@@ -178,12 +178,30 @@ struct BuddyHandoff: Equatable, Sendable {
     var from: NotchBuddyToy.Mood
     /// Seconds since the change.
     var age: TimeInterval
+    /// When the change landed part-way through an earlier one, the pose it
+    /// leaves is the blend drawn at that moment, as each mood's share.
+    /// Empty: `from` whole.
+    var blend: [NotchBuddyToy.Mood: Double] = [:]
 
     static let duration: TimeInterval = 0.24
 
     /// How much of the new mood's pose shows, 0 → 1.
     var weight: Double { BuddyTurn.smooth(age / Self.duration) }
     var isOver: Bool { !(age < Self.duration) }
+
+    /// The pose it leaves, as each mood's share.
+    var leaving: [NotchBuddyToy.Mood: Double] { blend.isEmpty ? [from: 1] : blend }
+
+    /// What is drawn at this age, handing into `mood`, as each mood's
+    /// share: the leaving pose fading out, `mood` fading in. A change
+    /// that lands now starts from exactly this. A share too small to
+    /// see is dropped, so the list stays short.
+    func shares(into mood: NotchBuddyToy.Mood) -> [NotchBuddyToy.Mood: Double] {
+        let w = weight
+        var out = leaving.mapValues { $0 * (1 - w) }
+        out[mood, default: 0] += w
+        return out.filter { $0.value > 0.001 }
+    }
 }
 
 /// The buddy arriving where it now lives, drawn over `duration`: grown in

@@ -242,6 +242,68 @@ struct BuddyTurnTests {
         #expect(toy.wavingSince == t0.addingTimeInterval(2), "stamped at the latest time seen, not the stale one")
     }
 
+    @Test("a second mood change mid-handoff carries on from the blend drawn, not the old mood whole")
+    func handoffChains() {
+        // Pacing at its right-hand end (3 pt off centre) against the
+        // gathering's centred hops: a quick pacing → gathering → pacing
+        // flicker, the second change 0.1 s into the first.
+        let pace = 0.45 * 3.4
+        let first = BuddyHandoff(from: .pacing, age: 0.1)
+        let drawn = figure(mood: .gathering, stride: pace, handoff: first).pose
+        let second = BuddyHandoff(from: .gathering, age: 0, blend: first.shares(into: .gathering))
+        let after = figure(stride: pace, handoff: second).pose
+        #expect(abs(after.offset.width - drawn.offset.width) < 1e-9)
+        #expect(abs(after.offset.height - drawn.offset.height) < 1e-9)
+        #expect(abs(after.lean - drawn.lean) < 1e-9)
+        let restart = figure(stride: pace, handoff: BuddyHandoff(from: .gathering, age: 0)).pose
+        #expect(abs(restart.offset.width - drawn.offset.width) > 1, "starting from gathering whole jumped")
+
+        var last = after
+        var age = Self.frame
+        while age <= BuddyHandoff.duration + Self.frame {
+            let pose = figure(stride: pace, handoff: BuddyHandoff(from: .gathering, age: age,
+                                                                   blend: second.blend)).pose
+            #expect(abs(pose.offset.width - last.offset.width) <= 0.5)
+            last = pose
+            age += Self.frame
+        }
+        #expect(abs(last.offset.width - figure(stride: pace).pose.offset.width) < 1e-9, "lands on pacing")
+    }
+
+    @Test("the toy records the blend a change lands on, and a finished one starts clean")
+    func toyRecordsBlend() {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        func working(_ count: Int) -> CoreState {
+            CoreState(sessions: (0..<count).map {
+                CoreSession(id: "s\($0)", provider: "claude", mode: "tool_running", lifecycle: "active")
+            })
+        }
+        core.apply(.state(working(1)))
+        #expect(toy.summary(at: t0).mood == .pacing)
+        core.apply(.state(working(3)))
+        #expect(toy.summary(at: t0.addingTimeInterval(1)).mood == .gathering)
+        #expect(toy.handoff(at: t0.addingTimeInterval(1))?.leaving == [.pacing: 1])
+        core.apply(.state(working(1)))
+        let flicker = t0.addingTimeInterval(1.1)
+        #expect(toy.summary(at: flicker).mood == .pacing)
+        // Dates this far from 2001 carry about a tenth of a microsecond.
+        let w = BuddyHandoff(from: .pacing, age: 0.1).weight
+        let leaving = toy.handoff(at: flicker)?.leaving ?? [:]
+        #expect(abs((leaving[.pacing] ?? 0) - (1 - w)) < 1e-5)
+        #expect(abs((leaving[.gathering] ?? 0) - w) < 1e-5)
+        // Long after, a change starts from the mood it leaves, whole.
+        core.apply(.state(working(3)))
+        let later = t0.addingTimeInterval(5)
+        #expect(toy.summary(at: later).mood == .gathering)
+        #expect(toy.handoff(at: later)?.leaving == [.pacing: 1])
+    }
+
     @Test("the dangle's lag is finite-safe")
     func followIsSafe() {
         #expect(BuddyTurn.follow(3, toward: 10, dt: 0) == 3)

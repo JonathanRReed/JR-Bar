@@ -861,7 +861,11 @@ final class NotchBuddyToy: Toy {
             slumpedSince = nil
         }
         if let shown = shownMood, shown != s.mood {
-            moodChange = (shown, stamp)
+            // Part-way through the last change, the pose it leaves is the
+            // blend drawn right now, not the old mood whole; a quick
+            // flicker between two moods carries on from where it is.
+            let leaving = handoff(at: stamp)?.shares(into: shown) ?? [:]
+            moodChange = (shown, leaving, stamp)
         }
         shownMood = s.mood
         s.care = store?.state.notchBuddy.care.mood(at: stamp) ?? .content
@@ -891,18 +895,20 @@ final class NotchBuddyToy: Toy {
     }
 
     /// The mood the last summary settled on, and the last change: the
-    /// figure eases from the old mood's pose into the new one's over
-    /// `BuddyHandoff.duration` (`handoff(at:)`). Untracked, like the
-    /// wave clock: `summary` maintains them mid-render.
+    /// figure eases from the old mood's pose (or the blend it was part-way
+    /// through, `blend`) into the new one's over `BuddyHandoff.duration`
+    /// (`handoff(at:)`). Untracked, like the wave clock: `summary`
+    /// maintains them mid-render.
     @ObservationIgnored private var shownMood: Mood?
-    @ObservationIgnored private(set) var moodChange: (from: Mood, at: Date)?
+    @ObservationIgnored private(set) var moodChange: (from: Mood, blend: [Mood: Double], at: Date)?
     /// The latest time any summary was taken at.
     @ObservationIgnored private var latestSummaryAt: Date?
 
     /// The mood change as drawn at `now`, or nil once it has handed off.
     func handoff(at now: Date) -> BuddyHandoff? {
         guard let change = moodChange else { return nil }
-        let drawn = BuddyHandoff(from: change.from, age: now.timeIntervalSince(change.at))
+        let drawn = BuddyHandoff(from: change.from, age: now.timeIntervalSince(change.at),
+                                 blend: change.blend)
         return drawn.isOver ? nil : drawn
     }
 

@@ -458,6 +458,23 @@ struct BuddyFigure: View {
             pose.blush = lerp(a.blush, b.blush)
             return pose
         }
+
+        /// Several poses at once, each by its share: every measure
+        /// weighted, the face's shapes the heaviest's. Ties go by the
+        /// mood's name, so the pick never flickers between frames.
+        static func blend(_ parts: [(mood: NotchBuddyToy.Mood, pose: Pose, share: Double)]) -> Pose {
+            let ordered = parts.filter { $0.share > 0 }.sorted {
+                $0.share != $1.share ? $0.share > $1.share : $0.mood.rawValue < $1.mood.rawValue
+            }
+            guard let first = ordered.first else { return Pose() }
+            var pose = first.pose
+            var total = first.share
+            for part in ordered.dropFirst() {
+                total += part.share
+                pose = mix(pose, part.pose, part.share / total)
+            }
+            return pose
+        }
     }
 
     /// The pose, layered: the mood first (handing off from the last
@@ -473,8 +490,11 @@ struct BuddyFigure: View {
 
     private var movingPose: Pose {
         let now = moodPose(mood)
-        guard let handoff, !handoff.isOver, handoff.from != mood else { return now }
-        return Pose.mix(moodPose(handoff.from), now, handoff.weight)
+        guard let handoff, !handoff.isOver else { return now }
+        let leaving = handoff.leaving
+        guard leaving != [mood: 1] else { return now }
+        let parts = leaving.map { (mood: $0.key, pose: moodPose($0.key), share: $0.value) }
+        return Pose.mix(Pose.blend(parts), now, handoff.weight)
     }
 
     /// One mood's moving pose. Pacing and gathering give way to the walk
