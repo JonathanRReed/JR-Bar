@@ -210,9 +210,11 @@ class ClaudeDesktopSessions:
 
     Read-only. The walk is cached by the store's directory mtimes and each
     file by its own mtime and size, so an open that finds nothing new reads
-    only directory entries. A store that is missing, unreadable or shaped
-    differently answers ``None``, and the open falls back to bare
-    ``claude://``."""
+    only directory entries. A file rewritten in place (its ``cliSessionId``
+    filled in after it was made) leaves every directory mtime alone, so a
+    miss also restats the files and rereads any that changed. A store that
+    is missing, unreadable or shaped differently answers ``None``, and the
+    open falls back to bare ``claude://``."""
 
     def __init__(self, root: Path | None = None) -> None:
         self._root = root
@@ -224,14 +226,19 @@ class ClaudeDesktopSessions:
     def local_id(self, cli_session_id: object) -> str | None:
         if not _valid_session_id(cli_session_id):
             return None
+        key = str(cli_session_id)
         try:
             with self._lock:
                 self._refresh()
-                return self._by_cli.get(str(cli_session_id))
+                found = self._by_cli.get(key)
+                if found is None:
+                    self._refresh(restat=True)
+                    found = self._by_cli.get(key)
+                return found
         except Exception:
             return None
 
-    def _refresh(self) -> None:
+    def _refresh(self, *, restat: bool = False) -> None:
         root = self._root if self._root is not None else CLAUDE_DESKTOP_SESSION_STORE
         directories: list[tuple[str, int]] = []
         files: list[os.DirEntry[str]] = []
@@ -258,7 +265,7 @@ class ClaudeDesktopSessions:
                     self._signature, self._files, self._by_cli = None, {}, {}
                     return
         signature = tuple(sorted(directories))
-        if signature == self._signature:
+        if signature == self._signature and not restat:
             return
         known: dict[str, tuple[tuple[int, int], str | None, str | None]] = {}
         for entry in files:

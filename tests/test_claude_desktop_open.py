@@ -46,7 +46,7 @@ def _store(tmp_path: Path) -> Path:
     return root
 
 
-def test_an_app_session_opens_by_its_local_id__and_3_more(tmp_path: Path) -> None:
+def test_an_app_session_opens_by_its_local_id__and_4_more(tmp_path: Path) -> None:
     root = _store(tmp_path)
     sessions = ClaudeDesktopSessions(root)
 
@@ -85,6 +85,18 @@ def test_an_app_session_opens_by_its_local_id__and_3_more(tmp_path: Path) -> Non
         assert reads == []
     finally:
         module._read_claude_session = original
+
+    # --- scenario: a file rewritten in place is found on the miss that needs it
+    pending = "local_7a7a7a7a-0000-4000-8000-000000000002"
+    (org / f"{pending}.json").write_text(json.dumps({"sessionId": pending}))
+    stamp = os.stat(org).st_mtime_ns + 1_000_000_000
+    os.utime(org, ns=(stamp, stamp))
+    assert claude_desktop_link(_status(session_id="third-cli"), sessions) is None
+    (org / f"{pending}.json").write_text(json.dumps({"sessionId": pending, "cliSessionId": "third-cli"}))
+    os.utime(org, ns=(stamp, stamp))  # an in-place write leaves the directory alone
+    assert claude_desktop_link(_status(session_id="third-cli"), sessions) == (
+        f"claude://code/continue?session={pending}"
+    )
 
     # --- scenario: a missing store, a malformed file or a foreign id shape falls back
     assert claude_desktop_link(_status(), ClaudeDesktopSessions(tmp_path / "absent")) is None
