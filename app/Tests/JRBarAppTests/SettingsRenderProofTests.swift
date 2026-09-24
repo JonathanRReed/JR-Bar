@@ -348,4 +348,25 @@ struct SettingsRenderProofTests {
         }
         withExtendedLifetime(fixture) {}
     }
+
+    // MARK: lane oss
+
+    /// Settings › Usage › Hooks: a rule that runs, with its last result,
+    /// and one that never will, with the reason, over the mock's rules.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the usage hooks PNGs"))
+    func usageHooks() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        let model = UsageHooksModel()
+        let ninthMinute = Date().timeIntervalSince1970 - 540
+        model.lastResults = ["chime": UsageHookLastResult(sentence: "quota_low: exit 0 in 0.1 s", at: ninthMinute, ok: true)]
+        model.problems = ["log": "the executable must be an absolute path"]
+        for dark in [false, true] where Self.wanted("settings-usage-hooks") {
+            let view = Form { UsageHooksSection(store: fixture.settings, model: model) }
+                .formStyle(.grouped)
+            let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 900), dark: dark)
+            try Self.write(rep, named: "settings-usage-hooks-\(dark ? "dark" : "light")")
+        }
+        withExtendedLifetime(fixture) {}
+    }
 }

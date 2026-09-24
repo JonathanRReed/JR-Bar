@@ -56,6 +56,8 @@ enum SettingsSearch {
         .init(.usage, "Display", "Graphs", subtitle: "Per-provider history, cost and pace, for the range above."),
         .init(.usage, "Claude", "Read plan limits", subtitle: "Reads your subscription's official 5-hour and 7-day windows from Anthropic. Off until you opt in."),
         .init(.usage, "Quota alerts", "Alert at thresholds", subtitle: "A nudge, then a warning, as a usage window fills."),
+        .init(.usage, "Hooks", "Run usage hooks", subtitle: "Runs your own program when a quota runs low, runs out, resets or a provider stops answering.",
+              keywords: ["hook", "script", "webhook", "automation", "codexbar", "notify"]),
         .init(.usage, "History", "Keep history", subtitle: "Stores usage samples locally so graphs can look back."),
         .init(.usage, "History", "Keep for"),
         .init(.devices, "Pro & Dot", "Dot follows strip", subtitle: "The Dot mirrors the Pro instead of rendering its own; which cue is the role below."),

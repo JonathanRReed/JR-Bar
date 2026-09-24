@@ -188,6 +188,9 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.usage, "quota_alert_thresholds", .numberList),
             SettingsKey(.usage, "capacity_history_enabled", .bool),
             SettingsKey(.usage, "capacity_history_retention_days", .number),
+            // Usage hooks' master switch; the rules are the person's own
+            // work and stay out of a page reset (lane oss).
+            SettingsKey(.usage, "usage_hooks.enabled", .bool),
             // Devices & Screen Bar
             SettingsKey(.devices, "devices[].led_display", .string),
             SettingsKey(.devices, "devices[].brightness", .number),
