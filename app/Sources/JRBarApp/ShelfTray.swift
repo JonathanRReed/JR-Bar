@@ -175,9 +175,12 @@ final class ShelfTrayModel {
     /// existing stack sharing its folder, or stacks with an existing
     /// loose item from the same folder (the same-folder rule).
     /// Symlinks resolve at read time — a link whose target moved is
-    /// `missing` on the next pass.
+    /// `missing` on the next pass. With the shelf switched off nothing
+    /// lands, whichever way the files came: the island, the Dock's Send
+    /// to Shelf, a paste or an action's result.
     func add(_ urls: [URL], before target: ShelfEntry? = nil,
              onto stackTarget: ShelfEntry? = nil) {
+        guard shelfEnabled() else { return }
         var known = entries
         let held = known.flatMap(\.items).map(\.path)
         let fresh = urls.map(\.path).reduce(into: [Entry]()) { out, path in

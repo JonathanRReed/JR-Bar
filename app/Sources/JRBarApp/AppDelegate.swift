@@ -285,6 +285,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         // …and its "Send to Shelf" lands in the one shared tray.
         utilitiesStore.dock.enhance.sendToShelf = { [weak cardTray] urls in cardTray?.add(urls) }
+        // The Dock offers Send to Shelf only while the shelf takes files.
+        toysStore.notch.onShelfSwitch = { [weak utilitiesStore, weak cardTray] on in
+            let send: @MainActor ([URL]) -> Void = { urls in cardTray?.add(urls) }
+            utilitiesStore?.dock.enhance.sendToShelf = on ? send : nil
+        }
         notchCard.model.mirrorEnabled = { [weak toysStore] in toysStore?.state.notch.mirror ?? false }
         notchCard.focus = { [weak self] in self?.store?.screenBarFocus }
         notchCard.sessionRows = { [weak self] in

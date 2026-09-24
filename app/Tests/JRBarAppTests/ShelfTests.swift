@@ -653,6 +653,17 @@ extension ShelfTests {
         #expect(!ShelfActionMenu.verbs(for: [folder.appendingPathComponent("a.zip")]).contains(.copyText))
     }
 
+    @Test func theShelfSwitchedOffTakesNoFiles() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        tray.shelfEnabled = { false }
+        tray.add([URL(fileURLWithPath: "/tmp/shelf-off/a.txt")])
+        #expect(tray.entries.isEmpty)
+        tray.shelfEnabled = { true }
+        tray.add([URL(fileURLWithPath: "/tmp/shelf-off/a.txt")])
+        #expect(tray.entries.count == 1)
+    }
+
     @Test func moveToCarriesTheChipAlong() throws {
         let tray = freshTray()
         defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }

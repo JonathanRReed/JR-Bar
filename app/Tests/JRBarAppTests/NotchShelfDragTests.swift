@@ -104,4 +104,15 @@ struct NotchShelfDragTests {
         #expect(toy.cardModel.dropHover.isEmpty,
                 "a stale row would read as a drag still over the card on the next summon")
     }
+
+    @Test("with the shelf switched off, a drop on the island takes nothing")
+    func shelfOffTakesNoDrop() {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        store.state.notch.shelfEnabled = false
+        let before = toy.cardModel.tray.entries.count
+        toy.shelfDrop([URL(fileURLWithPath: "/tmp/jrbar-shelf-off-\(UUID().uuidString).txt")])
+        #expect(toy.cardModel.tray.entries.count == before)
+        #expect(toy.cardModel.page != .shelf, "no turn to a shelf that is off")
+    }
 }

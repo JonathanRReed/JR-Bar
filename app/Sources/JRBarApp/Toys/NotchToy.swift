@@ -909,16 +909,26 @@ final class NotchToy: Toy {
     }
 
     /// The drop after the summon — file URLs straight in, web links
-    /// materialised as `.webloc`s first so the entry stays a file.
+    /// materialised as `.webloc`s first so the entry stays a file. With
+    /// the shelf switched off the island takes nothing; only a session
+    /// row still takes a file.
     func shelfDrop(_ urls: [URL]) {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        guard settings.shelfEnabled else { return }
         cardModel.tray.add(ShelfTrayDrop.trayURLs(from: urls))
         // Show where it landed.
         cardModel.show(.shelf)
     }
 
     // MARK: - Shake to summon
+
+    /// Told when the shelf is switched on or off — the app delegate hides
+    /// the Dock's Send to Shelf while the shelf takes no files.
+    @ObservationIgnored var onShelfSwitch: (@MainActor (Bool) -> Void)?
+    /// The last switch `onShelfSwitch` heard, so a reconcile that moved
+    /// nothing says nothing.
+    @ObservationIgnored private var shelfSwitchSent: Bool?
 
     /// The shake recognizer's feeds — global drag/up monitors, alive
     /// only while the island is up and the setting allows. A shake
@@ -1197,6 +1207,12 @@ final class NotchToy: Toy {
     private func reconcile() {
         guard runtimeEnabled else { return }
         publishRenderer()
+        // The shelf's switch reaches the surfaces that offer to shelve a
+        // file outside the card (the Dock's Send to Shelf).
+        if shelfSwitchSent != settings.shelfEnabled {
+            shelfSwitchSent = settings.shelfEnabled
+            onShelfSwitch?(settings.shelfEnabled)
+        }
         // The media-key tap's lifetime rides the same gates — a flip
         // must install or drop the tap now, not at the next press.
         onMediaGateChanged()
