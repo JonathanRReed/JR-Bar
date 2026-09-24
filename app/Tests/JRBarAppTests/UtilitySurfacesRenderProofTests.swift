@@ -97,6 +97,30 @@ struct UtilitySurfacesRenderProofTests {
         #expect(terminalTight == CGSize(width: 472, height: 247), "Tight terminal \(terminalTight)")
     }
 
+    /// Pointing at a card brings up its verbs, and never widens it: a
+    /// portrait window's narrow still stacks them down its edge instead,
+    /// so the strip can't reflow under the pointer.
+    @Test("a card's hover verbs never widen it, even a portrait window's")
+    func hoverVerbsKeepTheCardsWidth() {
+        let content = DockPreviewSamples.shapes(hug: true)
+        let cases = content.windows.flatMap { window in [(window, false), (window, true)] }
+        for (window, large) in cases {
+            let size = DockEnhanceMath.cardSize(large: large, aspect: DockEnhanceMath.aspect(of: window))
+            func card(_ hover: Bool) -> CGSize {
+                let view = DockPreviewCard(window: window, icon: content.icon, size: size, fillsStill: true,
+                                           metrics: content.metrics, hoverShown: hover,
+                                           actions: DockPreviewActions(content: content))
+                let hosting = NSHostingView(rootView: view.fixedSize())
+                hosting.layoutSubtreeIfNeeded()
+                return hosting.fittingSize
+            }
+            let resting = card(false)
+            let hovered = card(true)
+            #expect(hovered == resting, "\(window.title) (large \(large)): \(resting) grew to \(hovered) on hover")
+            #expect(resting.width >= DockPreviewCard.minColumn, "\(window.title) keeps a readable caption")
+        }
+    }
+
     /// The key row reads its caps off the line the controller writes, a
     /// tool's node follows its name, and a yellow disc takes dark ink.
     @Test("key caps, tool glyphs and verb ink read what they are given")
@@ -174,6 +198,28 @@ struct UtilitySurfacesRenderProofTests {
                 try Self.write(view, glassRadius: content.metrics.panelRadius, name: name, dark: dark,
                                canvas: CGSize(width: 900, height: 420))
             }
+        }
+        // The same shaped cards under the pointer, small then large: the
+        // verbs stay on each still — down the edge of a portrait one —
+        // and no card grows past its resting width.
+        let hugged = DockPreviewSamples.shapes(hug: true)
+        let hovered = VStack(alignment: .leading, spacing: hugged.metrics.sectionSpacing) {
+            ForEach([false, true], id: \.self) { large in
+                HStack(alignment: .top, spacing: hugged.metrics.cardSpacing) {
+                    ForEach(hugged.windows) { window in
+                        DockPreviewCard(window: window, icon: hugged.icon,
+                                        size: DockEnhanceMath.cardSize(large: large,
+                                                                       aspect: DockEnhanceMath.aspect(of: window)),
+                                        fillsStill: true, metrics: hugged.metrics, hoverShown: true,
+                                        actions: DockPreviewActions(content: hugged))
+                    }
+                }
+            }
+        }
+        .padding(hugged.metrics.panelInset)
+        for dark in [true, false] {
+            try Self.write(hovered, glassRadius: hugged.metrics.panelRadius, name: "dock-shapes-hover", dark: dark,
+                           canvas: CGSize(width: 900, height: 460))
         }
         // Where the glass sits off a 55 pt tile, from the frame math:
         // covering the name bubble at the default 4 pt, and the classic

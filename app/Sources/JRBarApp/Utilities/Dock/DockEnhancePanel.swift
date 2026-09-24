@@ -794,11 +794,49 @@ struct DockPreviewCard: View {
     /// The plate's reach past the still, its corner (concentric with the
     /// still inside it), and the air between still and caption.
     var metrics = DockPreviewMetrics.standard
+    /// The hover face drawn without a pointer — the verbs and the lit
+    /// plate — for the render proofs.
+    var hoverShown = false
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
     /// One caption row's height.
     static let captionRow: CGFloat = 14
+    /// The narrowest a card's plate and caption get: a portrait window's
+    /// still is narrower, and centres in this column so its title still
+    /// reads as words.
+    static let minColumn: CGFloat = 96
+
+    /// The caption's width, which the plate takes: the still's, or the
+    /// minimum column when the still is narrower.
+    private var columnWidth: CGFloat { max(size.width, Self.minColumn) }
+
+    private var showsHover: Bool { hovering || hoverShown }
+
+    /// The hover verbs: × closes, – minimizes or restores, the arrows
+    /// toggle full screen when the window can.
+    @ViewBuilder
+    private var verbs: some View {
+        DockRoundVerb(symbol: "xmark", tint: DockChrome.stop, label: "Close window",
+                      size: 20, onStill: true) {
+            actions.performWindowAction(window, actions.onClose)
+        }
+        DockRoundVerb(symbol: window.minimized ? "arrow.up.left.and.arrow.down.right" : "minus",
+                      tint: DockChrome.caution,
+                      label: window.minimized ? "Bring back" : "Minimize",
+                      size: 20, onStill: true) {
+            actions.performWindowAction(window, actions.onMinimize)
+        }
+        if let fullScreen = window.fullScreen {
+            DockRoundVerb(symbol: fullScreen ? "arrow.down.left.and.arrow.up.right"
+                                             : "arrow.up.right.and.arrow.down.left",
+                          tint: DockChrome.go,
+                          label: fullScreen ? "Leave full screen" : "Full screen",
+                          size: 20, onStill: true) {
+                actions.performWindowAction(window, actions.onFullScreen)
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: metrics.captionGap) {
@@ -823,32 +861,20 @@ struct DockPreviewCard: View {
                 // Right-click — DockDoor's action menu: the verbs the
                 // hover pills offer plus the tile grid.
                 .contextMenu { menu }
-                if hovering {
-                    HStack(spacing: 5) {
-                        DockRoundVerb(symbol: "xmark", tint: DockChrome.stop, label: "Close window",
-                                      size: 20, onStill: true) {
-                            actions.performWindowAction(window, actions.onClose)
-                        }
-                        DockRoundVerb(symbol: window.minimized ? "arrow.up.left.and.arrow.down.right" : "minus",
-                                      tint: DockChrome.caution,
-                                      label: window.minimized ? "Bring back" : "Minimize",
-                                      size: 20, onStill: true) {
-                            actions.performWindowAction(window, actions.onMinimize)
-                        }
-                        if let fullScreen = window.fullScreen {
-                            DockRoundVerb(symbol: fullScreen ? "arrow.down.left.and.arrow.up.right"
-                                                             : "arrow.up.right.and.arrow.down.left",
-                                          tint: DockChrome.go,
-                                          label: fullScreen ? "Leave full screen" : "Full screen",
-                                          size: 20, onStill: true) {
-                                actions.performWindowAction(window, actions.onFullScreen)
-                            }
-                        }
+                if showsHover {
+                    // A still too narrow for the row (a portrait window's
+                    // card) stacks the verbs down its edge instead.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 5) { verbs }
+                        VStack(spacing: 5) { verbs }
                     }
                     .padding(6)
                     .transition(.opacity)
                 }
             }
+            // Pinned to the still: the hover verbs never widen the card,
+            // so pointing at it can't reflow the strip under the pointer.
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
             .overlay(alignment: .topTrailing) {
                 if let agent {
                     DockAgentDot(mark: agent, size: 10)
@@ -859,7 +885,7 @@ struct DockPreviewCard: View {
             }
             if captionLines > 0 {
                 captions
-                    .frame(width: size.width, height: CGFloat(captionLines) * Self.captionRow, alignment: .top)
+                    .frame(width: columnWidth, height: CGFloat(captionLines) * Self.captionRow, alignment: .top)
             }
         }
         .padding(metrics.cardPad)
@@ -894,7 +920,7 @@ struct DockPreviewCard: View {
         if selected {
             shape.fill(Color.accentColor.opacity(0.16))
                 .overlay(shape.strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1))
-        } else if hovering {
+        } else if showsHover {
             shape.fill(DockChrome.plateHover)
         }
     }
@@ -953,7 +979,7 @@ struct DockPreviewCard: View {
                 }
             }
         }
-        .frame(maxWidth: size.width)
+        .frame(maxWidth: columnWidth)
     }
 
     @ViewBuilder
