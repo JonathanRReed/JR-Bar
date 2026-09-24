@@ -218,12 +218,13 @@ enum MenuBarBarKeys {
     }
 
     /// The typed filter's chip width — measured in the chip's own font,
-    /// so the glass grows by what the chip draws.
+    /// with room for its magnifier, so the glass grows by what the chip
+    /// draws.
     nonisolated static func chipWidth(_ query: String) -> CGFloat {
         guard !query.isEmpty else { return 0 }
-        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         let text = (query as NSString).size(withAttributes: [.font: font]).width
-        return min(160, max(28, ceil(text) + 20))
+        return min(170, max(40, ceil(text) + 36))
     }
 }
 
@@ -572,6 +573,8 @@ struct MenuBarBarView: View {
     var onUpdateWatch: @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }
     /// The tile under the pointer, for its plate.
     @ViewState private var hoveredID: String?
+    /// Reduce Motion keeps a pressed tile still; its plate still darkens.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var items: [MenuBarItem] { model.visibleItems }
 
@@ -582,7 +585,7 @@ struct MenuBarBarView: View {
         Group {
             if items.isEmpty && query.isEmpty {
                 Text("No hidden items")
-                    .font(.callout)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .frame(height: MenuBarBarLayout.tileSize)
@@ -607,7 +610,8 @@ struct MenuBarBarView: View {
                                         tileLabel(for: item, width: width)
                                     }
                                     .buttonStyle(MenuBarTileStyle(selected: item.id == selectedID,
-                                                                  hovered: item.id == hoveredID))
+                                                                  hovered: item.id == hoveredID,
+                                                                  dips: !reduceMotion))
                                     .onHover { inside in
                                         if inside {
                                             hoveredID = item.id
@@ -622,6 +626,10 @@ struct MenuBarBarView: View {
                                     .contextMenu { moveMenu(for: item) }
                                 }
                             }
+                            // A point of slack each side, taken back from
+                            // the glass's padding: the clip view never
+                            // shaves a chip's or a plate's edge.
+                            .padding(.horizontal, 1)
                         }
                         .scrollIndicators(overflow ? .visible : .hidden)
                         .accessibilityLabel("Hidden menu bar items")
@@ -632,20 +640,28 @@ struct MenuBarBarView: View {
                 }
             }
         }
-        .padding(MenuBarBarLayout.padding)
+        .padding(.vertical, MenuBarBarLayout.padding)
+        .padding(.horizontal, MenuBarBarLayout.padding - 1)
     }
 
-    /// What the keyboard has typed — the filter the row stands under.
+    /// What the keyboard has typed — the filter the row stands under,
+    /// in the accent the keyboard's pick wears.
     private func queryChip(_ query: String) -> some View {
-        Text(query)
-            .font(.system(size: 12, weight: .medium))
-            .lineLimit(1)
-            .truncationMode(.head)
-            .foregroundStyle(.secondary)
-            .frame(width: MenuBarBarKeys.chipWidth(query), height: 22)
-            .background(.quaternary, in: Capsule())
-            .frame(height: MenuBarBarLayout.tileSize)
-            .accessibilityLabel("Filter: \(query)")
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundStyle(Color.accentColor)
+            Text(query)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.head)
+        }
+        .padding(.horizontal, 9)
+        .frame(width: MenuBarBarKeys.chipWidth(query), height: 24, alignment: .leading)
+        .background(Capsule().fill(Color.accentColor.opacity(0.14)))
+        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 0.5))
+        .frame(height: MenuBarBarLayout.tileSize)
+        .accessibilityLabel("Filter: \(query)")
     }
 
     private func itemLabel(for item: MenuBarItem) -> String {
@@ -655,9 +671,9 @@ struct MenuBarBarView: View {
 
     /// The tile face, best first: the live capture of an item standing
     /// on the row; its photographed glyph (a template tinted in the bar's
-    /// own label colour); the owner app's icon. A parked item with no
-    /// glyph carries the parked mark; an item whose picture changed since
-    /// the bar last closed carries a dot.
+    /// own label colour); the owner app's icon (`MenuBarAppFace`). A
+    /// parked item with no glyph carries the parked mark; an item whose
+    /// picture changed since the bar last closed carries a dot.
     @ViewBuilder
     private func tileLabel(for item: MenuBarItem, width: CGFloat) -> some View {
         Group {
@@ -674,14 +690,7 @@ struct MenuBarBarView: View {
                     .foregroundStyle(.primary)
                     .frame(height: 22)
             } else {
-                Image(nsImage: item.owner?.icon
-                      ?? NSImage(systemSymbolName: "questionmark.square.dashed",
-                                 variableValue: 0,
-                                 accessibilityDescription: nil)
-                      ?? NSImage())
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 22, height: 22)
+                MenuBarAppFace(item: item, size: 20)
             }
         }
         .frame(width: width, height: MenuBarBarLayout.tileSize)
@@ -690,17 +699,21 @@ struct MenuBarBarView: View {
             if model.parkedIDs.contains(item.id), model.glyphs[item.id] == nil,
                tiles.images[item.id] == nil {
                 Image(systemName: "arrow.down.forward.and.arrow.up.backward")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .padding(1)
-                    .background(.regularMaterial, in: Circle())
+                    .font(.system(size: 7, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .frame(width: 13, height: 13)
+                    .background(Circle().fill(Color.black.opacity(0.55)))
+                    .offset(x: 1, y: 1)
+                    .help("Parked off the menu bar by macOS")
             }
         }
         .overlay(alignment: .topTrailing) {
             if model.updatedIDs.contains(item.id) {
                 Circle()
                     .fill(Color.accentColor)
-                    .frame(width: 5, height: 5)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: Color.accentColor.opacity(0.6), radius: 2)
+                    .offset(x: -1, y: 2)
                     .accessibilityLabel("Changed")
             }
         }
@@ -741,20 +754,29 @@ struct MenuBarBarView: View {
 private struct MenuBarTileStyle: ButtonStyle {
     var selected: Bool
     var hovered: Bool
+    /// A press dips the tile a touch — off under Reduce Motion.
+    var dips = true
 
     func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
         configuration.label
             .background {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Self.fill(selected: selected, hovered: hovered, pressed: configuration.isPressed))
+                shape.fill(Self.fill(selected: selected, hovered: hovered, pressed: configuration.isPressed))
             }
+            .overlay {
+                if selected {
+                    shape.strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
+                }
+            }
+            .scaleEffect(configuration.isPressed && dips ? 0.94 : 1)
             .animation(.easeOut(duration: 0.12), value: hovered)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
     }
 
     static func fill(selected: Bool, hovered: Bool, pressed: Bool) -> Color {
-        if selected { return Color.accentColor.opacity(pressed ? 0.3 : 0.22) }
+        if selected { return Color.accentColor.opacity(pressed ? 0.3 : 0.2) }
         if pressed { return Color.primary.opacity(0.14) }
-        return hovered ? Color.primary.opacity(0.08) : .clear
+        return hovered ? Color.primary.opacity(0.09) : .clear
     }
 }
 
@@ -1022,5 +1044,48 @@ final class MenuBarBar {
             guard let frame = self.panelFrame, !frame.contains(point) else { return }
             self.close()
         }
+    }
+}
+
+/// An item's owner as a face when nothing better stands: the running
+/// app's icon, else the icon its bundle has on disk (an app mid-relaunch,
+/// a helper whose process name moved on), else its initial on a quiet
+/// tile — never a question mark. Disk lookups are remembered per bundle.
+struct MenuBarAppFace: View {
+    let item: MenuBarItem
+    var size: CGFloat = 20
+
+    var body: some View {
+        if let icon = MenuBarAppIcons.icon(for: item) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+        } else {
+            Text(String(item.ownerName.prefix(1)).uppercased())
+                .font(.system(size: size * 0.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .frame(width: size, height: size)
+                .background(RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                    .fill(Color.primary.opacity(0.1)))
+        }
+    }
+}
+
+/// The owner icons `MenuBarAppFace` resolves from disk, by bundle — a
+/// LaunchServices lookup once per app, not once per redraw.
+@MainActor
+enum MenuBarAppIcons {
+    private static var cache: [String: NSImage?] = [:]
+
+    static func icon(for item: MenuBarItem) -> NSImage? {
+        if let running = item.owner?.icon { return running }
+        guard let bundleID = item.bundleID else { return nil }
+        if let known = cache[bundleID] { return known }
+        let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        cache[bundleID] = icon
+        return icon
     }
 }

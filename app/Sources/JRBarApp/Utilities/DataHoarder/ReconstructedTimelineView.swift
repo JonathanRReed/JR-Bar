@@ -53,10 +53,10 @@ struct ReconstructedTimelineView: View {
 
     var body: some View {
         let entries = reconstruction.entries
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if let sourceNote {
                 Label(sourceNote, systemImage: "archivebox")
-                    .font(.system(size: 10))
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
             }
             storyCard
@@ -64,7 +64,7 @@ struct ReconstructedTimelineView: View {
                 // The proxy's side of the story: retries and refusals
                 // the transcript never records.
                 Label("Upstream: \(upstream)", systemImage: "network")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(.orange)
                     .help("From the CLIProxyAPI request logs filed under this session")
             }
@@ -83,22 +83,33 @@ struct ReconstructedTimelineView: View {
 
     @ViewBuilder private var storyCard: some View {
         if reconstruction.story.failed {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("What happened", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11, weight: .semibold))
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.orange)
-                Text(Self.storyText(reconstruction.story))
-                    .font(.system(size: 12))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.orange.opacity(0.16)))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("What happened")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(Self.storyText(reconstruction.story))
+                        .font(.system(size: 12))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .padding(10)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.orange.opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.22), lineWidth: 0.5))
         } else {
-            Text("No failures in these rows")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
+            Label("No failures in these rows", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .symbolRenderingMode(.multicolor)
         }
     }
 
@@ -120,13 +131,13 @@ struct ReconstructedTimelineView: View {
                 }
                 Text("· \(reconstruction.totalLines) transcript \(reconstruction.totalLines == 1 ? "row" : "rows") read")
             }
-            .font(.system(size: 10))
+            .font(.system(size: 10.5))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 2)
         } label: {
             Text(gapSummary)
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundStyle(.orange)
         }
     }
@@ -183,31 +194,45 @@ struct ReconstructedTimelineView: View {
     }
 
     private func filterChips(_ entries: [SessionProxyEvidence.Entry]) -> some View {
-        HStack(spacing: 5) {
-            let counts = Self.kindCounts(entries)
+        let counts = Self.kindCounts(entries)
+        return HStack(spacing: 4) {
             ForEach(KindFilter.allCases.filter { $0 != .requests || counts.requests > 0 }, id: \.self) { filter in
-                let label: String = switch filter {
-                case .all: "All \(entries.count)"
-                case .messages: "Messages \(counts.messages)"
-                case .tools: "Tools \(counts.tools)"
-                case .errors: "Errors \(counts.errors)"
-                case .requests: "Requests \(counts.requests)"
+                let count: Int = switch filter {
+                case .all: entries.count
+                case .messages: counts.messages
+                case .tools: counts.tools
+                case .errors: counts.errors
+                case .requests: counts.requests
                 }
-                Button {
-                    kind = filter
-                } label: {
-                    Text(label)
-                        .font(.system(size: 9, weight: kind == filter ? .semibold : .regular))
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(
-                            Capsule().fill(kind == filter
-                                ? Color.accentColor.opacity(0.18) : .primary.opacity(0.06)))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(filter == .errors && counts.errors > 0 ? .red : .secondary)
-                .accessibilityLabel("Show \(filter.rawValue.lowercased()) timeline rows")
+                chip(filter, count: count, alarm: filter == .errors && counts.errors > 0)
             }
         }
+    }
+
+    /// One kind chip: its word and count; the picked one sits on a
+    /// neutral plate, and Errors turns red once there are any.
+    private func chip(_ filter: KindFilter, count: Int, alarm: Bool) -> some View {
+        let picked = kind == filter
+        let ink: Color = alarm ? .red : (picked ? .primary : .secondary)
+        return Button {
+            kind = filter
+        } label: {
+            HStack(spacing: 4) {
+                Text(filter.rawValue)
+                    .font(.system(size: 10.5, weight: picked ? .semibold : .medium))
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .opacity(0.7)
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(Capsule().fill(picked ? Color.primary.opacity(0.11) : Color.primary.opacity(0.04)))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(picked ? 0.14 : 0), lineWidth: 0.5))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show \(filter.rawValue.lowercased()) timeline rows")
     }
 
     @ViewBuilder private func listArea(_ entries: [SessionProxyEvidence.Entry]) -> some View {
@@ -221,7 +246,7 @@ struct ReconstructedTimelineView: View {
         } else {
             let firstError = entries.first(where: \.isError)?.id
             ScrollViewReader { proxy in
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 8) {
                     if let firstError {
                         Button {
                             // A kind filter can leave the error row
@@ -231,7 +256,10 @@ struct ReconstructedTimelineView: View {
                             withAnimation { proxy.scrollTo(firstError, anchor: .top) }
                         } label: {
                             Label("Jump to error", systemImage: "arrow.down.to.line")
-                                .font(.system(size: 10))
+                                .font(.system(size: 10.5, weight: .medium))
+                                .padding(.horizontal, 8)
+                                .frame(height: 20)
+                                .background(Capsule().fill(Color.red.opacity(0.1)))
                         }
                         .buttonStyle(.plain).foregroundStyle(.red)
                     }
@@ -254,158 +282,258 @@ struct ReconstructedTimelineView: View {
     }
 
     private func rows(_ shown: [SessionProxyEvidence.Entry]) -> some View {
-        LazyVStack(alignment: .leading, spacing: 5) {
+        let tail = liveTail.flatMap { kind == .all ? $0 : nil }
+        let lastID = tail == nil ? shown.last?.id : nil
+        return LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(shown) { entry in
                 Group {
                     switch entry {
-                    case .item(let item): row(item)
-                    case .request(_, let request): requestRow(request)
+                    case .item(let item): row(item, last: entry.id == lastID)
+                    case .request(_, let request): requestRow(request, last: entry.id == lastID)
                     }
                 }
                 .id(entry.id)
             }
-            if let liveTail, kind == .all {
-                liveTailRow(liveTail)
+            if let tail {
+                liveTailRow(tail)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: The spine
+
+    /// The clock column's width — "HH:mm:ss" whole at its size.
+    static let clockWidth: CGFloat = 50
+    /// A node's slot on the spine.
+    static let nodeSize: CGFloat = 18
+    static let gutter: CGFloat = 8
+    /// The air under a row before the next node.
+    static let rowGap: CGFloat = 10
+    /// The node's drop from its row's top — the spine breaks this much
+    /// either side of it.
+    static let nodeInset: CGFloat = 2
+    /// The spine's x, through the nodes' centres.
+    static let spineX: CGFloat = clockWidth + gutter + nodeSize / 2 - 0.5
+    /// Where the spine resumes under a node, and under a result's dot.
+    static let spineTop: CGFloat = nodeInset * 2 + nodeSize + 2
+    static let spineTopUnderDot: CGFloat = nodeInset + nodeSize / 2 + 7
+
+    /// One row on the spine: its clock, its node, its body, and the
+    /// spine running on from under the node to the next one — unless it
+    /// is the last row. A `small` node (a result's dot) lets the spine
+    /// start closer under it.
+    private func spineRow<Node: View, Content: View>(
+        clock: String, last: Bool, small: Bool = false,
+        @ViewBuilder node: () -> Node, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: Self.gutter) {
+            Text(clock)
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: Self.clockWidth, alignment: .leading)
+                .padding(.top, Self.nodeInset + 3)
+            node()
+                .frame(width: Self.nodeSize, height: Self.nodeSize)
+                .padding(.top, Self.nodeInset)
+            content()
+                .padding(.top, Self.nodeInset + 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.bottom, Self.rowGap)
+        .background(alignment: .topLeading) {
+            if !last {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.1))
+                    .frame(width: 1)
+                    .padding(.top, small ? Self.spineTopUnderDot : Self.spineTop)
+                    .offset(x: Self.spineX)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A node: the row's glyph on a disc of its own tint.
+    private func node(_ symbol: String, tint: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 8.5, weight: .bold))
+            .foregroundStyle(tint)
+            .frame(width: Self.nodeSize, height: Self.nodeSize)
+            .background(Circle().fill(tint.opacity(0.16)))
+            .overlay(Circle().strokeBorder(tint.opacity(0.3), lineWidth: 0.5))
+    }
+
+    /// A result's node: a small dot on the spine under its call.
+    private func dot(_ tint: Color) -> some View {
+        Circle()
+            .fill(tint)
+            .frame(width: 7, height: 7)
     }
 
     /// The hook's word for what is happening now — the transcript only
     /// writes a tool call once it is done, so the run's present moment
     /// lives here until it does.
     private func liveTailRow(_ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("now")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 40, alignment: .leading)
+        spineRow(clock: "now", last: true) {
             UnseenDot()
-                .frame(width: 12)
+        } content: {
             Text(text)
-                .font(.system(size: 10))
+                .font(.system(size: 11.5))
                 .italic()
                 .foregroundStyle(.secondary)
         }
-        .accessibilityElement(children: .combine)
         .accessibilityLabel("Now: \(text)")
     }
 
     /// A proxied request between the turns: the request line, the model,
     /// retries, and the upstream's error text when it refused.
-    private func requestRow(_ request: CLIProxyRequest) -> some View {
+    private func requestRow(_ request: CLIProxyRequest, last: Bool) -> some View {
         let failed = SessionProxyEvidence.failed(request)
-        return HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(request.timestamp.map { Self.clock.string(from: $0) } ?? "—")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.quaternary)
-                .frame(width: 40, alignment: .leading)
-            Image(systemName: "network")
-                .font(.system(size: 9))
-                .foregroundStyle(failed ? Color.red : Color.secondary)
-                .frame(width: 12)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(SessionProxyEvidence.line(request))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(failed ? Color.red : Color.secondary)
-                    .lineLimit(1)
-                    .textSelection(.enabled)
+        let tint: Color = failed ? .red : .indigo
+        return spineRow(clock: request.timestamp.map { Self.clock.string(from: $0) } ?? "—", last: last) {
+            node("network", tint: tint)
+        } content: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(SessionProxyEvidence.line(request))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(failed ? Color.red : Color.secondary)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                    tag("proxy", tint: .secondary)
+                }
                 if failed, let summary = request.errorSummary {
                     Text(summary)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.red)
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }
             }
-            Text("proxy")
-                .font(.system(size: 8, weight: .medium))
-                .padding(.horizontal, 4).padding(.vertical, 1)
-                .background(Color.secondary.opacity(0.12), in: .capsule)
-                .foregroundStyle(.secondary)
         }
-        .accessibilityElement(children: .combine)
+    }
+
+    private func tag(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(tint.opacity(0.14), in: .capsule)
+            .foregroundStyle(tint)
     }
 
     // MARK: Rows
 
-    private func row(_ item: ReconstructedItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(item.at.map { Self.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.quaternary)
-                .frame(width: 40, alignment: .leading)
-            Image(systemName: Self.symbol(item))
-                .font(.system(size: 9))
-                .foregroundStyle(Self.tint(item))
-                .frame(width: 12)
-            rowBody(item)
-            if item.sidechain {
-                Text("subagent")
-                    .font(.system(size: 8, weight: .medium))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(Color.purple.opacity(0.15), in: .capsule)
-                    .foregroundStyle(.purple)
+    private func row(_ item: ReconstructedItem, last: Bool) -> some View {
+        spineRow(clock: item.at.map { Self.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—",
+                 last: last, small: item.kind == .toolResult) {
+            if item.kind == .toolResult {
+                dot(Self.tint(item))
+            } else {
+                node(Self.symbol(item), tint: Self.tint(item))
             }
+        } content: {
+            rowBody(item)
+                .padding(.leading, item.sidechain ? 10 : 0)
+                .overlay(alignment: .leading) {
+                    if item.sidechain {
+                        Capsule().fill(Color.purple.opacity(0.35)).frame(width: 2)
+                    }
+                }
         }
-        .padding(.leading, (item.kind == .toolResult ? 12 : 0) + (item.sidechain ? 10 : 0))
-        .accessibilityElement(children: .combine)
+    }
+
+    /// A subagent's row wears its tag on its first line, beside the name
+    /// or the text — never out past a tool call's block.
+    @ViewBuilder
+    private func subagentTag(_ item: ReconstructedItem) -> some View {
+        if item.sidechain {
+            tag("subagent", tint: .purple)
+        }
     }
 
     @ViewBuilder
     private func rowBody(_ item: ReconstructedItem) -> some View {
         switch item.kind {
         case .message:
-            VStack(alignment: .leading, spacing: 1) {
-                if let role = item.role {
-                    Text(role == "user" ? "you" : role)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(Self.roleTint(role))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    if let role = item.role {
+                        Text(Self.roleName(role))
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Self.roleTint(role))
+                    }
+                    if let model = item.model {
+                        Text(model)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                    subagentTag(item)
                 }
                 itemText(item)
-                if let model = item.model {
-                    Text(model)
-                        .font(.system(size: 8))
-                        .foregroundStyle(.quaternary)
-                }
             }
         case .toolUse:
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.name ?? "tool")
-                    .font(.system(size: 9, weight: .medium))
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(
-                        (item.isError ? Color.red : Color.accentColor).opacity(0.15),
-                        in: .capsule)
-                    .foregroundStyle(item.isError ? .red : .accentColor)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(item.name ?? "tool")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(item.isError ? Color.red : Self.toolTint)
+                    subagentTag(item)
+                }
                 if item.redacted {
                     redactedText
                 } else if let text = item.text {
                     Text(text)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
                         .textSelection(.enabled)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.primary.opacity(0.05)))
                 }
             }
         case .toolResult:
-            if item.redacted {
-                redactedText
-            } else if let text = item.text {
-                Text(text)
-                    .font(.system(size: 10))
-                    .foregroundStyle(item.isError ? .red : .secondary)
-                    .lineLimit(4)
-                    .textSelection(.enabled)
-            } else {
-                Text(item.isError ? "failed" : "done")
-                    .font(.system(size: 10))
-                    .foregroundStyle(item.isError ? Color.red : Color.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                resultText(item)
+                subagentTag(item)
             }
         case .turnEnd:
-            Text(item.name.map { "turn end · \($0)" } ?? "turn end")
-                .font(.system(size: 10))
-                .foregroundStyle(item.isError ? Color.orange : Color.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(item.name.map { "Turn ended · \($0)" } ?? "Turn ended")
+                    .font(.system(size: 11))
+                    .foregroundStyle(item.isError ? Color.orange : Color.secondary)
+                subagentTag(item)
+            }
+        }
+    }
+
+    /// A result's words: its text (an error's on a red wash), else just
+    /// "done" or "failed".
+    @ViewBuilder
+    private func resultText(_ item: ReconstructedItem) -> some View {
+        if item.redacted {
+            redactedText
+        } else if let text = item.text {
+            Text(text)
+                .font(.system(size: 11, design: item.isError ? .monospaced : .default))
+                .foregroundStyle(item.isError ? Color.red : Color.secondary)
+                .lineLimit(4)
+                .textSelection(.enabled)
+                .padding(.horizontal, item.isError ? 7 : 0)
+                .padding(.vertical, item.isError ? 4 : 0)
+                .background {
+                    if item.isError {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.red.opacity(0.08))
+                    }
+                }
+        } else {
+            Text(item.isError ? "failed" : "done")
+                .font(.system(size: 11))
+                .foregroundStyle(item.isError ? Color.red : Color.secondary)
         }
     }
 
@@ -415,24 +543,43 @@ struct ReconstructedTimelineView: View {
             redactedText
         } else if let text = item.text {
             Text(text)
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var redactedText: some View {
-        Text("redacted")
-            .font(.system(size: 10))
+        Label("Text withheld", systemImage: "eye.slash")
+            .font(.system(size: 11))
             .italic()
             .foregroundStyle(.secondary)
     }
 
+    /// Tool calls wear one calm colour of their own — the accent is the
+    /// person's, and on a red-accent Mac a tool must not read as a fault.
+    static let toolTint = Color.teal
+
     private static func symbol(_ item: ReconstructedItem) -> String {
         switch item.kind {
-        case .message: item.role == "user" ? "person" : "sparkle"
-        case .toolUse: "wrench.and.screwdriver"
-        case .toolResult: item.isError ? "xmark.octagon" : "checkmark.circle"
+        case .message: item.role == "user" ? "person.fill" : "sparkle"
+        case .toolUse: toolSymbol(item.name)
+        case .toolResult: item.isError ? "xmark" : "checkmark"
         case .turnEnd: "flag.checkered"
+        }
+    }
+
+    /// A tool's own glyph where its name says what it does.
+    nonisolated static func toolSymbol(_ name: String?) -> String {
+        switch name?.lowercased() ?? "" {
+        case "bash", "shell", "exec", "exec_command", "local_shell": "terminal.fill"
+        case "read", "view", "read_file": "doc.text.fill"
+        case "edit", "multiedit", "write", "apply_patch", "str_replace_editor": "pencil"
+        case "grep", "glob", "search", "ls": "magnifyingglass"
+        case "task", "agent": "person.2.fill"
+        case "webfetch", "websearch", "web_search": "globe"
+        case "todowrite", "update_plan": "checklist"
+        default: "wrench.and.screwdriver.fill"
         }
     }
 
@@ -440,15 +587,23 @@ struct ReconstructedTimelineView: View {
         if item.isError { return .red }
         switch item.kind {
         case .message: return roleTint(item.role)
-        case .toolUse: return .accentColor
+        case .toolUse: return toolTint
         case .toolResult: return .green
         case .turnEnd: return .secondary
         }
     }
 
+    private static func roleName(_ role: String) -> String {
+        switch role {
+        case "user": return "You"
+        case "assistant": return "Assistant"
+        default: return role.prefix(1).uppercased() + role.dropFirst()
+        }
+    }
+
     private static func roleTint(_ role: String?) -> Color {
         switch role {
-        case "user": return .accentColor
+        case "user": return .blue
         case "assistant": return .purple
         default: return .secondary
         }

@@ -35,6 +35,15 @@ enum MenuBarLayoutEditor {
         }
     }
 
+    /// The row's mark beside its name.
+    nonisolated static func symbol(_ section: MenuBarItemSection) -> String {
+        switch section {
+        case .shown: "eye"
+        case .hidden: "eye.slash"
+        case .alwaysHidden: "lock"
+        }
+    }
+
     /// The item ids among `dropped` that are tiles of this editor — a
     /// drop of stray text from another app moves nothing.
     nonisolated static func movableIDs(_ dropped: [String],
@@ -45,23 +54,71 @@ enum MenuBarLayoutEditor {
     }
 }
 
-/// The editor's view: a label column and three drop rows of tiles.
+/// The editor's view: three labelled drop lanes of tiles.
 struct MenuBarLayoutEditorView: View {
-    let utility: MenuBarUtility
+    /// What the editor reads and writes — the utility's own, or a
+    /// fixture's in a render proof.
+    @MainActor
+    struct Source {
+        var subjects: () -> [MenuBarProfileSubject]
+        var section: (MenuBarItem) -> MenuBarItemSection
+        var setSection: (MenuBarItemSection, String) -> Void
+        var face: (MenuBarItem) -> MenuBarGlyphCache.Face?
+        /// Whether show for updates watches the item — nil while that
+        /// feature is off, and the tile's menu leaves the row out.
+        var watchesUpdates: (MenuBarItem) -> Bool?
+        var setWatchesUpdates: (Bool, MenuBarItem) -> Void
+
+        init(subjects: @escaping () -> [MenuBarProfileSubject],
+             section: @escaping (MenuBarItem) -> MenuBarItemSection,
+             setSection: @escaping (MenuBarItemSection, String) -> Void,
+             face: @escaping (MenuBarItem) -> MenuBarGlyphCache.Face?,
+             watchesUpdates: @escaping (MenuBarItem) -> Bool? = { _ in nil },
+             setWatchesUpdates: @escaping (Bool, MenuBarItem) -> Void = { _, _ in }) {
+            self.subjects = subjects
+            self.section = section
+            self.setSection = setSection
+            self.face = face
+            self.watchesUpdates = watchesUpdates
+            self.setWatchesUpdates = setWatchesUpdates
+        }
+
+        init(utility: MenuBarUtility) {
+            self.init(subjects: { utility.profileSubjects },
+                      section: { utility.effectiveSection(for: $0) },
+                      setSection: { utility.setSection($0, for: $1) },
+                      face: { utility.glyphFace(for: $0) },
+                      watchesUpdates: { item in
+                          utility.settings().showForUpdates ? utility.watchesUpdates(of: item) : nil
+                      },
+                      setWatchesUpdates: { utility.setWatchesUpdates($0, for: $1) })
+        }
+    }
+
+    let source: Source
     /// Where the plan put an item, for the tile's tooltip.
     let placement: (MenuBarItem) -> String
     @ViewState private var targeted: MenuBarItemSection?
 
+    init(utility: MenuBarUtility, placement: @escaping (MenuBarItem) -> String) {
+        self.init(source: Source(utility: utility), placement: placement)
+    }
+
+    init(source: Source, placement: @escaping (MenuBarItem) -> String) {
+        self.source = source
+        self.placement = placement
+    }
+
+    /// A lane's height — a tile and its breathing room.
+    static let laneHeight: CGFloat = 34
+
     var body: some View {
-        let subjects = utility.profileSubjects
-        let rows = MenuBarLayoutEditor.rows(subjects: subjects) { utility.effectiveSection(for: $0.item) }
-        VStack(alignment: .leading, spacing: 4) {
+        let subjects = source.subjects()
+        let rows = MenuBarLayoutEditor.rows(subjects: subjects) { source.section($0.item) }
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(rows) { row in
-                HStack(spacing: 8) {
-                    Text(MenuBarLayoutEditor.title(row.section))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 48, alignment: .leading)
+                HStack(spacing: 10) {
+                    label(row)
                     lane(row, subjects: subjects)
                 }
             }
@@ -70,12 +127,30 @@ struct MenuBarLayoutEditorView: View {
         .accessibilityLabel("Menu bar layout")
     }
 
+    private func label(_ row: MenuBarLayoutEditor.Row) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: MenuBarLayoutEditor.symbol(row.section))
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 13)
+            Text(MenuBarLayoutEditor.title(row.section))
+                .font(.system(size: 11.5, weight: .medium))
+            Spacer(minLength: 0)
+            Text("\(row.subjects.count)")
+                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.tertiary)
+        }
+        .foregroundStyle(.secondary)
+        .frame(width: 76)
+    }
+
     private func lane(_ row: MenuBarLayoutEditor.Row, subjects: [MenuBarProfileSubject]) -> some View {
-        ScrollView(.horizontal) {
+        let isTarget = targeted == row.section
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return ScrollView(.horizontal) {
             HStack(spacing: 4) {
                 if row.subjects.isEmpty {
-                    Text("Drag here")
-                        .font(.caption)
+                    Text("Drag items here")
+                        .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 6)
                 }
@@ -83,18 +158,24 @@ struct MenuBarLayoutEditorView: View {
                     tile(subject, in: row.section)
                 }
             }
-            .padding(.horizontal, 4)
-            .frame(height: 30)
+            .padding(.horizontal, 5)
+            .frame(height: Self.laneHeight)
         }
         .scrollIndicators(.never)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Color.primary.opacity(targeted == row.section ? 0.12 : 0.05)))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .strokeBorder(Color.accentColor.opacity(targeted == row.section ? 0.6 : 0), lineWidth: 1))
+        .background(shape.fill(isTarget ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)))
+        .overlay {
+            if row.subjects.isEmpty && !isTarget {
+                shape.strokeBorder(Color.primary.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            } else {
+                shape.strokeBorder(isTarget ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.07),
+                                   lineWidth: 1)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: isTarget)
         .dropDestination(for: String.self) { dropped, _ in
             let ids = MenuBarLayoutEditor.movableIDs(dropped, subjects: subjects)
-            for id in ids { utility.setSection(row.section, for: id) }
+            for id in ids { source.setSection(row.section, id) }
             return !ids.isEmpty
         } isTargeted: { inside in
             if inside { targeted = row.section } else if targeted == row.section { targeted = nil }
@@ -102,28 +183,29 @@ struct MenuBarLayoutEditorView: View {
     }
 
     private func tile(_ subject: MenuBarProfileSubject, in section: MenuBarItemSection) -> some View {
-        let face = utility.glyphFace(for: subject.item)
-        let width = face.map { MenuBarGlyphProcessing.tileWidth(pointWidth: $0.width * 20 / 22) } ?? 22
+        let face = source.face(subject.item)
+        let width = face.map { MenuBarGlyphProcessing.tileWidth(pointWidth: $0.width * 18 / 22) } ?? 22
         return Group {
             if let face {
                 Image(nsImage: face.image)
                     .renderingMode(face.template ? .template : .original)
                     .resizable()
+                    .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .foregroundStyle(.primary)
-                    .frame(width: width, height: 20)
+                    .frame(width: width, height: 18)
             } else {
-                Image(nsImage: subject.item.owner?.icon ?? NSImage())
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 18, height: 18)
-                    .frame(width: 22, height: 20)
+                MenuBarAppFace(item: subject.item, size: 18)
+                    .frame(width: 22, height: 18)
             }
         }
-        .padding(.horizontal, 2)
-        .frame(height: 24)
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(Color.primary.opacity(0.06)))
+        .padding(.horizontal, 4)
+        .frame(height: 26)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(Color.primary.opacity(0.07)))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        .opacity(section == .shown ? 1 : 0.85)
         .contentShape(Rectangle())
         .draggable(subject.item.id) {
             Text(subject.title)
@@ -134,14 +216,14 @@ struct MenuBarLayoutEditorView: View {
         .contextMenu {
             ForEach(MenuBarItemSection.allCases.filter { $0 != section }, id: \.self) { target in
                 Button("Move to \(MenuBarLayoutEditor.title(target))") {
-                    utility.setSection(target, for: subject.item.id)
+                    source.setSection(target, subject.item.id)
                 }
             }
-            if utility.settings().showForUpdates {
+            if let watched = source.watchesUpdates(subject.item) {
                 Divider()
                 Toggle("Show When It Changes", isOn: Binding(
-                    get: { utility.watchesUpdates(of: subject.item) },
-                    set: { utility.setWatchesUpdates($0, for: subject.item) }))
+                    get: { watched },
+                    set: { source.setWatchesUpdates($0, subject.item) }))
             }
         }
         .accessibilityElement(children: .ignore)
@@ -150,7 +232,7 @@ struct MenuBarLayoutEditorView: View {
         .accessibilityActions {
             ForEach(MenuBarItemSection.allCases.filter { $0 != section }, id: \.self) { target in
                 Button("Move to \(MenuBarLayoutEditor.title(target))") {
-                    utility.setSection(target, for: subject.item.id)
+                    source.setSection(target, subject.item.id)
                 }
             }
         }

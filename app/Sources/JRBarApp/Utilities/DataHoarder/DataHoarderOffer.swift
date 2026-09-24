@@ -216,11 +216,7 @@ struct DataHoarderOfferSheet: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "archivebox.fill")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 40, height: 40)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            DataHoarderMark(size: 40)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Keep a searchable copy of your sessions")
                     .font(.system(size: 15, weight: .semibold))

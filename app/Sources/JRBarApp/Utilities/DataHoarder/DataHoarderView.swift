@@ -8,8 +8,8 @@ struct DataHoarderView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: "archivebox.fill").font(.title2).foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 3) {
+                DataHoarderMark(size: 40)
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Data Hoarder").font(.title2.bold())
                     Text("Your traces, kept on this Mac.").foregroundStyle(.secondary)
                 }
@@ -31,7 +31,9 @@ struct DataHoarderView: View {
                 }
                 .disabled(model.busy)
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
 
             HStack {
                 Picker("Archive view", selection: $model.showTrash) {
@@ -396,27 +398,42 @@ struct DataHoarderView: View {
     @ViewBuilder private var detail: some View {
         if let record = model.selected {
             VStack(alignment: .leading, spacing: 12) {
-                Text(record.title ?? record.name).font(.title3.bold()).textSelection(.enabled)
-                if record.title != nil {
-                    Text(record.name).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(record.title ?? record.name)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                    Text(originLine(record))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .help("Original: \(record.sourcePath)")
                 }
-                Text("Original: \(record.sourcePath)").font(.caption).foregroundStyle(.secondary)
-                    .textSelection(.enabled)
                 provenanceBlock(record)
-                HStack(spacing: 10) {
-                    Button("Reveal Original in Finder") { model.revealInFinder(record) }
-                        .disabled(!FileManager.default.fileExists(atPath: record.sourcePath))
-                    Button("Copy Path") { model.copyPath(record) }
+                HStack(spacing: 8) {
+                    Button { model.revealInFinder(record) } label: {
+                        Label("Reveal Original in Finder", systemImage: "folder")
+                    }
+                    .disabled(!FileManager.default.fileExists(atPath: record.sourcePath))
+                    Button { model.copyPath(record) } label: {
+                        Label("Copy Path", systemImage: "doc.on.doc")
+                    }
                     if let session = model.sessionID(for: record) {
-                        Button("Open in Terminal") { model.openInTerminal(record) }
-                            .help("Raise the live session \(session)")
+                        Button { model.openInTerminal(record) } label: {
+                            Label("Open in Terminal", systemImage: "terminal")
+                        }
+                        .help("Raise the live session \(session)")
                     } else {
-                        Button("Open in Terminal") {}
-                            .disabled(true)
-                            .help("Only sessions the daemon still knows can be raised.")
+                        Button {} label: {
+                            Label("Open in Terminal", systemImage: "terminal")
+                        }
+                        .disabled(true)
+                        .help("Only sessions the daemon still knows can be raised.")
                     }
                 }
-                .font(.callout)
+                .controlSize(.small)
                 if model.detailKind == .cliProxy {
                     cliProxyCard
                 }
@@ -431,6 +448,13 @@ struct DataHoarderView: View {
         }
     }
 
+    /// "a1.jsonl · ~/.claude/projects/…/a1.jsonl" — the saved name when
+    /// a title stands above it, then where the original lives.
+    private func originLine(_ record: ArchiveRecord) -> String {
+        let path = (record.sourcePath as NSString).abbreviatingWithTildeInPath
+        return record.title == nil ? path : "\(record.name) · \(path)"
+    }
+
     /// Where this record came from and how much of it the archive holds:
     /// provider and capture-state chips, segment count, the captured time
     /// range, and the declared project/model/session facts.
@@ -438,10 +462,12 @@ struct DataHoarderView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 if let provider = record.provider {
-                    Text(provider)
-                        .font(.caption2.weight(.medium))
+                    let style = ProviderStyle.style(for: provider)
+                    Text(style.name)
+                        .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(.quaternary, in: Capsule())
+                        .background(style.accent.opacity(0.16), in: Capsule())
+                        .foregroundStyle(style.accent)
                 }
                 captureStateChip(record.captureState)
                 Text("\(record.segmentCount) \(record.segmentCount == 1 ? "segment" : "segments")")
@@ -650,7 +676,7 @@ struct DataHoarderView: View {
                     Text("Contents").tag(DataHoarderModel.DetailMode.contents)
                     Text("Timeline").tag(DataHoarderModel.DetailMode.timeline)
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 200)
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
                 if model.detailMode == .timeline {
                     timelinePane
                 } else {
@@ -867,5 +893,29 @@ struct DataHoarderCaptureControls: View {
     private var backfillBinding: Binding<Int> {
         Binding(get: { model.captureSettings.backfillDays ?? 0 },
                 set: { model.captureSettings.backfillDays = $0 > 0 ? $0 : nil })
+    }
+}
+
+/// The archive's own mark: its box on an amber tile, the way an app
+/// wears its icon at the head of its window.
+struct DataHoarderMark: View {
+    var size: CGFloat = 40
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+            .fill(LinearGradient(colors: [Color(red: 1.0, green: 0.72, blue: 0.28),
+                                          Color(red: 0.96, green: 0.50, blue: 0.16)],
+                                 startPoint: .top, endPoint: .bottom))
+            .overlay(RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.25), lineWidth: 0.5))
+            .overlay {
+                Image(systemName: "archivebox.fill")
+                    .font(.system(size: size * 0.46, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.15), radius: 1, y: 0.5)
+            }
+            .frame(width: size, height: size)
+            .shadow(color: Color.orange.opacity(0.25), radius: 4, y: 2)
+            .accessibilityHidden(true)
     }
 }
