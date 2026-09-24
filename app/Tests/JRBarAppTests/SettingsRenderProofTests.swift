@@ -278,6 +278,37 @@ struct SettingsRenderProofTests {
         }
     }
 
+    /// The sheets Settings raises: calibration over the strip and the
+    /// Doctor's report.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the sheet PNGs"))
+    func sheets() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        let strip = fixture.settings.deviceEntries.first { $0.kind != "dot" }?.id ?? "virtual:status-bar"
+        let report: JSONValue = .object([
+            "ok": .bool(false),
+            "checks": .array([
+                .object(["name": .string("Socket"), "ok": .bool(true), "detail": .string("listening")]),
+                .object(["name": .string("Claude hooks"), "ok": .bool(true), "detail": .string("12 events")]),
+                .object(["name": .string("Codex hooks"), "ok": .bool(false), "detail": .string("stale since 2 h")]),
+                .object(["name": .string("SidePulse"), "ok": .bool(true), "detail": .string("/Volumes/SidePulse")]),
+            ]),
+        ])
+        for dark in [false, true] where Self.wanted("sheet") {
+            let calibration = CalibrationSheet(store: fixture.settings, deviceID: strip, dismiss: {})
+                .background(Color(nsColor: .windowBackgroundColor))
+                .frame(maxHeight: .infinity, alignment: .top)
+            let rep = try Self.snapshot(calibration, size: CGSize(width: 540, height: 900), dark: dark)
+            try Self.write(rep, named: "sheet-calibration-\(dark ? "dark" : "light")")
+            let doctor = DoctorSheet(report: report, dismiss: {})
+                .background(Color(nsColor: .windowBackgroundColor))
+                .frame(maxHeight: .infinity, alignment: .top)
+            let doc = try Self.snapshot(doctor, size: CGSize(width: 480, height: 640), dark: dark)
+            try Self.write(doc, named: "sheet-doctor-\(dark ? "dark" : "light")")
+        }
+        withExtendedLifetime(fixture) {}
+    }
+
     /// The whole window — sidebar, toolbar-less split and the Toys page.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the window PNGs"))
     func window() throws {
@@ -290,6 +321,15 @@ struct SettingsRenderProofTests {
                 let rep = try Self.snapshot(view, size: CGSize(width: 780, height: 620), dark: dark)
                 try Self.write(rep, named: "window-\(page.rawValue)-\(dark ? "dark" : "light")")
             }
+        }
+        // A search: the sidebar lists the hits, the page names the one
+        // picked, and its card is open and lit.
+        fixture.settings.searchQuery = "lyrics"
+        if let hit = fixture.settings.searchResults.first { fixture.settings.reveal(hit) }
+        for dark in [false, true] where Self.wanted("window-search") {
+            let view = SettingsRootView(store: fixture.settings)
+            let rep = try Self.snapshot(view, size: CGSize(width: 780, height: 620), dark: dark)
+            try Self.write(rep, named: "window-search-\(dark ? "dark" : "light")")
         }
         withExtendedLifetime(fixture) {}
     }

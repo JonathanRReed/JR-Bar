@@ -1556,40 +1556,58 @@ struct DoctorSheet: View {
     let dismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "stethoscope").font(.title2).foregroundStyle(.secondary)
-                Text("Doctor").font(.title3.weight(.semibold))
+        let checks = report["checks"]?.arrayValue ?? []
+        let failing = checks.filter { $0["ok"]?.boolValue != true }.count
+        VStack(alignment: .leading, spacing: SettingsMetrics.m + 2) {
+            HStack(spacing: SettingsMetrics.m) {
+                SettingsIconTile(symbol: "stethoscope", tint: SettingsStore.Page.advanced.tint, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Doctor").font(.title3.weight(.semibold))
+                    Text("What the monitor checked just now.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if report["ok"]?.boolValue == true {
-                    Label("All good", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    StatusPill("All good", tint: .green)
+                } else if failing > 0 {
+                    StatusPill(failing == 1 ? "1 check failed" : "\(failing) checks failed", tint: .red)
                 }
             }
-            if let checks = report["checks"]?.arrayValue, !checks.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(checks.enumerated()), id: \.offset) { _, check in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if !checks.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(checks.enumerated()), id: \.offset) { index, check in
+                        if index > 0 { Divider() }
+                        HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
                             Image(systemName: check["ok"]?.boolValue == true ? "checkmark.circle.fill" : "xmark.octagon.fill")
                                 .foregroundStyle(check["ok"]?.boolValue == true ? Color.green : .red)
                             Text(check["name"]?.stringValue ?? "check")
                             Spacer()
-                            Text(check["detail"]?.stringValue ?? "").foregroundStyle(.secondary)
+                            Text(check["detail"]?.stringValue ?? "")
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
+                        .padding(.vertical, 7)
                     }
                 }
-                .padding(10)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, SettingsMetrics.m)
+                .padding(.vertical, 2)
+                .background(InsetPanel())
             }
+            Text("Report")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
             ScrollView {
                 Text(Self.render(report))
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .padding(SettingsMetrics.s + 2)
             }
-            .frame(height: 180)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.quaternary))
+            .frame(height: 160)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.quaternary))
             HStack {
                 Spacer()
                 Button("Done", action: dismiss).keyboardShortcut(.defaultAction)
