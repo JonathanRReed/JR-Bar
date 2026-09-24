@@ -139,6 +139,29 @@ struct BuddyTurnTests {
         #expect(turn.isResting(at: t0.addingTimeInterval(2)))
     }
 
+    @Test("the patrol's own turn at each end swings the lean through upright, never a flip")
+    func patrolEndsAreGentle() {
+        // No walk at all: the mood's own pacing, stepped at the sprint's
+        // cadence (the fastest the stride runs) through both ends, c = 0.5
+        // and the wrap at c = 1. The pause used to end 3° short of the
+        // next leg's lean and make up the rest in one frame.
+        let cycle = 3.4
+        let step = Self.frame * BuddyTempo.sprintCadence
+        for end in [0.5, 1.0] {
+            var last: BuddyFigure.Pose?
+            var stride = (end - 0.15) * cycle
+            while stride <= (end + 0.1) * cycle {
+                let pose = figure(stride: stride).pose
+                if let last {
+                    #expect(abs(pose.lean - last.lean) <= 2, "lean jumped at stride \(stride)")
+                    #expect(abs(pose.offset.width - last.offset.width) <= 0.5)
+                }
+                last = pose
+                stride += step
+            }
+        }
+    }
+
     @Test("a completion hop starts and ends where the patrol had the body")
     func moodHandoff() {
         // Pacing at its right-hand end (3 pt off centre); the hop's own

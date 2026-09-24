@@ -619,9 +619,11 @@ struct BuddyFigure: View {
             pose.look = CGSize(width: leg.dir * 0.9, height: -0.2)
         } else {
             // Paused at the end: settle, then the eyes lead the turn back.
+            // The lean swings all the way to the next leg's, through
+            // upright, so the step off never tips it in one frame.
             let settle = 1 - leg.turn
             pose.squash = CGSize(width: 1 + 0.07 * settle, height: 1 - 0.07 * settle)
-            pose.lean = leg.dir * (5 - 7 * leg.turn)
+            pose.lean = leg.dir * (5 - 10 * leg.turn)
             pose.look = CGSize(width: leg.dir * (0.9 - 1.8 * leg.turn), height: -0.2)
         }
         pose.mouth = .flat
