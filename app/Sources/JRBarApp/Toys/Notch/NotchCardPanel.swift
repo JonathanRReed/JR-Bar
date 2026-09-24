@@ -69,8 +69,9 @@ final class NotchCardPanel: NSPanel {
     private let hosting: NotchCardHostingView
     private let backdrop: NSView
 
-    /// Rounder than the island's shoulder — a surface, not a capsule.
-    static let cornerRadius: CGFloat = 18
+    /// Rounder than the island's shoulder — a surface, not a capsule —
+    /// and as round as the system's own glass panels.
+    static let cornerRadius: CGFloat = 22
     /// The air between the card and what it hangs from — the gap is
     /// what makes the card a floating surface.
     static let anchorGap: CGFloat = 8

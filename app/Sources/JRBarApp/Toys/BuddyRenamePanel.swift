@@ -27,7 +27,7 @@ final class BuddyRenamePanel: NSPanel {
         self.field = field
 
         let hint = NSTextField(labelWithString: "Return saves · Esc cancels · blank keeps the default")
-        hint.font = .systemFont(ofSize: 9)
+        hint.font = .systemFont(ofSize: 10)
         hint.textColor = .tertiaryLabelColor
 
         let row = NSStackView(views: [label, field])
@@ -38,7 +38,7 @@ final class BuddyRenamePanel: NSPanel {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 11, left: 12, bottom: 11, right: 12)
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 240, height: 60))
@@ -46,7 +46,8 @@ final class BuddyRenamePanel: NSPanel {
         effect.blendingMode = .behindWindow
         effect.state = .active
         effect.wantsLayer = true
-        effect.layer?.cornerRadius = 11
+        effect.layer?.cornerRadius = 14
+        effect.layer?.cornerCurve = .continuous
         effect.layer?.masksToBounds = true
         effect.addSubview(stack)
         NSLayoutConstraint.activate([
