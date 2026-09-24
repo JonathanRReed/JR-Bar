@@ -246,11 +246,14 @@ enum DockSwitcherList {
     /// Every app's AX window list, read side by side — one app element
     /// each, the reader's own half-second timeout — so a build costs
     /// about its slowest app instead of the sum of them all (measured
-    /// 160–256 ms in a row for seven windowed apps). The caller waits;
-    /// `order` matches the rows once every list is in.
+    /// 160–256 ms in a row for seven windowed apps). Each read gets its
+    /// own thread: `concurrentPerform` runs its iterations one after
+    /// another when the pool is busy, and a blocked AX read would then
+    /// cost the whole sum again. The caller waits; `order` matches the
+    /// rows once every list is in.
     static func readWindows(
         _ reads: [WindowRead],
-        reader: @Sendable (pid_t, Int) -> (windows: [DockPreviewWindow], unresponsive: Bool)
+        reader: @escaping @Sendable (pid_t, Int) -> (windows: [DockPreviewWindow], unresponsive: Bool)
             = AppleDockReader.windowsReading(pid:stamp:)
     ) -> WindowReadings {
         final class Gathered: @unchecked Sendable {
@@ -258,14 +261,21 @@ enum DockSwitcherList {
             var readings = WindowReadings()
         }
         let gathered = Gathered()
-        DispatchQueue.concurrentPerform(iterations: reads.count) { index in
-            let read = reads[index]
-            let reading = reader(read.pid, read.stamp)
-            gathered.lock.withLock {
-                gathered.readings.windows[read.pid] = reading.windows
-                if reading.unresponsive { gathered.readings.unresponsive.insert(read.pid) }
+        let done = DispatchGroup()
+        for read in reads {
+            done.enter()
+            let thread = Thread {
+                let reading = reader(read.pid, read.stamp)
+                gathered.lock.withLock {
+                    gathered.readings.windows[read.pid] = reading.windows
+                    if reading.unresponsive { gathered.readings.unresponsive.insert(read.pid) }
+                }
+                done.leave()
             }
+            thread.qualityOfService = .userInteractive
+            thread.start()
         }
+        done.wait()
         return gathered.readings
     }
 

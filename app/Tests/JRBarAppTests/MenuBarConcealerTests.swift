@@ -200,16 +200,24 @@ struct MenuBarConcealerTests {
         concealer.apply(concealed: ["h.app"], running: ["h.app", "s.app"])
         try? await Task.sleep(nanoseconds: 100_000_000)
         #expect(fake.n == 1)
-        // The lift lands, then the window stays open. It is wide on
-        // purpose: the mid-window look below must land inside it even on
-        // a runner a parallel suite has slowed to a crawl.
-        await concealer.suspend(for: 3)
+        // The lift lands, then the window stays open. The restore can
+        // start no sooner than the window after this moment, so a look
+        // taken before that is provably mid-window.
+        let window: Duration = .seconds(4)
+        let suspended = ContinuousClock.now
+        await concealer.suspend(for: 4)
         #expect(!concealer.isConcealing)
         // An apply inside the window waits for the restore — the bar
         // must not see a concealment flash mid-click.
         concealer.apply(concealed: ["h.app", "s.app"], running: ["h.app", "s.app"])
+        // A runner stalled past the whole window before the apply went
+        // in has nothing to judge: the premise is an apply inside it.
+        guard ContinuousClock.now - suspended < window else { return }
         try? await Task.sleep(nanoseconds: 150_000_000)
-        #expect(fake.n == 1, "mid-window apply must not activate: \(fake.log)")
+        let midWindow = fake.n
+        if ContinuousClock.now - suspended < window {
+            #expect(midWindow == 1, "mid-window apply must not activate: \(fake.log)")
+        }
         // Wait for the restore itself rather than guessing its moment.
         let start = ContinuousClock.now
         while fake.n < 2, ContinuousClock.now - start < .seconds(15) {
