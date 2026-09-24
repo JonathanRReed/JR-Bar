@@ -85,6 +85,11 @@ def default_codex_model(home: Path | None = None) -> str | None:
     return model.strip() if isinstance(model, str) and model.strip() else None
 
 
+#: Words that name a model's maker, for agents that run on someone else's
+#: models (Pi, OpenClaw): the record is priced at that maker's list price.
+_ANTHROPIC_WORDS: Final = ("claude", "opus", "sonnet", "haiku", "fable", "mythos")
+
+
 def _table_rates(provider: str, model: str) -> tuple[float, float] | None:
     if provider == "codex":
         return usage_stats._gpt_pricing_for_model(model)
@@ -92,6 +97,14 @@ def _table_rates(provider: str, model: str) -> tuple[float, float] | None:
         return usage_stats._gemini_pricing_for_model(model)
     if provider == "claude":
         return usage_stats._pricing_for_model(model)
+    if provider in ("pi", "openclaw"):
+        lowered = str(model or "").lower()
+        if "gpt" in lowered or "codex" in lowered:
+            return usage_stats._gpt_pricing_for_model(model)
+        if "gemini" in lowered:
+            return usage_stats._gemini_pricing_for_model(model)
+        if any(word in lowered for word in _ANTHROPIC_WORDS):
+            return usage_stats._pricing_for_model(model)
     return None
 
 
@@ -270,10 +283,15 @@ def usage_history_document(
 
 def scan_provider_records(provider: str, *, days: int, home: Path | None = None) -> list[tuple]:
     """The local transcript records for one provider over the last ``days``."""
+    from .local_token_history import LOCAL_HISTORY_PROVIDERS, scan_local_records
+
+    start = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if provider in LOCAL_HISTORY_PROVIDERS:
+        # Pi, Grok, Gemini CLI and OpenClaw: their own session files.
+        return scan_local_records((provider,), start.timestamp(), home=home)
     if provider not in SCANNED_PROVIDERS:
         return []
     base = Path(home) if home is not None else Path.home()
-    start = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
     from .provider_homes import scan_usage_all_homes
 
     # Every home of this provider (CLAUDE_CONFIG_DIR, CODEX_HOME and

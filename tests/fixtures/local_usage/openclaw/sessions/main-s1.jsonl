@@ -1,0 +1,2 @@
+{"type":"message","id":"oc-1","timestamp":"2026-09-20T09:00:00.000Z","message":{"role":"assistant","modelId":"claude-opus-5","provider":"anthropic","usage":{"input":700,"output":90,"cacheRead":100,"cacheWrite":0}}}
+{"type":"message","id":"oc-2","timestamp":"2026-09-20T09:05:00.000Z","message":{"role":"assistant","model":"gpt-5.4-mini","usage":{"input":300,"output":20}}}

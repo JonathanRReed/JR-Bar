@@ -390,6 +390,16 @@ def _build_payload(
     )
     totals.records.extend(opencode_records)
     totals.records.extend(t3code_records)
+    # Pi, Grok, Gemini CLI and OpenClaw keep their own session files; each
+    # record is that agent's own and never adds to Claude or Codex.
+    from .local_token_history import LOCAL_HISTORY_PROVIDERS, scan_local_records
+
+    totals.records.extend(
+        scan_local_records(
+            [provider for provider in provider_ids if provider in LOCAL_HISTORY_PROVIDERS],
+            period_start.timestamp(),
+        )
+    )
 
     # T3 statistics have their own explicit opt-in, separate from the provider
     # switches. Merely discovering another source must not re-enable its line.
@@ -579,6 +589,11 @@ def _corpus_fingerprint(
         fingerprint["opencode"] = _file_fingerprint(opencode_data_root() / "opencode.db")
     if t3_policy is not None and t3_policy.may_scan_activity_statistics:
         fingerprint["t3"] = _file_fingerprint(t3_database_path(t3_policy.base_dir))
+    from .local_token_history import roots as local_history_roots
+
+    for provider_id, root in local_history_roots().items():
+        if provider_id in providers:
+            fingerprint[f"local:{provider_id}"] = _tree_fingerprint(root)
     if snapshot.usage_display_mode == "sessions":
         from .session_history import TRANSCRIPT_SESSION_PROVIDERS
 
