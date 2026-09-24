@@ -6,6 +6,8 @@ import JRBarCore
 /// and how big they are — pick the ones to review, then review them.
 struct DataHoarderSourcesView: View {
     @Bindable var model: DataHoarderModel
+    /// CLIProxyAPI logging only its errors, said under its source.
+    @ViewState private var cliProxyNote: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -62,6 +64,9 @@ struct DataHoarderSourcesView: View {
         .padding(22)
         .frame(width: 630, height: 480)
         .disabled(model.busy)
+        .task {
+            cliProxyNote = DataHoarderProviders.requestLogNote(config: DataHoarderProviders.cliProxyConfig())
+        }
     }
 
     private func sourceRow(_ inventory: ArchiveSourceInventory) -> some View {
@@ -104,6 +109,12 @@ struct DataHoarderSourcesView: View {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.orange)
+                }
+                if inventory.id == ArchiveSource.cliProxyAPILogs, let cliProxyNote {
+                    Label(cliProxyNote, systemImage: "info.circle")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.leading, 50)

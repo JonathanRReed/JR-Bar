@@ -82,6 +82,36 @@ enum DataHoarderProviders {
         "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
+    // MARK: CLIProxyAPI's request log
+
+    /// Where CLIProxyAPI keeps its config: its own folder, else Homebrew's.
+    static let cliProxyConfigPaths = [
+        "~/.cli-proxy-api/config.yaml",
+        "/opt/homebrew/etc/cliproxyapi.conf",
+        "/usr/local/etc/cliproxyapi.conf",
+    ]
+
+    /// The first CLIProxyAPI config that exists, as text. It is read on
+    /// this Mac only to see whether `request-log` is on, and is never shown
+    /// or sent anywhere. nil when there is none.
+    static func cliProxyConfig(paths: [String] = cliProxyConfigPaths) -> String? {
+        for path in paths {
+            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            if let text = try? String(contentsOf: url, encoding: .utf8) { return text }
+        }
+        return nil
+    }
+
+    /// The note under the CLIProxyAPI source while its proxy writes only
+    /// error logs, so the archive holds a few failures and none of the
+    /// ordinary requests. The sentence and the rule belong to the daemon
+    /// lane: at integration this returns
+    /// `CLIProxyLogParser.requestLogNote(config: config)` (X18). Until
+    /// then there is no note.
+    static func requestLogNote(config: String?) -> String? {
+        nil
+    }
+
     // MARK: Agent Sessions
 
     /// Agent Sessions (jazzyalex/agent-sessions): local search and resume

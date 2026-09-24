@@ -589,6 +589,17 @@ struct DataHoarderModelTests {
         #expect(DataHoarderProviders.sourceProvider(forPath: "/elsewhere/run.jsonl", sources: [source]) == nil)
     }
 
+    @Test func theCLIProxyConfigIsTheFirstThatExists() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "jrbar-cliproxy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let brew = folder.appending(path: "cliproxyapi.conf")
+        try "port: 8317\n".write(to: brew, atomically: true, encoding: .utf8)
+        let missing = folder.appending(path: "config.yaml").path
+        #expect(DataHoarderProviders.cliProxyConfig(paths: [missing, brew.path]) == "port: 8317\n")
+        #expect(DataHoarderProviders.cliProxyConfig(paths: [missing]) == nil)
+    }
+
     @Test func aResumeTheDaemonCannotPlacePointsAtTheCopy() {
         let unknown = CoreReplyError(code: "not_found", message: "JR-Bar has no record of where that session ran.")
         #expect(DataHoarderProviders.resumeRefusal(unknown, title: "review")
