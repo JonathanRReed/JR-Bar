@@ -176,18 +176,28 @@ struct ActivityMark: View {
     }
 }
 
+/// A small count in a capsule. `symbol` names what is counted, so a bare
+/// "10" beside a session's name never reads as a version or a score.
 struct CountBadge: View {
     let text: String
+    var symbol: String? = nil
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1.5)
-            .background(Capsule().fill(.primary.opacity(0.08)))
+        HStack(spacing: 2.5) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .imageScale(.small)
+            }
+            Text(text)
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1.5)
+        .background(Capsule().fill(.primary.opacity(0.08)))
     }
 }
 
@@ -615,7 +625,10 @@ struct SessionRowView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                        if row.workers > 0 { CountBadge(text: "\(row.workers)").help("\(row.workers) workers") }
+                        if row.workers > 0 {
+                            CountBadge(text: "\(row.workers)", symbol: "square.stack")
+                                .help(row.workersText ?? "")
+                        }
                         if row.activity == .done, store.unseenCompletionIDs.contains(row.id) {
                             // `state.unseen_completions`: the same accent
                             // dot History gives a row newer than the last
@@ -716,17 +729,22 @@ struct SessionRowView: View {
         .help(row.help(now: store.now) ?? "")
         .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel([
-            row.label, row.style.name, row.activity.word,
-            PanelStore.elapsed(since: row.since, now: store.now) ?? "just started",
-            row.isRemote
-                ? "on \(row.remoteMachine ?? "a peer")"
-                : (row.cwdTail.map { "in \($0)" } ?? "no folder on record"),
-        ].joined(separator: ", "))
+        .accessibilityLabel(spokenLabel)
         .accessibilityHint(row.isRemote
             ? "Remote session — manage it on \(row.remoteMachine ?? "the machine it runs on")"
             : "Opens the session in its terminal")
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// "sidepulse, 10 workers, Claude, Working, 4m, in sidepulse": the
+    /// worker count said in words, never a bare number after the name.
+    private var spokenLabel: String {
+        let elapsed: String = PanelStore.elapsed(since: row.since, now: store.now) ?? "just started"
+        let place: String = row.isRemote
+            ? "on \(row.remoteMachine ?? "a peer")"
+            : (row.cwdTail.map { "in \($0)" } ?? "no folder on record")
+        let parts: [String?] = [row.label, row.workersText, row.style.name, row.activity.word, elapsed, place]
+        return parts.compactMap { $0 }.joined(separator: ", ")
     }
 }
 

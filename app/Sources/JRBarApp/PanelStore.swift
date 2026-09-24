@@ -21,6 +21,10 @@ struct SessionRow: Identifiable, Equatable {
     let activity: SessionActivity
     let since: Date?
     let workers: Int
+    /// "10 workers", "1 worker"; nil with none.
+    var workersText: String? {
+        workers <= 0 ? nil : (workers == 1 ? "1 worker" : "\(workers) workers")
+    }
     let ask: CoreAsk?
     let stale: Bool
     /// A peer's session mirrored onto this Mac (`remote:<machine>:…`):
