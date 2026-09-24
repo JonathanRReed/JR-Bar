@@ -180,4 +180,15 @@ struct KeepAwakeReadingTests {
             #"{"last_release":{"kind":"suspended","reason":"thermal","at":\#(at)}}"#)))
         #expect(warm.facts() == ["Last let go at 07:50 — too warm"])
     }
+
+    // MARK: lane utilities
+
+    @Test func lowPowerModeSaysSoInsteadOfItsWireWord() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let paused = KeepAwakeReading(state: .lease(.indefinite), suspended: "low_power")
+        #expect(paused.footerLine(now: now)?.full == "Awake paused · Low Power Mode is on")
+        #expect(paused.chipHelp(now: now).contains("Low Power Mode is on"))
+        #expect(!paused.chipHelp(now: now).contains("low_power"))
+        #expect(KeepAwakeReading.releaseWords("low_power") == "Low Power Mode")
+    }
 }

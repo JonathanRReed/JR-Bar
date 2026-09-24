@@ -286,6 +286,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
         case "finished", "agents_idle": return "the agents finished"
         case "thermal": return "too warm"
         case "battery": return "battery low"
+        case "low_power": return "Low Power Mode"
         case "policy": return "the setting changed"
         case let other?: return other.replacingOccurrences(of: "_", with: " ")
         }
@@ -303,11 +304,14 @@ public struct KeepAwakeReading: Equatable, Sendable {
     // MARK: Words
 
     /// Why the hold stepped aside, in the reader's words.
-    var suspendedWords: String? {
+    public var suspendedWords: String? {
         switch suspended {
         case nil: return nil
         case "thermal": return "too warm"
         case "battery": return "battery low"
+        // The daemon's Low Power Mode yield (X17): the lease waits while
+        // macOS saves power, and comes back once it is off.
+        case "low_power": return "Low Power Mode is on"
         case let other?: return other
         }
     }
