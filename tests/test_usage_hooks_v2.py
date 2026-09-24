@@ -213,7 +213,9 @@ def test_a_hung_hook_is_killed_with_its_children(tmp_path: Path) -> None:
         f'/bin/sleep 30 &\necho "$$ $!" > "{pids}"\nwait\n',
     )
 
-    result = run_rule(_rule(str(script), timeout_seconds=0.3), EVENT, environ={"PATH": "/usr/bin:/bin"})
+    # Long enough for a busy Mac to start the shell and its child before
+    # the timeout, short enough that the kill is what ends the run.
+    result = run_rule(_rule(str(script), timeout_seconds=2.0), EVENT, environ={"PATH": "/usr/bin:/bin"})
 
     assert result.outcome == "timeout"
     shell_pid, child_pid = (int(value) for value in pids.read_text().split())
