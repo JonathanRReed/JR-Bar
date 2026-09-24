@@ -259,4 +259,40 @@ struct AquariumTurnLayoutTests {
             }
         }
     }
+
+    @Test("a busy tank for two minutes: calm turns, never a pop")
+    func busyTankSoak() {
+        // Two schools and a loner, the way sessions fill a real tank.
+        let roster: [Fish] = [
+            ("claude-1", "claude", FishSpecies.clownfish), ("claude-2", "claude", .clownfish),
+            ("claude-3", "claude", .clownfish), ("codex-1", "codex", .shark), ("codex-2", "codex", .shark),
+            ("gemini-1", "gemini", .angelfish),
+        ].enumerated().map { i, spec in
+            Fish(id: spec.0, label: spec.0, providerID: spec.1, state: .swimming,
+                 lane: 0.2 + 0.12 * Double(i), speed: 0.05 + 0.018 * Double(i),
+                 direction: i % 2 == 0 ? 1 : -1, stateSince: Date(timeIntervalSince1970: t0 - 100),
+                 enteredAt: .distantPast, species: spec.2)
+        }
+        let tank = makeTank(roster)
+        var t = t0
+        var frames: [String: [AquariumView.Layout]] = [:]
+        for _ in 0..<(30 * 120) {
+            t += dt
+            let now = Date(timeIntervalSince1970: t)
+            tank.stepSwim(roster, in: size, t: t, now: now)
+            for fish in roster {
+                let l = tank.layout(of: fish, in: size, at: t, now: now)
+                tank.motion.swim.record(fish, layout: l, t: t)
+                frames[fish.id, default: []].append(l)
+            }
+        }
+        for fish in roster {
+            let run = frames[fish.id] ?? []
+            let b = tank.motion.bodies[fish.id]!
+            expectSmooth(run, speed: b.speed * b.energy * size.width * 2 + 8, fish.id)
+            let flips = zip(run, run.dropFirst()).filter { $0.facing != $1.facing }.count
+            #expect(flips <= 8, "\(fish.id) reversed \(flips) times in two minutes")
+            #expect(flips >= 1, "\(fish.id) still crosses the tank")
+        }
+    }
 }
