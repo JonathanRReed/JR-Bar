@@ -608,8 +608,10 @@ extension AquariumView {
                 var g = canvas
                 g.blendMode = .plusLighter
                 g.opacity = l.opacity * ga
+                // Glints catch on the body itself, whatever its fins do.
+                let bodyHeight = art.bounds.height * length
                 g.translateBy(x: l.x + (Double((gs >> 8) & 0xFF) / 0xFF - 0.5) * length * 0.8,
-                              y: l.y - height * 0.7 + (Double((gs >> 16) & 0xFF) / 0xFF - 0.5) * height * 0.7)
+                              y: l.y - bodyHeight * 0.25 + (Double((gs >> 16) & 0xFF) / 0xFF - 0.5) * bodyHeight)
                 let gs2 = 5.5 * (0.5 + ga * 0.5)
                 g.scaleBy(x: gs2, y: gs2)
                 g.fill(Self.starPath, with: .color(.white.opacity(0.85)))
