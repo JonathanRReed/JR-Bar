@@ -1266,13 +1266,6 @@ final class ScreenBarController {
         Int(((time - anchor) * 1000.0).rounded(.down))
     }
 
-    /// The codes the band shows right now (tests and the why popover).
-    var currentCodes: [RGB8] {
-        let ms = max(0, milliseconds(CACurrentMediaTime()))
-        if let plan { return plan.codes(atMilliseconds: ms) }
-        return sampler?.codes(atMilliseconds: ms) ?? []
-    }
-
     // MARK: Presentation
 
     /// Puts the current program on the layers: keyframes when the plan fits,

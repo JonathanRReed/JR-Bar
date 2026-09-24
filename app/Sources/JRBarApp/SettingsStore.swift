@@ -721,15 +721,6 @@ final class SettingsStore {
         }
     }
 
-    // MARK: Usage
-
-    /// False when the daemon says this provider has no quota source at all
-    /// (`quota_source: false`): metering it would be a dead checkbox.
-    /// A provider the daemon has never listed keeps its checkbox.
-    func hasQuotaSource(_ provider: String) -> Bool {
-        core.usage.filter { $0.id == provider }.allSatisfy { $0.quotaSource }
-    }
-
     // MARK: Remote
 
     /// `serve_token`: copies the loopback status endpoint's bearer token

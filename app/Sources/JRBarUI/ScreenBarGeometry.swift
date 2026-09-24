@@ -4,7 +4,6 @@ import JRBarCore
 /// Constants from `screen_bar_design.py`, the reviewed Screen Bar design.
 public enum ScreenBarDesign {
     public static let bandHeight: CGFloat = 4.0
-    public static let compactBandHeight: CGFloat = 3.5
     public static let glowHeight: CGFloat = 10.0
     public static let windowWidth: CGFloat = 260.0
     public static let minBandWidth: CGFloat = 180.0
