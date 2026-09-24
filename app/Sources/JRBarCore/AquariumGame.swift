@@ -747,6 +747,10 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     /// The fleet the tank has watched, for the milestones about the
     /// work itself (`AquariumFleetLog`).
     public var fleet: AquariumFleetLog = AquariumFleetLog()
+    /// Card › Fine-tune › Visitors: while false no visitor queues at all,
+    /// the alien included. A setting, not part of the save — the toy
+    /// keeps it in step with the card.
+    public var visitorsWelcome = true
 
     public struct Totals: Codable, Equatable, Sendable {
         public var feedings: Int
@@ -1295,13 +1299,15 @@ public struct AquariumGame: Codable, Equatable, Sendable {
 
     /// Queues a visitor once per cooldown — the stamp lands when it
     /// queues, so a trigger that fires while it's already pending or
-    /// still inside the window does nothing.
+    /// still inside the window does nothing. With visitors turned off
+    /// nothing queues and no cooldown starts.
     private mutating func queueVisitor(
         _ visitor: AquariumVisitor, now: Date,
         effects: inout [AquariumGameEffect]
     ) {
         let nowS = now.timeIntervalSince1970
-        guard nowS - (lastVisitorAt[visitor.rawValue] ?? 0)
+        guard visitorsWelcome,
+              nowS - (lastVisitorAt[visitor.rawValue] ?? 0)
                 >= AquariumRules.visitorCooldown,
               !pendingVisitors.contains(visitor) else { return }
         pendingVisitors.append(visitor)

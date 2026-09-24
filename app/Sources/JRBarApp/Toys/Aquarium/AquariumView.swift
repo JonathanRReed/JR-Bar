@@ -509,6 +509,13 @@ struct AquariumView: View {
             }
         }
         .coordinateSpace(.named(Self.tankSpace))
+        // The card's Look › Open the shop… lands here: the window's tank
+        // shows its shop as it comes up.
+        .onChange(of: toy?.store?.wantsAquariumShop ?? false, initial: true) { _, wants in
+            guard wants, !ambient, let store = toy?.store else { return }
+            store.wantsAquariumShop = false
+            showShop = true
+        }
     }
 
     /// The tank's own coordinate space — the canvas's points, which the
@@ -662,6 +669,7 @@ struct AquariumView: View {
             }
         }
         m.puffs.append((x: ux, y: uy, bornAt: Date()))
+        toy?.playSound(.plop)
     }
 
     /// One step of the steering world, run at the top of every live

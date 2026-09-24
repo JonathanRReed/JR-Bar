@@ -175,6 +175,43 @@ struct AquariumRenderProofTests {
         return true
     }
 
+    /// Draws `view` in an offscreen window and returns its layer tree
+    /// as a 2× bitmap — AppKit-backed controls (the segmented Labels
+    /// picker, the switches) included, which `ImageRenderer` can't draw.
+    private static func hostedSnapshot<V: View>(_ view: V, size: CGSize,
+                                                dark: Bool) throws -> NSBitmapImageRep {
+        let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let hosting = NSHostingView(rootView: view
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .frame(width: size.width, height: size.height))
+        let window = NSWindow(contentRect: NSRect(origin: CGPoint(x: -20000, y: -20000), size: size),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = appearance
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        hosting.frame = NSRect(origin: .zero, size: size)
+        for _ in 0..<6 {
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        let rep = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        rep.size = size
+        let context = try #require(NSGraphicsContext(bitmapImageRep: rep))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        appearance?.performAsCurrentDrawingAppearance {
+            hosting.cacheDisplay(in: hosting.bounds, to: rep)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        window.contentView = nil
+        window.close()
+        return rep
+    }
+
     /// The lookbook: every theme, floor, back wall and visitor, a
     /// night, a starter tank that owns nothing, the quiet empty tank,
     /// and the shop — the looks a person actually meets.
@@ -266,15 +303,26 @@ struct AquariumRenderProofTests {
             .appending(path: "aquarium-save.json"))
         defer { try? FileManager.default.removeItem(at: save.url.deletingLastPathComponent()) }
         let toy = AquariumToy(core: core, store: store, saveFile: save)
-        for scheme in [ColorScheme.light, .dark] {
-            let card = toy.controls
-                .padding(16)
-                .frame(width: 560, alignment: .top)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .environment(\.colorScheme, scheme)
-            if try Self.writePNG(card, size: CGSize(width: 560, height: 520),
-                                 name: "aquarium-card-\(scheme == .dark ? "dark" : "light")",
-                                 into: dir) { written += 1 }
+        // The card as its page draws it (the card body's row styles,
+        // AppKit controls and all), folded and with Fine-tune open,
+        // light and dark.
+        for dark in [false, true] {
+            for open in [false, true] {
+                let card = Form {
+                    Section {
+                        AquariumControlsView(toy: toy, fineTune: open)
+                            .cardBodyStyle()
+                    }
+                }
+                .formStyle(.grouped)
+                let name = "aquarium-card-\(dark ? "dark" : "light")\(open ? "-finetune" : "")"
+                let size = CGSize(width: 560, height: open ? 1280 : 820)
+                let rep = try Self.hostedSnapshot(card, size: size, dark: dark)
+                if let png = rep.representation(using: .png, properties: [:]) {
+                    try png.write(to: dir.appendingPathComponent("\(name).png"))
+                    written += 1
+                }
+            }
         }
         if try Self.writePNG(AquariumView(toy: toy), size: CGSize(width: 900, height: 520),
                              name: "aquarium-hud", into: dir) { written += 1 }
@@ -295,7 +343,7 @@ struct AquariumRenderProofTests {
                 written += 1
             }
         }
-        #expect(written == shots.count + 10)
+        #expect(written == shots.count + 12)
     }
 
     // MARK: Pearls that stay put

@@ -114,7 +114,40 @@ final class AquariumToy: Toy {
         // stealing focus for it.
         if isOn { present(activate: false) }
         observeAmbientSettings()
+        observeRosterSettings()
     }
+
+    /// The card's roster rows — Fish at once, Raised fish stay and the
+    /// inspector's species picks — reshape the tank at once instead of
+    /// waiting for the next session change.
+    private func observeRosterSettings() {
+        let settings = store?.state.aquarium ?? AquariumSettings()
+        withObservationTracking {
+            _ = store?.state.aquarium.maxFish
+            _ = store?.state.aquarium.keepResidents
+            _ = store?.state.aquarium.speciesOverrides
+            _ = store?.state.aquarium.visitors
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.observeRosterSettings() }
+        }
+        if game.visitorsWelcome != settings.visitors { game.visitorsWelcome = settings.visitors }
+        let wanted = RosterSettings(maxFish: settings.maxFish,
+                                    keepResidents: settings.keepResidents,
+                                    species: settings.speciesOverrides)
+        guard rosterSynced != wanted else { return }
+        let first = rosterSynced == nil
+        rosterSynced = wanted
+        if !first { refreshFish() }
+    }
+
+    /// The roster settings the fish list was last shaped by — the
+    /// observation fires on any toys-state write, most of them not ours.
+    private struct RosterSettings: Equatable {
+        var maxFish: Int
+        var keepResidents: Bool
+        var species: [String: String]
+    }
+    @ObservationIgnored private var rosterSynced: RosterSettings?
 
     /// The wallpaper and the screensaver follow their two settings; the
     /// controller only exists once either is on.
@@ -216,89 +249,13 @@ final class AquariumToy: Toy {
     }
 
     var controls: AnyView {
-        AnyView(
-            VStack(alignment: .leading, spacing: 4) {
-                LabeledContent {
-                    TankSwatch(themeID: game.themeID, substrateID: game.substrateID)
-                } label: {
-                    SettingLabel(title: "In the tank", subtitle: fact)
-                }
-
-                Divider()
-                    .padding(.vertical, 4)
-
-                Toggle(isOn: showLabels) {
-                    SettingLabel(title: "Show labels", subtitle: "The session's name under its fish.")
-                }
-                LabeledContent {
-                    HStack(spacing: 10) {
-                        Slider(value: density, in: 0.25...2)
-                            .frame(width: 180)
-                        ValueText(text: String(format: "%.2f×", density.wrappedValue))
-                    }
-                } label: {
-                    SettingLabel(title: "Density", subtitle: "How much plankton & bubbles the tank draws.")
-                }
-                LabeledContent {
-                    Picker("", selection: dayNight) {
-                        Text("Follow the clock").tag(DayNightMode.realTime)
-                        Text("Follow the sun").tag(DayNightMode.sun)
-                        Text("4-minute cycle").tag(DayNightMode.cycle)
-                    }
-                    .labelsHidden()
-                    .frame(width: 170)
-                } label: {
-                    SettingLabel(title: "Day & night", subtitle: dayNightSubtitle)
-                }
-
-                Divider()
-                    .padding(.vertical, 4)
-
-                LabeledContent {
-                    Button("Fill screen") { self.fillScreen() }
-                } label: {
-                    SettingLabel(title: "Fill screen", subtitle: "The tank covers the whole screen. Esc leaves.")
-                }
-                LabeledContent {
-                    Picker("", selection: ambientDisplay) {
-                        Text("Off").tag(String?.none)
-                        let connected = NSScreen.screens.map(\.localizedName)
-                        ForEach(AquariumWallpaper.displayChoices(
-                            connected: connected,
-                            saved: store?.state.aquarium.ambientDisplay), id: \.self) { name in
-                            Text(connected.contains(name) ? name : "\(name) (not connected)")
-                                .tag(String?.some(name))
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 170)
-                } label: {
-                    SettingLabel(title: "Live wallpaper", subtitle: "The tank behind every window on a display, click-through. Draws while you can see it.")
-                }
-                LabeledContent {
-                    Picker("", selection: idleFillMinutes) {
-                        ForEach(AquariumSettings.idleFillChoices, id: \.self) { minutes in
-                            Text(minutes == 0 ? "Off" : "After \(minutes) min").tag(minutes)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 170)
-                } label: {
-                    SettingLabel(title: "Screensaver", subtitle: "Idle that long, the tank fills your screens until you're back — never over a video, a call or a fullscreen app.")
-                }
-                if (store?.state.aquarium.idleFillMinutes ?? 0) > 0 {
-                    Toggle(isOn: saverClock) {
-                        SettingLabel(title: "Clock on the screensaver", subtitle: "The time and date, quietly, in a corner.")
-                    }
-                }
-            }
-        )
+        AnyView(AquariumControlsView(toy: self))
     }
 
     /// "4 fish · a school of 6 · 1 at the surface · ◉ 12" / "Nothing
     /// swimming yet" — a fact, like the status chip, with the idle
     /// game's bank & beach folded in.
-    private var fact: String {
+    var fact: String {
         let now = Date()
         let live = fish.filter { !$0.isRetired(at: now) }
         var parts: [String] = []
@@ -323,48 +280,27 @@ final class AquariumToy: Toy {
         return parts.joined(separator: " · ")
     }
 
-    private var showLabels: Binding<Bool> {
-        Binding(get: { self.store?.state.aquarium.showLabels ?? true },
-                set: { self.store?.state.aquarium.showLabels = $0 })
-    }
-
-    private var density: Binding<Double> {
-        Binding(get: { self.store?.state.aquarium.density ?? 1 },
-                set: { self.store?.state.aquarium.density = $0 })
-    }
-
-    private var ambientDisplay: Binding<String?> {
-        Binding(get: { self.store?.state.aquarium.ambientDisplay },
-                set: { self.store?.state.aquarium.ambientDisplay = $0 })
-    }
-
-    private var saverClock: Binding<Bool> {
-        Binding(get: { self.store?.state.aquarium.saverClock ?? true },
-                set: { self.store?.state.aquarium.saverClock = $0 })
-    }
-
-    private var idleFillMinutes: Binding<Int> {
-        Binding(get: { self.store?.state.aquarium.idleFillMinutes ?? 0 },
-                set: { self.store?.state.aquarium.idleFillMinutes = $0 })
-    }
-
-    /// The picker's caption names the sun's source, so "Follow the
-    /// sun" never pretends to know more than the time zone.
-    private var dayNightSubtitle: String {
-        guard store?.state.aquarium.dayNight == .sun else {
-            return "The tank's night wash — the real clock, the sun, or a quick loop."
+    /// The Day & night picker's caption: what the chosen clock is, and
+    /// for "Follow the sun" where the sun is worked out from — so it
+    /// never pretends to know more than the time zone.
+    var dayNightSubtitle: String {
+        switch store?.state.aquarium.dayNight ?? .realTime {
+        case .sun:
+            guard AquariumSun.coordinate(for: .current) != nil else {
+                return "Your time zone names no city, so the tank keeps the clock's hours."
+            }
+            let city = TimeZone.current.identifier.split(separator: "/").last
+                .map { $0.replacingOccurrences(of: "_", with: " ") } ?? ""
+            return "Sunrise & sunset for \(city), worked out on this Mac from your time zone."
+        case .appearance:
+            return "Night while your Mac is in Dark mode, day in Light."
+        case .alwaysDay:
+            return "The bright tank, whatever the hour."
+        case .alwaysNight:
+            return "The night tank, moonlight and all, whatever the hour."
+        case .cycle, .realTime:
+            return "The tank's night wash — the real clock, the sun, your Mac's appearance, or a quick loop."
         }
-        guard AquariumSun.coordinate(for: .current) != nil else {
-            return "Your time zone names no city, so the tank keeps the clock's hours."
-        }
-        let city = TimeZone.current.identifier.split(separator: "/").last
-            .map { $0.replacingOccurrences(of: "_", with: " ") } ?? ""
-        return "Sunrise & sunset for \(city), worked out on this Mac from your time zone."
-    }
-
-    private var dayNight: Binding<DayNightMode> {
-        Binding(get: { self.store?.state.aquarium.dayNight ?? .realTime },
-                set: { self.store?.state.aquarium.dayNight = $0 })
     }
 
     // MARK: Window
@@ -456,6 +392,7 @@ final class AquariumToy: Toy {
         let now = Date()
         note(game.apply(.pelletEaten(fishID: fishID), now: now), now: now)
         persist()
+        playSound(.gulp)
     }
 
     /// "Feed the tank" from outside the window — the buddy's menu today,
@@ -491,14 +428,70 @@ final class AquariumToy: Toy {
         let now = Date()
         note(game.apply(.collectDrop(id), now: now), now: now)
         persist()
+        playSound(.clink)
+    }
+
+    /// The snail reached a drop in the open tank and picked it up.
+    func snailCollected(_ id: String) {
+        guard game.drops.contains(where: { $0.id == id }) else { return }
+        let now = Date()
+        note(game.apply(.snailCollected(dropID: id), now: now), now: now)
+        persist()
+        playSound(.clink)
     }
 
     /// Shop: buy an item. Denials come back as effects; the view's
     /// buttons pre-disable, so a denied tap is just a shake anyway.
     func purchase(_ item: ShopItem) {
         let now = Date()
-        note(game.apply(.purchase(item), now: now), now: now)
+        let effects = game.apply(.purchase(item), now: now)
+        note(effects, now: now)
         persist()
+        if effects.contains(.pearlsSpent(item.price)) { playSound(.chime) }
+    }
+
+    /// Card › Look: put a surface on — "classic" or an owned item's id.
+    func useSurface(_ surface: AquariumSurface, id: String) {
+        let now = Date()
+        let event: AquariumEvent
+        if id == "classic" {
+            event = .useClassic(surface)
+        } else {
+            let match: (ShopItem) -> Bool
+            switch surface {
+            case .water: match = { $0.themeID == id }
+            case .floor: match = { $0.substrateID == id }
+            case .wall: match = { $0.backdropID == id }
+            }
+            guard let item = ShopItem.allCases.first(where: match) else { return }
+            switch surface {
+            case .water: event = .selectTheme(item)
+            case .floor: event = .selectSubstrate(item)
+            case .wall: event = .selectBackdrop(item)
+            }
+        }
+        note(game.apply(event, now: now), now: now)
+        persist()
+    }
+
+    /// Card › Look › Open the shop…: the tank comes up (or forward)
+    /// and shows its shop.
+    func openShop() {
+        store?.wantsAquariumShop = true
+        if isOn {
+            windowController?.show(activate: true)
+        } else {
+            isOn = true
+        }
+    }
+
+    /// The tank's voice, when Sound is on — and only for a person
+    /// watching: the window open and uncovered, the room not hushed.
+    /// Never from the wallpaper or the screensaver, which don't call.
+    func playSound(_ voice: AquariumSound.Voice) {
+        guard store?.state.aquarium.sound == true, isOn, windowController != nil,
+              !windowOccluded, !hushed else { return }
+        AquariumSound.play(voice, volume: SoundPreferences.load().volume)
     }
 
     /// Apply an owned theme.
@@ -548,6 +541,7 @@ final class AquariumToy: Toy {
         let now = Date()
         note(game.apply(.visitorShown(visitor), now: now), now: now)
         persist()
+        playSound(.whoosh)
     }
 
     /// The parade ended — the visitor swam off the far edge. A quiet
@@ -647,6 +641,7 @@ final class AquariumToy: Toy {
             }
         }
         if milestone { store?.confetti.fire(reason: .milestone, at: now) }
+        if let card = notice, card.id != noticeBefore { playSound(.chime) }
     }
 
     private func label(for sessionID: String) -> String {
@@ -685,11 +680,14 @@ final class AquariumToy: Toy {
                                      provider: session.provider), now: now)
         }
         pruneIfDue(liveIDs: Set(sessions.map(\.id)), now: now)
-        let residents = game.residents(excluding: Set(sessions.map(\.id)))
-        fish = AquariumModel.reduce(sessions: sessions, previous: fish, now: now,
-                                    residents: residents) {
+        let residents = settings.keepResidents
+            ? game.residents(excluding: Set(sessions.map(\.id))) : []
+        let everyone = AquariumModel.reduce(sessions: sessions, previous: fish, now: now,
+                                            residents: residents) {
             settings.species(for: $0)
         }
+        fish = AquariumModel.cap(everyone, max: settings.maxFish,
+                                 stages: self.game.pets.mapValues(\.stage))
         noteCompletions(now: now)
         noteFleet(now: now)
         let base = AquariumWaterMood.base(core.state)
@@ -765,52 +763,5 @@ final class AquariumToy: Toy {
                 self.observeSessions()
             }
         }
-    }
-}
-
-/// The card's glimpse of the tank: the water in the theme it wears,
-/// light falling through it and the floor it sits on — a still
-/// picture, so the card costs nothing to show.
-private struct TankSwatch: View {
-    let themeID: String
-    let substrateID: String
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        Canvas { canvas, size in
-            let rect = Path(CGRect(origin: .zero, size: size))
-            canvas.fill(rect, with: .linearGradient(
-                Gradient(stops: AquariumView.waterStops(forTheme: themeID)),
-                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
-            let light = AquariumView.water(forTheme: themeID)
-            var shafts = canvas
-            shafts.blendMode = .plusLighter
-            for (x, w) in [(0.22, 0.10), (0.42, 0.06), (0.58, 0.12)] as [(Double, Double)] where light.shafts > 0 {
-                var beam = Path()
-                beam.move(to: CGPoint(x: size.width * (x - w / 2), y: 0))
-                beam.addLine(to: CGPoint(x: size.width * (x + w / 2), y: 0))
-                beam.addLine(to: CGPoint(x: size.width * (x + w * 1.4 + 0.12), y: size.height))
-                beam.addLine(to: CGPoint(x: size.width * (x + 0.12), y: size.height))
-                beam.closeSubpath()
-                shafts.fill(beam, with: .linearGradient(
-                    Gradient(colors: [TankPaint.color(light.light, 0.22 * light.shafts), .clear]),
-                    startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
-            }
-            var sand = Path()
-            sand.move(to: CGPoint(x: 0, y: size.height * 0.80))
-            sand.addQuadCurve(to: CGPoint(x: size.width, y: size.height * 0.76),
-                              control: CGPoint(x: size.width * 0.5, y: size.height * 0.70))
-            sand.addLine(to: CGPoint(x: size.width, y: size.height))
-            sand.addLine(to: CGPoint(x: 0, y: size.height))
-            sand.closeSubpath()
-            canvas.fill(sand, with: .linearGradient(
-                Gradient(colors: AquariumView.sandSwatch(forSubstrate: substrateID)),
-                startPoint: CGPoint(x: 0, y: size.height * 0.72), endPoint: CGPoint(x: 0, y: size.height)))
-        }
-        .clipShape(shape)
-        .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.35), .black.opacity(0.15)],
-                                                   startPoint: .top, endPoint: .bottom), lineWidth: 0.5))
-        .frame(width: 76, height: 46)
-        .accessibilityHidden(true)
     }
 }

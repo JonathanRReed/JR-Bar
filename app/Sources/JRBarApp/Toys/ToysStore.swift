@@ -193,4 +193,20 @@ final class ToysStore {
         return ToysHush.reason(mode: focus?.mode, source: focus?.source, until: focus?.until,
                                onCall: onCall, now: now)
     }
+
+    // MARK: Search into a card
+
+    /// The card row a Settings search just landed on, by its title — a
+    /// card that folds rows away (the Aquarium's Fine-tune) opens to
+    /// show it. nil when the hit isn't inside a card.
+    var revealRow: String? {
+        guard let hit = settings.searchHit, hit.card != nil else { return nil }
+        return hit.title
+    }
+
+    // MARK: The aquarium's shop
+
+    /// The Aquarium card's Look menu asked for the shop: the tank opens
+    /// its shop the moment it shows, then clears this.
+    var wantsAquariumShop = false
 }
