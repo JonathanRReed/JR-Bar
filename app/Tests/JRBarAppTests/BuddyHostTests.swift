@@ -58,4 +58,25 @@ struct BuddyHostTests {
         let asleep = sizes()
         #expect(asleep.floating == .zero && asleep.docked == .zero)
     }
+
+    /// The panel re-centres on its parked spot at every present, so a
+    /// row that came and went with "Caption on hover" moved the pet.
+    @Test func captionToggleKeepsTheFloatingPanelsSize() {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel())
+        let toy = store.notchBuddy
+        let floating = BuddyPanelModel()
+        floating.toy = toy
+        floating.drawsBuddy = true
+        toy.isOn = true
+        toy.parkFree(at: CGPoint(x: 120, y: 300))
+        store.state.notchBuddy.scale = 2
+        let shown = NSHostingView(rootView: BuddyPanelView(model: floating)).fittingSize
+        toy.toggleCaption()
+        #expect(toy.showsCaption == false)
+        let hidden = NSHostingView(rootView: BuddyPanelView(model: floating)).fittingSize
+        #expect(shown == hidden)
+        #expect(shown.height > 0)
+    }
 }
