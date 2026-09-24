@@ -61,28 +61,63 @@ def test_quiet_visuals_do_not_block_notification_fallback__and_1_more() -> None:
 
 
 
-def test_a_client_that_posts_nothing_is_not_recorded_as_posted() -> None:
+def test_a_client_that_posts_nothing_is_not_recorded_as_posted__and_1_more() -> None:
     """The daemon's HeadlessNotificationClient returns False: the app
     banners the quota_reset wire event itself, and the receipt must not
-    claim a banner the daemon never showed."""
-    controller = SimpleNamespace(
-        quiet_active=lambda: False,
-        settings=SimpleNamespace(virtual_status_device_enabled=False),
-        has_connected_physical_device=lambda: False,
-        _notification_client_for_use=lambda: SimpleNamespace(deliver=lambda *_args: False),
-    )
-    event = ResetEvent("codex:weekly:event", "codex", "weekly", "Weekly reset", 1000, "acct", 900)
-
-    receipts = deliver_reset_channels(
-        controller,
-        event,
-        (ResetChannel.NOTIFICATION,),
-        now=1001,
-        monotonic_now=50,
-        log=lambda _message: None,
+    claim a banner the daemon never showed. It can never post, so the
+    channel is done after one pass rather than retried every 15 s for the
+    whole delivery window."""
+    from jrbar.core_runtime import HeadlessNotificationClient
+    from jrbar.provider_reset_events import (
+        ResetDeliverySettings,
+        ResetDeliveryState,
+        apply_reset_channel_receipt,
+        begin_reset_delivery,
+        next_reset_retry_delay,
+        pending_reset_channels,
+        reset_event_is_terminal,
     )
 
-    assert [(item.outcome, item.reason) for item in receipts] == [(ResetChannelOutcome.FAILED, "not_delivered")]
+    def one_pass(client) -> tuple:
+        controller = SimpleNamespace(
+            quiet_active=lambda: False,
+            settings=SimpleNamespace(virtual_status_device_enabled=True),
+            has_connected_physical_device=lambda: True,
+            schedule_event_refresh=lambda: None,
+            _notification_client_for_use=lambda: client,
+        )
+        event = ResetEvent("codex:weekly:event", "codex", "weekly", "Weekly reset", 1000, "acct", 900)
+        state = begin_reset_delivery(
+            ResetDeliveryState(()), event, ResetDeliverySettings(sound=False), now=1001
+        )
+        receipts = deliver_reset_channels(
+            controller,
+            event,
+            pending_reset_channels(state, event.event_id, now=1001),
+            now=1001,
+            monotonic_now=50,
+            log=lambda _message: None,
+        )
+        for receipt in receipts:
+            state = apply_reset_channel_receipt(
+                state, event.event_id, receipt.channel, receipt.outcome, reason=receipt.reason, now=1001
+            )
+        by_channel = {receipt.channel: (receipt.outcome, receipt.reason) for receipt in receipts}
+        return by_channel, state, event.event_id
+
+    # --- scenario: the headless client is done with the channel after one pass
+    by_channel, state, event_id = one_pass(HeadlessNotificationClient())
+    assert by_channel[ResetChannel.NOTIFICATION] == (ResetChannelOutcome.DISCARDED, "not_delivered")
+    assert by_channel[ResetChannel.OVERLAY][0] is ResetChannelOutcome.DELIVERED
+    assert by_channel[ResetChannel.HARDWARE][0] is ResetChannelOutcome.DELIVERED
+    assert reset_event_is_terminal(state, event_id)
+    assert next_reset_retry_delay(state, now=1002) is None
+
+    # --- scenario: a client that could post and did not is retried
+    by_channel, state, event_id = one_pass(SimpleNamespace(available=True, deliver=lambda *_args: False))
+    assert by_channel[ResetChannel.NOTIFICATION] == (ResetChannelOutcome.FAILED, "not_delivered")
+    assert not reset_event_is_terminal(state, event_id)
+    assert next_reset_retry_delay(state, now=1002) == 15.0
 
 
 def test_a_lane_turning_critical_reaches_the_app_as_a_quota_pace_event__and_2_more() -> None:

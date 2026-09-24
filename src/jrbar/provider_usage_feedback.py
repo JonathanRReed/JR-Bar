@@ -106,7 +106,8 @@ def deliver_reset_channels(
                 event_label = getattr(event, "label", None)
                 if not event_label:
                     event_label = f"{event.window_id} reset"
-                posted = controller._notification_client_for_use().deliver(
+                client = controller._notification_client_for_use()
+                posted = client.deliver(
                     "quota.reset." + event.event_id.replace(":", "-"),
                     PRODUCT_DISPLAY_NAME,
                     f"{label} {event_label}, fresh window",
@@ -114,12 +115,17 @@ def deliver_reset_channels(
                 )
                 # The daemon's client posts nothing (the app banners the
                 # quota_reset wire event itself); a receipt that said
-                # "posted" for it claimed a banner nobody saw.
-                outcome, reason = (
-                    (ResetChannelOutcome.DELIVERED, "posted")
-                    if posted
-                    else (ResetChannelOutcome.FAILED, "not_delivered")
-                )
+                # "posted" for it claimed a banner nobody saw. A client
+                # that can never post is done with the channel: FAILED
+                # would retry it every 15 s for the whole delivery window
+                # and grow the stored event by a receipt each pass. Only a
+                # client that could post and did not is retried.
+                if posted:
+                    outcome, reason = ResetChannelOutcome.DELIVERED, "posted"
+                elif getattr(client, "available", True) is False:
+                    outcome, reason = ResetChannelOutcome.DISCARDED, "not_delivered"
+                else:
+                    outcome, reason = ResetChannelOutcome.FAILED, "not_delivered"
             else:
                 if quiet:
                     outcome, reason = ResetChannelOutcome.SUPPRESSED, "quiet_active"
