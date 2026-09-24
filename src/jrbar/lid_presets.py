@@ -188,14 +188,16 @@ def upgraded_program(program: str, duration_seconds: float) -> tuple[str, float]
     version (program and length); anything else comes back as it was.
 
     Retired looks are named uniquely across the four transitions, so the
-    name alone finds today's version."""
+    name alone finds today's version. A length the person set longer than
+    today's is kept; a shorter one grows just enough for the look to end
+    dark instead of being cut off before its fade."""
     name = RETIRED_PRESET_PROGRAMS.get((program or "").strip())
     if name is None:
         return program, duration_seconds
     for kind in LID_ANIMATION_PRESETS:
         entry = preset(kind, name)
         if entry is not None:
-            return entry[2], entry[1]
+            return entry[2], max(float(duration_seconds), entry[1])
     return program, duration_seconds
 
 

@@ -253,3 +253,13 @@ def test_play_lid_preset_plays_the_look_drawn_for_each_device() -> None:
         core_runtime._cmd_play_lid_preset(host, {"kind": LID_ANIMATION_OPEN, "name": "Wormhole"})
     assert refused.value.code == "invalid_args"
     assert len(played) == 2
+
+
+def test_an_upgraded_look_keeps_a_longer_length() -> None:
+    """A retired opening look comes back as today's version; a length the
+    person set longer than today's stays theirs."""
+    old_hello = "#12E3B0 300ms pulse\n#0FA07C 300ms cosine\n#12E3B0 800ms pulse"
+    today = lid_presets.preset(LID_ANIMATION_OPEN, "Hello")
+    assert lid_presets.upgraded_program(old_hello, 2.0) == (today[2], 2.0)
+    assert lid_presets.upgraded_program(old_hello, 1.4) == (today[2], today[1])
+    assert lid_presets.upgraded_program("#FFFFFF 1s", 0.4) == ("#FFFFFF 1s", 0.4)
