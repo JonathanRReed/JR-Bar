@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -13,7 +12,6 @@ from jrbar.render_policy import (
     RenderEnvironment,
     choose_render_cadence,
     choose_render_schedule,
-    rounded_silhouette,
     runtime_render_environment,
 )
 
@@ -49,7 +47,6 @@ def test_hidden_or_sleeping_surface_pauses__and_2_more() -> None:
     )
 
     assert schedule.cadence == choose_render_cadence(environment, animation_active=True)
-
 
 
 def test_render_schedule_preserves_the_next_visual_change_deadline__and_2_more() -> None:
@@ -110,7 +107,6 @@ def test_render_schedule_preserves_the_next_visual_change_deadline__and_2_more()
     ) == choose_render_schedule(baseline, True, display_link_available=True)
     with pytest.raises(FrozenInstanceError):
         accessible.accessibility_generation = 42  # type: ignore[misc]
-
 
 
 def test_geometry_key_is_color_free_but_invalidates_geometry_inputs__and_2_more() -> None:
@@ -231,25 +227,7 @@ def test_geometry_key_is_color_free_but_invalidates_geometry_inputs__and_2_more(
         assert GlowPaintKey.from_output(**values) != base
 
 
-
-def test_rounded_silhouette_is_one_closed_body_and_clamps_radius__and_2_more() -> None:
-    # --- scenario: rounded_silhouette_is_one_closed_body_and_clamps_radius
-    silhouette = rounded_silhouette(
-        center_x=110.0,
-        width=220.0,
-        height=12.0,
-        contour=((0.0, 3.0), (20.0, 0.0), (200.0, 0.0), (220.0, 3.0)),
-        requested_radius=80.0,
-    )
-
-    assert silhouette.points[0] == silhouette.points[-1]
-    assert silhouette.radius == 6.0
-    assert len(silhouette.points) >= 5
-    assert all(
-        math.dist(first, second) <= 220.0
-        for first, second in zip(silhouette.points, silhouette.points[1:])
-    )
-
+def test_glow_composition_reuses_geometry_across_paint_changes__and_1_more() -> None:
     # --- scenario: glow_composition_reuses_geometry_across_paint_changes
     from jrbar.virtual_device import _glow_runs
 
@@ -315,4 +293,3 @@ def test_rounded_silhouette_is_one_closed_body_and_clamps_radius__and_2_more() -
     assert environment.thermal == "serious"
     assert fallback.low_power is False
     assert fallback.thermal == "nominal"
-

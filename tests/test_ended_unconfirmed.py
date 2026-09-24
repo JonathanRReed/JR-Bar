@@ -12,15 +12,40 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from jrbar._collector_legacy import (
+    COMPLETED_VISIBLE_SECONDS,
+    IDLE_VISIBLE_SECONDS,
     POST_TOOL_WORKING_VISIBLE_SECONDS,
     WORKING_SILENCE_SECONDS,
+    RestoreHealth,
+    _snapshot_from_operator_state,
     status_counts_active,
     status_for_snapshot,
 )
-from jrbar.attention import LifecycleMode, _lifecycle_mode
+from jrbar.attention import LifecycleMode, _lifecycle_mode, project_attention
 from jrbar.models import AgentMode, AgentStatus
 
 _NOW = datetime.now(timezone.utc)
+
+
+def _live_projection(state, at_epoch: float):
+    """What the daemon's lights read: the monitor's snapshot of the
+    canonical state at the monitor's clock, then project_attention."""
+    from jrbar._settings_legacy import AgentMonitorSettings
+
+    snapshot = _snapshot_from_operator_state(
+        state,
+        events=(),
+        sources=(),
+        collected_at=datetime.fromtimestamp(at_epoch, timezone.utc),
+        restore_health=RestoreHealth.NOT_ATTEMPTED,
+        stale_after_seconds=3600.0,
+        tool_running_timeout_seconds=0.0,
+        completed_visible_seconds=COMPLETED_VISIBLE_SECONDS,
+        idle_visible_seconds=IDLE_VISIBLE_SECONDS,
+        post_tool_working_visible_seconds=POST_TOOL_WORKING_VISIBLE_SECONDS,
+        canonical_projected_uses_age_windows=True,
+    )
+    return project_attention(snapshot, AgentMonitorSettings())
 
 
 def _status(mode: AgentMode, event_name: str, *, silent_for: float) -> AgentStatus:
@@ -168,8 +193,6 @@ def test_replayed_normalized_records_keep_their_own_time__and_2_more() -> None:
     title, the mailbox count, and the LIGHTS kept reading raw lifecycle
     ACTIVE -- 'it says an agent's running even though it's been done for
     10 minutes.'"""
-    from jrbar._settings_legacy import AgentMonitorSettings
-    from jrbar.attention import project_attention_from_operator_state
     from jrbar.capacity_types import SourceKey
     from jrbar.mailbox import project_canonical_mailbox
     from jrbar.operator_state import (
@@ -236,9 +259,7 @@ def test_replayed_normalized_records_keep_their_own_time__and_2_more() -> None:
     ).state
     assert state.works[0].lifecycle is WorkLifecycle.ACTIVE  # raw truth kept
 
-    projection = project_attention_from_operator_state(
-        state, (), AgentMonitorSettings()
-    )
+    projection = _live_projection(state, 1_800_000_000.0 + silent_for)
     assert all(
         row.lifecycle_mode.value != "active" for row in projection.visible_rows
     ), "the lights must not claim work from a silent session"
@@ -257,11 +278,6 @@ def test_replayed_normalized_records_keep_their_own_time__and_2_more() -> None:
     which also fed the keep-awake grace) until the presence horizon
     dropped the row, up to an hour later. COMPLETED is a moment: past
     COMPLETED_RECENT_SECONDS the row settles to the idle whisper."""
-    from jrbar._settings_legacy import AgentMonitorSettings
-    from jrbar.attention import (
-        LifecycleMode,
-        project_attention_from_operator_state,
-    )
     from jrbar.capacity_types import SourceKey
     from jrbar.operator_state import (
         COMPLETED_RECENT_SECONDS,
@@ -329,8 +345,8 @@ def test_replayed_normalized_records_keep_their_own_time__and_2_more() -> None:
 
     # Inside the window: the celebration is honest.
     fresh = state_after(COMPLETED_RECENT_SECONDS - 30.0)
-    fresh_rows = project_attention_from_operator_state(
-        fresh, (), AgentMonitorSettings()
+    fresh_rows = _live_projection(
+        fresh, 1_800_000_000.0 + COMPLETED_RECENT_SECONDS - 30.0
     ).visible_rows
     assert any(
         row.lifecycle_mode is LifecycleMode.COMPLETED_RECENTLY
@@ -340,8 +356,8 @@ def test_replayed_normalized_records_keep_their_own_time__and_2_more() -> None:
     # Past it: the raw truth stays COMPLETED, the display settles.
     stale = state_after(COMPLETED_RECENT_SECONDS + 60.0)
     assert stale.works[0].lifecycle is WorkLifecycle.COMPLETED  # raw truth kept
-    stale_rows = project_attention_from_operator_state(
-        stale, (), AgentMonitorSettings()
+    stale_rows = _live_projection(
+        stale, 1_800_000_000.0 + COMPLETED_RECENT_SECONDS + 60.0
     ).visible_rows
     assert all(
         row.lifecycle_mode is not LifecycleMode.COMPLETED_RECENTLY

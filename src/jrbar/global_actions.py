@@ -18,15 +18,6 @@ class ShortcutModifier(str, Enum):
     COMMAND = "command"
 
 
-class GlobalActionBindingState(str, Enum):
-    UNASSIGNED = "unassigned"
-    ACTIVE = "active"
-    LOCAL_CONFLICT = "local_conflict"
-    UNSUPPORTED = "unsupported"
-    REGISTRATION_REFUSED = "registration_refused"
-    CLOSED = "closed"
-
-
 class ShortcutValidationCode(str, Enum):
     MALFORMED = "malformed"
     UNKNOWN_ACTION = "unknown_action"
@@ -101,14 +92,6 @@ class ParsedGlobalActionShortcuts:
             (chord for candidate, chord in self.bindings if candidate is action),
             None,
         )
-
-
-@dataclass(frozen=True, slots=True)
-class GlobalActionStatusProjection:
-    action: GlobalActionID
-    state: GlobalActionBindingState
-    value_text: str
-    help_text: str
 
 
 _MODIFIER_ORDER = (
@@ -340,52 +323,3 @@ def serialize_global_action_shortcuts(
             ) from exc
         encoded[known_action.value] = chord.to_dict()
     return encoded
-
-
-def project_global_action_status(
-    action: GlobalActionID,
-    state: GlobalActionBindingState,
-    *,
-    chord: ShortcutChord | None = None,
-) -> GlobalActionStatusProjection:
-    if type(action) is not GlobalActionID or type(state) is not GlobalActionBindingState:
-        raise ValueError("global action status identity is invalid")
-    if state is GlobalActionBindingState.ACTIVE and chord is None:
-        raise ValueError("active status requires a shortcut chord")
-    if chord is not None:
-        validate_shortcut(chord)
-
-    if state is GlobalActionBindingState.UNASSIGNED:
-        value = "Not set"
-        help_text = "Set a shortcut to reveal the current ask or Agent Browser."
-    elif state is GlobalActionBindingState.ACTIVE:
-        formatted = format_shortcut(chord)
-        value = formatted
-        help_text = (
-            f"Use {formatted} to reveal the current ask or Agent Browser. "
-            "JR-Bar cannot detect every shortcut used by other apps."
-        )
-    elif state is GlobalActionBindingState.LOCAL_CONFLICT:
-        value = "Already used by JR-Bar"
-        help_text = (
-            "Choose another shortcut to reveal the current ask or Agent Browser."
-        )
-    elif state is GlobalActionBindingState.UNSUPPORTED:
-        value = "Shortcut not supported"
-        help_text = (
-            "Choose a shortcut with Command or Control to reveal the current ask or "
-            "Agent Browser."
-        )
-    elif state is GlobalActionBindingState.REGISTRATION_REFUSED:
-        value = "macOS refused shortcut"
-        help_text = (
-            "The previous binding is unchanged. Choose another shortcut to reveal the "
-            "current ask or Agent Browser."
-        )
-    else:
-        value = "Unavailable"
-        help_text = (
-            "Global shortcut registration is closed. Use the menu to reveal the current "
-            "ask or Agent Browser."
-        )
-    return GlobalActionStatusProjection(action, state, value, help_text)

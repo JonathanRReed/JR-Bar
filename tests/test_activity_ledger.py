@@ -32,7 +32,6 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -143,14 +142,6 @@ def _status(
         updated_at=updated_at or datetime.now(timezone.utc),
         event_name=event_name,
         session_id=session_id,
-    )
-
-
-def _snapshot(statuses=(), stale=()):
-    return SimpleNamespace(
-        statuses=list(statuses),
-        stale_statuses=list(stale),
-        collected_at=datetime.now(timezone.utc),
     )
 
 

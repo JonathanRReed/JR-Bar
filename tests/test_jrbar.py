@@ -15700,17 +15700,6 @@ class MenuQualityOfLifeTests(unittest.TestCase):
             collected_at=datetime.now(timezone.utc),
         )
 
-    def _worker(self, parent_session: str, worker_id: str):
-        return AgentStatus(
-            provider="claude",
-            agent_id=f"claude:agent:{worker_id}",
-            display_name=f"worker {worker_id}",
-            mode=AgentMode.WORKING,
-            updated_at=datetime.now(timezone.utc),
-            event_name="PreToolUse",
-            session_id=parent_session,
-        )
-
 
     def test_completion_banner_fires_on_fresh_main_transition_only(self) -> None:
         posted: list = []

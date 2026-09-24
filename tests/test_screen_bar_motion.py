@@ -1171,7 +1171,6 @@ def test_reposition_submits_plain_alcove_request_and_applies_validated_center(
         "_screen_capture_values",
         lambda _screen: ("1:0.000:0.000:1512.000:982.000", 1, 0.0, 0.0, 1512.0, 982.0, 2.0),
     )
-    monkeypatch.setattr(virtual_device, "measured_notch_silhouette", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         virtual_device,
         "_alcove_window_values",
@@ -2199,4 +2198,3 @@ def test_compact_mode_width_follows_the_capsule_too__and_1_more() -> None:
     device._fullscreen_hidden = False
     device._compact_active = True
     assert not device.can_present_announcer()
-

@@ -7,40 +7,17 @@ from jrbar.attention import (
     LifecycleMode,
     SignalKind,
     project_attention,
-    project_attention_from_operator_state,
     regate_actionable_attention,
     stable_event_key,
 )
 from jrbar.capacity_types import SourceKey
 from jrbar.collector import MonitorSnapshot, aggregate_status
 from jrbar.models import AgentMode, AgentStatus
-from jrbar.operator_state import (
-    AcknowledgementEligibility,
-    CanonicalOperatorEvent,
-    CanonicalOperatorState,
-    CanonicalRequestTruth,
-    CanonicalWorkTruth,
-    ClockContinuityState,
-    ClockContinuityStatus,
-    InterruptionClass,
-    RequestPhase,
-    SemanticEventKey,
-    TransitionKind,
-)
 from jrbar.provider_facts import (
-    EventToken,
-    NextActor,
-    ObservationAuthority,
-    ProviderWatermark,
     RequestIdentifier,
     RequestKey,
-    RequestKind,
-    SourceFreshness,
-    SourceHealth,
-    WatermarkBasis,
     WorkIdentifier,
     WorkKey,
-    WorkLifecycle,
 )
 from jrbar.settings import AgentMonitorSettings
 
@@ -105,7 +82,6 @@ def test_terminal_failure_is_visible_but_not_actionable__and_2_more() -> None:
     assert len(projection.actionable_attention) == 1
 
 
-
 def test_subagent_attention_obeys_one_setting_everywhere__and_2_more() -> None:
     # --- scenario: subagent_attention_obeys_one_setting_everywhere
     snapshot = snapshot_with(
@@ -140,7 +116,6 @@ def test_subagent_attention_obeys_one_setting_everywhere__and_2_more() -> None:
     )
 
     assert len(projection.transient_signals) == 1
-
 
 
 def test_failure_aliases_share_one_stable_key_and_consumed_signal__and_2_more() -> None:
@@ -225,81 +200,39 @@ def test_failure_aliases_share_one_stable_key_and_consumed_signal__and_2_more() 
     assert projection.click_target_agent_id == "codex:session:alpha"
 
 
-
-def test_canonical_attention_uses_request_truth_and_semantic_failure_edges__and_1_more() -> None:
-    # --- scenario: canonical_attention_uses_request_truth_and_semantic_failure_edges
+def test_the_live_path_carries_the_request_identity_and_the_failure_edge__and_1_more() -> None:
+    # --- scenario: the_live_path_carries_the_request_identity_and_the_failure_edge
+    """The daemon's lights and asks come from project_attention over the
+    monitor snapshot: an ask keeps the work and request identity its
+    status carries (what regate and the answer path key on), and a
+    terminal failure beside it still fires its signal."""
     source = SourceKey("codex", "hooks", "global", "live_agent_events")
     work_key = WorkKey(source, WorkIdentifier("work:canonical"))
     request_key = RequestKey(work_key, RequestIdentifier("request:canonical"))
-    watermark = ProviderWatermark(
-        source,
-        WatermarkBasis.PROVIDER_SEQUENCE,
-        1_786_632_000.0,
-        EventToken("event:canonical"),
-        1,
-        10,
+    asking = replace(
+        status(
+            provider="codex",
+            agent_id="codex:session:asking",
+            event_name="PermissionRequest",
+            mode=AgentMode.WAITING_FOR_INPUT,
+        ),
+        work_key=work_key,
+        request_key=request_key,
     )
-    request_event_key = SemanticEventKey(
-        request_key,
-        TransitionKind.REQUEST_OPENED,
-        watermark,
-    )
-    request = CanonicalRequestTruth(
-        request_key,
-        RequestPhase.LIVE_UNACKNOWLEDGED,
-        RequestKind.PERMISSION,
-        NextActor.USER,
-        watermark,
-        SourceFreshness.FRESH,
-        AcknowledgementEligibility.ELIGIBLE,
-        request_event_key,
-        watermark.occurred_at_epoch,
-        1.0,
-    )
-    work = CanonicalWorkTruth(
-        work_key,
-        WorkLifecycle.WAITING,
-        watermark,
-        ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
-        SourceHealth.HEALTHY,
-        SourceFreshness.FRESH,
-        NextActor.USER,
-        "Codex work:canonical",
-        None,
-        (request_key,),
-        False,
-    )
-    failure_key = SemanticEventKey(work_key, TransitionKind.FAILED, watermark)
-    failure = CanonicalOperatorEvent(
-        failure_key,
-        work_key,
-        TransitionKind.FAILED,
-        InterruptionClass.IMPORTANT_OUTCOME,
-        watermark.occurred_at_epoch,
-        SourceFreshness.FRESH,
-    )
-    state = CanonicalOperatorState(
-        1,
-        1,
-        (work,),
-        (request,),
-        ((source, watermark),),
-        (),
-        ClockContinuityState(ClockContinuityStatus.STABLE, None, 0),
-        None,
+    failed = status(
+        provider="codex",
+        agent_id="codex:session:failed",
+        event_name="StopFailure",
+        mode=AgentMode.BLOCKED_ERROR,
     )
 
-    projection = project_attention_from_operator_state(
-        state,
-        (failure,),
-        AgentMonitorSettings(),
-    )
+    projection = project_attention(snapshot_with(asking, failed), AgentMonitorSettings())
 
-    row = projection.actionable_attention[0]
+    (row,) = projection.actionable_attention
     assert row.work_key == work_key
     assert row.request_key == request_key
-    assert projection.click_target_agent_id is None
-    assert projection.transient_signals[0].event_key == failure_key
+    assert projection.click_target_agent_id == asking.agent_id
+    assert [signal.source_agent_id for signal in projection.transient_signals] == [failed.agent_id]
 
     # --- scenario: completed_settles_to_idle_on_the_live_projection_path
     from datetime import timedelta
@@ -330,7 +263,6 @@ def test_canonical_attention_uses_request_truth_and_semantic_failure_edges__and_
     assert stale_row.lifecycle_mode is LifecycleMode.IDLE, (
         "done is a moment on the LIVE path too"
     )
-
 
 
 # --- Delegation: a paused main whose sub-agents still work ------------------
@@ -398,64 +330,7 @@ def test_stopped_main_with_working_subagents_projects_as_working__and_2_more() -
     assert main_row.actionable
 
 
-
-def test_canonical_completed_parent_with_active_child_projects_active__and_2_more() -> None:
-    # --- scenario: canonical_completed_parent_with_active_child_projects_active
-    source = SourceKey("claude", "hooks", "global", "live_agent_events")
-    parent_key = WorkKey(source, WorkIdentifier("work:parent"))
-    child_key = WorkKey(source, WorkIdentifier("work:child"))
-    watermark = ProviderWatermark(
-        source,
-        WatermarkBasis.PROVIDER_SEQUENCE,
-        1_786_632_000.0,
-        EventToken("event:delegation"),
-        1,
-        10,
-    )
-    parent = CanonicalWorkTruth(
-        parent_key,
-        WorkLifecycle.COMPLETED,
-        watermark,
-        ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
-        SourceHealth.HEALTHY,
-        SourceFreshness.FRESH,
-        NextActor.PROVIDER,
-        "Claude main",
-        None,
-        (),
-        False,
-    )
-    child = CanonicalWorkTruth(
-        child_key,
-        WorkLifecycle.ACTIVE,
-        watermark,
-        ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
-        SourceHealth.HEALTHY,
-        SourceFreshness.FRESH,
-        NextActor.PROVIDER,
-        "Task worker",
-        parent_key,
-        (),
-        False,
-    )
-    state = CanonicalOperatorState(
-        1,
-        1,
-        (parent, child),
-        (),
-        ((source, watermark),),
-        (),
-        ClockContinuityState(ClockContinuityStatus.STABLE, None, 0),
-        None,
-    )
-
-    projection = project_attention_from_operator_state(
-        state, (), AgentMonitorSettings()
-    )
-
-    (main_row,) = projection.visible_rows
-    assert main_row.lifecycle_mode is LifecycleMode.ACTIVE
-
+def test_regate_demotes_asks_the_canonical_state_no_longer_holds__and_1_more() -> None:
     # --- scenario: regate_demotes_asks_the_canonical_state_no_longer_holds
     source = SourceKey("codex", "hooks", "global", "live_agent_events")
     work_key = WorkKey(source, WorkIdentifier("work:held"))
@@ -506,7 +381,6 @@ def test_canonical_completed_parent_with_active_child_projects_active__and_2_mor
     assert gated.actionable_attention == ()
     assert gated.lifecycle_mode is LifecycleMode.UNKNOWN
     assert gated.click_target_agent_id is None
-
 
 
 def test_regate_keeps_keyless_asks_and_returns_identity_when_unchanged() -> None:

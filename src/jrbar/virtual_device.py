@@ -387,32 +387,6 @@ def _notch_capture_request(screen, *, rows: int, below_window_number: int = 0):
     )
 
 
-def measured_notch_silhouette(screen, below_window_number: int = 0, max_width: float | None = None):
-    """The hardware notch's full measured outline: per-row black-run
-    insets through the notch's depth, so the drawn body can follow the
-    REAL corner curve instead of guessing a radius. The top-row width
-    alone left the body's straight walls standing beside the physical
-    notch's curved bottom corners -- dark slivers a few points wide,
-    visible every day. Returns (x, top_width, insets) where insets[r] is
-    (left_inset, right_inset) in points for pixel row r from the top, or
-    None under exactly the same validation that guards the width scan."""
-    try:
-        depth = int(round(notch_depth_for_screen(screen)))
-        if depth <= 2:
-            return None
-        request = _notch_capture_request(
-            screen,
-            rows=depth,
-            below_window_number=below_window_number,
-        )
-        if request is None:
-            return None
-        runs, scale, frame_x = _capture_notch_runs(request)
-        return _validated_notch_silhouette(runs, scale, frame_x, max_width=max_width)
-    except Exception:
-        return None
-
-
 def _legacy_notch_capture_image(request: NotchCaptureRequest):
     """Pre-macOS-15 WindowServer capture, called only on the probe worker."""
     rect = Quartz.CGRectMake(
@@ -3954,8 +3928,9 @@ class VirtualStatusDevice(NSObject):
         measured_notch_insets = None
         if gap_override is None:
             # Pixel-exact notch, measured once per screen configuration
-            # (the notch can't change at runtime) -- see
-            # measured_notch_silhouette for why this beats a model table.
+            # (the notch can't change at runtime): per-row insets let the
+            # body follow the real corner curve, which a model table of
+            # radii cannot.
             # Guards, each one earned: never measure while Alcove is up
             # (its capsule composites pure black over the very rows the
             # scan reads -- 266pt "notch" over a 186pt panel), cap by the

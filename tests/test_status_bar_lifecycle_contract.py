@@ -113,16 +113,6 @@ def _lifecycle(settings, events, *, save_error=None, save_errors=None):
     return lifecycle, registry, holder
 
 
-class _Thread:
-    def __init__(self, *, target, daemon):
-        self.target = target
-        self.daemon = daemon
-        self.started = False
-
-    def start(self) -> None:
-        self.started = True
-
-
 @pytest.fixture
 def controller(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(
