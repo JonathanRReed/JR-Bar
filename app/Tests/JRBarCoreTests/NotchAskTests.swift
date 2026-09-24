@@ -118,6 +118,32 @@ struct NotchAskTests {
         #expect(NotchAskVerbs.resolve(live: ok, session: "") == .none)
     }
 
+    @Test("the hold ring empties over the hold and is gone once it lapses")
+    func holdRing() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        var held = CoreAsk(session: "claude:s1", openedAt: 985, answerable: true)
+        held.decision = CoreAskDecision(holdUntil: 1_030)
+        #expect(NotchHold.remaining(held, now: now) == 30.0 / 45.0, "15 s of a 45 s hold gone")
+        #expect(NotchHold.remaining(held, now: Date(timeIntervalSince1970: 985)) == 1)
+        #expect(NotchHold.remaining(held, now: Date(timeIntervalSince1970: 1_030)) == nil,
+                "the hold lapsed: the agent's own prompt carries on, no ring")
+
+        // No opening stamp to measure from: the daemon's window.
+        var unstamped = held
+        unstamped.openedAt = nil
+        #expect(NotchHold.remaining(unstamped, now: now) == 30.0 / 45.0)
+        unstamped.decision = CoreAskDecision(holdUntil: 1_090)
+        #expect(NotchHold.remaining(unstamped, now: now) == 1, "a longer hold starts full")
+
+        var decided = held
+        decided.decision = CoreAskDecision(holdUntil: 1_030, decided: true)
+        #expect(NotchHold.remaining(decided, now: now) == nil)
+        var open = held
+        open.decision = CoreAskDecision()
+        #expect(NotchHold.remaining(open, now: now) == nil, "a hold with no deadline has no ring")
+        #expect(NotchHold.remaining(CoreAsk(session: "claude:s1"), now: now) == nil)
+    }
+
     @Test("a refusal is one short line naming why")
     func refusalLines() {
         #expect(NotchAskRefusal.line(for: CoreReplyError(code: "stale_request"))

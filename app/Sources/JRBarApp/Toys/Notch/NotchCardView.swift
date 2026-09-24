@@ -693,6 +693,9 @@ struct NotchCardView: View {
                 if row.activity == .waiting, ask?.isDestructive == true {
                     AskRiskMark(size: 8.5)
                 }
+                if (choosing || answering), let ask {
+                    NotchHoldRing(ask: ask, style: style)
+                }
                 if choosing, let ask, let desk {
                     // A held question: Deny declines it through its
                     // hook, and its options are the answer.
@@ -1940,6 +1943,40 @@ struct NotchVerbButton: View {
         .buttonStyle(.plain)
         .disabled(busy)
         .accessibilityLabel(title)
+    }
+}
+
+/// The decide lane's hold beside a held ask's verbs: a thin ring that
+/// empties while the agent's hook waits (`NotchHold`), gone the moment
+/// the hold lapses. A mark, never a count. It sweeps on a once-a-second
+/// tick; under Reduce Motion it steps every five seconds instead, and
+/// it ticks only while a hold with a deadline is on screen.
+struct NotchHoldRing: View {
+    let ask: CoreAsk
+    let style: NotchCardStyle
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if ask.isHeldForDecision, ask.decision?.holdUntil != nil {
+            TimelineView(.periodic(from: .now, by: reduceMotion ? 5 : 1)) { context in
+                if let left = NotchHold.remaining(ask, now: context.date) {
+                    ZStack {
+                        Circle()
+                            .stroke(style.chipFill, lineWidth: 1.5)
+                        Circle()
+                            .trim(from: 0, to: left)
+                            .stroke(style.subColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .animation(reduceMotion ? nil : .linear(duration: 1), value: left)
+                    }
+                    .frame(width: 10, height: 10)
+                    .help("The agent is waiting for this answer; when the ring empties it asks in its own window")
+                    .accessibilityElement()
+                    .accessibilityLabel("Held for your answer")
+                    .accessibilityValue("\(Int((left * 100).rounded())) percent left")
+                }
+            }
+        }
     }
 }
 

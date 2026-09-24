@@ -555,6 +555,10 @@ struct NotchIslandView: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 4)
+                if let live, desk != nil, !CoreSession.isRemoteID(session),
+                   AskVerbs.chooses(live) || (local && AskVerbs.approves(live)) {
+                    NotchHoldRing(ask: live, style: .island)
+                }
                 if let live, let desk, !CoreSession.isRemoteID(session), AskVerbs.chooses(live) {
                     // A held question: Deny declines it through its hook,
                     // and its options are the answer.

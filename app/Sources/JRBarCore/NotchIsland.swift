@@ -1008,6 +1008,29 @@ public enum NotchAskVerbs: Equatable, Sendable {
     }
 }
 
+/// The decide lane's hold, as the notch draws it: a ring on a held ask's
+/// verbs that empties while the agent's hook waits for JR-Bar's answer
+/// and is gone the moment the hold lapses and the agent's own prompt
+/// carries on. A mark, never a count.
+public enum NotchHold {
+    /// The daemon's `DECISION_HOLD_SECONDS` — the whole ring when the ask
+    /// does not say when it opened.
+    public static let window: TimeInterval = 45
+
+    /// How much of the hold is left at `now`, 1 → 0 — nil when there is
+    /// no ring to draw: not held, decided, no deadline, or lapsed.
+    public static func remaining(_ ask: CoreAsk, now: Date) -> Double? {
+        guard ask.isHeld(at: now), let until = ask.decision?.holdUntil else { return nil }
+        // The hold starts with the ask; an opening stamp that cannot be
+        // the hold's (after it, or far before) falls back to the window.
+        var span = window
+        if let opened = ask.openedAt, until > opened, until - opened <= 4 * window {
+            span = until - opened
+        }
+        return min(1, max(0, (until - now.timeIntervalSince1970) / span))
+    }
+}
+
 /// A refused `answer_ask`, as one short line for the island: the same
 /// cases the panel's toast names (`PanelStore.answerRefused`), trimmed
 /// to fit under the notch. The ask stays open either way.
