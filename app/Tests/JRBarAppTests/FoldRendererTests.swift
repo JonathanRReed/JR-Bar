@@ -166,7 +166,7 @@ import Testing
 
     /// A Metal-compatible 32BGRA frame, grey everywhere, from `gray(x, y)`
     /// — the shape ScreenCaptureKit hands the sink.
-    private static func frame(width: Int, height: Int,
+    private static func makeFrame(width: Int, height: Int,
                               gray: (Int, Int) -> UInt8) throws -> CVPixelBuffer {
         var maybeBuffer: CVPixelBuffer?
         let attrs: [String: Any] = [
@@ -194,7 +194,7 @@ import Testing
         return buffer
     }
 
-    private static func target(_ device: MTLDevice, width: Int, height: Int) throws -> MTLTexture {
+    private static func makeTarget(_ device: MTLDevice, width: Int, height: Int) throws -> MTLTexture {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         desc.usage = [.shaderRead, .renderTarget]
@@ -243,9 +243,9 @@ import Testing
         let pattern: (Int, Int) -> UInt8 = { x, y in
             UInt8((x * 7 + y * 13) % 256) ^ (((x / 5 + y / 3) % 2 == 0) ? 0x40 : 0)
         }
-        let renderer = try Self.duoRenderer(Self.frame(width: width, height: height, gray: pattern))
+        let renderer = try Self.duoRenderer(Self.makeFrame(width: width, height: height, gray: pattern))
         Self.duo(renderer, theta: 110, blur: 1, shade: 1)
-        let out = try Self.target(renderer.device, width: width, height: height)
+        let out = try Self.makeTarget(renderer.device, width: width, height: height)
         #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
         let px = Self.grays(out)
         var worst = 0.0
@@ -261,11 +261,11 @@ import Testing
         // A checkerboard mid-fold with no darkening: the hinge band keeps
         // its contrast, the far band's blurs away.
         let width = 256, height = 160
-        let renderer = try Self.duoRenderer(Self.frame(width: width, height: height) { x, y in
+        let renderer = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { x, y in
             ((x / 8) + (y / 8)) % 2 == 0 ? 255 : 0
         })
         Self.duo(renderer, theta: 70, blur: 1, shade: 0)
-        let out = try Self.target(renderer.device, width: width, height: height)
+        let out = try Self.makeTarget(renderer.device, width: width, height: height)
         #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
         let px = Self.grays(out)
         let input = 127.5
@@ -279,11 +279,11 @@ import Testing
         // Full motion (a short fade, lid at 75°): the far band is black,
         // the hinge band as bright as the white it shows.
         let width = 256, height = 160
-        let renderer = try Self.duoRenderer(Self.frame(width: width, height: height) { _, _ in 255 })
+        let renderer = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { _, _ in 255 })
         Self.duo(renderer, theta: 75, fadeLength: 0.3)
         #expect(renderer.params.motion == 1)
         #expect(renderer.params.endFade == 0)
-        let out = try Self.target(renderer.device, width: width, height: height)
+        let out = try Self.makeTarget(renderer.device, width: width, height: height)
         #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
         let px = Self.grays(out)
         let far = Self.stats(px, width: width, rows: 2..<14, columns: 96..<160)
@@ -305,7 +305,7 @@ import Testing
             if x > 60 && x < 70 && y > 140 && y < 230 { v = 0 }
             return UInt8(v * 255)
         }
-        let renderer = try Self.duoRenderer(Self.frame(width: n, height: n, gray: shapes))
+        let renderer = try Self.duoRenderer(Self.makeFrame(width: n, height: n, gray: shapes))
         let device = renderer.device
         let probe = """
         struct DuoProbe { float lod; float shift; float pad0; float pad1; };
@@ -330,7 +330,7 @@ import Testing
         samplerDesc.tAddressMode = .clampToEdge
         let sampler = try #require(device.makeSamplerState(descriptor: samplerDesc))
         let queue = try #require(device.makeCommandQueue())
-        let out = try Self.target(device, width: n, height: n)
+        let out = try Self.makeTarget(device, width: n, height: n)
         let base = (0..<(n * n)).map { Double(shapes($0 % n, $0 / n)) }
         for level in [2.0, 3.0] {
             let command = try #require(queue.makeCommandBuffer())
@@ -395,7 +395,7 @@ import Testing
             #expect(!renderer.canDraw, "no frame yet: nothing to draw")
             FoldDuoModel.applyBlackout(to: &renderer.params)
             #expect(renderer.canDraw, "the blackout needs no texture")
-            let out = try Self.target(renderer.device, width: 64, height: 40)
+            let out = try Self.makeTarget(renderer.device, width: 64, height: 40)
             #expect(renderer.render(to: out, size: CGSize(width: 64, height: 40)))
             var px = [UInt8](repeating: 7, count: 64 * 40 * 4)
             out.getBytes(&px, bytesPerRow: 64 * 4, from: MTLRegionMake2D(0, 0, 64, 40), mipmapLevel: 0)

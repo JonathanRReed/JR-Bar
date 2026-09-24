@@ -597,4 +597,17 @@ struct FoldPortalTests {
                                           usedBuckets: 0, reduceMotion: false)
         #expect(wild.hold == 1, "the hold clamps")
     }
+
+    @Test("the Duo arms on 3° of travel, so a nudge never starts the capture")
+    func anchorArmThreshold() {
+        var anchor = MoveAnchor()
+        anchor.feed(105, at: 0)
+        anchor.armThreshold = 3
+        #expect(!anchor.moving(103), "a 2° nudge is not a fold")
+        #expect(!anchor.moving(102.5))
+        #expect(anchor.moving(101.5))
+        #expect(anchor.moving(108.5), "either way off the anchor")
+        anchor.armThreshold = nil
+        #expect(anchor.moving(103), "without it the stillness deadband arms, as before")
+    }
 }

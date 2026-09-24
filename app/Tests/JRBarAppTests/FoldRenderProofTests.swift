@@ -143,7 +143,7 @@ struct FoldRenderProofTests {
     /// A renderer for `look` holding the desktop, plus the observer pass
     /// (test-only: compiled from the renderer's own source, so it shares
     /// the Duo's side-view helpers).
-    static func rig(_ look: FoldLook) throws -> Rig {
+    static func makeRig(_ look: FoldLook) throws -> Rig {
         let renderer = try FoldRenderer(pixelFormat: .bgra8Unorm)
         renderer.look = look
         let frame = try desktop()
@@ -170,7 +170,7 @@ struct FoldRenderProofTests {
         samplerDesc.magFilter = .linear
         samplerDesc.sAddressMode = .clampToEdge
         samplerDesc.tAddressMode = .clampToEdge
-        let texture = try target(device)
+        let texture = try makeTarget(device)
         CVPixelBufferLockBaseAddress(frame, .readOnly)
         texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
                         withBytes: try #require(CVPixelBufferGetBaseAddress(frame)),
@@ -182,7 +182,7 @@ struct FoldRenderProofTests {
                    queue: try #require(device.makeCommandQueue()))
     }
 
-    static func target(_ device: MTLDevice) throws -> MTLTexture {
+    static func makeTarget(_ device: MTLDevice) throws -> MTLTexture {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         desc.usage = [.shaderRead, .renderTarget]
@@ -193,7 +193,7 @@ struct FoldRenderProofTests {
     /// What the glass shows at `angle`: the live desktop while the
     /// overlay is out (no travel yet), else the look's overlay — the
     /// toy's own mapping for each look, from a lid resting at 110°.
-    static func panel(_ rig: Rig, angle: Double, blur: Double = 0.6,
+    static func renderPanel(_ rig: Rig, angle: Double, blur: Double = 0.6,
                       shade: Double = 0.67) throws -> MTLTexture {
         let delta = rest - angle
         guard delta > 0.2 else { return rig.desktop }
@@ -208,14 +208,14 @@ struct FoldRenderProofTests {
                                   perspective: 0.6, blur: blur, shade: shade, frost: 0, hold: 1,
                                   usedBuckets: renderer.usedBucketCount, reduceMotion: false)
         }
-        let out = try target(renderer.device)
+        let out = try makeTarget(renderer.device)
         #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
         return out
     }
 
     /// What the seated eye sees with the glass at `angle`.
-    static func observer(_ rig: Rig, panel: MTLTexture, angle: Double) throws -> MTLTexture {
-        let out = try target(rig.renderer.device)
+    static func renderObserver(_ rig: Rig, panel: MTLTexture, angle: Double) throws -> MTLTexture {
+        let out = try makeTarget(rig.renderer.device)
         let command = try #require(rig.queue.makeCommandBuffer())
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = out
@@ -355,14 +355,14 @@ struct FoldRenderProofTests {
         // The Dock at the default knobs; the window corner with blur and
         // shade at 0 — a corner blurred over 7 px has no ±2 px position,
         // and the hold is geometry: the picture must not slide or shrink.
-        let rig = try Self.rig(.duo)
+        let rig = try Self.makeRig(.duo)
         var docks: [Double: CGPoint] = [:]
         var corners: [Double: CGPoint] = [:]
         for angle in [110.0, 100, 90, 75] {
-            let px = Self.pixels(try Self.observer(rig, panel: try Self.panel(rig, angle: angle), angle: angle))
+            let px = Self.pixels(try Self.renderObserver(rig, panel: try Self.renderPanel(rig, angle: angle), angle: angle))
             docks[angle] = Self.dockCentroid(px)
-            let flat = try Self.panel(rig, angle: angle, blur: 0, shade: 0)
-            corners[angle] = Self.windowCorner(Self.pixels(try Self.observer(rig, panel: flat, angle: angle)),
+            let flat = try Self.renderPanel(rig, angle: angle, blur: 0, shade: 0)
+            corners[angle] = Self.windowCorner(Self.pixels(try Self.renderObserver(rig, panel: flat, angle: angle)),
                                                near: Self.restingCorner)
         }
         let dock0 = try #require(docks[110])
@@ -381,9 +381,9 @@ struct FoldRenderProofTests {
 
     @Test("in the Duo the glass is black by the time a seated eye loses it")
     func duoBlackNearShut() throws {
-        let rig = try Self.rig(.duo)
+        let rig = try Self.makeRig(.duo)
         for angle in [30.0, 10] {
-            let px = Self.pixels(try Self.panel(rig, angle: angle))
+            let px = Self.pixels(try Self.renderPanel(rig, angle: angle))
             var brightest = 0.0
             for i in stride(from: 0, to: px.bytes.count, by: 4) {
                 brightest = max(brightest, Double(max(px.bytes[i], px.bytes[i + 1], px.bytes[i + 2])))
@@ -399,13 +399,13 @@ struct FoldRenderProofTests {
                       ?? "/tmp/jrbar-audit", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         for look in FoldLook.allCases {
-            let rig = try Self.rig(look)
+            let rig = try Self.makeRig(look)
             var cells: [(Double, CGImage, CGImage)] = []
             var drift: [String] = []
             var yellow0: CGPoint?
             for angle in Self.angles {
-                let panel = try Self.panel(rig, angle: angle)
-                let seen = try Self.observer(rig, panel: panel, angle: angle)
+                let panel = try Self.renderPanel(rig, angle: angle)
+                let seen = try Self.renderObserver(rig, panel: panel, angle: angle)
                 let px = Self.pixels(seen)
                 // How far the seated eye sees the yellow window move.
                 if let yellow = Self.yellowCentroid(px) {
@@ -424,7 +424,7 @@ struct FoldRenderProofTests {
             let title = look == .duo
                 ? "Duo — the picture holds still for a seated eye; the glass softens and darkens away from the hinge"
                 : "Room — the older portal room (Hold 100%)"
-            let strip = try Self.strip(cells, title: title)
+            let strip = try Self.makeStrip(cells, title: title)
             let url = dir.appendingPathComponent("fold-\(look.rawValue)-strip.png")
             try Self.writePNG(strip, to: url)
             print("fold proof: wrote \(url.path) — yellow window as the eye sees it: \(drift.joined(separator: "; "))")
@@ -445,7 +445,7 @@ struct FoldRenderProofTests {
 
     /// One column per angle: the panel on top, the observer below, each
     /// labelled, under a title.
-    static func strip(_ cells: [(Double, CGImage, CGImage)], title: String) throws -> CGImage {
+    static func makeStrip(_ cells: [(Double, CGImage, CGImage)], title: String) throws -> CGImage {
         let cw = 378, ch = 245, pad = 10, head = 34, label = 22
         let w = cells.count * cw + (cells.count + 1) * pad
         let h = head + 2 * (label + ch + pad) + pad
