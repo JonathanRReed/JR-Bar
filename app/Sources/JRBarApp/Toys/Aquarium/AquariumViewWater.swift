@@ -16,7 +16,11 @@ extension AquariumView {
     /// The water column's gradient per theme (docs/TOYS.md shop):
     /// the shop's theme items recolour the tank — a stop list per
     /// theme id, "classic" the default the game starts with.
-    var waterStops: [Gradient.Stop] {
+    var waterStops: [Gradient.Stop] { Self.waterStops(forTheme: themeKey) }
+
+    /// The water column's stops for a theme key — also the shop's
+    /// swatch for that theme.
+    static func waterStops(forTheme themeKey: String) -> [Gradient.Stop] {
         switch themeKey {
         case "reef":
             return [

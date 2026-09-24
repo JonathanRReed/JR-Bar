@@ -131,7 +131,8 @@ extension AquariumView {
     private func shopRow(_ item: ShopItem, game: AquariumGame,
                          adults: [Fish]) -> some View {
         let unlocked = item.isUnlocked(atLevel: game.tankLevel)
-        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+        return HStack(alignment: .center, spacing: 9) {
+            shopTile(item)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.displayName)
                     .font(.system(size: 11, weight: .medium))
@@ -159,6 +160,90 @@ extension AquariumView {
             }
         }
         .opacity(unlocked ? 1 : 0.55)
+    }
+
+    /// The row's tile: a theme shows its own water, a floor its sand,
+    /// everything else a glyph on its shelf's colour.
+    @ViewBuilder
+    private func shopTile(_ item: ShopItem) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        Group {
+            if let theme = item.themeID {
+                shape.fill(LinearGradient(stops: Self.waterStops(forTheme: theme),
+                                          startPoint: .top, endPoint: .bottom))
+                    .overlay(alignment: .bottom) {
+                        Capsule().fill(.white.opacity(0.35)).frame(width: 14, height: 2).padding(.bottom, 4)
+                    }
+            } else if let substrate = item.substrateID {
+                shape.fill(LinearGradient(colors: substrate == "white"
+                                          ? [Color(red: 0.98, green: 0.96, blue: 0.90), Color(red: 0.72, green: 0.68, blue: 0.58)]
+                                          : [Color(red: 0.34, green: 0.35, blue: 0.40), Color(red: 0.06, green: 0.06, blue: 0.08)],
+                                          startPoint: .top, endPoint: .bottom))
+            } else {
+                shape.fill(Self.shopTint(item.category).gradient)
+                    .overlay {
+                        Image(systemName: Self.shopSymbol(item))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .symbolRenderingMode(.hierarchical)
+                    }
+            }
+        }
+        .overlay(shape.strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+        .frame(width: 26, height: 26)
+        .accessibilityHidden(true)
+    }
+
+    /// Each shelf's colour for its tiles.
+    static func shopTint(_ category: ShopItem.Category) -> Color {
+        switch category {
+        case .decor: return Color(red: 0.20, green: 0.56, blue: 0.62)
+        case .pets: return Color(red: 0.24, green: 0.62, blue: 0.36)
+        case .accessories: return Color(red: 0.46, green: 0.36, blue: 0.78)
+        case .hats: return Color(red: 0.86, green: 0.38, blue: 0.46)
+        case .buddy: return Color(red: 0.93, green: 0.30, blue: 0.62)
+        case .themes: return Color(red: 0.20, green: 0.44, blue: 0.80)
+        case .substrates: return Color(red: 0.62, green: 0.50, blue: 0.30)
+        }
+    }
+
+    /// Each item's glyph on its tile.
+    static func shopSymbol(_ item: ShopItem) -> String {
+        switch item {
+        case .plant: return "leaf.fill"
+        case .rock, .rockyBackdrop, .reefWallBackdrop: return "mountain.2.fill"
+        case .treasureChest: return "shippingbox.fill"
+        case .castle: return "flag.fill"
+        case .driftwood: return "tree.fill"
+        case .amphora: return "wineglass.fill"
+        case .bubbleWall: return "bubbles.and.sparkles.fill"
+        case .anemoneBed, .buddyFlower: return "camera.macro"
+        case .sunkenStatue: return "theatermasks.fill"
+        case .shipwreck: return "sailboat.fill"
+        case .ruinedColumns: return "building.columns.fill"
+        case .coralGarden: return "allergens.fill"
+        case .moonJellyLamp: return "lamp.table.fill"
+        case .volcano: return "flame.fill"
+        case .snail, .hermitCrab: return "fossil.shell.fill"
+        case .jellyfish: return "umbrella.fill"
+        case .cleanerShrimp: return "ant.fill"
+        case .tetraSchool: return "fish.fill"
+        case .seaTurtle: return "tortoise.fill"
+        case .axolotl: return "lizard.fill"
+        case .octopus: return "hurricane"
+        case .manta: return "bird.fill"
+        case .sunglasses: return "sunglasses.fill"
+        case .bowTie, .buddyBow: return "sparkles"
+        case .monocle: return "eyeglasses"
+        case .headphones: return "headphones"
+        case .scarf: return "wind"
+        case .topHat: return "hat.widebrim.fill"
+        case .tinyLaptop: return "laptopcomputer"
+        case .hatBeanie, .buddyBeanie: return "hat.cap.fill"
+        case .hatParty: return "party.popper.fill"
+        case .hatCrown: return "crown.fill"
+        default: return "sparkles"
+        }
     }
 
     /// What an owned item offers: a surface's Use, a wearable's fish
