@@ -127,7 +127,7 @@ def test_integration_cli_rejects_codexbar__and_1_more() -> None:
     assert document["settingsFileReadOnly"] is False
     assert "readOnly" not in document
     assert document["t3code"]["minimumVersion"] == "0.0.33"
-    assert document["t3code"]["maximumTestedVersion"] == "0.0.33"
+    assert document["t3code"]["maximumTestedVersion"] == "0.0.43"
     assert document["t3code"]["connectionMode"] == "sqlite-readonly-v1"
     assert (
         document["creator-micro"]["connectionMode"]
