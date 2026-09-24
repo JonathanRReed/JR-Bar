@@ -11,8 +11,11 @@ from jrbar.provider_usage_platform import (
     UsageLane,
 )
 from jrbar.usage_event_hooks import (
+    UsageHookLimiter,
+    UsageHookResults,
     detect_usage_hook_events,
-    run_usage_hooks,
+    dispatch_usage_hooks,
+    load_usage_hook_config,
 )
 
 
@@ -127,6 +130,17 @@ def test_quota_low_fires_on_the_downward_crossing_only__and_2_more() -> None:
 
 
 
+def _dispatch_legacy(path: str, events):
+    """The first version's one hook path, run the way the monitor runs it
+    now: migrated to the ``legacy`` rule and dispatched like every rule."""
+    return dispatch_usage_hooks(
+        load_usage_hook_config(None, legacy_path=path),
+        events,
+        limiter=UsageHookLimiter(interval=0.0),
+        results=UsageHookResults(),
+    )
+
+
 def test_runner_invokes_the_executable_with_event_argv(tmp_path) -> None:
     record = tmp_path / "events.txt"
     script = tmp_path / "hook.sh"
@@ -138,7 +152,7 @@ def test_runner_invokes_the_executable_with_event_argv(tmp_path) -> None:
         (snapshot((lane(18.0),)),),
         thresholds=THRESHOLDS,
     )
-    worker = run_usage_hooks(str(script), events)
+    worker = _dispatch_legacy(str(script), events)
     assert worker is not None
     # Bounded, with room for a loaded machine: the worker starts the hook
     # in its own session and waits for it.
@@ -156,3 +170,28 @@ def test_hook_path_message_expands_home(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     assert hook_path_message("~/hook.sh") == "Usage event hook saved."
     assert "does not exist" in hook_path_message("~/missing.sh")
+
+
+def test_a_legacy_path_under_home_still_runs(tmp_path, monkeypatch) -> None:
+    """The first version expanded ``~``; a path saved as ``~/hook.sh``
+    must not turn into a relative path that never runs."""
+    record = tmp_path / "events.txt"
+    script = tmp_path / "hook.sh"
+    script.write_text(f'#!/bin/sh\necho "$1 $4" >> "{record}"\n')
+    os.chmod(script, stat.S_IRWXU)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    [rule] = load_usage_hook_config(None, legacy_path="~/hook.sh").runnable()
+    assert rule.executable == str(script)
+
+    events = detect_usage_hook_events(
+        (snapshot((lane(25.0),)),),
+        (snapshot((lane(18.0),)),),
+        thresholds=THRESHOLDS,
+    )
+    worker = _dispatch_legacy("~/hook.sh", events)
+    assert worker is not None
+    # Bounded, with room for a loaded machine.
+    worker.join(timeout=10.0)
+    assert not worker.is_alive()
+    assert record.read_text().strip() == "quota_low 18"

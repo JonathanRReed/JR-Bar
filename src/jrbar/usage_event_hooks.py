@@ -60,7 +60,6 @@ from .provider_usage_platform import ProviderSourceState
 from .usage_source_settings import (
     USAGE_HOOK_ANY_EVENT,
     USAGE_HOOK_EVENTS,
-    legacy_usage_hook_rule,
     normalize_usage_hooks,
 )
 
@@ -657,7 +656,7 @@ def sample_event(event_name: str, provider_id: str, *, now: float | None = None)
     )
 
 
-# --- The first version's API, kept for the legacy settings window ---------
+# --- The first version's save message, kept for the legacy settings window --
 
 
 def hook_path_message(hook_path: str) -> str:
@@ -670,26 +669,6 @@ def hook_path_message(hook_path: str) -> str:
     if not os.access(hook_path, os.X_OK):
         return "Saved, but that file is not executable (chmod +x it)."
     return "Usage event hook saved."
-
-
-def run_usage_hooks(
-    executable: str,
-    events: tuple[UsageHookEvent, ...],
-    *,
-    environ: Mapping[str, str] | None = None,
-) -> threading.Thread | None:
-    """Fire-and-forget the first version's hook: one path, positional argv,
-    every event. It now runs as the ``legacy`` rule, so it gets the small
-    environment like every other hook."""
-    if not executable or not events:
-        return None
-    rule = UsageHookRule.from_dict(legacy_usage_hook_rule(os.path.expanduser(executable)))
-    return dispatch_usage_hooks(
-        UsageHookConfig(True, (rule,)),
-        events,
-        limiter=UsageHookLimiter(interval=0.0),
-        environ=environ,
-    )
 
 
 __all__ = [
@@ -717,6 +696,5 @@ __all__ = [
     "load_usage_hook_config",
     "rule_problem",
     "run_rule",
-    "run_usage_hooks",
     "sample_event",
 ]

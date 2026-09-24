@@ -15,6 +15,7 @@ instead of vanishing.
 from __future__ import annotations
 
 import math
+import os
 import re
 from typing import Any
 
@@ -131,14 +132,16 @@ def normalize_usage_hooks(raw: object, *, legacy_path: str = "") -> dict[str, An
 
 
 def legacy_usage_hook_rule(path: str) -> dict[str, Any]:
-    """The rule a v1 ``usage_event_hook_path`` migrates to."""
+    """The rule a v1 ``usage_event_hook_path`` migrates to. The first
+    version expanded a leading ``~``, so the rule does too; kept as typed,
+    ``~/bin/chime.sh`` would count as a relative path and never run."""
     return {
         "id": "legacy",
         "enabled": True,
         "event": USAGE_HOOK_ANY_EVENT,
         "provider": None,
         "threshold_remaining": None,
-        "executable": path.strip(),
+        "executable": os.path.expanduser(path.strip()),
         "arguments": [],
         "timeout_seconds": DEFAULT_USAGE_HOOK_TIMEOUT_SECONDS,
         "argv": "legacy",
