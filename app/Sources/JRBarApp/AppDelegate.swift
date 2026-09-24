@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var effectsWindow: EffectStudioWindowController?
     private var deckStore: DeckStore?
     private var controlCenterWindow: ControlCenterWindowController?
+    private var whatsNewWindow: WhatsNewWindowController?
     private var rail: DeckRailController?
     private var events: EventCoordinator?
     private var toysStore: ToysStore?
@@ -765,7 +766,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         setup.store.model.setIconStyle = { [weak settingsStore] in settingsStore?.menuBarIconStyle = $0 }
         setup.store.onOpenToys = { [weak settingsWindow] in settingsWindow?.show(page: .toys) }
-        if setup.store.shouldPresentOnLaunch { setup.show() }
+        let setupShown = setup.store.shouldPresentOnLaunch
+        if setupShown { setup.show() }
+
+        // What's New: once per release, after Setup has run to its end
+        // and never in the launch that shows it, at the first moment the
+        // monitor is live, the session unlocked and nothing full screen
+        // in front. Closing it stamps the release in setup.json.
+        let whatsNew = WhatsNewWindowController()
+        whatsNew.markSeen = { [weak setup] release in setup?.store.markWhatsNewSeen(release) }
+        self.whatsNewWindow = whatsNew
+        if WhatsNewGate.isArmed(setupFinished: setup.store.hasFinished, setupShownThisLaunch: setupShown,
+                                seen: setup.store.whatsNewSeen) {
+            whatsNew.arm(core: core)
+        }
 
         // Developer switches: `JRBAR_OPEN_PANEL=1` opens the panel shortly
         // after launch (screenshots, design passes) without a click;
@@ -811,6 +825,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                     StatusItemController.renderStyles(to: directory, live: statusItem.meters, liveDots: statusItem.sessionDots)
                     print("status icons: re-rendered with \(statusItem.meters.count) live meters, \(statusItem.sessionDots.count) sessions")
                 }
+            }
+        }
+        // `JRBAR_OPEN_WHATS_NEW=1` opens What's New by hand (screenshots);
+        // closing it stamps the release like any close.
+        if environment["JRBAR_OPEN_WHATS_NEW"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak whatsNew] in
+                MainActor.assumeIsolated { whatsNew?.show() }
             }
         }
         if environment["JRBAR_OPEN_HISTORY"] != nil {
@@ -1701,9 +1722,7 @@ extension AppDelegate {
             case .effects: self?.effectsWindow?.show()
             case .controlCenter: self?.controlCenterWindow?.show()
             case .setup: SetupWindowController.show()
-            // No window yet: the name routes so the menus and the palette
-            // can list it before What's New is built.
-            case .whatsNew: break
+            case .whatsNew: self?.whatsNewWindow?.show()
             }
         }
         router.quiet = { [weak self] mode, seconds in

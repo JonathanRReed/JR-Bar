@@ -85,41 +85,9 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
     @discardableResult
     func attachContent(to window: NSWindow) -> NSViewController {
         WindowContentLifecycle.attach(to: window, title: "Welcome to JR-Bar") {
-            Self.plate(around: NSHostingController(rootView: SetupView(store: store)))
+            WindowContentLifecycle.glassPlate(around: NSHostingController(rootView: SetupView(store: store)),
+                                              size: Self.contentSize)
         }
-    }
-
-    /// The floating glass card: the window's content IS the plate, with
-    /// the hosting view inside. The window supplies its own rounding, so
-    /// the plate's corner radius stays square to it. `JRBAR_PLAIN_MATERIAL`
-    /// swaps in a plain effect view, as the other glass surfaces do. The
-    /// plate is a controller of its own so the window can drop the whole
-    /// card, hosting view and all, when it closes.
-    private static func plate(around hosting: NSViewController) -> NSViewController {
-        let plate = NSViewController()
-        if ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] == nil {
-            let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: Self.contentSize))
-            glass.style = .regular
-            glass.cornerRadius = 0
-            glass.contentView = hosting.view
-            plate.view = glass
-        } else {
-            let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: Self.contentSize))
-            effect.material = .windowBackground
-            effect.blendingMode = .behindWindow
-            effect.state = .active
-            hosting.view.translatesAutoresizingMaskIntoConstraints = false
-            effect.addSubview(hosting.view)
-            NSLayoutConstraint.activate([
-                hosting.view.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-                hosting.view.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-                hosting.view.topAnchor.constraint(equalTo: effect.topAnchor),
-                hosting.view.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-            ])
-            plate.view = effect
-        }
-        plate.addChild(hosting)
-        return plate
     }
 
     private func makeWindow() -> NSWindow {

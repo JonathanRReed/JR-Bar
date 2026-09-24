@@ -54,6 +54,39 @@ enum WindowContentLifecycle {
         return hosting
     }
 
+    /// The floating glass card Setup and What's New are: the window's
+    /// content IS the plate, with the hosting view inside. The window
+    /// supplies its own rounding, so the plate's corner radius stays
+    /// square to it. `JRBAR_PLAIN_MATERIAL` swaps in a plain effect view,
+    /// as the other glass surfaces do. The plate is a controller of its
+    /// own so a closing window drops the whole card, hosting view and all.
+    static func glassPlate(around hosting: NSViewController, size: NSSize) -> NSViewController {
+        let plate = NSViewController()
+        if ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] == nil {
+            let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: size))
+            glass.style = .regular
+            glass.cornerRadius = 0
+            glass.contentView = hosting.view
+            plate.view = glass
+        } else {
+            let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
+            effect.material = .windowBackground
+            effect.blendingMode = .behindWindow
+            effect.state = .active
+            hosting.view.translatesAutoresizingMaskIntoConstraints = false
+            effect.addSubview(hosting.view)
+            NSLayoutConstraint.activate([
+                hosting.view.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+                hosting.view.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+                hosting.view.topAnchor.constraint(equalTo: effect.topAnchor),
+                hosting.view.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+            ])
+            plate.view = effect
+        }
+        plate.addChild(hosting)
+        return plate
+    }
+
     /// Back to a pure menu-bar process once the last titled window goes
     /// away. Runs after the close has finished, and only in the accessory
     /// app itself.

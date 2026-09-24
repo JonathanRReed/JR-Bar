@@ -32,22 +32,26 @@ struct SetupState: Codable, Equatable, Sendable {
     /// only records; a later look that finds one of these gone says so
     /// once — the reset an OS update or a re-signed build can leave.
     var grantedPermissions: [String]?
+    /// The release (`WhatsNewCatalog.releaseID`) whose What's New window
+    /// was last closed. nil until one is — the launch gate's "not seen".
+    var whatsNewSeen: String?
 
     static let currentVersion = 1
 
     init(version: Int = SetupState.currentVersion, completedSteps: [String] = [],
          skippedSteps: [String] = [], finishedAt: Double? = nil, presentedCount: Int = 0,
-         grantedPermissions: [String]? = nil) {
+         grantedPermissions: [String]? = nil, whatsNewSeen: String? = nil) {
         self.version = version
         self.completedSteps = completedSteps
         self.skippedSteps = skippedSteps
         self.finishedAt = finishedAt
         self.presentedCount = presentedCount
         self.grantedPermissions = grantedPermissions
+        self.whatsNewSeen = whatsNewSeen
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, completedSteps, skippedSteps, finishedAt, presentedCount, grantedPermissions
+        case version, completedSteps, skippedSteps, finishedAt, presentedCount, grantedPermissions, whatsNewSeen
     }
 
     /// Missing or wrongly typed keys read as the defaults; unknown keys
@@ -60,6 +64,7 @@ struct SetupState: Codable, Equatable, Sendable {
         finishedAt = (try? container.decodeIfPresent(Double.self, forKey: .finishedAt)) ?? nil
         presentedCount = (try? container.decodeIfPresent(Int.self, forKey: .presentedCount)) ?? 0
         grantedPermissions = (try? container.decodeIfPresent([String].self, forKey: .grantedPermissions)) ?? nil
+        whatsNewSeen = (try? container.decodeIfPresent(String.self, forKey: .whatsNewSeen)) ?? nil
     }
 }
 
