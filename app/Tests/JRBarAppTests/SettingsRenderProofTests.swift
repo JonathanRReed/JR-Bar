@@ -18,8 +18,10 @@ import Testing
 struct SettingsRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 
-    /// The detail pane's width at the window's default size.
-    static let paneWidth: CGFloat = 560
+    /// The detail pane's width at the window's older default size;
+    /// `JRBAR_RENDER_PROOF_WIDTH=430` draws the narrowest the window allows.
+    static let paneWidth: CGFloat = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_WIDTH"]
+        .flatMap(Double.init).map { CGFloat($0) } ?? 560
 
     private static var directory: URL {
         URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
