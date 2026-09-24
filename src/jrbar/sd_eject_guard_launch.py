@@ -668,3 +668,154 @@ class _path_context:
 
     def __exit__(self, *_exc: object) -> None:
         return None
+
+
+# --- the guard's real state, and protecting the mounted SidePulse ------------
+
+
+@dataclass(frozen=True)
+class SdEjectGuardStatus:
+    """What launchd actually has, not what the installer meant.
+
+    The guard shipped installed without a volume UUID, so its plist has
+    ``RunAtLoad`` and ``KeepAlive`` false and launchd had never run it
+    (``runs = 0`` since boot): "installed" was true and protected nothing.
+    ``protects`` is the one word that matters."""
+
+    installed: bool
+    scope: str | None = None
+    plist_path: str | None = None
+    volume_uuid: str | None = None
+    run_at_load: bool = False
+    keep_alive: bool = False
+    loaded: bool = False
+    running: bool = False
+    runs: int | None = None
+    pid: int | None = None
+    last_exit: str | None = None
+
+    @property
+    def protects(self) -> bool:
+        return self.installed and self.volume_uuid is not None and self.keep_alive and self.loaded
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "installed": self.installed,
+            "scope": self.scope,
+            "plist_path": self.plist_path,
+            "volume_uuid": self.volume_uuid,
+            "run_at_load": self.run_at_load,
+            "keep_alive": self.keep_alive,
+            "loaded": self.loaded,
+            "running": self.running,
+            "runs": self.runs,
+            "pid": self.pid,
+            "last_exit": self.last_exit,
+            "protects": self.protects,
+        }
+
+
+def _launchctl_print(domain: str) -> tuple[int, str]:
+    completed = subprocess.run(
+        [str(trusted_system_tool("launchctl")), "print", f"{domain}/{SD_EJECT_GUARD_LABEL}"],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+    return completed.returncode, completed.stdout or ""
+
+
+def parse_launchctl_print(text: str) -> dict[str, str]:
+    """``key = value`` lines from ``launchctl print`` (first one wins)."""
+    fields: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        key, separator, value = line.strip().partition(" = ")
+        if separator and key and key not in fields:
+            fields[key] = value.strip()
+    return fields
+
+
+def sd_eject_guard_status(
+    *,
+    user_paths: SdEjectGuardPaths | None = None,
+    system_paths: SdEjectGuardPaths | None = None,
+    launchctl_print=_launchctl_print,
+) -> SdEjectGuardStatus:
+    """The guard's plist and launchd state, read-only."""
+    for scope in ("user", "system"):
+        paths = paths_for_scope(scope, user_paths=user_paths, system_paths=system_paths)  # type: ignore[arg-type]
+        if not paths.plist_path.exists():
+            continue
+        try:
+            plist = plistlib.loads(paths.plist_path.read_bytes())
+        except (OSError, plistlib.InvalidFileException, ValueError):
+            plist = {}
+        arguments = [str(value) for value in plist.get("ProgramArguments", []) if isinstance(value, str)]
+        volume_uuid = None
+        if "--volume-uuid" in arguments:
+            index = arguments.index("--volume-uuid")
+            if index + 1 < len(arguments):
+                volume_uuid = arguments[index + 1]
+        loaded = running = False
+        runs = pid = None
+        last_exit = None
+        try:
+            code, text = launchctl_print(launch_domain(scope))  # type: ignore[arg-type]
+        except Exception:
+            code, text = 1, ""
+        if code == 0:
+            fields = parse_launchctl_print(text)
+            loaded = True
+            running = fields.get("state") == "running"
+            try:
+                runs = int(fields.get("runs", ""))
+            except ValueError:
+                runs = None
+            try:
+                pid = int(fields.get("pid", ""))
+            except ValueError:
+                pid = None
+            last_exit = fields.get("last exit code")
+        return SdEjectGuardStatus(
+            installed=True,
+            scope=scope,
+            plist_path=str(paths.plist_path),
+            volume_uuid=volume_uuid,
+            run_at_load=bool(plist.get("RunAtLoad")),
+            keep_alive=bool(plist.get("KeepAlive")),
+            loaded=loaded,
+            running=running,
+            runs=runs,
+            pid=pid,
+            last_exit=last_exit,
+        )
+    return SdEjectGuardStatus(installed=False)
+
+
+def mounted_volume_uuid(volume: Path, *, facts=None) -> str | None:
+    """The mounted volume's UUID from ``diskutil info`` (read-only)."""
+    from .device_inventory import diskutil_facts
+
+    reader = facts or diskutil_facts
+    found = reader(Path(volume))
+    uuid = getattr(found, "volume_uuid", None) if found is not None else None
+    try:
+        return validate_volume_uuid(uuid) if uuid else None
+    except SdEjectGuardInstallError:
+        return None
+
+
+def protect_mounted_sidepulse(
+    volume: Path,
+    *,
+    installer=install_sd_eject_guard,
+    uuid_reader=mounted_volume_uuid,
+) -> SdEjectGuardResult:
+    """Reinstall the guard for THIS SidePulse: its volume UUID in the plist,
+    so launchd starts it and keeps it alive. Only ever from an explicit
+    click (``protect_sidepulse``); nothing calls it on its own."""
+    uuid = uuid_reader(Path(volume))
+    if uuid is None:
+        raise SdEjectGuardInstallError(f"could not read a volume UUID for {volume}")
+    return installer(scope="user", volume_uuid=uuid, start=True)
