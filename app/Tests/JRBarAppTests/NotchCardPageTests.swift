@@ -117,15 +117,52 @@ struct NotchCardPageTests {
         #expect(!wiring.contains("expandFromBand"), "a bare expand opens on Now")
     }
 
-    @Test("with no island drawn the shelf link says why instead of doing nothing")
-    func shelfLinkWithoutIslandIsRefused() {
+    @Test("with no island drawn the shelf goes to the band's glass card, and only an off utility refuses")
+    func shelfWithoutIslandUsesTheGlassCard() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         toy.islandVisible = false
-        #expect(toy.toggleShelf() == "The shelf opens in the notch island, and the island isn't showing.")
+        #expect(toy.notchSurface == .glass)
+        var glassToggles = 0
+        toy.toggleGlassShelf = {
+            glassToggles += 1
+            return nil
+        }
+        #expect(toy.toggleShelf() == nil)
+        #expect(glassToggles == 1)
         #expect(!toy.islandExpanded)
-        #expect(toy.cardModel.page == .now, "a refused open leaves no shelf page waiting")
+        #expect(toy.cardModel.page == .now, "the island's card is not the one that opened")
+        // The glass card's own answer is the link's.
+        toy.toggleGlassShelf = { "The Shelf card has nowhere to open right now." }
+        #expect(toy.toggleShelf() == "The Shelf card has nowhere to open right now.")
         store.state.notch.enabled = false
         #expect(toy.toggleShelf() == "The Notch utility is off — turn it on in Utilities.")
+        #expect(glassToggles == 1)
+    }
+
+    @Test("the delegate hands the glass card's shelf to the band's own toggle")
+    func delegateWiresTheGlassShelf() throws {
+        let delegate = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Sources/JRBarApp/AppDelegate.swift")
+        let text = try String(contentsOf: delegate, encoding: .utf8)
+        let start = try #require(text.range(of: "toysStore.notch.toggleGlassShelf = {"))
+        let end = try #require(text.range(of: "\n        }\n", range: start.upperBound..<text.endIndex))
+        let wiring = String(text[start.upperBound..<end.lowerBound])
+        #expect(wiring.contains("interaction?.toggleShelfCard()"))
+    }
+
+    @Test("a glass card with nothing to hang from says so and leaves no pin or Shelf page")
+    func glassShelfWithNowhereToOpen() {
+        let idle = ScreenBarFocus(style: nil, label: "JR-Bar", word: "Idle", clickSession: nil)
+        let presenter = NotchCardPresenter(model: makeTestCardModel())
+        presenter.surface = { .glass }
+        presenter.focus = { idle }
+        // No anchor: the pin lands, and nothing is ever ordered in.
+        let interaction = ScreenBarInteraction(card: presenter, hitRects: { [] }, focus: { idle })
+        #expect(interaction.toggleShelfCard() == "The Shelf card has nowhere to open right now.")
+        #expect(!presenter.isShown)
+        #expect(!presenter.isPinned)
+        #expect(presenter.model.page == .now, "the next band open starts on Now")
     }
 }

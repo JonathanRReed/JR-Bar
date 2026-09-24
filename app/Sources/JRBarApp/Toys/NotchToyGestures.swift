@@ -37,25 +37,28 @@ extension NotchToy {
 
     /// ⌃⌥D and `jrbar://shelf`: the card opens straight onto the shelf,
     /// or folds when it is already up — the Yoink key, which is about
-    /// the shelf, not the sessions. nil once it acted, else the sentence
-    /// a link says instead of doing nothing: the shelf lives in the
-    /// island, and with no island drawn there is no card to open.
+    /// the shelf, not the sessions. The island's card while the island
+    /// is drawn, else the band's glass card, which has the same two
+    /// pages. nil once it acted, else the sentence a link says instead
+    /// of doing nothing: with the utility off there is no card at all.
     @discardableResult
     func toggleShelf() -> String? {
         if islandExpanded {
             collapseFromBand()
             return nil
         }
-        guard isDrawingIsland else {
-            return settings.enabled
-                ? "The shelf opens in the notch island, and the island isn't showing."
-                : "The Notch utility is off — turn it on in Utilities."
+        switch notchSurface {
+        case .island:
+            // Fold's overlay owns the screen; the band press waits it out too.
+            guard !foldEngaged else { return nil }
+            cardModel.show(.shelf)
+            expandFromBand()
+            return nil
+        case .glass:
+            return toggleGlassShelf()
+        case .none:
+            return "The Notch utility is off — turn it on in Utilities."
         }
-        // Fold's overlay owns the screen; the band press waits it out too.
-        guard !foldEngaged else { return nil }
-        cardModel.show(.shelf)
-        expandFromBand()
-        return nil
     }
 
     /// ⌥-click on the resting island: the card opens straight onto the

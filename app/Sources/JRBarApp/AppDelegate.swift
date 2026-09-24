@@ -245,9 +245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         self.hotkey = hotkey
         // Yoink's drop-target summon: ⌃⌥D toggles the island's shelf
-        // card — open pinned, a second press folds it. The band click's
-        // own expand/collapse pair drives both directions so the card
-        // obeys every existing guard (fold engaged, capsule mid-show).
+        // card (the band's glass card with no island drawn) — open
+        // pinned, a second press folds it. The band click's own
+        // expand/collapse pair drives both directions so the card obeys
+        // every existing guard (fold engaged, capsule mid-show).
         let shelfHotkey = PanelHotkey(signature: OSType(0x6A726273),
                                       keyCode: UInt32(kVK_ANSI_D))
         shelfHotkey.onPress = { [weak toysStore] in
@@ -354,6 +355,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // alive while the island's debounce decides on the card.
         interaction.onWingHover = { [weak screenBar] side in screenBar?.hoverWing(side) }
         toysStore.notch.pointerOnBand = { [weak interaction] in interaction?.hovering ?? false }
+        // With no island drawn, ⌃⌥D and `jrbar://shelf` open the glass
+        // card on its Shelf page instead — the same two pages.
+        toysStore.notch.toggleGlassShelf = { [weak interaction] in
+            interaction?.toggleShelfCard() ?? "JR-Bar is still starting."
+        }
         // The grown island's card reads the same facts the glass one
         // does.
         toysStore.notch.cardFocus = { [weak self] in self?.store?.screenBarFocus }
