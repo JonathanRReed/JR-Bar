@@ -250,16 +250,20 @@ enum TankPaint {
                 startPoint: CGPoint(x: rect.midX, y: rect.minY),
                 endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
             if caustics, day > 0.3 {
-                layer.stroke(causticLace(in: rect, unit: unit, seed: seed),
-                             with: .linearGradient(
-                                 Gradient(stops: [
-                                     .init(color: color(a.light, 0.34 * day), location: 0),
-                                     .init(color: color(a.light, 0.10 * day), location: 0.45),
-                                     .init(color: color(a.light, 0), location: 0.75),
-                                 ]),
-                                 startPoint: CGPoint(x: rect.midX, y: rect.minY),
-                                 endPoint: CGPoint(x: rect.midX, y: rect.maxY)),
-                             style: StrokeStyle(lineWidth: 1.3 / unit, lineCap: .round, lineJoin: .round))
+                // The net: the crown lit, then each cell cut back out,
+                // so only the light between the cells stays.
+                layer.drawLayer { net in
+                    net.fill(box, with: .linearGradient(
+                        Gradient(stops: [
+                            .init(color: color(a.light, 0.34 * day), location: 0),
+                            .init(color: color(a.light, 0.12 * day), location: 0.4),
+                            .init(color: color(a.light, 0), location: 0.7),
+                        ]),
+                        startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                        endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
+                    net.blendMode = .destinationOut
+                    net.fill(causticCells(in: rect, cell: 13 / unit, seed: seed), with: .color(.black))
+                }
             }
             layer.fill(box, with: .linearGradient(
                 Gradient(stops: [
@@ -275,34 +279,38 @@ enum TankPaint {
     }
 
     /// Caustics: the net of light the surface ripples focus onto
-    /// whatever is below — two families of wandering lines whose
-    /// crossings close into cells. Seeded, so a baked piece keeps its
-    /// lace; the sand's live net moves `phase`.
-    static func causticLace(in rect: CGRect, unit: Double = 1, seed: UInt64,
-                            phase: Double = 0, squash: Double = 1) -> Path {
+    /// whatever is below, as the cells between its bright lines — a
+    /// jittered lattice of rounded cells, each drawn a little smaller
+    /// than its corners so the net shows where they don't reach. Fill
+    /// them out of a lit layer. Seeded, so a baked piece keeps its net.
+    static func causticCells(in rect: CGRect, cell: Double, seed: UInt64) -> Path {
+        let columns = max(1, Int((rect.width / cell).rounded(.up)) + 1)
+        let rows = max(1, Int((rect.height / (cell * 0.7)).rounded(.up)) + 1)
         var rng = Seeded(seed)
+        var corners: [CGPoint] = []
+        corners.reserveCapacity((columns + 1) * (rows + 1))
+        for row in 0...rows {
+            for col in 0...columns {
+                let stagger = row.isMultiple(of: 2) ? 0 : 0.5
+                corners.append(CGPoint(
+                    x: rect.minX + (Double(col) - 0.5 + stagger + rng.next(-0.38, 0.38)) * cell,
+                    y: rect.minY + (Double(row) - 0.5 + rng.next(-0.3, 0.3)) * cell * 0.7))
+            }
+        }
         var p = Path()
-        let cell = 11 / unit
-        let rows = max(1, Int((rect.height / (cell * squash)).rounded(.up)))
-        let step = max(2 / unit, cell * 0.35)
-        for family in 0..<2 {
-            let tilt = family == 0 ? 0.35 : -0.35
-            for row in 0...rows {
-                let y0 = rect.minY + (Double(row) + rng.next(-0.3, 0.3)) * cell * squash
-                let f1 = rng.next(0.45, 0.75) / cell
-                let f2 = rng.next(0.9, 1.4) / cell
-                let p1 = rng.next(0, .pi * 2) + phase * (family == 0 ? 1 : -1.3)
-                let p2 = rng.next(0, .pi * 2) - phase * 0.7
-                var x = rect.minX - cell
-                var first = true
-                while x <= rect.maxX + cell {
-                    let y = y0 + (x - rect.midX) * tilt * 0.12 * squash
-                        + cell * squash * (0.34 * sin(x * f1 + p1) + 0.18 * sin(x * f2 + p2))
-                    if first { p.move(to: CGPoint(x: x, y: y)); first = false } else {
-                        p.addLine(to: CGPoint(x: x, y: y))
-                    }
-                    x += step
+        for row in 0..<rows {
+            for col in 0..<columns {
+                let a = corners[row * (columns + 1) + col], b = corners[row * (columns + 1) + col + 1]
+                let c = corners[(row + 1) * (columns + 1) + col + 1], d = corners[(row + 1) * (columns + 1) + col]
+                let cx = (a.x + b.x + c.x + d.x) / 4, cy = (a.y + b.y + c.y + d.y) / 4
+                let keep = rng.next(0.78, 0.88)
+                let q = [a, b, c, d].map { CGPoint(x: cx + ($0.x - cx) * keep, y: cy + ($0.y - cy) * keep) }
+                p.move(to: CGPoint(x: (q[3].x + q[0].x) / 2, y: (q[3].y + q[0].y) / 2))
+                for k in 0..<4 {
+                    let next = q[(k + 1) % 4]
+                    p.addQuadCurve(to: CGPoint(x: (q[k].x + next.x) / 2, y: (q[k].y + next.y) / 2), control: q[k])
                 }
+                p.closeSubpath()
             }
         }
         return p
