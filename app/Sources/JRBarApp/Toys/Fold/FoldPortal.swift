@@ -742,6 +742,15 @@ enum FoldDuoModel {
         return radians(max(0, reference - blackAngle(eye: eye(perspective: perspective))))
     }
 
+    /// The reference a Duo frame draws from: taken when the overlay
+    /// orders in and kept until it orders out, so one gesture draws from
+    /// one lid even when the anchor moves under it — the dwell pause
+    /// re-seats it at the parked angle while the fold is still unwinding.
+    static func drawnReference(held: Double?, current: Double?, overlayVisible: Bool) -> Double? {
+        if !overlayVisible || held == nil, let current { return current }
+        return held
+    }
+
     /// The overlay's own alpha over the first degrees of travel.
     static func alpha(delta: Double) -> Double {
         guard delta.isFinite else { return 0 }

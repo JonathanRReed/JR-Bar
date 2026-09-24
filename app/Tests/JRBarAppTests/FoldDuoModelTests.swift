@@ -353,6 +353,23 @@ struct FoldDuoModelTests {
         #expect(FoldDuoModel.reopenDelta(reference: .nan, perspective: 0.6) == 0)
     }
 
+    @Test("one gesture draws from one reference, so a dwell re-seat never flashes black")
+    func drawnReferenceHoldsPerGesture() {
+        // The overlay orders in: the current reference is taken.
+        #expect(FoldDuoModel.drawnReference(held: nil, current: 110, overlayVisible: false) == 110)
+        #expect(FoldDuoModel.drawnReference(held: 95, current: 110, overlayVisible: false) == 110)
+        // On screen, the held one stays even as the anchor moves under it.
+        #expect(FoldDuoModel.drawnReference(held: 110, current: 70, overlayVisible: true) == 110)
+        #expect(FoldDuoModel.drawnReference(held: nil, current: 70, overlayVisible: true) == 70)
+        #expect(FoldDuoModel.drawnReference(held: 110, current: nil, overlayVisible: false) == 110)
+        // Release when parked at 70° with the fold 40° in: the unwind
+        // drawn from the parked angle would start at 30°, under edge-on
+        // (black); from the held 110° it starts at 70°, clear.
+        #expect(FoldDuoModel.endFade(theta: 70 - 40, eye: eye) == 1, "the re-seated anchor would flash black")
+        let held = FoldDuoModel.drawnReference(held: 110, current: 70, overlayVisible: true) ?? 0
+        #expect(FoldDuoModel.endFade(theta: held - 40, eye: eye) == 0)
+    }
+
     // MARK: Bar windows
 
     @Test("the Duo keeps JR-Bar's own menu-bar windows and nothing else of ours")

@@ -101,8 +101,11 @@ final class FoldToy: Toy {
     /// When the overlay last ordered in, for the Duo's order-in fade;
     /// nil while it is out.
     @ObservationIgnored private var overlayShownAt: TimeInterval?
-    /// The last reference the Duo drew from, so an unwind that outlives
-    /// its anchor (a reset mid-unwind) still draws from the same lid.
+    /// The reference the Duo draws this gesture from: taken as the
+    /// overlay orders in and kept until it orders out, so an unwind that
+    /// outlives its anchor (the dwell re-seat, a reset) still draws from
+    /// the same lid, and a reopen from the black hold unfolds from the
+    /// lid it closed from.
     @ObservationIgnored private var heldReference: Double?
     /// The displayed-delta follower: instant while the fold deepens, a
     /// slew-limited unwind when the gate snaps the target to 0 —
@@ -840,8 +843,10 @@ final class FoldToy: Toy {
             // imageSize/texAspect survive the per-tick pass.
             if isDuo {
                 // The Duo: the picture held where the resting lid showed
-                // it, the glass drawn at the reference minus the delta.
-                if let current = duoReference { heldReference = current }
+                // it, the glass drawn at the reference minus the delta —
+                // one reference per gesture, however the anchor moves.
+                heldReference = FoldDuoModel.drawnReference(
+                    held: heldReference, current: duoReference, overlayVisible: overlay.isVisible)
                 // With no reference ever seen, a lid's usual rest.
                 let reference = heldReference ?? 110
                 FoldDuoModel.apply(to: &overlay.renderer.params, reference: reference,
@@ -855,7 +860,8 @@ final class FoldToy: Toy {
                 overlay.alphaValue = CGFloat(Double(overlay.renderer.params.opacity) * ramp)
             } else {
                 // The Room: Perspective, Blur, Shade and Frost are the
-                // knobs.
+                // knobs. A switch back to the Duo takes a fresh reference.
+                heldReference = nil
                 FoldPortalModel.apply(to: &overlay.renderer.params,
                                       delta: displayedDelta,
                                       perspective: settings.perspective,
