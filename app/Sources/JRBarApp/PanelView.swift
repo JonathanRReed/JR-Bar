@@ -181,6 +181,9 @@ struct ActivityMark: View {
 struct CountBadge: View {
     let text: String
     var symbol: String? = nil
+    /// In a line of small type the capsule draws past the count's height
+    /// instead of adding to it, so the line keeps its height.
+    var inline: Bool = false
 
     var body: some View {
         HStack(spacing: 2.5) {
@@ -196,8 +199,8 @@ struct CountBadge: View {
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .padding(.horizontal, 5)
-        .padding(.vertical, 1.5)
-        .background(Capsule().fill(.primary.opacity(0.08)))
+        .padding(.vertical, inline ? 0 : 1.5)
+        .background(Capsule().fill(.primary.opacity(0.08)).padding(.vertical, inline ? -1.5 : 0))
     }
 }
 
@@ -403,6 +406,7 @@ struct SessionsSection: View {
     let layout: PanelLayout
 
     var body: some View {
+        let trailing = trailingWidth
         VStack(spacing: 0) {
             SectionLabel(text: "Sessions", trailing: sessionsTrailing)
             if store.visibleRows.isEmpty {
@@ -415,7 +419,7 @@ struct SessionsSection: View {
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                         ForEach(store.visiblePlainRows) { row in
-                            SessionRowView(row: row, store: store)
+                            SessionRowView(row: row, store: store, trailingWidth: trailing)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                     }
@@ -439,6 +443,12 @@ struct SessionsSection: View {
         .padding(.bottom, CGFloat(PanelLayout.sessionsBottomPadding))
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.lightExplanation == nil)
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.hiddenCount > 0)
+    }
+
+    /// The rows' shared trailing column, as wide as the widest state word
+    /// among them.
+    private var trailingWidth: CGFloat {
+        SessionRowView.trailingWidth(for: store.visiblePlainRows.map(\.activity))
     }
 
     /// "3" — or, while a find query narrows the list, "“opus” · 2 of 5".
@@ -661,10 +671,38 @@ struct SessionsEmptyState: View {
 struct SessionRowView: View {
     let row: SessionRow
     @Bindable var store: PanelStore
+    /// The state word, mark and elapsed time sit in one column every row
+    /// in the list shares (`trailingWidth(for:)`).
+    let trailingWidth: CGFloat
 
-    /// The state word, mark and elapsed time sit in one fixed column so the
-    /// label column never shifts as the clock ticks.
-    static let trailingWidth: CGFloat = 96
+    /// The trailing column: as wide as the widest state word the list
+    /// shows plus its mark, and never narrower than the longest elapsed
+    /// time. Shared, it keeps every row's title the same room and every
+    /// context hairline the same length; it moves only when a row's word
+    /// changes, never as the clock ticks. A list of working rows leaves
+    /// its titles the width "Waiting on you" used to hold back.
+    static func trailingWidth(for activities: [SessionActivity]) -> CGFloat {
+        let widest = activities.map { wordWidths[$0] ?? 0 }.max() ?? 0
+        return max(elapsedWidth, widest + markRoom).rounded(.up)
+    }
+
+    /// The word's HStack spacing and the 8 pt mark.
+    static let markRoom: CGFloat = 5 + 8
+
+    /// Each state word in the trailing column's type.
+    static let wordWidths: [SessionActivity: CGFloat] = {
+        let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let pairs = SessionActivity.allCases.map { activity in
+            (activity, (activity.word as NSString).size(withAttributes: [.font: font]).width)
+        }
+        return Dictionary(uniqueKeysWithValues: pairs)
+    }()
+
+    /// The longest elapsed time `PanelStore.elapsed` writes ("23h 59m").
+    static let elapsedWidth: CGFloat = {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        return ("00h 00m" as NSString).size(withAttributes: [.font: font]).width
+    }()
 
     /// Waiting and failed are the words that shout -- a failure used to be
     /// as quiet as "Idle" here, which is the app-side half of the same
@@ -679,10 +717,6 @@ struct SessionRowView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                        if row.workers > 0 {
-                            CountBadge(text: "\(row.workers)", symbol: "square.stack")
-                                .help(row.workersText ?? "")
-                        }
                         if row.activity == .done, store.unseenCompletionIDs.contains(row.id) {
                             // `state.unseen_completions`: the one unseen
                             // dot History gives a row newer than the last
@@ -720,6 +754,12 @@ struct SessionRowView: View {
                         // provider, so the model is the better use of the
                         // words.
                         Text(row.usage?.modelName ?? row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        if row.workers > 0 {
+                            // The run's workers ride the model line, so the
+                            // title keeps the label column's whole width.
+                            CountBadge(text: "\(row.workers)", symbol: "square.stack", inline: true)
+                                .help(row.workersText ?? "")
+                        }
                         if let fact = row.activityFact {
                             // The hook's last word ("running Bash") — the
                             // row's activity made specific.
@@ -770,7 +810,7 @@ struct SessionRowView: View {
                     Text(row.elapsedText(now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
                 }
-                .frame(width: Self.trailingWidth, alignment: .trailing)
+                .frame(width: trailingWidth, alignment: .trailing)
             }
         }
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: row.activity)
