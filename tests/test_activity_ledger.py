@@ -530,6 +530,49 @@ def test_an_ask_and_an_error_reach_the_ledger_too(controller) -> None:
     }
 
 
+def test_a_row_is_named_by_the_providers_own_title_when_it_is_recorded__and_1_more(
+    controller,
+) -> None:
+    # --- scenario: a_row_is_named_by_the_providers_own_title_when_it_is_recorded
+    """History used to name a row only when it was shown. The daemon's
+    extras cache already holds the provider's own session title; the row
+    carries it from the moment it is recorded."""
+    from jrbar.core_projection import SessionExtras
+
+    target, _status_bar, _path = controller
+    looked_up = []
+
+    def extras_for(status):
+        looked_up.append(status.agent_id)
+        return SessionExtras(name="Refactor the auth flow")
+
+    target._core_extras_for = extras_for
+    working = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")
+    done = _status("claude:session:one", AgentMode.COMPLETED)
+
+    target.track_completions((working,))
+    target.track_completions((done,))
+
+    (entry,) = target.activity_ledger.entries
+    assert entry.label == "sidepulse-manager"
+    assert entry.detail == "Refactor the auth flow"
+    assert looked_up == ["claude:session:one"]
+
+    # --- scenario: a_failing_lookup_keeps_the_plain_label
+    target, _status_bar, _path = controller
+
+    def broken(_status):
+        raise OSError("registry unreadable")
+
+    target._core_extras_for = broken
+    target.track_completions(
+        (_status("claude:session:two", AgentMode.WORKING, session_id="two", event_name="PreToolUse"),)
+    )
+    target.track_completions((_status("claude:session:two", AgentMode.COMPLETED, session_id="two"),))
+
+    assert [entry.kind for entry in target.activity_ledger.entries][-1] is ActivityKind.COMPLETED
+
+
 def test_a_sub_agent_never_reaches_the_ledger(controller) -> None:
     target, _status_bar, _path = controller
     parent = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")

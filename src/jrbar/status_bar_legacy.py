@@ -7512,9 +7512,11 @@ class StatusBarController(NSObject):
         rule (display-name first, the short id dropped). `session_title_parts`
         is not used here on purpose: it stats the filesystem looking for a
         `.git` directory, which is not something a per-refresh recorder may
-        do. The row's `detail` is the pure ``core_projection.session_label``
-        instead -- the same projected name the daemon's ``state.sessions``
-        rows carry, minus the extras cache.
+        do. The row's `detail` is ``core_projection.session_label``: the
+        same projected name the daemon's ``state.sessions`` rows carry,
+        including the provider's own session title from the daemon's
+        extras cache when it has one, so History names the row when it is
+        recorded rather than only when it is shown.
 
         `duration_seconds` is filled only when ``_session_active_since``
         saw this session live before the transition: a run the monitor
@@ -7522,6 +7524,7 @@ class StatusBarController(NSObject):
         stays null rather than reporting "0 seconds".
         """
         active_since = getattr(self, "_session_active_since", None) or {}
+        extras_for = getattr(self, "_core_extras_for", None)
         entries: list[ActivityEntry] = []
         for status in statuses:
             if getattr(status, "is_subagent", False):
@@ -7538,6 +7541,15 @@ class StatusBarController(NSObject):
             # import path and the label costs nothing until a row exists.
             from . import core_projection
 
+            # The daemon's cached registry read (TTL-bounded, one record
+            # file per session); a bare controller has no cache and keeps
+            # the pure label.
+            extras = None
+            if callable(extras_for):
+                try:
+                    extras = extras_for(status)
+                except Exception:
+                    extras = None
             detail = safe_activity_text(
                 core_projection.session_label(
                     provider=status.provider,
@@ -7545,7 +7557,7 @@ class StatusBarController(NSObject):
                     agent_id=status.agent_id,
                     display_name=status.display_name,
                     cwd=status.cwd,
-                    extras=None,
+                    extras=extras,
                     is_worker=False,
                     parent_label=None,
                 ),
