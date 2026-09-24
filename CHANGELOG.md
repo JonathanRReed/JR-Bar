@@ -56,6 +56,19 @@ All notable changes to JR-Bar are documented here.
   opens the thing itself: `jrbar://overview/graph` puts the Overview on
   its Graph, open or not, and `jrbar://aquarium` opens the tank or brings
   it forward (it never closes it).
+- Every window a click or a link opens comes forward through one
+  `WindowFront.bring`: History, the Data Hoarder archive and the
+  Aquarium no longer open behind the app you're in, a minimized window
+  comes back, one on another Space comes to this one, and the Launch
+  Services fallback stands down if you've already switched away. Setup's
+  launch showing only asks.
+- `jrbar://shelf` and ⌃⌥D open the card on the Shelf page (the glass
+  card too), a pinned glass card closes on Esc again, and the notch's
+  volume tick no longer drops clicks on a fast run or leaks its quiet
+  volume onto every other Tink.
+- Exactly one JR-Bar is registered with Launch Services: packaging takes
+  its intermediate copies back out (even when a build fails part-way)
+  and `make install-pkg` registers the installed app.
 
 ### Overnight pass (2026-09-24)
 
