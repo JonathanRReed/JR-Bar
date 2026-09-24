@@ -558,12 +558,19 @@ def _fix_run_length(lines: list[PaintStep], want: float) -> None:
     if not lines or delta == 0:
         return
     last = lines[-1]
-    longest = max(range(len(last.segments)), key=lambda i: last.segments[i].timing.span_ms)
-    segment = last.segments[longest]
-    timing = segment.timing
-    duration = max(1, timing.effective_duration_ms + delta)
+    span = step_duration_ms(last)
+    goal = span + delta
+    if delta > 0:
+        ends = [max(range(len(last.segments)), key=lambda i: last.segments[i].timing.span_ms)]
+    else:
+        # Every segment still ending past the goal comes in: one left tied
+        # with the longest kept the run a millisecond long.
+        ends = [i for i, segment in enumerate(last.segments) if segment.timing.span_ms > goal]
     segments = list(last.segments)
-    segments[longest] = replace(segment, timing=replace(timing, duration_ms=duration))
+    for index in ends:
+        timing = segments[index].timing
+        duration = max(1, timing.effective_duration_ms + (goal - timing.span_ms))
+        segments[index] = replace(segments[index], timing=replace(timing, duration_ms=duration))
     lines[-1] = PaintStep(tuple(segments))
 
 
@@ -842,12 +849,20 @@ def _scale_line(step: PaintStep, target: int) -> PaintStep | None:
         ]
         if not timed:
             return scaled
-        longest = max(timed, key=lambda i: segments[i].timing.span_ms)
-        segment = segments[longest]
-        duration = segment.timing.duration_ms + (target - have)
-        if duration < 1 or duration > MAX_TIME_MS:
-            return scaled
-        segments[longest] = replace(segment, timing=replace(segment.timing, duration_ms=duration))
+        # The line ends at its longest segment. Longer: stretch that one.
+        # Shorter: every segment that would still end past the target has
+        # to come in, or a second one tied with the longest keeps the line
+        # a millisecond long and the lap misses its half-millisecond.
+        if have < target:
+            ends = [max(timed, key=lambda i: segments[i].timing.span_ms)]
+        else:
+            ends = [i for i in timed if segments[i].timing.span_ms > target]
+        for index in ends:
+            segment = segments[index]
+            duration = segment.timing.duration_ms + (target - segment.timing.span_ms)
+            if duration < 1 or duration > MAX_TIME_MS:
+                return scaled
+            segments[index] = replace(segment, timing=replace(segment.timing, duration_ms=duration))
         scaled = PaintStep(tuple(segments))
     return scaled
 

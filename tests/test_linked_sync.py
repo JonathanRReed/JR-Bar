@@ -71,7 +71,7 @@ def _gap(left, right) -> int:
 # --- retiming ------------------------------------------------------------------
 
 
-def test_retime_is_exact_over_the_corpus__and_2_more() -> None:
+def test_retime_is_exact_over_the_corpus__and_3_more() -> None:
     # --- scenario: every_lap_lands_within_half_a_millisecond
     """The running total is rounded, never each step, so a lap written for
     the Dot's clock is ``rate`` times the strip's to half a millisecond --
@@ -96,6 +96,34 @@ def test_retime_is_exact_over_the_corpus__and_2_more() -> None:
     idle = SAMPLES["idle_roll"]
     assert _lap(idle, 8) == 12250
     assert _lap(retime_program(idle, DOT_RATE, led_count=8), 8) == 11924
+
+    # --- scenario: rotated_then_retimed_every_lap_still_lands
+    """What the write boundary really writes -- rotated to the phase, then
+    retimed -- keeps the promise too, for the Dot's mirror and its
+    continuation. A cut line whose two segments tied for longest used to
+    shrink only one of them, and the lap came out a millisecond long."""
+    from jrbar.dot_continue import continue_program
+
+    written = 0
+    for name, program, leds in CORPUS:
+        if leds != 8:
+            continue
+        for locked in (period_locked_dot(program, source_leds=8), continue_program(program, source_leds=8)):
+            if locked is None or not locked.lap_ms:
+                continue
+            for moment in (0.4137, 2.9021, 7.3519):
+                timed = apply_device_timing(
+                    locked.program,
+                    DeviceTiming(anchor=0.0, rate=DOT_RATE, trim_ms=-locked.origin_ms),
+                    led_count=2,
+                    now=moment,
+                    latency_ms=20.0,
+                )
+                if timed.rotation == "unrotated":
+                    continue
+                assert abs(_lap(timed.program, 2) - locked.lap_ms * DOT_RATE) <= 0.5, (name, locked.rung, moment)
+                written += 1
+    assert written > 150
 
     # --- scenario: the_firmware_loops_the_retimed_program_at_its_new_lap
     """Sampled on the engine, the retimed loop repeats at its own lap: the
