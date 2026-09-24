@@ -31,10 +31,9 @@
 # Either way the app lands in ~/Applications/JR-Bar.app; the /Applications
 # install is `sudo installer -pkg dist/JR-Bar-<version>.pkg -target /`.
 #
-# Re-run after every commit you want running. Revert to the Python UI:
+# Re-run after every commit you want running. To stop the dev layout:
 #   launchctl bootout gui/$UID/com.jonathanreed.jrbar.ui
 #   launchctl bootout gui/$UID/com.jonathanreed.jrbar.core
-#   .venv/bin/python -m jrbar status-bar start
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -76,8 +75,9 @@ done
 mkdir -p "$AGENTS" "$STATE" "$PREFIX/bin" "$HOME/Applications"
 
 stop_everything() {
-    # The Python status bar, the dev agents and a packaged app cannot share
-    # the hook sockets: stop whatever is running before switching layouts.
+    # The retired Python status bar, the dev agents and a packaged app
+    # cannot share the hook sockets: stop whatever is running before
+    # switching layouts.
     if launchctl print "$DOMAIN/$OLD_LABEL" >/dev/null 2>&1; then
         echo "==> booting out $OLD_LABEL"
         launchctl bootout "$DOMAIN/$OLD_LABEL" || true
@@ -93,7 +93,6 @@ stop_everything() {
     pkill -x "JR-Bar" 2>/dev/null || true
     pkill -f "jrbar core" 2>/dev/null || true
     pkill -f "jrbar-core core" 2>/dev/null || true
-    pkill -f "jrbar status-bar" 2>/dev/null || true
     sleep 1
 }
 

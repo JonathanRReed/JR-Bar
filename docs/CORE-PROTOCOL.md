@@ -1259,8 +1259,12 @@ fallback (`transcript_monitoring.gemini`) reads
 python -m jrbar core                    # headless daemon on ~/.local/state/jrbar/core.sock
 python -m jrbar core --socket /tmp/x    # elsewhere (tests; AF_UNIX paths are capped at 104 bytes)
 JRBAR_TRACEMALLOC=1 python -m jrbar core   # + a tracemalloc report in the log every 60 s (a number = seconds)
-jrbar status-bar start                  # the old Python UI; refuses to run beside the daemon
 ```
+
+The old Python menu bar (`jrbar status-bar start`) is gone. The daemon
+unloads and deletes its LaunchAgent (`com.jonathanreed.jrbar.app`, and the
+pre-rename `io.sidepulse.agentstatus`/`com.sidepulse.agentstatus`) at
+startup; `jrbar status-bar stop` does the same by hand.
 
 On this Mac the running pair is the packaged app, `~/Applications/JR-Bar.app`
 (installed from `dist/JR-Bar-<version>.pkg` by `make clean-install`, which

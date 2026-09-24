@@ -1035,10 +1035,10 @@ def test_the_alcove_finding_is_in_the_manifest_and_encodes__and_1_more(monkeypat
 
 
 
-def test_doctor_manifest_is_version_five_and_allows_seven_codes() -> None:
+def test_doctor_manifest_is_version_six_and_allows_seven_codes() -> None:
     from jrbar import doctor
 
-    assert doctor.DOCTOR_VERSION == 5
+    assert doctor.DOCTOR_VERSION == 6
     field = next(
         field
         for field in doctor.DIAGNOSTIC_MANIFEST.fields

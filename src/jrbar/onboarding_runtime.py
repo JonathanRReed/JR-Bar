@@ -75,13 +75,6 @@ def run_first_launch_setup(controller, legacy) -> None:
     except Exception as exc:
         errors.append(f"Provider preferences failed: {exc}")
 
-    if is_on("launch"):
-        try:
-            if not legacy.launch_agent_installed():
-                legacy.install_launch_agent(start=False)
-            messages.append("Run at Login installed.")
-        except Exception as exc:
-            errors.append(f"Run at Login failed: {exc}")
     if is_on("sleep_helper"):
         try:
             if not legacy.sleep_helper_installed():

@@ -1303,7 +1303,3 @@ __all__ = (
 _facade_module = sys.modules[__name__]
 _facade_module.__class__ = _StatusBarFacade
 _facade_module.__file__ = _legacy.__file__
-
-
-if __name__ == "__main__":
-    raise SystemExit(_legacy.main())

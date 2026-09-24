@@ -22,29 +22,6 @@ class ProbeLegacyShim:
             return function
 
 
-class ProbeHost:
-    def __init__(self, *, product_display_name: str) -> None:
-        self._product_display_name = product_display_name
-
-    @staticmethod
-    def install_status_bar_facade():
-        return None
-
-    def main(self) -> int:
-        from . import application_composition
-        from . import status_bar_legacy as legacy
-
-        application_composition.compose_status_bar_application()
-        if legacy.another_instance_alive():
-            print(
-                f"{self._product_display_name} is already running; "
-                "this instance is exiting."
-            )
-            return 0
-        legacy.run_status_bar()
-        return 0
-
-
 def probe_build_menu(snapshot, state, target):
     from . import status_bar as host
     from .sparkle_updater import inject_software_update_submenu
@@ -77,7 +54,6 @@ def probe_build_menu(snapshot, state, target):
 
 __all__ = [
     "PROBE_IMPORT_MODE",
-    "ProbeHost",
     "ProbeLegacyShim",
     "probe_build_menu",
 ]

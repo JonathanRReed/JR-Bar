@@ -64,15 +64,14 @@ class ModuleEntrypointTests(unittest.TestCase):
         self.assertEqual(payload["document"], "jrbar-doctor")
         # v4 expands alcove_follow_state from capture outcomes into the
         # seven semantic confidence states used by the product surfaces;
-        # v5 adds not_applicable to launch_agent_state for the embedded
-        # daemon where no LaunchAgent plist is the design.
-        self.assertEqual(payload["version"], 5)
+        # v6 drops launch_agent_state: no install has a menu-bar
+        # LaunchAgent any more.
+        self.assertEqual(payload["version"], 6)
         self.assertEqual(
             tuple(finding["check"] for finding in payload["findings"]),
             (
                 "package_import_root",
                 "signature_state",
-                "launch_agent_state",
                 "private_path_modes",
                 "hook_detector_state",
                 "negotiated_source_health",

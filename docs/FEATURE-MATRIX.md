@@ -142,7 +142,9 @@ Mac half (`glance`, `serve --phone-glance`), the external Agent Deck
 snapshot bridge, the Waybar client, severe-weather alerts, the
 timebox/timer and its Shortcuts handshake, the operator history export,
 night warmth and the fixed 7 PM–7 AM dim (replaced by auto-dim), the PyObjC
-status bar as a UI (`jrbar status-bar` refuses to run beside the daemon),
+status bar as a UI (removed: `jrbar setup` installs no LaunchAgent, the
+daemon unloads the old one, and `jrbar status-bar` only manages the sleep
+helper),
 the architecture-policing meta-tests, and the old multi-receipt release
 gate (`verify_macos_release.sh`, `publish_release.sh`) as the way releases
 happen. Earlier removals (the delivery-planning plane, `runtime_truth`,

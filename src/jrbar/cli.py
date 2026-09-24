@@ -118,7 +118,7 @@ def build_jrbar_parser() -> argparse.ArgumentParser:
     add_effects_parser(subparsers)
     setup = subparsers.add_parser(
         "setup",
-        help="Install agent hooks and start the macOS status-bar app.",
+        help="Install agent hooks, and the SD eject guard when asked for.",
     )
     setup.add_argument(
         "provider",
@@ -146,11 +146,6 @@ def build_jrbar_parser() -> argparse.ArgumentParser:
         "--sd-eject-guard-volume-uuid",
         action=_StoreAndRequestSdEjectGuard,
         help="Exact SidePulse volume UUID to protect. Without it the guard is installed disabled.",
-    )
-    setup.add_argument(
-        "--no-status-bar",
-        action="store_true",
-        help="Do not install or start the status-bar app.",
     )
     setup.add_argument(
         "--no-sd-eject-guard",
@@ -224,27 +219,24 @@ def cmd_jrbar_hooks_doctor(args: argparse.Namespace) -> int:
 
 
 def add_jrbar_status_bar_parser(subparsers: argparse._SubParsersAction) -> None:
+    # The verb keeps its name for the sleep helper, which the Swift app's
+    # Setup and Settings print as `status-bar install-sleep-helper`. The
+    # Python menu bar it used to start is retired; `stop` stays, unlisted,
+    # for scripts that still stop it: it only unloads that old LaunchAgent.
+    sleep_helper_commands = (
+        "install-sleep-helper",
+        "uninstall-sleep-helper",
+        "sleep-helper-status",
+    )
     status_bar = subparsers.add_parser(
         "status-bar",
-        help=f"Start or stop the macOS {PRODUCT_DISPLAY_NAME} menu-bar app.",
+        help="Install, remove or check the closed-lid sleep helper.",
     )
     status_bar.add_argument(
         "status_bar_command",
-        choices=(
-            "start",
-            "stop",
-            "install-sleep-helper",
-            "uninstall-sleep-helper",
-            "sleep-helper-status",
-        ),
-        nargs="?",
-        default="start",
-        help="Start/stop the menu-bar app, or manage the closed-lid sleep helper. Default: start.",
-    )
-    status_bar.add_argument(
-        "--foreground",
-        action="store_true",
-        help="Run the menu-bar app in the foreground instead of installing a LaunchAgent.",
+        choices=(*sleep_helper_commands, "stop"),
+        metavar="{" + ",".join(sleep_helper_commands) + "}",
+        help="Manage the closed-lid sleep helper.",
     )
     status_bar.add_argument(
         "--dry-run",
@@ -463,12 +455,18 @@ def cmd_jrbar_status_bar(args: argparse.Namespace) -> int:
         return cmd_jrbar_sleep_helper_uninstall(args)
     if args.status_bar_command == "sleep-helper-status":
         return cmd_jrbar_sleep_helper_status(args)
+    return cmd_jrbar_status_bar_stop(args)
 
-    args.uninstall = args.status_bar_command == "stop"
-    args.no_start = False
-    if args.uninstall:
-        args.foreground = False
-    return cmd_status_bar(args)
+
+def cmd_jrbar_status_bar_stop(args: argparse.Namespace) -> int:
+    from .status_bar_launch import remove_retired_launch_agents
+
+    removed = remove_retired_launch_agents()
+    for path in removed:
+        print(f"status-bar: removed the retired LaunchAgent {path}")
+    if not removed:
+        print("status-bar: no retired LaunchAgent is installed")
+    return 0
 
 
 def cmd_jrbar_sleep_helper_install(args: argparse.Namespace) -> int:
@@ -644,23 +642,10 @@ def cmd_jrbar_setup(args: argparse.Namespace) -> int:
     results = install_hook_results(args)
     print_install_results(results, dry_run=args.dry_run)
 
-    # The menu-bar app installs FIRST and the eject guard is best-effort:
-    # the guard needs clang (Xcode Command Line Tools), and a fresh Mac
-    # without them used to abort setup right here -- hooks installed, no
-    # app, a confusing half-state (2026-08-27 readiness audit).
-    if not args.no_status_bar:
-        if args.dry_run:
-            print("status-bar: would install and start")
-        else:
-            from .status_bar_launch import install_launch_agent
-
-            result = install_launch_agent(start=True)
-            action = "installed" if result.changed else "already installed"
-            if result.started:
-                action += " and started"
-            print(f"status-bar: {action}")
-            print(f"  plist: {result.plist_path}")
-
+    # The eject guard is best-effort: it needs clang (Xcode Command Line
+    # Tools), and a fresh Mac without them must still come out of setup
+    # with its hooks installed. The app is the Swift JR-Bar.app, which
+    # registers itself as a login item; setup installs no LaunchAgent.
     if args.no_sd_eject_guard or not args.sd_eject_guard:
         return 0
 
@@ -758,25 +743,6 @@ def build_parser(prog: str = "agent-monitor") -> argparse.ArgumentParser:
     leds.add_argument("--dry-run", action="store_true", help="Show writes without touching the device.")
     leds.add_argument("--once", action="store_true", help="Write the current status once and exit.")
     leds.set_defaults(func=cmd_leds)
-
-    status_bar = subparsers.add_parser("status-bar", help="Install and start the macOS menu-bar app.")
-    status_bar_mode = status_bar.add_mutually_exclusive_group()
-    status_bar_mode.add_argument(
-        "--foreground",
-        action="store_true",
-        help="Run the menu-bar app in the foreground instead of installing a LaunchAgent.",
-    )
-    status_bar_mode.add_argument(
-        "--uninstall",
-        action="store_true",
-        help="Stop and remove the status-bar LaunchAgent.",
-    )
-    status_bar.add_argument(
-        "--no-start",
-        action="store_true",
-        help="Install the LaunchAgent without starting it immediately.",
-    )
-    status_bar.set_defaults(func=cmd_status_bar)
 
     install = subparsers.add_parser("install", help="Install selected agent-monitor hooks.")
     install.add_argument("provider", choices=("all", *HOOK_PROVIDERS), nargs="?", default="all")
@@ -1274,30 +1240,6 @@ def cmd_leds(args: argparse.Namespace) -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         return 0
-
-
-def cmd_status_bar(args: argparse.Namespace) -> int:
-    if args.foreground:
-        from .status_bar import main as status_bar_main
-
-        return status_bar_main()
-
-    from .status_bar_launch import install_launch_agent, uninstall_launch_agent
-
-    if args.uninstall:
-        result = uninstall_launch_agent()
-        action = "removed" if result.changed else "already removed"
-        print(f"status-bar: {action}")
-        print(f"  plist: {result.plist_path}")
-        return 0
-
-    result = install_launch_agent(start=not args.no_start)
-    action = "installed" if result.changed else "already installed"
-    if result.started:
-        action += " and started"
-    print(f"status-bar: {action}")
-    print(f"  plist: {result.plist_path}")
-    return 0
 
 
 def cmd_install(args: argparse.Namespace) -> int:

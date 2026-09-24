@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import plistlib
@@ -12,7 +13,7 @@ import threading
 import time
 import types
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr
 from dataclasses import replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -208,12 +209,7 @@ from jrbar.settings import (
     load_settings,
     save_settings,
 )
-from jrbar.status_bar_launch import (
-    LAUNCH_AGENT_LABEL,
-    build_launch_agent_plist,
-    install_launch_agent,
-    launch_agent_installed,
-)
+from jrbar.status_bar_launch import remove_retired_launch_agents
 
 
 def write_hook_line(log_path, line):
@@ -3621,8 +3617,6 @@ for (const event of [
         live = parser.parse_args(["live", "--recent-seconds", "120"])
         leds = parser.parse_args(["leds", "--once", "--dry-run"])
         uninstall = parser.parse_args(["uninstall"])
-        status_bar = parser.parse_args(["status-bar"])
-        status_bar_foreground = parser.parse_args(["status-bar", "--foreground"])
         grok_install = parser.parse_args(["install", "grok"])
         grok_hook_log = parser.parse_args(["hook-log", "--provider", "grok", "--log", "/tmp/grok.jsonl"])
         grok_hook_client = parser.parse_args(["hook-client", "--provider", "grok", "--log", "/tmp/grok.jsonl"])
@@ -3635,10 +3629,10 @@ for (const event of [
         self.assertTrue(leds.once)
         self.assertTrue(leds.dry_run)
         self.assertEqual(uninstall.provider, "all")
-        self.assertEqual(status_bar.command, "status-bar")
-        self.assertFalse(status_bar.foreground)
-        self.assertFalse(status_bar.uninstall)
-        self.assertTrue(status_bar_foreground.foreground)
+        # The agent-monitor CLI no longer starts or installs the retired
+        # Python menu bar.
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            parser.parse_args(["status-bar"])
         self.assertEqual(grok_hook_log.provider, "grok")
         self.assertEqual(grok_hook_client.provider, "grok")
         self.assertIn("jrbar agent-monitor", parser.format_usage())
@@ -3666,19 +3660,18 @@ for (const event of [
         self.assertEqual(configure.battery_command, "configure")
         self.assertEqual(configure.display, "battery")
 
-        default = root.parse_args(["status-bar"])
-        start = root.parse_args(["status-bar", "start", "--foreground"])
         stop = root.parse_args(["status-bar", "stop"])
         helper = root.parse_args(["status-bar", "install-sleep-helper", "--dry-run"])
 
-        self.assertEqual(default.command, "status-bar")
-        self.assertEqual(default.status_bar_command, "start")
-        self.assertFalse(default.foreground)
-        self.assertEqual(start.status_bar_command, "start")
-        self.assertTrue(start.foreground)
+        self.assertEqual(stop.command, "status-bar")
         self.assertEqual(stop.status_bar_command, "stop")
         self.assertEqual(helper.status_bar_command, "install-sleep-helper")
         self.assertTrue(helper.dry_run)
+        # start and --foreground ran the retired menu bar; the verb now
+        # needs a sleep-helper command (or the unlisted stop).
+        for retired in (["status-bar"], ["status-bar", "start"], ["status-bar", "--foreground"]):
+            with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+                root.parse_args(retired)
 
         start = root.parse_args(["sdejectguard", "start", "--volume-uuid", "A1B2-C3D4"])
         interactive = root.parse_args(
@@ -3820,8 +3813,8 @@ for (const event of [
         uninstall.assert_called_once_with(scope="user", dry_run=True)
 
     def test_sidepulse_setup(self) -> None:
-        """setup command shape, hook+guard+status-bar install when the
-        guard is requested, and guard-only install without the bar."""
+        """setup command shape, and hook+guard install when the guard is
+        requested. Setup installs no menu-bar LaunchAgent."""
         # --- scenario: sidepulse_setup_command_shape
         parser = cli_module.build_jrbar_parser()
 
@@ -3830,7 +3823,6 @@ for (const event of [
             [
                 "setup",
                 "codex",
-                "--no-status-bar",
                 "--dry-run",
                 "--sd-eject-guard-scope",
                 "user",
@@ -3839,14 +3831,12 @@ for (const event of [
         self.assertEqual(default.command, "setup")
         self.assertEqual(default.provider, "all")
         self.assertEqual(default.sd_eject_guard_scope, "auto")
-        self.assertFalse(default.no_status_bar)
         self.assertFalse(default.dry_run)
         self.assertEqual(codex_only.provider, "codex")
         self.assertEqual(codex_only.sd_eject_guard_scope, "user")
-        self.assertTrue(codex_only.no_status_bar)
         self.assertTrue(codex_only.dry_run)
 
-        # --- scenario: sidepulse_setup_installs_hooks_guard_and_status_bar_when_guard_is_requested
+        # --- scenario: sidepulse_setup_installs_hooks_and_guard_when_guard_is_requested
         parser = cli_module.build_jrbar_parser()
         args = parser.parse_args(["setup", "--sd-eject-guard"])
         codex_result = SimpleNamespace(
@@ -3876,11 +3866,6 @@ for (const event of [
             log_path=Path("/tmp/grok.jsonl"),
             changed=True,
             backup_path=None,
-        )
-        launch_result = SimpleNamespace(
-            plist_path=Path("/tmp/com.jonathanreed.jrbar.app.plist"),
-            changed=True,
-            started=True,
         )
         guard_result = SimpleNamespace(
             dry_run=False,
@@ -3922,10 +3907,6 @@ for (const event of [
                 "jrbar.sd_eject_guard_launch.install_sd_eject_guard",
                 return_value=guard_result,
             ) as guard,
-            patch(
-                "jrbar.status_bar_launch.install_launch_agent",
-                return_value=launch_result,
-            ) as launch,
         ):
             result = cli_module.cmd_jrbar_setup(args)
 
@@ -3948,11 +3929,10 @@ for (const event of [
             ],
         )
         guard.assert_called_once_with(scope="auto", dry_run=False, volume_uuid=None)
-        launch.assert_called_once_with(start=True)
 
-        # --- scenario: sidepulse_setup_no_status_bar_still_installs_guard
+        # --- scenario: sidepulse_setup_guard_scope_reaches_the_guard
         parser = cli_module.build_jrbar_parser()
-        args = parser.parse_args(["setup", "--no-status-bar", "--sd-eject-guard-scope", "user"])
+        args = parser.parse_args(["setup", "--sd-eject-guard-scope", "user"])
         hook_result = SimpleNamespace(
             provider="codex",
             config_path=Path("/tmp/codex.toml"),
@@ -3977,13 +3957,11 @@ for (const event of [
                 "jrbar.sd_eject_guard_launch.install_sd_eject_guard",
                 return_value=guard_result,
             ) as guard,
-            patch("jrbar.status_bar_launch.install_launch_agent") as launch,
         ):
             result = cli_module.cmd_jrbar_setup(args)
 
         self.assertEqual(result, 0)
         guard.assert_called_once_with(scope="user", dry_run=False, volume_uuid=None)
-        launch.assert_not_called()
 
     def test_sidepulse_write_and_discovery(self) -> None:
         """Writes target LEDS.LED with device limits enforced; discovery
@@ -4929,57 +4907,7 @@ for (const event of [
         self.assertIn("Not connected", titles)
         self.assertIn("Remove", titles)
 
-    def test_status_bar_launch_agent_and_hook_command_contracts(self) -> None:
-        plist = build_launch_agent_plist(
-            python_executable="/usr/bin/python3",
-            stdout_path=Path("/tmp/jrbar.out.log"),
-            stderr_path=Path("/tmp/jrbar.err.log"),
-        )
-
-        self.assertEqual(plist["Label"], LAUNCH_AGENT_LABEL)
-        self.assertEqual(
-            plist["ProgramArguments"],
-            [
-                "/usr/bin/python3",
-                "-m",
-                "jrbar",
-                "status-bar",
-                "--foreground",
-            ],
-        )
-        self.assertTrue(plist["RunAtLoad"])
-        self.assertEqual(plist["StandardOutPath"], "/tmp/jrbar.out.log")
-        self.assertEqual(plist["StandardErrorPath"], "/tmp/jrbar.err.log")
-        # Unconditional KeepAlive: a TCC grant quits the app with exit 0
-        # (a SuccessfulExit condition would leave it dead); Quit boots
-        # the job out instead of relying on exit codes.
-        self.assertIs(plist["KeepAlive"], True)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            plist_path = Path(tmp) / "com.jonathanreed.jrbar.app.plist"
-
-            self.assertFalse(launch_agent_installed(plist_path))
-            plist_path.write_bytes(b"plist")
-            self.assertTrue(launch_agent_installed(plist_path))
-
-            executable = Path(tmp) / "JR-Bar.app" / "Contents" / "MacOS" / "JR-Bar"
-            executable.parent.mkdir(parents=True)
-            executable.write_bytes(b"frozen")
-            executable.chmod(0o755)
-            with (
-                patch("jrbar.status_bar_launch.sys.frozen", True, create=True),
-                patch("jrbar.status_bar_launch.sys.executable", str(executable)),
-            ):
-                plist = build_launch_agent_plist(
-                    stdout_path=Path("/tmp/jrbar.out.log"),
-                    stderr_path=Path("/tmp/jrbar.err.log"),
-                )
-
-        self.assertEqual(
-            plist["ProgramArguments"],
-            [str(executable), "status-bar", "start", "--foreground"],
-        )
-
+    def test_frozen_hook_command_contract(self) -> None:
         # Without a bundled shim (a checkout's hook/build/jrbar-hook must not
         # leak into this case) a frozen build registers its internal CLI.
         with (
@@ -4993,26 +4921,18 @@ for (const event of [
             f"{sys.executable} agent-monitor hook-client --provider codex --log '/tmp/codex events.jsonl'",
         )
 
-    def test_status_bar_install_removes_legacy_com_sidepulse_plist(self) -> None:
+    def test_startup_cleanup_removes_legacy_com_sidepulse_plist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            target = base / "com.jonathanreed.jrbar.app.plist"
-            legacy = base / "com.sidepulse.agentstatus.plist"
+            home = Path(tmp)
+            agents = home / "Library" / "LaunchAgents"
+            agents.mkdir(parents=True)
+            legacy = agents / "com.sidepulse.agentstatus.plist"
             legacy.write_bytes(b"old")
 
-            with (
-                patch("jrbar.status_bar_launch.default_state_dir", return_value=base / "state"),
-                patch("jrbar.status_bar_launch.subprocess.run") as run,
-            ):
-                result = install_launch_agent(
-                    start=False,
-                    plist_path=target,
-                    legacy_plist_path=legacy,
-                    python_executable="/usr/bin/python3",
-                )
+            with patch("jrbar.status_bar_launch.subprocess.run") as run:
+                removed = remove_retired_launch_agents(home)
 
-            self.assertTrue(result.changed)
-            self.assertTrue(target.exists())
+            self.assertEqual(removed, (legacy,))
             self.assertFalse(legacy.exists())
             run.assert_called_once()
             self.assertEqual(run.call_args.args[0][0:2], ["/bin/launchctl", "bootout"])

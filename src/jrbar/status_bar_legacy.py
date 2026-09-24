@@ -24,7 +24,6 @@ try:
         NSAlert,
         NSAlertFirstButtonReturn,
         NSApp,
-        NSApplication,
         NSApplicationActivationPolicyAccessory,
         NSBackingStoreBuffered,
         NSBezelStyleRounded,
@@ -419,7 +418,6 @@ from .hook_ingress import (
 from .ipc import (
     HookEventServer,
     ProviderRefreshHint,
-    another_instance_alive,
     default_event_socket_path,
     default_latest_state_path,
 )
@@ -681,8 +679,6 @@ from .signal_coordinator import (
 from .status_bar_launch import (
     LAUNCH_AGENT_LABEL,
     TerminalLaunchPlan,
-    install_launch_agent,
-    launch_agent_installed,
     resolve_terminal_launch,
     terminal_launch_arguments,
 )
@@ -11543,67 +11539,6 @@ class StatusBarController(NSObject):
         if demo_view is not None:
             demo_view.setNeedsDisplay_(True)
 
-    def refresh_setup_window(self) -> None:
-        if self.setup_window is None:
-            return
-
-        launch_installed = launch_agent_installed()
-        eject_installed = sd_eject_guard_installed()
-        sleep_installed = sleep_helper_installed()
-
-        set_field_value(
-            self.setup_fields.get("launch_status"),
-            "Installed" if launch_installed else "Not installed",
-        )
-        set_field_value(
-            self.setup_fields.get("eject_status"),
-            "Installed" if eject_installed else "Not installed",
-        )
-        set_field_value(
-            self.setup_fields.get("sleep_status"),
-            "Installed" if sleep_installed else "Needs administrator setup",
-        )
-        # Enablement only -- never the checked STATE. Refresh runs after
-        # every provider Install click, and forcing these back to
-        # checked overrode a user's explicit opt-out (the sleep helper
-        # opens a sudo Terminal; re-checking it behind their back is the
-        # worst possible surprise). The initial checked state is set
-        # once, at window build.
-        self.set_setup_checkbox("launch", None, enabled=not launch_installed)
-        self.set_setup_checkbox("eject_guard", None, enabled=not eject_installed)
-        self.set_setup_checkbox("sleep_helper", None, enabled=not sleep_installed)
-        eject_uninstall = self.setup_buttons.get("eject_guard_uninstall")
-        if eject_uninstall is not None:
-            eject_uninstall.setEnabled_(eject_installed)
-            eject_uninstall.setHidden_(not eject_installed)
-
-        fda_status = self.setup_fields.get("fda_status")
-        fda_button = self.setup_buttons.get("fda_grant")
-        if fda_status is not None or fda_button is not None:
-            try:
-                focus_sync.configured_focus_modes()
-                fda_granted = True
-            except focus_sync.FocusSyncUnavailableError:
-                fda_granted = False
-            if fda_status is not None:
-                set_field_value(fda_status, "Granted ✓" if fda_granted else "Not granted")
-            if fda_button is not None:
-                fda_button.setHidden_(fda_granted)
-
-        # The welcome window's provider rows mirror the Settings Agents
-        # pane: one contextual action, honest status.
-        for provider in HOOK_PROVIDERS:
-            status_label = self.setup_fields.get(f"setup_{provider}_status")
-            install_button = self.setup_buttons.get(f"setup_{provider}_install")
-            if status_label is None and install_button is None:
-                continue
-            config = provider_spec(provider).detector(None)
-            installed = provider_hooks_installed(config)
-            if status_label is not None:
-                set_field_value(status_label, "Connected ✓" if installed else "")
-            if install_button is not None:
-                install_button.setHidden_(installed)
-
     def set_setup_checkbox(self, key: str, checked: bool | None, *, enabled: bool) -> None:
         """checked=None leaves the user's current choice alone (the
         refresh path); a bool sets it (the build path)."""
@@ -11613,72 +11548,6 @@ class StatusBarController(NSObject):
         if checked is not None:
             set_checkbox_state(button, checked)
         button.setEnabled_(enabled)
-
-    def run_first_launch_setup(self) -> None:
-        messages: list[str] = []
-        errors: list[str] = []
-        opened_sleep_installer = False
-
-        if checkbox_is_on(self.setup_buttons.get("launch")) and not launch_agent_installed():
-            try:
-                result = install_launch_agent(start=False)
-                messages.append("Run at Login installed." if result.changed else "Run at Login already installed.")
-            except Exception as exc:
-                errors.append(f"Run at Login failed: {exc}")
-
-        if checkbox_is_on(self.setup_buttons.get("eject_guard")) and not sd_eject_guard_installed():
-            try:
-                result = install_sd_eject_guard(scope="auto", start=True)
-                scope_label = "system" if result.scope == "system" else "user"
-                messages.append(f"{SD_EJECT_GUARD_DISPLAY_NAME} installed ({scope_label}).")
-            except Exception as exc:
-                errors.append(f"{SD_EJECT_GUARD_DISPLAY_NAME} failed: {exc}")
-
-        if checkbox_is_on(self.setup_buttons.get("sleep_helper")) and not sleep_helper_installed():
-            try:
-                path = open_terminal_setup_command(sleep_helper_install_command())
-                messages.append(f"Sleep prevention installer opened: {path}")
-                opened_sleep_installer = True
-            except Exception as exc:
-                errors.append(f"Sleep prevention installer failed: {exc}")
-
-        if errors:
-            set_field_value(self.setup_fields.get("message"), "  ".join(errors))
-            log_status_bar(f"setup errors: {'; '.join(errors)}")
-            self.refresh_setup_window()
-            return
-
-        if opened_sleep_installer:
-            message = "Finish the Terminal setup, then click Set Up again."
-            set_field_value(self.setup_fields.get("message"), message)
-            log_status_bar(f"setup waiting: {message}")
-            self.refresh_setup_window()
-            return
-
-        # Agent monitoring is the whole point: pressing the default
-        # Set Up button with zero provider hooks installed used to mark
-        # setup complete and close the window anyway. Hold the window
-        # open ONCE with a plain explanation; a second press respects
-        # the user's choice.
-        try:
-            any_hooks = any(
-                provider_hooks_installed(provider_spec(provider).detector(None))
-                for provider in HOOK_PROVIDERS
-            )
-        except Exception:
-            any_hooks = True
-        if not any_hooks and not getattr(self, "_setup_no_hooks_warned", False):
-            self._setup_no_hooks_warned = True
-            set_field_value(
-                self.setup_fields.get("message"),
-                "No agents connected yet -- sessions won't appear until "
-                "you install a hook above. Set Up again to finish anyway.",
-            )
-            self.refresh_setup_window()
-            return
-        if not messages:
-            messages.append("Nothing to install.")
-        self.complete_first_launch_setup("  ".join(messages))
 
     def uninstall_sd_eject_guard_from_setup(self) -> None:
         try:
@@ -19757,33 +19626,6 @@ def open_terminal_command(
     return plan
 
 
-def run_status_bar() -> None:
-    app = NSApplication.sharedApplication()
-    controller = StatusBarController.alloc().init()
-    app.setDelegate_(controller)
-    app.run()
-
-
-def main() -> int:
-    # Backlog #15: a second instance used to steal events.sock, and
-    # quitting it unlinked the socket and permanently deafened the
-    # survivor. One live-owner probe; a stale socket file still reads
-    # as dead and gets rebound over as before.
-    if another_instance_alive():
-        print(f"{PRODUCT_DISPLAY_NAME} is already running; this instance is exiting.")
-        return 0
-    from .application_composition import compose_status_bar_application
-    from .migration import run_startup_migration
-
-    # A SidePulse install's settings, ledgers and history come forward
-    # before composition reads any of them.
-    run_startup_migration()
-    compose_status_bar_application()
-    run_status_bar()
-    return 0
-
-
-
 # --- Extraction seam (backlog #14): the Settings window's construction
 # lives in settings_window.py with explicit dependencies and is re-exported
 # below so controller methods, tests, and callers keep addressing
@@ -19850,10 +19692,3 @@ from .settings_window import (  # noqa: E402, F401 -- re-export: tests and
     remote_peer_status_text,
     select_focus_dim_choice,
 )
-
-# Direct execution (python -m jrbar.status_bar) must run AFTER the
-# extraction seam above -- main() blocks for the app's whole life, so
-# anything below the guard would never execute (the seam sat below it
-# briefly, and every Settings path NameError'd under -m).
-if __name__ == "__main__":
-    raise SystemExit(main())

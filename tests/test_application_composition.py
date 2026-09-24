@@ -137,27 +137,7 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
 
 
 
-def test_foreground_entrypoints_reach_one_composition_boundary__and_2_more() -> None:
-    # --- scenario: foreground_entrypoints_reach_one_composition_boundary
-    legacy_main = _function(_tree(STATUS_BAR_LEGACY), "main")
-    provider_main = _function(_tree(PROVIDER_USAGE_STATUS_BAR), "main")
-    legacy_calls = [
-        _call_name(node) for node in ast.walk(legacy_main) if isinstance(node, ast.Call)
-    ]
-    provider_calls = [
-        _call_name(node)
-        for node in ast.walk(provider_main)
-        if isinstance(node, ast.Call)
-    ]
-
-    assert legacy_calls.count("compose_status_bar_application") == 1
-    assert legacy_calls.count("run_status_bar") == 1
-    assert legacy_calls.index("compose_status_bar_application") < legacy_calls.index(
-        "run_status_bar"
-    )
-    assert "compose_status_bar_application" not in provider_calls
-    assert provider_calls == ["main"]
-
+def test_status_bar_composition_is_pure_on_import_and_idempotent_at_boot__and_1_more() -> None:
     # --- scenario: status_bar_composition_is_pure_on_import_and_idempotent_at_boot
     script = """
 import json
@@ -227,36 +207,12 @@ print(json.dumps({"ok": True}))
 
     assert completed.returncode == 0, completed.stderr
 
-    # --- scenario: provider_foreground_main_composes_once_before_appkit
-    script = """
-from jrbar import application_composition
-from jrbar import provider_usage_status_bar as provider
-from jrbar import status_bar_legacy as legacy
-
-calls = []
-application_composition.compose_status_bar_application = (
-    lambda: calls.append("compose")
-)
-legacy.another_instance_alive = lambda: False
-legacy.run_status_bar = lambda: calls.append("run")
-
-assert provider.main() == 0
-assert calls == ["compose", "run"], calls
-"""
-    with tempfile.TemporaryDirectory() as tempdir:
-        env = os.environ.copy()
-        env["SIDEPULSE_TESTING"] = "1"
-        env["HOME"] = tempdir
-        env["PYTHONPATH"] = str(ROOT / "src")
-        completed = subprocess.run(
-            [sys.executable, "-c", script],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-
-    assert completed.returncode == 0, completed.stderr
-
+    # --- scenario: no_module_starts_the_retired_foreground_menu_bar
+    # The daemon composes the headless controller; nothing runs the
+    # PyObjC menu bar's NSApplication loop any more.
+    for path in (STATUS_BAR, PRODUCTION_STATUS_BAR, PROVIDER_USAGE_STATUS_BAR, STATUS_BAR_LEGACY):
+        tree = _tree(path)
+        names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        assert "main" not in names, f"{path.name} still has a foreground main"
+        assert "run_status_bar" not in names, f"{path.name} still runs the menu-bar app"
+        assert '__name__ == "__main__"' not in path.read_text(encoding="utf-8")

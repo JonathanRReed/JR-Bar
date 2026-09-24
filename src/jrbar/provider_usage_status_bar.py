@@ -11,9 +11,6 @@ from .provider_usage_status_bar_probe import (
     PROBE_IMPORT_MODE as _PROBE_IMPORT_MODE,
 )
 from .provider_usage_status_bar_probe import (
-    ProbeHost as _ProbeHost,
-)
-from .provider_usage_status_bar_probe import (
     ProbeLegacyShim as _ProbeLegacyShim,
 )
 from .provider_usage_status_bar_probe import (
@@ -22,7 +19,6 @@ from .provider_usage_status_bar_probe import (
 
 if _PROBE_IMPORT_MODE:
     _settings_navigation = None
-    _host = _ProbeHost(product_display_name=PRODUCT_DISPLAY_NAME)
     _legacy = _ProbeLegacyShim()
     _BaseStatusBarController = object
     _original_build_menu = None
@@ -928,17 +924,7 @@ def install_provider_usage_status_bar():
     return JRProviderUsageStatusBarController, build_menu
 
 
-def main() -> int:
-    """Delegate to the one retained foreground main and composition boundary."""
-    return _host.main()
-
-
 __all__ = [
     "JRProviderUsageStatusBarController",
     "install_provider_usage_status_bar",
-    "main",
 ]
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -46,7 +46,6 @@ def _result() -> DiagnosticResult:
         findings=(
             _finding(DiagnosticCheck.PACKAGE_IMPORT_ROOT, DiagnosticCode.SOURCE_CHECKOUT, 1, 1),
             _finding(DiagnosticCheck.SIGNATURE_STATE, DiagnosticCode.NOT_APPLICABLE, 0, 1),
-            _finding(DiagnosticCheck.LAUNCH_AGENT_STATE, DiagnosticCode.MISSING, 0, 1),
             _finding(DiagnosticCheck.PRIVATE_PATH_MODES, DiagnosticCode.PRIVATE, 3, 3),
             _finding(DiagnosticCheck.HOOK_DETECTOR_STATE, DiagnosticCode.PARTIAL, 2, 8),
             _finding(DiagnosticCheck.NEGOTIATED_SOURCE_HEALTH, DiagnosticCode.HEALTHY, 17, 17),
@@ -65,7 +64,9 @@ def test_manifest_and_result_are_frozen_exact_and_bounded__and_2_more() -> None:
     assert isinstance(DIAGNOSTIC_MANIFEST, DiagnosticManifest)
     # Adding a check changes the exported document's shape, so the version
     # moves with it -- a v1 reader must not silently miss a whole row.
-    assert DIAGNOSTIC_MANIFEST.version == DOCTOR_VERSION == 5
+    assert DIAGNOSTIC_MANIFEST.version == DOCTOR_VERSION == 6
+    # v6 dropped launch_agent_state: no install has a menu-bar LaunchAgent.
+    assert "launch_agent_state" not in {check.value for check in DiagnosticCheck}
     assert tuple(field.check for field in DIAGNOSTIC_MANIFEST.fields) == tuple(DiagnosticCheck)
     assert tuple(field.name for field in fields(DiagnosticResult)) == (
         "manifest_version",
@@ -180,11 +181,9 @@ def test_default_collection_uses_only_read_only_local_probes__and_2_more(tmp_pat
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
     state.chmod(0o700)
-    launch_agent = tmp_path / "missing.plist"
 
     with (
         patch("jrbar.doctor.running_inside_bundle", return_value=False),
-        patch("jrbar.doctor.launch_agent_path", return_value=launch_agent),
         patch("jrbar.doctor.default_state_dir", return_value=state),
         patch("jrbar.doctor.default_log_path", side_effect=lambda provider: state / f"{provider}.jsonl"),
         patch("jrbar.doctor.detect_provider_configs", return_value=[]),
@@ -200,7 +199,6 @@ def test_default_collection_uses_only_read_only_local_probes__and_2_more(tmp_pat
 
     assert result.finding(DiagnosticCheck.PACKAGE_IMPORT_ROOT).code is DiagnosticCode.SOURCE_CHECKOUT
     assert result.finding(DiagnosticCheck.SIGNATURE_STATE).code is DiagnosticCode.NOT_APPLICABLE
-    assert result.finding(DiagnosticCheck.LAUNCH_AGENT_STATE).code is DiagnosticCode.MISSING
     assert result.finding(DiagnosticCheck.PRIVATE_PATH_MODES).code is DiagnosticCode.PRIVATE
     assert result.finding(DiagnosticCheck.HOOK_DETECTOR_STATE).code is DiagnosticCode.NOT_CONFIGURED
     assert result.finding(DiagnosticCheck.NEGOTIATED_SOURCE_HEALTH).code is DiagnosticCode.UNAVAILABLE
@@ -210,15 +208,6 @@ def test_default_collection_uses_only_read_only_local_probes__and_2_more(tmp_pat
     assert result.finding(DiagnosticCheck.ALCOVE_FOLLOW_STATE).code is DiagnosticCode.NOT_CONFIGURED
     assert result.last_failure_class is SanitizedFailureClass.NONE
     run.assert_not_called()
-
-    # --- scenario: bundled core reports the launch agent not applicable
-    with (
-        patch("jrbar.doctor.running_inside_bundle", return_value=True),
-        patch("jrbar.doctor.launch_agent_path", return_value=launch_agent),
-    ):
-        finding = doctor._launch_agent_state_probe()
-    assert finding.code is DiagnosticCode.NOT_APPLICABLE
-    assert (finding.count, finding.limit) == (1, 1)
 
     # --- scenario: private_export_writes_one_exact_0600_json_leaf
     parent = tmp_path / "selected"
