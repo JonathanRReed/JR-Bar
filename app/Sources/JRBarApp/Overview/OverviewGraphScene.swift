@@ -121,8 +121,9 @@ struct GraphScene: View, Animatable {
     private var progress: Double { min(1, max(0, 1 - (Double(generation) - settle))) }
 
     var body: some View {
-        let painter = GraphPainter(model: model, accents: model.accents, camera: camera, progress: progress,
-                                   dim: dim, dark: colorScheme == .dark, motion: motion)
+        let painter = GraphPainter(model: model, accents: model.accents, unseen: Color(nsColor: UnseenDot.fill),
+                                   camera: camera, progress: progress, dim: dim, dark: colorScheme == .dark,
+                                   motion: motion)
         ZStack {
             Canvas { context, size in
                 painter.drawStill(&context, size: size)
@@ -168,6 +169,8 @@ private struct GraphPainter {
     typealias Layout = OverviewGraphLayout
     let model: GraphSceneModel
     let accents: [String: Color]
+    /// The panel's unseen-dot blue, read where the views live.
+    let unseen: Color
     let camera: GraphCamera
     let progress: Double
     let dim: Double
@@ -598,7 +601,7 @@ private struct GraphPainter {
         if model.unseen.contains(id) {
             let dot = CGPoint(x: side == .right ? rect.minX + 6 : rect.maxX - 6, y: rect.minY + 6)
             c.fill(Self.circle(dot, 3.5), with: .color(capsuleTop))
-            c.fill(Self.circle(dot, 2.6), with: .color(Color(nsColor: UnseenDot.fill)))
+            c.fill(Self.circle(dot, 2.6), with: .color(unseen))
         }
         if model.selectedID == id {
             var ring = context
@@ -695,10 +698,13 @@ private struct GraphPainter {
         c.stroke(mark, with: .color(.white), style: StrokeStyle(lineWidth: size * 0.14, lineCap: .round, lineJoin: .round))
     }
 
+    /// The glow's bands, widest and faintest first.
+    private static let glowBands: [(spread: CGFloat, opacity: Double)] = [(9, 0.07), (5, 0.13), (2.5, 0.22)]
+
     /// The amber glow round a capsule that waits on you, outside its edge
     /// so it never washes over the words.
     private func strokeGlow(_ context: inout GraphicsContext, rect: CGRect, strength: Double) {
-        for (spread, opacity) in [(9.0, 0.07), (5.0, 0.13), (2.5, 0.22)] as [(CGFloat, Double)] {
+        for (spread, opacity) in Self.glowBands {
             let halo = rect.insetBy(dx: -spread / 2 - 1, dy: -spread / 2 - 1)
             context.stroke(Path(roundedRect: halo, cornerRadius: halo.height / 2, style: .continuous),
                            with: .color(.orange.opacity(opacity * strength * 1.6)), lineWidth: spread)
@@ -760,7 +766,7 @@ private struct GraphPainter {
                 let ring = radius + (worker ? 3 : 4)
                 let width: CGFloat = worker ? 1.8 : 2.3
                 let head = (time * 280 + Double(Self.seed(id) % 360)).truncatingRemainder(dividingBy: 360)
-                for (length, opacity) in [(150.0, 0.18), (95.0, 0.45), (45.0, 1.0)] {
+                for (length, opacity) in Self.comet {
                     var arc = Path()
                     arc.addArc(center: center, radius: ring, startAngle: .degrees(head - length),
                                endAngle: .degrees(head), clockwise: false)
@@ -774,6 +780,10 @@ private struct GraphPainter {
             }
         }
     }
+
+    /// A working ring's comet, in degrees of arc: the faint long tail,
+    /// the brighter short one, then the head.
+    private static let comet: [(length: Double, opacity: Double)] = [(150, 0.18), (95, 0.45), (45, 1)]
 
     /// Three sparks running the length of an edge, brightest mid-flight.
     private func drawSparks(_ context: inout GraphicsContext, from start: CGPoint, to end: CGPoint, color: Color,
@@ -870,7 +880,7 @@ struct GraphNodeLabel: View {
     let side: OverviewGraphLayout.Side
     let worker: Bool
 
-    static func size(worker: Bool) -> CGSize {
+    nonisolated static func size(worker: Bool) -> CGSize {
         worker ? CGSize(width: 116, height: 30) : CGSize(width: 160, height: 44)
     }
 
