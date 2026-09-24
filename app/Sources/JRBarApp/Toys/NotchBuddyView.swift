@@ -147,7 +147,8 @@ struct NotchBuddyView: View {
     /// (`tuck` 0 → 1; up under the notch when docked, down to its feet
     /// when floating), or arriving — grown in from the docked size and
     /// drifted in from the docked spot on a hand-off, popped back up
-    /// after a nap. Reduce Motion fades the tuck and skips the rest.
+    /// after a nap. Reduce Motion never ducks out (`tuckAway` puts it
+    /// away at once) and skips the arrivals too.
     /// `scale` is the home's size: a drift is in screen points and the
     /// figure is drawn at 18 pt and scaled after, so it travels in the
     /// figure's own units.
@@ -155,8 +156,8 @@ struct NotchBuddyView: View {
                          reduceMotion: Bool) -> Presence {
         let anchor: UnitPoint = docked ? .top : .bottom
         if let tuck {
-            let size = reduceMotion ? 1 : NotchBuddyToy.tuckScale(tuck)
-            return Presence(scale: size, anchor: anchor, offset: .zero, opacity: 1 - tuck * tuck)
+            return Presence(scale: NotchBuddyToy.tuckScale(tuck), anchor: anchor, offset: .zero,
+                            opacity: 1 - tuck * tuck)
         }
         guard !reduceMotion, let arrival else {
             return Presence(scale: 1, anchor: anchor, offset: .zero, opacity: 1)
