@@ -106,6 +106,14 @@ import Testing
         #expect(ToyCard.tint(for: "confetti", page: page) == page)
     }
 
+    @Test func aChordReadsAsTheKeysAPersonPresses() {
+        #expect(ShortcutRecorderLogic.keycaps("⌃⌥J") == ["⌃", "⌥", "J"])
+        #expect(ShortcutRecorderLogic.keycaps("⌥⇧⌘F12") == ["⌥", "⇧", "⌘", "F12"])
+        #expect(ShortcutRecorderLogic.keycaps("⌃⌥⌘→") == ["⌃", "⌥", "⌘", "→"])
+        #expect(ShortcutRecorderLogic.keycaps("Space") == ["Space"])
+        #expect(ShortcutRecorderLogic.keycaps("").isEmpty)
+    }
+
     @Test func chipsWrapOntoANewLineWhenTheRowIsFull() {
         func height(width: CGFloat) -> CGFloat {
             let row = FlowLayout(spacing: 8, lineSpacing: 6) {

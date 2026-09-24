@@ -45,7 +45,6 @@ struct LightingPage: View {
                     SettingLabel(title: "Blend mode", subtitle: blendDetail)
                 }
                 .pickerStyle(.menu)
-                .fixedSize()
             }
             FleetPreviewRow(store: store, sketch: fleetProgram)
             SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
@@ -811,18 +810,14 @@ struct ProviderSwatch: View {
             ColorPicker("", selection: store.color(path, default: style.accentHex), supportsOpacity: false)
                 .labelsHidden()
                 .disabled(!store.isProvided(path))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(style.name)
-                HStack(spacing: 6) {
-                    LEDStripPreview(program: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
-                                    style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6,
-                                    phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
-                        .frame(width: 66)
-                        .accessibilityLabel("\(style.name) working animation preview")
-                    Text(store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tertiary)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                SwatchTitle(name: style.name,
+                            hex: store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
+                LEDStripPreview(program: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
+                                style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6,
+                                phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
+                    .frame(maxWidth: 110)
+                    .accessibilityLabel("\(style.name) working animation preview")
             }
         }
         .help("How \(style.name) looks while working: \(LightingPage.blendModes.first { $0.value == blend }?.label ?? blend), one cycle every \(SettingsStore.seconds(cycle))")
@@ -860,20 +855,40 @@ struct ModeSwatch: View {
             ColorPicker("", selection: store.color(path, default: fallback), supportsOpacity: false)
                 .labelsHidden()
                 .disabled(!store.isProvided(path))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(label.name)
-                HStack(spacing: 6) {
-                    LEDStripPreview(program: LightingPreviewPrograms.state(mode, colorHex: hex),
-                                    style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6)
-                        .frame(width: 66)
-                        .accessibilityLabel("\(label.name) preview")
-                    Text(store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : fallback))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tertiary)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                SwatchTitle(name: label.name,
+                            hex: store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : fallback))
+                LEDStripPreview(program: LightingPreviewPrograms.state(mode, colorHex: hex),
+                                style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6)
+                    .frame(maxWidth: 110)
+                    .accessibilityLabel("\(label.name) preview")
             }
         }
         .help(label.detail)
+    }
+}
+
+/// A swatch's name with its hex beside it, on one line — the code in
+/// small monospaced type, and dropped (to the tooltip) before the name
+/// is ever cut short.
+struct SwatchTitle: View {
+    let name: String
+    let hex: String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(name)
+                    .fixedSize()
+                Text(hex.uppercased())
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
+            }
+            Text(name)
+                .lineLimit(1)
+                .help(hex.uppercased())
+        }
     }
 }
 
@@ -1102,7 +1117,6 @@ struct EscalationCeilingRow: View {
             SettingLabel(title: ProviderStyle.style(for: provider).name, subtitle: note(current))
         }
         .pickerStyle(.menu)
-        .fixedSize()
         .settingRowStyle()
     }
 

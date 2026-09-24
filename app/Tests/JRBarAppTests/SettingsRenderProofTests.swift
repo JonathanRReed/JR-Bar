@@ -72,7 +72,15 @@ struct SettingsRenderProofTests {
         let toys = ToysStore(core: core, settings: settings, state: ToysState(),
                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         settings.toys = toys
-        let utilities = UtilitiesStore(core: core, settings: settings, state: UtilitiesState())
+        // A few agents with rules, so the Agent Overview card's table
+        // has rows to draw: one loud, one quiet, one following.
+        var state = UtilitiesState()
+        state.agents.alertRules = [
+            "claude": .followGlobal,
+            "codex": AgentAlertRule(completions: true, escalationCeiling: 3),
+            "grok": AgentAlertRule(asks: true, completions: false, sounds: false, escalationCeiling: 1),
+        ]
+        let utilities = UtilitiesStore(core: core, settings: settings, state: state)
         settings.utilities = utilities
         return Fixture(core: core, settings: settings, toys: toys, utilities: utilities)
     }
@@ -196,6 +204,78 @@ struct SettingsRenderProofTests {
             }
         }
         withExtendedLifetime(fixture) {}
+    }
+
+    /// The atoms on one sheet: a grouped page's rows and an open
+    /// disclosure, then a card body's run header, subrows, chips, notes
+    /// and every status pill.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the atoms PNGs"))
+    func atoms() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let statuses: [ToyStatus] = [.paused("Parked"), .needsPermission("Needs Accessibility"),
+                                     .external("Bendy is rendering it"), .limited("Wallpaper only"),
+                                     .unavailable("No lid-angle sensor"), .note("Watching quietly")]
+        let sheet = Form {
+            Section {
+                SettingsPageHeader(page: .toys)
+            }
+            SettingGroup("A grouped page", note: "A footer note under the group, in the subtitle's size.") {
+                Toggle(isOn: .constant(true)) {
+                    SettingLabel(title: "A switch", subtitle: "A one-sentence description under its title.")
+                }
+                SettingRow("A button", subtitle: "The control sits in the trailing column.") {
+                    Button("Do It…") {}
+                }
+                DisclosureGroup(isExpanded: .constant(true)) {
+                    Toggle(isOn: .constant(false)) {
+                        SettingLabel(title: "Inside the panel", subtitle: "Rows under an open disclosure.")
+                    }
+                    LabeledContent {
+                        Text("42 min").foregroundStyle(.secondary)
+                    } label: {
+                        SettingLabel(title: "A reading")
+                    }
+                } label: {
+                    SettingLabel(title: "An open disclosure", subtitle: "The chevron turns in the control column.")
+                }
+            }
+            Section {
+                VStack(alignment: .leading, spacing: 0) {
+                    CardNote("A note with a glyph: how a thing works.")
+                    CardSectionHeader("A run")
+                    Toggle(isOn: .constant(true)) {
+                        SettingLabel(title: "A parent switch", subtitle: "Its dependent rows sit below it.")
+                    }
+                    CardSubrows {
+                        FlowLayout {
+                            Toggle("Asks", isOn: .constant(true))
+                            Toggle("Completions", isOn: .constant(true))
+                            Toggle("Failures", isOn: .constant(false))
+                            Toggle("Quota resets", isOn: .constant(true))
+                            Toggle("Power", isOn: .constant(false))
+                        }
+                        .toggleStyle(ChipToggleStyle())
+                        .padding(.vertical, SettingsMetrics.s)
+                        Toggle(isOn: .constant(false)) {
+                            SettingLabel(title: "A dependent switch")
+                        }
+                    }
+                    CardNote("A warning, with its fix beside it.", symbol: "exclamationmark.triangle.fill", tint: .orange)
+                    CardSectionHeader("Pills")
+                    FlowLayout {
+                        ForEach(statuses, id: \.text) { StatusPill($0.text, tint: $0.tint) }
+                    }
+                    .padding(.vertical, SettingsMetrics.s)
+                }
+                .cardBodyStyle()
+            }
+        }
+        .formStyle(.grouped)
+        .disclosureGroupStyle(SettingsDisclosureStyle())
+        for dark in [false, true] where Self.wanted("atoms") {
+            let rep = try Self.snapshot(sheet, size: CGSize(width: Self.paneWidth, height: 2000), dark: dark)
+            try Self.write(rep, named: "atoms-\(dark ? "dark" : "light")")
+        }
     }
 
     /// The whole window — sidebar, toolbar-less split and the Toys page.

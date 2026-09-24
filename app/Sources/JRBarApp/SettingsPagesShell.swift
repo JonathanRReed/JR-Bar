@@ -342,7 +342,7 @@ private struct QuickTogglesGroup: View {
             ForEach(SystemToggle.allCases, id: \.rawValue) { toggle in
                 let id = AppShortcutCatalog.toggleID(toggle)
                 LabeledContent {
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
                         ShortcutRecorderField(id: id, chord: store.actionShortcut(id), center: center,
                                               onChange: { store.setShortcut($0, for: id) },
                                               onTakeOver: { store.setShortcut(nil, for: $0) })
@@ -352,11 +352,12 @@ private struct QuickTogglesGroup: View {
                             .help("Show this chip on the notch card")
                     }
                 } label: {
-                    Label {
-                        Text(toggle.longTitle)
-                    } icon: {
+                    HStack(spacing: SettingsMetrics.s) {
                         Image(systemName: toggle.symbol)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(toggle.longTitle)
                     }
                 }
                 .settingRowStyle()

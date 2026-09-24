@@ -402,7 +402,7 @@ struct SettingPicker: View {
             if segmented {
                 picker.pickerStyle(.segmented)
             } else {
-                picker.pickerStyle(.menu).fixedSize()
+                picker.pickerStyle(.menu)
             }
         }
     }
@@ -436,7 +436,6 @@ struct SettingIntPicker: View {
                 SettingLabel(title: title, subtitle: subtitle)
             }
             .pickerStyle(.menu)
-            .fixedSize()
         }
     }
 }

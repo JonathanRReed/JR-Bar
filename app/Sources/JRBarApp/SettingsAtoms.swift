@@ -166,6 +166,37 @@ struct SettingsBanner: View {
     }
 }
 
+/// A group's title with a glyph and a state beside it — a device's name
+/// and whether it is connected — for the groups that stand for a thing
+/// rather than an idea.
+struct SettingsGroupHeader: View {
+    let title: String
+    var symbol: String? = nil
+    var tint: Color = .gray
+    var pill: String? = nil
+    var pillTint: Color = .secondary
+    var trailing: String? = nil
+
+    var body: some View {
+        HStack(spacing: SettingsMetrics.s) {
+            if let symbol {
+                SettingsIconTile(symbol: symbol, tint: tint, size: 20)
+            }
+            Text(title)
+                .font(.headline)
+            if let pill {
+                StatusPill(pill, tint: pillTint)
+            }
+            Spacer(minLength: SettingsMetrics.s)
+            if let trailing {
+                Text(trailing)
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+}
+
 // MARK: - Card bodies
 //
 // A toy or utility card's controls arrive as one view from the lane that
