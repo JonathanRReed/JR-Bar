@@ -416,6 +416,72 @@ struct StatusMetersTests {
         #expect(StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .meters, meters: [unknown])).contains("no reading"))
     }
 
+    /// The alpha down the middle of the first column, top to bottom, with
+    /// the strip drawn at 4× so a pixel row is a quarter point. The column
+    /// starts after the edge inset, the state dot and its gap.
+    static func firstColumnAlpha(_ image: NSImage) -> [UInt8] {
+        let scale: CGFloat = 4
+        let width = Int(image.size.width * scale), height = Int(image.size.height * scale)
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return [] }
+        rep.size = image.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.restoreGraphicsState()
+        let left = StatusIconRenderer.edgeInset + StatusIconRenderer.dotDiameter + StatusIconRenderer.dotGap
+        let x = Int(((left + StatusIconRenderer.meterBarWidth / 2) * scale).rounded(.down))
+        guard let data = rep.bitmapData else { return [] }
+        return (0..<height).map { data[$0 * rep.bytesPerRow + x * 4 + 3] }
+    }
+
+    @Test("a stale figure fills the same continuous column, faint, and never warns")
+    func staleMeter() {
+        var stale = Self.meter("claude", 0.5)
+        stale.stale = true
+        #expect(stale.warning == .none)
+        var nearlyFull = Self.meter("claude", 0.97)
+        nearlyFull.stale = true
+        #expect(nearlyFull.warning == .none, "an old figure cannot turn the strip red")
+        #expect(StatusIconSpec(style: .meters, meters: [nearlyFull]).meterWarning == .none)
+        #expect(stale.readout == "Claude 50% (stale)")
+        var unread = StatusMeter(id: "grok", name: "Grok", glyph: .symbol("circle"), fraction: nil)
+        unread.stale = true
+        #expect(unread.readout == "Grok no reading (stale)")
+
+        let renderer = StatusIconRenderer()
+        let freshImage = renderer.image(for: StatusIconSpec(style: .meters, meters: [Self.meter("claude", 0.5)]))
+        let staleImage = renderer.image(for: StatusIconSpec(style: .meters, meters: [stale]))
+        #expect(staleImage.isTemplate, "a stale column is not a warning")
+        #expect(staleImage.size == freshImage.size, "the column keeps its place in the strip")
+        #expect(Self.pixels(staleImage) != Self.pixels(freshImage))
+
+        let fresh = Self.firstColumnAlpha(freshImage)
+        let faint = Self.firstColumnAlpha(staleImage)
+        let track = fresh.filter { $0 > 0 }.min() ?? 0
+        let freshFill = fresh.max() ?? 0
+        let staleFill = faint.max() ?? 0
+        #expect(staleFill > track + 30, "the faint fill still reads above the track: \(staleFill) vs \(track)")
+        #expect(staleFill + 30 < freshFill, "and plainly below a fresh fill: \(staleFill) vs \(freshFill)")
+        // Continuous: the filled rows are one run from the bottom, and
+        // the stale fill covers as many rows as the fresh one.
+        let filledRows = faint.indices.filter { faint[$0] > track + 30 }
+        let firstFilled = filledRows.first ?? 0
+        let lastFilled = filledRows.last ?? 0
+        #expect(filledRows.count == lastFilled - firstFilled + 1, "one unbroken fill, no segments")
+        let freshRows = fresh.indices.filter { fresh[$0] > track + 30 }
+        #expect(abs(freshRows.count - filledRows.count) <= 1, "the same height as a fresh fill")
+
+        // An accent is not drawn for a stale figure, so it does not cost
+        // the strip its template colouring.
+        var accented = stale
+        accented.accentHex = "#D97757"
+        #expect(renderer.image(for: StatusIconSpec(style: .meters, meters: [accented])).isTemplate)
+        let voice = StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .meters, meters: [stale]))
+        #expect(voice.contains("(stale)"))
+    }
+
     @Test("a live state dot colours the strip; a quiet one leaves it a template")
     func stateDot() {
         let renderer = StatusIconRenderer()
@@ -636,6 +702,19 @@ struct StatusCompactPercentTests {
         let unread = StatusIconSpec(style: .compactPercent, meters: [Self.meter("gemini", nil)])
         #expect(StatusIconRenderer.tightestMeter(unread)?.id == "gemini", "all-unread still picks one to dash")
         #expect(StatusIconRenderer.tightestMeter(StatusIconSpec(style: .compactPercent)) == nil)
+    }
+
+    @Test("a stale figure loses the readout to a fresh one and takes no tint")
+    func staleReadout() {
+        var stale = Self.meter("grok", 0.9, verdict: .exhausted, accent: "#D97757")
+        stale.stale = true
+        let spec = StatusIconSpec(style: .compactPercent, meters: [stale, Self.meter("claude", 0.2), Self.meter("codex", nil)])
+        #expect(StatusIconRenderer.tightestMeter(spec)?.id == "claude", "fresh beats a higher stale figure")
+        let staleOnly = StatusIconSpec(style: .compactPercent, meters: [Self.meter("codex", nil), stale])
+        #expect(StatusIconRenderer.tightestMeter(staleOnly)?.id == "grok", "a stale figure still beats no figure")
+        #expect(StatusIconRenderer.compactColor(stale) == nil, "no pace, warning or accent colour for an old figure")
+        #expect(StatusIconRenderer().image(for: staleOnly).isTemplate)
+        #expect(StatusIconRenderer.accessibilityLabel(staleOnly) == "JR-Bar · Grok 10% left (stale)")
     }
 
     @Test("the strip draws glyph plus figure, tinted by the pace verdict")
