@@ -3090,9 +3090,14 @@ final class MenuBarUtility: Toy {
                         if MenuBarItemLister.onAnyMenuBarRow(found.bounds) { break }
                     }
                 }
-                if !MenuBarAX.press(fresh) {
-                    await MainActor.run { self.clickFallback(fresh) }
-                }
+                // The press waits on the owner's reply — up to the
+                // messaging timeout twice over — so it runs off the main
+                // actor, as the uncovered path's does; the lift stays here.
+                let target = fresh
+                let pressed = await Task.detached(priority: .userInitiated) {
+                    MenuBarAX.press(target)
+                }.value
+                if !pressed { self.clickFallback(target) }
                 try? await Task.sleep(nanoseconds: UInt64(rehide * 1e9))
                 await self.releaseLift(id, item: fresh)
             }

@@ -228,7 +228,16 @@ enum MenuBarAX {
     /// offered.
     nonisolated static func press(_ item: MenuBarItem) -> Bool {
         guard let element = resolve(item) else { return false }
-        if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success { return true }
-        return AXUIElementPerformAction(element, "AXShowMenu" as CFString) == .success
+        if delivered(AXUIElementPerformAction(element, kAXPressAction as CFString)) { return true }
+        return delivered(AXUIElementPerformAction(element, "AXShowMenu" as CFString))
+    }
+
+    /// Whether an action's result means the app got it. An app that
+    /// opens its menu on the press is tracking that menu when the reply
+    /// is due, so the press times out as `cannotComplete` although it
+    /// landed — a fallback then would show the menu twice, or raise the
+    /// owner over the menu it just opened.
+    nonisolated static func delivered(_ result: AXError) -> Bool {
+        result == .success || result == .cannotComplete
     }
 }
