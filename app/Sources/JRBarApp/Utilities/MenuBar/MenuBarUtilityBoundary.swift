@@ -287,15 +287,14 @@ extension MenuBarUtility {
             menu.removeItem(toggle)
         }
         // The hide rows teach by acting; the hint speaks only when there
-        // is nothing on the bar a click could hide. Under the concealer
-        // position teaches nothing — the picker is the way in; under the
-        // spacer the mark is the separator.
+        // is nothing on the bar a click could hide. Under the concealer a
+        // ⌘-drag across the icon is the way in (the picker when it is
+        // off); under the spacer the mark is the separator.
         if !menu.items.contains(where: { $0.action == #selector(MenuBarMenuActions.menuHideApp(_:))
                                           || $0.submenu != nil }) {
             let hint = NSMenuItem(
-                title: concealer != nil
-                    ? "Pick apps to hide in Settings › Utilities › Menu Bar"
-                    : "⌘-drag an item left of the ‹ mark to hide it",
+                title: Self.emptyRunHint(concealing: concealer != nil,
+                                         dragToHide: settings().curation.dragToHide),
                 action: nil, keyEquivalent: "")
             hint.isEnabled = false
             menu.insertItem(hint, at: 0)
@@ -307,6 +306,15 @@ extension MenuBarUtility {
         menu.popUp(positioning: nil,
                    at: NSPoint(x: NSEvent.mouseLocation.x, y: NSEvent.mouseLocation.y - 4),
                    in: nil)
+    }
+
+    /// The empty run's teach row: how an item gets hidden on this
+    /// engine. Pure so a test pins the copy.
+    nonisolated static func emptyRunHint(concealing: Bool, dragToHide: Bool) -> String {
+        guard concealing else { return "⌘-drag an item left of the ‹ mark to hide it" }
+        return dragToHide
+            ? "⌘-drag an item left of the JR-Bar icon to hide it"
+            : "Pick apps to hide in Settings › Utilities › Menu Bar"
     }
 
     /// The ear's ‹ handle — the hidden run's affordance while the agent
@@ -543,7 +551,8 @@ extension MenuBarUtility {
         let reveal = Self.updateReveal(
             changed: changed,
             watch: Set(settings().curation.updateWatch),
-            concealing: concealer != nil)
+            concealing: concealer != nil,
+            appleExtras: concealsAppleExtras)
         let seconds = settings().rehideSeconds
         // Under the concealer the changed app stands alone for the clock
         // — one item joins the row, not the whole run.
@@ -580,16 +589,18 @@ extension MenuBarUtility {
 
     /// What one show-for-updates pass acts on: the changed hidden items
     /// the watch list lets through (all of them while it is empty). An
-    /// app the concealer takes is lifted alone; anything else — a covered
-    /// extra, any item under the spacer engine — reveals its section.
-    /// Pure so a test pins it.
+    /// app the concealer takes is lifted alone — Apple's extras too with
+    /// `concealAppleExtras` on; anything else — a covered extra, any
+    /// item under the spacer engine — reveals its section. Pure so a
+    /// test pins it.
     nonisolated static func updateReveal(changed: [(MenuBarItem, MenuBarItemSection)],
-                                         watch: Set<String>,
-                                         concealing: Bool) -> (lifts: Set<String>, sections: Set<MenuBarItemSection>) {
+                                         watch: Set<String>, concealing: Bool,
+                                         appleExtras: Bool = false) -> (lifts: Set<String>, sections: Set<MenuBarItemSection>) {
         var lifts = Set<String>()
         var sections = Set<MenuBarItemSection>()
         for (item, section) in changed where watch.isEmpty || watch.contains(updateWatchKey(item)) {
-            if concealing, let app = item.bundleID, MenuBarConcealPlan.canConcealApp(app) {
+            if concealing, let app = item.bundleID,
+               MenuBarConcealPlan.canConcealApp(app, appleExtras: appleExtras) {
                 lifts.insert(app)
             } else {
                 sections.insert(section)
@@ -662,6 +673,13 @@ protocol MenuBarBoundaryHost: AnyObject {
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)? { get set }
     var hiddenCount: Int { get set }
     var hiddenRevealed: Bool { get set }
+    /// Size the real item's slot to the mirror (`.slot` seat); nil is the
+    /// slim slot. A host that predates it keeps the slim slot.
+    func setMirrorSlotLength(_ length: CGFloat?)
+}
+
+extension MenuBarBoundaryHost {
+    func setMirrorSlotLength(_ length: CGFloat?) {}
 }
 
 /// The hidden-items submenu's target: an `NSObject` shim so `MenuBarUtility`

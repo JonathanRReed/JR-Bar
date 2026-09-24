@@ -100,6 +100,31 @@ public enum MenuBarTriggerAction: Equatable, Codable, Sendable {
     /// (`/bin/sh -c …`) — "shortcuts run X", an AppleScript file, a
     /// one-liner. The rule's own text, fired as configured.
     case runScript(command: String)
+    /// Keep the Mac awake — Amphetamine's trigger: for `seconds`, or
+    /// until released when nil. The same hold the Keep Awake card and
+    /// `jrbar://awake` take, so a rule and a click never disagree.
+    case holdAwake(seconds: Int?)
+    /// Let the Mac sleep again — whatever hold is standing ends.
+    case releaseAwake
+
+    /// The longest hold a rule may ask for: a day. A rule that needs
+    /// longer holds until released.
+    public static let holdAwakeRange: ClosedRange<Int> = 60...86_400
+
+    /// A hold's seconds kept inside `holdAwakeRange`; nil stays nil,
+    /// the hold until released.
+    public static func clampedAwake(_ seconds: Int?) -> Int? {
+        seconds.map { min(max($0, holdAwakeRange.lowerBound), holdAwakeRange.upperBound) }
+    }
+
+    /// The most minutes a rule's hold may name: a day.
+    public static let holdAwakeMaxMinutes = holdAwakeRange.upperBound / 60
+
+    /// A hold of `minutes` typed on the card, in seconds — clamped before
+    /// the multiply, so a huge number is a day, never an overflow.
+    public static func awakeSeconds(minutes: Int) -> Int {
+        min(max(minutes, 1), holdAwakeMaxMinutes) * 60
+    }
 }
 
 /// One rule. `id` is a stable string (UUIDs are fine) — the engine's
@@ -157,8 +182,19 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         case .showAll: a = "show all items"
         case .reveal(let s): a = "reveal for \(Int(s))s"
         case .runScript(let command): a = "run “\(command)”"
+        case .holdAwake(let seconds): a = Self.awakeSummary(seconds)
+        case .releaseAwake: a = "let the Mac sleep again"
         }
         return "\(t) → \(a)"
+    }
+
+    /// "keep the Mac awake for 2 h", "… for 45 min", or until released.
+    static func awakeSummary(_ seconds: Int?) -> String {
+        guard let seconds = MenuBarTriggerAction.clampedAwake(seconds) else {
+            return "keep the Mac awake until released"
+        }
+        if seconds % 3600 == 0 { return "keep the Mac awake for \(seconds / 3600) h" }
+        return "keep the Mac awake for \(max(1, seconds / 60)) min"
     }
 }
 
@@ -314,15 +350,67 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     /// hidden item; once one is marked, only the marked ones interrupt —
     /// a VPN can, a clock can't.
     public var updateWatch: [String]
+    /// A ⌘-drag across the JR-Bar icon picks the dragged app's section:
+    /// dropped left of the icon hides it, right of it shows it — the
+    /// Bartender, Ice and Hidden Bar habit. Only the person's own
+    /// press-and-release writes; a reflow never does.
+    public var dragToHide: Bool
+    /// The person's own answer to `concealAppleExtras`; nil follows
+    /// `concealAppleExtrasDefault`. Only a choice made on the card is
+    /// written, so flipping the default reaches every file that never
+    /// made one.
+    public var concealAppleExtrasChoice: Bool?
+    /// Where the icon stands under the concealer: flush left of the
+    /// first drawn item (`gap`), or exactly on JR-Bar's own macOS slot,
+    /// sized to the icon (`slot`) — then "left of the icon" is the
+    /// agent's own order.
+    public var mirrorSeat: MenuBarMirrorSeat
+    /// Ice's "show hidden items while ⌘-dragging": a ⌘-press on the bar
+    /// brings the hidden run in beside the icon for the drag, so a
+    /// hidden item can be dragged back out.
+    public var revealWhileDragging: Bool
+    /// The security-scoped bookmark for macOS's menu-bar layout table
+    /// (`com.apple.MenuBar.plist`), granted once through an open panel.
+    /// Read-only: JR-Bar never writes the table. nil is no grant.
+    public var layoutTableBookmark: Data?
+    /// Where the Item Bar hangs: under the icon's ‹, or under the
+    /// pointer (Bartender Golden Gate's default).
+    public var itemBarAt: MenuBarItemBarAnchor
+    /// Where an app new to the menu bar goes: where macOS puts it (and
+    /// the ear asks), straight to Shown, or straight to Hidden.
+    public var newItems: MenuBarNewItemsPlacement
+    /// Let a ⌘-drag hide the clock and Control Center through macOS's
+    /// own system-item list. Off until a live probe shows they conceal
+    /// and come back cleanly; Wi-Fi, battery and sound never join.
+    public var concealSystemItems: Bool
 
     /// The profile model this build writes.
     public static let currentProfileModel = 1
+    /// What `concealAppleExtras` is for a file that never chose. Off
+    /// until a live probe shows the agent conceals Apple's extras by
+    /// omission (J13); turning it on is this one line (J23).
+    public static let concealAppleExtrasDefault = false
+
+    /// Apple's standalone extras (Weather, Passwords, Time Machine) hide
+    /// through macOS like any app instead of taking a cover where they
+    /// sit. The system's own items never join.
+    public var concealAppleExtras: Bool {
+        get { concealAppleExtrasChoice ?? Self.concealAppleExtrasDefault }
+        set { concealAppleExtrasChoice = newValue }
+    }
+    /// A layout-table bookmark past this size is not one — dropped on
+    /// decode rather than carried.
+    public static let bookmarkLimit = 64 * 1024
 
     public init(overlay: MenuBarOverlay? = nil, activeProfileID: String? = nil,
                 profileModel: Int = MenuBarCuration.currentProfileModel,
                 stateRules: [MenuBarStateRule] = [], sceneBeforeRule: String? = nil,
                 forceSpacerEngine: Bool = false, deskProfiles: [MenuBarDeskProfile] = [],
-                lastDeskKey: String? = nil, updateWatch: [String] = []) {
+                lastDeskKey: String? = nil, updateWatch: [String] = [],
+                dragToHide: Bool = true, concealAppleExtras: Bool? = nil,
+                mirrorSeat: MenuBarMirrorSeat = .gap, revealWhileDragging: Bool = false,
+                layoutTableBookmark: Data? = nil, itemBarAt: MenuBarItemBarAnchor = .icon,
+                newItems: MenuBarNewItemsPlacement = .asPlaced, concealSystemItems: Bool = false) {
         self.overlay = overlay
         self.activeProfileID = activeProfileID
         self.profileModel = profileModel
@@ -332,11 +420,28 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
         self.deskProfiles = deskProfiles
         self.lastDeskKey = lastDeskKey
         self.updateWatch = updateWatch
+        self.dragToHide = dragToHide
+        self.concealAppleExtrasChoice = concealAppleExtras
+        self.mirrorSeat = mirrorSeat
+        self.revealWhileDragging = revealWhileDragging
+        self.layoutTableBookmark = Self.clampedBookmark(layoutTableBookmark)
+        self.itemBarAt = itemBarAt
+        self.newItems = newItems
+        self.concealSystemItems = concealSystemItems
+    }
+
+    /// A bookmark inside `bookmarkLimit`, else nil.
+    public static func clampedBookmark(_ data: Data?) -> Data? {
+        guard let data, !data.isEmpty, data.count <= bookmarkLimit else { return nil }
+        return data
     }
 
     private enum CodingKeys: String, CodingKey {
         case overlay, activeProfileID, profileModel, stateRules, sceneBeforeRule, forceSpacerEngine
         case deskProfiles, lastDeskKey, updateWatch
+        case dragToHide, mirrorSeat, revealWhileDragging, layoutTableBookmark
+        case itemBarAt, newItems, concealSystemItems
+        case concealAppleExtrasChoice = "concealAppleExtras"
     }
 
     /// One element that swallows its own decode failure — a rule written
@@ -360,7 +465,39 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
                                                 forKey: .deskProfiles)) ?? []).compactMap(\.value)
         lastDeskKey = (try? c.decodeIfPresent(String.self, forKey: .lastDeskKey)) ?? nil
         updateWatch = (try? c.decodeIfPresent([String].self, forKey: .updateWatch)) ?? []
+        dragToHide = (try? c.decodeIfPresent(Bool.self, forKey: .dragToHide)) ?? true
+        concealAppleExtrasChoice = (try? c.decodeIfPresent(Bool.self, forKey: .concealAppleExtrasChoice)) ?? nil
+        mirrorSeat = (try? c.decodeIfPresent(MenuBarMirrorSeat.self, forKey: .mirrorSeat)) ?? .gap
+        revealWhileDragging = (try? c.decodeIfPresent(Bool.self, forKey: .revealWhileDragging)) ?? false
+        layoutTableBookmark = Self.clampedBookmark(
+            (try? c.decodeIfPresent(Data.self, forKey: .layoutTableBookmark)) ?? nil)
+        itemBarAt = (try? c.decodeIfPresent(MenuBarItemBarAnchor.self, forKey: .itemBarAt)) ?? .icon
+        newItems = (try? c.decodeIfPresent(MenuBarNewItemsPlacement.self, forKey: .newItems)) ?? .asPlaced
+        concealSystemItems = (try? c.decodeIfPresent(Bool.self, forKey: .concealSystemItems)) ?? false
     }
+}
+
+/// Where the icon stands under the concealer — see
+/// `MenuBarCuration.mirrorSeat`.
+public enum MenuBarMirrorSeat: String, Codable, CaseIterable, Sendable {
+    /// Flush left of the first drawn item whose gap fits the icon.
+    case gap
+    /// On JR-Bar's own macOS slot, which is sized to the icon.
+    case slot
+}
+
+/// Where the Item Bar hangs.
+public enum MenuBarItemBarAnchor: String, Codable, CaseIterable, Sendable {
+    case icon
+    case pointer
+}
+
+/// Where a newcomer to the menu bar goes.
+public enum MenuBarNewItemsPlacement: String, Codable, CaseIterable, Sendable {
+    /// Where macOS puts it; the ear offers the three sections.
+    case asPlaced
+    case shown
+    case hidden
 }
 
 /// A desk: one set of displays attached at once — the laptop alone, the

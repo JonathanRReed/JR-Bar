@@ -90,6 +90,7 @@ extension MenuBarUtility {
             face.length = 0
         }
         face.accessories = extrasAccessories()
+        face.dragDivider = dragInFlight?.revealedHidden == true
         face.chevronToolTip = Self.chevronToolTip(
             hiddenCount: face.hiddenCount,
             toggleHotkey: resolvedHotkeyBindings().first { $0.action == .toggleReveal && $0.enabled },

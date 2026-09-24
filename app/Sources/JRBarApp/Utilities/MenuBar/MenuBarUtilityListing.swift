@@ -96,7 +96,10 @@ extension MenuBarUtility {
         let apps = settings().concealedApps
         guard !apps.isEmpty else { return }
         let stale = apps.keys.filter { id in
-            NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
+            // The clock's and Control Center's keys are items, not apps:
+            // nothing installs them, and nothing uninstalls them.
+            MenuBarConcealPlan.concealableSystemItems[id] == nil
+                && NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
                 && NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) == nil
                 // A helper bundled inside another app resolves neither
                 // lookup but is installed and will be back — an id that

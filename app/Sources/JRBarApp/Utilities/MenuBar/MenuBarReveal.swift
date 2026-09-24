@@ -50,11 +50,29 @@ final class MenuBarReveal {
     var onReveal: @MainActor () -> Void = {}
     /// The rehide timer's landing: the covers go back.
     var onHide: @MainActor () -> Void = {}
+    /// Whether the gestures stand down right now: a ⌘-drag is in flight
+    /// (or just landed), or a mouse button is held. The drop of a drag
+    /// lands in the blank stretch more often than not, and a hover there
+    /// popped the Item Bar under the hand. While it holds, the pointer's
+    /// presence is tracked but never counts; a fresh entry after it
+    /// waits the full dwell. The rehide clock re-arms instead of folding.
+    var suppressed: @MainActor () -> Bool = { false }
+    /// A ⌘-press anywhere, in AppKit screen coordinates — the drag
+    /// learn's fallback while the click bridge's tap is down.
+    var onCommandDown: @MainActor (NSPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
+    /// The release that ends a ⌘-press on a bar, in AppKit screen
+    /// coordinates — the fallback's end of a drag. No other release is
+    /// handed over.
+    var onPointerUp: @MainActor (NSPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
 
     /// Seams so a test can drive the gestures without a screen, a
     /// pointer, or a real clock.
     var row: @MainActor () -> NSRect? = { MenuBarReveal.currentMenuBarRow() }
+    /// Every display's menu bar band, for the ⌘-drag's fallback.
+    var barRows: @MainActor () -> [NSRect] = { MenuBarReveal.everyMenuBarRow() }
     var mouseLocation: @MainActor () -> NSPoint = { NSEvent.mouseLocation }
+    /// The dwell's clock — a test steers it.
+    var now: @MainActor () -> Date = { Date() }
     /// The rehide clock; returns a cancel for the armed fire. Tests
     /// inject a manual clock.
     var scheduleRehide: @MainActor (TimeInterval, @escaping @MainActor () -> Void) -> () -> Void = { seconds, fire in
@@ -71,6 +89,8 @@ final class MenuBarReveal {
     private(set) var revealed = false
 
     private var globalMonitor: Any?
+    /// The front-app watch behind `RehideMode.focusChange`.
+    private var focusObserver: NSObjectProtocol?
     private var hoverTimer: Timer?
     /// Whether the hover poll runs — between `startHoverPoll()` and
     /// `stop()`, parked or not.
@@ -124,6 +144,12 @@ final class MenuBarReveal {
     private final class RowGate: @unchecked Sendable {
         let lock = NSLock()
         var row: NSRect = .zero
+        /// Every display's menu bar band — where a ⌘-press may start a
+        /// drag, another display's included (the drop gets its note).
+        var barRows: [NSRect] = []
+        /// A ⌘-press on a bar went to the main actor and its release has
+        /// not: the one mouse-up the monitor forwards.
+        var commandHeld = false
     }
     nonisolated private let gate = RowGate()
 
@@ -136,10 +162,13 @@ final class MenuBarReveal {
             MainActor.assumeIsolated { self?.refreshRowCache() }
         }
         // One tap, one mask: every additional global monitor is another
-        // event stream the TCC service gets pinged for.
+        // event stream the TCC service gets pinged for. Mouse-ups are
+        // discrete like the downs — they end a ⌘-drag when the click
+        // bridge's tap is down — so they bring back no flood.
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .scrollWheel],
+            matching: [.leftMouseDown, .leftMouseUp, .scrollWheel],
             handler: { [weak self] event in self?.noteGlobalEvent(event) })
+        watchFocus()
         watchPresence()
         if MenuBarStateRunner.screenIsLocked() { park(.locked) }
         startHoverPoll()
@@ -199,6 +228,28 @@ final class MenuBarReveal {
         scheduleHoverPoll(after: Self.hoverPollInterval)
     }
 
+    /// Ice's "smart" rehide: under `.focusChange` a reveal folds when
+    /// another app comes to the front — the person has moved on.
+    private func watchFocus() {
+        guard focusObserver == nil else { return }
+        focusObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.frontAppChanged() }
+        }
+    }
+
+    /// Another app came to the front. Under `.focusChange` the reveal
+    /// folds — unless a listed item's menu is open (its app may well be
+    /// the one that activated) or a drag holds the bar.
+    func frontAppChanged() {
+        guard revealed, settings().rehideMode == .focusChange,
+              !itemMenuOpen(), !suppressed() else { return }
+        Self.log.notice("reveal: the front app changed")
+        cancelReveal()
+        onHide()
+    }
+
     /// The display, session and lock notices that park and resume the
     /// poll, for as long as the reveal runs.
     private func watchPresence() {
@@ -240,6 +291,8 @@ final class MenuBarReveal {
     func stop() {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         globalMonitor = nil
+        if let focusObserver { NSWorkspace.shared.notificationCenter.removeObserver(focusObserver) }
+        focusObserver = nil
         hoverTimer?.invalidate()
         hoverTimer = nil
         polling = false
@@ -259,6 +312,7 @@ final class MenuBarReveal {
 
     isolated deinit {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
+        if let focusObserver { NSWorkspace.shared.notificationCenter.removeObserver(focusObserver) }
         hoverTimer?.invalidate()
         for observer in presenceObservers { observer.center.removeObserver(observer.token) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
@@ -276,13 +330,42 @@ final class MenuBarReveal {
             .insetBy(dx: 0, dy: -rowSlack)
     }
 
-    /// The monitor's cached row, recomputed on start and when the
+    /// Every screen's menu bar band in AppKit coordinates, slack
+    /// included — each as deep as its own notch.
+    private static func everyMenuBarRow() -> [NSRect] {
+        NSScreen.screens.map { screen in
+            let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen), 1)
+            return NSRect(x: screen.frame.minX, y: screen.frame.maxY - depth,
+                          width: screen.frame.width, height: depth)
+                .insetBy(dx: 0, dy: -rowSlack)
+        }
+    }
+
+    /// The monitor's cached rows, recomputed on start and when the
     /// screens change.
     private func refreshRowCache() {
         let rect = row() ?? .zero
+        let bars = [rect] + barRows()
         gate.lock.lock()
         gate.row = rect
+        gate.barRows = bars
         gate.lock.unlock()
+    }
+
+    /// Whether the monitor hands a left-button event to the ⌘-drag's
+    /// fallback: a ⌘-press on a menu bar, then the one release that
+    /// ends it. Every other press and release stays off the main actor,
+    /// and a plain press while one is held means that release was lost —
+    /// the next release belongs to the plain click, never to the drag.
+    nonisolated static func forwardsDragEvent(down: Bool, command: Bool, onBar: Bool,
+                                              held: inout Bool) -> Bool {
+        if down {
+            held = command && onBar
+            return held
+        }
+        guard held else { return false }
+        held = false
+        return true
     }
 
     // MARK: Monitor handler (off-actor)
@@ -292,6 +375,25 @@ final class MenuBarReveal {
     /// never pays a main-actor hop.
     nonisolated private func noteGlobalEvent(_ event: NSEvent) {
         let point = NSEvent.mouseLocation
+        let flags = event.modifierFlags
+        let down = event.type == .leftMouseDown
+        // A ⌘-press on a bar is a drag's start: reported, and never a
+        // reveal click; its release is its end. Any other press or
+        // release costs no hop here.
+        let command = down && flags.contains(.command)
+        if down || event.type == .leftMouseUp {
+            gate.lock.lock()
+            let onBar = gate.barRows.contains { $0.contains(point) }
+            let forward = Self.forwardsDragEvent(down: down, command: command, onBar: onBar,
+                                                 held: &gate.commandHeld)
+            gate.lock.unlock()
+            if forward, down {
+                Task { @MainActor [weak self] in self?.onCommandDown(point, flags) }
+            } else if forward {
+                Task { @MainActor [weak self] in self?.onPointerUp(point, flags) }
+            }
+            if !down { return }
+        }
         gate.lock.lock()
         let inside = gate.row.contains(point)
         gate.lock.unlock()
@@ -306,6 +408,7 @@ final class MenuBarReveal {
         }
         switch event.type {
         case .leftMouseDown:
+            guard !command else { return }
             Task { @MainActor [weak self] in self?.pointerDown(at: point) }
         case .scrollWheel:
             Task { @MainActor [weak self] in self?.scrolled() }
@@ -328,6 +431,14 @@ final class MenuBarReveal {
         let inZone = ((revealZone() ?? row() ?? .zero).contains(point)
             && !itemFrames().contains(where: { $0.contains(point) }))
             || hotFrames().contains(where: { $0.contains(point) })
+        if suppressed() {
+            // A drag in flight or a held button: presence is tracked, so
+            // the pointer still resting where the drop landed is not an
+            // entry once it lifts; a fresh entry waits the full dwell.
+            hoverInside = inZone
+            hoverDwellDeadline = nil
+            return
+        }
         let entered = inZone && !hoverInside
         hoverInside = inZone
         guard inZone else {
@@ -339,9 +450,9 @@ final class MenuBarReveal {
             // zone must be dwelt in before the reveal answers. The
             // deadline is read on this and later polls, so no extra
             // timer; a zero dwell (tests) fires on entry as before.
-            hoverDwellDeadline = Date().addingTimeInterval(hoverDwell)
+            hoverDwellDeadline = now().addingTimeInterval(hoverDwell)
         }
-        guard let deadline = hoverDwellDeadline, Date() >= deadline else { return }
+        guard let deadline = hoverDwellDeadline, now() >= deadline else { return }
         hoverDwellDeadline = nil
         pointerEnteredRow()
     }
@@ -473,7 +584,7 @@ final class MenuBarReveal {
         cancelPendingRehide = nil
         // A cancelled reveal owes no hide — the covers already stand.
         guard revealed else { return }
-        if pointerOnRevealSurface() || itemMenuOpen() {
+        if pointerOnRevealSurface() || itemMenuOpen() || suppressed() {
             armClock(0.5)
             return
         }

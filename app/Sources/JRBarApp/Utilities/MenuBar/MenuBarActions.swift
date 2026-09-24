@@ -81,6 +81,9 @@ protocol MenuBarActionsDelegate: AnyObject {
     /// Fold the Item Bar — the palette is about to open, and the
     /// keyboard's bar must not stand under it holding key.
     func menuBarActionsFoldItemBar(_ actions: MenuBarActions)
+    /// A rule's keep-awake hold: for `seconds`, until released (nil), or
+    /// released (0) — the same hold the Keep Awake card takes.
+    func menuBarActions(_ actions: MenuBarActions, holdAwake seconds: Int?)
 }
 
 extension MenuBarActionsDelegate {
@@ -92,6 +95,7 @@ extension MenuBarActionsDelegate {
     func menuBarActions(_: MenuBarActions, saveProfileNamed _: String) {}
     func menuBarActions(_: MenuBarActions, renameProfile _: String, to _: String) {}
     func menuBarActionsFoldItemBar(_: MenuBarActions) {}
+    func menuBarActions(_: MenuBarActions, holdAwake _: Int?) {}
 }
 
 /// The ACTIONS track's single owner: the ⌘⇧K command bar, the Carbon
@@ -350,6 +354,10 @@ final class MenuBarActions {
             delegate.menuBarActions(self, revealFor: seconds)
         case .runScript(let command):
             Self.runScript(command)
+        case .holdAwake(let seconds):
+            delegate.menuBarActions(self, holdAwake: MenuBarTriggerAction.clampedAwake(seconds))
+        case .releaseAwake:
+            delegate.menuBarActions(self, holdAwake: 0)
         }
     }
 

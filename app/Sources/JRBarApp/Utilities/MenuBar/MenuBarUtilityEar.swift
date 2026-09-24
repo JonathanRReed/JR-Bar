@@ -67,6 +67,16 @@ extension MenuBarUtility {
         let step = MenuBarNewcomers.step(candidates: candidates, seen: memory.seen, mapped: mapped,
                                          settling: Date() < startSettleUntil)
         if let remember = step.remember { memory.remember(remember) }
+        // "New menu bar items": straight to a section, no question asked
+        // — the person already answered it in the card.
+        if let section = Self.newcomerSection(settings().curation.newItems) {
+            for app in step.arrivals {
+                guard let item = items.first(where: { $0.bundleID == app }),
+                      applySection(section, to: item) != nil else { continue }
+                MenuBarAssessmentBackend.log.notice("newcomer: \(app, privacy: .public) → \(section.rawValue, privacy: .public)")
+            }
+            return
+        }
         guard !step.arrivals.isEmpty, earAvailable() else { return }
         let rows = MenuBarItemLister.menuBarRows()
         for app in step.arrivals {

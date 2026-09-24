@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Testing
 @testable import JRBarApp
+import JRBarCore
 
 /// The icon under the macOS 27 concealer: macOS will not draw our own
 /// item under our assertion, so `MenuBarIconMirror` is the icon — seated
@@ -395,5 +396,107 @@ struct MenuBarIconMirrorTests {
         let plist = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Preferences/\(suite).plist")
         try? FileManager.default.removeItem(at: plist)
+    }
+
+    // MARK: lane menubar — the frozen seat, the slot seat, the slot's length
+
+    /// Records nothing; the frozen-seat test only needs an engine.
+    @MainActor
+    private final class QuietBackend: MenuBarConcealBackend {
+        func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+            MenuBarAssertionToken(NSNumber(value: 1))
+        }
+        func invalidate(_ token: MenuBarAssertionToken) {}
+    }
+
+    @MainActor
+    @Test("a ⌘-drag holds the icon's frame while frozen, and it re-seats once the drag thaws")
+    func frozenSeat() throws {
+        // The mirror stands on a row far off every screen: the proof of
+        // the seat never flashes an icon over the real bar.
+        let row = CGRect(x: 0, y: 40_000, width: 1512, height: 37)
+        func drawn(_ x: CGFloat) -> MenuBarItem {
+            MenuBarItem(id: "Wi-Fi", ownerPID: 690, ownerName: "MenuBarAgent",
+                        bounds: CGRect(x: x, y: 40_006.5, width: 30, height: 24), title: nil, windowID: 0,
+                        identifier: "com.apple.menuextra.wifi", bundleID: "com.apple.MenuBarAgent")
+        }
+        let utility = MenuBarUtility(runningBundleIDRead: { ["h.app", "s.app"] })
+        utility.settings = {
+            MenuBarSettings(enabled: true, concealedApps: ["h.app": .hidden], concealSeeded: true)
+        }
+        let host = Host()
+        let glyph = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in true }
+        host.face = MenuBarIconFace(image: glyph, length: 24)
+        utility.host = host
+        utility.concealer = MenuBarConcealer(backend: QuietBackend())
+        utility.mirrorPlacementOverride = { (row, 982) }
+        utility.iconMirror = utility.makeIconMirror()
+        defer { utility.iconMirror?.hide() }
+        utility.lastPlan.shown = [drawn(1300)]
+        utility.updateIconMirror()
+        let first = try #require(utility.standingMirrorFrame)
+        #expect(first.maxX == 1300 - MenuBarIconMirror.itemGap, "flush left of the first drawn item")
+        // The drag takes hold; the bar moves under it.
+        utility.freezeForDrag(maxX: first.maxX)
+        utility.lastPlan.shown = [drawn(1400)]
+        utility.updateIconMirror()
+        #expect(utility.standingMirrorFrame == first, "the icon the person saw stays put mid-drag")
+        // The drop settled: the icon takes its seat on today's bar.
+        utility.thawDrag(after: 0)
+        let after = try #require(utility.standingMirrorFrame)
+        #expect(after.maxX == 1400 - MenuBarIconMirror.itemGap)
+        #expect(!utility.dragFrozen)
+    }
+
+    @Test("the slot seat: on the row it anchors right-aligned on our slot; parked, stacked or under the notch it falls back")
+    func slotSeatTable() {
+        let row = CGRect(x: 0, y: 0, width: 1512, height: 37)
+        let slot = CGRect(x: 1076, y: 6.5, width: 80, height: 24)
+        #expect(MenuBarIconMirror.slotSeat(realItem: slot, width: 73, row: row, clearOf: 980,
+                                           overflow: nil) == CGFloat(1156 - 73))
+        #expect(MenuBarIconMirror.slotSeat(realItem: nil, width: 73, row: row, clearOf: 980,
+                                           overflow: nil) == nil, "no slot listed")
+        let parked = CGRect(x: 900, y: 970, width: 28, height: 24)
+        #expect(MenuBarIconMirror.slotSeat(realItem: parked, width: 73, row: row, clearOf: 0,
+                                           overflow: nil) == nil, "parked below the row")
+        let stacked = CGRect(x: 1076, y: 6.5, width: 17, height: 24)
+        #expect(MenuBarIconMirror.slotSeat(realItem: slot, width: 73, row: row, clearOf: 980,
+                                           overflow: stacked) == nil, "stacked on the «: a crowded bar")
+        #expect(MenuBarIconMirror.slotSeat(realItem: slot, width: 73, row: row, clearOf: 1100,
+                                           overflow: nil) == nil, "under the band or the menus")
+    }
+
+    @MainActor
+    @Test("the slot's length: quantized to 8 pt, grows at once, shrinks only after 5 s of wanting less")
+    func slotLengthHysteresis() {
+        let floor = StatusItemController.anchorSlimLength
+        #expect(MenuBarSlotLength.quantized(73, floor: floor) == 80)
+        #expect(MenuBarSlotLength.quantized(80, floor: floor) == 80)
+        #expect(MenuBarSlotLength.quantized(10, floor: floor) == floor)
+        var slot = MenuBarSlotLength()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        func wants(_ width: CGFloat?, at seconds: TimeInterval) -> Bool {
+            slot.step(wanted: width, floor: floor, now: t0.addingTimeInterval(seconds))
+        }
+        #expect(wants(73, at: 0))
+        #expect(slot.length == 80)
+        #expect(!wants(75, at: 0), "the same quantum writes nothing")
+        #expect(wants(90, at: 0), "grows at once")
+        #expect(slot.length == 96)
+        // The recording indicator's few seconds: a smaller width is wanted
+        // and let go again — nothing is written either way.
+        #expect(!wants(60, at: 1))
+        #expect(!wants(90, at: 3))
+        #expect(!wants(60, at: 4))
+        #expect(!wants(60, at: 8.9))
+        #expect(wants(60, at: 9), "5 s stable: shrinks")
+        #expect(slot.length == 64)
+        #expect(wants(nil, at: 9), "off: the slim slot at once")
+        #expect(slot.length == nil)
+        // The real item's length follows.
+        #expect(StatusItemController.itemLength(mirrored: true, hasLabel: false, spacer: 0,
+                                                stripWidth: 62, glyphWidth: 22, slotLength: 80) == 80)
+        #expect(StatusItemController.itemLength(mirrored: true, hasLabel: false, spacer: 0,
+                                                stripWidth: 62, glyphWidth: 22, slotLength: nil) == floor)
     }
 }

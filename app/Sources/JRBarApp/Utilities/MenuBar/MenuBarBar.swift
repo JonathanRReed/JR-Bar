@@ -87,6 +87,38 @@ enum MenuBarBarLayout {
               menuBarDepth: menuBarDepth, on: screenFrame, anchorMaxX: anchorMaxX)
     }
 
+    /// The same, centred under `anchorMidX` — the pointer's x when the
+    /// bar hangs at the pointer, the icon's middle for a drop's note.
+    static func frame(widths: [CGFloat], menuBarDepth: CGFloat, on screenFrame: NSRect,
+                      anchorMidX: CGFloat) -> NSRect {
+        let size = contentSize(widths: widths, availableWidth: screenFrame.width - 2 * edgeMargin)
+        return frame(size: size, menuBarDepth: menuBarDepth, on: screenFrame,
+                     anchorMaxX: anchorMidX + size.width / 2)
+    }
+
+    /// A drop's note: one line of text beside its mark, in glass.
+    static let noteHeight: CGFloat = 32
+    static let noteMaxWidth: CGFloat = 640
+
+    /// The note's glass for `text`: the text at the note's font, its
+    /// mark and the padding, never wider than `noteMaxWidth`.
+    static func noteSize(_ text: String) -> NSSize {
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let width = (text as NSString).size(withAttributes: [.font: font]).width
+        // The text, its mark and the gap beside it (22), the row's own
+        // inset (8), the glass's padding each side, and a few points of
+        // slack so a measured line never truncates.
+        return NSSize(width: min(noteMaxWidth, ceil(width) + 2 * padding + 36), height: noteHeight)
+    }
+
+    /// Where a note of `size` hangs: centred under `anchorMidX`, else at
+    /// the screen's right end, kept on the screen.
+    static func noteFrame(size: NSSize, menuBarDepth: CGFloat, on screenFrame: NSRect,
+                          anchorMidX: CGFloat?) -> NSRect {
+        frame(size: size, menuBarDepth: menuBarDepth, on: screenFrame,
+              anchorMaxX: anchorMidX.map { $0 + size.width / 2 })
+    }
+
     private static func frame(size: NSSize, menuBarDepth: CGFloat, on screenFrame: NSRect,
                               anchorMaxX: CGFloat?) -> NSRect {
         let rightmost = screenFrame.maxX - edgeMargin
@@ -247,6 +279,9 @@ final class MenuBarBarModel {
     /// The keyboard's state while the bar was opened from the keyboard;
     /// nil for a pointer's bar, which never takes key.
     var keys: MenuBarBarKeys.State?
+    /// A drop's one-line note — why a ⌘-drag across the icon did what it
+    /// did, or nothing. The note's glass shows it alone.
+    var note: String?
 
     /// The tiles standing: all of them, or what the typed filter leaves.
     var visibleItems: [MenuBarItem] {
@@ -505,12 +540,14 @@ final class MenuBarBarPanel: NSPanel {
          itemSection: @escaping @MainActor (MenuBarItem) -> MenuBarItemSection,
          onMoveItem: @escaping @MainActor (MenuBarItem, MenuBarItemSection) -> Void,
          updateWatch: @escaping @MainActor (MenuBarItem) -> Bool? = { _ in nil },
-         onUpdateWatch: @escaping @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }) {
+         onUpdateWatch: @escaping @MainActor (MenuBarItem, Bool) -> Void = { _, _ in },
+         beginDrag: @escaping @MainActor (MenuBarItem, NSImage?) -> Void = { _, _ in }) {
         let hosting = NSHostingView(rootView: MenuBarBarView(
             model: model, tiles: tiles,
             onTrigger: onTrigger, onRevealItem: onRevealItem,
             itemSection: itemSection, onMoveItem: onMoveItem,
-            updateWatch: updateWatch, onUpdateWatch: onUpdateWatch))
+            updateWatch: updateWatch, onUpdateWatch: onUpdateWatch,
+            beginDrag: beginDrag))
         self.hosting = hosting
         let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
         glass.cornerRadius = Self.cornerRadius
@@ -571,6 +608,10 @@ struct MenuBarBarView: View {
     /// feature is off, and the menu leaves the row out.
     var updateWatch: @MainActor (MenuBarItem) -> Bool? = { _ in nil }
     var onUpdateWatch: @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }
+    /// A tile dragged past a few points: the bar starts its own drag
+    /// session with the tile's face, so the tile can be dropped on the
+    /// menu bar right of the icon to show its app.
+    var beginDrag: @MainActor (MenuBarItem, NSImage?) -> Void = { _, _ in }
     /// The tile under the pointer, for its plate.
     @ViewState private var hoveredID: String?
     /// Reduce Motion keeps a pressed tile still; its plate still darkens.
@@ -583,7 +624,9 @@ struct MenuBarBarView: View {
         let query = model.keys?.query ?? ""
         let selectedID = model.selectedID
         Group {
-            if items.isEmpty && query.isEmpty {
+            if let note = model.note {
+                MenuBarDropNoteRow(text: note)
+            } else if items.isEmpty && query.isEmpty {
                 Text("No hidden items")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -620,6 +663,9 @@ struct MenuBarBarView: View {
                                         }
                                     }
                                     .id(item.id)
+                                    .simultaneousGesture(DragGesture(minimumDistance: 6).onChanged { _ in
+                                        beginDrag(item, dragImage(for: item))
+                                    })
                                     .accessibilityLabel(itemLabel(for: item))
                                     .accessibilityAddTraits(item.id == selectedID ? .isSelected : [])
                                     .help(tooltip(for: item))
@@ -640,8 +686,14 @@ struct MenuBarBarView: View {
                 }
             }
         }
-        .padding(.vertical, MenuBarBarLayout.padding)
+        .padding(.vertical, model.note == nil ? MenuBarBarLayout.padding : 0)
         .padding(.horizontal, MenuBarBarLayout.padding - 1)
+    }
+
+    /// The face a tile's drag carries: the live capture, the photograph,
+    /// or the app's icon.
+    private func dragImage(for item: MenuBarItem) -> NSImage? {
+        tiles.images[item.id] ?? model.glyphs[item.id]?.image ?? MenuBarAppIcons.icon(for: item)
     }
 
     /// What the keyboard has typed — the filter the row stands under,
@@ -744,7 +796,7 @@ struct MenuBarBarView: View {
     private func tooltip(for item: MenuBarItem) -> String {
         var name = item.ownerName
         if let title = item.title { name += " · \(title)" }
-        return name + " — click to open, ⌘-click to keep it out, right-click to move it"
+        return name + " — click to open, ⌘-click to keep it out, drag it onto the bar right of the icon to show it, right-click to move it"
     }
 }
 
@@ -808,6 +860,14 @@ final class MenuBarBar {
     /// the bar's right edge under its right edge — nil hangs it at the
     /// screen's edge.
     var anchorFrame: @MainActor () -> NSRect? = { nil }
+    /// Whether the bar hangs centred under the anchor instead — the
+    /// pointer's spot (`MenuBarItemBarAnchor.pointer`).
+    var centersOnAnchor: @MainActor () -> Bool = { false }
+    /// A tile dropped off the bar, at an AppKit screen point.
+    var onDragOut: @MainActor (MenuBarItem, NSPoint) -> Void = { _, _ in }
+    /// What a drop's note hangs under — the icon; nil hangs it at the
+    /// screen's right end.
+    var noteAnchorFrame: @MainActor () -> NSRect? = { nil }
     /// Ids whose picture changed since the bar last closed.
     var updatedIDs: Set<String> = [] {
         didSet { model.updatedIDs = updatedIDs }
@@ -823,6 +883,13 @@ final class MenuBarBar {
 
     private(set) var isOpen = false
     private var panel: MenuBarBarPanel?
+    /// A drop's note, standing in the bar's glass on its own — no tiles,
+    /// no capture, no clicks.
+    private var notePanel: MenuBarBarPanel?
+    private let noteModel = MenuBarBarModel()
+    private var noteExpiry: Task<Void, Never>?
+    /// The tile drag in flight — one session at a time.
+    private var dragSource: MenuBarTileDragSource?
     private var dismissMonitors: [Any] = []
     /// The system uptime at open — a click event that predates it is
     /// the click that opened the bar, not one that should fold it.
@@ -872,7 +939,9 @@ final class MenuBarBar {
                 self?.onMoveItem(item, section)
             },
             updateWatch: { [weak self] item in self?.updateWatch(item) ?? nil },
-            onUpdateWatch: { [weak self] item, on in self?.onUpdateWatch(item, on) })
+            onUpdateWatch: { [weak self] item, on in self?.onUpdateWatch(item, on) },
+            beginDrag: { [weak self] item, image in self?.beginTileDrag(item, image: image) })
+        closeNote()
         panel.setFrame(frame(on: screen), display: false)
         if keyboard {
             panel.takesKeys = true
@@ -905,11 +974,16 @@ final class MenuBarBar {
     /// it stands on this screen, else at the screen's right end.
     private func frame(on screen: NSScreen) -> NSRect {
         let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
-        let anchor = anchorFrame().flatMap { frame in
-            screen.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) ? frame.maxX : nil
+        let widths = model.rowWidths(liveWidths: tiles.imageWidths)
+        let anchorRect = anchorFrame().flatMap { frame in
+            screen.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) ? frame : nil
         }
-        return MenuBarBarLayout.frame(widths: model.rowWidths(liveWidths: tiles.imageWidths),
-                                      menuBarDepth: depth, on: screen.frame, anchorMaxX: anchor)
+        if let anchorRect, centersOnAnchor() {
+            return MenuBarBarLayout.frame(widths: widths, menuBarDepth: depth, on: screen.frame,
+                                          anchorMidX: anchorRect.midX)
+        }
+        return MenuBarBarLayout.frame(widths: widths, menuBarDepth: depth, on: screen.frame,
+                                      anchorMaxX: anchorRect?.maxX)
     }
 
     /// The glyph cache filed new photographs — the open bar wears them.
@@ -982,6 +1056,74 @@ final class MenuBarBar {
     isolated deinit {
         for monitor in dismissMonitors { NSEvent.removeMonitor(monitor) }
         panel?.orderOut(nil)
+        notePanel?.orderOut(nil)
+        noteExpiry?.cancel()
+    }
+
+    // MARK: A drop's note
+
+    /// Stand `text` under the icon for `seconds` in the bar's own glass —
+    /// the same panel at the same level, holding one line and nothing
+    /// else. It takes no clicks and captures nothing; an open bar folds
+    /// first, so there is only ever one surface under the icon.
+    func showNote(_ text: String, for seconds: TimeInterval) {
+        closeNote()
+        if isOpen { close() }
+        let anchor = noteAnchorFrame()
+        let screen = anchor.flatMap { frame in
+            NSScreen.screens.first { $0.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) }
+        } ?? NSScreen.screens.first
+        guard let screen else { return }
+        noteModel.note = text
+        let glass = MenuBarBarPanel(model: noteModel, tiles: tiles, onTrigger: { _ in },
+                                    onRevealItem: { _ in }, itemSection: { _ in .hidden },
+                                    onMoveItem: { _, _ in })
+        glass.ignoresMouseEvents = true
+        let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
+        glass.setFrame(MenuBarBarLayout.noteFrame(size: MenuBarBarLayout.noteSize(text), menuBarDepth: depth,
+                                                  on: screen.frame, anchorMidX: anchor?.midX),
+                       display: false)
+        glass.orderFrontRegardless()
+        notePanel = glass
+        noteExpiry = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0.5, seconds) * 1e9))
+            guard !Task.isCancelled else { return }
+            self?.closeNote()
+        }
+    }
+
+    /// The note, gone.
+    func closeNote() {
+        noteExpiry?.cancel()
+        noteExpiry = nil
+        notePanel?.orderOut(nil)
+        notePanel = nil
+        noteModel.note = nil
+    }
+
+    // MARK: A tile dragged out
+
+    /// Start the bar's own drag session for a tile — the tile's face under
+    /// the pointer, nothing posted. Where it ends is `onDragOut`'s to
+    /// judge; the bar never moves anything itself.
+    func beginTileDrag(_ item: MenuBarItem, image: NSImage?) {
+        guard dragSource == nil, let view = panel?.contentView,
+              let event = NSApp.currentEvent, event.type == .leftMouseDragged else { return }
+        let source = MenuBarTileDragSource { [weak self] point in
+            self?.dragSource = nil
+            self?.onDragOut(item, point)
+        }
+        let pasteboardItem = NSPasteboardItem()
+        pasteboardItem.setString(item.id, forType: MenuBarTileDragSource.pasteboardType)
+        let dragging = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        let local = view.convert(event.locationInWindow, from: nil)
+        let side: CGFloat = 22
+        dragging.setDraggingFrame(NSRect(x: local.x - side / 2, y: local.y - side / 2, width: side, height: side),
+                                  contents: image ?? NSImage(systemSymbolName: "app.dashed",
+                                                             accessibilityDescription: nil))
+        dragSource = source
+        let session = view.beginDraggingSession(with: [dragging], event: event, source: source)
+        session.animatesToStartingPositionsOnCancelOrFail = false
     }
 
     /// A click anywhere but the bar folds it — the panel never takes
@@ -1087,5 +1229,51 @@ enum MenuBarAppIcons {
             .map { NSWorkspace.shared.icon(forFile: $0.path) }
         cache[bundleID] = icon
         return icon
+    }
+}
+
+/// The Item Bar's tile drag: an in-app session, so the drop's screen
+/// point is the bar's to read — nothing is posted, nothing else accepts
+/// it, and it ends where the person lets go.
+@MainActor
+final class MenuBarTileDragSource: NSObject, NSDraggingSource {
+    /// The pasteboard type a tile carries — its item id, JR-Bar's own.
+    static let pasteboardType = NSPasteboard.PasteboardType("com.jonathanreed.jrbar.menubar-tile")
+
+    private let onEnded: @MainActor (NSPoint) -> Void
+
+    init(onEnded: @escaping @MainActor (NSPoint) -> Void) {
+        self.onEnded = onEnded
+    }
+
+    nonisolated func draggingSession(_ session: NSDraggingSession,
+                                     sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .move
+    }
+
+    nonisolated func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint,
+                                     operation: NSDragOperation) {
+        MainActor.assumeIsolated { onEnded(screenPoint) }
+    }
+}
+
+/// A drop's note in the Item Bar's glass: a mark and one line.
+struct MenuBarDropNoteRow: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity)
+        .frame(height: MenuBarBarLayout.noteHeight)
+        .accessibilityElement(children: .combine)
     }
 }

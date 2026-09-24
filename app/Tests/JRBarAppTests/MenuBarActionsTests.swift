@@ -524,6 +524,9 @@ struct MenuBarActionsTests {
         func menuBarActionsFoldItemBar(_ actions: MenuBarActions) {
             calls.append(palette?.isOpen == true ? "fold:over-palette" : "fold")
         }
+        func menuBarActions(_ actions: MenuBarActions, holdAwake seconds: Int?) {
+            calls.append("awake:\(seconds.map(String.init) ?? "held")")
+        }
     }
 
     /// A delegate that answers only the original requirements — the
@@ -826,5 +829,52 @@ struct MenuBarActionsTests {
         var onEvent: (@MainActor (MenuBarTriggerEvent) -> Void)?
         func start() {}
         func stop() {}
+    }
+
+    // MARK: lane menubar — keep-awake rules
+
+    @MainActor
+    @Test("a rule keeps the Mac awake for its minutes, until released, or lets it sleep — through the delegate")
+    func keepAwakeRules() {
+        let actions = MenuBarActions(bindings: [])
+        let delegate = FakeDelegate()
+        actions.delegate = delegate
+        actions.rules = {
+            [MenuBarTriggerRule(id: "hour", enabled: false, trigger: .appLaunched(bundleID: "com.apple.dt.Xcode"),
+                                action: .holdAwake(seconds: 3600)),
+             MenuBarTriggerRule(id: "held", enabled: false, trigger: .chargerConnected,
+                                action: .holdAwake(seconds: nil)),
+             MenuBarTriggerRule(id: "tiny", enabled: false, trigger: .chargerConnected,
+                                action: .holdAwake(seconds: 5)),
+             MenuBarTriggerRule(id: "off", enabled: false, trigger: .chargerDisconnected,
+                                action: .releaseAwake)]
+        }
+        for id in ["hour", "held", "tiny", "off"] { actions.commandBar.onAction(.runRule(id: id)) }
+        #expect(delegate.calls == ["awake:3600", "awake:held", "awake:60", "awake:0"],
+                "a hold shorter than a minute is a minute; release is zero")
+    }
+
+    @Test("keep-awake actions round-trip and read as the card writes them")
+    func keepAwakeActionCoding() throws {
+        for action in [MenuBarTriggerAction.holdAwake(seconds: 7200), .holdAwake(seconds: nil), .releaseAwake] {
+            let rule = MenuBarTriggerRule(id: "r", trigger: .chargerConnected, action: action)
+            let back = try JSONDecoder().decode(MenuBarTriggerRule.self, from: JSONEncoder().encode(rule))
+            #expect(back == rule)
+        }
+        let rule = { (action: MenuBarTriggerAction) in
+            MenuBarTriggerRule(id: "r", trigger: .chargerConnected, action: action).summary
+        }
+        #expect(rule(.holdAwake(seconds: 7200)) == "when the charger connects → keep the Mac awake for 2 h")
+        #expect(rule(.holdAwake(seconds: 2700)) == "when the charger connects → keep the Mac awake for 45 min")
+        #expect(rule(.holdAwake(seconds: nil)) == "when the charger connects → keep the Mac awake until released")
+        #expect(rule(.releaseAwake) == "when the charger connects → let the Mac sleep again")
+        #expect(MenuBarTriggerAction.clampedAwake(10) == 60)
+        #expect(MenuBarTriggerAction.clampedAwake(999_999) == 86_400)
+        #expect(MenuBarTriggerAction.clampedAwake(nil) == nil)
+        // The card's minutes: clamped before the multiply, so any typed
+        // number is at most a day and never traps.
+        #expect(MenuBarTriggerAction.awakeSeconds(minutes: 45) == 2700)
+        #expect(MenuBarTriggerAction.awakeSeconds(minutes: Int.max) == 86_400)
+        #expect(MenuBarTriggerAction.awakeSeconds(minutes: -5) == 60)
     }
 }

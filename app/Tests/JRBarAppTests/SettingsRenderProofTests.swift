@@ -380,4 +380,40 @@ struct SettingsRenderProofTests {
         }
         withExtendedLifetime((core, settings, toys, utilities)) {}
     }
+
+    // MARK: lane menubar
+
+    /// A concealer backend that never asserts anything.
+    private final class MenuBarQuietBackend: MenuBarConcealBackend {
+        func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+            MenuBarAssertionToken(NSNumber(value: 1))
+        }
+        func invalidate(_ token: MenuBarAssertionToken) {}
+    }
+
+    /// The Menu Bar card as the card draws it, Advanced open and under a
+    /// concealer that is never started: the ⌘-drag rows, Item Bar opens
+    /// at, then Relaunch, New menu bar items, Icon seat and the layout
+    /// table in their real places.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the Menu Bar Advanced PNGs"))
+    func menuBarAdvanced() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        let utility = fixture.utilities.menuBar
+        utility.concealer = MenuBarConcealer(backend: MenuBarQuietBackend())
+        for dark in [false, true] where Self.wanted("card-menuBar-advanced") {
+            let card = Form {
+                Section {
+                    MenuBarUtilityControls(utility: utility, showAdvanced: true)
+                        .cardBodyStyle()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .formStyle(.grouped)
+            let rep = try Self.snapshot(card, size: CGSize(width: Self.paneWidth, height: 6000), dark: dark)
+            try Self.write(rep, named: "card-menuBar-advanced-\(dark ? "dark" : "light")")
+        }
+        utility.concealer = nil
+        withExtendedLifetime(fixture) {}
+    }
 }

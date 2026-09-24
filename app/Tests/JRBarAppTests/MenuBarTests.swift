@@ -760,4 +760,119 @@ struct MenuBarTests {
         #expect(result.sections.isEmpty)
         #expect(result.signatures["fresh"]?.hasPrefix("just appeared") == true)
     }
+
+    // MARK: lane menubar — the reveal stands down for a drag
+
+    /// The dwell's clock and the drag's suppression, steered by hand.
+    @MainActor
+    private final class DragSteer {
+        var now = Date(timeIntervalSince1970: 1_000)
+        var suppressed = true
+        var settings = MenuBarSettings(enabled: true)
+    }
+
+    @MainActor
+    @Test("hover with the drag's suppression never reveals, and a fresh entry after it waits the full dwell")
+    func hoverSuppressed() {
+        let h = RevealHarness()
+        let steer = DragSteer()
+        h.reveal.now = { steer.now }
+        h.reveal.hoverDwell = 0.18
+        h.reveal.suppressed = { steer.suppressed }
+        let inZone = NSPoint(x: 400, y: 965)
+        let offRow = NSPoint(x: 400, y: 400)
+        // Mid-drag, the pointer rests in the blank stretch for a while.
+        h.point = inZone
+        h.reveal.pollHover()
+        steer.now += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0, "a drag in flight is never a hover")
+        // The drop landed there and the drag let go: still no entry.
+        steer.suppressed = false
+        h.reveal.pollHover()
+        steer.now += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0, "the pointer resting where the drop landed is not an entry")
+        // A fresh entry waits the full dwell.
+        h.point = offRow
+        h.reveal.pollHover()
+        h.point = inZone
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        steer.now += 0.1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0, "not before the dwell")
+        steer.now += 0.1
+        h.reveal.pollHover()
+        #expect(h.reveals == 1)
+    }
+
+    @MainActor
+    @Test("the rehide clock re-arms while a drag holds the bar, and folds once it lets go")
+    func rehideWaitsForDrag() {
+        let h = RevealHarness()
+        let steer = DragSteer()
+        h.reveal.suppressed = { steer.suppressed }
+        h.reveal.triggerReveal()
+        h.point = NSPoint(x: 400, y: 400)
+        h.fireClock()
+        #expect(h.hides == 0, "an inline reveal never folds mid-drag")
+        steer.suppressed = false
+        h.fireClock()
+        #expect(h.hides == 1)
+    }
+
+    @MainActor
+    @Test("under the focus-change rehide a reveal holds on no clock and folds when another app comes forward")
+    func focusChangeRehide() {
+        let h = RevealHarness()
+        let steer = DragSteer()
+        steer.settings.rehideMode = .focusChange
+        h.reveal.settings = { steer.settings }
+        h.reveal.triggerReveal()
+        #expect(h.pending == nil, "no clock armed")
+        h.reveal.frontAppChanged()
+        #expect(h.hides == 1)
+        #expect(!h.reveal.revealed)
+        // A second switch with nothing out folds nothing.
+        h.reveal.frontAppChanged()
+        #expect(h.hides == 1)
+        // Timed mode ignores the switch.
+        steer.settings.rehideMode = .timed
+        h.reveal.triggerReveal()
+        h.reveal.frontAppChanged()
+        #expect(h.hides == 1)
+    }
+
+    @Test("the monitor hands the drag only a ⌘-press on a bar and the release that ends it")
+    func dragEventForwarding() {
+        /// One left-button event and whether the drag hears it.
+        struct Step {
+            var down: Bool
+            var command = false
+            var onBar = true
+            var heard: Bool
+            var why: String
+        }
+        let steps = [
+            Step(down: true, heard: false, why: "a plain press is no drag"),
+            Step(down: false, heard: false, why: "and its release is never handed over"),
+            Step(down: true, command: true, onBar: false, heard: false, why: "a ⌘-press off every bar"),
+            Step(down: false, heard: false, why: "its release neither"),
+            Step(down: true, command: true, heard: true, why: "a ⌘-press on a bar"),
+            Step(down: false, heard: true, why: "its release ends the drag"),
+            Step(down: false, heard: false, why: "one release per press"),
+            // A ⌘-press whose release was lost, then a plain click: the
+            // click's release is the click's, not the drag's.
+            Step(down: true, command: true, heard: true, why: "a ⌘-press whose release gets lost"),
+            Step(down: true, heard: false, why: "a plain click after it"),
+            Step(down: false, heard: false, why: "the click's release is the click's"),
+        ]
+        var held = false
+        for step in steps {
+            let heard = MenuBarReveal.forwardsDragEvent(down: step.down, command: step.command,
+                                                       onBar: step.onBar, held: &held)
+            #expect(heard == step.heard, "\(step.why)")
+        }
+    }
 }

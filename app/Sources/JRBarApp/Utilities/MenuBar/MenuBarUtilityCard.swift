@@ -36,6 +36,12 @@ struct MenuBarUtilityControls: View {
     @ViewState private var showOverrides = false
     @ViewState private var showExtras = false
 
+    /// The card body, Advanced folded; a render proof opens it.
+    init(utility: MenuBarUtility, showAdvanced: Bool = false) {
+        self.utility = utility
+        _showAdvanced = ViewState(initialValue: showAdvanced)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Picker(selection: utility.providerBinding) {
@@ -61,10 +67,10 @@ struct MenuBarUtilityControls: View {
                 }
             }
 
-            CardNote(utility.concealing
-                        ? "Drag an app to Hidden or Always below and macOS hides it. The JR-Bar icon stands at the right end of the gap, with a ‹ that brings hidden items back; hidden apps keep running and stay reachable in the Item Bar."
-                        : "Everything left of the JR-Bar icon is tucked away. ⌘-drag an item across the icon, or drag its tile below, to hide or show it.")
+            CardNote(MenuBarDragRows.cardNote(concealing: utility.concealing,
+                                              dragToHide: utility.settings().curation.dragToHide))
                 .padding(.vertical, SettingsMetrics.xs)
+            MenuBarDragRows(utility: utility)
             if utility.concealerAvailable, utility.notarized == false {
                 Toggle(isOn: utility.bind(\.concealUnnotarized)) {
                     SettingLabel(title: "Hide the way macOS hides",
@@ -146,9 +152,10 @@ struct MenuBarUtilityControls: View {
             Picker(selection: utility.bind(\.rehideMode)) {
                 Text("After a delay").tag(MenuBarSettings.RehideMode.timed)
                 Text("When you click elsewhere").tag(MenuBarSettings.RehideMode.untilClick)
+                Text("When you switch apps").tag(MenuBarSettings.RehideMode.focusChange)
             } label: {
                 SettingLabel(title: "Tuck away",
-                             subtitle: "On a clock once the pointer leaves the bar, or only when a click lands outside it.")
+                             subtitle: "On a clock once the pointer leaves the bar, when a click lands outside it, or when another app comes to the front.")
             }
             .pickerStyle(.menu)
             .padding(.vertical, SettingsMetrics.rowPadding)
@@ -188,6 +195,7 @@ struct MenuBarUtilityControls: View {
                 SettingLabel(title: "Hidden items as tiles",
                              subtitle: "A glass strip under the menu bar with a live tile per hidden item — also on the JR-Bar icon's right-click menu.")
             }
+            MenuBarItemBarAnchorRow(utility: utility)
 
             if !utility.accessibilityGranted {
                 HStack(spacing: SettingsMetrics.s) {
@@ -292,7 +300,9 @@ struct MenuBarUtilityControls: View {
                     SettingLabel(title: "Custom spacing",
                                  subtitle: "An exact gap in points — the presets above all live on this dial.")
                 }
+                MenuBarSpacingRelaunchRow(utility: utility)
                 engineControls
+                MenuBarPlacementRows(utility: utility)
                 MenuBarProfilesControls(utility: utility)
                 MenuBarAutomationControls(utility: utility)
             } label: {
@@ -355,7 +365,7 @@ struct MenuBarUtilityControls: View {
 
     /// The override picker for one item.
     private func overrideRow(_ item: MenuBarItem) -> some View {
-        let appChoice = utility.concealing && item.bundleID.map(MenuBarConcealPlan.canConcealApp) == true
+        let appChoice = utility.concealing && item.bundleID.map(utility.canConceal) == true
         return LabeledContent {
             Picker(selection: Binding(
                 get: { utility.effectiveSection(for: item) },
@@ -972,6 +982,7 @@ private struct MenuBarAutomationControls: View {
     @ViewState private var actionProfile = ""
     @ViewState private var actionSeconds = 4.0
     @ViewState private var actionScript = ""
+    @ViewState private var actionMinutes = 60
 
     /// The button names the key that opens the palette — whatever the
     /// Shortcuts page bound it to, or nothing once it is switched off.
@@ -1128,6 +1139,10 @@ private struct MenuBarAutomationControls: View {
                     Text("Show all").tag("showAll")
                     Text("Reveal for…").tag("reveal")
                     Text("Run script").tag("script")
+                    Divider()
+                    Text("Keep awake for…").tag("awake")
+                    Text("Keep awake until released").tag("awakeHold")
+                    Text("Let the Mac sleep").tag("awakeOff")
                 } label: { EmptyView() }
                 .labelsHidden()
                 .pickerStyle(.menu)
@@ -1153,6 +1168,11 @@ private struct MenuBarAutomationControls: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 160)
                 }
+                if actionKind == "awake" {
+                    TextField("min", value: $actionMinutes, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 44)
+                }
                 Button("Add rule") { addRule() }
                     .controlSize(.small)
                     .disabled(!ruleDraftValid)
@@ -1176,6 +1196,8 @@ private struct MenuBarAutomationControls: View {
             return false
         }
         if actionKind == "reveal" && actionSeconds < 1 { return false }
+        if actionKind == "awake"
+            && !(1...MenuBarTriggerAction.holdAwakeMaxMinutes).contains(actionMinutes) { return false }
         if actionKind == "script" && actionScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return false
         }
@@ -1226,6 +1248,9 @@ private struct MenuBarAutomationControls: View {
         case "reveal": action = .reveal(seconds: actionSeconds)
         case "script": action = .runScript(
             command: actionScript.trimmingCharacters(in: .whitespacesAndNewlines))
+        case "awake": action = .holdAwake(seconds: MenuBarTriggerAction.awakeSeconds(minutes: actionMinutes))
+        case "awakeHold": action = .holdAwake(seconds: nil)
+        case "awakeOff": action = .releaseAwake
         default: action = .hideAll
         }
         utility.addTriggerRule(trigger: trigger, action: action)
@@ -1238,14 +1263,19 @@ private struct MenuBarAutomationControls: View {
 
     // MARK: Order
 
-    /// The spacer engine leaves the order to the hand that owns it: a
-    /// ⌘-drag, as macOS has always allowed. Under the concealer macOS
-    /// orders the bar itself, so there is nothing to say.
+    /// The order is the hand's under both engines: a ⌘-drag, as macOS
+    /// has always allowed — and across the JR-Bar icon it picks the
+    /// section too.
     @ViewBuilder
     private var orderNote: some View {
-        if !utility.concealing {
-            SettingLabel(title: "Order", subtitle: "⌘-drag items to order them.")
+        SettingLabel(title: "Order", subtitle: orderSubtitle)
+    }
+
+    private var orderSubtitle: String {
+        guard utility.concealing, utility.settings().curation.dragToHide else {
+            return "⌘-drag items to order them."
         }
+        return "⌘-drag items to order them — across the JR-Bar icon to hide or show them."
     }
 }
 

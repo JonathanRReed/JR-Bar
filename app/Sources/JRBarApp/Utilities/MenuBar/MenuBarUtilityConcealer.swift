@@ -30,9 +30,14 @@ extension MenuBarUtility {
         // No affordance under the agent: nothing of ours grows while the
         // agent hides — the icon is the mirror's.
         host?.setBoundarySpacer(0)
-        let bridge = MenuBarSystemClickBridge { [weak self] point in
-            self?.bridgeClick(at: point)
-        }
+        // The bridge also reports ⌘-presses and the release that ends
+        // them — the one source a drag across the icon is learned from.
+        let bridge = MenuBarSystemClickBridge(
+            onBridge: { [weak self] point in self?.bridgeClick(at: point) },
+            onCommandPress: { [weak self] point, _ in self?.commandPressed(at: point) },
+            onCommandRelease: { [weak self] point, flags in
+                self?.commandReleased(at: point, option: flags.contains(.maskAlternate))
+            })
         bridge.start()
         clickBridge = bridge
         clickBridgeFailed = !bridge.tapLive
@@ -127,12 +132,23 @@ extension MenuBarUtility {
     /// The set the engine converges to: the map's hidden apps less the
     /// live reveal — our own family never, whatever a stale map says
     /// (the daemon's meter hid itself once).
-    private func concealTarget() -> Set<String> {
+    func concealTarget() -> Set<String> {
         let now = Date()
         lifts = lifts.filter { $0.value > now }
+        // Only what today's settings let the agent take: an Apple extra's
+        // entry waits for `concealAppleExtras`, the clock's for
+        // `concealSystemItems`.
+        let apps = Self.supportedConcealed(liveSettings().concealedApps, curation: settings().curation)
         return Self.liveTarget(
-            MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed),
+            MenuBarConcealPlan.concealed(apps: apps, revealed: hider.revealed),
             lifts: lifts, now: now)
+    }
+
+    /// The system items' keys in a target — the clock and Control
+    /// Center, which the assertion drops from its system-item list rather
+    /// than its allowlist.
+    nonisolated static func systemKeys(in target: Set<String>) -> Set<String> {
+        target.filter { MenuBarConcealPlan.concealableSystemItems[$0] != nil }
     }
 
     /// The target with the live lifts left out — never our own family.
@@ -194,11 +210,14 @@ extension MenuBarUtility {
         // extras ride it — they have nowhere else to show.
         let drawsSomething = (host?.anchorWantsVisibleSeat ?? false)
             || !(iconMirror?.face.accessories.isEmpty ?? true)
+        let target = concealTarget()
+        let targetEmpty = target.isDisjoint(with: runningApps.snapshot())
+            && Self.systemKeys(in: target).isEmpty
         let mirrored = Self.mirrorsIcon(engineUp: true,
                                         styleDrawsIcon: drawsSomething,
                                         concealing: concealer.isConcealing,
                                         suspended: concealer.isSuspended,
-                                        targetEmpty: concealTarget().isDisjoint(with: runningApps.snapshot()),
+                                        targetEmpty: targetEmpty,
                                         activationFailing: concealer.activationFailing)
         let extrasFlipped = iconMirrored != mirrored
         iconMirrored = mirrored
@@ -209,14 +228,37 @@ extension MenuBarUtility {
             syncAgentItem()
         }
         stepCombinedGate()
-        if mirrored, let mirror = iconMirror, let primary = NSScreen.screens.first {
-            mirror.show(row: Self.primaryRow(), primaryMaxY: primary.frame.maxY) { width in
-                mirrorSeat(width: width)
+        if mirrored, let mirror = iconMirror, let placement = mirrorPlacement() {
+            // A ⌘-drag in flight holds the icon's right edge where the
+            // person saw it: the drop is judged against that icon, and a
+            // re-seat under the hand would move the target mid-drag. A ‹
+            // that appears (the first hidden app) grows leftward.
+            let frozen = dragFrozenMaxX
+            mirror.show(row: placement.row, primaryMaxY: placement.primaryMaxY) { width in
+                frozen.map { $0 - width } ?? mirrorSeat(width: width, row: placement.row)
             }
         } else {
             iconMirror?.hide()
         }
+        // The `.slot` seat sizes the real item to the mirror — never mid-
+        // drag: a length write re-sorts the bar under the hand.
+        if dragFrozenMaxX == nil {
+            let wantsSlot = mirrored && settings().curation.mirrorSeat == .slot
+            if slotLength.step(wanted: wantsSlot ? iconMirror?.panelWidth : nil,
+                               floor: StatusItemController.anchorSlimLength, now: Date()) {
+                host?.setMirrorSlotLength(slotLength.length)
+            }
+        }
         if standingMirrorFrame != before { recutCovers() }
+    }
+
+    /// Where the mirror stands: the Quartz origin display's menu bar row
+    /// and that display's top in AppKit space. nil with no screen. A test
+    /// stands the mirror on a row off every screen.
+    func mirrorPlacement() -> (row: CGRect, primaryMaxY: CGFloat)? {
+        if let mirrorPlacementOverride { return mirrorPlacementOverride() }
+        guard let primary = NSScreen.screens.first else { return nil }
+        return (Self.primaryRow(), primary.frame.maxY)
     }
 
     /// The menu bar's row on the Quartz origin display — the one the
@@ -249,9 +291,18 @@ extension MenuBarUtility {
     /// concealed, so a 0.45 s reflow never walks the icon — unless the
     /// engine is failing to assert it: then macOS draws every target
     /// app, and a seat that skipped them would stand on one.
-    private func mirrorSeat(width: CGFloat) -> CGFloat {
-        let row = Self.primaryRow()
+    private func mirrorSeat(width: CGFloat, row: CGRect) -> CGFloat {
         let clear = mirrorClearOf()
+        if settings().curation.mirrorSeat == .slot,
+           let slot = MenuBarIconMirror.slotSeat(realItem: ownSlotFrame(), width: width, row: row,
+                                                 clearOf: clear,
+                                                 overflow: listedItems.first(where: \.isNativeOverflowControl)?.bounds) {
+            if slot != lastMirrorSeat {
+                lastMirrorSeat = slot
+                MenuBarAssessmentBackend.log.debug("conceal: mirror seat \(String(format: "%.0f", slot), privacy: .public) w=\(String(format: "%.0f", width), privacy: .public) on our own slot")
+            }
+            return slot
+        }
         let targetOnItsWay = concealer.map { !$0.isConcealing && !$0.activationFailing } ?? true
         let concealed = targetOnItsWay ? concealTarget() : (concealer?.concealedApps ?? [])
         let ourPID = ProcessInfo.processInfo.processIdentifier
@@ -275,6 +326,15 @@ extension MenuBarUtility {
             }
         }
         return seat
+    }
+
+    /// JR-Bar's own real item on the listing — the slot macOS reserves
+    /// for us in its order, which the `.slot` seat stands on.
+    func ownSlotFrame() -> CGRect? {
+        let ourPID = ProcessInfo.processInfo.processIdentifier
+        return listedItems.first {
+            $0.ownerPID == ourPID && $0.identifier == StatusItemController.accessibilityIdentifier
+        }?.bounds
     }
 
     /// Where nothing covers the row on the Quartz origin display. The
@@ -685,7 +745,11 @@ extension MenuBarUtility {
                 lastX[id] = min(lastX[id] ?? .infinity, ghost.minX)
             }
         }
-        for (id, section) in Self.concealedOrder(apps: apps, lastX: lastX) {
+        // Granted, macOS's own layout table is the order — concealed
+        // apps included; remembered x is the fallback.
+        let ranks = layoutTableRanks(apps: Set(apps.keys))
+        let order = ranks.isEmpty ? lastX : ranks.mapValues { CGFloat($0) }
+        for (id, section) in Self.concealedOrder(apps: apps, lastX: order) {
             let items = knownItems[id] ?? []
             switch section {
             case .hidden: plan.hidden.append(contentsOf: items)
@@ -825,7 +889,10 @@ extension MenuBarUtility {
         }
         guard concealer.isConcealing || !inGrace else { return }
         let concealed = concealTarget()
-        concealer.apply(concealed: concealed, running: runningApps.snapshot())
+        let systemKeys = Self.systemKeys(in: concealed)
+        concealer.apply(concealed: concealed.subtracting(systemKeys), running: runningApps.snapshot(),
+                        systemItems: MenuBarConcealPlan.allowedSystemItems(
+                            concealed: systemKeys, enabled: settings().curation.concealSystemItems))
         clickBridge?.update(items: lastPlan.shown, concealing: !concealed.isEmpty)
     }
 

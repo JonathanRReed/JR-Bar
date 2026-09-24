@@ -287,4 +287,189 @@ struct MenuBarConcealerTests {
         #expect(!concealer.isConcealing)
         #expect(fake.log.last == "invalidate 1", "\(fake.log)")
     }
+
+    // MARK: lane menubar — the ⌘-drag's bridge, Apple's extras, the clock
+
+    /// What the bridge reported, hop by hop.
+    @MainActor
+    private final class BridgeLog {
+        var bridged: [CGPoint] = []
+        var presses: [CGPoint] = []
+        var releases: [(point: CGPoint, flags: CGEventFlags)] = []
+    }
+
+    /// Wait, bounded, for the bridge's main-actor hops to land.
+    @MainActor
+    private func settle(_ done: () -> Bool) async {
+        for _ in 0..<200 where !done() {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private func event(_ type: CGEventType, at point: CGPoint, flags: CGEventFlags = []) throws -> CGEvent {
+        let event = try #require(CGEvent(mouseEventSource: nil, mouseType: type,
+                                         mouseCursorPosition: point, mouseButton: .left))
+        event.flags = flags
+        return event
+    }
+
+    @Test("a plain press bridges; a ⌘-press never does")
+    func bridgesFlags() {
+        #expect(MenuBarConcealPlan.bridges(flags: []))
+        #expect(MenuBarConcealPlan.bridges(flags: .maskAlternate))
+        #expect(!MenuBarConcealPlan.bridges(flags: .maskCommand))
+        #expect(!MenuBarConcealPlan.bridges(flags: [.maskCommand, .maskAlternate]))
+    }
+
+    @MainActor
+    @Test("a ⌘-press on a bridged system item passes through and is never replayed")
+    func commandPressPassesThrough() async throws {
+        let log = BridgeLog()
+        let bridge = MenuBarSystemClickBridge(
+            onBridge: { log.bridged.append($0) },
+            onCommandPress: { point, _ in log.presses.append(point) },
+            onCommandRelease: { point, flags in log.releases.append((point, flags)) })
+        let wifi = item("wifi", owner: "MenuBarAgent", x: 1165, identifier: "com.apple.menuextra.wifi")
+        bridge.update(items: [wifi], concealing: true)
+        let press = CGPoint(x: 1170, y: 10)
+        let drop = CGPoint(x: 1000, y: 10)
+        // Built, never posted: the tap's own decision, read directly.
+        #expect(bridge.handle(type: .leftMouseDown, event: try event(.leftMouseDown, at: press,
+                                                                     flags: .maskCommand)) != nil,
+                "the ⌘-press goes straight through to the agent")
+        // ⌘ let go mid-drag: the release still ends it, ⌥ held at the drop.
+        #expect(bridge.handle(type: .leftMouseUp, event: try event(.leftMouseUp, at: drop,
+                                                                   flags: .maskAlternate)) != nil)
+        await settle { log.releases.count == 1 }
+        #expect(log.presses == [press])
+        #expect(log.releases.map(\.point) == [drop])
+        #expect(log.releases.first?.flags.contains(.maskAlternate) == true)
+        #expect(log.bridged.isEmpty, "never lifted, never replayed")
+        // A plain click on the same item is still the bridge's.
+        #expect(bridge.handle(type: .leftMouseDown, event: try event(.leftMouseDown, at: press)) == nil,
+                "held back for the lift")
+        #expect(bridge.handle(type: .leftMouseUp, event: try event(.leftMouseUp, at: press)) == nil,
+                "its release goes with it")
+        await settle { log.bridged.count == 1 }
+        #expect(log.bridged == [press])
+        #expect(log.releases.count == 1, "a plain click is no drag")
+    }
+
+    @Test("Apple's extras conceal like apps only with the flag; the system's own owners never")
+    func appleExtras() {
+        #expect(MenuBarConcealPlan.canConcealApp("com.tinyspeck.slackmacgap"))
+        #expect(!MenuBarConcealPlan.canConcealApp("com.apple.weather.menu"))
+        #expect(MenuBarConcealPlan.canConcealApp("com.apple.weather.menu", appleExtras: true))
+        #expect(MenuBarConcealPlan.canConcealApp("com.apple.Passwords.MenuBarExtra", appleExtras: true))
+        #expect(!MenuBarConcealPlan.canConcealApp("com.apple.menuextra.clock", appleExtras: true),
+                "a system item's key is concealSystemItems's alone")
+        for owner in ["com.apple.MenuBarAgent", "com.apple.controlcenter", "com.apple.TextInputMenuAgent",
+                      "com.apple.Spotlight", "com.apple.Siri"] {
+            #expect(!MenuBarConcealPlan.canConcealApp(owner, appleExtras: true), "\(owner)")
+        }
+    }
+
+    @Test("with the flag on a covered extra's pick becomes its app's section, and back when it goes off")
+    func appleExtrasMigration() {
+        var weather = item("Weather", owner: "Weather", x: 1300)
+        weather.bundleID = "com.apple.weather.menu"
+        var slack = item("Slack", owner: "Slack", x: 1000)
+        slack.bundleID = "com.tinyspeck.slackmacgap"
+        let on = MenuBarUtility.migrateAppleExtras(on: true, sections: ["Weather": .alwaysHidden],
+                                                  concealedApps: ["com.tinyspeck.slackmacgap": .hidden],
+                                                  items: [weather, slack])
+        #expect(on.sections.isEmpty)
+        #expect(on.concealedApps == ["com.tinyspeck.slackmacgap": .hidden,
+                                     "com.apple.weather.menu": .alwaysHidden])
+        let off = MenuBarUtility.migrateAppleExtras(on: false, sections: on.sections,
+                                                   concealedApps: on.concealedApps, items: [weather, slack])
+        #expect(off.sections == ["Weather": .alwaysHidden], "a cover where it sits again")
+        #expect(off.concealedApps == ["com.tinyspeck.slackmacgap": .hidden])
+        // An extra not listed right now keeps its pick where it is.
+        let unlisted = MenuBarUtility.migrateAppleExtras(on: true, sections: ["Weather": .hidden],
+                                                        concealedApps: [:], items: [slack])
+        #expect(unlisted.sections == ["Weather": .hidden])
+        // The filter keeps what today's flags can act on.
+        var curation = MenuBarCuration()
+        let apps: [String: MenuBarItemSection] = ["com.apple.weather.menu": .hidden, "x.app": .hidden,
+                                                  "com.apple.menuextra.clock": .hidden]
+        #expect(MenuBarUtility.supportedConcealed(apps, curation: curation) == ["x.app": .hidden])
+        // In a file that never chose, an extra's entry is old learning's
+        // and goes; once the person turned the flag off on the card, a
+        // migration keeps an unlisted extra's pick, so it becomes a cover
+        // once the extra is listed again.
+        #expect(MenuBarUtility.keptConcealed(apps, curation: curation) == ["x.app": .hidden])
+        var turnedOff = MenuBarCuration()
+        turnedOff.concealAppleExtras = false
+        #expect(MenuBarUtility.keptConcealed(apps, curation: turnedOff)
+                == ["com.apple.weather.menu": .hidden, "x.app": .hidden])
+        let offUnlisted = MenuBarUtility.migrateAppleExtras(on: false, sections: [:],
+                                                           concealedApps: ["com.apple.weather.menu": .hidden],
+                                                           items: [slack])
+        #expect(MenuBarUtility.keptConcealed(offUnlisted.concealedApps, curation: turnedOff)
+                == ["com.apple.weather.menu": .hidden], "the pick waits for its item")
+        let listedAgain = MenuBarUtility.migrateAppleExtras(on: false, sections: offUnlisted.sections,
+                                                           concealedApps: offUnlisted.concealedApps,
+                                                           items: [weather, slack])
+        #expect(listedAgain.sections == ["Weather": .hidden], "a cover where it sits")
+        #expect(listedAgain.concealedApps.isEmpty)
+        curation.concealAppleExtras = true
+        curation.concealSystemItems = true
+        #expect(MenuBarUtility.supportedConcealed(apps, curation: curation) == apps)
+    }
+
+    @Test("the clock and Control Center leave the system-item list only with the flag; Wi-Fi never")
+    func systemItemsTable() {
+        let all = MenuBarConcealPlan.allSystemItems
+        #expect(all == Array(0...8))
+        let hidden: Set<String> = ["com.apple.menuextra.clock", "com.apple.menuextra.controlcenter",
+                                   "com.apple.menuextra.wifi"]
+        #expect(MenuBarConcealPlan.allowedSystemItems(concealed: hidden, enabled: false) == all)
+        #expect(MenuBarConcealPlan.allowedSystemItems(concealed: hidden, enabled: true)
+                == all.filter { $0 != 2 && $0 != 8 })
+        #expect(MenuBarConcealPlan.concealableSystemItems["com.apple.menuextra.wifi"] == nil)
+        #expect(MenuBarConcealPlan.concealableSystemItems["com.apple.menuextra.battery"] == nil)
+        #expect(MenuBarUtility.systemKeys(in: hidden.union(["x.app"]))
+                == ["com.apple.menuextra.clock", "com.apple.menuextra.controlcenter"])
+    }
+
+    @Test("the helper hears the plain allowlist while every system item stays, the object otherwise")
+    func helperRequestLine() throws {
+        let plain = try #require(MenuBarAsserterBackend.requestLine(
+            allowedBundleIDs: ["a.app"], allowedSystemItems: MenuBarConcealPlan.allSystemItems))
+        #expect(plain == #"["a.app"]"#)
+        let object = try #require(MenuBarAsserterBackend.requestLine(
+            allowedBundleIDs: ["a.app"], allowedSystemItems: [0, 1, 3]))
+        #expect(object == #"{"bundles":["a.app"],"systemItems":[0,1,3]}"#)
+    }
+
+    @MainActor
+    @Test("a concealed clock rides the system-item list, never the allowlist")
+    func controllerSystemItems() async {
+        final class Recorder: MenuBarConcealBackend {
+            var calls: [(bundles: [String], system: [Int])] = []
+            func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
+                try await activate(allowedBundleIDs: allowedBundleIDs,
+                                   allowedSystemItems: MenuBarConcealPlan.allSystemItems)
+            }
+            func activate(allowedBundleIDs: [String], allowedSystemItems: [Int]) async throws -> MenuBarAssertionToken {
+                calls.append((allowedBundleIDs, allowedSystemItems))
+                return MenuBarAssertionToken(NSNumber(value: calls.count))
+            }
+            func invalidate(_ token: MenuBarAssertionToken) {}
+        }
+        let recorder = Recorder()
+        let concealer = MenuBarConcealer(backend: recorder)
+        // Nothing concealed but the clock: an assertion still goes up.
+        concealer.apply(concealed: [], running: ["s.app"], systemItems: [0, 1, 3, 4, 5, 6, 7, 8])
+        for _ in 0..<200 where recorder.calls.isEmpty { try? await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(recorder.calls.count == 1)
+        #expect(recorder.calls.first?.system == [0, 1, 3, 4, 5, 6, 7, 8])
+        #expect(recorder.calls.first?.bundles.contains("s.app") == true)
+        #expect(concealer.isConcealing)
+        // Back to every item: the assertion drops.
+        concealer.apply(concealed: [], running: ["s.app"])
+        for _ in 0..<200 where concealer.isConcealing { try? await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(!concealer.isConcealing)
+    }
 }

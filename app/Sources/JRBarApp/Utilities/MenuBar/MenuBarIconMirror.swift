@@ -32,6 +32,10 @@ struct MenuBarIconFace {
     /// What the ‹ says under the pointer — the utility names the
     /// keyboard's way in when the hotkey is on.
     var chevronToolTip: String?
+    /// A ⌘-drag is in flight with "reveal while dragging" on: the ‹
+    /// becomes a thin divider — Ice's "|" — so the hidden run brought in
+    /// beside the icon reads as left of the boundary.
+    var dragDivider = false
     /// The extras that ride the face as segments of its one compound
     /// face — the agent dot, the combined system readout. Under our own
     /// assertion macOS draws none of JR-Bar's status items, so an extra
@@ -305,6 +309,20 @@ final class MenuBarIconMirror: NSPanel {
         return gaps
     }
 
+    /// The icon's seat on JR-Bar's own macOS slot: right-aligned in it,
+    /// so the visible icon covers exactly the space macOS reserves and
+    /// "left of the icon" is the agent's own order. nil — fall back to
+    /// the gap seat — when the slot is not on the row, sits left of
+    /// `clearOf` (under the notch, the band or the menus), or is stacked
+    /// on the « (parked).
+    nonisolated static func slotSeat(realItem: CGRect?, width: CGFloat, row: CGRect,
+                                     clearOf: CGFloat, overflow: CGRect?) -> CGFloat? {
+        guard let realItem, realItem.width > 0, realItem.intersects(row),
+              realItem.minX >= clearOf else { return nil }
+        if let overflow, overflow.intersection(realItem).width >= 4 { return nil }
+        return realItem.maxX - width
+    }
+
     /// The panel's width: the face plus the ‹ zone while anything is
     /// hidden.
     nonisolated static func panelWidth(faceWidth: CGFloat, hiddenCount: Int,
@@ -350,7 +368,9 @@ private final class MirrorContentView: NSView {
     private var accessoryButtons: [(id: String, signature: String, button: NSButton)] = []
 
     private var showsChevron = false
-    private var chevronRevealed: Bool?
+    /// The mark the ‹ zone last drew: a chevron either way, or the drag's
+    /// divider.
+    private var chevronMark: String?
     private var highlighted = false
     private var pulsing = false
     private var axLabel = "JR-Bar"
@@ -418,12 +438,29 @@ private final class MirrorContentView: NSView {
             axLabel += ", " + face.accessories.map(\.accessibilityLabel).joined(separator: ", ")
         }
         layoutZones()
-        if chevronRevealed != face.hiddenRevealed {
-            chevronRevealed = face.hiddenRevealed
-            chevron.image = NSImage(systemSymbolName: face.hiddenRevealed ? "chevron.right" : "chevron.left",
-                                    accessibilityDescription: nil)?
+        let mark = face.dragDivider ? "divider" : (face.hiddenRevealed ? "chevron.right" : "chevron.left")
+        if chevronMark != mark {
+            chevronMark = mark
+            chevron.image = Self.chevronImage(mark)
+        }
+    }
+
+    /// The ‹ zone's mark: a chevron by name, or the thin divider a
+    /// ⌘-drag with "reveal while dragging" wears.
+    static func chevronImage(_ mark: String) -> NSImage? {
+        guard mark == "divider" else {
+            return NSImage(systemSymbolName: mark, accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
         }
+        let size = NSSize(width: 6, height: 16)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: NSRect(x: rect.midX - 0.75, y: 1, width: 1.5, height: rect.height - 2),
+                         xRadius: 0.75, yRadius: 0.75).fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     /// The face's natural width: a label measures itself like a
@@ -552,6 +589,52 @@ private final class MirrorContentView: NSView {
 
     override func accessibilityPerformShowMenu() -> Bool {
         onClick?(.menu, faceButton)
+        return true
+    }
+}
+
+/// The length JR-Bar's real item claims while the mirror stands on its
+/// slot (`MenuBarMirrorSeat.slot`): the mirror's width, rounded up to 8 pt
+/// so small face changes never touch it, never below the slim slot. A
+/// length write re-sorts the whole bar, so it grows at once and shrinks
+/// only after the smaller width has been wanted for `shrinkHold` — the
+/// recording indicator's few seconds, a breathing label, never a dance.
+struct MenuBarSlotLength: Equatable, Sendable {
+    /// The length written, or nil while the slot is the slim default.
+    private(set) var length: CGFloat?
+    /// Since when a smaller length has been wanted.
+    private(set) var shrinkWantedSince: Date?
+
+    nonisolated static let quantum: CGFloat = 8
+    nonisolated static let shrinkHold: TimeInterval = 5
+
+    init() {}
+
+    /// A mirror width as the slot's length.
+    nonisolated static func quantized(_ width: CGFloat, floor: CGFloat) -> CGFloat {
+        max(floor, (width / quantum).rounded(.up) * quantum)
+    }
+
+    /// One pass: the width the mirror wants now (nil: no slot seat). True
+    /// when `length` changed and must be written.
+    mutating func step(wanted width: CGFloat?, floor: CGFloat, now: Date) -> Bool {
+        let target = width.map { Self.quantized($0, floor: floor) }
+        guard target != length else {
+            shrinkWantedSince = nil
+            return false
+        }
+        guard let current = length, let target, target < current else {
+            length = target
+            shrinkWantedSince = nil
+            return true
+        }
+        guard let since = shrinkWantedSince else {
+            shrinkWantedSince = now
+            return false
+        }
+        guard now.timeIntervalSince(since) >= Self.shrinkHold else { return false }
+        length = target
+        shrinkWantedSince = nil
         return true
     }
 }

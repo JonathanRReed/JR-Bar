@@ -41,6 +41,17 @@ struct MenuBarLiftTests {
         #expect(reveal.sections == [.hidden, .alwaysHidden])
     }
 
+    @Test("with concealAppleExtras on, a changed Apple extra is lifted alone like any app")
+    func updateRevealAppleExtra() {
+        let weather = item("weather", bundle: "com.apple.weather.menu")
+        let off = MenuBarUtility.updateReveal(changed: [(weather, .hidden)], watch: [], concealing: true)
+        #expect(off.lifts.isEmpty && off.sections == [.hidden], "a covered extra reveals its section")
+        let on = MenuBarUtility.updateReveal(changed: [(weather, .hidden)], watch: [], concealing: true,
+                                             appleExtras: true)
+        #expect(on.lifts == ["com.apple.weather.menu"])
+        #expect(on.sections.isEmpty, "the Hidden run stays put")
+    }
+
     @Test("under the spacer engine every change reveals its section, as before")
     func updateRevealSpacer() {
         let reveal = MenuBarUtility.updateReveal(changed: [(item("vpn", bundle: "com.vpn"), .hidden)],
