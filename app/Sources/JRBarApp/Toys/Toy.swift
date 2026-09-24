@@ -16,6 +16,10 @@ enum ToyStatus: Equatable {
     /// Working, but a missing permission holds back part of it —
     /// "Wallpaper only".
     case limited(String)
+    /// Off by its switch, with one quiet fact still true — the tank's
+    /// game keeps count while its window is closed. Neutral, not a
+    /// warning.
+    case note(String)
 
     var text: String {
         switch self {
@@ -26,6 +30,7 @@ enum ToyStatus: Equatable {
         case .external(let what): return what
         case .unavailable(let why): return why
         case .limited(let what): return what
+        case .note(let what): return what
         }
     }
 
@@ -35,7 +40,16 @@ enum ToyStatus: Equatable {
         case .on: return .green
         case .paused, .external, .limited: return Color(nsColor: .systemOrange)
         case .needsPermission: return .red
-        case .unavailable: return Color(nsColor: .secondaryLabelColor)
+        case .unavailable, .note: return Color(nsColor: .secondaryLabelColor)
+        }
+    }
+
+    /// Whether the card draws a chip at all: plain on and off are the
+    /// switch's to say, so only a state with words of its own gets one.
+    var showsChip: Bool {
+        switch self {
+        case .on, .off: return false
+        default: return true
         }
     }
 }
@@ -150,7 +164,9 @@ struct ToyCard: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
-                        StatusChip(status: status)
+                        if status.showsChip {
+                            StatusChip(status: status)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -195,30 +211,22 @@ private struct ToyCostLine: View {
     }
 }
 
-/// The card's status chip. On the live "On" state the capsule breathes —
-/// a slow opacity pulse on a timeline that pauses for every other state
-/// and under Reduce Motion — and long status text truncates instead of
+/// The card's status chip, drawn only when the state has words the
+/// switch beside it cannot say (`ToyStatus.showsChip`). It holds still —
+/// no clock runs for it — and long status text truncates instead of
 /// pushing the toggle out.
 private struct StatusChip: View {
     let status: ToyStatus
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var live: Bool { status == .on && !reduceMotion }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !live)) { context in
-            let breath = live
-                ? (1 - cos(context.date.timeIntervalSinceReferenceDate * .pi * 2 / 2.6)) / 2
-                : 0
-            Text(status.text)
-                .font(.caption)
-                .foregroundStyle(status.tint)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(status.tint.opacity(0.14 + 0.10 * breath), in: Capsule())
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
+        Text(status.text)
+            .font(.caption)
+            .foregroundStyle(status.tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(status.tint.opacity(0.14), in: Capsule())
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 }
 

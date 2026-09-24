@@ -19,6 +19,12 @@ import Testing
         #expect(SettingsSearch.search("launch at login", in: entries).first?.page == .general)
     }
 
+    @Test func everySidebarPageHasItsOwnGlyph() {
+        let symbols = SettingsStore.Page.allCases.map(\.symbol)
+        #expect(Set(symbols).count == symbols.count, "no two pages share a sidebar icon")
+        #expect(SettingsStore.Page.advanced.symbol == "slider.horizontal.3")
+    }
+
     @Test func aPartialWordStillFindsIt() {
         #expect(SettingsSearch.search("webho", in: entries).first?.title == "Webhook URL")
         #expect(SettingsSearch.search("calib", in: entries).contains { $0.title == "Colour calibration" })

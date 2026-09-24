@@ -49,7 +49,7 @@ final class SettingsStore {
             case .sounds: return "speaker.wave.2.fill"
             case .shortcuts: return "command"
             case .remote: return "antenna.radiowaves.left.and.right"
-            case .advanced: return "wrench.and.screwdriver.fill"
+            case .advanced: return "slider.horizontal.3"
             }
         }
 
