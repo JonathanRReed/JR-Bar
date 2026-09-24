@@ -162,10 +162,10 @@ struct DockSettingsTests {
     @Test("spacing, gap and the label cover decode tolerantly and clamp")
     func airDecodesTolerantly() throws {
         let junk = try decode(DockSettings.self,
-                              #"{"enhance": {"previewSpacing": "wide", "dockGap": "near", "coverDockLabel": 1}}"#).enhance
+                              #"{"enhance": {"previewSpacing": "wide", "dockGap": "near", "coverDockLabel": 0}}"#).enhance
         #expect(junk.previewSpacing == DockEnhanceSettings.defaultSpacing)
         #expect(junk.dockGap == DockEnhanceSettings.defaultDockGap)
-        #expect(junk.coverDockLabel == true, "a number is not a switch")
+        #expect(junk.coverDockLabel == true, "a number is not a switch: 0 keeps the default, not off")
         let high = try decode(DockSettings.self, #"{"enhance": {"previewSpacing": 9, "dockGap": 99}}"#).enhance
         #expect(high.previewSpacing == 1.6)
         #expect(high.dockGap == 40)
