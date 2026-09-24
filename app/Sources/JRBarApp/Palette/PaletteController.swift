@@ -95,7 +95,9 @@ final class PaletteHUD {
         panel.ignoresMouseEvents = true
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        // The palette's own Space rule — one list, so the HUD can never
+        // drift back to the pair AppKit refuses.
+        panel.collectionBehavior = PalettePanel.behavior
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         let visible = (NSScreen.screenWithMouse ?? NSScreen.main)?.visibleFrame ?? .zero
         let reference = anchor ?? NSRect(origin: PalettePanel.origin(on: visible),
