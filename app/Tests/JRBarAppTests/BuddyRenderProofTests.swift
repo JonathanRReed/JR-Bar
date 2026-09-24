@@ -249,4 +249,179 @@ struct BuddyRenderProofTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try png.write(to: dir.appendingPathComponent("\(name).png"))
     }
+
+    // MARK: lane buddy
+
+    /// The walk's turn, frame by frame: four bodies reversing from right
+    /// to left over `BuddyTurn.duration`, eight frames 50 ms apart, zoomed
+    /// so the lean, the narrowing and the eyes crossing ahead of the body
+    /// read. A hairline marks upright. Light and dark grounds.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the turn sequence"))
+    func turnSequence() throws {
+        let steps = (0..<8).map { Double($0) * 0.05 }
+        let bodies: [BuddyCharacter] = [.dot, .cat, .owl, .ufo]
+        for dark in [false, true] {
+            let ground = dark ? Color(white: 0.11) : Color(white: 0.93)
+            let sheet = VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    ForEach(steps.indices, id: \.self) { i in
+                        Text("\(Int((steps[i] * 1000).rounded())) ms")
+                            .font(.system(size: 9, weight: .medium).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 66)
+                    }
+                }
+                ForEach(bodies, id: \.self) { character in
+                    HStack(spacing: 6) {
+                        ForEach(steps.indices, id: \.self) { i in
+                            Self.turnTile(character: character, elapsed: steps[i], ground: ground)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .background(dark ? Color(white: 0.05) : Color(white: 0.99))
+            .environment(\.colorScheme, dark ? .dark : .light)
+            let renderer = ImageRenderer(content: sheet)
+            renderer.scale = 3
+            let image = try #require(renderer.cgImage)
+            let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)
+            try png.write(to: ProofRender.directory
+                .appendingPathComponent("buddy-turn-sequence-\(dark ? "dark" : "light").png"))
+        }
+    }
+
+    /// One frame of the reversal, three times the docked size, with a
+    /// hairline through upright.
+    private static func turnTile(character: BuddyCharacter, elapsed: Double, ground: Color) -> some View {
+        let turn = BuddyTurn.eased(from: 1, to: -1, elapsed: elapsed)
+        return BuddyFigure(character: character, mood: .pacing,
+                           tint: ProviderStyle.style(for: "claude").accent,
+                           phase: 2.35, hopProgress: nil, waveAge: nil, slumpAge: nil,
+                           leans: false, still: false, askCount: 0, care: .content,
+                           trick: nil, treatAge: nil, crumbAge: nil, stride: 0, turn: turn)
+            .frame(width: 18, height: 18)
+            .scaleEffect(3)
+            .frame(width: 54, height: 60)
+            .padding(6)
+            .background(alignment: .center) {
+                Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 0.5)
+            }
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(ground))
+    }
+
+    /// The card with its roaming rows — the hover caption, walks and how
+    /// often — on the grouped settings ground, both appearances, through
+    /// the native path so the real controls draw.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the card"))
+    func card() throws {
+        var toys = ToysState()
+        toys.notchBuddy = NotchBuddySettings(enabled: true, character: "cat",
+                                             freePosition: BuddySpot(x: 900, y: 600), scale: 1.75)
+        toys.notchBuddy.walkEvery = 8
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: toys,
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let controls = store.notchBuddy.controls
+        let probe = NSHostingView(rootView: controls.frame(width: 560))
+        probe.layoutSubtreeIfNeeded()
+        let height = ceil(probe.fittingSize.height) + 90
+        for dark in [false, true] {
+            let view = Form { Section { controls } }
+                .formStyle(.grouped)
+                .frame(width: 640, height: height)
+            try ProofRender.write(view, size: CGSize(width: 640, height: height),
+                                  name: "buddy-card-\(dark ? "dark" : "light")", dark: dark)
+        }
+    }
+
+    /// The moves between homes and moods, frame by frame: a docked tuck
+    /// ducking up under the notch, a 2× buddy fresh out of the notch
+    /// growing in from the docked size (the dashed ring is where the
+    /// docked figure stood), and a completion hop handing off from the
+    /// patrol's right-hand end instead of jumping to centre.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the presence strip"))
+    func presenceStrip() throws {
+        let tint = ProviderStyle.style(for: "codex").accent
+        func body(_ mood: NotchBuddyToy.Mood = .pacing, hop: Double? = nil,
+                  handoff: BuddyHandoff? = nil) -> BuddyFigure {
+            BuddyFigure(character: .cat, mood: mood, tint: mood == .celebrating ? .green : tint,
+                        phase: 2.35, hopProgress: hop, waveAge: nil, slumpAge: nil, leans: false,
+                        still: false, askCount: 0, care: .content, trick: nil, treatAge: nil,
+                        crumbAge: nil, stride: 0.45 * 3.4, handoff: handoff)
+        }
+        func placed(_ figure: BuddyFigure, _ place: NotchBuddyView.Presence, scale: Double) -> some View {
+            figure
+                .scaleEffect(place.scale, anchor: place.anchor)
+                .offset(place.offset)
+                .opacity(place.opacity)
+                .frame(width: 18, height: 18)
+                .scaleEffect(scale)
+                .frame(width: 18 * scale, height: 18 * scale)
+        }
+        let ticks = (0..<6).map { Double($0) / 5 }
+        for dark in [false, true] {
+            let ground = dark ? Color(white: 0.11) : Color(white: 0.93)
+            let tile = RoundedRectangle(cornerRadius: 14, style: .continuous)
+            let sheet = VStack(alignment: .leading, spacing: 8) {
+                Text("Tuck, docked · 0 → \(Int(NotchBuddyToy.tuckDuration * 1000)) ms")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ticks.indices, id: \.self) { i in
+                        placed(body(), NotchBuddyView.presence(tuck: ticks[i], arrival: nil, docked: true,
+                                                              scale: 3, reduceMotion: false), scale: 3)
+                            .frame(width: 66, height: 66).background(tile.fill(ground))
+                    }
+                }
+                Text("Out of the notch at 2× · 0 → \(Int(BuddyArrival.duration * 1000)) ms")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ticks.indices, id: \.self) { i in
+                        let arrival = BuddyArrival(fromScale: 0.5, drift: CGSize(width: 0, height: 3.5),
+                                                   age: ticks[i] * BuddyArrival.duration)
+                        placed(body(), NotchBuddyView.presence(tuck: nil, arrival: arrival, docked: false,
+                                                              scale: 2, reduceMotion: false), scale: 2)
+                            .frame(width: 66, height: 66)
+                            .overlay {
+                                Circle().stroke(Color.secondary.opacity(0.6),
+                                                style: StrokeStyle(lineWidth: 0.6, dash: [2, 2]))
+                                    .frame(width: 22, height: 22).offset(y: 3.5)
+                            }
+                            .background(tile.fill(ground))
+                    }
+                }
+                Text("Completion hop from the patrol's end · 0 → \(Int(BuddyHandoff.duration * 1000)) ms")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ticks.indices, id: \.self) { i in
+                        let age = ticks[i] * BuddyHandoff.duration
+                        placed(body(.celebrating, hop: age / 1.1,
+                                    handoff: BuddyHandoff(from: .pacing, age: age)),
+                               NotchBuddyView.presence(tuck: nil, arrival: nil, docked: false, scale: 3,
+                                                       reduceMotion: false), scale: 3)
+                            .frame(width: 66, height: 66)
+                            .background(alignment: .center) {
+                                Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 0.5)
+                            }
+                            .background(tile.fill(ground))
+                    }
+                }
+            }
+            .padding(10)
+            .background(dark ? Color(white: 0.05) : Color(white: 0.99))
+            .environment(\.colorScheme, dark ? .dark : .light)
+            let renderer = ImageRenderer(content: sheet)
+            renderer.scale = 3
+            let image = try #require(renderer.cgImage)
+            let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)
+            try png.write(to: ProofRender.directory
+                .appendingPathComponent("buddy-presence-\(dark ? "dark" : "light").png"))
+        }
+    }
 }
