@@ -851,10 +851,6 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         onUnsnoozeAll?()
     }
 
-    @objc private func openSettings(_ sender: Any?) {
-        onOpenSettings?()
-    }
-
     /// One of the catalog's verbs, named by the item's `representedObject`.
     @objc private func performVerb(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let verb = AppMenuVerb(rawValue: raw) else { return }
