@@ -1,23 +1,24 @@
+import AppKit
 import JRBarCore
 import SwiftUI
 
-/// The cartoon fish kit (docs/TOYS.md): plump rounded bodies with
-/// real volume — countershaded, lit from the surface, glossy on top —
-/// big friendly eyes with a coloured iris and two catchlights, soft
-/// translucent fins with rays, a mouth that smiles when fed and makes
-/// a small "o" when hungry. Everything is a unit-space `Path` — nose
-/// toward +x, body centred near the origin, roughly x −0.5…0.5 — so
-/// the caller scales to the fish's drawn length, flips x for
-/// left-facing, and rotates for pitch without the paths knowing. No
-/// image assets anywhere.
+/// The fish kit (docs/TOYS.md): one illustrated style for every
+/// species — a crisp outline tinted from the fish's own colour,
+/// countershaded bodies lit from the surface with a soft top light
+/// and a cool rim, translucent fins whose rays ripple with the swim,
+/// and big glossy eyes that carry the mood. Everything is a unit-space
+/// `Path` drawn at true proportions — nose toward +x, body centred
+/// near the origin, roughly x −0.5…0.5 — so the caller scales both
+/// axes by the fish's length, flips x for left-facing and rotates for
+/// pitch without the paths knowing. No image assets anywhere.
 enum CartoonFish {
     /// What the fish is saying with its mouth.
     enum MouthKind: Equatable, Sendable {
-        /// Just ate: a big open smile.
+        /// Just ate: a big open smile and happy, squinting eyes.
         case smile
-        /// Starving: a small round "o".
+        /// Starving: a small round "o" under worried lids.
         case hungry
-        /// Cruising: a soft neutral curve.
+        /// Cruising: a soft upturned curve.
         case plain
     }
 
@@ -28,629 +29,308 @@ enum CartoonFish {
         var light: Color     // pale belly / fin light
         var dark: Color      // markings, the shaded back
         var outline: Color   // the silhouette's edge
+        /// The cool light the surface rims the back with.
+        var glow: Color
+
+        init(body: Color, light: Color, dark: Color, outline: Color, glow: Color? = nil) {
+            self.body = body
+            self.light = light
+            self.dark = dark
+            self.outline = outline
+            self.glow = glow ?? light
+        }
+
+        /// The tank's recipe: `accent` washed toward `floor` as the
+        /// fish swims `depth` (0 shallow … 1 deep) down the column —
+        /// hue as well as brightness, with a touch of grey on top, so
+        /// a deep fish reads watery rather than just dim. Shadows cool
+        /// toward navy instead of black, the way light falls off in
+        /// water. Plain sRGB colours, so a frame resolves them for free.
+        init(accent: NSColor, depth: Double = 0, floor: NSColor) {
+            let a = Self.rgb(accent), fl = Self.rgb(floor)
+            let grey = (0.5, 0.5, 0.5)
+            let washed = Self.mix(Self.mix(a, grey, depth * 0.30), fl, depth * 0.45)
+            self.init(
+                body: Self.color(washed),
+                light: Self.color(Self.mix(washed, (1, 1, 1), 0.58)),
+                dark: Self.color(Self.mix(washed, (0.03, 0.07, 0.19), 0.42)),
+                outline: Self.color(Self.mix(washed, (0.02, 0.03, 0.08), 0.74)),
+                glow: Self.color(Self.mix(washed, (0.86, 0.97, 1.0), 0.72)))
+        }
+
+        private typealias RGB = (Double, Double, Double)
+
+        private static func rgb(_ c: NSColor) -> RGB {
+            // A colour with no sRGB form (a pattern, say) swims grey.
+            guard let s = c.usingColorSpace(.sRGB) else { return (0.5, 0.5, 0.5) }
+            return (Double(s.redComponent), Double(s.greenComponent), Double(s.blueComponent))
+        }
+
+        private static func mix(_ a: RGB, _ b: RGB, _ u: Double) -> RGB {
+            (a.0 + (b.0 - a.0) * u, a.1 + (b.1 - a.1) * u, a.2 + (b.2 - a.2) * u)
+        }
+
+        private static func color(_ c: RGB) -> Color {
+            Color(.sRGB, red: c.0, green: c.1, blue: c.2)
+        }
     }
 
-    /// A species' own markings, drawn over the body on top of its
-    /// `FishSpecies.Pattern` — what makes a tetra a tetra.
-    enum Marking: Sendable {
-        case none
-        /// A dotted lateral line along the flank.
-        case lateralLine
-        /// A glowing neon stripe from the eye to the tail root.
-        case neon
-        /// Three soft dark bands down the disc.
-        case angelBands
-        /// Gill slits behind the eye and a crisp white underside.
-        case sharkGills
-        /// An iridescent sheen across the flank.
-        case iridescent
-        /// Ridged segments down the trunk and tail.
-        case seahorseRings
-        /// Rosy cheeks under the eye.
-        case blush
+    /// Where the fish is in its swim this frame.
+    struct Swim: Sendable {
+        /// The tail beat's phase in radians; the caller advances it
+        /// faster the faster the fish swims.
+        var phase: Double = 0
+        /// How hard the tail beats: 0 holds still, ~0.3 is a brisk swim.
+        var amplitude: Double = 0
+        /// 1 side-on, falling toward 0 as a wall turn brings the face
+        /// round to the glass; the caller squashes x by the same.
+        var thin: Double = 1
+
+        /// A fish holding perfectly still — the Reduce Motion pose.
+        static let still = Swim()
     }
 
-    /// One fin: its shape, where its rays spring from and which way
-    /// they fan, and how many.
+    // MARK: Kit types
+
+    /// A point on an outline; a `corner` stops the curve rounding
+    /// through it, for fin tips and forks.
+    struct Knot: Sendable {
+        var p: CGPoint
+        var corner = false
+    }
+
+    /// One fin: its rest shape and rays, where it hinges, and how it
+    /// moves.
     struct Fin: Sendable {
+        enum Motion: Sendable {
+            /// The tail: swings on the beat, foreshortens at the ends
+            /// of the stroke and rides the body's flex.
+            case tail
+            /// Dorsal, anal and ventral fins: a wave travels out along
+            /// them, `k` strong.
+            case ripple(Double)
+            /// Pectorals: a paddle about the root, `k` strong.
+            case paddle(Double)
+            /// Moves only with the body's flex.
+            case fixed
+        }
+
+        /// Which side of the body the fin draws on.
+        enum Layer: Sendable {
+            /// The far side, seen through the water behind the body.
+            case far
+            /// Behind the body on the near side.
+            case behind
+            /// Over the body — the near pectoral.
+            case near
+        }
+
         var path: Path
-        var root: CGPoint
+        var rays: Path
+        /// The root's midpoint: what the fin swings about.
+        var pivot: CGPoint
+        /// The farthest edge point; the fin's gradient runs pivot → tip.
         var tip: CGPoint
-        var rays: Int = 5
+        var reach: Double
+        var motion: Motion
+        var layer: Layer
         /// A dark margin along the edge — the clownfish's trim.
-        var trim: Bool = false
+        var trim = false
+        /// A colour of its own — the tang's yellow tail.
+        var tint: Color?
+        /// Opaque, body-coloured — the puffer's spines.
+        var solid = false
+    }
+
+    /// A paint layer clipped to the body: bars, bands, stripes, spots.
+    struct Mark: Sendable {
+        enum Tone: Sendable { case light, dark, outline, white, neonRed }
+        enum Style: Sendable {
+            case fill(Tone, Double)
+            case stroke(Tone, width: Double, opacity: Double)
+            /// A dotted line — the lateral line.
+            case dots(Tone, width: Double, gap: Double, opacity: Double)
+            /// A white bar with a dark edge — the clownfish's bars.
+            case bar(edge: Double)
+            /// A glowing line — the tetra's neon.
+            case neon(width: Double)
+            /// An iridescent sweep laid over the flank.
+            case sheen
+            /// A soft rosy cheek.
+            case blush
+        }
+
+        var path: Path
+        var style: Style
+        /// Reaches back into the bending tail, so the swim must bend
+        /// it too; a mark on the head stays put for free.
+        var flexes = true
     }
 
     /// One species' silhouette kit.
     struct Art: Sendable {
         var body: Path
-        /// A pale belly patch clipped inside the body, when the
-        /// silhouette leaves room for one.
-        var belly: Path?
-        /// Fins behind the body (veils, spines, the far pectoral).
-        var extras: [Fin]
-        /// The tail, rebuilt per frame off the wag phase.
-        var tail: (@Sendable (Double) -> Fin)?
-        var dorsal: Fin?
-        var anal: Fin?
-        /// The near-side fin, rebuilt off the flap phase.
-        var pectoral: (@Sendable (Double) -> Fin)?
+        var bounds: CGRect
+        var fins: [Fin]
+        var marks: [Mark]
         /// Where the eye sits and how big it is — big, per the brief.
         var eye: CGPoint
         var eyeR: Double
+        /// Half the gap between the eyes, for the face-on turn.
+        var eyeSpread: Double
         /// The mouth anchor: the nose-side point it draws around.
         var mouth: CGPoint
-        /// Where a hat sits on the head.
+        var mouthScale: Double = 1
+        /// Where a hat sits on the head, how big and how tipped.
         var hatAnchor: CGPoint
+        var hatScale: Double = 1
+        var hatTilt: Double = 0
+        /// Under the chin, where a bow tie knots.
+        var chin: CGPoint
         /// The gill cover's curve behind the eye; nil draws none.
-        var gill: Path? = nil
-        var marking: Marking = .none
-        /// Where the upper-front gloss sits and how wide it runs.
-        var gloss: CGRect = CGRect(x: -0.06, y: -0.26, width: 0.42, height: 0.11)
+        var gill: Path?
+        /// The mid-flank line from the gill to the tail root — the
+        /// tide stripe follows it.
+        var flank: Path
+        /// The body bends behind `flexPivot` down to `tailRootX`.
+        var flexPivot: Double
+        var tailRootX: Double
+        /// The body's upper-front, where the gloss catches.
+        var gloss: CGRect
+        /// Faint overlapping scales, cached once.
+        var scales: Path?
+        /// Everything drawn, fins included — shadows and tags measure it.
+        var extent: CGRect
+        /// Stands upright (the seahorse): the pale side is the front,
+        /// not the underside.
+        var upright = false
+        /// Where a scarf wraps: the collar's top and bottom edge,
+        /// found once from the silhouette.
+        var collar: (top: CGPoint, bottom: CGPoint) = (.zero, .zero)
+        /// Fins that shimmer cyan to rose toward the edge — the betta's.
+        var iridescent = false
     }
 
-    // MARK: Shared shapes
+    // MARK: Shape builders
 
-    /// A plump teardrop body: rounded nose at +x, full belly, tapering
-    /// tail root at −x. `fullness` fattens the mid-body; `brow` lifts
-    /// the forehead.
-    private static func teardrop(fullness: Double = 1, brow: Double = 0) -> Path {
-        let h = 0.30 * fullness
-        var p = Path()
-        p.move(to: CGPoint(x: 0.50, y: 0.00))
-        p.addCurve(to: CGPoint(x: 0.08, y: -h),
-                   control1: CGPoint(x: 0.47, y: -h * (0.78 + brow)),
-                   control2: CGPoint(x: 0.28, y: -h * (1.04 + brow * 0.5)))
-        p.addCurve(to: CGPoint(x: -0.36, y: -0.07),
-                   control1: CGPoint(x: -0.13, y: -h * 0.98),
-                   control2: CGPoint(x: -0.30, y: -0.17))
-        p.addQuadCurve(to: CGPoint(x: -0.36, y: 0.07),
-                       control: CGPoint(x: -0.39, y: 0))
-        p.addCurve(to: CGPoint(x: 0.08, y: h * 0.86),
-                   control1: CGPoint(x: -0.16, y: h * 0.88),
-                   control2: CGPoint(x: -0.03, y: h * 1.04))
-        p.addCurve(to: CGPoint(x: 0.50, y: 0.00),
-                   control1: CGPoint(x: 0.30, y: h * 0.74),
-                   control2: CGPoint(x: 0.47, y: h * 0.36))
-        p.closeSubpath()
-        return p
+    static func k(_ x: Double, _ y: Double) -> Knot { Knot(p: CGPoint(x: x, y: y)) }
+    static func corner(_ x: Double, _ y: Double) -> Knot { Knot(p: CGPoint(x: x, y: y), corner: true) }
+
+    /// A smooth Catmull–Rom outline through `knots`, cornered where a
+    /// knot asks.
+    static func spline(_ knots: [Knot], closed: Bool = true) -> Path {
+        var path = Path()
+        let n = knots.count
+        guard n >= 2 else { return path }
+        path.move(to: knots[0].p)
+        let segments = closed ? n : n - 1
+        for i in 0..<segments {
+            let a = knots[i], b = knots[(i + 1) % n]
+            let before = closed || i > 0 ? knots[(i - 1 + n) % n].p : a.p
+            let after = closed || i + 2 < n ? knots[(i + 2) % n].p : b.p
+            let c1 = a.corner
+                ? lerp(a.p, b.p, 1.0 / 3)
+                : CGPoint(x: a.p.x + (b.p.x - before.x) / 6, y: a.p.y + (b.p.y - before.y) / 6)
+            let c2 = b.corner
+                ? lerp(b.p, a.p, 1.0 / 3)
+                : CGPoint(x: b.p.x - (after.x - a.p.x) / 6, y: b.p.y - (after.y - a.p.y) / 6)
+            path.addCurve(to: b.p, control1: c1, control2: c2)
+        }
+        if closed { path.closeSubpath() }
+        return path
     }
 
-    /// A soft belly oval sitting in the lower half of a body.
-    private static func bellyPatch(x: Double, y: Double, w: Double, h: Double) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: x - w, y: y))
-        p.addQuadCurve(to: CGPoint(x: x + w, y: y + h * 0.1),
-                       control: CGPoint(x: x, y: y + h))
-        p.addQuadCurve(to: CGPoint(x: x - w, y: y),
-                       control: CGPoint(x: x, y: y - h * 0.55))
-        p.closeSubpath()
-        return p
+    static func lerp(_ a: CGPoint, _ b: CGPoint, _ u: Double) -> CGPoint {
+        CGPoint(x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u)
     }
 
-    /// The gill cover: a soft crescent just behind the eye.
-    private static func gillArc(behind eye: CGPoint, r: Double, drop: Double = 0.22) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: eye.x - r * 1.5, y: eye.y - r * 1.4))
-        p.addQuadCurve(to: CGPoint(x: eye.x - r * 1.2, y: eye.y + drop),
-                       control: CGPoint(x: eye.x - r * 3.0, y: eye.y + drop * 0.35))
-        return p
-    }
-
-    /// A round fan tail with a soft two-lobed edge: peduncle at −0.34.
-    /// `wag` swings the tips; `span`/`reach` size it.
-    private static func fanTail(wag: Double, span: Double = 0.30, reach: Double = 0.70) -> Fin {
-        var p = Path()
-        p.move(to: CGPoint(x: -0.33, y: -0.07))
-        p.addCurve(to: CGPoint(x: -reach, y: -span + wag),
-                   control1: CGPoint(x: -0.48, y: -0.20 + wag * 0.4),
-                   control2: CGPoint(x: -reach + 0.04, y: -span * 0.92 + wag * 0.8))
-        p.addQuadCurve(to: CGPoint(x: -reach + 0.10, y: wag * 0.7),
-                       control: CGPoint(x: -reach - 0.02, y: -span * 0.25 + wag * 0.8))
-        p.addQuadCurve(to: CGPoint(x: -reach, y: span + wag),
-                       control: CGPoint(x: -reach - 0.02, y: span * 0.25 + wag * 0.8))
-        p.addCurve(to: CGPoint(x: -0.33, y: 0.07),
-                   control1: CGPoint(x: -reach + 0.04, y: span * 0.92 + wag * 0.8),
-                   control2: CGPoint(x: -0.48, y: 0.20 + wag * 0.4))
-        p.closeSubpath()
-        return Fin(path: p, root: CGPoint(x: -0.30, y: 0),
-                   tip: CGPoint(x: -reach, y: wag), rays: 7)
-    }
-
-    /// A swept, rounded dorsal fin along the back.
-    private static func dorsalFin(root0: Double, root1: Double, apex: CGPoint,
-                                  base: Double = -0.24) -> Fin {
-        var p = Path()
-        p.move(to: CGPoint(x: root0, y: base))
-        p.addCurve(to: apex,
-                   control1: CGPoint(x: root0 - 0.02, y: base - 0.14),
-                   control2: CGPoint(x: apex.x + 0.10, y: apex.y - 0.02))
-        p.addQuadCurve(to: CGPoint(x: root1, y: base + 0.05),
-                       control: CGPoint(x: (root1 + apex.x) / 2 - 0.05, y: apex.y + 0.12))
-        p.closeSubpath()
-        return Fin(path: p, root: CGPoint(x: (root0 + root1) / 2, y: base + 0.08),
-                   tip: apex, rays: 5)
-    }
-
-    /// A small anal fin under the rear belly.
-    private static func analFin(root0: Double, root1: Double, apex: CGPoint,
-                                base: Double = 0.20) -> Fin {
-        var p = Path()
-        p.move(to: CGPoint(x: root0, y: base))
-        p.addCurve(to: apex,
-                   control1: CGPoint(x: root0 - 0.02, y: base + 0.10),
-                   control2: CGPoint(x: apex.x + 0.08, y: apex.y))
-        p.addQuadCurve(to: CGPoint(x: root1, y: base - 0.04),
-                       control: CGPoint(x: (root1 + apex.x) / 2 - 0.03, y: apex.y - 0.08))
-        p.closeSubpath()
-        return Fin(path: p, root: CGPoint(x: (root0 + root1) / 2, y: base - 0.06),
-                   tip: apex, rays: 4)
-    }
-
-    /// The near-side pectoral fin; `flap` follows the wag a beat late.
-    private static func pectoralFin(flap: Double, at root: CGPoint = CGPoint(x: 0.14, y: 0.07),
-                                    size: Double = 1) -> Fin {
-        var p = Path()
-        p.move(to: root)
-        p.addCurve(to: CGPoint(x: root.x - 0.21 * size, y: root.y + (0.17 + flap) * size),
-                   control1: CGPoint(x: root.x - 0.06 * size, y: root.y + 0.02),
-                   control2: CGPoint(x: root.x - 0.19 * size, y: root.y + (0.08 + flap * 0.6) * size))
-        p.addQuadCurve(to: CGPoint(x: root.x - 0.02 * size, y: root.y + 0.12 * size),
-                       control: CGPoint(x: root.x - 0.10 * size, y: root.y + (0.22 + flap * 0.5) * size))
-        p.closeSubpath()
-        return Fin(path: p, root: root,
-                   tip: CGPoint(x: root.x - 0.20 * size, y: root.y + (0.17 + flap) * size), rays: 4)
+    /// A fin springing from the body between `a` (front) and `b`
+    /// (back) out round `edge`; `rays` fan from the root to the edge.
+    static func fin(_ a: CGPoint, _ b: CGPoint, edge: [Knot], rays count: Int,
+                    motion: Fin.Motion, layer: Fin.Layer = .behind,
+                    trim: Bool = false, tint: Color? = nil) -> Fin {
+        let path = spline([Knot(p: a, corner: true)] + edge + [Knot(p: b, corner: true)])
+        let pivot = lerp(a, b, 0.5)
+        // The edge as a polyline, measured, so the rays land evenly.
+        let rim = [a] + edge.map(\.p) + [b]
+        var lengths: [Double] = [0]
+        for i in 1..<rim.count {
+            let dx = rim[i].x - rim[i - 1].x, dy = rim[i].y - rim[i - 1].y
+            lengths.append(lengths[i - 1] + (dx * dx + dy * dy).squareRoot())
+        }
+        func along(_ u: Double) -> CGPoint {
+            let target = u * (lengths.last ?? 0)
+            for i in 1..<rim.count where lengths[i] >= target {
+                let span = max(0.0001, lengths[i] - lengths[i - 1])
+                return lerp(rim[i - 1], rim[i], (target - lengths[i - 1]) / span)
+            }
+            return b
+        }
+        var rays = Path()
+        for i in 0..<count {
+            let u = (Double(i) + 1) / (Double(count) + 1)
+            let start = lerp(a, b, 0.15 + 0.7 * u)
+            // Just short of the edge, so no clip is needed to keep the
+            // rays inside the membrane.
+            let end = lerp(start, along(u), 0.96)
+            let mid = lerp(start, end, 0.5)
+            let bow = CGPoint(x: mid.x - (end.y - start.y) * 0.04, y: mid.y + (end.x - start.x) * 0.04)
+            rays.move(to: start)
+            rays.addQuadCurve(to: end, control: bow)
+        }
+        var tip = pivot
+        var reach = 0.0
+        for p in edge.map(\.p) {
+            let d = hypot(p.x - pivot.x, p.y - pivot.y)
+            if d > reach { reach = d; tip = p }
+        }
+        return Fin(path: path, rays: rays, pivot: pivot, tip: tip, reach: max(0.01, reach),
+                   motion: motion, layer: layer, trim: trim, tint: tint)
     }
 
     /// A filled ribbon along `spine`, `widths` wide at each point — a
     /// seahorse's trunk and curled tail in one outline.
-    private static func ribbon(_ spine: [CGPoint], widths: [Double]) -> Path {
+    static func ribbon(_ spine: [CGPoint], widths: [Double]) -> Path {
         guard spine.count >= 2, widths.count == spine.count else { return Path() }
-        var left: [CGPoint] = []
-        var right: [CGPoint] = []
+        var left: [Knot] = []
+        var right: [Knot] = []
         for i in spine.indices {
             let a = spine[max(0, i - 1)], b = spine[min(spine.count - 1, i + 1)]
             let dx = b.x - a.x, dy = b.y - a.y
             let len = max(0.0001, (dx * dx + dy * dy).squareRoot())
             let nx = -dy / len, ny = dx / len
             let w = widths[i] / 2
-            left.append(CGPoint(x: spine[i].x + nx * w, y: spine[i].y + ny * w))
-            right.append(CGPoint(x: spine[i].x - nx * w, y: spine[i].y - ny * w))
+            left.append(k(spine[i].x + nx * w, spine[i].y + ny * w))
+            right.append(k(spine[i].x - nx * w, spine[i].y - ny * w))
         }
-        var p = Path()
-        p.move(to: left[0])
-        for i in 1..<left.count {
-            let mid = CGPoint(x: (left[i - 1].x + left[i].x) / 2, y: (left[i - 1].y + left[i].y) / 2)
-            p.addQuadCurve(to: mid, control: left[i - 1])
-        }
-        p.addLine(to: left[left.count - 1])
-        // A rounded cap at the tail's tip.
-        let tip = spine[spine.count - 1]
-        let leftEnd = left[left.count - 1], rightEnd = right[right.count - 1]
-        let capX: CGFloat = tip.x * 2 - (leftEnd.x + rightEnd.x) / 2
-        let capY: CGFloat = tip.y * 2 - (leftEnd.y + rightEnd.y) / 2
-        p.addQuadCurve(to: rightEnd, control: CGPoint(x: capX, y: capY))
-        for i in stride(from: right.count - 2, through: 0, by: -1) {
-            let mid = CGPoint(x: (right[i + 1].x + right[i].x) / 2, y: (right[i + 1].y + right[i].y) / 2)
-            p.addQuadCurve(to: mid, control: right[i + 1])
-        }
-        p.addLine(to: right[0])
-        p.closeSubpath()
-        return p
+        // Round cap at the tail's tip.
+        let last = spine[spine.count - 1], prev = spine[spine.count - 2]
+        let dx = last.x - prev.x, dy = last.y - prev.y
+        let len = max(0.0001, (dx * dx + dy * dy).squareRoot())
+        let capR = widths[widths.count - 1] * 0.5
+        let cap = k(last.x + dx / len * capR, last.y + dy / len * capR)
+        return spline(left + [cap] + right.reversed())
     }
 
-    // MARK: Species kits
-
-    /// The shark's crescent tail: long upper lobe, short lower.
-    private static func lunateTail(wag: Double) -> Fin {
-        var p = Path()
-        p.move(to: CGPoint(x: -0.38, y: -0.05))
-        p.addCurve(to: CGPoint(x: -0.84, y: -0.50 + wag),
-                   control1: CGPoint(x: -0.56, y: -0.16 + wag * 0.3),
-                   control2: CGPoint(x: -0.74, y: -0.40 + wag * 0.8))
-        p.addQuadCurve(to: CGPoint(x: -0.62, y: wag * 0.4),
-                       control: CGPoint(x: -0.74, y: -0.12 + wag * 0.7))
-        p.addCurve(to: CGPoint(x: -0.72, y: 0.30 + wag),
-                   control1: CGPoint(x: -0.64, y: 0.10 + wag * 0.6),
-                   control2: CGPoint(x: -0.68, y: 0.22 + wag * 0.8))
-        p.addQuadCurve(to: CGPoint(x: -0.38, y: 0.05),
-                       control: CGPoint(x: -0.50, y: 0.12 + wag * 0.4))
-        p.closeSubpath()
-        return Fin(path: p, root: CGPoint(x: -0.36, y: 0),
-                   tip: CGPoint(x: -0.80, y: -0.30 + wag), rays: 6)
-    }
-
-    /// The betta's veil: a huge soft fan that ripples at its edge.
-    private static func veilTail(wag: Double) -> Fin {
-        var p = Path()
-        p.move(to: CGPoint(x: -0.33, y: -0.08))
-        p.addCurve(to: CGPoint(x: -0.86, y: -0.62 + wag),
-                   control1: CGPoint(x: -0.46, y: -0.34 + wag * 0.4),
-                   control2: CGPoint(x: -0.70, y: -0.62 + wag * 0.8))
-        // The ruffled trailing edge, top to bottom.
-        let lobes = 5
-        for k in 0..<lobes {
-            let y0 = -0.62 + Double(k) / Double(lobes) * 1.24
-            let y1 = -0.62 + Double(k + 1) / Double(lobes) * 1.24
-            let bulge = -0.98 - 0.04 * sin(Double(k) * 1.7)
-            p.addQuadCurve(to: CGPoint(x: -0.86 - 0.05 * sin(Double(k + 1) * 2.1), y: y1 + wag),
-                           control: CGPoint(x: bulge, y: (y0 + y1) / 2 + wag))
-        }
-        p.addCurve(to: CGPoint(x: -0.33, y: 0.08),
-                   control1: CGPoint(x: -0.70, y: 0.62 + wag * 0.8),
-                   control2: CGPoint(x: -0.46, y: 0.34 + wag * 0.4))
-        p.closeSubpath()
-        return Fin(path: p, root: CGPoint(x: -0.30, y: 0),
-                   tip: CGPoint(x: -0.95, y: wag), rays: 11)
-    }
-
-    private static let kits: [FishSpecies: Art] = {
-        var kits: [FishSpecies: Art] = [:]
-
-        // Minnow: the plain plump fish, a dotted line down its flank.
-        kits[.minnow] = Art(
-            body: teardrop(fullness: 0.92),
-            belly: bellyPatch(x: 0.08, y: 0.15, w: 0.30, h: 0.16),
-            extras: [],
-            tail: { fanTail(wag: $0, span: 0.27, reach: 0.64) },
-            dorsal: dorsalFin(root0: 0.10, root1: -0.20, apex: CGPoint(x: -0.12, y: -0.50)),
-            anal: analFin(root0: -0.08, root1: -0.26, apex: CGPoint(x: -0.26, y: 0.34)),
-            pectoral: { pectoralFin(flap: $0) },
-            eye: CGPoint(x: 0.29, y: -0.08), eyeR: 0.092,
-            mouth: CGPoint(x: 0.47, y: 0.06),
-            hatAnchor: CGPoint(x: 0.22, y: -0.25),
-            gill: gillArc(behind: CGPoint(x: 0.29, y: -0.08), r: 0.092),
-            marking: .lateralLine)
-
-        // Tetra: small, slim and shiny — the neon stripe is its name.
-        kits[.tetra] = Art(
-            body: teardrop(fullness: 0.84),
-            belly: bellyPatch(x: 0.06, y: 0.14, w: 0.28, h: 0.13),
-            extras: [],
-            tail: { fanTail(wag: $0, span: 0.26, reach: 0.60) },
-            dorsal: dorsalFin(root0: 0.06, root1: -0.16, apex: CGPoint(x: -0.12, y: -0.48)),
-            anal: analFin(root0: -0.02, root1: -0.24, apex: CGPoint(x: -0.24, y: 0.34)),
-            pectoral: { pectoralFin(flap: $0, size: 0.85) },
-            eye: CGPoint(x: 0.29, y: -0.07), eyeR: 0.105,
-            mouth: CGPoint(x: 0.47, y: 0.05),
-            hatAnchor: CGPoint(x: 0.22, y: -0.23),
-            gill: gillArc(behind: CGPoint(x: 0.29, y: -0.07), r: 0.105, drop: 0.18),
-            marking: .neon)
-
-        // Tang: a tall oval with a long fin along its back and belly;
-        // the tail-end band is its pattern.
-        let tangBody: Path = {
-            var p = Path()
-            p.move(to: CGPoint(x: 0.50, y: 0.04))
-            p.addCurve(to: CGPoint(x: 0.10, y: -0.36),
-                       control1: CGPoint(x: 0.48, y: -0.22),
-                       control2: CGPoint(x: 0.32, y: -0.37))
-            p.addCurve(to: CGPoint(x: -0.36, y: -0.07),
-                       control1: CGPoint(x: -0.14, y: -0.35),
-                       control2: CGPoint(x: -0.30, y: -0.20))
-            p.addQuadCurve(to: CGPoint(x: -0.36, y: 0.07), control: CGPoint(x: -0.39, y: 0))
-            p.addCurve(to: CGPoint(x: 0.10, y: 0.33),
-                       control1: CGPoint(x: -0.30, y: 0.20),
-                       control2: CGPoint(x: -0.12, y: 0.34))
-            p.addCurve(to: CGPoint(x: 0.50, y: 0.04),
-                       control1: CGPoint(x: 0.32, y: 0.32),
-                       control2: CGPoint(x: 0.47, y: 0.22))
-            p.closeSubpath()
-            return p
-        }()
-        kits[.tang] = Art(
-            body: tangBody,
-            belly: bellyPatch(x: 0.10, y: 0.18, w: 0.28, h: 0.17),
-            extras: [],
-            tail: { fanTail(wag: $0, span: 0.30, reach: 0.62) },
-            dorsal: dorsalFin(root0: 0.24, root1: -0.30, apex: CGPoint(x: -0.12, y: -0.52),
-                              base: -0.30),
-            anal: analFin(root0: 0.06, root1: -0.30, apex: CGPoint(x: -0.18, y: 0.46),
-                          base: 0.26),
-            pectoral: { pectoralFin(flap: $0) },
-            eye: CGPoint(x: 0.30, y: -0.12), eyeR: 0.090,
-            mouth: CGPoint(x: 0.48, y: 0.08),
-            hatAnchor: CGPoint(x: 0.22, y: -0.33),
-            gill: gillArc(behind: CGPoint(x: 0.30, y: -0.12), r: 0.090, drop: 0.26))
-
-        // Clownfish: the roundest body of the lot, bold bars, every fin
-        // trimmed dark.
-        kits[.clownfish] = Art(
-            body: teardrop(fullness: 1.18, brow: 0.08),
-            belly: bellyPatch(x: 0.06, y: 0.20, w: 0.30, h: 0.20),
-            extras: [],
-            tail: {
-                var tail = fanTail(wag: $0, span: 0.27, reach: 0.60)
-                tail.trim = true
-                return tail
-            },
-            dorsal: {
-                var fin = dorsalFin(root0: 0.16, root1: -0.22, apex: CGPoint(x: -0.08, y: -0.54),
-                                    base: -0.28)
-                fin.trim = true
-                return fin
-            }(),
-            anal: {
-                var fin = analFin(root0: -0.04, root1: -0.26, apex: CGPoint(x: -0.24, y: 0.40),
-                                  base: 0.24)
-                fin.trim = true
-                return fin
-            }(),
-            pectoral: {
-                var fin = pectoralFin(flap: $0, size: 1.05)
-                fin.trim = true
-                return fin
-            },
-            eye: CGPoint(x: 0.30, y: -0.10), eyeR: 0.094,
-            mouth: CGPoint(x: 0.47, y: 0.07),
-            hatAnchor: CGPoint(x: 0.21, y: -0.31),
-            gill: nil,
-            marking: .blush)
-
-        // Betta: a small body under huge flowing veils.
-        let bettaVeil: Fin = {
-            var p = Path()
-            p.move(to: CGPoint(x: 0.04, y: 0.20))
-            p.addCurve(to: CGPoint(x: -0.62, y: 0.74),
-                       control1: CGPoint(x: -0.16, y: 0.40),
-                       control2: CGPoint(x: -0.44, y: 0.72))
-            p.addQuadCurve(to: CGPoint(x: -0.50, y: 0.54), control: CGPoint(x: -0.62, y: 0.62))
-            p.addQuadCurve(to: CGPoint(x: -0.34, y: 0.14), control: CGPoint(x: -0.46, y: 0.30))
-            p.addQuadCurve(to: CGPoint(x: 0.04, y: 0.20), control: CGPoint(x: -0.16, y: 0.26))
-            p.closeSubpath()
-            return Fin(path: p, root: CGPoint(x: -0.10, y: 0.18),
-                       tip: CGPoint(x: -0.60, y: 0.72), rays: 8)
-        }()
-        let bettaDorsal: Fin = {
-            var p = Path()
-            p.move(to: CGPoint(x: 0.06, y: -0.25))
-            p.addCurve(to: CGPoint(x: -0.52, y: -0.62),
-                       control1: CGPoint(x: -0.06, y: -0.52),
-                       control2: CGPoint(x: -0.34, y: -0.66))
-            p.addQuadCurve(to: CGPoint(x: -0.32, y: -0.12), control: CGPoint(x: -0.48, y: -0.30))
-            p.closeSubpath()
-            return Fin(path: p, root: CGPoint(x: -0.12, y: -0.22),
-                       tip: CGPoint(x: -0.50, y: -0.60), rays: 7)
-        }()
-        kits[.betta] = Art(
-            body: teardrop(fullness: 0.98),
-            belly: bellyPatch(x: 0.08, y: 0.17, w: 0.28, h: 0.16),
-            extras: [bettaVeil],
-            tail: { veilTail(wag: $0) },
-            dorsal: bettaDorsal,
-            anal: nil,
-            pectoral: { pectoralFin(flap: $0) },
-            eye: CGPoint(x: 0.30, y: -0.09), eyeR: 0.088,
-            mouth: CGPoint(x: 0.47, y: 0.06),
-            hatAnchor: CGPoint(x: 0.20, y: -0.27),
-            gill: gillArc(behind: CGPoint(x: 0.30, y: -0.09), r: 0.088),
-            marking: .iridescent)
-
-        // Shark: a sleek blade with a pointed snout, a crisp white
-        // belly and gill slits — still round-eyed and friendly.
-        let sharkBody: Path = {
-            var p = Path()
-            p.move(to: CGPoint(x: 0.56, y: 0.02))
-            p.addCurve(to: CGPoint(x: 0.06, y: -0.30),
-                       control1: CGPoint(x: 0.48, y: -0.16),
-                       control2: CGPoint(x: 0.28, y: -0.31))
-            p.addCurve(to: CGPoint(x: -0.44, y: -0.06),
-                       control1: CGPoint(x: -0.18, y: -0.28),
-                       control2: CGPoint(x: -0.36, y: -0.14))
-            p.addQuadCurve(to: CGPoint(x: -0.44, y: 0.06), control: CGPoint(x: -0.47, y: 0))
-            p.addCurve(to: CGPoint(x: 0.10, y: 0.22),
-                       control1: CGPoint(x: -0.20, y: 0.18),
-                       control2: CGPoint(x: -0.06, y: 0.25))
-            p.addCurve(to: CGPoint(x: 0.56, y: 0.02),
-                       control1: CGPoint(x: 0.34, y: 0.19),
-                       control2: CGPoint(x: 0.52, y: 0.10))
-            p.closeSubpath()
-            return p
-        }()
-        let sharkDorsal: Fin = {
-            var p = Path()
-            p.move(to: CGPoint(x: 0.08, y: -0.28))
-            p.addCurve(to: CGPoint(x: -0.16, y: -0.74),
-                       control1: CGPoint(x: 0.04, y: -0.46),
-                       control2: CGPoint(x: -0.06, y: -0.66))
-            p.addQuadCurve(to: CGPoint(x: -0.24, y: -0.22), control: CGPoint(x: -0.14, y: -0.40))
-            p.closeSubpath()
-            return Fin(path: p, root: CGPoint(x: -0.08, y: -0.24),
-                       tip: CGPoint(x: -0.16, y: -0.72), rays: 0)
-        }()
-        let sharkPectoral: @Sendable (Double) -> Fin = { flap in
-            var p = Path()
-            p.move(to: CGPoint(x: 0.20, y: 0.10))
-            p.addCurve(to: CGPoint(x: -0.12, y: 0.44 + flap * 0.6),
-                       control1: CGPoint(x: 0.12, y: 0.22),
-                       control2: CGPoint(x: -0.02, y: 0.36 + flap * 0.4))
-            p.addQuadCurve(to: CGPoint(x: 0.04, y: 0.16), control: CGPoint(x: -0.02, y: 0.26))
-            p.closeSubpath()
-            return Fin(path: p, root: CGPoint(x: 0.10, y: 0.14),
-                       tip: CGPoint(x: -0.10, y: 0.42), rays: 0)
-        }
-        kits[.shark] = Art(
-            body: sharkBody,
-            belly: bellyPatch(x: 0.10, y: 0.14, w: 0.40, h: 0.16),
-            extras: [],
-            tail: { lunateTail(wag: $0) },
-            dorsal: sharkDorsal,
-            anal: analFin(root0: -0.20, root1: -0.32, apex: CGPoint(x: -0.34, y: 0.26), base: 0.12),
-            pectoral: sharkPectoral,
-            eye: CGPoint(x: 0.34, y: -0.08), eyeR: 0.074,
-            mouth: CGPoint(x: 0.50, y: 0.09),
-            hatAnchor: CGPoint(x: 0.24, y: -0.26),
-            gill: nil,
-            marking: .sharkGills,
-            gloss: CGRect(x: -0.14, y: -0.25, width: 0.52, height: 0.09))
-
-        // Angelfish: a tall disc under long swept sails.
-        let angelBody: Path = {
-            var p = Path()
-            p.move(to: CGPoint(x: 0.50, y: 0.02))
-            p.addCurve(to: CGPoint(x: 0.04, y: -0.42),
-                       control1: CGPoint(x: 0.46, y: -0.24),
-                       control2: CGPoint(x: 0.30, y: -0.43))
-            p.addCurve(to: CGPoint(x: -0.34, y: -0.08),
-                       control1: CGPoint(x: -0.20, y: -0.41),
-                       control2: CGPoint(x: -0.32, y: -0.26))
-            p.addQuadCurve(to: CGPoint(x: -0.34, y: 0.08), control: CGPoint(x: -0.37, y: 0))
-            p.addCurve(to: CGPoint(x: 0.04, y: 0.42),
-                       control1: CGPoint(x: -0.32, y: 0.26),
-                       control2: CGPoint(x: -0.20, y: 0.41))
-            p.addCurve(to: CGPoint(x: 0.50, y: 0.02),
-                       control1: CGPoint(x: 0.30, y: 0.43),
-                       control2: CGPoint(x: 0.46, y: 0.24))
-            p.closeSubpath()
-            return p
-        }()
-        let angelDorsal: Fin = {
-            var p = Path()
-            p.move(to: CGPoint(x: 0.14, y: -0.38))
-            p.addCurve(to: CGPoint(x: -0.40, y: -0.88),
-                       control1: CGPoint(x: 0.06, y: -0.64),
-                       control2: CGPoint(x: -0.18, y: -0.84))
-            p.addQuadCurve(to: CGPoint(x: -0.28, y: -0.22), control: CGPoint(x: -0.28, y: -0.48))
-            p.closeSubpath()
-            return Fin(path: p, root: CGPoint(x: -0.06, y: -0.32),
-                       tip: CGPoint(x: -0.40, y: -0.86), rays: 7)
-        }()
-        let angelAnal: Fin = {
-            var p = Path()
-            p.move(to: CGPoint(x: 0.14, y: 0.38))
-            p.addCurve(to: CGPoint(x: -0.40, y: 0.88),
-                       control1: CGPoint(x: 0.06, y: 0.64),
-                       control2: CGPoint(x: -0.18, y: 0.84))
-            p.addQuadCurve(to: CGPoint(x: -0.28, y: 0.22), control: CGPoint(x: -0.28, y: 0.48))
-            p.closeSubpath()
-            return Fin(path: p, root: CGPoint(x: -0.06, y: 0.32),
-                       tip: CGPoint(x: -0.40, y: 0.86), rays: 7)
-        }()
-        let angelStreamers: Fin = {
-            // The two long ventral threads that trail under the disc.
-            var p = Path()
-            p.move(to: CGPoint(x: 0.18, y: 0.30))
-            p.addCurve(to: CGPoint(x: -0.20, y: 0.86),
-                       control1: CGPoint(x: 0.12, y: 0.52),
-                       control2: CGPoint(x: -0.04, y: 0.76))
-            p.addQuadCurve(to: CGPoint(x: 0.12, y: 0.32), control: CGPoint(x: 0.02, y: 0.60))
-            p.closeSubpath()
-            return Fin(path: p, root: CGPoint(x: 0.14, y: 0.32),
-                       tip: CGPoint(x: -0.20, y: 0.86), rays: 0)
-        }()
-        kits[.angelfish] = Art(
-            body: angelBody,
-            belly: bellyPatch(x: 0.10, y: 0.22, w: 0.26, h: 0.18),
-            extras: [angelStreamers],
-            tail: { fanTail(wag: $0, span: 0.24, reach: 0.58) },
-            dorsal: angelDorsal,
-            anal: angelAnal,
-            pectoral: { pectoralFin(flap: $0, at: CGPoint(x: 0.12, y: 0.04), size: 0.9) },
-            eye: CGPoint(x: 0.27, y: -0.12), eyeR: 0.082,
-            mouth: CGPoint(x: 0.46, y: 0.03),
-            hatAnchor: CGPoint(x: 0.16, y: -0.38),
-            gill: gillArc(behind: CGPoint(x: 0.27, y: -0.12), r: 0.082, drop: 0.26),
-            marking: .angelBands,
-            gloss: CGRect(x: -0.10, y: -0.34, width: 0.42, height: 0.13))
-
-        // Puffer: a round, spiny little ball with big eyes.
-        let pufferBody: Path = {
-            var p = Path()
-            p.addEllipse(in: CGRect(x: -0.38, y: -0.44, width: 0.86, height: 0.88))
-            return p
-        }()
-        let pufferSpikes: Fin = {
-            var p = Path()
-            let count = 18
-            for i in 0..<count {
-                let a = Double(i) / Double(count) * .pi * 2 + 0.17
-                let cx = 0.05, cy = 0.0
-                let ex = cx + cos(a) * 0.42, ey = cy + sin(a) * 0.43
-                // No spines on the face or at the tail root.
-                guard cos(a) < 0.78, cos(a) > -0.86 || abs(sin(a)) > 0.34 else { continue }
-                let px = -sin(a), py = cos(a)
-                p.move(to: CGPoint(x: ex + px * 0.035, y: ey + py * 0.035))
-                p.addLine(to: CGPoint(x: ex + cos(a) * 0.10, y: ey + sin(a) * 0.10))
-                p.addLine(to: CGPoint(x: ex - px * 0.035, y: ey - py * 0.035))
-                p.closeSubpath()
+    /// Faint overlapping scales across `bounds`, rear two thirds.
+    static func scaleTexture(bounds: CGRect, r: Double = 0.045) -> Path {
+        var scales = Path()
+        var row = 0
+        var y = bounds.minY + r
+        while y < bounds.maxY {
+            var x = bounds.minX + (row % 2 == 0 ? 0 : r)
+            while x < bounds.minX + bounds.width * 0.72 {
+                scales.move(to: CGPoint(x: x + r * cos(.pi * 0.64), y: y - r * sin(.pi * 0.64)))
+                scales.addArc(center: CGPoint(x: x, y: y), radius: r,
+                              startAngle: .radians(-.pi * 0.64), endAngle: .radians(.pi * 0.64),
+                              clockwise: false)
+                x += r * 2
             }
-            return Fin(path: p, root: CGPoint(x: 0.05, y: 0), tip: CGPoint(x: 0.5, y: 0), rays: 0)
-        }()
-        kits[.puffer] = Art(
-            body: pufferBody,
-            belly: bellyPatch(x: 0.06, y: 0.20, w: 0.34, h: 0.24),
-            extras: [pufferSpikes],
-            tail: { fanTail(wag: $0, span: 0.20, reach: 0.60) },
-            dorsal: dorsalFin(root0: 0.00, root1: -0.18, apex: CGPoint(x: -0.16, y: -0.58),
-                              base: -0.40),
-            anal: analFin(root0: -0.06, root1: -0.22, apex: CGPoint(x: -0.20, y: 0.54), base: 0.38),
-            pectoral: { pectoralFin(flap: $0, at: CGPoint(x: 0.10, y: 0.06), size: 0.9) },
-            eye: CGPoint(x: 0.25, y: -0.13), eyeR: 0.11,
-            mouth: CGPoint(x: 0.46, y: 0.08),
-            hatAnchor: CGPoint(x: 0.10, y: -0.40),
-            gill: nil,
-            marking: .blush,
-            gloss: CGRect(x: -0.14, y: -0.36, width: 0.46, height: 0.16))
-
-        // Seahorse: upright, a long snout, a crown and a curled tail.
-        let seahorseTrunk = ribbon(
-            [CGPoint(x: 0.16, y: -0.30), CGPoint(x: 0.08, y: -0.16), CGPoint(x: 0.08, y: 0.00),
-             CGPoint(x: 0.12, y: 0.12), CGPoint(x: 0.08, y: 0.24), CGPoint(x: -0.02, y: 0.32),
-             CGPoint(x: -0.10, y: 0.40), CGPoint(x: -0.08, y: 0.48), CGPoint(x: 0.00, y: 0.51),
-             CGPoint(x: 0.06, y: 0.46), CGPoint(x: 0.04, y: 0.41)],
-            widths: [0.22, 0.26, 0.30, 0.28, 0.20, 0.14, 0.11, 0.09, 0.07, 0.055, 0.04])
-        let seahorseHead: Path = {
-            var p = Path()
-            p.addEllipse(in: CGRect(x: 0.08, y: -0.45, width: 0.26, height: 0.22))
-            // The snout: a tube to a little flared mouth.
-            p.move(to: CGPoint(x: 0.26, y: -0.39))
-            p.addQuadCurve(to: CGPoint(x: 0.50, y: -0.37), control: CGPoint(x: 0.38, y: -0.40))
-            p.addQuadCurve(to: CGPoint(x: 0.50, y: -0.29), control: CGPoint(x: 0.53, y: -0.33))
-            p.addQuadCurve(to: CGPoint(x: 0.26, y: -0.29), control: CGPoint(x: 0.38, y: -0.31))
-            p.closeSubpath()
-            return p
-        }()
-        let seahorseCrown: Path = {
-            var p = Path()
-            for (x, h) in [(0.13, 0.08), (0.18, 0.10), (0.23, 0.07)] as [(Double, Double)] {
-                p.move(to: CGPoint(x: x - 0.03, y: -0.42))
-                p.addQuadCurve(to: CGPoint(x: x, y: -0.43 - h), control: CGPoint(x: x - 0.02, y: -0.44 - h * 0.5))
-                p.addQuadCurve(to: CGPoint(x: x + 0.03, y: -0.42), control: CGPoint(x: x + 0.02, y: -0.44 - h * 0.5))
-                p.closeSubpath()
-            }
-            return p
-        }()
-        var seahorseBody = seahorseTrunk
-        seahorseBody.addPath(seahorseHead)
-        seahorseBody.addPath(seahorseCrown)
-        kits[.seahorse] = Art(
-            body: seahorseBody,
-            belly: bellyPatch(x: 0.16, y: 0.06, w: 0.10, h: 0.18),
-            extras: [],
-            tail: nil,
-            dorsal: nil,
-            anal: nil,
-            // The seahorse's one working fin: the little fan on its
-            // back, fluttering with the swim.
-            pectoral: { flap in
-                var p = Path()
-                p.move(to: CGPoint(x: -0.03, y: -0.10))
-                p.addCurve(to: CGPoint(x: -0.06, y: 0.12),
-                           control1: CGPoint(x: -0.20 - flap * 0.4, y: -0.10),
-                           control2: CGPoint(x: -0.22 - flap * 0.4, y: 0.10))
-                p.closeSubpath()
-                return Fin(path: p, root: CGPoint(x: -0.02, y: 0.01),
-                           tip: CGPoint(x: -0.20 - flap * 0.4, y: 0.0), rays: 6)
-            },
-            eye: CGPoint(x: 0.22, y: -0.35), eyeR: 0.07,
-            mouth: CGPoint(x: 0.50, y: -0.33),
-            hatAnchor: CGPoint(x: 0.17, y: -0.47),
-            gill: nil,
-            marking: .seahorseRings,
-            gloss: CGRect(x: 0.02, y: -0.20, width: 0.12, height: 0.26))
-
-        return kits
-    }()
+            y += r * 1.25
+            row += 1
+        }
+        return scales
+    }
 
     static func art(for species: FishSpecies) -> Art {
         kits[species] ?? kits[.minnow]!
@@ -658,643 +338,554 @@ enum CartoonFish {
 
     // MARK: Draw
 
+    /// The outline's weight in unit space for a fish `pointSize` long:
+    /// about 1.2 pt on a tank-sized fish, never hairline, never heavy.
+    static func outlineWidth(_ pointSize: Double) -> Double {
+        min(1.9, max(0.95, 0.72 + pointSize * 0.0085)) / max(1, pointSize)
+    }
+
     /// Draw one fish at the origin of `f` — already translated, rotated,
     /// flipped & scaled to unit space by the caller. `blink` is 0 open
-    /// …1 shut. `dead` (a sinking fish) crosses the eye out.
-    /// `aspectComp` un-shears the eye: the caller's non-uniform scale
-    /// (length × height) would stretch the eye's circle, so the eye's
-    /// y-radii pre-multiply by it — pass `drawnLength / drawnHeight`.
+    /// …1 shut. `dead` (a sinking fish) crosses the eye out and drains
+    /// the species' own colours — no neon, no yellow tail, no blush.
+    /// `pointSize` is the fish's drawn length, so the outline keeps one
+    /// weight and the fine detail drops out where it would only be
+    /// noise.
     static func draw(into f: inout GraphicsContext, species: FishSpecies,
-                     palette: Palette, wag: Double, flap: Double,
+                     palette: Palette, swim: Swim = .still,
                      mouth: MouthKind, blink: Double, dead: Bool,
-                     patternSeed: UInt64, aspectComp: Double = 1,
+                     pointSize: Double = 60,
                      variant: AquariumVariant? = nil) {
         let art = art(for: species)
+        let pose = Pose(art: art, swim: swim)
+        let lw = outlineWidth(pointSize)
+        let detailed = pointSize >= 38
+        let vivid = !dead
 
-        // Fins behind the body — soft and translucent, so they read as
-        // fins rather than more body.
-        if let tail = art.tail { drawFin(tail(wag), palette: palette, into: &f) }
-        for extra in art.extras { drawFin(extra, palette: palette, into: &f) }
-        if let dorsal = art.dorsal { drawFin(dorsal, palette: palette, into: &f) }
-        if let anal = art.anal { drawFin(anal, palette: palette, into: &f) }
+        drawFinsBehind(art: art, pose: pose, palette: palette, into: &f, lw: lw,
+                       detailed: detailed, vivid: vivid)
 
+        let body = pose.body(art.body)
         // The silhouette's edge goes down first, twice as wide as it
-        // shows: the body fills over its inner half, so compound
-        // bodies (the seahorse) keep one clean outline.
-        f.stroke(art.body, with: .color(palette.outline.opacity(0.92)),
-                 style: StrokeStyle(lineWidth: 0.058, lineJoin: .round))
-        drawBody(art, species: species, palette: palette, into: &f,
-                 seed: patternSeed, variant: variant)
-
-        if let pectoral = art.pectoral {
-            drawFin(pectoral(flap), palette: palette, into: &f, near: true)
+        // shows: the body fills over its inner half, so the outline
+        // hugs the fill with no seam between them.
+        f.stroke(body, with: .color(palette.outline),
+                 style: StrokeStyle(lineWidth: lw * 2, lineJoin: .round))
+        var near: [(fin: Fin, path: Path)] = []
+        for fin in art.fins where fin.layer == .near {
+            near.append((fin, pose.fin(fin.path, fin)))
+        }
+        drawBody(body, art: art, pose: pose, palette: palette, into: &f,
+                 lw: lw, detailed: detailed, vivid: vivid, variant: variant,
+                 shadows: near.map(\.path))
+        for (fin, path) in near {
+            // The near pectoral: its own lit membrane, rays and edge.
+            let tint = vivid ? fin.tint : nil
+            let base = tint ?? palette.body
+            if fin.trim {
+                f.stroke(path, with: .color(palette.outline.opacity(0.95)),
+                         style: StrokeStyle(lineWidth: lw * 3.2, lineJoin: .round))
+            }
+            f.fill(path, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: base.opacity(0.97), location: 0),
+                    .init(color: base.opacity(0.82), location: 0.5),
+                    .init(color: (tint ?? palette.light).opacity(0.66), location: 1),
+                ]),
+                startPoint: pose.finPoint(fin.pivot, fin), endPoint: pose.finPoint(fin.tip, fin)))
+            if detailed {
+                f.stroke(pose.fin(fin.rays, fin), with: .color(palette.dark.opacity(0.34)), lineWidth: lw * 0.55)
+            }
+            if !fin.trim {
+                f.stroke(path, with: .color(palette.outline.opacity(0.8)),
+                         style: StrokeStyle(lineWidth: lw * 0.9, lineJoin: .round))
+            }
         }
 
-        drawEye(into: &f, art: art, palette: palette,
-                blink: blink, dead: dead, comp: aspectComp)
-        if species != .seahorse || mouth != .plain {
-            drawMouth(into: &f, at: art.mouth, kind: mouth, palette: palette)
-        }
+        drawFace(art: art, species: species, swim: swim, palette: palette, into: &f,
+                 mouth: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed)
     }
 
-    /// The body's paint, back to front: the base colour, the shaded
-    /// back and pale underside, the belly, the pattern and marking,
-    /// the scales, the volume, the gloss and a thin rim of light.
-    private static func drawBody(_ art: Art, species: FishSpecies, palette: Palette,
-                                 into f: inout GraphicsContext, seed: UInt64,
-                                 variant: AquariumVariant?) {
-        let body = art.body
-        f.fill(body, with: .color(palette.body))
+    /// The fins behind the body, soft and translucent so they read as
+    /// fins rather than more body. Every plain membrane shares one
+    /// radial wash — dense by the body, glassy out at the edges — and
+    /// all the rays and edges go down in one stroke each, so a fish's
+    /// fins cost a handful of fills however many it has. A tinted fin
+    /// (the tang's yellow) paints its own while the fish is `vivid`;
+    /// spines are solid.
+    private static func drawFinsBehind(art: Art, pose: Pose, palette: Palette,
+                                       into f: inout GraphicsContext, lw: Double, detailed: Bool,
+                                       vivid: Bool) {
+        var far = Path()
+        var membrane = Path()
+        var trims = Path()
+        var rays = Path()
+        var edges = Path()
+        var tinted: [(fin: Fin, path: Path)] = []
+        for fin in art.fins where fin.layer != .near {
+            let path = pose.fin(fin.path, fin)
+            if fin.solid {
+                // Spines are body, not membrane: lit tips, a full outline.
+                f.stroke(path, with: .color(palette.outline), style: StrokeStyle(lineWidth: lw * 2, lineJoin: .round))
+                f.fill(path, with: .radialGradient(Gradient(colors: [palette.body, palette.light]),
+                                                   center: fin.pivot, startRadius: fin.reach * 0.8,
+                                                   endRadius: fin.reach * 1.05))
+                continue
+            }
+            if fin.layer == .far {
+                far.addPath(path)
+            } else if fin.tint != nil, vivid {
+                tinted.append((fin, path))
+            } else {
+                membrane.addPath(path)
+            }
+            if fin.trim { trims.addPath(path) } else { edges.addPath(path) }
+            if detailed { rays.addPath(pose.fin(fin.rays, fin)) }
+        }
+        f.fill(far, with: .color(palette.dark.opacity(0.75)))
+        f.stroke(trims, with: .color(palette.outline.opacity(0.95)),
+                 style: StrokeStyle(lineWidth: lw * 3.2, lineJoin: .round))
+        let centre = CGPoint(x: art.bounds.midX, y: art.bounds.midY)
+        let e = art.extent
+        let reach = max(hypot(e.minX - centre.x, e.minY - centre.y), hypot(e.minX - centre.x, e.maxY - centre.y),
+                        hypot(e.maxX - centre.x, e.minY - centre.y))
+        let inner = min(art.bounds.width, art.bounds.height) * 0.4
+        // A veil keeps its colour right out to the edge — the richest
+        // part of a betta — where a plain fin thins to glass.
+        let veil = art.iridescent && vivid
+        f.fill(membrane, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: palette.body.opacity(0.94), location: 0),
+                .init(color: palette.body.opacity(veil ? 0.82 : 0.70), location: 0.45),
+                .init(color: veil ? palette.body.opacity(0.62) : palette.light.opacity(0.42), location: 1),
+            ]),
+            center: centre, startRadius: inner, endRadius: reach * 0.9))
+        if veil {
+            // The shimmer: a cool sheen through a rosy blush toward the
+            // veils' edges, light enough to keep the fish's own colour.
+            var sheen = f
+            sheen.blendMode = .plusLighter
+            sheen.fill(membrane, with: .radialGradient(
+                Gradient(stops: [
+                    .init(color: .clear, location: 0.15),
+                    .init(color: Color(red: 0.30, green: 0.70, blue: 1.0).opacity(0.18), location: 0.5),
+                    .init(color: Color(red: 1.0, green: 0.40, blue: 0.80).opacity(0.16), location: 0.82),
+                    .init(color: .clear, location: 1),
+                ]),
+                center: centre, startRadius: inner, endRadius: reach * 0.9))
+        }
+        for (fin, path) in tinted {
+            let tint = fin.tint ?? palette.body
+            f.fill(path, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: tint.opacity(0.94), location: 0),
+                    .init(color: tint.opacity(0.72), location: 0.5),
+                    .init(color: tint.opacity(0.5), location: 1),
+                ]),
+                startPoint: pose.finPoint(fin.pivot, fin), endPoint: pose.finPoint(fin.tip, fin)))
+        }
+        f.stroke(rays, with: .color(palette.dark.opacity(0.32)), lineWidth: lw * 0.55)
+        f.stroke(edges, with: .color(palette.outline.opacity(0.5)),
+                 style: StrokeStyle(lineWidth: lw * 0.7, lineJoin: .round))
+    }
+
+    /// The body's paint, back to front: the countershaded base, the
+    /// markings and scales, one pass of volume that lifts the back
+    /// toward the surface and darkens the flanks as they turn away, a
+    /// gloss on the brow, the near fins' soft shadows, a cool rim of
+    /// light along the back with a bounce under the belly, and the
+    /// gill cover. One clip to the silhouette carries all of it.
+    private static func drawBody(_ body: Path, art: Art, pose: Pose, palette: Palette,
+                                 into f: inout GraphicsContext, lw: Double, detailed: Bool,
+                                 vivid: Bool, variant: AquariumVariant?, shadows: [Path]) {
+        let r = art.bounds
+        // Countershading: a deep back, the true colour across the
+        // flank and a pale underside — for an upright seahorse, the
+        // back is behind it and the pale side in front.
+        f.fill(body, with: .linearGradient(
+            Gradient(stops: [
+                .init(color: palette.dark, location: 0),
+                .init(color: palette.body, location: 0.36),
+                .init(color: palette.body, location: 0.58),
+                .init(color: art.upright ? palette.body : palette.light, location: 0.96),
+            ]),
+            startPoint: art.upright ? CGPoint(x: r.minX, y: 0) : CGPoint(x: 0, y: r.minY),
+            endPoint: art.upright ? CGPoint(x: r.maxX, y: 0) : CGPoint(x: 0, y: r.maxY)))
         var b = f
         b.clip(to: body)
-        let bounds = body.boundingRect
-        // Countershading: a darker back, a paler underside.
-        b.fill(body, with: .linearGradient(
-            Gradient(stops: [
-                .init(color: palette.dark.opacity(0.62), location: 0),
-                .init(color: palette.dark.opacity(0), location: 0.46),
-                .init(color: palette.light.opacity(0), location: 0.56),
-                .init(color: palette.light.opacity(0.55), location: 1),
-            ]),
-            startPoint: CGPoint(x: 0, y: bounds.minY),
-            endPoint: CGPoint(x: 0, y: bounds.maxY)))
-        if let belly = art.belly {
-            b.fill(belly, with: .linearGradient(
-                Gradient(colors: [palette.light.opacity(0.1), palette.light.opacity(0.85)]),
-                startPoint: CGPoint(x: 0, y: belly.boundingRect.minY),
-                endPoint: CGPoint(x: 0, y: belly.boundingRect.maxY)))
+        if detailed, let scales = art.scales {
+            b.stroke(scales, with: .linearGradient(
+                Gradient(colors: [palette.dark.opacity(0.16), palette.dark.opacity(0)]),
+                startPoint: CGPoint(x: r.minX, y: 0),
+                endPoint: CGPoint(x: r.minX + r.width * 0.72, y: 0)),
+                lineWidth: lw * 0.55)
         }
-        drawPattern(species.pattern, palette: palette, into: &b, seed: seed)
-        drawMarking(art.marking, art: art, palette: palette, into: &b)
-        if let variant { drawVariant(variant, palette: palette, into: &b) }
-        drawScales(bounds: bounds, palette: palette, into: &b)
-        // Volume: the flanks fall off toward the edge and the tail.
+        for mark in art.marks {
+            paintMark(mark, path: mark.flexes ? pose.body(mark.path) : mark.path,
+                      palette: palette, into: &b, lw: lw, vivid: vivid)
+        }
+        if let variant { drawVariant(variant, art: art, pose: pose, palette: palette, into: &b) }
+        // Volume and the top light in one pass: the surface's glow soft
+        // along the back, the flanks turning away from it toward the
+        // edge, deepest along the belly and the tail.
+        let extent = max(r.width, r.height)
         b.fill(body, with: .radialGradient(
             Gradient(stops: [
-                .init(color: .black.opacity(0), location: 0),
-                .init(color: .black.opacity(0), location: 0.55),
-                .init(color: .black.opacity(0.26), location: 1),
+                .init(color: palette.glow.opacity(0.32), location: 0),
+                .init(color: palette.glow.opacity(0), location: 0.34),
+                .init(color: palette.dark.opacity(0), location: 0.55),
+                .init(color: palette.dark.opacity(0.42), location: 1),
             ]),
-            center: CGPoint(x: bounds.midX + bounds.width * 0.12, y: bounds.midY - bounds.height * 0.08),
-            startRadius: 0, endRadius: max(bounds.width, bounds.height) * 0.62))
-        // The gill cover.
-        if let gill = art.gill {
-            b.stroke(gill, with: .color(palette.dark.opacity(0.42)),
-                     style: StrokeStyle(lineWidth: 0.02, lineCap: .round))
-            b.stroke(gill.offsetBy(dx: 0.018, dy: 0), with: .color(palette.light.opacity(0.28)),
-                     style: StrokeStyle(lineWidth: 0.012, lineCap: .round))
-        }
-        // The gloss: the surface's light caught on the upper front.
+            center: CGPoint(x: r.midX + r.width * 0.12, y: r.midY - r.height * 0.24),
+            startRadius: 0, endRadius: extent * 0.62))
+        // The gloss: a crisp catch of light on the brow.
         let g = art.gloss
         b.fill(Path(ellipseIn: g), with: .radialGradient(
-            Gradient(colors: [.white.opacity(0.62), .white.opacity(0)]),
-            center: CGPoint(x: g.midX + g.width * 0.12, y: g.midY),
+            Gradient(colors: [.white.opacity(0.70), .white.opacity(0)]),
+            center: CGPoint(x: g.midX + g.width * 0.1, y: g.midY),
             startRadius: 0, endRadius: g.width * 0.5))
-        // A thin rim of light along the back.
+        // The near fins' soft shadows on the flank under them.
+        if !shadows.isEmpty {
+            var shade = Path()
+            for shadow in shadows { shade.addPath(shadow.offsetBy(dx: -0.012, dy: 0.022)) }
+            b.fill(shade, with: .color(palette.dark.opacity(0.35)))
+        }
+        // A rim of cool light along the back, where the surface sits,
+        // and bounce light off the sand along the belly's edge.
         b.stroke(body, with: .linearGradient(
-            Gradient(colors: [.white.opacity(0.42), .white.opacity(0)]),
-            startPoint: CGPoint(x: 0, y: bounds.minY),
-            endPoint: CGPoint(x: 0, y: bounds.minY + bounds.height * 0.45)),
-            lineWidth: 0.05)
-    }
-
-    /// One fin: a soft gradient from the root to a pale translucent
-    /// edge, fine rays fanning from the root, and a thin edge line.
-    private static func drawFin(_ fin: Fin, palette: Palette,
-                                into f: inout GraphicsContext, near: Bool = false) {
-        let path = fin.path
-        f.fill(path, with: .linearGradient(
             Gradient(stops: [
-                .init(color: palette.body.opacity(near ? 0.95 : 0.86), location: 0),
-                .init(color: palette.body.opacity(near ? 0.70 : 0.55), location: 0.5),
-                .init(color: palette.light.opacity(near ? 0.55 : 0.34), location: 1),
+                .init(color: palette.glow.opacity(0.85), location: 0),
+                .init(color: palette.glow.opacity(0), location: 0.42),
+                .init(color: palette.light.opacity(0), location: 0.70),
+                .init(color: palette.light.opacity(0.35), location: 1),
             ]),
-            startPoint: fin.root, endPoint: fin.tip))
-        if fin.rays > 0 {
-            var r = f
-            r.clip(to: path)
-            let dx = fin.tip.x - fin.root.x, dy = fin.tip.y - fin.root.y
-            let reach = (dx * dx + dy * dy).squareRoot() * 1.6
-            let heading = atan2(dy, dx)
-            var rays = Path()
-            for k in 0..<fin.rays {
-                let spread = fin.rays == 1 ? 0 : (Double(k) / Double(fin.rays - 1) - 0.5) * 1.9
-                let a = heading + spread
-                rays.move(to: fin.root)
-                rays.addLine(to: CGPoint(x: fin.root.x + cos(a) * reach, y: fin.root.y + sin(a) * reach))
+            startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)),
+            lineWidth: lw * 2.4)
+        if let gill = art.gill {
+            b.stroke(gill, with: .color(palette.dark.opacity(0.55)),
+                     style: StrokeStyle(lineWidth: lw * 0.9, lineCap: .round))
+            if detailed {
+                b.stroke(gill.offsetBy(dx: lw * 1.1, dy: 0), with: .color(palette.light.opacity(0.35)),
+                         style: StrokeStyle(lineWidth: lw * 0.7, lineCap: .round))
             }
-            r.stroke(rays, with: .color(palette.dark.opacity(0.30)), lineWidth: 0.011)
         }
-        if fin.trim {
-            var t = f
-            t.clip(to: path)
-            t.stroke(path, with: .color(palette.outline.opacity(0.85)), lineWidth: 0.06)
-        }
-        f.stroke(path, with: .color(palette.outline.opacity(near ? 0.55 : 0.5)),
-                 style: StrokeStyle(lineWidth: near ? 0.02 : 0.022, lineJoin: .round))
     }
 
-    /// Faint overlapping scales on the rear two thirds of the flank,
-    /// fading out toward the head.
-    private static func drawScales(bounds: CGRect, palette: Palette,
-                                   into b: inout GraphicsContext) {
-        var scales = Path()
-        let r = 0.05
-        var row = 0
-        var y = bounds.minY + 0.06
-        while y < bounds.maxY - 0.04 {
-            var x = -0.38 + (row % 2 == 0 ? 0 : r)
-            while x < 0.22 {
-                scales.move(to: CGPoint(x: x + r * cos(.pi * 0.62), y: y - r * sin(.pi * 0.62)))
-                scales.addArc(center: CGPoint(x: x, y: y), radius: r,
-                              startAngle: .radians(-.pi * 0.62), endAngle: .radians(.pi * 0.62),
-                              clockwise: false)
-                x += r * 2
-            }
-            y += r * 1.3
-            row += 1
+    private static func color(_ tone: Mark.Tone, _ palette: Palette, vivid: Bool) -> Color {
+        switch tone {
+        case .light: return palette.light
+        case .dark: return palette.dark
+        case .outline: return palette.outline
+        case .white: return Color(red: 0.99, green: 0.99, blue: 0.97)
+        case .neonRed: return vivid ? Color(red: 0.93, green: 0.20, blue: 0.30) : palette.dark
         }
-        b.stroke(scales, with: .linearGradient(
-            Gradient(colors: [palette.dark.opacity(0.16), palette.dark.opacity(0)]),
-            startPoint: CGPoint(x: -0.36, y: 0), endPoint: CGPoint(x: 0.18, y: 0)),
-            lineWidth: 0.010)
     }
 
-    /// The species' own markings, over the pattern.
-    private static func drawMarking(_ marking: Marking, art: Art, palette: Palette,
-                                    into b: inout GraphicsContext) {
-        switch marking {
-        case .none:
+    /// One marking. A fish that isn't `vivid` keeps its pattern but
+    /// loses the colours of its own: the neon goes out, the shimmer
+    /// and the blush fade away.
+    private static func paintMark(_ mark: Mark, path: Path, palette: Palette,
+                                  into b: inout GraphicsContext, lw: Double, vivid: Bool) {
+        switch mark.style {
+        case .fill(let tone, let opacity):
+            b.fill(path, with: .color(color(tone, palette, vivid: vivid).opacity(opacity)))
+        case .stroke(let tone, let width, let opacity):
+            b.stroke(path, with: .color(color(tone, palette, vivid: vivid).opacity(opacity)),
+                     style: StrokeStyle(lineWidth: width, lineCap: .round))
+        case .dots(let tone, let width, let gap, let opacity):
+            b.stroke(path, with: .color(color(tone, palette, vivid: vivid).opacity(opacity)),
+                     style: StrokeStyle(lineWidth: width, lineCap: .round, dash: [0.0001, gap]))
+        case .bar(let edge):
+            b.stroke(path, with: .color(palette.outline.opacity(0.95)), lineWidth: edge + lw * 1.2)
+            let r = path.boundingRect
+            b.fill(path, with: .linearGradient(
+                Gradient(colors: [.white, Color(red: 0.90, green: 0.93, blue: 0.97)]),
+                startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)))
+        case .neon(let width) where !vivid:
+            b.stroke(path, with: .color(palette.light.opacity(0.6)),
+                     style: StrokeStyle(lineWidth: width, lineCap: .round))
+        case .sheen where !vivid, .blush where !vivid:
             break
-        case .lateralLine:
-            var line = Path()
-            line.move(to: CGPoint(x: art.eye.x - 0.12, y: art.eye.y + 0.04))
-            line.addQuadCurve(to: CGPoint(x: -0.36, y: 0.02), control: CGPoint(x: -0.02, y: -0.04))
-            b.stroke(line, with: .color(palette.dark.opacity(0.40)),
-                     style: StrokeStyle(lineWidth: 0.018, lineCap: .round, dash: [0.001, 0.035]))
-        case .neon:
-            var stripe = Path()
-            stripe.move(to: CGPoint(x: art.eye.x - 0.04, y: art.eye.y + 0.02))
-            stripe.addQuadCurve(to: CGPoint(x: -0.38, y: -0.01), control: CGPoint(x: -0.02, y: -0.05))
+        case .neon(let width):
             var glow = b
             glow.blendMode = .plusLighter
-            glow.stroke(stripe, with: .color(palette.light.opacity(0.55)),
-                        style: StrokeStyle(lineWidth: 0.10, lineCap: .round))
-            glow.stroke(stripe, with: .color(.white.opacity(0.75)),
-                        style: StrokeStyle(lineWidth: 0.03, lineCap: .round))
-        case .angelBands:
-            for (x, w) in [(0.24, 0.05), (0.02, 0.07), (-0.20, 0.06)] as [(Double, Double)] {
-                var band = Path()
-                band.move(to: CGPoint(x: x + 0.02, y: -0.6))
-                band.addQuadCurve(to: CGPoint(x: x - 0.02, y: 0.6), control: CGPoint(x: x - 0.06, y: 0))
-                b.stroke(band, with: .color(palette.dark.opacity(0.42)),
-                         style: StrokeStyle(lineWidth: w, lineCap: .round))
-            }
-        case .sharkGills:
-            var gills = Path()
-            for k in 0..<3 {
-                let x = art.eye.x - 0.14 - Double(k) * 0.045
-                gills.move(to: CGPoint(x: x + 0.01, y: -0.06))
-                gills.addQuadCurve(to: CGPoint(x: x, y: 0.10), control: CGPoint(x: x - 0.025, y: 0.02))
-            }
-            b.stroke(gills, with: .color(palette.dark.opacity(0.55)),
-                     style: StrokeStyle(lineWidth: 0.014, lineCap: .round))
-        case .iridescent:
+            glow.stroke(path, with: .color(Color(red: 0.30, green: 0.85, blue: 1.0).opacity(0.55)),
+                        style: StrokeStyle(lineWidth: width * 2.2, lineCap: .round))
+            glow.stroke(path, with: .color(Color(red: 0.55, green: 0.95, blue: 1.0).opacity(0.9)),
+                        style: StrokeStyle(lineWidth: width, lineCap: .round))
+            glow.stroke(path, with: .color(.white.opacity(0.85)),
+                        style: StrokeStyle(lineWidth: width * 0.35, lineCap: .round))
+        case .sheen:
             var sheen = b
             sheen.blendMode = .plusLighter
-            sheen.fill(Path(CGRect(x: -0.5, y: -0.5, width: 1, height: 1)), with: .linearGradient(
+            let r = path.boundingRect
+            sheen.fill(path, with: .linearGradient(
                 Gradient(stops: [
-                    .init(color: .clear, location: 0.2),
-                    .init(color: Color(red: 0.45, green: 0.85, blue: 1.0).opacity(0.22), location: 0.45),
-                    .init(color: Color(red: 0.95, green: 0.55, blue: 1.0).opacity(0.18), location: 0.6),
-                    .init(color: .clear, location: 0.8),
+                    .init(color: .clear, location: 0.15),
+                    .init(color: Color(red: 0.40, green: 0.85, blue: 1.0).opacity(0.30), location: 0.42),
+                    .init(color: Color(red: 0.95, green: 0.50, blue: 1.0).opacity(0.24), location: 0.62),
+                    .init(color: .clear, location: 0.85),
                 ]),
-                startPoint: CGPoint(x: -0.4, y: -0.3), endPoint: CGPoint(x: 0.3, y: 0.3)))
-        case .seahorseRings:
-            var rings = Path()
-            for k in 0..<7 {
-                let y = -0.18 + Double(k) * 0.075
-                let x = 0.10 - max(0, Double(k) - 3.5) * 0.04
-                rings.move(to: CGPoint(x: x - 0.16, y: y - 0.02))
-                rings.addQuadCurve(to: CGPoint(x: x + 0.16, y: y - 0.02), control: CGPoint(x: x, y: y + 0.035))
-            }
-            b.stroke(rings, with: .color(palette.dark.opacity(0.38)), lineWidth: 0.014)
+                startPoint: CGPoint(x: r.minX, y: r.minY), endPoint: CGPoint(x: r.maxX, y: r.maxY)))
         case .blush:
-            let c = CGPoint(x: art.eye.x - 0.02, y: art.eye.y + art.eyeR * 2.0)
-            b.fill(Path(ellipseIn: CGRect(x: c.x - 0.055, y: c.y - 0.03, width: 0.11, height: 0.06)),
-                   with: .radialGradient(
-                    Gradient(colors: [Color(red: 1.0, green: 0.45, blue: 0.50).opacity(0.45), .clear]),
-                    center: c, startRadius: 0, endRadius: 0.055))
+            let r = path.boundingRect
+            b.fill(path, with: .radialGradient(
+                Gradient(colors: [Color(red: 1.0, green: 0.42, blue: 0.50).opacity(0.50), .clear]),
+                center: CGPoint(x: r.midX, y: r.midY), startRadius: 0, endRadius: r.width * 0.5))
         }
     }
 
     /// An earned mark (`AquariumVariant`), clipped to the body like a
     /// pattern and drawn over it — small and pale, so it reads as a
     /// distinction rather than a costume.
-    private static func drawVariant(_ variant: AquariumVariant, palette: Palette,
-                                    into b: inout GraphicsContext) {
+    private static func drawVariant(_ variant: AquariumVariant, art: Art, pose: Pose,
+                                    palette: Palette, into b: inout GraphicsContext) {
+        let r = art.bounds
         switch variant {
         case .tide:
             // One pale wave from gill to tail root along the flank.
-            var stripe = Path()
-            stripe.move(to: CGPoint(x: 0.34, y: -0.02))
-            stripe.addCurve(to: CGPoint(x: -0.46, y: 0.02),
-                            control1: CGPoint(x: 0.10, y: -0.16),
-                            control2: CGPoint(x: -0.18, y: 0.14))
-            b.stroke(stripe, with: .color(palette.light.opacity(0.8)),
-                     style: StrokeStyle(lineWidth: 0.07, lineCap: .round))
-            b.stroke(stripe, with: .color(.white.opacity(0.35)),
-                     style: StrokeStyle(lineWidth: 0.025, lineCap: .round))
+            let stripe = pose.body(art.flank)
+            let w = r.height * 0.16
+            b.stroke(stripe, with: .color(palette.light.opacity(0.85)),
+                     style: StrokeStyle(lineWidth: w, lineCap: .round))
+            b.stroke(stripe, with: .color(.white.opacity(0.45)),
+                     style: StrokeStyle(lineWidth: w * 0.35, lineCap: .round))
         case .starry:
             // Six specks across the back: a school's worth of stars.
             let specks: [(Double, Double, Double)] = [
-                (0.22, -0.26, 0.030), (0.06, -0.33, 0.024), (-0.08, -0.24, 0.028),
-                (-0.20, -0.30, 0.022), (0.14, -0.14, 0.020), (-0.30, -0.16, 0.024),
+                (0.70, 0.18, 0.050), (0.52, 0.10, 0.040), (0.36, 0.22, 0.046),
+                (0.22, 0.14, 0.036), (0.60, 0.34, 0.034), (0.12, 0.30, 0.040),
             ]
-            for (x, y, r) in specks {
-                b.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
-                       with: .color(.white.opacity(0.9)))
+            var sparkle = b
+            sparkle.blendMode = .plusLighter
+            for (u, v, s) in specks {
+                let c = CGPoint(x: r.minX + r.width * u, y: r.minY + r.height * v)
+                let d = s * max(r.width, r.height) * 0.5
+                sparkle.fill(Path(ellipseIn: CGRect(x: c.x - d * 2, y: c.y - d * 2, width: d * 4, height: d * 4)),
+                             with: .radialGradient(Gradient(colors: [.white.opacity(0.35), .clear]),
+                                                   center: c, startRadius: 0, endRadius: d * 2))
+                b.fill(Path(ellipseIn: CGRect(x: c.x - d, y: c.y - d, width: d * 2, height: d * 2)),
+                       with: .color(.white.opacity(0.95)))
             }
         }
     }
 
-    /// The species' marking, clipped to the body silhouette.
-    private static func drawPattern(_ pattern: FishSpecies.Pattern, palette: Palette,
-                                    into b: inout GraphicsContext, seed: UInt64) {
-        switch pattern {
-        case .plain:
-            break
-        case .bars:
-            // Three bold white bars with dark edges, clownfish-style.
-            for (bx, bow) in [(0.30, -0.06), (0.02, -0.01), (-0.24, 0.06)]
-                    as [(Double, Double)] {
-                var bar = Path()
-                bar.move(to: CGPoint(x: bx - 0.055, y: -0.6))
-                bar.addQuadCurve(to: CGPoint(x: bx - 0.055, y: 0.6),
-                                 control: CGPoint(x: bx - 0.16 + bow, y: 0))
-                bar.addLine(to: CGPoint(x: bx + 0.065, y: 0.6))
-                bar.addQuadCurve(to: CGPoint(x: bx + 0.065, y: -0.6),
-                                 control: CGPoint(x: bx - 0.04 + bow, y: 0))
-                bar.closeSubpath()
-                b.stroke(bar, with: .color(palette.outline.opacity(0.9)), lineWidth: 0.05)
-                b.fill(bar, with: .linearGradient(
-                    Gradient(colors: [.white.opacity(0.9), Color(white: 0.93).opacity(0.97)]),
-                    startPoint: CGPoint(x: 0, y: -0.4), endPoint: CGPoint(x: 0, y: 0.4)))
-            }
-        case .spots:
-            let spots: [(x: Double, y: Double, r: Double)] = [
-                (0.28, -0.20, 0.045), (0.08, -0.30, 0.05), (0.14, 0.10, 0.04),
-                (-0.08, -0.12, 0.055), (-0.12, 0.18, 0.045), (-0.26, 0.02, 0.05),
-                (0.32, 0.14, 0.035), (-0.02, -0.34, 0.035), (-0.22, -0.26, 0.04),
-            ]
-            for spot in spots {
-                b.fill(Path(ellipseIn: CGRect(x: spot.x - spot.r, y: spot.y - spot.r,
-                                              width: spot.r * 2, height: spot.r * 2)),
-                       with: .color(palette.dark.opacity(0.5)))
-            }
-        case .band:
-            // A bold dark sweep over the tail end with a pale flash at
-            // the root — the tang's calling card.
-            var band = Path()
-            band.move(to: CGPoint(x: -0.06, y: -0.6))
-            band.addQuadCurve(to: CGPoint(x: -0.12, y: 0.6),
-                              control: CGPoint(x: -0.30, y: 0))
-            band.addLine(to: CGPoint(x: -0.50, y: 0.6))
-            band.addLine(to: CGPoint(x: -0.50, y: -0.6))
-            band.closeSubpath()
-            b.fill(band, with: .color(palette.outline.opacity(0.62)))
-            var flash = Path()
-            flash.move(to: CGPoint(x: -0.25, y: -0.6))
-            flash.addLine(to: CGPoint(x: -0.50, y: -0.6))
-            flash.addLine(to: CGPoint(x: -0.50, y: 0.6))
-            flash.addLine(to: CGPoint(x: -0.27, y: 0.6))
-            flash.addQuadCurve(to: CGPoint(x: -0.25, y: -0.6),
-                               control: CGPoint(x: -0.36, y: 0))
-            flash.closeSubpath()
-            b.fill(flash, with: .color(Color(red: 1.0, green: 0.84, blue: 0.28).opacity(0.9)))
+    // MARK: Face
+
+    /// The eyes and mouth. Through a wall turn the face comes round to
+    /// the glass: both eyes show, and they stay round instead of
+    /// squashing with the body.
+    private static func drawFace(art: Art, species: FishSpecies, swim: Swim, palette: Palette,
+                                 into f: inout GraphicsContext, mouth: MouthKind,
+                                 blink: Double, dead: Bool, lw: Double, detailed: Bool) {
+        let face = faceTurn(art: art, thin: swim.thin)
+        let turn = face.turn, spread = face.spread, sx = face.sx
+        if turn > 0.05 {
+            // The far eye, peeking over the brow as the head comes round.
+            var far = f
+            far.opacity = face.far
+            drawEye(into: &far, at: CGPoint(x: art.eye.x - spread, y: art.eye.y), r: art.eyeR * 0.94,
+                    palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: false,
+                    sx: sx)
         }
+        drawEye(into: &f, at: CGPoint(x: art.eye.x + spread, y: art.eye.y), r: art.eyeR,
+                palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed,
+                sx: sx)
+        if !dead, species != .seahorse || mouth != .plain {
+            var m = f
+            if turn > 0.05 {
+                // Face-on the mouth sits centred under the eyes.
+                m.translateBy(x: -spread * 0.2, y: 0)
+            }
+            drawMouth(into: &m, at: art.mouth, kind: mouth, palette: palette, lw: lw,
+                      s: art.mouthScale)
+        }
+    }
+
+    /// How far a turn has brought the face round to the glass: `turn`
+    /// 0 side-on … 1 face-on, how far the eyes part from where they sit
+    /// side-on (unit space, before the caller's squash), how much
+    /// wider to draw an eye so it stays round on screen, and how solid
+    /// the far eye (and anything worn over it) shows — solid by half
+    /// way, so a fish holding a half turn at the glass never looks at
+    /// you through a ghost of an eye.
+    static func faceTurn(art: Art, thin: Double)
+        -> (turn: Double, spread: Double, sx: Double, far: Double) {
+        let thin = max(0.12, min(1, thin))
+        let turn = min(1, max(0, (0.9 - thin) / 0.6))
+        let spread = art.eyeSpread * (1 - thin * thin).squareRoot() / thin * turn
+        let sx = (0.55 + 0.45 * thin) / thin * turn + (1 - turn)
+        return (turn, spread, sx, min(1, turn * 2.2))
     }
 
     /// The big friendly eye: a soft socket, a white that shades toward
-    /// its lower edge, a coloured iris, a deep pupil and two
-    /// catchlights — and a lid that slides down on `blink`. Drawn as a
-    /// circle in a space the caller may have sheared, so the radius is
-    /// compensated on y by the body's aspect handled at call site.
-    private static func drawEye(into f: inout GraphicsContext, art: Art,
-                                palette: Palette, blink: Double, dead: Bool,
-                                comp: Double) {
-        func circle(_ cx: Double, _ cy: Double, _ r: Double) -> Path {
-            Path(ellipseIn: CGRect(x: cx - r, y: cy - r * comp,
-                                   width: r * 2, height: r * 2 * comp))
+    /// its lower edge, a coloured iris lit from below, a deep pupil,
+    /// two catchlights, and lids that carry the mood — relaxed, a
+    /// happy squint after a meal, a worried slant when hungry — and
+    /// slide shut on `blink`. `sx` widens the circle back
+    /// against a turn's squash.
+    private static func drawEye(into f: inout GraphicsContext, at e: CGPoint, r: Double,
+                                palette: Palette, mood: MouthKind, blink: Double, dead: Bool,
+                                lw: Double, detailed: Bool, sx: Double) {
+        func oval(_ cx: Double, _ cy: Double, _ rr: Double) -> Path {
+            Path(ellipseIn: CGRect(x: cx - rr * sx, y: cy - rr,
+                                   width: rr * 2 * sx, height: rr * 2))
         }
-        let e = art.eye, r = art.eyeR
         if dead {
             // A sinking fish: the classic cartoon X.
-            var x1 = Path()
-            let rr = r * 0.8
-            x1.move(to: CGPoint(x: e.x - rr, y: e.y - rr * comp))
-            x1.addLine(to: CGPoint(x: e.x + rr, y: e.y + rr * comp))
-            x1.move(to: CGPoint(x: e.x + rr, y: e.y - rr * comp))
-            x1.addLine(to: CGPoint(x: e.x - rr, y: e.y + rr * comp))
-            f.stroke(x1, with: .color(palette.outline.opacity(0.8)),
-                     style: StrokeStyle(lineWidth: 0.035, lineCap: .round))
+            var x = Path()
+            let rr = r * 0.78
+            x.move(to: CGPoint(x: e.x - rr * sx, y: e.y - rr))
+            x.addLine(to: CGPoint(x: e.x + rr * sx, y: e.y + rr))
+            x.move(to: CGPoint(x: e.x + rr * sx, y: e.y - rr))
+            x.addLine(to: CGPoint(x: e.x - rr * sx, y: e.y + rr))
+            f.stroke(x, with: .color(palette.outline.opacity(0.85)),
+                     style: StrokeStyle(lineWidth: lw * 1.6, lineCap: .round))
             return
         }
-        // The socket: a soft shadow ring that seats the eye in the head.
-        f.fill(circle(e.x - r * 0.04, e.y + r * 0.06, r * 1.28),
-               with: .radialGradient(Gradient(colors: [palette.dark.opacity(0.45), palette.dark.opacity(0)]),
-                                     center: CGPoint(x: e.x, y: e.y), startRadius: r * 0.9,
-                                     endRadius: r * 1.3))
-        let white = circle(e.x, e.y, r)
-        f.fill(white, with: .radialGradient(
-            Gradient(colors: [.white, Color(red: 0.86, green: 0.90, blue: 0.94)]),
-            center: CGPoint(x: e.x + r * 0.2, y: e.y - r * 0.3 * comp),
-            startRadius: 0, endRadius: r * 1.2))
-        var inner = f
-        inner.clip(to: white)
-        // The iris looks forward, where the fish is going.
-        let ix = e.x + r * 0.24, iy = e.y + r * 0.02
-        let irisR = r * 0.68
-        inner.fill(circle(ix, iy, irisR), with: .radialGradient(
-            Gradient(colors: [palette.light, palette.body, palette.outline]),
-            center: CGPoint(x: ix, y: iy + irisR * 0.3 * comp),
-            startRadius: 0, endRadius: irisR * 1.05))
-        inner.fill(circle(ix + r * 0.04, iy, irisR * 0.60),
-                   with: .color(Color(red: 0.03, green: 0.04, blue: 0.07)))
-        // The upper lid's shadow across the top of the white.
-        inner.fill(Path(CGRect(x: e.x - r, y: e.y - r * comp, width: r * 2, height: r * 0.5 * comp)),
-                   with: .linearGradient(Gradient(colors: [palette.dark.opacity(0.35), .clear]),
-                                         startPoint: CGPoint(x: 0, y: e.y - r * comp),
-                                         endPoint: CGPoint(x: 0, y: e.y - r * 0.45 * comp)))
-        // Catchlights: a big one high and forward, a small one low.
-        inner.fill(circle(ix + r * 0.18, iy - r * 0.30, r * 0.26), with: .color(.white.opacity(0.97)))
-        inner.fill(circle(ix - r * 0.26, iy + r * 0.30, r * 0.11), with: .color(.white.opacity(0.75)))
-        f.stroke(white, with: .color(palette.outline.opacity(0.85)), lineWidth: 0.022)
-        if blink > 0.01 {
-            // The lid: a body-coloured cap sliding over the eye.
-            var lid = f
-            lid.clip(to: circle(e.x, e.y, r + 0.012))
-            let cover = r * 2 * blink * comp
-            lid.fill(Path(CGRect(x: e.x - r - 0.02, y: e.y - r * comp - 0.02,
-                                 width: r * 2 + 0.04, height: cover + 0.02)),
-                     with: .color(palette.body))
-            lid.stroke(Path(ellipseIn: CGRect(
-                x: e.x - r, y: e.y - r * comp + cover - r * 0.2 * comp,
-                width: r * 2, height: r * 0.4 * comp)),
-                with: .color(palette.outline.opacity(0.7)), lineWidth: 0.02)
+        if detailed {
+            // The socket: a soft shadow ring that seats the eye in the head.
+            f.fill(oval(e.x - r * 0.03, e.y + r * 0.08, r * 1.3), with: .radialGradient(
+                Gradient(colors: [palette.dark.opacity(0.3), palette.dark.opacity(0)]),
+                center: CGPoint(x: e.x, y: e.y + r * 0.08), startRadius: r * 0.9, endRadius: r * 1.3))
+        }
+        // The white, shaded under the brow at the top and cool at the
+        // bottom edge.
+        let white = oval(e.x, e.y, r)
+        f.fill(white, with: .linearGradient(
+            Gradient(stops: [
+                .init(color: palette.dark.mix(with: .white, by: 0.55), location: 0),
+                .init(color: .white, location: 0.36),
+                .init(color: .white, location: 0.7),
+                .init(color: Color(red: 0.84, green: 0.89, blue: 0.95), location: 1),
+            ]),
+            startPoint: CGPoint(x: 0, y: e.y - r), endPoint: CGPoint(x: 0, y: e.y + r)))
+        // Everything inside the white sits well inside it, so nothing
+        // here needs a clip.
+        // The iris looks forward, where the fish is going; a hungry
+        // fish's pupils go wide.
+        let ix = e.x + r * 0.24 * sx, iy = e.y + r * 0.04
+        let irisR = r * (mood == .hungry ? 0.74 : 0.68)
+        f.fill(oval(ix, iy, irisR), with: .radialGradient(
+            Gradient(stops: [
+                .init(color: palette.light, location: 0),
+                .init(color: palette.body, location: 0.55),
+                .init(color: palette.outline, location: 1),
+            ]),
+            center: CGPoint(x: ix, y: iy + irisR * 0.45),
+            startRadius: 0, endRadius: irisR * 1.15))
+        f.fill(oval(ix + r * 0.03 * sx, iy, irisR * (mood == .hungry ? 0.66 : 0.58)),
+                   with: .color(Color(red: 0.02, green: 0.03, blue: 0.07)))
+        // Catchlights: a big one high and forward, a sharp dot low.
+        var glints = oval(ix + r * 0.16 * sx, iy - r * 0.30, r * 0.27)
+        glints.addPath(oval(ix - r * 0.26 * sx, iy + r * 0.30, r * 0.10))
+        f.fill(glints, with: .color(.white.opacity(0.95)))
+        f.stroke(white, with: .color(palette.outline.opacity(0.9)), lineWidth: lw * 0.95)
+
+        // The lids. `upper` is how far the top lid has come down (0…1
+        // of the eye's height), `slant` tips it lower at the back.
+        var upper = 0.0
+        var slant = 0.0
+        var lower = 0.0
+        switch mood {
+        case .plain: break
+        case .smile:
+            lower = 0.34
+        case .hungry:
+            upper = 0.10
+            slant = 0.34
+        }
+        upper = max(upper, blink)
+        lower = lower * (1 - blink)
+        var lid = f
+        lid.clip(to: oval(e.x, e.y, r + lw * 0.5))
+        let top = e.y - r
+        let span = r * 2
+        if upper > 0.01 {
+            // The lid's edge bows down: a curve from back to front.
+            let yb = top + span * min(1, upper + slant * 0.5)
+            let yf = top + span * max(0, upper - slant * 0.5)
+            let sag = r * 0.35 * (1 - upper * 0.8)
+            var cap = Path()
+            cap.move(to: CGPoint(x: e.x - r * 1.2 * sx, y: top - r))
+            cap.addLine(to: CGPoint(x: e.x - r * 1.2 * sx, y: yb))
+            cap.addQuadCurve(to: CGPoint(x: e.x + r * 1.2 * sx, y: yf),
+                             control: CGPoint(x: e.x, y: (yb + yf) / 2 + sag))
+            cap.addLine(to: CGPoint(x: e.x + r * 1.2 * sx, y: top - r))
+            cap.closeSubpath()
+            lid.fill(cap, with: .linearGradient(Gradient(colors: [palette.body, palette.body.mix(with: palette.dark, by: 0.25)]),
+                                                startPoint: CGPoint(x: 0, y: top),
+                                                endPoint: CGPoint(x: 0, y: max(yb, yf))))
+            var edge = Path()
+            edge.move(to: CGPoint(x: e.x - r * 1.2 * sx, y: yb))
+            edge.addQuadCurve(to: CGPoint(x: e.x + r * 1.2 * sx, y: yf),
+                              control: CGPoint(x: e.x, y: (yb + yf) / 2 + sag))
+            lid.stroke(edge, with: .color(palette.outline), lineWidth: lw * 1.3)
+        }
+        if lower > 0.01 {
+            // The happy squint: the cheek pushes the lower lid up.
+            let bottom = e.y + r
+            let yl = bottom - span * lower
+            var arch = Path()
+            arch.move(to: CGPoint(x: e.x - r * 1.2 * sx, y: yl + r * 0.55))
+            arch.addQuadCurve(to: CGPoint(x: e.x + r * 1.2 * sx, y: yl + r * 0.55),
+                              control: CGPoint(x: e.x, y: yl - r * 0.55))
+            var cheek = arch
+            cheek.addLine(to: CGPoint(x: e.x + r * 1.2 * sx, y: bottom + r))
+            cheek.addLine(to: CGPoint(x: e.x - r * 1.2 * sx, y: bottom + r))
+            cheek.closeSubpath()
+            lid.fill(cheek, with: .color(palette.body))
+            lid.stroke(arch, with: .color(palette.outline), lineWidth: lw * 1.2)
         }
     }
 
     /// The mouth: a smile just after eating, a small "o" when hungry,
-    /// a soft curve otherwise.
+    /// a soft upturned curve otherwise. `s` sizes it to the face.
     private static func drawMouth(into f: inout GraphicsContext, at p: CGPoint,
-                                  kind: MouthKind, palette: Palette) {
+                                  kind: MouthKind, palette: Palette, lw: Double, s: Double) {
+        let throat = Color(red: 0.36, green: 0.06, blue: 0.12)
         switch kind {
         case .smile:
+            // A wide open grin, a tongue at the bottom, a dimple at the
+            // back corner.
             var m = Path()
-            m.move(to: CGPoint(x: p.x - 0.01, y: p.y - 0.05))
-            m.addQuadCurve(to: CGPoint(x: p.x - 0.14, y: p.y - 0.02),
-                           control: CGPoint(x: p.x - 0.05, y: p.y + 0.06))
-            m.addQuadCurve(to: CGPoint(x: p.x - 0.01, y: p.y - 0.05),
-                           control: CGPoint(x: p.x - 0.07, y: p.y + 0.01))
-            f.fill(m, with: .color(Color(red: 0.55, green: 0.12, blue: 0.16).opacity(0.85)))
+            m.move(to: CGPoint(x: p.x, y: p.y - 0.04 * s))
+            m.addQuadCurve(to: CGPoint(x: p.x - 0.15 * s, y: p.y - 0.035 * s),
+                           control: CGPoint(x: p.x - 0.075 * s, y: p.y - 0.015 * s))
+            m.addQuadCurve(to: CGPoint(x: p.x, y: p.y - 0.04 * s),
+                           control: CGPoint(x: p.x - 0.05 * s, y: p.y + 0.10 * s))
+            m.closeSubpath()
+            f.fill(m, with: .color(throat))
+            var tongue = f
+            tongue.clip(to: m)
+            tongue.fill(Path(ellipseIn: CGRect(x: p.x - 0.09 * s, y: p.y + 0.01 * s,
+                                               width: 0.08 * s, height: 0.06 * s)),
+                        with: .color(Color(red: 1.0, green: 0.46, blue: 0.52)))
             f.stroke(m, with: .color(palette.outline),
-                     style: StrokeStyle(lineWidth: 0.026, lineCap: .round, lineJoin: .round))
+                     style: StrokeStyle(lineWidth: lw * 1.3, lineCap: .round, lineJoin: .round))
+            var dimple = Path()
+            dimple.move(to: CGPoint(x: p.x - 0.165 * s, y: p.y - 0.06 * s))
+            dimple.addQuadCurve(to: CGPoint(x: p.x - 0.16 * s, y: p.y - 0.01 * s),
+                                control: CGPoint(x: p.x - 0.18 * s, y: p.y - 0.035 * s))
+            f.stroke(dimple, with: .color(palette.outline.opacity(0.8)),
+                     style: StrokeStyle(lineWidth: lw * 0.9, lineCap: .round))
         case .hungry:
-            let r = 0.042
-            let o = Path(ellipseIn: CGRect(x: p.x - 0.03 - r, y: p.y - 0.02 - r,
-                                           width: r * 2, height: r * 2))
-            f.fill(o, with: .color(Color(red: 0.35, green: 0.06, blue: 0.10).opacity(0.85)))
-            f.stroke(o, with: .color(palette.outline), lineWidth: 0.024)
+            // A small round "o", lips pursed for food.
+            let r = 0.046 * s
+            let c = CGPoint(x: p.x - 0.045 * s, y: p.y)
+            let o = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r * 1.1, width: r * 2, height: r * 2.2))
+            f.fill(o, with: .color(palette.light))
+            f.stroke(o, with: .color(palette.outline), lineWidth: lw * 1.2)
+            let inside = Path(ellipseIn: CGRect(x: c.x - r * 0.58, y: c.y - r * 0.7,
+                                                width: r * 1.16, height: r * 1.4))
+            f.fill(inside, with: .color(throat))
         case .plain:
             var m = Path()
-            m.move(to: CGPoint(x: p.x - 0.01, y: p.y - 0.02))
-            m.addQuadCurve(to: CGPoint(x: p.x - 0.11, y: p.y - 0.005),
-                           control: CGPoint(x: p.x - 0.05, y: p.y + 0.025))
-            f.stroke(m, with: .color(palette.outline.opacity(0.85)),
-                     style: StrokeStyle(lineWidth: 0.024, lineCap: .round))
-        }
-    }
-
-    // MARK: Hats
-
-    /// A purchased hat drawn at the fish's `hatAnchor`, in the same
-    /// unit space — it rides the pitch and the flip with the body.
-    static func drawHat(_ item: ShopItem, into f: inout GraphicsContext,
-                        at anchor: CGPoint) {
-        switch item {
-        case .hatBeanie:
-            var dome = Path()
-            dome.move(to: CGPoint(x: anchor.x - 0.13, y: anchor.y))
-            dome.addQuadCurve(to: CGPoint(x: anchor.x + 0.13, y: anchor.y),
-                              control: CGPoint(x: anchor.x, y: anchor.y - 0.20))
-            dome.closeSubpath()
-            f.fill(dome, with: .color(Color(red: 0.75, green: 0.22, blue: 0.28)))
-            f.stroke(dome, with: .color(Color(red: 0.40, green: 0.10, blue: 0.14)),
-                     lineWidth: 0.025)
-            let brim = Path(roundedRect: CGRect(x: anchor.x - 0.15, y: anchor.y - 0.03,
-                                                width: 0.30, height: 0.07),
-                            cornerRadius: 0.03)
-            f.fill(brim, with: .color(Color(red: 0.55, green: 0.14, blue: 0.18)))
-            f.fill(Path(ellipseIn: CGRect(x: anchor.x - 0.035, y: anchor.y - 0.225,
-                                          width: 0.07, height: 0.07)),
-                   with: .color(.white))
-        case .hatParty:
-            var cone = Path()
-            cone.move(to: CGPoint(x: anchor.x - 0.11, y: anchor.y))
-            cone.addLine(to: CGPoint(x: anchor.x + 0.02, y: anchor.y - 0.26))
-            cone.addLine(to: CGPoint(x: anchor.x + 0.11, y: anchor.y))
-            cone.closeSubpath()
-            f.fill(cone, with: .color(Color(red: 0.35, green: 0.60, blue: 0.95)))
-            f.stroke(cone, with: .color(Color(red: 0.16, green: 0.30, blue: 0.60)),
-                     lineWidth: 0.025)
-            // Stripes.
-            for i in 0..<2 {
-                let y = anchor.y - 0.07 - Double(i) * 0.08
-                let w = 0.10 - Double(i) * 0.035
-                var s = Path()
-                s.move(to: CGPoint(x: anchor.x - w, y: y))
-                s.addLine(to: CGPoint(x: anchor.x + w, y: y))
-                f.stroke(s, with: .color(.white.opacity(0.8)), lineWidth: 0.02)
-            }
-            f.fill(Path(ellipseIn: CGRect(x: anchor.x + 0.02 - 0.035, y: anchor.y - 0.30,
-                                          width: 0.07, height: 0.07)),
-                   with: .color(Color(red: 0.95, green: 0.75, blue: 0.25)))
-        case .hatCrown:
-            var band = Path()
-            band.move(to: CGPoint(x: anchor.x - 0.12, y: anchor.y))
-            band.addLine(to: CGPoint(x: anchor.x - 0.12, y: anchor.y - 0.10))
-            band.addLine(to: CGPoint(x: anchor.x - 0.06, y: anchor.y - 0.05))
-            band.addLine(to: CGPoint(x: anchor.x, y: anchor.y - 0.14))
-            band.addLine(to: CGPoint(x: anchor.x + 0.06, y: anchor.y - 0.05))
-            band.addLine(to: CGPoint(x: anchor.x + 0.12, y: anchor.y - 0.10))
-            band.addLine(to: CGPoint(x: anchor.x + 0.12, y: anchor.y))
-            band.closeSubpath()
-            f.fill(band, with: .color(Color(red: 0.95, green: 0.75, blue: 0.20)))
-            f.stroke(band, with: .color(Color(red: 0.55, green: 0.38, blue: 0.05)),
-                     lineWidth: 0.025)
-            f.fill(Path(ellipseIn: CGRect(x: anchor.x - 0.02, y: anchor.y - 0.055,
-                                          width: 0.04, height: 0.04)),
-                   with: .color(Color(red: 0.80, green: 0.20, blue: 0.30)))
-        default:
-            break
-        }
-    }
-
-    // MARK: Accessories
-
-    /// A purchased accessory drawn in the second wearable slot (docs/
-    /// TOYS.md): eyewear anchors on the `Art`'s eye, headwear on its
-    /// `hatAnchor` (the view skips a hat while headwear wins the
-    /// slot), the bow tie sits under the chin and the scarf wraps the
-    /// neck. Same unit space as `drawHat` — the body's flip, pitch and
-    /// squash carry it.
-    static func drawAccessory(_ item: ShopItem, into f: inout GraphicsContext,
-                              art: Art, trail: Double = 0) {
-        switch item {
-        case .sunglasses:
-            // Two dark lenses over the eye with a bridge; the far lens
-            // hides behind the head's roundness.
-            let lens = Path(roundedRect: CGRect(x: art.eye.x - art.eyeR * 1.5,
-                                                y: art.eye.y - art.eyeR * 1.3,
-                                                width: art.eyeR * 3.0,
-                                                height: art.eyeR * 2.4),
-                            cornerRadius: art.eyeR * 0.7)
-            f.fill(lens, with: .color(Color(red: 0.06, green: 0.07, blue: 0.10)
-                                     .opacity(0.92)))
-            f.stroke(lens, with: .color(.black.opacity(0.6)), lineWidth: 0.018)
-            var temple = Path()
-            temple.move(to: CGPoint(x: art.eye.x - art.eyeR * 1.5,
-                                    y: art.eye.y - art.eyeR * 0.4))
-            temple.addLine(to: CGPoint(x: art.eye.x - 0.20,
-                                       y: art.eye.y - art.eyeR * 0.9))
-            f.stroke(temple, with: .color(.black.opacity(0.6)), lineWidth: 0.02)
-            // A glint off the lens.
-            f.fill(Path(ellipseIn: CGRect(x: art.eye.x - art.eyeR * 0.9,
-                                          y: art.eye.y - art.eyeR * 1.0,
-                                          width: art.eyeR * 0.8,
-                                          height: art.eyeR * 0.35)),
-                   with: .color(.white.opacity(0.35)))
-        case .monocle:
-            // A gold ring on the eye, a chain dropping to a pocket.
-            let ring = Path(ellipseIn: CGRect(x: art.eye.x - art.eyeR * 1.7,
-                                              y: art.eye.y - art.eyeR * 1.7,
-                                              width: art.eyeR * 3.4,
-                                              height: art.eyeR * 3.4))
-            f.fill(ring, with: .color(.white.opacity(0.14)))
-            f.stroke(ring, with: .color(Color(red: 0.85, green: 0.70, blue: 0.30)),
-                     lineWidth: 0.028)
-            var chain = Path()
-            chain.move(to: CGPoint(x: art.eye.x + art.eyeR * 1.2,
-                                   y: art.eye.y + art.eyeR * 1.5))
-            chain.addQuadCurve(
-                to: CGPoint(x: art.eye.x - 0.02, y: art.eye.y + 0.30),
-                control: CGPoint(x: art.eye.x + 0.10, y: art.eye.y + 0.26))
-            f.stroke(chain, with: .color(Color(red: 0.75, green: 0.60, blue: 0.26)),
-                     lineWidth: 0.015)
-        case .topHat:
-            let a = art.hatAnchor
-            // Brim, tall crown, band.
-            let brim = Path(roundedRect: CGRect(x: a.x - 0.17, y: a.y - 0.045,
-                                                width: 0.34, height: 0.06),
-                            cornerRadius: 0.03)
-            f.fill(brim, with: .color(Color(red: 0.10, green: 0.10, blue: 0.14)))
-            let crown = Path(roundedRect: CGRect(x: a.x - 0.11, y: a.y - 0.32,
-                                                 width: 0.22, height: 0.30),
-                             cornerRadius: 0.02)
-            f.fill(crown, with: .color(Color(red: 0.12, green: 0.12, blue: 0.17)))
-            f.stroke(crown, with: .color(.black.opacity(0.55)), lineWidth: 0.02)
-            f.fill(Path(CGRect(x: a.x - 0.11, y: a.y - 0.10, width: 0.22, height: 0.05)),
-                   with: .color(Color(red: 0.62, green: 0.16, blue: 0.22)))
-            // The crown's soft sheen.
-            f.fill(Path(CGRect(x: a.x - 0.075, y: a.y - 0.30, width: 0.035, height: 0.26)),
-                   with: .color(.white.opacity(0.10)))
-        case .headphones:
-            let a = art.hatAnchor
-            // A band arcing over the head with a cup on the near ear.
-            var band = Path()
-            band.move(to: CGPoint(x: a.x + 0.10, y: a.y + 0.05))
-            band.addQuadCurve(to: CGPoint(x: a.x - 0.12, y: a.y + 0.02),
-                              control: CGPoint(x: a.x - 0.02, y: a.y - 0.24))
-            f.stroke(band, with: .color(Color(red: 0.16, green: 0.17, blue: 0.22)),
-                     style: StrokeStyle(lineWidth: 0.045, lineCap: .round))
-            f.stroke(band, with: .color(Color(red: 0.30, green: 0.32, blue: 0.40)),
-                     style: StrokeStyle(lineWidth: 0.02, lineCap: .round))
-            let cup = Path(roundedRect: CGRect(x: a.x - 0.16, y: a.y - 0.02,
-                                               width: 0.09, height: 0.16),
-                           cornerRadius: 0.04)
-            f.fill(cup, with: .color(Color(red: 0.14, green: 0.15, blue: 0.20)))
-            f.stroke(cup, with: .color(Color(red: 0.36, green: 0.55, blue: 0.85)),
-                     lineWidth: 0.018)
-        case .bowTie:
-            // Under the chin: two triangles knot-to-cheek.
-            let knot = CGPoint(x: art.mouth.x - 0.10, y: art.mouth.y + 0.10)
-            var bow = Path()
-            bow.move(to: knot)
-            bow.addLine(to: CGPoint(x: knot.x - 0.10, y: knot.y - 0.07))
-            bow.addLine(to: CGPoint(x: knot.x - 0.10, y: knot.y + 0.07))
-            bow.closeSubpath()
-            bow.move(to: knot)
-            bow.addLine(to: CGPoint(x: knot.x + 0.10, y: knot.y - 0.07))
-            bow.addLine(to: CGPoint(x: knot.x + 0.10, y: knot.y + 0.07))
-            bow.closeSubpath()
-            f.fill(bow, with: .color(Color(red: 0.72, green: 0.18, blue: 0.24)))
-            f.stroke(bow, with: .color(Color(red: 0.40, green: 0.08, blue: 0.12)),
-                     lineWidth: 0.018)
-            f.fill(Path(roundedRect: CGRect(x: knot.x - 0.028, y: knot.y - 0.035,
-                                            width: 0.056, height: 0.07),
-                            cornerRadius: 0.02),
-                   with: .color(Color(red: 0.55, green: 0.12, blue: 0.18)))
-        case .scarf:
-            // A wrap around the neck with a tail trailing behind.
-            let neck = CGPoint(x: 0.16, y: 0.02)
-            var wrap = Path()
-            wrap.move(to: CGPoint(x: neck.x - 0.05, y: neck.y - 0.22))
-            wrap.addQuadCurve(to: CGPoint(x: neck.x - 0.02, y: neck.y + 0.24),
-                              control: CGPoint(x: neck.x - 0.13, y: neck.y + 0.02))
-            f.stroke(wrap, with: .color(Color(red: 0.80, green: 0.30, blue: 0.14)),
-                     style: StrokeStyle(lineWidth: 0.10, lineCap: .round))
-            // The trailing end, lifted by the swim.
-            var tail = Path()
-            tail.move(to: CGPoint(x: neck.x - 0.04, y: neck.y + 0.12))
-            tail.addQuadCurve(
-                to: CGPoint(x: neck.x - 0.34, y: neck.y + 0.16 - trail * 0.10),
-                control: CGPoint(x: neck.x - 0.18, y: neck.y + 0.20 - trail * 0.06))
-            f.stroke(tail, with: .color(Color(red: 0.80, green: 0.30, blue: 0.14)),
-                     style: StrokeStyle(lineWidth: 0.08, lineCap: .round))
-            // Fringe.
-            for k in 0..<3 {
-                var fr = Path()
-                let fx = neck.x - 0.34
-                let fy = neck.y + 0.16 - trail * 0.10
-                fr.move(to: CGPoint(x: fx, y: fy))
-                fr.addLine(to: CGPoint(x: fx - 0.05, y: fy + Double(k - 1) * 0.035))
-                f.stroke(fr, with: .color(Color(red: 0.55, green: 0.16, blue: 0.08)),
-                         lineWidth: 0.015)
-            }
-        case .tinyLaptop:
-            // A clamshell under the pectoral fin, its screen glowing.
-            var lap = f
-            lap.translateBy(x: 0.16, y: 0.16)
-            lap.rotate(by: .radians(-0.25))
-            let base = Path(roundedRect: CGRect(x: -0.09, y: 0, width: 0.20, height: 0.05),
-                            cornerRadius: 0.015)
-            lap.fill(base, with: .color(Color(red: 0.55, green: 0.57, blue: 0.62)))
-            var screen = lap
-            screen.blendMode = .plusLighter
-            screen.fill(Path(roundedRect: CGRect(x: -0.09, y: -0.13, width: 0.17, height: 0.13),
-                             cornerRadius: 0.015),
-                        with: .linearGradient(
-                            Gradient(colors: [Color(red: 0.55, green: 0.85, blue: 0.95),
-                                              Color(red: 0.30, green: 0.55, blue: 0.80)]),
-                            startPoint: CGPoint(x: 0, y: -0.13),
-                            endPoint: CGPoint(x: 0, y: 0)))
-            lap.stroke(Path(roundedRect: CGRect(x: -0.09, y: -0.13, width: 0.17, height: 0.13),
-                            cornerRadius: 0.015),
-                       with: .color(Color(red: 0.35, green: 0.37, blue: 0.42)),
-                       lineWidth: 0.015)
-        default:
-            break
+            m.move(to: CGPoint(x: p.x - 0.005 * s, y: p.y - 0.02 * s))
+            m.addQuadCurve(to: CGPoint(x: p.x - 0.10 * s, y: p.y - 0.018 * s),
+                           control: CGPoint(x: p.x - 0.045 * s, y: p.y + 0.035 * s))
+            f.stroke(m, with: .color(palette.outline),
+                     style: StrokeStyle(lineWidth: lw * 1.15, lineCap: .round))
         }
     }
 }
