@@ -20,16 +20,18 @@ import Observation
 ///   the Mac sleeps once both let go.
 ///
 /// Matching is by bundle id, or by the app's own name for rivals whose
-/// id is not pinned. `MenuBarRivals` keeps its own list this wave; the
-/// `.menuBar` role reads it, so the two can never disagree.
+/// id is not pinned. The menu bar keeps its own list (`MenuBarRivals`)
+/// and its own note this wave, and so does the Dock card's switcher
+/// (its chord note); the `.switcher` role is here for the day that note
+/// reads this table.
 enum UtilityRivals {
     enum Role: String, CaseIterable, Sendable {
-        case menuBar, dockPreviews, switcher, notch, hud, shelfGesture, keepAwake
+        case dockPreviews, switcher, notch, hud, shelfGesture, keepAwake
 
         /// How JR-Bar behaves while a rival for this role runs.
         var policy: Policy {
             switch self {
-            case .menuBar, .dockPreviews, .switcher, .notch, .hud: return .ask
+            case .dockPreviews, .switcher, .notch, .hud: return .ask
             case .shelfGesture: return .stepAside
             case .keepAwake: return .informOnly
             }
@@ -50,7 +52,6 @@ enum UtilityRivals {
         case dock(DockProvider)
         case switcher(DockSwitcherProvider)
         case notch(NotchProvider)
-        case menuBar(MenuBarProvider)
     }
 
     struct Rival: Equatable, Sendable, Identifiable {
@@ -117,10 +118,7 @@ enum UtilityRivals {
         Rival(name: "Caffeine", bundleIDs: ["com.intelliscapesolutions.caffeine"], roles: [.keepAwake]),
         Rival(name: "Lungo", bundleIDs: ["com.sindresorhus.Lungo"], roles: [.keepAwake]),
         Rival(name: "Theine", bundleIDs: [], roles: [.keepAwake]),
-    ] + MenuBarRivals.known.map { rival in
-        Rival(name: rival.name, bundleIDs: rival.bundleIDs, roles: [.menuBar],
-              handoffs: rival.handoff.map { [.menuBar: .menuBar($0)] } ?? [:])
-    }
+    ]
 
     /// The rivals for `role` among `apps` — each once, in table order.
     nonisolated static func running(for role: Role,
@@ -150,21 +148,23 @@ enum UtilityRivals {
         }
     }
 
+    /// "JR‑Bar" with a non-breaking hyphen, so a note that wraps never
+    /// leaves "JR-" at the end of one line and "Bar's" on the next.
+    nonisolated static let appName = "JR\u{2011}Bar"
+
     /// The note's sentence for one running rival.
     nonisolated static func note(for rival: Rival, role: Role) -> String {
         switch role {
-        case .menuBar:
-            return "\(rival.name) is also managing the menu bar. Two managers fight — its hiding can undo what JR-Bar hides."
         case .dockPreviews:
             return "\(rival.name) is also drawing Dock previews, so hovering an icon can open two."
         case .switcher:
             return "\(rival.name) is also a window switcher and may answer the same keys."
         case .notch:
-            return "\(rival.name) is also drawing in the notch, over or beside JR-Bar's island."
+            return "\(rival.name) is also drawing in the notch, over or beside \(appName)'s island."
         case .hud:
             return "\(rival.name) also draws volume and brightness, so a key press can show two."
         case .shelfGesture:
-            return "\(rival.name) is running, so a shake is its shelf — JR-Bar's steps aside until it quits."
+            return "\(rival.name) is running, so a shake is its shelf — \(appName)'s shake steps aside until it quits."
         case .keepAwake:
             return "\(rival.name) can hold this Mac awake too. The holds stack harmlessly: the Mac sleeps once both let go."
         }

@@ -38,7 +38,6 @@ struct UtilityRivalsTests {
         #expect(UtilityRivals.running(for: .switcher, in: apps).map(\.name) == ["DockDoor"])
         #expect(UtilityRivals.running(for: .notch, in: apps).map(\.name) == ["Boring Notch"])
         #expect(UtilityRivals.running(for: .hud, in: apps).map(\.name) == ["Boring Notch"])
-        #expect(UtilityRivals.running(for: .menuBar, in: apps).isEmpty)
     }
 
     @Test("a rival running as two processes is listed once")
@@ -60,15 +59,6 @@ struct UtilityRivalsTests {
         }
     }
 
-    @Test("the menu bar role reads the menu bar's own list")
-    func menuBarRoleFollowsMenuBarRivals() {
-        let found = UtilityRivals.running(for: .menuBar, in: [("com.surteesstudios.Bartender-5", "Bartender 5")])
-        #expect(found.map(\.name) == ["Bartender"])
-        #expect(found.first?.handoff(for: .menuBar) == .menuBar(.bartender))
-        #expect(Set(UtilityRivals.known.filter { $0.roles.contains(.menuBar) }.map(\.name))
-                == Set(MenuBarRivals.known.map(\.name)))
-    }
-
     @Test("hand-overs point at the pickers that can take the surface")
     func handoffs() {
         let dockDoor = UtilityRivals.known.first { $0.name == "DockDoor" }
@@ -86,6 +76,10 @@ struct UtilityRivalsTests {
         #expect(UtilityRivals.Role.shelfGesture.policy == .stepAside)
         #expect(UtilityRivals.Role.keepAwake.policy == .informOnly)
         let dropover = UtilityRivals.known.first { $0.name == "Dropover" }!
-        #expect(UtilityRivals.note(for: dropover, role: .shelfGesture).contains("steps aside"))
+        #expect(UtilityRivals.note(for: dropover, role: .shelfGesture).contains("shake steps aside"))
+        // The notes never break "JR-Bar" at its hyphen.
+        for role in UtilityRivals.Role.allCases {
+            #expect(!UtilityRivals.note(for: dropover, role: role).contains("JR-Bar"))
+        }
     }
 }
