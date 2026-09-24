@@ -56,7 +56,11 @@ final class KeepAwakeUtility: Toy {
         }
     }
 
-    var controls: AnyView { AnyView(KeepAwakeUtilityControls(utility: self)) }
+    /// Fixed holders for a render proof of the real Utilities page, so no
+    /// app of this Mac reaches the PNG; nil reads macOS's power assertions.
+    @ObservationIgnored var proofHolders: [KeepAwakeHolders.Holder]?
+
+    var controls: AnyView { AnyView(KeepAwakeUtilityControls(utility: self, holders: proofHolders)) }
 }
 
 /// The card's body: what holds the Mac right now, the presets, the

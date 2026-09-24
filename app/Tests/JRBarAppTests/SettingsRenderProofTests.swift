@@ -372,6 +372,12 @@ struct SettingsRenderProofTests {
             try Self.write(rep, named: "settings-screenbar-hidden-apps-\(dark ? "dark" : "light")")
         }
         fixture.settings.expandedCards = ["keepAwake"]
+        // The real page's card, with fixed holders: this Mac's own power
+        // holders never reach the PNG.
+        KeepAwakeUtility.shared.proofHolders = [
+            KeepAwakeHolders.Holder(name: "Amphetamine", bundleID: "com.if.Amphetamine", display: false),
+        ]
+        defer { KeepAwakeUtility.shared.proofHolders = nil }
         for dark in [false, true] where Self.wanted("card-keepAwake") {
             let view = SettingsPageContainer(store: fixture.settings, page: .utilities)
             let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 6000), dark: dark)
