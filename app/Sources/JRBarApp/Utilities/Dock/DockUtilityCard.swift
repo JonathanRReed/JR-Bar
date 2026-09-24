@@ -63,6 +63,8 @@ struct DockUtilityControls: View {
                 providerNote(note, symbol: "arrow.triangle.2.circlepath",
                              open: utility.externalURL == nil ? nil : { utility.openExternal() })
             }
+            RivalGuardView(role: .dockPreviews, active: utility.isOn && utility.settings().provider == .jrbar,
+                           handOver: { utility.handOver(to: $0) })
 
             CardSectionHeader("Previews")
             Toggle(isOn: hoverPreviews) {
