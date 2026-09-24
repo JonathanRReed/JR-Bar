@@ -281,7 +281,4 @@ public enum DockEdge: String, Codable, CaseIterable, Sendable {
     case bottom
     case left
     case right
-
-    /// True for `bottom`: the row runs horizontally.
-    public var isHorizontal: Bool { self == .bottom }
 }

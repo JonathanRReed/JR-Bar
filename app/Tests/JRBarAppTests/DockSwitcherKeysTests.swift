@@ -230,11 +230,35 @@ struct DockSwitcherKeysTests {
         #expect(try eaten(tap, 123, flags: .maskAlternate), "⌥← tiles it")
         #expect(try !eaten(tap, 49), "Space is only the player's, with the pointer on it")
         #expect(try !eaten(tap, 13, flags: .maskCommand), "⌘W is never the preview's")
+        #expect(try !eaten(tap, 13, flags: .maskShift), "⇧W types a capital, it closes nothing")
+        #expect(try !eaten(tap, 46, flags: .maskAlternate), "⌥M types its character")
+        #expect(try eaten(tap, 3, flags: .maskAlphaShift), "Caps Lock is not a modifier — F still acts")
         tap.setPreviewChars(DockEnhanceController.previewChars(walked: false, media: true, pointerInPanel: true))
         #expect(try eaten(tap, 49))
         #expect(try !eaten(tap, 13))
         tap.setPreviewOpen(false)
         #expect(try !eaten(tap, 49), "a closed preview owns nothing")
+    }
+
+    @Test("a modified arrow or Esc passes through the open preview — ⇧→ still selects in the front app")
+    func previewPassesModifiedKeys() throws {
+        let tap = SwitcherKeyTap()
+        tap.keyboard = DockKeyboardLayout()
+        tap.setPreviewOpen(true)
+        #expect(try eaten(tap, 124), "a bare → walks the cards")
+        #expect(try !eaten(tap, 124, flags: .maskShift), "⇧→ extends the selection")
+        #expect(try !eaten(tap, 123, flags: .maskCommand), "⌘← goes to the line's start")
+        #expect(try !eaten(tap, 124, flags: .maskControl))
+        #expect(try !eaten(tap, 124, flags: .maskAlternate), "no card walked: ⌥→ jumps a word")
+        #expect(try !eaten(tap, 53, flags: .maskShift))
+        #expect(try eaten(tap, 124, flags: .maskSecondaryFn),
+                "an arrow's own fn bit is not a modifier")
+        tap.setPreviewChars(DockEnhanceController.previewChars(walked: true, media: false, pointerInPanel: false))
+        #expect(try eaten(tap, 124, flags: .maskAlternate), "a walked card: ⌥→ tiles it")
+        #expect(try !eaten(tap, 124, flags: [.maskAlternate, .maskShift]), "⇧⌥→ still selects a word")
+        #expect(try !eaten(tap, 124, flags: .maskShift))
+        #expect(try eaten(tap, 76), "keypad Enter raises the walked card")
+        tap.setPreviewOpen(false)
     }
 
     @Test("hover selects only once the pointer has moved since the strip opened")

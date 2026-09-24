@@ -7,8 +7,9 @@ import SwiftUI
 /// Dock stays, and `enhance` — the AX hover watcher — floats window
 /// previews over it. The main thread constructs it once, wires
 /// `settings` to the persisted `DockSettings`, sets the persist
-/// callback, and calls `start()`/`stop()` from the card toggle and
-/// `applySettings()` on every settings change.
+/// callback, and calls `applySettings()` after launch and on every
+/// settings change — it starts and stops the utility as the card's
+/// toggle says — and `stop()` only as the app quits.
 ///
 /// The Replace bar is gone; what survives of it is `appleDock`, the
 /// save-and-restore control over `com.apple.dock autohide`, kept so a
@@ -39,9 +40,6 @@ final class DockUtility {
     /// The daemon's pinned asks (`state.asks`) — the episode ids an
     /// Approve / Deny from a preview pins its answer to.
     var asks: @MainActor () -> [CoreAsk] = { [] }
-    /// `answer_ask`, awaited — wired to `CoreModel.answerAskNow`. nil
-    /// (no daemon) leaves the preview's ask rows read-only.
-    var sendAnswer: (@MainActor (_ session: String, _ approve: Bool, _ request: String?) async throws -> CoreReply)?
 
     /// The live sessions as Dock marks — what the switcher and the
     /// previews both read.
@@ -64,28 +62,6 @@ final class DockUtility {
     @discardableResult
     func raiseSessionWindow(_ sessionID: String) async -> SessionWindowLocator.Outcome {
         await SessionWindowLocator.raise(sessionID: sessionID, marks: agentMarks())
-    }
-
-    /// A preview's Approve / Deny — `PanelStore.answer`'s guards, and the
-    /// daemon's own verdict as the line the row shows. `only_if_frontmost`
-    /// stays false: the daemon raises the session's terminal first.
-    static func answer(_ ask: CoreAsk, approve: Bool,
-                       send: (@MainActor (String, Bool, String?) async throws -> CoreReply)?) async -> String {
-        guard let session = ask.session, !session.isEmpty else {
-            return "This ask has no session left to answer"
-        }
-        guard ask.canAnswer else { return "Answer this one in the session's window" }
-        if CoreSession.isRemoteID(session) {
-            return "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there"
-        }
-        guard let send else { return "The monitor is not answering" }
-        do {
-            let reply = try await send(session, approve, ask.request)
-            if reply.ok { return approve ? "Approved" : "Denied" }
-            return "Couldn't answer: \(reply.error?.message ?? reply.error?.code ?? "refused")"
-        } catch {
-            return "No answer from the monitor — the ask is still open"
-        }
     }
 
     /// True while the card is on and applied — the watcher, the
@@ -287,9 +263,6 @@ final class DockUtility {
         }
         switcher.onLearn = { [weak self] picks in self?.update { $0.enhance.learnedPicks = picks } }
         enhance.agentMarks = { [weak self] in self?.agentMarks() ?? [] }
-        enhance.answerAsk = { [weak self] ask, approve in
-            await Self.answer(ask, approve: approve, send: self?.sendAnswer)
-        }
         // Provider watch: a counterpart launching or quitting flips
         // the card's note live while ours is parked under it.
         let center = NSWorkspace.shared.notificationCenter

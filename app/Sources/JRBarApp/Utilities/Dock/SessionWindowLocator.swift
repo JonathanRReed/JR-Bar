@@ -33,11 +33,14 @@ enum SessionWindowLocator {
 
     /// The row hosting `sessionID` among `items`, by the exclusive-claim
     /// rule over every mark (a rival session's stronger claim on the
-    /// same window still wins). Pure; the live half feeds it.
+    /// same window still wins). Only a window that is the session's own:
+    /// an app-hosted app's sole window, which shows whatever conversation
+    /// the app last had open, is left to `open_session`. Pure; the live
+    /// half feeds it.
     nonisolated static func locate(sessionID: String, marks: [DockAgentMark], items: [SwitcherItem],
                                    bundleID: (pid_t) -> String?) -> SwitcherItem? {
         guard marks.contains(where: { $0.sessionID == sessionID }) else { return nil }
-        return DockSwitcherList.annotate(items, marks: marks, bundleID: bundleID)
+        return DockSwitcherList.annotate(items, marks: marks, bundleID: bundleID, soleAppWindows: false)
             .first { $0.agent?.sessionID == sessionID }
     }
 

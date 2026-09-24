@@ -120,7 +120,21 @@ struct DockAgentMark: Equatable, Identifiable {
 /// window is the session's sole claimant at its strongest evidence AND
 /// no other session claims that window as strongly. Two Ghostty windows
 /// both titled `JR-Bar` get no mark; one does.
+///
+/// Claude's and Codex's own apps title their windows with the app's
+/// name, never a session's, so no title ever claims one of their
+/// sessions. There the window count decides: an app-hosted app with
+/// exactly one window hosts every session it runs in it, and that
+/// window takes the most urgent (`soleWindowMark`); two or more, and
+/// nothing says which holds what — no mark.
 enum DockAgentMatch {
+    /// The apps that host an agent's whole conversation in their own
+    /// windows — the daemon's `APP_HOSTED_BUNDLE_IDS`.
+    static let appHostedBundleIDs: Set<String> = [
+        "com.anthropic.claudefordesktop",
+        "com.openai.codex",
+    ]
+
     /// One window a session could live in — a switcher row or a
     /// preview card, reduced to what the match reads.
     struct Candidate: Equatable {
@@ -177,8 +191,44 @@ enum DockAgentMatch {
     }
 
     /// candidate key → the one session it hosts. Only exclusive pairs
-    /// survive: see the type's comment for the rule.
-    static func match(marks: [DockAgentMark], candidates: [Candidate]) -> [String: DockAgentMark] {
+    /// survive: see the type's comment for the rule. `soleAppWindows`
+    /// adds an app-hosted app's only window, marked with its most urgent
+    /// session — true for the marks people see; the session locator
+    /// passes false, since that window shows whichever conversation the
+    /// app last had open, not necessarily the session's own.
+    static func match(marks: [DockAgentMark], candidates: [Candidate],
+                      soleAppWindows: Bool = true) -> [String: DockAgentMark] {
+        var result = titleMatch(marks: marks, candidates: candidates)
+        guard soleAppWindows else { return result }
+        var windowsByApp: [String: [String]] = [:]
+        for candidate in candidates {
+            guard let bundle = candidate.bundleID, appHostedBundleIDs.contains(bundle) else { continue }
+            windowsByApp[bundle, default: []].append(candidate.key)
+        }
+        let claimed = Set(result.values.map(\.sessionID))
+        let unclaimed = marks.filter { !claimed.contains($0.sessionID) }
+        for (bundle, keys) in windowsByApp where keys.count == 1 {
+            guard result[keys[0]] == nil,
+                  let mark = soleWindowMark(bundleID: bundle, marks: unclaimed) else { continue }
+            result[keys[0]] = mark
+        }
+        return result
+    }
+
+    /// The mark an app-hosted app's only window carries: the most urgent
+    /// of the live sessions it hosts, and of several waiting the one
+    /// that has waited longest — the needs-you lane orders by its ask.
+    static func soleWindowMark(bundleID: String, marks: [DockAgentMark]) -> DockAgentMark? {
+        let live = marks.filter { $0.hosts.contains(bundleID) && $0.isLive }
+        let waiting = live.filter(\.isWaiting)
+        if !waiting.isEmpty {
+            return waiting.min { ($0.ask?.openedAt ?? .infinity) < ($1.ask?.openedAt ?? .infinity) }
+        }
+        return live.min { $0.urgency < $1.urgency }
+    }
+
+    /// The title half of `match`: the exclusive pairs the evidence makes.
+    private static func titleMatch(marks: [DockAgentMark], candidates: [Candidate]) -> [String: DockAgentMark] {
         // Every (session, window, evidence) claim, host-filtered.
         var claims: [(mark: Int, window: Int, evidence: Evidence)] = []
         for (m, mark) in marks.enumerated() {
@@ -204,10 +254,13 @@ enum DockAgentMatch {
         return result
     }
 
-    /// session id → candidate key: the locator's direction.
+    /// session id → candidate key: the locator's direction, so only a
+    /// window that is the session's own.
     static func windows(for marks: [DockAgentMark], candidates: [Candidate]) -> [String: String] {
         var out: [String: String] = [:]
-        for (key, mark) in match(marks: marks, candidates: candidates) { out[mark.sessionID] = key }
+        for (key, mark) in match(marks: marks, candidates: candidates, soleAppWindows: false) {
+            out[mark.sessionID] = key
+        }
         return out
     }
 

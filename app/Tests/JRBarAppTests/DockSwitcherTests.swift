@@ -1,4 +1,5 @@
 import ApplicationServices
+import Foundation
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
@@ -356,7 +357,10 @@ struct DockSwitcherTests {
                 "the panel can't take key status — the tap eats its arrows")
         let esc = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: true))
         let enter = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true))
-        #expect(!passes(tap, esc) && !passes(tap, enter))
+        #expect(!passes(tap, esc))
+        #expect(passes(tap, enter), "no card walked: Return is the front app's")
+        tap.setPreviewChars([SwitcherKeyTap.walkedMarker])
+        #expect(!passes(tap, enter), "a walked card: Return raises it")
         // A letter still passes — the preview owns only its keys.
         let a = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
         #expect(passes(tap, a))
@@ -428,5 +432,69 @@ struct DockSwitcherTests {
         #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary),
                 "without it the switcher can't surface over a fullscreen space")
         panel.close()
+    }
+
+    // MARK: The side-by-side reads
+
+    @Test("each app's windows are read side by side — the open waits for the slowest, not the sum")
+    func readsSideBySide() {
+        // Every reader waits for the other before it answers: read one
+        // after the other, the first would sit out its whole timeout.
+        let met = DispatchGroup()
+        for _ in 0..<2 { met.enter() }
+        let reads = [DockSwitcherList.WindowRead(pid: 11, stamp: 1 << 20),
+                     DockSwitcherList.WindowRead(pid: 12, stamp: 2 << 20)]
+        let readings = DockSwitcherList.readWindows(reads) { pid, stamp in
+            met.leave()
+            let together = met.wait(timeout: .now() + 5) == .success
+            let window = DockPreviewWindow(id: stamp | (together ? 1 : 0), title: "\(pid)", minimized: false,
+                                           fullScreen: nil, frame: nil, thumbnail: nil, element: nil)
+            return ([window], pid == 12)
+        }
+        #expect(readings.windows[11]?.map(\.id) == [(1 << 20) | 1], "both reads were in flight at once")
+        #expect(readings.windows[12]?.map(\.id) == [(2 << 20) | 1], "each app keeps the stamp it was given")
+        #expect(readings.unresponsive == [12], "a timed-out app is named so it can rest")
+        #expect(DockSwitcherList.readWindows([]) { _, _ in ([], false) }.windows.isEmpty)
+    }
+
+    @Test("badges that land after the strip shows keep its order, its filter and its pick")
+    func lateBadges() {
+        var model = SwitcherModel()
+        model.open(with: [named("Mail", "Inbox"), named("Safari", "News"), named("Mail", "Drafts")])
+        model.type("m")
+        let before = model.items.map(\.id)
+        let picked = model.selected?.id
+        model.setBadges { $0.appName == "Mail" ? "3" : nil }
+        #expect(model.items.map(\.id) == before)
+        #expect(model.selected?.id == picked)
+        #expect(model.items.allSatisfy { $0.badge == ($0.appName == "Mail" ? "3" : nil) })
+        model.backspace()
+        #expect(model.items.count == 3 && model.items.filter { $0.badge == "3" }.count == 2,
+                "the unfiltered rows took them too")
+    }
+
+    @Test("only an app tile's label is a badge")
+    func tileBadges() {
+        let element = AXUIElementCreateSystemWide()
+        let frame = CGRect(x: 0, y: 0, width: 50, height: 50)
+        let mail = URL(fileURLWithPath: "/System/Applications/Mail.app")
+        let tiles = [
+            DockAXItem(element: element, frame: frame, title: "Mail", url: mail, badge: "3"),
+            DockAXItem(element: element, frame: frame, title: "Safari",
+                       url: URL(fileURLWithPath: "/Applications/Safari.app")),
+            DockAXItem(element: element, frame: frame, title: "Downloads",
+                       url: URL(fileURLWithPath: "/Users/me/Downloads"), badge: "1", kind: .folder),
+        ]
+        #expect(DockSwitcherList.badges(of: tiles) == [mail.path: "3"])
+    }
+
+    @Test("a strip's cards share one slot, and a ring inset in a card keeps its curve")
+    func cardSlot() {
+        #expect(DockSwitcherView.slotWidth(hasStills: true) == 128)
+        #expect(DockSwitcherView.slotWidth(hasStills: false) == 96,
+                "icon cards alone keep the narrower slot")
+        #expect(DockSwitcherView.ringRadius(inset: 0) == DockSwitcherView.cardRadius)
+        #expect(DockSwitcherView.ringRadius(inset: 3) == DockSwitcherView.cardRadius - 3)
+        #expect(DockSwitcherView.ringRadius(inset: 40) == 0)
     }
 }

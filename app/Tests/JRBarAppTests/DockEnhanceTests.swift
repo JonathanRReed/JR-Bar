@@ -6,8 +6,8 @@ import Testing
 
 /// Enhance mode's pure machinery (the hover debounce, the AX↔AppKit
 /// geometry, the thumbnail match), the icon rasterizer, and
-/// `AppleDockControl`'s `autohide-delay` save/restore with its
-/// crash-safe persistence — kept because a Mac the old Replace bar
+/// `AppleDockControl`'s `autohide-delay` restore from the crash-safe
+/// keys an old Replace build's hide left — kept because a Mac that bar
 /// left hidden must still get Apple's Dock back.
 @MainActor
 @Suite struct DockEnhanceTests {
@@ -353,23 +353,22 @@ import Testing
                            now: 0.3, delay: 0.25) == .none)
     }
 
-    // MARK: autohide-delay save/restore
+    // MARK: autohide-delay restore
 
     /// The full-fidelity fake — the delay verbs exist so a bool-only
-    /// fake can't fake the new behaviour.
+    /// fake can't fake the restore.
     private final class FakeDefaults: AppleDockDefaults {
         var bools: [String: Bool] = [:]
         var doubles: [String: Double] = [:]
         var removed: [String] = []
-        func boolValue(forKey key: String) -> Bool? { bools[key] }
         func setBool(_ value: Bool, forKey key: String) { bools[key] = value }
-        func doubleValue(forKey key: String) -> Double? { doubles[key] }
         func setDouble(_ value: Double, forKey key: String) { doubles[key] = value }
         func removeValue(forKey key: String) {
             bools[key] = nil
             doubles[key] = nil
             removed.append(key)
         }
+        func synchronize() {}
     }
 
     private func freshPersistence(_ name: String) -> UserDefaults {
@@ -378,28 +377,26 @@ import Testing
         return UserDefaults(suiteName: suite)!
     }
 
-    @Test func hidingPinsTheRevealDelayToo() {
-        let defaults = FakeDefaults()
-        let control = AppleDockControl(defaults: defaults,
-                                       persistence: freshPersistence("hidePins"))
-        control.restartDock = {}
-
-        control.setAppleDockHidden(true)
-
-        #expect(defaults.bools["autohide"] == true)
-        #expect(defaults.doubles["autohide-delay"] == AppleDockControl.hiddenDelay,
-                "autohide alone leaves the edge one hover away — the delay seals it")
-        #expect(control.savedDelay == .absent, "the key wasn't there — restore removes ours")
+    /// What an old Replace build's hide left in our defaults: the
+    /// `autohide` it found, and the `autohide-delay` it found — a value,
+    /// or its "absent" marker.
+    private func leftByAnOldHide(_ name: String, autohide: Bool?, delay: Double?,
+                                 delayWasAbsent: Bool = false) -> UserDefaults {
+        let suite = freshPersistence(name)
+        if let autohide { suite.set(autohide, forKey: "JRBarDock.savedAutohide") }
+        if let delay { suite.set(delay, forKey: "JRBarDock.savedAutohideDelay") }
+        if delayWasAbsent { suite.set("absent", forKey: "JRBarDock.savedAutohideDelay") }
+        return suite
     }
 
     @Test func restoreHandsBackASavedDelay() {
         let defaults = FakeDefaults()
-        defaults.doubles["autohide-delay"] = 0.4
+        defaults.doubles["autohide-delay"] = 1000   // the old bar's pin
         let control = AppleDockControl(defaults: defaults,
-                                       persistence: freshPersistence("delayValue"))
+                                       persistence: leftByAnOldHide("delayValue", autohide: false, delay: 0.4))
         control.restartDock = {}
 
-        control.setAppleDockHidden(true)
+        #expect(control.savedDelay == .value(0.4))
         #expect(control.restore() == true)
 
         #expect(defaults.doubles["autohide-delay"] == 0.4)
@@ -408,11 +405,13 @@ import Testing
 
     @Test func restoreRemovesADelayThatWasAbsent() {
         let defaults = FakeDefaults()
+        defaults.doubles["autohide-delay"] = 1000
         let control = AppleDockControl(defaults: defaults,
-                                       persistence: freshPersistence("delayAbsent"))
+                                       persistence: leftByAnOldHide("delayAbsent", autohide: false, delay: nil,
+                                                                    delayWasAbsent: true))
         control.restartDock = {}
 
-        control.setAppleDockHidden(true)
+        #expect(control.savedDelay == .absent)
         #expect(control.restore() == true)
 
         #expect(defaults.doubles["autohide-delay"] == nil)
@@ -421,87 +420,36 @@ import Testing
     }
 
     @Test func aCrashCantStrandTheDockHidden() {
-        let suite = freshPersistence("crashSafe")
-        let defaults = FakeDefaults()
-        defaults.bools["autohide"] = false
-        let first = AppleDockControl(defaults: defaults, persistence: suite)
-        first.restartDock = {}
-        first.setAppleDockHidden(true)
-        // …process dies before restore runs.
-
-        let second = AppleDockControl(defaults: defaults, persistence: suite)
-        second.restartDock = {}
-        #expect(second.savedAutohide == false,
-                "the saved value survives into the next launch")
-        #expect(second.restore() == true)
-        #expect(defaults.bools["autohide"] == false)
-    }
-
-    // MARK: Replace-mode hide policy
-
-    @Test func anAlreadyPinnedDockIsNotRestartedAgain() {
+        // An old build hid the Dock, then died before its restore ran.
+        let suite = leftByAnOldHide("crashSafe", autohide: false, delay: nil, delayWasAbsent: true)
         let defaults = FakeDefaults()
         defaults.bools["autohide"] = true
-        defaults.doubles["autohide-delay"] = AppleDockControl.hiddenDelay
-        let control = AppleDockControl(defaults: defaults,
-                                       persistence: freshPersistence("alreadyPinned"))
-        var restarts = 0
-        control.restartDock = { restarts += 1 }
 
-        control.setAppleDockHidden(true)
+        let next = AppleDockControl(defaults: defaults, persistence: suite)
+        next.restartDock = {}
+        #expect(next.savedAutohide == false,
+                "the saved value survives into the next launch")
+        #expect(next.restore() == true)
+        #expect(defaults.bools["autohide"] == false)
 
-        #expect(restarts == 0, "nothing changed — don't bounce the Dock for it")
-        #expect(control.savedAutohide == true, "still saved so restore stays armed")
-    }
-
-    @Test func reassertRepinsADriftedDockOnce() {
-        let defaults = FakeDefaults()
-        defaults.bools["autohide"] = false
-        let control = AppleDockControl(defaults: defaults,
-                                       persistence: freshPersistence("reassert"))
-        var restarts = 0
-        control.restartDock = { restarts += 1 }
-
-        control.setAppleDockHidden(true)
-        defaults.bools["autohide"] = false // the relaunched Dock lost the write
-
-        control.reassertPinned()
-        #expect(defaults.bools["autohide"] == true)
-        #expect(defaults.doubles["autohide-delay"] == AppleDockControl.hiddenDelay)
-        #expect(restarts == 2)
-
-        control.reassertPinned()
-        #expect(restarts == 2, "the values hold — the re-assert is a no-op")
-    }
-
-    @Test func reassertWithoutALiveHideDoesNothing() {
-        let defaults = FakeDefaults()
-        let control = AppleDockControl(defaults: defaults,
-                                       persistence: freshPersistence("reassertIdle"))
-        var restarts = 0
-        control.restartDock = { restarts += 1 }
-
-        control.reassertPinned()
-
-        #expect(defaults.bools.isEmpty && defaults.doubles.isEmpty,
-                "no hide is live — the re-assert invents no writes")
-        #expect(restarts == 0)
+        let after = AppleDockControl(defaults: defaults, persistence: suite)
+        #expect(after.savedAutohide == nil && after.savedDelay == .nothing,
+                "once restored, a later launch has nothing to hand back")
     }
 
     @Test func restoreHandsBackTheUsersOwnAutohideAndDelay() {
         let defaults = FakeDefaults()
         defaults.bools["autohide"] = true
-        defaults.doubles["autohide-delay"] = 0.4
+        defaults.doubles["autohide-delay"] = 1000
         let control = AppleDockControl(defaults: defaults,
-                                       persistence: freshPersistence("ownValues"))
+                                       persistence: leftByAnOldHide("ownValues", autohide: true, delay: 0.4))
         control.restartDock = {}
 
-        control.setAppleDockHidden(true)
         #expect(control.restore() == true)
 
         #expect(defaults.bools["autohide"] == true)
         #expect(defaults.doubles["autohide-delay"] == 0.4,
-                "restore means THEIR values, not our pin")
+                "restore means THEIR values, not the old pin")
     }
 
     // MARK: Icon resolution
@@ -623,6 +571,51 @@ import Testing
         #expect(byURL.hoverID == "/Applications/Safari.app")
         #expect(byTitle.hoverID == "Safari")
         #expect(bySlot.hoverID == "dock-item@10")
+    }
+
+    @Test("the preview tick parks while sleep, a lock or a switched session holds, and resumes when the last lifts")
+    func tickParks() {
+        var park = DockTickPark()
+        #expect(park.note(.displaysSlept) == .park)
+        #expect(park.note(.locked) == nil, "already parked")
+        #expect(park.note(.displaysWoke) == nil, "still locked")
+        #expect(park.parked)
+        #expect(park.note(.unlocked) == .resume)
+        #expect(!park.parked)
+        #expect(park.note(.displaysWoke) == nil, "a wake with nothing parked changes nothing")
+        #expect(park.note(.sessionLeft) == .park)
+        #expect(park.note(.sessionReturned) == .resume)
+    }
+
+    @Test("a watcher that isn't running never arms its tick on a wake")
+    func stoppedWatcherStaysParked() {
+        let controller = DockEnhanceController()
+        controller.notePresence(.displaysSlept)
+        #expect(controller.presence.parked)
+        controller.notePresence(.displaysWoke)
+        #expect(!controller.isTicking)
+    }
+
+    @Test("the Dock's pid is kept between reads; its launch and exit move it, a failed read asks again")
+    func dockPIDIsKept() {
+        var asked = 0
+        var running: pid_t? = 400
+        let cache = DockPIDCache(center: NotificationCenter(), lookUp: {
+            asked += 1
+            return running
+        })
+        for _ in 0..<20 { _ = cache.pid }
+        #expect(cache.pid == 400 && asked == 1, "twenty reads, one workspace query")
+        cache.noteWorkspace(launched: true, bundleID: "com.apple.Safari", pid: 999)
+        #expect(cache.pid == 400, "another app's launch is no news")
+        cache.noteWorkspace(launched: false, bundleID: AppleDockReader.dockBundleID, pid: 400)
+        running = nil
+        #expect(cache.pid == nil && asked == 2, "the Dock quit: asked again, and it isn't running")
+        cache.noteWorkspace(launched: true, bundleID: AppleDockReader.dockBundleID, pid: 512)
+        #expect(cache.pid == 512 && asked == 2, "its relaunch brings the new pid")
+        running = 640
+        cache.forget()
+        #expect(cache.pid == 640 && asked == 3, "a read that failed at the kept pid asks the workspace")
     }
 
     @Test func tileKindsMapTheDocksSubroles() {

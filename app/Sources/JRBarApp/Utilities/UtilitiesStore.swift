@@ -31,7 +31,7 @@ final class UtilitiesStore {
         didSet {
             scheduleSave()
             if state.menuBar != oldValue.menuBar { menuBar.applySettings() }
-            if state.dock != oldValue.dock { applyDock() }
+            if state.dock != oldValue.dock { dock.applySettings() }
             if state.agents != oldValue.agents { agents.applySettings() }
             if state.dataHoarderEnabled != oldValue.dataHoarderEnabled {
                 dataHoarder.model.enabled = state.dataHoarderEnabled
@@ -89,7 +89,10 @@ final class UtilitiesStore {
             }?.id
         }
         dataHoarder.model.sessionOpener = { [weak self] id in
-            self?.core.openSession(id)
+            Task { @MainActor [weak self] in
+                guard let model = self?.dataHoarder.model else { return }
+                await Self.openArchived(id, via: SessionOpener.wiring, on: model)
+            }
         }
         dataHoarder.model.applyCapture()
         // The utility reads and writes the persisted blob through these;
@@ -106,11 +109,6 @@ final class UtilitiesStore {
         // the same live `state.sessions` the panel reads.
         dock.sessions = { [weak self] in self?.core.state?.sessions ?? [] }
         dock.asks = { [weak self] in self?.core.state?.asks ?? [] }
-        dock.sendAnswer = { [weak self] session, approve, request in
-            guard let self else { throw CoreClientError.notConnected }
-            return try await self.core.answerAskNow(session: session, approve: approve,
-                                                    request: request)
-        }
         agents.settings = { [weak self] in self?.state.agents ?? AgentOrganizerSettings() }
         agents.onSettingsChange = { [weak self] updated in
             self?.state.agents = updated
@@ -125,13 +123,19 @@ final class UtilitiesStore {
     /// distinguishes start/stop/re-apply itself.
     func applySettings() {
         menuBar.applySettings()
-        applyDock()
+        dock.applySettings()
         agents.applySettings()
     }
 
-    private func applyDock() {
-        if state.dock.enabled { dock.start() } else { dock.stop() }
-        dock.applySettings()
+    /// An archived record's session, opened the way the panel opens a
+    /// row (`SessionOpener`): the daemon's `open_session`, awaited, and
+    /// the Dock's window locator for a live session whose window the
+    /// daemon can't find. A refusal becomes the archive's line instead
+    /// of vanishing.
+    static func openArchived(_ id: String, via wiring: SessionOpener.Wiring?,
+                             on model: DataHoarderModel) async {
+        guard let line = await SessionOpener.open(id, via: wiring) else { return }
+        model.message = line
     }
 
     /// Raise the exact window a live agent session runs in, if one

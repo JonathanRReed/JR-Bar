@@ -28,59 +28,59 @@ extension DockUtility: Toy {
     var controls: AnyView { AnyView(DockUtilityControls(utility: self)) }
 }
 
-/// The Dock card's disclosure body: the hover delay, what the cards
-/// carry, and the two permission gates the feature lives behind. The
-/// knobs persist through `DockSettings.enhance` — the facade's `write`
-/// lands in `app-state.json` via `DockUtility.update`.
+/// The Dock card's disclosure body, in the Menu Bar card's shape: what
+/// needs you first (a missing permission, a recovered hold), the rows
+/// most people set, then the rest of the previews and the exclusion
+/// list behind disclosures, and the switcher last. The knobs persist
+/// through `DockSettings.enhance` — the facade's `write` lands in
+/// `app-state.json` via `DockUtility.update`.
 struct DockUtilityControls: View {
     let utility: DockUtility
     /// Installed apps the exclusion menu can name when they aren't
     /// running — scanned off the main thread when the card appears.
     @ViewState private var installed: [DockInstalledApps.App] = []
+    @ViewState private var showPreviewOptions = false
+    @ViewState private var showExclusions = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Picker(selection: utility.providerBinding) {
-                Text("JR-Bar").tag(DockProvider.jrbar)
-                Text("DockDoor").tag(DockProvider.dockDoor)
-                Text("ActiveDock").tag(DockProvider.activeDock)
+            notices
+
+            LabeledContent {
+                Picker(selection: utility.providerBinding) {
+                    Text("JR-Bar").tag(DockProvider.jrbar)
+                    Text("DockDoor").tag(DockProvider.dockDoor)
+                    Text("ActiveDock").tag(DockProvider.activeDock)
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
             } label: {
                 SettingLabel(title: "Render with",
                              subtitle: "Hand the previews to an installed counterpart — DockDoor (free) or ActiveDock (paid). Our previews park while the pick stands; the switcher is its own pick below.")
             }
-            .pickerStyle(.menu)
-            .fixedSize()
-
             if let note = utility.providerNote {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(.secondary)
-                    Text(note)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if utility.externalURL != nil {
-                        Spacer()
-                        Button("Open") { utility.openExternal() }
-                            .controlSize(.small)
-                    }
-                }
+                providerNote(note, symbol: "arrow.triangle.2.circlepath",
+                             open: utility.externalURL == nil ? nil : { utility.openExternal() })
             }
 
             Toggle(isOn: hoverPreviews) {
                 SettingLabel(title: "Hover previews",
-                             subtitle: "Apple's Dock stays. Rest the pointer on an icon and that app's windows appear beside the Dock: click a card to raise the window (⌥-click keeps the preview up), hover it for × (close), – (minimize) and full screen; New, Hide and Quit sit in the header. Apps with no windows open nothing. Off keeps the switcher below on its own.")
+                             subtitle: "Apple's Dock stays. Rest on an icon and that app's windows appear beside the Dock — click a card to raise it, ⌥-click to keep the preview up. Off keeps the switcher below on its own.")
             }
-            Picker(selection: previewTrigger) {
-                Text("Hover").tag(DockPreviewTrigger.hover)
-                Text("Hover with ⌥ held").tag(DockPreviewTrigger.optionHover)
-                Text("Middle-click").tag(DockPreviewTrigger.middleClick)
+            LabeledContent {
+                Picker(selection: previewTrigger) {
+                    Text("Hover").tag(DockPreviewTrigger.hover)
+                    Text("Hover with ⌥ held").tag(DockPreviewTrigger.optionHover)
+                    Text("Middle-click").tag(DockPreviewTrigger.middleClick)
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
             } label: {
                 SettingLabel(title: "Open previews on",
                              subtitle: "A rest on the icon, a rest while holding Option, or a middle click — for anyone who finds hover panels noisy while aiming at the Dock.")
             }
-            .pickerStyle(.menu)
-            .fixedSize()
             .disabled(!ownPreviews)
             LabeledContent {
                 HStack(spacing: 10) {
@@ -93,104 +93,62 @@ struct DockUtilityControls: View {
                              subtitle: "How long the pointer rests before the preview opens.")
             }
             .disabled(utility.enhance.preferences.previewTrigger == .middleClick)
-            // The icon gestures ride JR-Bar's own watcher — with the
-            // previews off or handed to a counterpart they'd do nothing,
-            // so they say so by standing down.
-            Toggle(isOn: scrollGestures) {
-                SettingLabel(title: "Scroll on an icon",
-                             subtitle: "Scroll up on a Dock icon to open its preview at once; scroll down to hide the app.")
-            }
-            .disabled(!ownPreviews)
-            Toggle(isOn: clickToMinimize) {
-                SettingLabel(title: "Click the front app's icon to minimize",
-                             subtitle: "Clicking the Dock icon of the app you're in minimizes its windows, like a Windows taskbar; click again and the Dock brings one back.")
-            }
-            .disabled(!ownPreviews)
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
                              subtitle: "A capture of each window, kept for half a minute; the card you point at re-takes one older than a few seconds. Needs Screen Recording, and each fresh capture flashes macOS's recording dot. Off shows icon + title cards.")
             }
-            Toggle(isOn: liveCard) {
-                SettingLabel(title: "Live card under the pointer",
-                             subtitle: "The card you point at plays live instead of showing a still — macOS's recording dot stays on while it does.")
+
+            DisclosureGroup(isExpanded: $showPreviewOptions) {
+                previewOptions
+                    .padding(.top, 4)
+            } label: {
+                SettingLabel(title: "More preview options",
+                             subtitle: "Card size and captures, which windows list, the icon gestures, ⌥` and the auto-hiding Dock.")
             }
-            .disabled(!utility.enhance.preferences.showThumbnails)
-            Toggle(isOn: largePreviews) {
-                SettingLabel(title: "Large cards",
-                             subtitle: "Bigger thumbnails for reading the window, not just the title.")
+
+            DisclosureGroup(isExpanded: $showExclusions) {
+                exclusionList
+                    .padding(.top, 4)
+            } label: {
+                SettingLabel(title: "Never preview",
+                             subtitle: Self.exclusionSummary(exclusions.wrappedValue.map(appName(for:))))
             }
-            Toggle(isOn: offscreen) {
-                SettingLabel(title: "Capture every window",
-                             subtitle: "Thumbnails for windows on other Spaces and minimized ones too; the cards list them either way.")
-            }
-            Toggle(isOn: holdOpen) {
-                SettingLabel(title: "Hold the Dock out",
-                             subtitle: utility.enhance.autohideHold.available
-                                ? "While a preview is up an auto-hiding Dock stays out so the pointer can step onto the cards; it hides again when the panel closes."
-                                : "Not available on this macOS — an auto-hiding Dock slides away when the pointer steps onto the cards.")
-            }
-            .disabled(!utility.enhance.autohideHold.available)
-            if let note = utility.recoveredHoldNote {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.uturn.backward.circle")
-                        .foregroundStyle(.secondary)
-                    Text(note)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    Button {
-                        utility.dismissRecoveredHoldNote()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Dismiss")
-                }
-            }
-            Toggle(isOn: frontAppChord) {
-                SettingLabel(title: "⌥` previews the front app",
-                             subtitle: "Option-backtick opens the front app's windows on its Dock tile with the next one picked — arrows walk, Return raises, W, M and F act. Takes the accent key ⌥` types on US layouts.")
-            }
-            .disabled(!ownPreviews)
-            Toggle(isOn: previewThisDisplay) {
-                SettingLabel(title: "Only windows on this display",
-                             subtitle: "A preview lists the windows on the Dock's own screen; minimized ones always list.")
-            }
+
             Divider()
                 .padding(.vertical, 4)
-            Picker(selection: utility.switcherProviderBinding) {
-                ForEach(DockSwitcherProvider.allCases, id: \.self) { provider in
-                    Text(DockUtility.displayName(provider)).tag(provider)
-                }
+
+            LabeledContent {
+                Picker(selection: utility.switcherProviderBinding) {
+                    ForEach(DockSwitcherProvider.allCases, id: \.self) { provider in
+                        Text(DockUtility.displayName(provider)).tag(provider)
+                    }
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
             } label: {
                 SettingLabel(title: "Switcher",
                              subtitle: "Who answers ⌥⇥ and ⌘⇥ — its own pick, so DockDoor can draw the previews while JR-Bar keeps the switcher.")
             }
-            .pickerStyle(.menu)
-            .fixedSize()
-
             if let note = utility.switcherNote {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-                        .foregroundStyle(.secondary)
-                    Text(note)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if utility.switcherExternalURL != nil {
-                        Spacer()
-                        Button("Open") { utility.openSwitcherExternal() }
-                            .controlSize(.small)
-                    }
-                }
+                providerNote(note, symbol: "exclamationmark.arrow.triangle.2.circlepath",
+                             open: utility.switcherExternalURL == nil ? nil : { utility.openSwitcherExternal() })
             }
             Toggle(isOn: switcher) {
                 SettingLabel(title: "⌥⇥ window switcher",
                              subtitle: "Option-Tab raises every app's windows in recency order — a window whose agent waits on you comes first. Tab walks, releasing Option commits, esc cancels; type to search windows and the sessions in them (! for waiting agents), ` narrows to one app.")
             }
-            .disabled(utility.settings().switcherProvider != .jrbar)
+            .disabled(!ownSwitcher)
+            Toggle(isOn: appSwitcher) {
+                SettingLabel(title: "⌘⇥ app switcher",
+                             subtitle: "Replaces the system's Command-Tab with a centred app strip — Tab walks, releasing Command commits. Off leaves the OS chord alone.")
+            }
+            .disabled(!ownSwitcher)
+            Toggle(isOn: switcherThisDisplay) {
+                SettingLabel(title: "⌥⇥ lists this display only",
+                             subtitle: "The strip shows the windows on the pointer's screen; minimized ones always list.")
+            }
+            .disabled(!ownSwitcher)
             let learned = utility.settings().enhance.learnedPicks.count
             if learned > 0 {
                 HStack(spacing: 8) {
@@ -204,16 +162,64 @@ struct DockUtilityControls: View {
                         .controlSize(.small)
                 }
             }
-            Toggle(isOn: switcherThisDisplay) {
-                SettingLabel(title: "⌥⇥ lists this display only",
-                             subtitle: "The strip shows the windows on the pointer's screen; minimized ones always list.")
+        }
+        .onAppear { utility.enhance.refreshPermissions(force: true) }
+        .task { installed = await DockInstalledApps.load() }
+    }
+
+    /// What needs you before any knob does: the permission the card's
+    /// status chip names, and a Dock hold an unclean quit left behind.
+    @ViewBuilder
+    private var notices: some View {
+        if utility.isOn && !utility.enhance.accessibilityTrusted {
+            permissionNote("Hover previews need Accessibility so JR-Bar can see which Dock icon the pointer rests on.") {
+                utility.openAccessibilitySettings()
             }
-            .disabled(utility.settings().switcherProvider != .jrbar)
-            Toggle(isOn: appSwitcher) {
-                SettingLabel(title: "⌘⇥ app switcher",
-                             subtitle: "Replaces the system's Command-Tab with a centred app strip — Tab walks, releasing Command commits. Off leaves the OS chord alone.")
+        } else if utility.isOn && utility.enhance.preferences.showThumbnails
+                    && !utility.enhance.screenCaptureGranted {
+            permissionNote("Thumbnails need Screen Recording — window titles, raising, closing and minimizing work without it.") {
+                utility.openScreenCaptureSettings()
             }
-            .disabled(utility.settings().switcherProvider != .jrbar)
+        }
+        if let note = utility.recoveredHoldNote {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.uturn.backward.circle")
+                    .foregroundStyle(.secondary)
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button {
+                    utility.dismissRecoveredHoldNote()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss")
+            }
+            .padding(.bottom, 4)
+        }
+    }
+
+    /// The rows past the everyday ones: what a card looks like and
+    /// captures, which windows list, and the icon and keyboard gestures.
+    private var previewOptions: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: liveCard) {
+                SettingLabel(title: "Live card under the pointer",
+                             subtitle: "The card you point at plays live instead of showing a still — macOS's recording dot stays on while it does.")
+            }
+            .disabled(!utility.enhance.preferences.showThumbnails)
+            Toggle(isOn: largePreviews) {
+                SettingLabel(title: "Large cards",
+                             subtitle: "Bigger thumbnails for reading the window, not just the title.")
+            }
+            Toggle(isOn: offscreen) {
+                SettingLabel(title: "Capture every window",
+                             subtitle: "Thumbnails for windows on other Spaces and minimized ones too; the cards list them either way.")
+            }
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: compactLimit, in: 0...12, step: 1)
@@ -225,10 +231,42 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "List past N windows",
                              subtitle: "An app with more windows than this gets a compact title list instead of thumbnails — and no captures at all.")
             }
-            Divider()
-                .padding(.vertical, 4)
-            SettingLabel(title: "Never preview",
-                         subtitle: "Apps on this list can rest in the Dock all they like — no preview opens.")
+            Toggle(isOn: previewThisDisplay) {
+                SettingLabel(title: "Only windows on this display",
+                             subtitle: "A preview lists the windows on the Dock's own screen; minimized ones always list.")
+            }
+            // The icon gestures ride JR-Bar's own watcher — with the
+            // previews off or handed to a counterpart they'd do nothing,
+            // so they say so by standing down.
+            Toggle(isOn: scrollGestures) {
+                SettingLabel(title: "Scroll on an icon",
+                             subtitle: "Scroll up on a Dock icon to open its preview at once; scroll down to hide the app.")
+            }
+            .disabled(!ownPreviews)
+            Toggle(isOn: clickToMinimize) {
+                SettingLabel(title: "Click the front app's icon to minimize",
+                             subtitle: "Clicking the Dock icon of the app you're in minimizes its windows, like a Windows taskbar; click again and the Dock brings one back.")
+            }
+            .disabled(!ownPreviews)
+            Toggle(isOn: frontAppChord) {
+                SettingLabel(title: "⌥` previews the front app",
+                             subtitle: "Option-backtick opens the front app's windows on its Dock tile with the next one picked — arrows walk, Return raises, W, M and F act. Takes the accent key ⌥` types on US layouts.")
+            }
+            .disabled(!ownPreviews)
+            Toggle(isOn: holdOpen) {
+                SettingLabel(title: "Hold the Dock out",
+                             subtitle: utility.enhance.autohideHold.available
+                                ? "While a preview is up an auto-hiding Dock stays out so the pointer can step onto the cards; it hides again when the panel closes."
+                                : "Not available on this macOS — an auto-hiding Dock slides away when the pointer steps onto the cards.")
+            }
+            .disabled(!utility.enhance.autohideHold.available)
+        }
+    }
+
+    /// The apps that never open a preview, each with its way back, and
+    /// the menu that adds one — running apps first, installed ones under.
+    private var exclusionList: some View {
+        VStack(alignment: .leading, spacing: 4) {
             ForEach(exclusions.wrappedValue, id: \.self) { bundleID in
                 HStack(spacing: 6) {
                     Text(appName(for: bundleID))
@@ -270,32 +308,55 @@ struct DockUtilityControls: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .disabled(filterableApps.isEmpty && installed.isEmpty)
-            if utility.isOn && !utility.enhance.accessibilityTrusted {
-                HStack(spacing: 8) {
-                    Text("Hover previews need Accessibility so JR-Bar can see which Dock icon the pointer rests on.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    Button("Open Settings") { utility.openAccessibilitySettings() }
-                        .controlSize(.small)
-                }
-            } else if utility.isOn && utility.enhance.preferences.showThumbnails
-                        && !utility.enhance.screenCaptureGranted {
-                HStack(spacing: 8) {
-                    Text("Thumbnails need Screen Recording — window titles, raising, closing and minimizing work without it.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    Button("Open Settings") { utility.openScreenCaptureSettings() }
-                        .controlSize(.small)
-                }
+        }
+    }
+
+    /// The exclusion group's line: what the list is for while it is
+    /// empty, the names it holds once it isn't.
+    static func exclusionSummary(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return "Apps on this list can rest in the Dock all they like — no preview opens."
+        case 1: return "\(names[0]) never opens a preview."
+        case 2: return "\(names[0]) and \(names[1]) never open a preview."
+        default: return "\(names[0]), \(names[1]) and \(names.count - 2) more never open a preview."
+        }
+    }
+
+    /// A counterpart's line under its picker, with Open when there's an
+    /// app to open.
+    private func providerNote(_ note: String, symbol: String, open: (() -> Void)?) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .foregroundStyle(.secondary)
+            Text(note)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let open {
+                Spacer()
+                Button("Open", action: open)
+                    .controlSize(.small)
             }
         }
-        .onAppear { utility.enhance.refreshPermissions(force: true) }
-        .task { installed = await DockInstalledApps.load() }
     }
+
+    private func permissionNote(_ text: String, open: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("Open Settings", action: open)
+                .controlSize(.small)
+        }
+        .padding(.bottom, 4)
+    }
+
+    /// Whether JR-Bar answers ⌥⇥ and ⌘⇥ — the switcher rows only act then.
+    private var ownSwitcher: Bool { utility.settings().switcherProvider == .jrbar }
 
     /// Whether JR-Bar's own hover watcher is the one running — the
     /// trigger, the icon gestures and ⌥` all ride it.

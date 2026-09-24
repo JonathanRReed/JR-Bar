@@ -225,6 +225,61 @@ enum DockSwitcherList {
         return windows[index]
     }
 
+    // MARK: Reading
+
+    /// One app whose AX windows a build reads, and the stamp its rows'
+    /// ids carry (`AppleDockReader.nextStamp`).
+    struct WindowRead: Sendable {
+        let pid: pid_t
+        let stamp: Int
+    }
+
+    /// What `readWindows` brings back: each app's rows, and the apps that
+    /// let the half-second timeout lapse. The AX handles cross from the
+    /// reading threads to main — sound, as `DockAXElement` explains; the
+    /// rows carry no thumbnail yet.
+    struct WindowReadings: @unchecked Sendable {
+        var windows: [pid_t: [DockPreviewWindow]] = [:]
+        var unresponsive: Set<pid_t> = []
+    }
+
+    /// Every app's AX window list, read side by side — one app element
+    /// each, the reader's own half-second timeout — so a build costs
+    /// about its slowest app instead of the sum of them all (measured
+    /// 160–256 ms in a row for seven windowed apps). The caller waits;
+    /// `order` matches the rows once every list is in.
+    static func readWindows(
+        _ reads: [WindowRead],
+        reader: @Sendable (pid_t, Int) -> (windows: [DockPreviewWindow], unresponsive: Bool)
+            = AppleDockReader.windowsReading(pid:stamp:)
+    ) -> WindowReadings {
+        final class Gathered: @unchecked Sendable {
+            let lock = NSLock()
+            var readings = WindowReadings()
+        }
+        let gathered = Gathered()
+        DispatchQueue.concurrentPerform(iterations: reads.count) { index in
+            let read = reads[index]
+            let reading = reader(read.pid, read.stamp)
+            gathered.lock.withLock {
+                gathered.readings.windows[read.pid] = reading.windows
+                if reading.unresponsive { gathered.readings.unresponsive.insert(read.pid) }
+            }
+        }
+        return gathered.readings
+    }
+
+    /// The unread counts on the Dock's app tiles — bundle path → label.
+    static func badges(of tiles: [DockAXItem]) -> [String: String] {
+        var badges: [String: String] = [:]
+        for tile in tiles where tile.kind == .app {
+            if let badge = tile.badge, let path = tile.url?.path {
+                badges[path] = badge
+            }
+        }
+        return badges
+    }
+
     /// The owning pid of a minimized-window Dock tile: the tile carries
     /// no `AXURL`, so its title is matched against the off-screen
     /// window list — exactly one claimant pid is trusted; zero or
@@ -255,16 +310,21 @@ enum DockSwitcherList {
 
     /// Stamp each window row with the agent session it exclusively
     /// hosts. Only rows of a session's host app are candidates, so a
-    /// Safari tab titled like a session never claims it.
+    /// Safari tab titled like a session never claims it. The rows are
+    /// the app's whole set, before any scope or display filter: a
+    /// window's claim is judged against every window it competes with.
+    /// `soleAppWindows` is `DockAgentMatch.match`'s.
     static func annotate(_ items: [SwitcherItem], marks: [DockAgentMark],
-                         bundleID: (pid_t) -> String?) -> [SwitcherItem] {
+                         bundleID: (pid_t) -> String?,
+                         soleAppWindows: Bool = true) -> [SwitcherItem] {
         guard !marks.isEmpty else { return items }
         let hosts = marks.reduce(into: Set<String>()) { $0.formUnion($1.hosts) }
         let candidates = items.compactMap { item -> DockAgentMatch.Candidate? in
             guard let bundle = bundleID(item.pid), hosts.contains(bundle) else { return nil }
             return .init(key: item.id, bundleID: bundle, title: item.title)
         }
-        let map = DockAgentMatch.match(marks: marks, candidates: candidates)
+        let map = DockAgentMatch.match(marks: marks, candidates: candidates,
+                                       soleAppWindows: soleAppWindows)
         return items.map { item in
             var item = item
             item.agent = map[item.id]
@@ -409,6 +469,20 @@ struct SwitcherModel {
         } else {
             selection = min(selection, max(0, self.items.count - 1))
         }
+    }
+
+    /// Badges that land after the strip shows: every row takes its
+    /// app's label; the order, the filter and the pick stay.
+    mutating func setBadges(_ badge: (SwitcherItem) -> String?) {
+        func badged(_ rows: [SwitcherItem]) -> [SwitcherItem] {
+            rows.map { row in
+                var row = row
+                row.badge = badge(row)
+                return row
+            }
+        }
+        allItems = badged(allItems)
+        items = badged(items)
     }
 
     mutating func advance(by step: Int) {
@@ -616,9 +690,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// right now (W/M/F once a card is walked, Space over a player), or
     /// ⌥← / ⌥→ as "tile left" / "tile right".
     var onPreviewAction: (_ action: String) -> Void = { _ in }
-    /// The preview panel's keys — Esc/arrows/Return — while its flag is
-    /// set. The events are eaten either way: the panel can't take key
-    /// status, so a pass-through would land them in the front app too.
+    /// The preview panel's keys while its flag is set — bare Esc and
+    /// arrows, and Return once a card is walked. Those are eaten: the
+    /// panel can't take key status, so a pass-through would land them
+    /// in the front app too. A modified arrow is the front app's.
     var onPreviewKey: (_ code: Int64) -> Void = { _ in }
     /// Set from the main actor whenever the panel opens or closes;
     /// read on the tap thread.
@@ -671,9 +746,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
     }
 
     /// The letters the floating preview wants beyond its arrows — empty
-    /// unless a card is walked (W/M/F, ⌥←/⌥→ tiling) or the pointer
-    /// rests on a player's row (Space). Mirrored by the watcher; every
-    /// other key keeps reaching the front app.
+    /// unless a card is walked (W/M/F, and `walkedMarker` for ⌥←/⌥→
+    /// tiling and Return) or the pointer rests on a player's row
+    /// (Space). Mirrored by the watcher; every other key keeps reaching
+    /// the front app.
     nonisolated(unsafe) private var previewChars: Set<String> = []
 
     func setPreviewChars(_ chars: Set<String>) {
@@ -888,20 +964,28 @@ final class SwitcherKeyTap: @unchecked Sendable {
             // The dock preview floats but can't take key status — while
             // it's up the tap owns its keys wherever the pointer sits:
             // a card walk with the pointer parked on the Dock still
-            // lands, and nothing leaks into the front app. The strip's
-            // own keys are all consumed above, so an open strip keeps
+            // lands, and nothing leaks into the front app. Only the bare
+            // keys are the preview's: ⇧→ selects, ⌘← goes to the line's
+            // start and ⌥→ jumps a word in the front app, and Return is
+            // the front app's until a card is walked. The strip's own
+            // keys are all consumed above, so an open strip keeps
             // precedence.
             if isPreviewOpen {
                 lock.lock(); let wanted = previewChars; lock.unlock()
+                let walked = wanted.contains(Self.walkedMarker)
                 let plain = !flags.contains(.maskCommand) && !flags.contains(.maskControl)
-                if plain, flags.contains(.maskAlternate), wanted.contains("tile"),
+                if plain, !flags.contains(.maskShift), flags.contains(.maskAlternate), walked,
                    code == 123 || code == 124 {
                     return swallow { self.onPreviewAction(code == 123 ? "tile-left" : "tile-right") }
                 }
-                if Self.previewKeyCodes.contains(code) {
+                let bare = flags.intersection([.maskCommand, .maskControl, .maskShift, .maskAlternate]).isEmpty
+                if Self.previewKeyCodes.contains(code), bare,
+                   walked || !Self.returnKeyCodes.contains(code) {
                     return swallow { self.onPreviewKey(code) }
                 }
-                if plain, !wanted.isEmpty,
+                // W/M/F and Space bare too: ⇧W types a capital into the
+                // front app, it never closes the walked card.
+                if bare, !wanted.isEmpty,
                    let char = keyboard.character(for: code)?.lowercased(), wanted.contains(char) {
                     return swallow { self.onPreviewAction(char) }
                 }
@@ -975,9 +1059,15 @@ final class SwitcherKeyTap: @unchecked Sendable {
         return cmdOpen
     }
 
-    /// The keys the floating dock preview owns — Esc closes it, the
-    /// arrows walk its cards, Return raises the pick.
+    /// The keys the floating dock preview owns, bare — Esc closes it,
+    /// the arrows walk its cards, Return raises the pick.
     nonisolated static let previewKeyCodes: Set<Int64> = [53, 123, 124, 125, 126, 36, 76]
+    /// Return and keypad Enter — the preview's only once a card is
+    /// walked, since with none there is nothing for them to raise.
+    nonisolated static let returnKeyCodes: Set<Int64> = [36, 76]
+    /// Stands for the walked card in the preview's wanted keys: what
+    /// earns Return and ⌥←/⌥→ tiling.
+    nonisolated static let walkedMarker = "walked"
 
     /// The ⌘-verb letters — the row of actions stock ⌘⇥ and AltTab
     /// share. Type-ahead keeps every other key.
@@ -1055,9 +1145,9 @@ final class DockSwitcherController {
     private var workspaceObservers: [NSObjectProtocol] = []
     static let liveInterval: TimeInterval = 1
     /// The dock preview's keys while its panel floats — Esc closes,
-    /// arrows walk the cards, Return raises. The tap eats them either
-    /// way: the panel can't take key status, so a pass-through would
-    /// type them into the front app.
+    /// arrows walk the cards, Return raises the walked one. The tap
+    /// eats them bare: the panel can't take key status, so a
+    /// pass-through would type them into the front app.
     var onPreviewKey: ((Int64) -> Void)?
     /// Mirrors the preview panel's visibility into the tap — the
     /// enhance controller's show/hide drives it.
@@ -1079,6 +1169,17 @@ final class DockSwitcherController {
     /// An open can land while the last open's captures still run —
     /// the generation tells a stale async batch from the live strip.
     private var thumbGeneration = 0
+    /// The Dock's badges from the preview watcher's tile read while it
+    /// is fresh — bundle path → label. nil sends the strip up without
+    /// them, and `fillBadges` walks the Dock after it shows.
+    var cachedBadges: () -> [String: String]? = { nil }
+    /// The badges this strip's cards carry — bundle path → label.
+    private var badges: [String: String] = [:]
+    /// Bumped by every build and by the close: an AX half that lands
+    /// after a newer build, or on a closed strip, is dropped.
+    private var listGeneration = 0
+    /// The main-side read of the rebuild whose AX half is on the worker.
+    private var pendingRead: ListRead?
 
     private(set) var running = false
 
@@ -1183,16 +1284,21 @@ final class DockSwitcherController {
     }
 
     /// ` under the strip: narrow to the picked card's app, or widen back.
+    /// The strip is already up, so the re-list's AX half runs on the
+    /// worker and the narrowed rows land a beat later.
     private func toggleScope() {
         guard panel?.isVisible == true, !appMode, drilledApp == nil else { return }
         scopePID = scopePID == nil ? model.selected?.pid : nil
-        let built = buildItems()
-        guard !built.isEmpty else { scopePID = nil; return }
-        let lane = DockSwitcherList.needsYouFirst(built)
         let keep = model.selected?.id
-        model.open(with: lane.items, selection: lane.items.firstIndex { $0.id == keep } ?? lane.selection)
-        panel?.present(model: model)
-        loadThumbnails()
+        rebuildLater(windows: true) { [weak self] built in
+            guard let self else { return }
+            guard !built.isEmpty else { self.scopePID = nil; return }
+            let lane = DockSwitcherList.needsYouFirst(built)
+            self.model.open(with: lane.items,
+                            selection: lane.items.firstIndex { $0.id == keep } ?? lane.selection)
+            self.panel?.present(model: self.model)
+            self.loadThumbnails()
+        }
     }
 
     /// ↑ on a drilled strip: back to the app row, on the app drilled.
@@ -1200,6 +1306,7 @@ final class DockSwitcherController {
         guard panel?.isVisible == true, let pid = drilledApp else { return }
         let apps = buildAppItems()
         guard !apps.isEmpty else { return }
+        listGeneration += 1
         drilledApp = nil
         appMode = true
         model.open(with: apps, selection: apps.firstIndex { $0.pid == pid } ?? 0)
@@ -1256,8 +1363,7 @@ final class DockSwitcherController {
     /// The visible frame (Quartz space) of the screen a window sits on —
     /// by its centre — else the pointer's screen.
     private static func visibleQuartz(around frame: CGRect?) -> CGRect? {
-        let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
-                             ?? NSScreen.screens.first)?.frame.height ?? 0
+        let primaryHeight = DockDisplays.primaryHeight()
         let screen = frame.flatMap { frame -> NSScreen? in
             let centre = CGPoint(x: frame.midX, y: primaryHeight - frame.midY)
             return NSScreen.screens.first { $0.frame.contains(centre) }
@@ -1318,8 +1424,17 @@ final class DockSwitcherController {
         }
     }
 
+    /// ⌥⇥'s open. The strip must be up before the tap's commit can
+    /// reach it, so the list is built here and now — but each app's AX
+    /// windows are read side by side, and the badges come from the
+    /// preview watcher's fresh tile read or land from the worker after
+    /// the strip shows, so the open costs about its slowest app.
     private func open() {
         scopePID = nil
+        listGeneration += 1
+        let start = ProcessInfo.processInfo.systemUptime
+        let fresh = cachedBadges()
+        badges = fresh ?? [:]
         let built = buildItems()
         guard !built.isEmpty else { return }
         // A waiting agent's window leads and takes the first pick.
@@ -1332,75 +1447,134 @@ final class DockSwitcherController {
         if panel == nil { panel = DockSwitcherPanel(controller: self) }
         hoverGate.open(at: NSEvent.mouseLocation)
         panel?.present(model: model)
+        let milliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000
+        Self.log.debug("switcher open: \(built.count, privacy: .public) windows in \(milliseconds, privacy: .public) ms")
+        if fresh == nil { fillBadges() }
         loadThumbnails()
         startLive()
     }
 
-    /// The ⌥⇥ strip's rows: on-screen windows in z-order, then
-    /// minimized and other-Space windows grouped by app — the whole
-    /// set a verb can rebuild under the open panel.
-    private func buildItems() -> [SwitcherItem] {
+    /// A build's main-side read, before any AX call: the window server's
+    /// rows, the running apps, and the apps to ask Accessibility for —
+    /// every app a row belongs to, less JR-Bar and the apps `axBackoff`
+    /// is resting (a hung app's rows still list from the window server;
+    /// only the AX wait is skipped for a while).
+    private struct ListRead {
+        let rows: [SwitcherWindowRow]
+        let offRows: [SwitcherWindowRow]
+        let apps: [pid_t: NSRunningApplication]
+        let reads: [DockSwitcherList.WindowRead]
+        let at: TimeInterval
+    }
+
+    private func readList() -> ListRead {
         let rows = DockSwitcherList.onScreenRows()
+        let offRows = DockSwitcherList.offScreenRows()
         let apps = Dictionary(uniqueKeysWithValues:
             NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) })
+        let now = ProcessInfo.processInfo.systemUptime
+        let own = ProcessInfo.processInfo.processIdentifier
+        var asked = Set<pid_t>()
+        var reads: [DockSwitcherList.WindowRead] = []
+        for pid in (rows + offRows).map(\.pid) where asked.insert(pid).inserted {
+            guard apps[pid] != nil, pid != own, !axBackoff.skips(pid, now: now) else { continue }
+            reads.append(DockSwitcherList.WindowRead(pid: pid, stamp: AppleDockReader.nextStamp()))
+        }
+        return ListRead(rows: rows, offRows: offRows, apps: apps, reads: reads, at: now)
+    }
+
+    /// The ⌥⇥ strip's rows: on-screen windows in z-order, then
+    /// minimized and other-Space windows grouped by app — the whole
+    /// set a verb can rebuild under the open panel. Here and now, with
+    /// the AX reads side by side; a rebuild under an open strip takes
+    /// `rebuildLater` instead.
+    private func buildItems() -> [SwitcherItem] {
+        let read = readList()
+        return assemble(read, windows: DockSwitcherList.readWindows(read.reads))
+    }
+
+    /// The rows from a read and the AX windows it asked for — matched
+    /// only now that every list is in. Apps that let the timeout lapse
+    /// rest for `DockAXBackoff.backoff`.
+    private func assemble(_ read: ListRead, windows: DockSwitcherList.WindowReadings) -> [SwitcherItem] {
+        for ask in read.reads {
+            let unresponsive = windows.unresponsive.contains(ask.pid)
+            axBackoff.note(ask.pid, unresponsive: unresponsive, now: read.at)
+            if unresponsive {
+                Self.log.notice("switcher: pid \(ask.pid, privacy: .public) didn't answer AX — skipped for \(DockAXBackoff.backoff, privacy: .public) s")
+            }
+        }
+        let apps = read.apps
         let items = DockSwitcherList.order(
-            rows: rows,
-            offRows: DockSwitcherList.offScreenRows(),
-            windowsForApp: { pid in
-                guard apps[pid] != nil, pid != ProcessInfo.processInfo.processIdentifier
-                else { return [] }
-                // A hung app's rows still list from the window server;
-                // only the AX wait is skipped for a while.
-                let now = ProcessInfo.processInfo.systemUptime
-                guard !axBackoff.skips(pid, now: now) else { return [] }
-                let reading = AppleDockReader.windowsReading(pid: pid)
-                axBackoff.note(pid, unresponsive: reading.unresponsive, now: now)
-                if reading.unresponsive {
-                    Self.log.notice("switcher: pid \(pid, privacy: .public) didn't answer AX — skipped for \(DockAXBackoff.backoff, privacy: .public) s")
-                }
-                return reading.windows
-            },
+            rows: read.rows,
+            offRows: read.offRows,
+            windowsForApp: { windows.windows[$0] ?? [] },
             appName: { apps[$0]?.localizedName ?? "App" },
             icon: { apps[$0]?.icon })
         // The Dock's unread badges ride the window cards too — Mail's 3
         // shows on each Mail window, the way the tile shows it.
-        let badges = Self.dockBadges()
-        var scoped = badges.isEmpty ? items : items.map { item in
+        let badged = badges.isEmpty ? items : items.map { item in
             var item = item
             item.badge = apps[item.pid]?.bundleURL.flatMap { badges[$0.path] }
             return item
         }
+        // Marked before the scope and the display narrow the rows: a
+        // window's claim is weighed against all its app's windows.
+        var scoped = DockSwitcherList.annotate(badged, marks: agentMarks(),
+                                               bundleID: { apps[$0]?.bundleIdentifier })
         if let scopePID { scoped = scoped.filter { $0.pid == scopePID } }
-        if thisDisplayOnly(), let display = Self.pointerDisplayQuartz() {
+        if thisDisplayOnly(), let display = DockDisplays.pointerDisplayQuartz() {
             scoped = DockSwitcherList.onDisplay(scoped, display: display)
         }
-        return DockSwitcherList.annotate(scoped, marks: agentMarks(),
-                                         bundleID: { apps[$0]?.bundleIdentifier })
+        return scoped
     }
 
-    /// The pointer's screen in Quartz space (y down from the primary
-    /// display's top) — the space CG bounds and AX frames share.
-    private static func pointerDisplayQuartz() -> CGRect? {
-        let pointer = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }),
-              let primary = NSScreen.screens.first(where: { $0.frame.origin == .zero })
-                ?? NSScreen.screens.first else { return nil }
-        let f = screen.frame
-        return CGRect(x: f.minX, y: primary.frame.height - f.maxY, width: f.width, height: f.height)
+    /// A rebuild under the open strip: the AX half — the window lists
+    /// (none for the ⌘⇥ app row, which reads no windows) and the Dock's
+    /// badges — runs on `DockAXWorker`, and `apply` gets the rows on
+    /// main. Dropped when a newer build, an open or a close came first.
+    private func rebuildLater(windows: Bool,
+                              apply: @escaping @MainActor @Sendable ([SwitcherItem]) -> Void) {
+        listGeneration += 1
+        let generation = listGeneration
+        let read = windows ? readList() : nil
+        pendingRead = read
+        let reads = read?.reads ?? []
+        let dock = AppleDockReader.dockPID()
+        DockAXWorker.run({ () -> (windows: DockSwitcherList.WindowReadings, badges: [String: String]) in
+            (DockSwitcherList.readWindows(reads), dock.map(Self.dockBadges(dockPID:)) ?? [:])
+        }, then: { [weak self] answer in
+            guard let self, self.listGeneration == generation, self.panel?.isVisible == true else { return }
+            let landed = self.pendingRead
+            self.pendingRead = nil
+            self.badges = answer.badges
+            apply(landed.map { self.assemble($0, windows: answer.windows) } ?? [])
+        })
+    }
+
+    /// The badges an open didn't find fresh, walked on `DockAXWorker`
+    /// after the strip shows and set on its cards as they land — unless
+    /// the strip has closed or been rebuilt (which walks its own) since.
+    private func fillBadges() {
+        let generation = listGeneration
+        guard let dock = AppleDockReader.dockPID() else { return }
+        DockAXWorker.run({ Self.dockBadges(dockPID: dock) }, then: { [weak self] badges in
+            guard let self, self.listGeneration == generation, self.panel?.isVisible == true,
+                  !badges.isEmpty else { return }
+            self.badges = badges
+            self.model.setBadges { item in
+                NSRunningApplication(processIdentifier: item.pid)?.bundleURL.flatMap { badges[$0.path] }
+            }
+            self.panel?.present(model: self.model)
+        })
     }
 
     /// The unread counts live on the Dock's tiles — one AX walk maps
     /// bundle path → badge, the same walk the previews do per tick.
-    private static func dockBadges() -> [String: String] {
-        var badges: [String: String] = [:]
-        guard let pid = AppleDockReader.dockPID(),
-              let list = AppleDockReader.dockList(pid: pid) else { return badges }
-        for tile in AppleDockReader.items(list: list) where tile.kind == .app {
-            if let badge = tile.badge, let path = tile.url?.path {
-                badges[path] = badge
-            }
-        }
-        return badges
+    /// The worker's: the Dock answers within its own timeout.
+    nonisolated static func dockBadges(dockPID: pid_t) -> [String: String] {
+        guard let list = AppleDockReader.dockList(pid: dockPID) else { return [:] }
+        return DockSwitcherList.badges(of: AppleDockReader.items(list: list))
     }
 
     // MARK: ⌘⇥ — the app strip
@@ -1418,6 +1592,9 @@ final class DockSwitcherController {
     /// every app with a visible window, then the rest of the regular
     /// apps follow — ⌘⇥'s whole list, not just the windowed half.
     private func openApps() {
+        listGeneration += 1
+        let fresh = cachedBadges()
+        badges = fresh ?? [:]
         let items = buildAppItems()
         guard !items.isEmpty else { return }
         model.learned = learnedPicks()
@@ -1428,6 +1605,7 @@ final class DockSwitcherController {
         if panel == nil { panel = DockSwitcherPanel(controller: self) }
         hoverGate.open(at: NSEvent.mouseLocation)
         panel?.present(model: model)
+        if fresh == nil { fillBadges() }
         loadThumbnails()
         startLive()
         // ⌘ is already down — the verb row follows after the usual beat.
@@ -1453,7 +1631,6 @@ final class DockSwitcherController {
         for app in apps where seen.insert(app.processIdentifier).inserted {
             ordered.append(app.processIdentifier)
         }
-        let badges = Self.dockBadges()
         let marks = agentMarks()
         return ordered.compactMap { pid -> SwitcherItem? in
             guard let app = byPID[pid] else { return nil }
@@ -1479,6 +1656,7 @@ final class DockSwitcherController {
         // No reachable windows: keep the app row — a blank strip is
         // worse than the card that was under the finger.
         guard !items.isEmpty else { return }
+        listGeneration += 1
         drilledApp = app.pid
         appMode = false
         model.open(with: items, selection: 0)
@@ -1584,6 +1762,8 @@ final class DockSwitcherController {
     /// here: the tap stops owning the keyboard, the live watch and the
     /// scope end, and a half-armed guard is forgotten.
     private func closeStrip() {
+        listGeneration += 1
+        pendingRead = nil
         latchWatchers.stop()
         agentGuard.reset()
         appMode = false
@@ -1669,27 +1849,33 @@ final class DockSwitcherController {
     }
 
     /// Re-list the rows under the open panel, keeping the selection —
-    /// the verb path's refresh.
+    /// the verb path's refresh, the live tick's and a launch or quit's.
+    /// The strip is already up, so the AX half runs on the worker and
+    /// the rows land a beat later (`rebuildLater`).
     private func rebuild() {
         guard panel?.isVisible == true else { return }
-        if appMode {
-            model.refresh(with: buildAppItems())
-        } else if let drilledApp {
-            let rows = DockSwitcherList.waitingFirst(buildItems().filter { $0.pid == drilledApp })
-            if rows.isEmpty {
-                // The drilled app lost its last window under the panel —
-                // pop back to the strip rather than show a blank card.
-                self.drilledApp = nil
-                appMode = true
-                model.refresh(with: buildAppItems())
+        rebuildLater(windows: !appMode) { [weak self] built in
+            guard let self else { return }
+            if self.appMode {
+                self.model.refresh(with: self.buildAppItems())
+            } else if let drilled = self.drilledApp {
+                let rows = DockSwitcherList.waitingFirst(built.filter { $0.pid == drilled })
+                if rows.isEmpty {
+                    // The drilled app lost its last window under the
+                    // panel — pop back to the strip rather than show a
+                    // blank card.
+                    self.drilledApp = nil
+                    self.appMode = true
+                    self.model.refresh(with: self.buildAppItems())
+                } else {
+                    self.model.refresh(with: rows)
+                }
             } else {
-                model.refresh(with: rows)
+                self.model.refresh(with: DockSwitcherList.needsYouFirst(built).items)
             }
-        } else {
-            model.refresh(with: DockSwitcherList.needsYouFirst(buildItems()).items)
+            self.panel?.present(model: self.model)
+            self.loadThumbnails()
         }
-        panel?.present(model: model)
-        loadThumbnails()
     }
 
     /// Fill the strip's cards in behind the icons: every row with a
@@ -2089,15 +2275,28 @@ struct DockSwitcherView: View {
         }
     }
 
+    /// Every card in a strip shares one slot, so a row of windows reads
+    /// as a row, not a ragged line sized by each title: the still's
+    /// width once any card has one, an icon card's narrower slot while
+    /// none has.
+    static func slotWidth(hasStills: Bool) -> CGFloat { hasStills ? 128 : 96 }
+    static let slotHeight: CGFloat = 76
+    static let cardRadius: CGFloat = 12
+
+    /// A ring drawn `inset` inside a card keeps the card's curve — the
+    /// same centre, a radius smaller by the inset.
+    static func ringRadius(inset: CGFloat) -> CGFloat { max(cardRadius - inset, 0) }
+
     private func card(_ item: SwitcherItem, selected: Bool) -> some View {
-        VStack(spacing: 5) {
+        let slot = Self.slotWidth(hasStills: !model.thumbnails.isEmpty)
+        return VStack(spacing: 5) {
             if let still = model.thumbnails[item.id] {
                 // AltTab's card: the window's own pixels, its app
                 // badged in the corner.
                 Image(nsImage: still)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 128, maxHeight: 76)
+                    .frame(maxWidth: slot, maxHeight: Self.slotHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .overlay(alignment: .bottomLeading) {
                         Image(nsImage: item.icon ?? NSImage())
@@ -2113,7 +2312,10 @@ struct DockSwitcherView: View {
                             }
                             .padding(3)
                     }
-                    .frame(height: 76)
+                    // The agent's mark rides the still's own corner, where
+                    // the preview card draws it.
+                    .overlay(alignment: .topTrailing) { agentDot(item).padding(5) }
+                    .frame(width: slot, height: Self.slotHeight)
             } else {
                 Image(nsImage: item.icon ?? NSImage())
                     .resizable()
@@ -2126,47 +2328,50 @@ struct DockSwitcherView: View {
                                 .offset(x: 8, y: -6)
                         }
                     }
-                    .frame(height: 76, alignment: .center)
+                    .frame(width: slot, height: Self.slotHeight)
+                    .overlay(alignment: .topTrailing) { agentDot(item).padding(4) }
             }
             Text(AppNameChannel.split(item.title).base)
                 .font(.caption2)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: 96)
+                .frame(width: slot)
         }
         .padding(8)
         .opacity(item.onScreen ? 1 : 0.65)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
                 .fill(selected ? AnyShapeStyle(.tint.opacity(0.3))
                                : AnyShapeStyle(.quaternary.opacity(0.4))))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
                 .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
         // The "needs you" ring: a waiting agent's card is outlined in
         // its provider's colour, inside the selection ring so both read.
         .overlay {
             if let agent = item.agent, agent.isWaiting {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                let inset: CGFloat = selected ? 3 : 0
+                RoundedRectangle(cornerRadius: Self.ringRadius(inset: inset), style: .continuous)
                     .strokeBorder(agent.accent.opacity(0.9), lineWidth: 1.5)
-                    .padding(selected ? 3 : 0)
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if let agent = item.agent {
-                DockAgentDot(mark: agent)
-                    .padding(6)
+                    .padding(inset)
             }
         }
         // A guarded ⌘W/⌘Q's first press: the card rings in the agent's
         // colour until the second press or the guard's window lapses.
         .overlay {
             if model.armedID == item.id {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
                     .strokeBorder(model.armedAccent ?? .accentColor, lineWidth: 3)
             }
         }
         .help(help(for: item))
+    }
+
+    @ViewBuilder
+    private func agentDot(_ item: SwitcherItem) -> some View {
+        if let agent = item.agent {
+            DockAgentDot(mark: agent)
+        }
     }
 
     /// The Dock tile's unread pill, verbatim.

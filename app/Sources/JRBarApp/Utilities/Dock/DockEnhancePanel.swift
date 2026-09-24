@@ -97,8 +97,9 @@ final class DockPreviewActions {
     /// drag-between-previews handoff. False means the drop fell
     /// through (a non-document, or an app that can't take it).
     var onDocumentDrop: (@MainActor (URL) -> Bool)?
-    /// An ask row's Approve (true) / Deny (false).
-    var onAnswer: (@MainActor (CoreAsk, Bool) -> Void)?
+    /// An ask row's answer came back from the shared desk — the panel
+    /// refits around the line that now stands where its buttons were.
+    var onAnswered: (@MainActor () -> Void)?
     /// The context menu's Move To — the window to another display.
     var onMoveToDisplay: (@MainActor (DockPreviewWindow, CGDirectDisplayID) -> Void)?
     /// The pointer landed on a card — the controller re-takes its still
@@ -120,7 +121,9 @@ final class DockPreviewActions {
     var onFolderBack: (@MainActor () -> Void)?
 }
 
-/// The Macs' displays as the Move To menu names them.
+/// The Macs' displays as the Move To menu names them, and the screen
+/// geometry the Dock's watcher and switcher share: AX frames and CG
+/// bounds live in Quartz space, y down from the primary display's top.
 @MainActor
 enum DockDisplays {
     struct Display { let id: CGDirectDisplayID; let name: String; let screen: NSScreen }
@@ -139,10 +142,24 @@ enum DockDisplays {
         let displays = all()
         guard displays.count > 1 else { return [] }
         guard let frame else { return displays }
-        let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
-                             ?? NSScreen.screens.first)?.frame.height ?? 0
-        let centre = CGPoint(x: frame.midX, y: primaryHeight - frame.midY)
+        let centre = CGPoint(x: frame.midX, y: primaryHeight() - frame.midY)
         return displays.filter { !$0.screen.frame.contains(centre) }
+    }
+
+    /// The primary screen's height — the one holding the global origin,
+    /// whose top edge Quartz's y counts down from.
+    static func primaryHeight() -> CGFloat {
+        (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first)?
+            .frame.height ?? 0
+    }
+
+    /// The pointer's screen in Quartz space — "only this display" for
+    /// the switcher and the previews.
+    static func pointerDisplayQuartz() -> CGRect? {
+        let pointer = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) else { return nil }
+        let f = screen.frame
+        return CGRect(x: f.minX, y: primaryHeight() - f.maxY, width: f.width, height: f.height)
     }
 }
 
@@ -470,9 +487,7 @@ struct DockPreviewView: View {
             if !content.askRows.isEmpty {
                 Divider()
                 ForEach(content.askRows) { mark in
-                    DockAskRow(mark: mark, note: content.askNotes[mark.sessionID],
-                               answering: content.answering.contains(mark.sessionID),
-                               actions: actions)
+                    DockAskRow(mark: mark, actions: actions)
                 }
             }
             if let media = content.media {
@@ -711,6 +726,8 @@ struct DockPreviewCard: View {
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
+    /// The card's corner; a ring drawn inside it steps in from it.
+    static let radius: CGFloat = 10
 
     var body: some View {
         VStack(spacing: 4) {
@@ -835,18 +852,20 @@ struct DockPreviewCard: View {
         }
         .padding(5)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
                 .fill(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.quaternary.opacity(0.45))))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.accentColor, lineWidth: selected ? 2 : 0))
+            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                .strokeBorder(Color.accentColor, lineWidth: selected ? 2 : 0))
         // A waiting agent's card is outlined in its provider's colour; a
-        // guarded close's first press thickens it.
+        // guarded close's first press thickens it. Inside the selection
+        // ring it steps in and keeps the card's curve.
         .overlay {
             if let agent, agent.isWaiting || armedNote != nil {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                let inset: CGFloat = selected ? 3 : 0
+                RoundedRectangle(cornerRadius: Self.radius - inset, style: .continuous)
                     .strokeBorder(agent.accent.opacity(0.9), lineWidth: armedNote != nil ? 3 : 1.5)
-                    .padding(selected ? 3 : 0)
+                    .padding(inset)
                     .allowsHitTesting(false)
             }
         }
@@ -933,12 +952,16 @@ struct DockPreviewCompactList: View {
     let actions: DockPreviewActions
 
     var body: some View {
+        // The leading columns are the list's, not each row's: a row with
+        // no mark or no state glyph still keeps the space, so every title
+        // starts on the same line.
+        let columns = DockCompactColumns.of(windows, agents: agents)
         ScrollView(.vertical, showsIndicators: true) {
             LazyVStack(spacing: 2) {
                 ForEach(windows) { window in
                     DockPreviewCompactRow(window: window, agent: agents[window.id],
                                           armedNote: armedWindowID == window.id ? armedNote : nil,
-                                          actions: actions)
+                                          columns: columns, actions: actions)
                 }
             }
             .padding(2)
@@ -1143,27 +1166,50 @@ final class SwipeCatcherView: NSView {
     }
 }
 
+/// Which leading columns the compact list reserves — the agent's mark
+/// and the minimized / full-screen glyph. Every row keeps a column any
+/// row needs, so the titles line up.
+struct DockCompactColumns: Equatable {
+    var mark = false
+    var state = false
+
+    static func of(_ windows: [DockPreviewWindow], agents: [Int: DockAgentMark]) -> DockCompactColumns {
+        DockCompactColumns(mark: windows.contains { agents[$0.id] != nil },
+                           state: windows.contains { $0.minimized || $0.fullScreen == true })
+    }
+}
+
 /// One row of the compact list — click raises, hover shows the verbs.
 private struct DockPreviewCompactRow: View {
     let window: DockPreviewWindow
     var agent: DockAgentMark? = nil
     var armedNote: String? = nil
+    var columns = DockCompactColumns()
     let actions: DockPreviewActions
     @ViewState private var hovering = false
 
     var body: some View {
         Button { actions.pick(window) } label: {
             HStack(spacing: 6) {
-                if let agent {
-                    DockAgentDot(mark: agent, size: 7)
+                // A clear slot, not a Group: a Group hands its frame to
+                // each child, so an empty one would take no room at all.
+                if columns.mark {
+                    Color.clear
+                        .frame(width: 8, height: 8)
+                        .overlay {
+                            if let agent { DockAgentDot(mark: agent, size: 7) }
+                        }
                 }
-                if window.minimized {
-                    Image(systemName: "arrow.down.right.and.arrow.up.left")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
-                }
-                if window.fullScreen == true {
-                    Image(systemName: "arrow.up.right.and.arrow.down.left")
+                if columns.state {
+                    Color.clear
+                        .frame(width: 10, height: 10)
+                        .overlay {
+                            if window.minimized {
+                                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            } else if window.fullScreen == true {
+                                Image(systemName: "arrow.up.right.and.arrow.down.left")
+                            }
+                        }
                         .font(.system(size: 8))
                         .foregroundStyle(.secondary)
                 }
@@ -1219,18 +1265,17 @@ private struct DockPreviewCompactRow: View {
 
 /// A waiting agent this app hosts, answerable from the Dock: the mark,
 /// the session and what it asks — what it would run, and the red mark
-/// when that is destructive — then Deny / Approve through the same
-/// `answer_ask` the panel sends (the daemon raises the terminal first,
-/// or the agent's own hook takes it). Where the hook holds the ask,
-/// Always Allow sits between them, and a held question offers its
-/// options instead of Approve; both go through the shared answer desk.
-/// Where the daemon says the ask can't be answered from outside, the
-/// buttons disable and say where it can be; once answered, the row
-/// shows the daemon's verdict instead of guessing success.
+/// when that is destructive — then Deny / Approve. Where the hook holds
+/// the ask, Always Allow sits between them, and a held question offers
+/// its options instead of Approve. Every verb goes through the shared
+/// answer desk the panel and the notch answer through, so one pending
+/// set dims every copy of the buttons and the line under the ask is the
+/// desk's. Where the daemon says the ask can't be answered from
+/// outside, the buttons disable and say where it can be; once answered,
+/// the row shows the daemon's verdict instead of guessing success. With
+/// no desk published the row draws no verbs.
 private struct DockAskRow: View {
     let mark: DockAgentMark
-    let note: String?
-    let answering: Bool
     let actions: DockPreviewActions
 
     /// The mark's ask with its session filled in, for the desk.
@@ -1244,7 +1289,7 @@ private struct DockAskRow: View {
 
     var body: some View {
         let desk = AskAnswerDesk.shared
-        let busy = answering || (desk?.isPending(mark.sessionID) ?? false)
+        let busy = desk?.isPending(mark.sessionID) ?? false
         HStack(spacing: 8) {
             DockAgentDot(mark: mark)
             VStack(alignment: .leading, spacing: 1) {
@@ -1267,28 +1312,28 @@ private struct DockAskRow: View {
             }
             .frame(maxWidth: 260, alignment: .leading)
             Spacer(minLength: 8)
-            if let line = note ?? desk?.note(for: mark.sessionID)?.text {
+            if let line = desk?.note(for: mark.sessionID)?.text {
                 Text(line)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             } else if let ask, let desk, AskVerbs.chooses(ask) {
-                Button("Deny") { Task { await desk.answer(ask, .deny) } }
+                Button("Deny") { answer(ask, .deny, on: desk) }
                     .controlSize(.small)
                     .disabled(busy)
                 DockAskChoices(ask: ask, desk: desk, accent: mark.accent, busy: busy)
-            } else if let ask {
+            } else if let ask, let desk {
                 let answerable = ask.canAnswer && !ask.wantsTextReply
-                Button("Deny") { actions.onAnswer?(ask, false) }
+                Button("Deny") { answer(ask, .deny, on: desk) }
                     .controlSize(.small)
                     .disabled(!answerable || busy)
-                if let desk, answerable, AskVerbs.alwaysAllows(ask) {
-                    Button("Always Allow") { Task { await desk.answer(ask, .always) } }
+                if answerable, AskVerbs.alwaysAllows(ask) {
+                    Button("Always Allow") { answer(ask, .always, on: desk) }
                         .controlSize(.small)
                         .disabled(busy)
                         .help("Approve, and let \(mark.providerName) remember the rule it offered")
                 }
-                Button("Approve") { actions.onAnswer?(ask, true) }
+                Button("Approve") { answer(ask, .approve, on: desk) }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
                     .tint(mark.accent)
@@ -1299,6 +1344,15 @@ private struct DockAskRow: View {
         }
         .padding(.vertical, 2)
         .help("\(mark.providerName) · \(mark.label)\n\(mark.cwd ?? "")")
+    }
+
+    /// One click's verdict, through the desk; once it has answered, the
+    /// panel refits around the desk's line.
+    private func answer(_ ask: CoreAsk, _ verdict: AskVerdict, on desk: AskAnswerDesk) {
+        Task {
+            await desk.answer(ask, verdict)
+            actions.onAnswered?()
+        }
     }
 }
 
