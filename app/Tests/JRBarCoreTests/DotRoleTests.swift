@@ -174,7 +174,7 @@ struct DotRoleTests {
         // steady state, not a settling one.
         let noStrip = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
                                           link: CoreDotLink(state: "no_strip", role: "extend"), dot: dot)
-        #expect(noStrip.headline == "Nothing to mirror")
+        #expect(noStrip.headline == "Nothing to extend")
         #expect(noStrip.detail == "No strip is connected. Plug in the SidePulse, or pick Alert beacon or On its own, which need no strip.")
         #expect(!noStrip.settling)
         // `failed`: the error class is the detail.
@@ -276,6 +276,26 @@ struct DotRoleTests {
         #expect(EjectGuardReading(installed: false).words.hasPrefix("Not installed"))
         #expect(!EjectGuardReading(installed: false).canProtect, "nothing mounted, nothing to protect")
         #expect(EjectGuardReading.parse(.object(["protects": .bool(true)])) == nil)
+    }
+
+    @Test("an eject guard that is not protecting says why, and only what is true")
+    func ejectGuardWhyNot() {
+        // Told nothing, but it did run once: not "never run".
+        let ranOnce = EjectGuardReading(installed: true, runs: 2, mountedVolumeUUID: "B293")
+        #expect(!ranOnce.words.contains("never run"))
+        #expect(ranOnce.words.contains("not told which SidePulse"))
+        // Told which SidePulse, but launchd has not loaded it: not "never
+        // told".
+        let unloaded = EjectGuardReading.parse(.object([
+            "installed": .bool(true), "protects": .bool(false), "loaded": .bool(false),
+            "runs": .number(0), "volume_uuid": .string("B293"), "mounted_volume_uuid": .string("B293"),
+        ]))
+        #expect(unloaded?.loaded == false)
+        #expect(unloaded?.words.contains("not loaded") == true)
+        #expect(unloaded?.words.contains("never told") == false)
+        // Loaded with a volume but not kept alive.
+        let idle = EjectGuardReading(installed: true, volumeUUID: "B293", mountedVolumeUUID: "B293", loaded: true)
+        #expect(idle.words.contains("not kept running"))
     }
 
     @Test("dot_link decodes; a daemon that sends none falls back to the setting")

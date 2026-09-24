@@ -27,7 +27,7 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
 
     public var label: String {
         switch self {
-        case .extend: return "Mirror the strip"
+        case .extend: return "Extend the strip"
         case .asks: return "Alert beacon"
         case .call: return "Call light"
         case .status: return "On its own"
@@ -39,7 +39,7 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
     public var explanation: String {
         switch self {
         case .extend:
-            return "Plays the strip's animation on the Dot too, timed to the strip's own start and the Dot's measured clock: a chase still sweeps and a solid colour stays solid."
+            return "Carries the strip's light onto the Dot, timed to the strip's own start and the Dot's measured clock. The Look below says how: moving light runs on through the Dot, or the strip folds into its two LEDs."
         case .asks:
             return "Dark until something needs you: amber for a permission request, red for a blocked error. A glance at the Dot alone answers \"do they need me?\"."
         case .call:
@@ -119,7 +119,7 @@ public struct DotRoleReadout: Equatable, Sendable {
                 return missing(chosen: chosen)
             case "no_strip":
                 return DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
-                                      headline: "Nothing to mirror",
+                                      headline: "Nothing to extend",
                                       detail: "No strip is connected. Plug in the SidePulse, or pick Alert beacon or On its own, which need no strip.",
                                       settling: false)
             case "failed":

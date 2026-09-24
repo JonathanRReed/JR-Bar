@@ -16,10 +16,12 @@ public struct EjectGuardReading: Equatable, Sendable {
     public var volumeUUID: String?
     public var mountedVolumeUUID: String?
     public var mountedName: String?
+    /// launchd has the job loaded (`launchctl print` found it).
+    public var loaded: Bool
 
     public init(installed: Bool = false, protects: Bool = false, protectsMounted: Bool = false,
                 running: Bool = false, runs: Int? = nil, volumeUUID: String? = nil,
-                mountedVolumeUUID: String? = nil, mountedName: String? = nil) {
+                mountedVolumeUUID: String? = nil, mountedName: String? = nil, loaded: Bool = false) {
         self.installed = installed
         self.protects = protects
         self.protectsMounted = protectsMounted
@@ -28,6 +30,7 @@ public struct EjectGuardReading: Equatable, Sendable {
         self.volumeUUID = volumeUUID
         self.mountedVolumeUUID = mountedVolumeUUID
         self.mountedName = mountedName
+        self.loaded = loaded
     }
 
     /// nil when the reply is not an eject-guard reading at all.
@@ -41,7 +44,8 @@ public struct EjectGuardReading: Equatable, Sendable {
             runs: json["runs"]?.intValue,
             volumeUUID: json["volume_uuid"]?.stringValue,
             mountedVolumeUUID: json["mounted_volume_uuid"]?.stringValue,
-            mountedName: json["mounted_name"]?.stringValue)
+            mountedName: json["mounted_name"]?.stringValue,
+            loaded: json["loaded"]?.boolValue ?? false)
     }
 
     /// Whether "Protect this SidePulse" has something to do.
@@ -57,10 +61,21 @@ public struct EjectGuardReading: Equatable, Sendable {
         if protects {
             return "Protecting a different SidePulse. Protect this one to move the guard to it."
         }
-        if installed {
-            return "Installed, but it has never run: it was never told which SidePulse to protect."
+        guard installed else {
+            return "Not installed. macOS can eject the SidePulse when the Mac wakes locked."
         }
-        return "Not installed. macOS can eject the SidePulse when the Mac wakes locked."
+        if volumeUUID == nil {
+            // The shipped install: no SidePulse named, so launchd never
+            // starts it. One that did run once was told nothing since.
+            if (runs ?? 0) == 0 {
+                return "Installed, but it has never run: it was never told which SidePulse to protect."
+            }
+            return "Installed, but not told which SidePulse to protect, so it guards nothing now."
+        }
+        if !loaded {
+            return "Set up for a SidePulse, but launchd has not loaded it, so it is not running."
+        }
+        return "Set up for a SidePulse, but not kept running, so a locked wake can still eject it."
     }
 }
 

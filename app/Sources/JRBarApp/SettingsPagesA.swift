@@ -651,7 +651,7 @@ struct DevicesPage: View {
         CalibrationProfilesSection(store: store)
 
         SettingGroup("Pro & Dot", note: "The role is what the Dot is for; the link is whether the monitor drives it at all.") {
-            SettingToggle(store, "Dot follows strip", subtitle: "The Dot mirrors the Pro instead of rendering its own; which cue is the role below.",
+            SettingToggle(store, "Dot follows strip", subtitle: "The Dot takes its light from the Pro instead of rendering its own; the role below says how.",
                           path: "devices_linked", default: true)
             SettingSlider(store, "Dot brightness", subtitle: "Two nearby LEDs read much brighter than eight across a desk. The alert beacon is never dimmed.",
                           path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded()))%" }

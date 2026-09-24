@@ -361,16 +361,31 @@ struct SettingsRenderProofTests {
       "dot":{"program":"0:#00E5FF 1:#00B8CC 400ms cosine\\nrepeat","led_count":2,"why":"working","role":"extend"}},
      "dot_link":{"state":"linked","role":"extend","error":null,"phase_error_ms":-18.4,
       "clock_rate":0.9734,"clock_source":"measured","tolerance_ms":40,"sync_writes_hour":3,
-      "rotation":"exact","style":"mirror","rung":"brightest"},
+      "rotation":"exact","style":"continue","rung":"brightest"},
      "device_receipts":{"sidepulse:pro:B293A1":{"foreign_write_at":1790271000.0,"foreign_writes":1,"paused":false}}}
     """
+
+    /// The same pair with a comet the Dot carries on (`rung: continue`) and
+    /// a Check sync running for another half minute.
+    private static func continuingLightsFrame(checkUntil: Double) -> String {
+        """
+        {"t":"lights","v":1,"linked":true,"devices_linked":true,
+         "surfaces":{
+          "hardware":{"program":"0:#00E5FF 400ms cosine; 1:#00E5FF 400ms cosine 100ms\\nrepeat","led_count":8,"why":"working"},
+          "dot":{"program":"#00E5FF 496ms pulse 658ms; 1:#00E5FF 496ms pulse 823ms\\nrepeat","led_count":2,"why":"working","role":"extend"}},
+         "dot_link":{"state":"linked","role":"extend","error":null,"phase_error_ms":7.2,
+          "clock_rate":0.9734,"clock_source":"measured","tolerance_ms":40,"sync_writes_hour":1,
+          "rotation":"exact","style":"continue","rung":"continue","check_until":\(checkUntil)}}
+        """
+    }
 
     /// The Devices page with a linked Pro + Dot, at the default width and
     /// the narrowest, in both appearances: the Pro & Dot group's look, trim,
     /// clock and Check sync; the readout's measured timing; the Dot's card
     /// with Display, Pin to, Asks only, Blend and Auto-brightness switched
     /// off and the reason on the card; the receipt and the eject guard on
-    /// the SidePulse's. Then the Continue look, with its side picker.
+    /// the SidePulse's. Then a comet the Dot continues, with its side
+    /// picker and a Check sync running, and the Mirror look.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the linked Devices PNGs"))
     func linkedDevices() throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
@@ -384,17 +399,33 @@ struct SettingsRenderProofTests {
                 try Self.write(rep, named: "linked-devices-\(Int(width))-\(dark ? "dark" : "light")")
             }
         }
-        fixture.settings.set("dot_extend_style", .string("continue"))
+        // A comet the Dot carries on, with Check sync running: the readout
+        // says "Continuing the strip" and the check row says it is watching.
+        let checking = Date().timeIntervalSince1970 + 30
+        let continuing = Self.continuingLightsFrame(checkUntil: checking)
+        fixture.core.apply(try CoreCodec.decode(frame: Data(continuing.utf8)))
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         for dark in [false, true] where Self.wanted("linked-devices") {
             let view = SettingsPageContainer(store: fixture.settings, page: .devices)
             let rep = try Self.snapshot(view, size: CGSize(width: 560, height: 6000), dark: dark)
             try Self.write(rep, named: "linked-devices-continue-\(dark ? "dark" : "light")")
         }
+        // Mirror picked: no side picker.
+        fixture.core.apply(try CoreCodec.decode(frame: Data(Self.linkedLightsFrame.utf8)))
+        fixture.settings.set("dot_extend_style", .string("mirror"))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        for dark in [false, true] where Self.wanted("linked-devices") {
+            let view = SettingsPageContainer(store: fixture.settings, page: .devices)
+            let rep = try Self.snapshot(view, size: CGSize(width: 560, height: 6000), dark: dark)
+            try Self.write(rep, named: "linked-devices-mirror-\(dark ? "dark" : "light")")
+        }
         // The eject guard's words, one row per state it can be in.
         let readings = [
             EjectGuardReading(installed: false),
             EjectGuardReading(installed: true, mountedVolumeUUID: "B293"),
+            EjectGuardReading(installed: true, runs: 2, mountedVolumeUUID: "B293"),
+            EjectGuardReading(installed: true, volumeUUID: "B293", mountedVolumeUUID: "B293"),
+            EjectGuardReading(installed: true, volumeUUID: "B293", mountedVolumeUUID: "B293", loaded: true),
             EjectGuardReading(installed: true, protects: true, volumeUUID: "7F02", mountedVolumeUUID: "B293"),
             EjectGuardReading(installed: true, protects: true, protectsMounted: true, running: true,
                               volumeUUID: "B293", mountedVolumeUUID: "B293"),
