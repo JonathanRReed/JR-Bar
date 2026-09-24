@@ -10,9 +10,9 @@ import pytest
 
 from jrbar import usage_stats
 from jrbar.usage_stats import (
+    LocalUsageInventory,
     UsageSourceCoverage,
     UsageSourceStatus,
-    build_usage_inventory,
     scan_usage,
 )
 from jrbar.usage_view import source_text_for_coverage
@@ -86,6 +86,15 @@ def _write_rows(path: Path, *rows: object) -> Path:
 
 def _coverage(totals, provider_id: str):
     return totals.source_coverage[provider_id]
+
+
+def _frozen_inventory(claude_root: Path, codex_root: Path | None = None, **bounds) -> LocalUsageInventory:
+    """The inventory scan_usage walks for itself, frozen ahead of the scan."""
+    roots = {"claude": claude_root, **({"codex": codex_root} if codex_root is not None else {})}
+    return LocalUsageInventory(tuple(
+        usage_stats._provider_inventory(provider_id, root, **bounds).sources[0]
+        for provider_id, root in roots.items()
+    ))
 
 
 def test_missing_roots_are_not_reported_as_observed_empty_usage__and_2_more(tmp_path: Path) -> None:
@@ -730,7 +739,7 @@ def test_one_frozen_inventory_supplies_usage_and_codex_rate_evidence(
     codex_root = tmp_path / "codex"
     claude_root.mkdir()
     _write_rows(codex_root / "rollout.jsonl", _codex_rate_row(used_percent=37))
-    inventory = build_usage_inventory(claude_root, codex_root=codex_root)
+    inventory = _frozen_inventory(claude_root, codex_root)
 
     with patch("jrbar.usage_stats.os.walk", side_effect=AssertionError("second walk")):
         totals = scan_usage(
@@ -794,7 +803,7 @@ def test_cached_codex_rate_evidence_does_not_wait_for_a_historical_rescan(
 def test_file_added_after_inventory_freeze_is_not_opened_or_counted(tmp_path: Path) -> None:
     root = tmp_path / "claude"
     first = _write_rows(root / "first.jsonl", _claude_row("first", tokens=13))
-    inventory = build_usage_inventory(root)
+    inventory = _frozen_inventory(root)
     late = _write_rows(root / "late.jsonl", _claude_row("late", tokens=997))
     real_open = os.open
 
@@ -818,9 +827,9 @@ def test_inventory_bounds_oversized_and_excess_files_as_partial_coverage(
     _write_rows(root / "a.jsonl", _claude_row("a", tokens=3))
     _write_rows(root / "b.jsonl", _claude_row("b", tokens=5))
     oversized = _write_rows(root / "oversized.jsonl", _claude_row("large", tokens=997))
-    inventory = build_usage_inventory(
+    inventory = _frozen_inventory(
         root,
-        max_files_per_source=1,
+        max_files=1,
         max_file_bytes=max(1, oversized.stat().st_size - 1),
     )
 

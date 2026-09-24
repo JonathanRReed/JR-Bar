@@ -530,9 +530,10 @@ def test_inventory_overflow_keeps_the_newest_rollouts(tmp_path: Path) -> None:
         epoch = int(stamp[:4]) * 10_000_000 + int(stamp[5:7]) * 100_000 + int(stamp[8:10]) * 1000
         os.utime(path, (epoch, epoch))
 
-    inventory = usage_stats.build_usage_inventory(
-        tmp_path / "claude", codex_root=root, max_files_per_source=2
-    )
+    inventory = usage_stats.LocalUsageInventory((
+        usage_stats._provider_inventory("claude", tmp_path / "claude").sources[0],
+        usage_stats._provider_inventory("codex", root, max_files=2).sources[0],
+    ))
     (tmp_path / "claude").mkdir(exist_ok=True)
     totals = usage_stats.scan_usage(tmp_path / "claude", codex_root=root, inventory=inventory)
 

@@ -40,6 +40,9 @@ MAX_SOURCE_KEY_BYTES = 64 * 1024
 BUSY_TIMEOUT_MS = 100
 SQLITE_PROGRESS_INTERVAL = 1000
 SQLITE_PROGRESS_CALLBACK_LIMIT = 100
+# A prune deletes this many rows per progress budget; 256 peaked at 27 of
+# the 100 callbacks on a live index.
+_PRUNE_CHUNK_ROWS = 128
 _SIDECAR_SUFFIXES = ("-journal", "-wal", "-shm")
 _SCHEMA_VERSION = 1
 _COMPRESSED_PREFIX = b"JRZ1"
@@ -259,18 +262,44 @@ class UsageFileIndex:
             return False
 
     def prune(self, keys: Collection[str]) -> None:
+        """Delete every row whose key is not in ``keys``.
+
+        The keys are read in full before anything is deleted, and each
+        bounded chunk gets a fresh progress budget: one budget spread over
+        thousands of stale rows interrupted the delete, the abort refused
+        every later ``put``, and the next scan found the same stale rows, so
+        the index never saved again. A prune that still fails is undone on
+        its own and leaves this scan's writes to commit.
+        """
         if self._closed or self._failed:
             return
         try:
             self._begin()
-            cursor = self._connection.execute("SELECT file_key FROM files")
-            while rows := cursor.fetchmany(256):
-                stale = [(row[0],) for row in rows if row[0] not in keys]
-                if stale:
-                    self._connection.executemany("DELETE FROM files WHERE file_key = ?", stale)
-                    self._row_count -= len(stale)
-        except (TypeError, sqlite3.Error):
+            self._connection.execute("SAVEPOINT usage_file_prune")
+        except sqlite3.Error:
             self._abort()
+            return
+        try:
+            self._progress_budget.reset()
+            cursor = self._connection.execute("SELECT file_key FROM files")
+            stale: list[tuple[str]] = []
+            while rows := cursor.fetchmany(_PRUNE_CHUNK_ROWS):
+                stale.extend((row[0],) for row in rows if row[0] not in keys)
+                self._progress_budget.reset()
+            for start in range(0, len(stale), _PRUNE_CHUNK_ROWS):
+                self._progress_budget.reset()
+                self._connection.executemany(
+                    "DELETE FROM files WHERE file_key = ?",
+                    stale[start:start + _PRUNE_CHUNK_ROWS],
+                )
+            self._connection.execute("RELEASE usage_file_prune")
+            self._row_count -= len(stale)
+        except (TypeError, sqlite3.Error):
+            try:
+                self._connection.execute("ROLLBACK TO usage_file_prune")
+                self._connection.execute("RELEASE usage_file_prune")
+            except sqlite3.Error:
+                self._abort()
 
     def close(self) -> None:
         if self._closed:

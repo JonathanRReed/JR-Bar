@@ -389,7 +389,7 @@ def test_activity_does_not_touch_deselected_provider_sources(monkeypatch):
     def forbidden(*_args, **_kwargs):
         raise AssertionError("a deselected provider source was touched")
 
-    monkeypatch.setattr(usage_graph_worker.usage_stats, "build_usage_inventory", forbidden)
+    monkeypatch.setattr(usage_graph_worker.usage_stats, "_provider_inventory", forbidden)
     monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", forbidden)
 
     model, _summary = usage_graph_worker._build_payload(settings)
