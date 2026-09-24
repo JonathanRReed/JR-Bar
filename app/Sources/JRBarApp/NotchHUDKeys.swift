@@ -138,14 +138,8 @@ enum SystemLevelReader {
     static func outputVolume() -> Float? {
         guard let device = defaultOutputDevice() else { return nil }
         for element in [kAudioObjectPropertyElementMain, 1] {
-            var value = Float(0)
-            var size = UInt32(MemoryLayout<Float>.size)
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyVolumeScalar,
-                mScope: kAudioObjectPropertyScopeOutput,
-                mElement: element)
-            if AudioObjectHasProperty(device, &address),
-               AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr {
+            if let value = CoreAudioDefaults.volume(of: device, scope: kAudioObjectPropertyScopeOutput,
+                                                    element: element) {
                 return value
             }
         }
@@ -214,15 +208,9 @@ enum SystemLevelReader {
     static func outputMuted() -> Bool? {
         guard let device = defaultOutputDevice() else { return nil }
         for element in [kAudioObjectPropertyElementMain, 1] {
-            var muted = UInt32(0)
-            var size = UInt32(MemoryLayout<UInt32>.size)
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyMute,
-                mScope: kAudioObjectPropertyScopeOutput,
-                mElement: element)
-            if AudioObjectHasProperty(device, &address),
-               AudioObjectGetPropertyData(device, &address, 0, nil, &size, &muted) == noErr {
-                return muted != 0
+            if let muted = CoreAudioDefaults.muted(of: device, scope: kAudioObjectPropertyScopeOutput,
+                                                   element: element) {
+                return muted
             }
         }
         return nil
@@ -233,41 +221,11 @@ enum SystemLevelReader {
     /// the device (AirPods, a display, the built-in speakers) and not a
     /// generic speaker. nil when CoreAudio names no default output.
     static func outputRoute() -> (name: String, transport: UInt32)? {
-        guard let device = defaultOutputDevice(), device != 0 else { return nil }
-        var nameAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioObjectPropertyName,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var name = "" as CFString
-        var nameSize = UInt32(MemoryLayout<CFString>.size)
-        let named = withUnsafeMutablePointer(to: &name) {
-            AudioObjectGetPropertyData(device, &nameAddress, 0, nil, &nameSize, $0)
-        } == noErr
-        var transportAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyTransportType,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var transport = UInt32(0)
-        var transportSize = UInt32(MemoryLayout<UInt32>.size)
-        if AudioObjectGetPropertyData(device, &transportAddress, 0, nil,
-                                      &transportSize, &transport) != noErr {
-            transport = 0
-        }
-        return (named ? name as String : "", transport)
+        guard let device = defaultOutputDevice() else { return nil }
+        return (CoreAudioDefaults.name(of: device) ?? "", CoreAudioDefaults.transport(of: device) ?? 0)
     }
 
-    private static func defaultOutputDevice() -> AudioDeviceID? {
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device
-        ) == noErr else { return nil }
-        return device
-    }
+    private static func defaultOutputDevice() -> AudioDeviceID? { CoreAudioDefaults.defaultOutput }
 
     /// The built-in display's brightness, 0…1: DisplayServices first
     /// (the Apple-silicon path), then the IOKit display parameter.

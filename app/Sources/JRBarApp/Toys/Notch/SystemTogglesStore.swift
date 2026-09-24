@@ -945,15 +945,7 @@ final class AudioListener: @unchecked Sendable {
     }
 
     static func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioObjectID? {
-        var device = AudioObjectID(0)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
-                                         0, nil, &size, &device) == noErr,
-              device != kAudioObjectUnknown else { return nil }
-        return device
+        CoreAudioDefaults.defaultDevice(selector)
     }
 }
 
@@ -1031,13 +1023,7 @@ enum AudioMute {
 
     private nonisolated static func readMuteFlag(_ device: AudioObjectID, _ scope: Scope) -> Bool? {
         for propertyScope in scope.propertyScopes {
-            var address = muteAddress(propertyScope)
-            guard AudioObjectHasProperty(device, &address) else { continue }
-            var value: UInt32 = 0
-            var size = UInt32(MemoryLayout<UInt32>.size)
-            if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr {
-                return value != 0
-            }
+            if let muted = CoreAudioDefaults.muted(of: device, scope: propertyScope) { return muted }
         }
         return nil
     }
@@ -1085,14 +1071,7 @@ enum AudioMute {
     }
 
     private nonisolated static func uid(of device: AudioObjectID) -> String? {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID,
-                                                 mScope: kAudioObjectPropertyScopeGlobal,
-                                                 mElement: kAudioObjectPropertyElementMain)
-        var uid: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &uid) == noErr,
-              let uid else { return nil }
-        return uid.takeRetainedValue() as String
+        CoreAudioDefaults.uid(of: device)
     }
 }
 

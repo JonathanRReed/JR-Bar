@@ -609,32 +609,13 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
     }
 
     private static func defaultOutputDevice() throws -> AudioDeviceID {
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        let status = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
-        guard status == noErr, device != kAudioObjectUnknown else {
-            throw AudioTapError.noOutputDevice
-        }
+        guard let device = CoreAudioDefaults.defaultOutput else { throw AudioTapError.noOutputDevice }
         return device
     }
 
     private static func deviceUID(_ device: AudioDeviceID) throws -> String {
-        // The getter hands back a retained CFString — read it through
-        // Unmanaged and take the retain, or every rebuild leaks one.
-        var uid: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        let status = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &uid)
-        guard status == noErr, let uid else { throw AudioTapError.noOutputDevice }
-        return uid.takeRetainedValue() as String
+        guard let uid = CoreAudioDefaults.uid(of: device) else { throw AudioTapError.noOutputDevice }
+        return uid
     }
 
     /// The tap's own nominal rate — `kAudioDevicePropertyNominalSampleRate`
