@@ -224,7 +224,9 @@ struct UtilityParityRenderProofTests {
         // with fixed holders, so no app of this Mac reaches the PNG.
         let open = Self.sheet(VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: SettingsMetrics.m) {
-                SettingsIconTile(symbol: utility.symbol, tint: .orange, size: SettingsMetrics.cardTile)
+                SettingsIconTile(symbol: utility.symbol,
+                                 tint: ToyCard.tint(for: utility.id, page: SettingsStore.Page.utilities.tint),
+                                 size: SettingsMetrics.cardTile)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: SettingsMetrics.s) {
                         Text(utility.name).font(.body.weight(.semibold))
