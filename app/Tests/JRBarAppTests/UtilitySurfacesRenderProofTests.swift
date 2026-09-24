@@ -187,6 +187,38 @@ struct UtilitySurfacesRenderProofTests {
         }
     }
 
+    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
+    func hoarderSources() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-proof-archive-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Fixtures.hoarderModel(root: root)
+        let now = Date()
+        func inventory(_ id: String, _ name: String, _ path: String, files: Int,
+                       warnings: [String] = []) -> ArchiveSourceInventory {
+            ArchiveSourceInventory(
+                source: ArchiveSource(id: id, name: name, root: URL(fileURLWithPath: NSHomeDirectory() + path),
+                                      extensions: ["jsonl"]),
+                files: (0..<files).map { index in
+                    ArchiveSourceFile(url: URL(fileURLWithPath: "/tmp/\(id)-\(index).jsonl"),
+                                      byteCount: Int64(120_000 * (index + 1)),
+                                      modifiedAt: now.addingTimeInterval(-Double(index) * 86_400 * 3))
+                },
+                warnings: warnings)
+        }
+        model.sourceInventories = [
+            inventory("claude-projects", "Claude Code", "/.claude/projects", files: 14),
+            inventory("codex-sessions", "Codex", "/.codex/sessions", files: 6),
+            inventory("gemini-chats", "Gemini CLI", "/.gemini/tmp", files: 0,
+                      warnings: ["Some files could not be read"]),
+        ]
+        model.selectedSources = ["claude-projects"]
+        for dark in [true, false] {
+            try Self.write(DataHoarderSourcesView(model: model), glassRadius: nil, name: "hoarder-sources",
+                           dark: dark, canvas: CGSize(width: 630, height: 480), window: true)
+        }
+    }
+
     // MARK: Staging
 
     /// Writes `view` over the proof backdrop: a desktop-like wash, and —
