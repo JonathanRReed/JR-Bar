@@ -907,8 +907,11 @@ def apply_device_timing(
     wanted = phase_ms(predicted, timing.anchor, span, trim_ms=timing.trim_ms) if span else 0.0
     if not lap:
         # A one-shot joins late or not at all: it cannot be started early.
+        # One the strip has already finished is joined at its last
+        # millisecond, so the Dot holds the strip's final frame too instead
+        # of playing the whole cue after the strip has stopped.
         elapsed = (predicted - timing.anchor) * 1000.0 + float(timing.trim_ms)
-        wanted = elapsed if 0.0 < elapsed < total else 0.0
+        wanted = min(elapsed, total - 1.0) if elapsed > 0.0 and total > 1 else 0.0
     candidates: list[tuple[str, float, str]] = []
     if wanted:
         # The finest cut first, then a cheaper one, before giving up

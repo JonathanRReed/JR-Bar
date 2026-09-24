@@ -13,7 +13,7 @@ crossfades they are); the travel time between neighbouring LEDs is found by
 matching each LED against the next one shifted in time; and the Dot's two
 LEDs are what the strip's end LED showed one and two steps of travel ago
 (or will show, when the light runs the other way). That is spelled as a
-loop of colour-list keyframes with linear crossfades -- at most twelve,
+loop of colour-list keyframes with linear crossfades -- at most sixteen,
 placed where the colour turns -- whose lap is the strip's lap exactly, so
 it takes the same rotation and retiming as any linked Dot program.
 """
@@ -42,9 +42,9 @@ from .animation import (
 )
 from .linked_sync import RGB, LockedDot, curve_weight, line_curves, resting_state
 
-#: The Dot program's keyframe budget: 12 lines of ``#RRGGBB #RRGGBB Tms
-#: linear`` is about 330 bytes, leaving room for brightness and repeat.
-MAX_KEYFRAMES: Final = 12
+#: The Dot program's keyframe budget: 16 lines of ``#RRGGBB #RRGGBB Tms
+#: linear`` is about 450 bytes, leaving room for brightness and repeat.
+MAX_KEYFRAMES: Final = 16
 #: How finely the strip is sampled to find travel and place keyframes.
 _SAMPLE_MS: Final = 10.0
 #: Two neighbouring LEDs whose shifted timelines differ by more than this
