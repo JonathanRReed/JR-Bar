@@ -484,6 +484,12 @@ def _usage_row(message_id: str, timestamp: str, tokens: int = 1) -> dict:
     }
 
 
+# When the windowed fixtures' rows were written. A scan with a window never
+# reads a file last written before the window's floor, so their mtime
+# follows their rows.
+_ROWS_WRITTEN = datetime(2026, 8, 12, 14, 0, tzinfo=timezone.utc).timestamp()
+
+
 def _write_usage_file(root: Path, name: str, rows: list[dict], *, mtime: float) -> Path:
     path = root / f"{name}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -572,7 +578,7 @@ def test_usage_cache_rotation_is_bounded_without_changing_current_totals__and_2_
                 _usage_row("old", "2026-08-12T11:00:00Z", tokens=100),
                 _usage_row("new", "2026-08-12T13:00:00Z", tokens=3),
             ],
-            mtime=100.0,
+            mtime=_ROWS_WRITTEN,
         )
         since = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc).timestamp()
 
@@ -599,7 +605,7 @@ def test_pre_window_duplicate_does_not_suppress_in_window_usage__and_2_more() ->
                 _usage_row("same", "2026-08-12T11:00:00Z", tokens=100),
                 _usage_row("same", "2026-08-12T13:00:00Z", tokens=7),
             ],
-            mtime=100.0,
+            mtime=_ROWS_WRITTEN,
         )
         since = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc).timestamp()
 
@@ -618,8 +624,8 @@ def test_pre_window_duplicate_does_not_suppress_in_window_usage__and_2_more() ->
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         row = _usage_row("same", "2026-08-12T13:00:00Z", tokens=7)
-        _write_usage_file(root, "a", [row], mtime=100.0)
-        _write_usage_file(root, "b", [row], mtime=101.0)
+        _write_usage_file(root, "a", [row], mtime=_ROWS_WRITTEN)
+        _write_usage_file(root, "b", [row], mtime=_ROWS_WRITTEN + 1)
         since = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc).timestamp()
 
         totals = scan_usage(root, since_epoch=since)

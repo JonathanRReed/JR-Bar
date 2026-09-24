@@ -2144,6 +2144,20 @@ def _scan_inventory_usage_with_index(
                 )
                 continue
 
+            if candidate.info.st_mtime < retention_epoch:
+                # Last written before the floor, so nothing in it can reach
+                # the window: remember it as empty from that floor on
+                # without reading it. The headroom absorbs clock skew
+                # between the file's mtime and its records' timestamps.
+                # eof_newline is unknown, so growth means a full reparse,
+                # and a wider window reads it.
+                file_floors[key] = retention_epoch
+                scanned_files[key] = (
+                    candidate.info, source.provider_id, source.root_key,
+                    0, [], (), False, candidate.info.st_size,
+                )
+                continue
+
             # Incremental tail: the file GREW in place (same device and
             # inode, cached parse ended on a newline). Read only the
             # appended bytes instead of re-parsing a 10MB live

@@ -395,6 +395,45 @@ def test_warm_index_validates_metadata_without_opening_unchanged_transcripts(
     assert transcript_opens == [], "metadata-only cache hits must not reopen source files"
 
 
+def test_a_file_last_written_before_the_window_is_remembered_without_a_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Over half of a 30-day Codex scan was rollouts nobody had touched in
+    months, each read in full to find nothing in the window."""
+    now = time.time()
+    root = tmp_path / "projects"
+    old = _write_transcript(root, "old.jsonl", [_claude_line("s-old", "ancient", now - 60 * DAY)])
+    os.utime(old, (now - 60 * DAY, now - 60 * DAY))
+    # Inside the headroom: its clock ran ahead of the file's mtime, and its
+    # record lands in the window, so it is still read.
+    skewed = _write_transcript(root, "skewed.jsonl", [_claude_line("s-skew", "skewed", now - 29 * DAY)])
+    os.utime(skewed, (now - 32 * DAY, now - 32 * DAY))
+    fresh = _write_transcript(root, "fresh.jsonl", [_claude_line("s-new", "fresh", now - DAY)])
+    cache = tmp_path / "usage-scan-cache.json"
+    reads: list[Path] = []
+    original = usage_stats._read_verified_prefix
+
+    def observed(path, info, resume_offset=0):
+        reads.append(path)
+        return original(path, info, resume_offset)
+
+    monkeypatch.setattr(usage_stats, "_read_verified_prefix", observed)
+    cold = _scan(root, cache, since_epoch=now - 30 * DAY)
+    assert sorted(reads) == sorted([skewed, fresh])
+    assert len(cold.records) == 2
+
+    reads.clear()
+    warm = _scan(root, cache, since_epoch=now - 30 * DAY)
+    assert reads == []
+    assert warm.records == cold.records
+    assert warm.source_coverage["claude"].cache_hits == 3
+
+    # A wider window reaches back past the floor it was remembered from.
+    wide = _scan(root, cache, since_epoch=now - 90 * DAY)
+    assert reads == [old]
+    assert len(wide.records) == 3
+
+
 def test_an_index_full_of_stale_rows_saves_the_scan_and_the_next_scan_hits(tmp_path: Path) -> None:
     """A device-number change left 5,419 stale rows in the live Codex index;
     pruning them wedged it, so every scan after re-read 14.7 GB."""
