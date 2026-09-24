@@ -1495,9 +1495,13 @@ def open_live_session(
     if action is None:
         # An explicit choice elsewhere wins: a provider profile's open action,
         # then Settings > Agents > Clicks open. "Automatic" and "Terminal"
-        # both mean the session's own window when it has one.
+        # both mean the session's own window when it has one, and so does
+        # "Its app" for a session a terminal hosts: that choice is for the
+        # sessions the app runs, which _live_host leaves to the ladder. A
+        # saved "app" once sent every live Claude CLI in Ghostty to
+        # Claude.app instead of its own pane.
         configured = _configured_open_action(controller, status, on_main)
-        if configured is not None and configured not in RAISE_ACTIONS:
+        if configured is not None and configured not in RAISE_ACTIONS and configured != "app":
             return None
     live = _live_host(controller, status, process_table=process_table, on_main=on_main)
     if live is None:

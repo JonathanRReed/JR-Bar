@@ -687,11 +687,21 @@ def test_open_session_raises_a_live_session_instead_of_resuming_it__and_4_more(t
     controller, status = _live(pid=None)
     assert open_(controller, status, {}, FakeRunner()) is None
 
-    # --- scenario: an explicit app or VS Code choice keeps its own path
+    # --- scenario: an explicit app or VS Code choice keeps its own path; a saved "Its app" raises a terminal-hosted session
     controller, status = _live()
     assert open_(controller, status, {"action": "vscode"}, FakeRunner()) is None
-    controller, status = _live(action="app")
+    assert open_(controller, status, {"action": "app"}, FakeRunner()) is None
+    controller, status = _live(action="vscode")
     assert open_(controller, status, {}, FakeRunner()) is None
+    controller, status = _live(action="app")
+    assert open_(controller, status, {}, FakeRunner(ghostty_terminals="T1\t/Users/me/repo\tx\n"))["raised"] == "terminal"
+    app_hosted = _table(_entry(500, 400, "/bin/codex"), _entry(400, 1, "/Applications/Codex.app/Contents/MacOS/Codex"))
+    assert (
+        open_live_session(
+            controller, status, {}, runner=FakeRunner(), recorder=recorder, process_table=lambda: app_hosted
+        )
+        is None
+    )
     controller, status = _live(action="terminal")
     assert open_(controller, status, {}, FakeRunner(ghostty_terminals="T1\t/Users/me/repo\tx\n"))["raised"] == "terminal"
 
