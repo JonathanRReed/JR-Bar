@@ -72,11 +72,13 @@ struct AquariumView: View {
         }
     }
 
-    /// The shop decor's tone for this moment (`TankPaint.Tone`).
+    /// The shop decor's tone for this moment (`TankPaint.Tone`): none
+    /// by day in the bright themes — so the 30 fps pass converts no
+    /// colours then — deepening with the night and in the dark themes.
     func decorTone() -> TankPaint.Tone {
         let night = nightFactor(t: Date().timeIntervalSince1970)
-        let wash = max(isDarkTheme ? 0.40 : 0.06, night * 0.34)
-        return TankPaint.Tone(wash: wash, toward: floorNS)
+        let wash = max(isDarkTheme ? 0.40 : 0, night * 0.34)
+        return TankPaint.Tone(wash: wash < 0.02 ? 0 : wash, toward: floorNS)
     }
 
     init(toy: AquariumToy, ambient: Bool = false) {
