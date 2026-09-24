@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// How a provider looks everywhere in the app: its name, the accent the
@@ -94,17 +95,5 @@ extension SessionActivity {
     var wordColor: Color {
         if wordIsLoud { return tint }
         return self == .ended ? Color.secondary.opacity(0.65) : .secondary
-    }
-}
-
-extension NSColor {
-    convenience init?(hex: String) {
-        var text = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.hasPrefix("#") { text.removeFirst() }
-        guard text.count == 6, let value = UInt32(text, radix: 16) else { return nil }
-        self.init(srgbRed: CGFloat((value >> 16) & 0xFF) / 255.0,
-                  green: CGFloat((value >> 8) & 0xFF) / 255.0,
-                  blue: CGFloat(value & 0xFF) / 255.0,
-                  alpha: 1)
     }
 }
