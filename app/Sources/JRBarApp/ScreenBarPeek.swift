@@ -175,7 +175,7 @@ final class ScreenBarPeekModel {
     @ObservationIgnored var onOpen: @MainActor (String) -> Void = { _ in }
     /// A nudge's answer was clicked — the only way one is ever answered.
     @ObservationIgnored var onChoose: @MainActor (MenuBarEarChoice, String) -> Void = { _, _ in }
-    /// The keep-awake hold the ear's cup or moon stands for — its words
+    /// The keep-awake hold the ear's cup or laptop stands for — its words
     /// at the peek's foot, since the ear itself never spells them.
     var awake: ScreenBarEarMarks.Awake?
 

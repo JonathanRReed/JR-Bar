@@ -44,7 +44,7 @@ struct ScreenBarWingSlot: Equatable {
     var sensors: NotchSensorState?
     var tone: Tone = .neutral
     /// A second, smaller mark at the ear's outer end — the keep-awake
-    /// cup or the closed-lid moon riding beside whatever the ear shows,
+    /// cup or the closed-lid laptop riding beside whatever the ear shows,
     /// so a hold that lasts all afternoon never takes the meter's place.
     /// nil draws none.
     var accessory: ScreenBarWingAccessory?
@@ -273,9 +273,10 @@ struct ScreenBarEarMarks: Equatable {
     }
 
     /// The daemon's hold on sleep, as the right ear shows it: the cup
-    /// while the person's own lease holds, the moon while the closed-lid
-    /// hold runs; the words for the peek and VoiceOver ("Held awake
-    /// until 14:30"). Amber when heat or the battery floor made it yield.
+    /// while the person's own lease holds, the laptop while the
+    /// closed-lid hold keeps a shut lid running; the words for the peek
+    /// and VoiceOver ("Held awake until 14:30"). Amber when heat or the
+    /// battery floor made it yield.
     struct Awake: Equatable {
         var symbol: String
         var text: String
@@ -288,22 +289,22 @@ struct ScreenBarEarMarks: Equatable {
 
     /// The lease's cup — Amphetamine's mark, the notch chip's glyph.
     static let leaseSymbol = "cup.and.saucer.fill"
-    /// The closed-lid hold's moon — the stars keep it apart from the
-    /// quiet's plain moon on the other ear.
-    static let lidSymbol = "moon.stars.fill"
+    /// The closed-lid hold's mark — the laptop itself, since the moon
+    /// on the other ear means quiet and only quiet.
+    static let lidSymbol = "laptopcomputer"
 
     /// The mark for `state.power`, or nil while neither hold runs. The
     /// agents' own automatic hold is not shown: it comes and goes with
     /// every run, and the band already says the agents are working. The
-    /// closed-lid hold outranks a lease — it is the one that keeps a
-    /// shut laptop running. A lease's end reads as a clock time, so the
-    /// words only move when the lease does.
+    /// closed-lid hold shows only while the lid really is shut, and then
+    /// outranks a lease — it is the one keeping a shut laptop running.
+    /// With the lid open it is only armed, which is not news: the ear
+    /// shows the lease's cup, or nothing. A lease's end reads as a clock
+    /// time, so the words only move when the lease does.
     static func awake(power: CorePower?, calendar: Calendar = .current) -> Awake? {
         guard let power else { return nil }
-        if let lid = power.closedLid, lid.holding == true {
-            return Awake(symbol: lidSymbol,
-                         text: lid.lidClosed == true ? "Running with the lid closed"
-                             : "Keeps running if the lid closes")
+        if let lid = power.closedLid, lid.holding == true, lid.lidClosed == true {
+            return Awake(symbol: lidSymbol, text: "Running with the lid closed")
         }
         guard let hold = power.hold, hold.isManual, let lease = hold.lease else { return nil }
         if let yielded = hold.suspended {

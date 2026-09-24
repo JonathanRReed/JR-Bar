@@ -4,7 +4,8 @@ import Testing
 @testable import JRBarApp
 
 /// The right ear's keep-awake mark: the cup while the person's own
-/// lease holds, the moon while the closed-lid hold runs — marks only,
+/// lease holds, the laptop while the closed-lid hold keeps a shut lid
+/// running — marks only,
 /// riding beside whatever the ear shows; the words stay in VoiceOver
 /// and the peek.
 @Suite("Screen Bar keep-awake mark")
@@ -62,15 +63,25 @@ struct ScreenBarAwakeMarkTests {
                 == "Keep-awake paused — the battery is low")
     }
 
-    @Test func theClosedLidHoldIsTheMoonAndOutranksALease() throws {
+    @Test func theClosedLidHoldIsTheLaptopOnlyWhileTheLidIsShut() throws {
         var power = Self.lease("indefinite")
         power.closedLid = CoreClosedLid(policy: "agents", holding: true, lidClosed: true)
         let shut = try #require(ScreenBarEarMarks.awake(power: power))
-        #expect(shut.symbol == ScreenBarEarMarks.lidSymbol)
-        #expect(shut.text == "Running with the lid closed")
+        #expect(shut.symbol == "laptopcomputer")
+        #expect(shut.text == "Running with the lid closed", "a shut lid outranks the lease")
+        // Open again, the hold is only armed: the lease's cup comes back.
         power.closedLid?.lidClosed = false
-        #expect(ScreenBarEarMarks.awake(power: power)?.text == "Keeps running if the lid closes")
-        #expect(ScreenBarEarMarks.lidSymbol != "moon.fill", "the quiet's moon on the other ear stays its own")
+        let open = try #require(ScreenBarEarMarks.awake(power: power))
+        #expect(open.symbol == ScreenBarEarMarks.leaseSymbol)
+        #expect(open.text == "Held awake until you turn it off")
+        // With no lease either, an armed lid hold draws nothing.
+        let armed = CorePower(closedLid: CoreClosedLid(policy: "agents", holding: true, lidClosed: false))
+        #expect(ScreenBarEarMarks.awake(power: armed) == nil)
+        let unknown = CorePower(closedLid: CoreClosedLid(policy: "agents", holding: true))
+        #expect(ScreenBarEarMarks.awake(power: unknown) == nil, "an unread lid is not a shut one")
+        // The moon means quiet and nothing else.
+        #expect(!ScreenBarEarMarks.lidSymbol.hasPrefix("moon"))
+        #expect(!ScreenBarEarMarks.leaseSymbol.hasPrefix("moon"))
     }
 
     @Test func theMarkRidesTheRightEarWithoutTakingIt() throws {
