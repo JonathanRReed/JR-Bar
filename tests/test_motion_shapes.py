@@ -317,3 +317,155 @@ def test_frontier_holds_its_fill_while_the_tip_breathes__and_1_more() -> None:
     positions = head_positions(frames)
     assert len(set(positions)) >= 6  # the crest actually crosses the strip
 
+
+
+def test_a_finish_can_land_or_ripple__and_ends_dark() -> None:
+    """The done celebration's two new looks play once, in the done colour,
+    and leave the strip dark -- a finish is a cue, never a held light."""
+    from jrbar import celebrations
+    from jrbar.animation import animation_duration_ms, loop_duration_ms, parse_animation
+    from jrbar.colors import ColorSettings, program_for_snapshot
+
+    for style in (celebrations.DONE_CELEBRATION_LAND, celebrations.DONE_CELEBRATION_RIPPLE):
+        for led_count in (8, 2):
+            program = celebrations.done_celebration_program(style, "#00FF66", led_count=led_count)
+            assert program is not None
+            animation = parse_animation(program, led_count=led_count)
+            assert loop_duration_ms(animation) is None
+            end = animation_duration_ms(animation)
+            try:
+                controller = SdLedWasmController(led_count)
+            except LedWasmUnavailableError as error:  # pragma: no cover
+                pytest.skip(str(error))
+            controller.reset(0)
+            assert controller.parse(program, 0).ok
+            last = controller.step_batch(end + 60, FRAME_MS, 1)[0]
+            assert all(pixel == (0, 0, 0) for pixel in last), (style, led_count, last)
+    assert celebrations.done_celebration_program("bloom", "#00FF66") is None
+
+    # The setting reaches the lights: a finish renders the chosen look.
+    from datetime import datetime, timezone
+
+    from jrbar.models import AgentMode, AgentStatus
+
+    done = (
+        AgentStatus(
+            provider="claude",
+            agent_id="a",
+            display_name="Claude",
+            mode=AgentMode.COMPLETED,
+            updated_at=datetime(2026, 9, 24, tzinfo=timezone.utc),
+            event_name="Stop",
+        ),
+    )
+    bloom = program_for_snapshot(done, led_count=8, colors=ColorSettings.defaults())[1]
+    landed = program_for_snapshot(
+        done, led_count=8, colors=ColorSettings.defaults().with_done_celebration_style("land")
+    )[1]
+    assert bloom != landed
+    assert landed.startswith("off 90ms cosine")
+    restored = ColorSettings.from_dict(
+        ColorSettings.defaults().with_done_celebration_style("ripple").to_dict()
+    )
+    assert restored.done_celebration_style == "ripple"
+    assert ColorSettings.from_dict({"done_celebration_style": "confetti"}).done_celebration_style == "bloom"
+
+
+def test_a_reversed_strip_mirrors_every_position__and_2_more() -> None:
+    # --- scenario: a_reversed_strip_mirrors_every_position
+    program = "\n".join(
+        [
+            "brightness 128",
+            "0:#FF0000 200ms cosine; 7:#00FF00 200ms pulse 100ms",
+            "#110000 #220000 #330000 300ms cosine",
+            "roll-right 2s linear",
+            "roll-left 1s",
+            "repeat",
+        ]
+    )
+    mirrored = shapes.oriented_program(program, led_count=8, direction="reversed").splitlines()
+    assert mirrored[0] == "brightness 128"
+    assert mirrored[1] == "7:#FF0000 200ms cosine; 0:#00FF00 200ms pulse 100ms"
+    assert mirrored[2].startswith("#000000 #000000 #000000 #000000 #000000 #330000 #220000 #110000")
+    assert mirrored[3].startswith("roll-left 2s")
+    assert mirrored[4].startswith("roll-right 1s")
+    assert shapes.oriented_program(program, led_count=8, direction="forward") == program
+    assert shapes.oriented_program("not a program", led_count=8, direction="reversed") == "not a program"
+    # Mirroring twice is the original light.
+    twice = shapes.oriented_program(
+        shapes.oriented_program(program, led_count=8, direction="reversed"),
+        led_count=8,
+        direction="reversed",
+    )
+    assert sample(twice, 8, frames=90, start_ms=500) == sample(
+        shapes.oriented_program(program, led_count=8, direction="forward"), 8, frames=90, start_ms=500
+    )
+
+    # --- scenario: a_comet_on_a_reversed_strip_runs_the_other_way
+    from jrbar.colors import ColorSettings, provider_motion_lines
+
+    settings = ColorSettings.defaults().with_agent_animation("claude", "comet")
+    body, _lead = provider_motion_lines("claude", COLOR, settings, led_count=8)
+    forward = "\n".join([*body, "repeat"])
+    reverse = shapes.oriented_program(forward, led_count=8, direction="reversed")
+
+    def travel(text):
+        heads = head_positions(sample(text, 8, frames=90, start_ms=1500))
+        steps = [b - a for a, b in pairwise(heads) if abs(b - a) == 1]
+        return sum(steps)
+
+    assert travel(forward) > 0 and travel(reverse) < 0
+
+    # --- scenario: a_device_draws_its_own_way_round_and_its_own_dot_travel
+    from datetime import datetime, timezone
+
+    from jrbar.colors import program_for_snapshot
+    from jrbar.models import AgentMode, AgentStatus
+
+    working = (
+        AgentStatus(
+            provider="claude",
+            agent_id="a",
+            display_name="Claude",
+            mode=AgentMode.WORKING,
+            updated_at=datetime(2026, 9, 24, tzinfo=timezone.utc),
+            event_name="PreToolUse",
+        ),
+    )
+    base = ColorSettings.defaults().with_agent_animation("claude", "comet")
+    pro = program_for_snapshot(working, led_count=8, colors=base)[1]
+    flipped = program_for_snapshot(
+        working, led_count=8, colors=base.for_device(led_direction="reversed")
+    )[1]
+    assert flipped == shapes.oriented_program(pro, led_count=8, direction="reversed")
+    wiping = program_for_snapshot(working, led_count=2, colors=base)[1]
+    fading = program_for_snapshot(
+        working, led_count=2, colors=base.for_device(dot_travel_style="crossfade")
+    )[1]
+    assert "roll" not in wiping and "1:" in wiping
+    assert "roll-right" in fading
+
+
+def test_device_direction_and_dot_travel_are_saved_per_device(tmp_path) -> None:
+    from jrbar.settings import AgentMonitorSettings, DeviceDisplaySetting, load_settings, save_settings
+
+    dot = DeviceDisplaySetting(
+        device_id="dot", name="Dot", path="/Volumes/PulseDot",
+        led_direction="reversed", dot_travel_style="crossfade",
+    )
+    target = tmp_path / "settings.json"
+    save_settings(AgentMonitorSettings(devices=(dot,)), target)
+    loaded = load_settings(target)
+    assert loaded.device_led_direction("dot") == "reversed"
+    assert loaded.device_dot_travel_style("dot") == "crossfade"
+    assert loaded.device_led_direction("unknown") == "forward"
+    assert loaded.device_dot_travel_style("unknown") == "wipe"
+    import json
+
+    raw = json.loads(target.read_text())
+    raw["devices"][0]["led_direction"] = "sideways"
+    raw["devices"][0]["dot_travel_style"] = 7
+    target.write_text(json.dumps(raw))
+    tolerant = load_settings(target)
+    assert tolerant.device_led_direction("dot") == "forward"
+    assert tolerant.device_dot_travel_style("dot") == "wipe"

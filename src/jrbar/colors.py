@@ -1263,6 +1263,10 @@ class ColorSettings:
     render_led_direction: str = "forward"
     render_dot_travel: str = "wipe"
     render_tool_family: str | None = None
+    # How a finish is celebrated when ``done_celebration_enabled`` is on:
+    # "bloom" (the shipped twinkle-then-bloom), "land" or "ripple"
+    # (``celebrations.DONE_CELEBRATION_STYLES``).
+    done_celebration_style: str = "bloom"
 
     @classmethod
     def defaults(cls) -> ColorSettings:
@@ -1509,6 +1513,11 @@ class ColorSettings:
     def with_done_celebration_enabled(self, enabled: bool) -> ColorSettings:
         return replace(self, done_celebration_enabled=bool(enabled))
 
+    def with_done_celebration_style(self, style: str) -> ColorSettings:
+        from .celebrations import normalize_done_celebration_style
+
+        return replace(self, done_celebration_style=normalize_done_celebration_style(style))
+
     def with_color_by_project(self, enabled: bool) -> ColorSettings:
         return replace(self, color_by_project=bool(enabled))
 
@@ -1534,6 +1543,7 @@ class ColorSettings:
                 )
             },
             "tint_by_tool": self.tint_by_tool,
+            "done_celebration_style": self.done_celebration_style,
         }
 
     @classmethod
@@ -1654,6 +1664,12 @@ class ColorSettings:
         raw_tint = data.get("tint_by_tool")
         tint_by_tool = bool(raw_tint) if isinstance(raw_tint, bool) else False
 
+        from .celebrations import normalize_done_celebration_style
+
+        done_celebration_style = normalize_done_celebration_style(
+            data.get("done_celebration_style")
+        )
+
         return cls(
             mode_colors=mode_colors,
             agent_colors=agent_colors,
@@ -1670,6 +1686,7 @@ class ColorSettings:
             color_by_project=color_by_project,
             provider_animation_parameters=provider_animation_parameters,
             tint_by_tool=tint_by_tool,
+            done_celebration_style=done_celebration_style,
         )
 
 
@@ -1830,6 +1847,42 @@ class ToolTintGate:
             self._shown = wanted
             self._changed_at = now
             return self._shown
+
+
+#: The one gate every surface asks, so the Pro, the Dot and the Screen Bar
+#: always agree on the family the head shows.
+TOOL_TINT_GATE = ToolTintGate()
+_TINT_WORKING_MODES = frozenset(
+    {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS}
+)
+
+
+def working_tool_name(statuses, provider: str | None) -> str | None:
+    """The tool the main ``provider`` session working right now is using."""
+    for status in statuses or ():
+        if (
+            status.provider == provider
+            and not getattr(status, "is_subagent", False)
+            and status.mode in _TINT_WORKING_MODES
+        ):
+            return status.tool_name
+    return None
+
+
+def with_tool_tint(
+    settings: ColorSettings,
+    statuses,
+    provider: str | None,
+    *,
+    now: float,
+    gate: ToolTintGate | None = None,
+) -> ColorSettings:
+    """``settings`` carrying the tool family the working head should show,
+    when the tool tint is on; unchanged when it is off."""
+    if not settings.tint_by_tool or not provider:
+        return settings
+    family = (gate or TOOL_TINT_GATE).family(working_tool_name(statuses, provider), now)
+    return settings.with_render_tool_family(family)
 
 
 # --- Urgency weighting -----------------------------------------------------
@@ -2169,6 +2222,27 @@ def _within_firmware_budget(program: str) -> bool:
     )
 
 
+def _display_state_program(settings: ColorSettings, state: LedDisplayState, **kwargs) -> str:
+    """``program_for_display_state`` with the celebration the person chose:
+    a finish plays Land or Ripple instead of the shipped bloom when
+    Settings says so; everything else is drawn exactly as before."""
+    if (
+        state is LedDisplayState.DONE
+        and kwargs.get("done_celebrate")
+        and settings.done_celebration_style != "bloom"
+    ):
+        from .celebrations import done_celebration_program
+
+        program = done_celebration_program(
+            settings.done_celebration_style,
+            kwargs.get("done_color", DONE_GREEN),
+            led_count=int(kwargs.get("led_count", 8)),
+        )
+        if program is not None:
+            return apply_brightness(program, kwargs.get("brightness", 255))
+    return program_for_display_state(state, **kwargs)
+
+
 def _single_agent_program(
     color: str,
     state: LedDisplayState,
@@ -2228,7 +2302,7 @@ def _single_agent_program(
     if style is not None:
         fade_kwargs = dict(fade_kwargs)
         fade_kwargs[_MODE_KEY_TO_STYLE_KWARG[_STATE_TO_MODE_KEY[state]]] = style
-    return program_for_display_state(
+    return _display_state_program(settings,
         state,
         led_count=led_count,
         brightness=brightness,
@@ -3333,7 +3407,7 @@ def program_for_snapshot(
 
     if not statuses:
         state = display_state_for_mode(fallback_mode)
-        program = program_for_display_state(
+        program = _display_state_program(settings,
             state,
             led_count=led_count,
             brightness=brightness,
@@ -3352,7 +3426,7 @@ def program_for_snapshot(
     if settings.blend_mode == BLEND_MODE_CLASSIC:
         aggregate_mode = max(statuses, key=lambda status: -status.priority).mode
         state = display_state_for_mode(aggregate_mode)
-        program = program_for_display_state(
+        program = _display_state_program(settings,
             state,
             led_count=led_count,
             brightness=brightness,
@@ -3538,7 +3612,7 @@ def program_for_projection(
     # never reached the strip.
     rows = tuple(projection.light_rows)
     if not rows:
-        return state, program_for_display_state(
+        return state, _display_state_program(settings,
             state,
             led_count=led_count,
             brightness=brightness,
@@ -3617,7 +3691,7 @@ def program_for_projection(
         if fleet_plan.mode == "shared":
             shared_lifecycle = fleet_plan.shared_semantic
             shared_state = state_by_lifecycle.get(shared_lifecycle, state)
-            program = program_for_display_state(
+            program = _display_state_program(settings,
                 shared_state,
                 led_count=led_count,
                 brightness=brightness,
@@ -3672,7 +3746,7 @@ def program_for_projection(
                     include_arrival=include_attention_arrival,
                 )
     if settings.blend_mode == BLEND_MODE_CLASSIC:
-        program = program_for_display_state(
+        program = _display_state_program(settings,
             state,
             led_count=led_count,
             brightness=brightness,
