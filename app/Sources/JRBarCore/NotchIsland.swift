@@ -1035,6 +1035,20 @@ public enum NotchHold {
         }
         return min(1, max(0, (until - now.timeIntervalSince1970) / span))
     }
+
+    /// When the ring redraws: every `step` seconds from `start`, one
+    /// last tick on the deadline itself so the ring goes the moment the
+    /// hold lapses, then nothing. A start at or past the deadline is a
+    /// single tick that draws no ring.
+    public static func ticks(from start: Date, until deadline: Date,
+                             every step: TimeInterval) -> UnfoldSequence<Date, Date?> {
+        let step = max(0.25, step)
+        return sequence(state: Optional(start)) { next -> Date? in
+            guard let date = next else { return nil }
+            next = date < deadline ? min(deadline, date.addingTimeInterval(step)) : nil
+            return date
+        }
+    }
 }
 
 /// A refused `answer_ask`, as one short line for the island: the same

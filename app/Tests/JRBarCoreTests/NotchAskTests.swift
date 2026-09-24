@@ -144,6 +144,27 @@ struct NotchAskTests {
         #expect(NotchHold.remaining(CoreAsk(session: "claude:s1"), now: now) == nil)
     }
 
+    @Test("the hold ring's clock stops on the deadline")
+    func holdRingTicks() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let deadline = Date(timeIntervalSince1970: 1_003.5)
+        let ticks = Array(NotchHold.ticks(from: start, until: deadline, every: 1))
+            .map(\.timeIntervalSince1970)
+        #expect(ticks == [1_000, 1_001, 1_002, 1_003, 1_003.5],
+                "a tick a second, then one on the deadline, then none")
+
+        let stepped = Array(NotchHold.ticks(from: start, until: deadline, every: 5))
+            .map(\.timeIntervalSince1970)
+        #expect(stepped == [1_000, 1_003.5], "Reduce Motion's step still lands on the deadline")
+
+        let lapsed = Array(NotchHold.ticks(from: deadline, until: start, every: 1))
+        #expect(lapsed == [deadline], "a lapsed hold is one tick that draws no ring")
+
+        let long = Array(NotchHold.ticks(from: start, until: start.addingTimeInterval(45), every: 1))
+        #expect(long.count == 46)
+        #expect(long.last == start.addingTimeInterval(45))
+    }
+
     @Test("a refusal is one short line naming why")
     func refusalLines() {
         #expect(NotchAskRefusal.line(for: CoreReplyError(code: "stale_request"))

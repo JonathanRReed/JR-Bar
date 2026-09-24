@@ -1959,15 +1959,17 @@ struct NotchVerbButton: View {
 /// empties while the agent's hook waits (`NotchHold`), gone the moment
 /// the hold lapses. A mark, never a count. It sweeps on a once-a-second
 /// tick; under Reduce Motion it steps every five seconds instead, and
-/// it ticks only while a hold with a deadline is on screen.
+/// it ticks only while a hold with a deadline is on screen: the clock
+/// stops on the deadline rather than waiting for the daemon to drop it.
 struct NotchHoldRing: View {
     let ask: CoreAsk
     let style: NotchCardStyle
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if ask.isHeldForDecision, ask.decision?.holdUntil != nil {
-            TimelineView(.periodic(from: .now, by: reduceMotion ? 5 : 1)) { context in
+        if ask.isHeldForDecision, let until = ask.decision?.holdUntil {
+            TimelineView(NotchHoldSchedule(until: Date(timeIntervalSince1970: until),
+                                           step: reduceMotion ? 5 : 1)) { context in
                 if let left = NotchHold.remaining(ask, now: context.date) {
                     ZStack {
                         Circle()
@@ -1986,6 +1988,17 @@ struct NotchHoldRing: View {
                 }
             }
         }
+    }
+}
+
+/// The hold ring's clock (`NotchHold.ticks`): it runs to the deadline
+/// and stops there.
+struct NotchHoldSchedule: TimelineSchedule {
+    let until: Date
+    let step: TimeInterval
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> UnfoldSequence<Date, Date?> {
+        NotchHold.ticks(from: startDate, until: until, every: step)
     }
 }
 
