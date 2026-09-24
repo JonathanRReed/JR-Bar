@@ -771,8 +771,9 @@ struct BuddyFigure: View {
                 .frame(width: 8 * (1 - air * 0.35), height: 1.5)
                 .offset(y: 7)
             ZStack {
+                if mood != .asleep, wearsBehind, let wearing { outfit(wearing) }
                 characterBody
-                if mood == .asleep { cap } else if let wearing { outfit(wearing) }
+                if mood == .asleep { cap } else if !wearsBehind, let wearing { outfit(wearing) }
                 if pose.blush > 0.01 { cheeks }
             }
             .scaleEffect(x: stageScale.width, y: stageScale.height, anchor: UnitPoint(x: 0.5, y: 0.9))
@@ -916,6 +917,11 @@ struct BuddyFigure: View {
         .offset(y: -6.7)
     }
 
+    /// The crab's eyes stand on stalks above its crown, so what it wears
+    /// sits behind them: the stalks and eyes stay in front of the hat
+    /// rather than vanishing under it.
+    private var wearsBehind: Bool { character == .crab }
+
     /// Where a worn piece sits on each body: the crown's centre, the line
     /// a hat's cuff rests on, and how wide the head is to the hat. The
     /// bow and the flower pin themselves to either side of the same seat.
@@ -928,7 +934,7 @@ struct BuddyFigure: View {
         case .owl: return (0, -3.2, 1)
         case .slime: return (0, -3.6, 0.82)
         case .axolotl: return (0, -2.6, 1)
-        case .crab: return (0, -1.0, 0.78)
+        case .crab: return (0, -1.6, 0.78)
         case .mushroom: return (0, -3.6, 1.04)
         case .ufo: return (0, -3.2, 0.8)
         }

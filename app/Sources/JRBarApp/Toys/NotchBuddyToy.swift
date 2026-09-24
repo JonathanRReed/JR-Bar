@@ -1148,13 +1148,36 @@ private struct BuddyControlsView: View {
         TimelineView(.animation(minimumInterval: BuddyBurstSchedule.rosterInterval,
                                 paused: reduceMotion
                                     || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
-            HStack(spacing: 4) {
-                ForEach(BuddyCharacter.allCases, id: \.self) { c in
-                    cell(c, at: context.date)
+            // One row where the card is wide enough; two even rows where
+            // it is not, so no tile ever runs off the card's edge.
+            ViewThatFits(in: .horizontal) {
+                rosterRow(BuddyCharacter.allCases, at: context.date)
+                VStack(alignment: .leading, spacing: 8) {
+                    rosterRow(Array(BuddyCharacter.allCases.prefix(Self.rosterHalf)), at: context.date)
+                    rosterRow(Array(BuddyCharacter.allCases.dropFirst(Self.rosterHalf)), at: context.date)
                 }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    /// Where the roster breaks when it takes two rows.
+    private static let rosterHalf = (BuddyCharacter.allCases.count + 1) / 2
+
+    /// Each character's column: its tile and the air to the next, wide
+    /// enough for "Mushroom" at full size.
+    private static let rosterCell: CGFloat = 48
+    private static let rosterTile: CGFloat = 40
+    /// The first tile's edge lines up with the labels above it.
+    private static let rosterInset: CGFloat = (rosterCell - rosterTile) / 2
+
+    private func rosterRow(_ characters: [BuddyCharacter], at now: Date) -> some View {
+        HStack(spacing: 0) {
+            ForEach(characters, id: \.self) { c in
+                cell(c, at: now)
+            }
+        }
+        .padding(.horizontal, -Self.rosterInset)
     }
 
     /// One character on a tile of its own, half again the docked size,
@@ -1170,22 +1193,22 @@ private struct BuddyControlsView: View {
                         trick: nil, treatAge: nil, crumbAge: nil)
                 .frame(width: 18, height: 18)
                 .scaleEffect(1.5)
-                .frame(width: 40, height: 38)
+                .frame(width: Self.rosterTile, height: 38)
                 .background(tile.fill(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05)))
                 .overlay(tile.strokeBorder(selected ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.06),
                                            lineWidth: selected ? 1.5 : 0.5))
             Text(c.displayName)
-                .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                .font(.system(size: 9.5, weight: selected ? .semibold : .regular))
                 .foregroundStyle(selected ? .primary : .secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.85)
         }
-            .frame(width: 44)
-            .contentShape(Rectangle())
-            .onTapGesture { toy.characterBinding.wrappedValue = c }
-            .help("\(c.displayName) — \(c.blurb)")
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(c.displayName)\(selected ? ", selected" : "")")
+        .frame(width: Self.rosterCell)
+        .contentShape(Rectangle())
+        .onTapGesture { toy.characterBinding.wrappedValue = c }
+        .help("\(c.displayName) — \(c.blurb)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(c.displayName)\(selected ? ", selected" : "")")
     }
 }
 
