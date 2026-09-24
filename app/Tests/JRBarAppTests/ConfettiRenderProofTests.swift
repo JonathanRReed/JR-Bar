@@ -11,8 +11,9 @@ import JRBarCore
 /// MacBook Pro geometry (1512 × 982, the notch 663.5–848.5 × 32), a
 /// notchless 1920 × 1080 display and a 3440 × 1440 ultrawide. Every
 /// burst is seeded, so a frame is the same frame every run. Each PNG's
-/// line prints how much of the burst the notch hides, how wide it has
-/// spread and how many pieces are on the far layer — numbers, not
+/// line prints how much of the burst the notch hides, how wide and how
+/// tall it has spread (the middle 90 % of the pieces on screen) and how
+/// many pieces are on the far layer — numbers, not
 /// goldens. Written to `JRBAR_RENDER_PROOF_DIR` (default
 /// `/tmp/confetti-proof`) only when `JRBAR_RENDER_PROOF=1`.
 @Suite("Confetti render proof")
@@ -207,19 +208,25 @@ struct ConfettiRenderProofTests {
     static func metrics(_ burst: ConfettiBurst, at time: Double, name: String) -> String {
         var launched = 0, hidden = 0, far = 0
         var xs: [Double] = []
+        var ys: [Double] = []
         for index in burst.pieces.indices {
             guard let frame = burst.frame(of: index, at: time) else { continue }
             launched += 1
             xs.append(frame.x)
+            if frame.opacity > 0.05, frame.y >= 0, frame.y <= burst.stage.height { ys.append(frame.y) }
             if burst.pieces[index].far { far += 1 }
             if let notch = burst.stage.notch, notch.contains(CGPoint(x: frame.x, y: frame.y)) { hidden += 1 }
         }
         xs.sort()
         let spread = xs.count < 2 ? 0
             : (xs[Int(Double(xs.count - 1) * 0.95)] - xs[Int(Double(xs.count - 1) * 0.05)]) / burst.stage.width
+        ys.sort()
+        let depth = ys.count < 2 ? 0
+            : (ys[Int(Double(ys.count - 1) * 0.95)] - ys[Int(Double(ys.count - 1) * 0.05)]) / burst.stage.height
         let hiddenShare = launched == 0 ? 0 : Double(hidden) / Double(launched)
-        return String(format: "confetti proof %@: %d pieces, %.0f%% in the notch, spread %.0f%% of the width, %d far",
-                      name, launched, hiddenShare * 100, spread * 100, far)
+        return String(format: "confetti proof %@: %d pieces, %.0f%% in the notch, spread %.0f%% of the width, "
+                      + "%.0f%% of the height (%d on screen), %d far",
+                      name, launched, hiddenShare * 100, spread * 100, depth * 100, ys.count, far)
     }
 }
 

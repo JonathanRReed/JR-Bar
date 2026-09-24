@@ -147,6 +147,27 @@ struct ConfettiEmitterTests {
         }
     }
 
+    /// The end of a Fall trails off: the slow pieces hurried to finish in
+    /// time each have their own deadline, so they don't all reach the
+    /// bottom in the same moment, bunched into one line. With one shared
+    /// deadline, 27-40 % of the burst left inside one tenth of a second;
+    /// now no tenth of a second takes a fifth of it.
+    @Test("the end of Fall trails off", arguments: [982.0, 1117])
+    func fallTrailsOff(_ height: Double) {
+        for seed in 0..<8 {
+            let burst = ConfettiBurst(stage: Self.laptop(height: height), recipe: .init(landing: .fall),
+                                      seed: UInt64(seed))
+            let gone = burst.pieces.map { $0.launch.delay + $0.end }.sorted()
+            var busiest = 0
+            for (index, time) in gone.enumerated() {
+                let within = gone[index...].prefix { $0 < time + 0.1 }.count
+                busiest = max(busiest, within)
+            }
+            #expect(Double(busiest) <= Double(gone.count) / 5,
+                    "seed \(seed): \(busiest) of \(gone.count) pieces leave inside one tenth of a second")
+        }
+    }
+
     // MARK: Rest
 
     /// Rest lands every piece on something real: a window's top edge,

@@ -351,18 +351,24 @@ struct ConfettiBurst {
     static let nudgeCap = 1.3
     /// A late piece's fade in the air, at the end of the burst.
     static let airFade = 0.5
+    /// How far ahead of the landing's deadline (seconds, at a hang time
+    /// of 1) a piece's own deadline may fall.
+    static let trail = 0.7
 
     /// Works out a piece's end: in Rest its ledge, touchdown and fade; in
     /// Fall its trip off the bottom; in Fade its trip into the band. A
-    /// piece too slow to finish by the landing's deadline is nudged
-    /// faster — only as much as it needs, so most keep their own flutter;
-    /// in Fall and Fade one that would need more than `nudgeCap` fades
-    /// out where it is as the burst ends, so a curtain never bunches up
-    /// into one line catching up with itself.
+    /// piece too slow to finish by its deadline is nudged faster — only
+    /// as much as it needs, so most keep their own flutter; in Fall and
+    /// Fade one that would need more than `nudgeCap` fades out where it
+    /// is instead. Each piece has its own deadline, up to `trail` ahead
+    /// of the landing's, so the last ones trail off one by one instead
+    /// of reaching the bottom together in a line.
     private static func plan(_ piece: inout Piece, recipe: Recipe, stage: ConfettiStage, ledgeOrder: [Int]) {
         let hang = min(1.5, max(0.7, recipe.hang))
         let launch = piece.launch
-        let by = deadline(recipe.landing) * hang - launch.delay
+        var own = ownRandom(piece, salt: 0xDEAD_11E5)
+        let early = Double.random(in: 0...trail, using: &own)
+        let by = (deadline(recipe.landing) - early) * hang - launch.delay
         switch recipe.landing {
         case .fall, .fade:
             // Fade dissolves on the way down only: from the band's top, or
@@ -381,7 +387,7 @@ struct ConfettiBurst {
         case .rest:
             let spot = restingPlace(of: piece, stage: stage, ledgeOrder: ledgeOrder, by: by)
             piece.vt = spot.vt
-            var lieRandom = rngForLie(piece)
+            var lieRandom = ownRandom(piece, salt: 0)
             let flat = Double.random(in: 0.3...0.5, using: &lieRandom)
             piece.landing = Landing(x: spot.x, y: spot.y, t: spot.t, window: spot.window,
                                     lieDepth: flat, front: piece.phase < .pi)
@@ -461,10 +467,11 @@ struct ConfettiBurst {
         }
     }
 
-    /// A small per-piece random source for the lie, from its own phase,
-    /// so the lie never shifts the burst's main sequence.
-    private static func rngForLie(_ piece: Piece) -> ConfettiRandom {
-        ConfettiRandom(seed: UInt64(bitPattern: Int64(piece.phase * 1_000_000)))
+    /// A small random source of the piece's own, from its phase — one
+    /// `salt` for its deadline, another for its lie — so neither shifts
+    /// the burst's main sequence.
+    private static func ownRandom(_ piece: Piece, salt: UInt64) -> ConfettiRandom {
+        ConfettiRandom(seed: UInt64(bitPattern: Int64(piece.phase * 1_000_000)) ^ salt)
     }
 
     // MARK: A moment
