@@ -53,6 +53,9 @@ struct UsageSourceNotesTests {
         #expect(UsageSourceNotes.sourceCaption(direct) == nil)
         #expect(UsageSourceNotes.instanceBadge("cliproxy:3f2a9c1b0d4e") == "CLIProxyAPI")
         #expect(UsageSourceNotes.instanceBadge("work") == "work")
+        #expect(UsageSourceNotes.rowTag("cliproxy:3f2a9c1b0d4e") == "CLIProxyAPI")
+        #expect(UsageSourceNotes.rowTag("default") == nil)
+        #expect(UsageSourceNotes.rowTag(nil) == nil)
     }
 
     @Test func theWindowSourceDecodesAndIsOptional() throws {

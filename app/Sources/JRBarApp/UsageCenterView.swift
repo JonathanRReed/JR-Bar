@@ -762,11 +762,20 @@ struct CombinedUsageCard: View {
         let leading = UsageCenterStore.primaryWindow(of: provider)
         return HStack(spacing: 10) {
             ProviderTile(style: style, size: 20)
-            Text(style.name)
-                .font(.callout.weight(.medium))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: 104, alignment: .leading)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(style.name)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let tag = UsageSourceNotes.rowTag(provider.instance) {
+                    Text(tag)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .frame(width: 104, alignment: .leading)
             if provider.isSignedOut {
                 Text("not signed in")
                     .font(.caption)

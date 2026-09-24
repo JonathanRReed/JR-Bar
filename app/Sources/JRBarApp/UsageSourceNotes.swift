@@ -63,6 +63,14 @@ enum UsageSourceNotes {
         isHubInstance(instance) ? "CLIProxyAPI" : instance
     }
 
+    /// The small line under a provider's name in "All providers", so two
+    /// Claude rows say which account each one is. Nil for the Mac's own
+    /// default account.
+    static func rowTag(_ instance: String?) -> String? {
+        guard let instance, !instance.isEmpty, instance != "default" else { return nil }
+        return instanceBadge(instance)
+    }
+
     /// "1 reset credit" / "3 reset credits": unused limit resets the
     /// provider reports, shown as a count. The app never redeems one.
     static func resetCreditsText(_ count: Int?) -> String? {

@@ -402,7 +402,7 @@ struct WindowsRenderProofTests {
     /// through the CLIProxyAPI hub.
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func usageCenterSources() async throws {
-        let scenarios: [(name: String, height: Double)] = [("opencode", 1000), ("statusline", 1000), ("hub", 1400)]
+        let scenarios: [(name: String, height: Double)] = [("opencode", 1000), ("statusline", 1000), ("hub", 1560)]
         for scenario in scenarios {
             let (core, process) = try await Self.mock(startAt: 6, extra: ["--usage-scenario", scenario.name])
             defer { process.terminate(); core.stop() }
