@@ -355,9 +355,10 @@ stacked boulders) draws behind everything. Every
 piece sits on the dune line under a soft pooled shadow. A jellyfish
 pulses through the mid-water every ~40 s (and stays on as the
 resident drifter while the tank is empty, under a small quiet caption
-low on the left) and a snail inches along the sand — it keeps its
-rounds while the window is closed, so dropped pearls it has picked up
-land in the "while you were away" card on reopen. Behind it all: a
+low on the left) and a snail works the sand — it fetches pearls while
+you watch and keeps its rounds while the window is closed, so dropped
+pearls it has picked up land in the "while you were away" card on
+reopen. Behind it all: a
 multi-stop gradient from a bright green surface band to a deep
 blue-green floor, five soft god rays breathing a couple of degrees
 and pooling as wandering caustic light on the dune crest, a slow
@@ -394,15 +395,114 @@ tick into a `.drawingGroup` bitmap, an additive `Canvas` carries the
 rays, caustic pools & sheen, and a `TimelineView(.animation)` capped
 at 30 fps + `Canvas` draws only what moves — fish labels resolve once
 and are cached. It reads `core.state.sessions` (mains AND workers) and
-stops its timelines while occluded. Controls: On/Off (opens/closes the
-window), Show labels, Density (how much plankton/bubbles/decor), Day &
-night (follow the clock or the four-minute cycle), "Fill
-screen" button (borderless full-screen, Esc leaves). Reduce Motion:
+stops its timelines while occluded. Controls: see "The card" below.
+Reduce Motion:
 rays, shimmer & kelp hold still, tails don't wag, the jellyfish &
 snail freeze, the manta and the visitors skip their pass (a queued
 visitor is still marked seen and its caption tells the story), tapped
 fish do no tricks, and the sips, spirals, rings & bursts hold at a
 still pose — poses stay.
+
+### The card
+
+`AquariumControlsView` (`Toys/Aquarium/AquariumControls.swift`). The main
+body is five rows:
+
+- **In the tank** — a still swatch of the water and floor, and a fact
+  line (fish, fry, pearls on the sand).
+- **Look** — a menu of Classic plus every owned water, floor and back
+  wall, each a checked pick (`useClassic` always works, so buying a
+  theme is never a one-way door), and **Open the shop…**, which brings
+  the tank up with its shop showing (`ToysStore.wantsAquariumShop`).
+- **Labels** — Always (a chip under each main fish), On hover (only the
+  name tag under the pointer — what "Show labels" off always really
+  did), or Never (the selected fish still names itself).
+- **Day & night** — the clock, the sun, **Follow Light & Dark** (eases
+  over two seconds when macOS flips), the four-minute cycle, **Always
+  day** or **Always night**.
+- **Sound** — off by default. A plop when food lands, a gulp when a fish
+  eats, a clink for a pearl or coin, a chime for a purchase or a reward
+  card, a whoosh for a visitor (`AquariumSound`, synthesized, no asset).
+  Only for a tap or a window event, only in the open, uncovered window,
+  never on the wallpaper or the screensaver, never while the toys are
+  hushed (Focus, quiet hours, a call), at the Sounds page's volume.
+
+A folded **Fine-tune** holds the numbers: **Fish at once** (All, 6, 10,
+16, 24 — past it, residents rest first, least raised first, then quiet
+sessions, then working ones; an ask, a failure or a finish always shows,
+and fry go with their parent: `AquariumModel.cap`), **Raised fish
+stay**, **Plankton**, **Bubbles** (0 turns the stream off), **Scenery**
+(full, light or bare seeded dressing — what you bought always stays;
+the fish's work stations use the same share), **Visitors** (off stops
+any visitor from queuing, the alien included) and **Reset fine-tune**.
+A Settings search that lands on one of these rows opens Fine-tune
+(`ToysStore.revealRow`). **Outside the window** keeps Fill screen, Live
+wallpaper, Screensaver and its clock.
+
+An older settings file keeps its tank: `showLabels: false` reads as On
+hover, and the old `density` becomes Plankton, seeds Bubbles, and picks
+light scenery below 1. `showLabels` is still written for older builds.
+
+### The Arcade tank
+
+Three shop items, look only — the economy doesn't change:
+
+- **Arcade** (themes, 60, level 1): bright cyan-to-royal water with a
+  drawing style of its own. `TankStyle` rides on each theme's water —
+  haze, ink, vivid, bubble size, dark — so a theme can change how the
+  tank is drawn, not only its colours. Arcade keeps deep fish nearly as
+  bright as shallow ones, pushes their colour, inks their outlines
+  heavier and blows big bubbles with a hard crescent glint. Its pearls
+  come as **coins** that spin as they fall and turn slowly at rest; a
+  crowned fish's drop is a cyan **gem** (worth the same). The pearl chip
+  and the flight home follow.
+- **Candy gravel** (substrates, 35): a light tan bed under round beads
+  in pink, lemon, cyan, lime and violet, with candy pebbles. Baked on the
+  still pass like every floor.
+- **Toy reef** (back wall, 110, level 3): a painted stage set that
+  changes with the tank level — a bubble cave (levels 0–2), pink ruins
+  (3–5), a coral city whose windows glow at night (6–8) and a star
+  cavern with glowing crystals (9).
+
+Nothing in the set is named after or traced from the game it tips its
+hat to.
+
+### Drops, the snail, the oyster and the alien
+
+- **Drops fall and stay put.** The tank pins each pearl where it first
+  sees it — under its fish — lets a fresh one fall 1.4 s to the sand
+  with a little wobble, and rests it there for good, however the fish
+  swims on. A drop found already old (a relaunch) just rests.
+- **The snail fetches** (`SnailSim`). With the window open it hustles to
+  the oldest resting pearl and picks it up (`snailCollected`); the tick
+  only sweeps up drops older than 120 s as a backstop. With the window
+  closed the tick collects after 10 s as before. With no pearls it
+  creeps end to end and naps after five quiet minutes; an hour with no
+  pearl warms its shell toward red and it huffs. It turns by squashing
+  through zero over 0.6 s — never a one-frame flip — and the hermit crab
+  walks back with the same turn instead of jumping to the start of its
+  lap.
+- **Oyster** (pets, 70, level 1): half an hour of the tank's work grows
+  a 3-pearl pearl; it opens with the pearl glinting (a coin in Arcade)
+  and waits for a tap, first in the tap chain.
+- **Alien beacon** (decor, 90, level 3): a failed run the tank hasn't
+  seen before calls the **alien**, once a day at most. A round,
+  one-eyed, cheerful thing bobs along the upper third for 25 s; five
+  taps shoo it off for 8 pearls, once a visit. Left alone it simply
+  leaves. It never eats a fish, never takes a pearl, and never touches
+  the failed session or its review.
+- **Put away.** In the shop, owned decor and pets have an **In tank**
+  switch: put away, a piece stays owned but isn't drawn, and the snail,
+  the oyster and the beacon only answer while they're in the tank.
+
+### Housekeeping
+
+- An older build keeps shop items it doesn't know (`unknownInventory`),
+  so a downgrade never eats a purchase.
+- The care records are pruned with the window closed too (from the
+  session refresh, at most once a minute), passers-by first — small
+  nameless fish, then small named ones, then the oldest — never a live
+  fish or a resident.
 
 ## Notch Buddy (native)
 

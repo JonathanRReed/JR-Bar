@@ -120,6 +120,8 @@ struct AquariumControlsView: View {
     @ViewBuilder
     private var fineTuneRows: some View {
         VStack(alignment: .leading, spacing: 4) {
+            // The swim rows (Swim pace, Fish size, Swimming speed —
+            // `AquariumSwimRows(settings:)`) lead this list once they land.
             LabeledContent {
                 Picker("", selection: bind(\.maxFish)) {
                     ForEach(AquariumSettings.maxFishChoices, id: \.self) { count in
