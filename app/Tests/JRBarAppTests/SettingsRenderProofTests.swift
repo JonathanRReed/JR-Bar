@@ -300,6 +300,18 @@ struct SettingsRenderProofTests {
                 .frame(maxHeight: .infinity, alignment: .top)
             let rep = try Self.snapshot(calibration, size: CGSize(width: 540, height: 900), dark: dark)
             try Self.write(rep, named: "sheet-calibration-\(dark ? "dark" : "light")")
+            var bundle = SettingsBundle(exportedAt: Date(timeIntervalSince1970: 1_790_000_000),
+                                        appVersion: "0.8.0", schema: 1)
+            bundle.monitor = ["global_brightness_scale": .number(0.8), "alert_burst": .number(3)]
+            bundle.devices = .array([])
+            bundle.toys = .object([:])
+            bundle.preferences = ["sound.volume": .number(0.6)]
+            let importer = SettingsImportSheet(bundle: bundle, monitorLive: false, knownSchema: 1,
+                                               apply: { _ in }, cancel: {})
+                .background(Color(nsColor: .windowBackgroundColor))
+                .frame(maxHeight: .infinity, alignment: .top)
+            let imp = try Self.snapshot(importer, size: CGSize(width: 460, height: 700), dark: dark)
+            try Self.write(imp, named: "sheet-import-\(dark ? "dark" : "light")")
             let doctor = DoctorSheet(report: report, dismiss: {})
                 .background(Color(nsColor: .windowBackgroundColor))
                 .frame(maxHeight: .infinity, alignment: .top)

@@ -169,34 +169,45 @@ struct SettingsImportSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Import settings").font(.title3.weight(.semibold))
-                Text(origin).foregroundStyle(.secondary)
-                if let schema = bundle.schema, schema > knownSchema {
-                    Text("Its monitor settings are a newer shape; keys this JR-Bar does not know are skipped.")
-                        .font(.callout).foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: SettingsMetrics.m + 2) {
+            HStack(alignment: .center, spacing: SettingsMetrics.m) {
+                SettingsIconTile(symbol: "tray.and.arrow.down.fill",
+                                 tint: SettingsStore.Page.advanced.tint, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Import settings").font(.title3.weight(.semibold))
+                    Text(origin).font(.callout).foregroundStyle(.secondary)
                 }
+            }
+            if let schema = bundle.schema, schema > knownSchema {
+                CardNote("Its monitor settings are a newer shape; keys this JR-Bar does not know are skipped.",
+                         symbol: "exclamationmark.triangle.fill", tint: .orange)
             }
             if bundle.categories.isEmpty {
                 Text("The file holds nothing to import.").foregroundStyle(.secondary)
-            }
-            ForEach(bundle.categories) { category in
-                Toggle(isOn: Binding(get: { chosen.contains(category) && !needsMonitor(category) },
-                                     set: { if $0 { chosen.insert(category) } else { chosen.remove(category) } })) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(category.title)
-                            Text(bundle.summary(of: category)).foregroundStyle(.tertiary)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(bundle.categories.enumerated()), id: \.element) { index, category in
+                        if index > 0 { Divider() }
+                        Toggle(isOn: Binding(get: { chosen.contains(category) && !needsMonitor(category) },
+                                             set: { if $0 { chosen.insert(category) } else { chosen.remove(category) } })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(category.title)
+                                    Text(bundle.summary(of: category)).foregroundStyle(.tertiary)
+                                }
+                                Text(needsMonitor(category) ? "Needs the monitor running." : category.detail)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
-                        Text(needsMonitor(category) ? "Needs the monitor running." : category.detail)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        .toggleStyle(.checkbox)
+                        .disabled(needsMonitor(category))
+                        .padding(.vertical, SettingsMetrics.s)
                     }
                 }
-                .toggleStyle(.checkbox)
-                .disabled(needsMonitor(category))
+                .padding(.horizontal, SettingsMetrics.m)
+                .background(InsetPanel())
             }
             HStack {
                 Spacer()
