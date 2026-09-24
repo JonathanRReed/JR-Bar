@@ -630,10 +630,11 @@ struct SessionRowView: View {
                                 .help(row.workersText ?? "")
                         }
                         if row.activity == .done, store.unseenCompletionIDs.contains(row.id) {
-                            // `state.unseen_completions`: the same accent
+                            // `state.unseen_completions`: the one unseen
                             // dot History gives a row newer than the last
-                            // visit.
-                            Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                            // visit, a fixed blue — never the accent, which
+                            // a red accent would turn into a failure.
+                            UnseenDot()
                                 .help("Finished since you last looked")
                         }
                         if row.isSnoozed(now: store.now) {
