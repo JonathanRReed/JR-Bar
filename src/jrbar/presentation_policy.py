@@ -127,6 +127,10 @@ class PresentationProgram:
     relay_epoch: float
     next_visual_change_at: float | None
     playback_anchor: float | None = None
+    # The program's own text when it carries no phase (a chosen motion's
+    # loop), so a change of shape, knob or tint is a change of identity even
+    # when its period is not. None where the text bakes in a phase (Relay).
+    identity_dsl: str | None = None
 
 
 _GLYPHS = {
@@ -198,13 +202,61 @@ def compose_presentation_program(
 ) -> PresentationProgram:
     """Compose one hue-independent semantic glyph for a bounded surface.
 
-    ``motion_style`` is the provider's own chosen rhythm ("breathe",
-    "blink", "steady") and applies ONLY to the ACTIVE semantic: this was
-    the dead half of the per-provider animation setting -- the
-    multi-agent renderers honored it, but a SOLO agent renders through
-    this composer, which always chased. Urgent semantics ignore it,
-    exactly as agent_motion does.
+    ``motion_style`` is the provider's own chosen rhythm and applies ONLY
+    to the ACTIVE semantic; left out, it is the provider's choice in
+    ``color_settings``. Urgent semantics ignore it, exactly as agent_motion
+    does. A chosen motion is drawn by the same renderer as its Settings
+    thumbnail and its Effect Studio preview, so one working agent on the
+    Pro plays exactly what those show.
+
+    A device whose strip is mounted the other way round
+    (``color_settings.render_led_direction``) gets the whole composition
+    mirrored as the last step.
     """
+    program = _compose_presentation_program(
+        resolved,
+        presentation_time=presentation_time,
+        led_count=led_count,
+        color=color,
+        preferences=preferences,
+        capacity_remaining_fraction=capacity_remaining_fraction,
+        calibration=calibration,
+        motion_style=motion_style,
+        provider=provider,
+        color_settings=color_settings,
+    )
+    direction = getattr(color_settings, "render_led_direction", "forward")
+    if direction != "reversed" or type(led_count) is not int or led_count <= 0:
+        return program
+    from .motion_shapes import oriented_program
+
+    def mirrored(text: str | None) -> str | None:
+        if text is None:
+            return None
+        return oriented_program(text, led_count=led_count, direction=direction)
+
+    return replace(
+        program,
+        dsl=mirrored(program.dsl) or program.dsl,
+        static_fallback_dsl=mirrored(program.static_fallback_dsl)
+        or program.static_fallback_dsl,
+        identity_dsl=mirrored(program.identity_dsl),
+    )
+
+
+def _compose_presentation_program(
+    resolved: ResolvedGlance,
+    *,
+    presentation_time: float,
+    led_count: int,
+    color: str,
+    preferences: AccessibilityDisplayPreferences,
+    capacity_remaining_fraction: float | None = None,
+    calibration: CalibrationState = CalibrationState(),
+    motion_style: str | None = None,
+    provider: str | None = None,
+    color_settings=None,
+) -> PresentationProgram:
     if (
         not isinstance(resolved, ResolvedGlance)
         or not valid_presentation_time(presentation_time)
@@ -308,427 +360,21 @@ def compose_presentation_program(
         )
         return _bounded_and_safe(candidate, calibration=calibration)
 
-    if resolved.semantic is GlanceSemantic.ACTIVE and motion_style in (
-        "breathe",
-        "blink",
-        "steady",
-        "heartbeat",
-        "scanner",
-        "kitt",
-        "comet",
-        "flicker",
-        "stack",
-        "twinkle",
-        "drift",
-        "converge",
-        "aurora",
-        "tide",
-        "gradient",
-        "marquee",
-        "duotone",
-        "ember",
-        "bloom",
-        "frontier",
-        "glint",
-    ):
-        if motion_style == "steady":
+    if resolved.semantic is GlanceSemantic.ACTIVE and _chosen_motion(motion_style):
+        lines = _chosen_motion_lines(
+            motion_style,
+            normalized_color,
+            provider=provider,
+            color_settings=color_settings,
+            led_count=led_count,
+        )
+        if lines is None:
             return _static_program(resolved, dsl=fallback)
-        # Gentleness (owner decision, 2026-08-26): the solo render
-        # honors the Working fade floor/ceiling, so one working agent
-        # is no brighter than the same agent in a crowd and the sliders
-        # are never no-ops. The per-provider MOTION still outranks the
-        # classic style picker. Hardcoded 0.05/1.0 remains the fallback
-        # when no color settings ride along.
-        floor_fraction, ceiling_fraction = 0.05, 1.0
-        if color_settings is not None:
-            try:
-                from .colors import MODE_WORKING
-
-                raw_floor, raw_ceiling = color_settings.fade_range(MODE_WORKING)
-                ceiling_fraction = max(0.1, min(1.0, float(raw_ceiling)))
-                floor_fraction = max(
-                    0.02, min(ceiling_fraction * 0.5, float(raw_floor))
-                )
-            except Exception:
-                floor_fraction, ceiling_fraction = 0.05, 1.0
-        floor_color = _scaled_color(normalized_color, floor_fraction)
-        peak_color = _scaled_color(normalized_color, ceiling_fraction)
-        settle_text = f"{floor_color} 160ms cosine"
-        if motion_style == "breathe":
-            # The human-rate asymmetric breath (led_status.IDLE_BREATH_*):
-            # the previous 3.2s symmetric pulse was 18.75 breaths/min --
-            # nearly double a resting sleep rate, which read as anxious
-            # rather than calm on a solo working agent.
-            from .led_status import (
-                IDLE_BREATH_CYCLE_MS,
-                IDLE_BREATH_DWELL_MS,
-                IDLE_BREATH_EXHALE_MS,
-                IDLE_BREATH_INHALE_MS,
-            )
-
-            lines = (
-                settle_text,
-                f"{peak_color} {IDLE_BREATH_INHALE_MS}ms cosine",
-                f"{floor_color} {IDLE_BREATH_EXHALE_MS}ms cosine",
-                f"{floor_color} {IDLE_BREATH_DWELL_MS}ms none",
-                "repeat",
-            )
-            cycle_seconds = IDLE_BREATH_CYCLE_MS / 1000.0
-        elif motion_style == "blink":
-            half_ms = round(RELAY_TRAVERSAL_SECONDS * 500.0)
-            lines = (
-                f"{peak_color} {half_ms}ms none",
-                f"{floor_color} {half_ms}ms none",
-                "repeat",
-            )
-            cycle_seconds = half_ms / 500.0
-        elif motion_style == "heartbeat":
-            # Lub-dub then a long rest: the rhythm most separable from a
-            # sinusoid in peripheral vision (Particle/WLED survey).
-            lines = (
-                settle_text,
-                f"{peak_color} 300ms pulse; {peak_color} 300ms pulse 500ms",
-                f"{floor_color} 1400ms none",
-                "repeat",
-            )
-            cycle_seconds = 0.16 + 0.8 + 1.4
-        elif motion_style == "scanner":
-            # A dot bounces 0..7..0 across 2.8s -- born on 8 elements.
-            step_ms, width_ms = 200, 400
-            segments = [
-                f"{index}:{peak_color} {width_ms}ms pulse {index * step_ms}ms"
-                for index in range(led_count)
-            ] + [
-                f"{index}:{peak_color} {width_ms}ms pulse {(2 * led_count - 2 - index) * step_ms}ms"
-                for index in range(1, led_count - 1)
-            ]
-            scanner_lines = [settle_text, "; ".join(segments)]
-            rest_ms = 0
-            if led_count <= 2:
-                # Two LEDs make a 0.76s loop -- under the 1s the safety
-                # envelope needs, so the shape silently fell to STATIC
-                # on the Dot (audit, 2026-08-26). Same rest kitt has.
-                rest_ms = 480
-                scanner_lines.append(f"{floor_color} {rest_ms}ms none")
-            scanner_lines.append("repeat")
-            lines = tuple(scanner_lines)
-            cycle_seconds = (
-                0.16
-                + ((2 * led_count - 3) * step_ms + width_ms + rest_ms) / 1000.0
-            )
-        elif motion_style == "kitt":
-            # The classic KITT eye (upstream PR #29's recipe): pulses
-            # nearly four times wider than their stagger, so neighbours
-            # overlap into one continuous swoosh instead of a hopping
-            # dot -- that overlap is the whole difference from scanner.
-            # Forward over every LED; return skips both endpoints so
-            # the turn-around never double-hits.
-            step_ms = 240 if led_count <= 2 else 85
-            width_ms = 320
-            forward = "; ".join(
-                f"{index}:{peak_color} {width_ms}ms pulse {index * step_ms}ms"
-                for index in range(led_count)
-            )
-            lines_list = [settle_text, forward]
-            back_indexes = tuple(range(led_count - 2, 0, -1))
-            if back_indexes:
-                lines_list.append(
-                    "; ".join(
-                        f"{index}:{peak_color} {width_ms}ms pulse "
-                        f"{position * step_ms}ms"
-                        for position, index in enumerate(back_indexes)
-                    )
-                )
-            rest_ms = 0
-            if led_count <= 2:
-                # Two LEDs have no return lane (the endpoint skip leaves
-                # nothing), so the loop lands under the 1s the safety
-                # envelope needs. A dark rest at the turn-around keeps
-                # the swoosh-swoosh-rest rhythm AND the analyzed window.
-                rest_ms = 480
-                lines_list.append(f"{floor_color} {rest_ms}ms none")
-            lines_list.append("repeat")
-            lines = tuple(lines_list)
-            forward_ms = (led_count - 1) * step_ms + width_ms
-            back_ms = (
-                (len(back_indexes) - 1) * step_ms + width_ms if back_indexes else 0
-            )
-            cycle_seconds = 0.16 + (forward_ms + back_ms + rest_ms) / 1000.0
-        elif motion_style == "comet":
-            # One-way sweep with an eased tail, then a dark beat.
-            step_ms, width_ms = 180, 420
-            segments = [
-                f"{index}:{peak_color} {width_ms}ms pulse {index * step_ms}ms"
-                for index in range(led_count)
-            ]
-            lines = (
-                settle_text,
-                "; ".join(segments),
-                f"{floor_color} 600ms none",
-                "repeat",
-            )
-            cycle_seconds = 0.16 + ((led_count - 1) * step_ms + width_ms + 600) / 1000.0
-        elif motion_style == "stack":
-            # LEDs pile on hard, one by one, hold the full bar, then the
-            # whole strip eases away together -- "adding on top of each
-            # other until it disappears".
-            step_ms, hold_ms = 250, 600
-            segments = [
-                f"{index}:{peak_color} "
-                f"{(led_count - index) * step_ms + hold_ms}ms none {index * step_ms}ms"
-                for index in range(led_count)
-            ]
-            lines = (
-                settle_text,
-                "; ".join(segments),
-                f"{floor_color} 900ms cosine",
-                "repeat",
-            )
-            cycle_seconds = 0.16 + (led_count * step_ms + hold_ms + 900) / 1000.0
-        elif motion_style == "twinkle":
-            # Scattered single sparks over a dim base; frozen offsets.
-            offsets = (0, 1300, 2700, 700, 3400, 2100, 500, 1800)
-            segments = [
-                f"{index}:{peak_color} 450ms pulse "
-                f"{offsets[index % len(offsets)]}ms"
-                for index in range(led_count)
-            ]
-            lines = (settle_text, "; ".join(segments), "repeat")
-            cycle_seconds = 0.16 + (3400 + 450) / 1000.0
-        elif motion_style == "drift":
-            # Glacial detuned swells -- slow water. Periods per LED are
-            # slightly different so the interference never visibly loops.
-            segments = [
-                f"{index}:{peak_color} "
-                f"{2600 + index * 140}ms pulse {(index * 530) % 1300}ms"
-                for index in range(led_count)
-            ]
-            lines = (settle_text, "; ".join(segments), "repeat")
-            cycle_seconds = 0.16 + (2600 + (led_count - 1) * 140 + 1299) / 1000.0
-        elif motion_style == "converge":
-            # Two dots leave the ends and meet at the center pair.
-            step_ms, width_ms = 240, 420
-            segments = [
-                f"{index}:{peak_color} {width_ms}ms pulse "
-                f"{min(index, led_count - 1 - index) * step_ms}ms"
-                for index in range(led_count)
-            ]
-            lines = (
-                settle_text,
-                "; ".join(segments),
-                f"{floor_color} 500ms none",
-                "repeat",
-            )
-            cycle_seconds = 0.16 + (
-                (led_count // 2 - 1) * step_ms + width_ms + 500
-            ) / 1000.0
-        elif motion_style == "aurora":
-            # Rolling waves over a LUMINOUS base: like drift, but resting
-            # on a visible quarter-bright bed instead of near-dark, with
-            # wider detune -- light moving on water at night.
-            bed_color = _scaled_color(normalized_color, 0.22 * ceiling_fraction)
-            segments = [
-                f"{index}:{peak_color} "
-                f"{2400 + index * 220}ms pulse {(index * 617) % 1600}ms"
-                for index in range(led_count)
-            ]
-            lines = (
-                f"{bed_color} 160ms cosine",
-                "; ".join(segments),
-                "repeat",
-            )
-            cycle_seconds = 0.16 + (2400 + (led_count - 1) * 220 + 1599) / 1000.0
-        elif motion_style == "tide":
-            # The bar rises to full and the water pulls back: LED 0 rises
-            # first and falls last, LED 7 crests briefly at the top.
-            step_ms = 200
-            segments = [
-                f"{index}:{peak_color} "
-                f"{2 * (led_count - index) * step_ms}ms pulse {index * step_ms}ms"
-                for index in range(led_count)
-            ]
-            tide_lines = [settle_text, "; ".join(segments)]
-            rest_ms = 0
-            if led_count <= 2:
-                # Same Dot-length fix as scanner/kitt: a 0.96s loop is
-                # under the safety envelope's 1s and fell to static.
-                rest_ms = 480
-                tide_lines.append(f"{floor_color} {rest_ms}ms none")
-            tide_lines.append("repeat")
-            lines = tuple(tide_lines)
-            cycle_seconds = 0.16 + (2 * led_count * step_ms + rest_ms) / 1000.0
-        elif motion_style == "gradient":
-            # tlip's gradient rolling wave: the chase's exact shape, but
-            # each LED pulses its OWN shade -- a hue ramp centred on the
-            # provider color, so identity survives while the wave gains
-            # depth. Span stays +/-24 degrees: far enough to read as a
-            # gradient, close enough that no LED reads as another
-            # provider's hue.
-            step_ms, width_ms = 95, 760
-            span = 48.0
-            segments = []
-            for index in range(led_count):
-                fraction = index / max(1, led_count - 1)
-                shade = _hue_shifted_color(
-                    peak_color, (fraction - 0.5) * span
-                )
-                segments.append(
-                    f"{index}:{shade} {width_ms}ms pulse {index * step_ms}ms"
-                )
-            lines = (settle_text, "; ".join(segments), "repeat")
-            cycle_seconds = 0.16 + ((led_count - 1) * step_ms + width_ms) / 1000.0
-        elif motion_style == "marquee":
-            # A palette seeded from the provider color, rotated by the
-            # firmware's own roll -- the cheapest continuous motion in
-            # the DSL. Brightness ramp + a gentle hue ramp reads as a
-            # comet chasing its own tail.
-            roll_ms = 2400
-            # The repaint at the top of every loop must carry EXPLICIT
-            # timing: untimed steps inside a loop get stamped with a
-            # hard 250ms `none` hold by the safety compiler, which
-            # turned "endlessly rotating" into a freeze-snap each
-            # cycle. A full roll returns to its start arrangement, so
-            # this cosine repaints identical colors -- visually a brief
-            # gentle pause, and the declared period matches the real
-            # firmware cycle.
-            paint_ms = 250
-            palette = []
-            for index in range(led_count):
-                fraction = index / max(1, led_count - 1)
-                shade = _hue_shifted_color(peak_color, (fraction - 0.5) * 36.0)
-                palette.append(_scaled_color(shade, 0.08 + 0.92 * fraction))
-            lines = (
-                f"{' '.join(palette)} {paint_ms}ms cosine",
-                f"roll {roll_ms}ms linear",
-                "repeat",
-            )
-            cycle_seconds = (paint_ms + roll_ms) / 1000.0
-        elif motion_style == "duotone":
-            # The iOS pattern library's two-tone working breathe: swell
-            # to the color, then swell to its warmer neighbour. Twice
-            # the information of a plain breathe at the same calmness.
-            tone_ms = 900
-            second_tone = _hue_shifted_color(peak_color, 40.0)
-            lines = (
-                settle_text,
-                f"{peak_color} {tone_ms}ms pulse",
-                f"{second_tone} {tone_ms}ms pulse",
-                "repeat",
-            )
-            cycle_seconds = 0.16 + (2 * tone_ms) / 1000.0
-        elif motion_style == "ember":
-            # Upstream's centre-bright idle gradient (sidepulse #41):
-            # a fixed centre-hot profile swelling as one. The bed is a
-            # warm fraction of the peak -- coals never go dark -- and
-            # every LED keeps its own height at the crest, which is what
-            # separates it from breathe's uniform swell and aurora's
-            # detuned waves.
-            middle = (led_count - 1) / 2.0
-            weights = [
-                max(
-                    0.12,
-                    1.0 - (abs(index - middle) / max(middle, 1.0)) ** 1.5,
-                )
-                for index in range(led_count)
-            ]
-            bed_colors = " ".join(
-                _scaled_color(normalized_color, floor_fraction + 0.25 * weight)
-                for weight in weights
-            )
-            swell_ms, rest_ms = 1760, 1440
-            coals = "; ".join(
-                f"{index}:{_scaled_color(peak_color, 0.30 + 0.70 * weight)} "
-                f"{swell_ms}ms pulse"
-                for index, weight in enumerate(weights)
-            )
-            lines = (
-                f"{bed_colors} 320ms cosine",
-                coals,
-                f"{bed_colors} {rest_ms}ms cosine",
-                "repeat",
-            )
-            cycle_seconds = (320 + swell_ms + rest_ms) / 1000.0
-        elif motion_style == "bloom":
-            # The lid-open signature as a loop: paired LEDs rise
-            # centre-out, the outermost pair's rise finishing the line
-            # at full light, then one drain line pulls the whole strip
-            # back. Converge's heads meet and part; bloom arrives and
-            # stays -- an opening, not a meeting.
-            step_ms, rise_ms = 140, 280
-            middle = (led_count - 1) / 2.0
-            segments = [
-                f"{index}:{peak_color} {rise_ms}ms cosine "
-                f"{int(round(max(0.0, abs(index - middle) - 0.5) * step_ms))}ms"
-                for index in range(led_count)
-            ]
-            drain_ms = step_ms * 3
-            bloom_lines = [
-                settle_text,
-                "; ".join(segments),
-                f"{floor_color} {drain_ms}ms cosine",
-            ]
-            rest_ms = 0
-            if led_count <= 2:
-                # Two LEDs bloom in unison: ~0.86s of motion is under
-                # the safety envelope's 1s and fell to static (same
-                # Dot-length fix scanner/kitt/tide carry).
-                rest_ms = 320
-                bloom_lines.append(f"{floor_color} {rest_ms}ms none")
-            bloom_lines.append("repeat")
-            lines = tuple(bloom_lines)
-            farthest = int(round(max(0.0, middle - 0.5) * step_ms))
-            cycle_seconds = (
-                0.16 + (farthest + rise_ms + drain_ms + rest_ms) / 1000.0
-            )
-        elif motion_style == "frontier":
-            # The battery-bar read: a held fill at a fixed level while
-            # the first unfilled LED pulses into the dark -- a progress
-            # bar whose tip is alive, where stack's pile lets go.
-            filled = max(0, min(led_count, int(round(led_count * 0.625))))
-            tip = min(filled, led_count - 1)
-            pulse_ms = 1080
-            lit_color = _scaled_color(peak_color, 0.88)
-            segments = []
-            for index in range(led_count):
-                if index < tip:
-                    segments.append(
-                        f"{index}:{lit_color} {pulse_ms}ms cosine"
-                    )
-                elif index == tip:
-                    segments.append(
-                        f"{index}:{peak_color} {pulse_ms}ms pulse"
-                    )
-                else:
-                    segments.append(
-                        f"{index}:{floor_color} {pulse_ms}ms cosine"
-                    )
-            lines = (settle_text, "; ".join(segments), "repeat")
-            cycle_seconds = 0.16 + pulse_ms / 1000.0
-        elif motion_style == "glint":
-            # A thin specular pass over a strip that stays lit: marquee's
-            # roll machinery with a single sharp crest on a reading-light
-            # bed, instead of a rotating palette on a dark one.
-            roll_ms = 2400
-            paint_ms = 250
-            palette = [peak_color] + [
-                _scaled_color(peak_color, 0.62) for _ in range(led_count - 1)
-            ]
-            lines = (
-                f"{' '.join(palette)} {paint_ms}ms cosine",
-                f"roll {roll_ms}ms linear",
-                "repeat",
-            )
-            cycle_seconds = (paint_ms + roll_ms) / 1000.0
-        else:
-            # Flicker: frozen per-LED detune -- deterministic shimmer.
-            base_ms = 1800
-            segments = [
-                f"{index}:{peak_color} "
-                f"{base_ms + (index * 137) % 331}ms pulse {(index * 271) % 600}ms"
-                for index in range(led_count)
-            ]
-            lines = (settle_text, "; ".join(segments), "repeat")
-            cycle_seconds = 0.16 + (base_ms + 330 + 599) / 1000.0
+        if motion_style == "steady":
+            # Steady holds its colour: the preview's hold, written once,
+            # with no loop to keep alive.
+            return _static_program(resolved, dsl=lines[0])
+        cycle_seconds = 1.0
         # The declared period must be the period the firmware will
         # actually loop, or phase-resume drifts a little every cycle
         # (twinkle at 2 LEDs declared 4010ms against a real 1910ms
@@ -748,12 +394,14 @@ def compose_presentation_program(
         elapsed = max(0.0, float(presentation_time) - resolved.relay_epoch)
         elapsed_ms = round(elapsed * 1000.0)
         anchor = float(presentation_time) - (elapsed_ms % cycle_ms) / 1000.0
+        # At least two full periods, and always the period plus the second
+        # the safety pass needs: a loop shorter than a second (a fast chase,
+        # a Dot's wipe) is still a loop, not a reason to fall back to still.
+        frame_count = max(4, math.ceil(2.0 * (cycle_seconds + 1.0) / cycle_seconds))
         temporal = TemporalProgram(
-            # Two full periods: the safety pass requires the analyzed
-            # envelope to cover trusted_period + 1s.
             frames=tuple(
                 TemporalFrame(_mean_intensity(intensities), cycle_seconds / 2.0)
-                for _ in range(4)
+                for _ in range(frame_count)
             ),
             repeat_count=1,
             static_fallback=StaticSemanticFallback(
@@ -772,6 +420,7 @@ def compose_presentation_program(
             relay_epoch=resolved.relay_epoch,
             next_visual_change_at=resolved.next_visual_change_at,
             playback_anchor=anchor,
+            identity_dsl="\n".join(lines),
         )
         return _bounded_and_safe(candidate, calibration=calibration)
 
@@ -834,6 +483,65 @@ def compose_presentation_program(
         playback_anchor=playback_anchor,
     )
     return _bounded_and_safe(candidate, calibration=calibration)
+
+
+#: Room kept for the ``brightness N`` line the caller puts in front.
+_BRIGHTNESS_LINE_RESERVE = 16
+
+
+def _chosen_motion(motion_style: object) -> bool:
+    """Whether ``motion_style`` is a motion a person chose (not Automatic)."""
+    from .colors import PROVIDER_ANIMATION_AUTO, PROVIDER_ANIMATION_CHOICES
+
+    return (
+        isinstance(motion_style, str)
+        and motion_style in PROVIDER_ANIMATION_CHOICES
+        and motion_style != PROVIDER_ANIMATION_AUTO
+    )
+
+
+def _chosen_motion_lines(
+    motion_style: str,
+    color: str,
+    *,
+    provider: str | None,
+    color_settings,
+    led_count: int,
+) -> list[str] | None:
+    """The loop one working agent plays for its chosen motion: a short ease
+    to the resting colour, then the motion exactly as its preview draws it.
+
+    The ease goes first so an interrupted loop settles instead of snapping,
+    and it is the first thing dropped when the firmware's 512 bytes are
+    tight -- refusing the write would freeze the strip on its old program.
+    """
+    from .colors import (
+        ColorSettings,
+        PROVIDER_ANIMATION_AUTO,
+        provider_motion_lines,
+    )
+
+    settings = color_settings if isinstance(color_settings, ColorSettings) else ColorSettings.defaults()
+    owner = provider or "solo"
+    try:
+        if settings.agent_animation(owner) != motion_style:
+            settings = settings.with_agent_animation(owner, motion_style)
+        rendered = provider_motion_lines(owner, color, settings, led_count=led_count)
+    except (TypeError, ValueError):
+        rendered = None
+    if rendered is None or motion_style == PROVIDER_ANIMATION_AUTO:
+        return None
+    body, settle_text = rendered
+    if motion_style == "steady":
+        return [*body, "repeat"]
+    for candidate in ([settle_text, *body, "repeat"], [*body, "repeat"]):
+        text = "\n".join(candidate)
+        if (
+            len(text.encode("utf-8")) + _BRIGHTNESS_LINE_RESERVE <= MAX_PROGRAM_BYTES
+            and len(candidate) + 1 <= MAX_PROGRAM_LINES
+        ):
+            return candidate
+    return None
 
 
 def enforce_temporal_safety(
@@ -1097,6 +805,7 @@ def continuous_presentation_identity(program: object) -> tuple[object, ...] | No
         program.static_fallback_dsl,
         program.trusted_period_seconds,
         program.relay_epoch,
+        program.identity_dsl,
     )
 
 

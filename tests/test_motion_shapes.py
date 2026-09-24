@@ -105,6 +105,16 @@ ALL_SHAPES = {
         COLOR, FLOOR, led_count=n, cycle_ms=2400
     ),
     "glint": lambda n: shapes.glint(COLOR, led_count=n, lap_ms=2400, laps=6),
+    # 2026-09-24: the new motions, the upstream iris lid transitions and
+    # the Dot's wipe.
+    "ripple": lambda n: shapes.ripple(COLOR, FLOOR, led_count=n, cycle_ms=2200),
+    "pendulum": lambda n: shapes.pendulum(COLOR, FLOOR, led_count=n, cycle_ms=2400),
+    "land": lambda n: shapes.land(COLOR, FLOOR, led_count=n, cycle_ms=2400),
+    "iris_open": lambda n: shapes.iris_open(led_count=n),
+    "iris_close": lambda n: shapes.iris_close(led_count=n),
+    "dot_wipe": lambda n: shapes.travelling_wave(
+        COLOR, led_count=n, lap_ms=2200, tail=shapes.DOT_WIPE, laps=2
+    ),
 }
 
 

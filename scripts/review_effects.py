@@ -331,10 +331,76 @@ def effect_programs() -> list[tuple[str, str, int]]:
     return entries
 
 
-def review(out_dir: Path, *, png: bool = True) -> list[Metrics]:
+#: The cycle speeds the solo pass renders at: Jonathan's own 0.5 s, the
+#: shipped 2.2 s, and a slow 5 s.
+SOLO_CYCLE_SECONDS: tuple[float, ...] = (0.5, 2.2, 5.0)
+
+
+def solo_programs() -> list[tuple[str, str, int]]:
+    """What ONE working agent actually plays, motion by motion.
+
+    One engaged agent is the common case, and it does not go through the
+    effect registry or the Settings thumbnail: the Pro and the Screen Bar
+    compose it in ``presentation_policy``. Rendering that composer here is
+    what makes a live shape that differs from its preview visible -- a sweep
+    that only plays one way shows up as a diagonal with its other half
+    missing.
+    """
+    from jrbar._settings_legacy import AgentMonitorSettings
+    from jrbar.accessibility_display import AccessibilityDisplayPreferences
+    from jrbar.presentation_policy import (
+        GlanceInputs,
+        compose_presentation_program,
+        resolve_glance,
+    )
+
+    preferences = AccessibilityDisplayPreferences()
+    resolved = resolve_glance(
+        GlanceInputs(
+            actionable_episode_key=None,
+            fresh_failure=None,
+            fresh_completion=None,
+            active=True,
+            unresolved_failure=False,
+            capacity=None,
+        ),
+        presentation_time=100.0,
+        relay_epoch=100.0,
+        preferences=preferences,
+    )
+    base = AgentMonitorSettings().colors
+    entries: list[tuple[str, str, int]] = []
+    for seconds in SOLO_CYCLE_SECONDS:
+        speed = base.with_cycle_speed(seconds)
+        for motion in colors_module.PROVIDER_ANIMATION_CHOICES:
+            colors = speed.with_agent_animation("claude", motion)
+            for led_count in (8, 2):
+                presentation = compose_presentation_program(
+                    resolved,
+                    presentation_time=100.0,
+                    led_count=led_count,
+                    color=colors.agent_color("claude"),
+                    preferences=preferences,
+                    provider="claude",
+                    color_settings=colors,
+                )
+                entries.append(
+                    (
+                        f"solo_{motion}_{seconds:g}s_{led_count}led",
+                        presentation.dsl,
+                        led_count,
+                    )
+                )
+    return entries
+
+
+def review(out_dir: Path, *, png: bool = True, solo: bool = False) -> list[Metrics]:
     rows: list[Metrics] = []
     programs = {}
-    for name, program, led_count in [*effect_programs(), *builtin_programs()]:
+    catalogue = [*effect_programs(), *builtin_programs()]
+    if solo:
+        catalogue.extend(solo_programs())
+    for name, program, led_count in catalogue:
         compiled = compile_presentation_program(program, led_count=led_count)
         shown = compiled.program if compiled.accepted else program
         metrics, frames = measure(name, shown, led_count, compiled=compiled.transformed)
@@ -417,8 +483,13 @@ def main() -> int:
     parser.add_argument("--compare", type=Path, default=None)
     parser.add_argument("--no-png", action="store_true")
     parser.add_argument("--filter", default="")
+    parser.add_argument(
+        "--solo",
+        action="store_true",
+        help="also render what one working agent plays live, per motion",
+    )
     arguments = parser.parse_args()
-    rows = review(arguments.out, png=not arguments.no_png)
+    rows = review(arguments.out, png=not arguments.no_png, solo=arguments.solo)
     shown = [row for row in rows if arguments.filter in row.name]
     print_table(shown)
     unsafe = [row for row in rows if not row.parse_ok]

@@ -216,6 +216,11 @@ MOTION_EMBER = "ember"
 MOTION_BLOOM = "bloom"
 MOTION_FRONTIER = "frontier"
 MOTION_GLINT = "glint"
+# The 2026-09-24 expansion (lane led-motions): ripple is a stone in water,
+# centre-out rings that dim as they spread; pendulum is a bounce that
+# lingers at the ends like a weight on a string -- a calm KITT.
+MOTION_RIPPLE = "ripple"
+MOTION_PENDULUM = "pendulum"
 PROVIDER_ANIMATION_CHOICES: tuple[str, ...] = (
     PROVIDER_ANIMATION_AUTO,
     MOTION_BREATHE,
@@ -226,6 +231,7 @@ PROVIDER_ANIMATION_CHOICES: tuple[str, ...] = (
     MOTION_HEARTBEAT,
     MOTION_SCANNER,
     MOTION_KITT,
+    MOTION_PENDULUM,
     MOTION_COMET,
     MOTION_GLINT,
     MOTION_FLICKER,
@@ -234,6 +240,7 @@ PROVIDER_ANIMATION_CHOICES: tuple[str, ...] = (
     MOTION_DRIFT,
     MOTION_CONVERGE,
     MOTION_BLOOM,
+    MOTION_RIPPLE,
     MOTION_AURORA,
     MOTION_TIDE,
     MOTION_FRONTIER,
@@ -263,6 +270,8 @@ PROVIDER_ANIMATION_LABELS: dict[str, str] = {
     MOTION_BLOOM: "Bloom",
     MOTION_FRONTIER: "Frontier",
     MOTION_GLINT: "Glint",
+    MOTION_RIPPLE: "Ripple",
+    MOTION_PENDULUM: "Pendulum",
     MOTION_STEADY: "Steady",
     MOTION_BLINK: "Blink",
 }
@@ -288,6 +297,8 @@ PROVIDER_ANIMATION_DESCRIPTIONS: dict[str, str] = {
     MOTION_BLOOM: "Light opens from the center outward, holds lit, then fades — the lid-open signature as a loop. Shared strips ride it as the full swell.",
     MOTION_FRONTIER: "A held fill whose leading edge pulses into the dark — a progress bar with a live tip. Shared strips pulse the tip over a raised bed.",
     MOTION_GLINT: "One thin bright pass sweeping a lit strip, like light catching a rim. Shared strips ride it as a narrow flare over a lit bed.",
+    MOTION_RIPPLE: "A stone in water: the middle crests first and rings run outward, dimmer at every step, then the strip rests. Shared strips ride it as a unison swell.",
+    MOTION_PENDULUM: "A weight on a string: the light swings end to end, lingering at each end and passing quickly through the middle. Shared strips ride it as a narrow travelling flare.",
     MOTION_STEADY: "Holds its color. Never moves.",
     MOTION_BLINK: "Hard-edged on/off, no easing.",
 }
@@ -1231,6 +1242,27 @@ class ColorSettings:
     # Story #13: color sessions by PROJECT (origin) -- one hue family
     # per repo, lightness steps within it. Off = classic per-session.
     color_by_project: bool = False
+    # Per-PROVIDER Effect Studio values for its chosen motion (provider id
+    # -> {parameter: value}): the comet's head width, a chase's crests, and
+    # ``duration_seconds``, which gives that provider its own tempo instead
+    # of the global cycle speed. Written with the provider assignment and
+    # cleared with it; empty means every knob at its default.
+    provider_animation_parameters: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
+    # Opt-in: while an agent works, the head of a chase, comet or glint
+    # takes the colour of the kind of tool it is using (shell, edit, read,
+    # web, task, plan). The tail keeps the provider's colour, and asks and
+    # failures never take the tint.
+    tint_by_tool: bool = False
+    # Render context, never saved: the device a program is being drawn for
+    # sets these just before it renders (``for_device``), so one set of
+    # colour settings can draw a strip mounted either way round and a Dot
+    # that wipes or crossfades. The tool family is the one the tool tint
+    # gate decided on for this render.
+    render_led_direction: str = "forward"
+    render_dot_travel: str = "wipe"
+    render_tool_family: str | None = None
 
     @classmethod
     def defaults(cls) -> ColorSettings:
@@ -1335,15 +1367,81 @@ class ColorSettings:
 
     def with_agent_animation(self, provider: str, motion: str) -> ColorSettings:
         """Automatic REMOVES the entry rather than storing "auto", so a
-        settings file only ever carries the choices actually made."""
+        settings file only ever carries the choices actually made -- and it
+        takes that provider's motion values with it."""
         if motion not in PROVIDER_ANIMATION_CHOICES:
             raise ValueError(f"Unknown provider animation: {motion}")
         animations = dict(self.provider_animation)
+        parameters = dict(self.provider_animation_parameters)
         if motion == PROVIDER_ANIMATION_AUTO:
             animations.pop(provider, None)
+            parameters.pop(provider, None)
         else:
             animations[provider] = motion
-        return replace(self, provider_animation=animations)
+        return replace(
+            self,
+            provider_animation=animations,
+            provider_animation_parameters=parameters,
+        )
+
+    def agent_animation_parameters(self, provider: str | None) -> dict[str, Any]:
+        """The Effect Studio values this provider's motion was given, or {}."""
+        if not provider:
+            return {}
+        raw = self.provider_animation_parameters.get(provider)
+        return dict(raw) if isinstance(raw, dict) else {}
+
+    def with_agent_animation_parameters(
+        self, provider: str, parameters: object
+    ) -> ColorSettings:
+        """Stores (or, when empty, removes) one provider's motion values."""
+        table = dict(self.provider_animation_parameters)
+        cleaned = clean_animation_parameters(parameters)
+        if cleaned:
+            table[provider] = cleaned
+        else:
+            table.pop(provider, None)
+        return replace(self, provider_animation_parameters=table)
+
+    def agent_cycle_ms(self, provider: str | None, fallback_ms: int) -> int:
+        """One cycle of this provider's motion, in ms: its own
+        ``duration_seconds`` when it has one, else ``fallback_ms`` (the
+        global cycle speed)."""
+        duration = self.agent_animation_parameters(provider).get("duration_seconds")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+            return max(1, int(round(normalize_cycle_speed(duration) * 1000)))
+        return max(1, int(fallback_ms))
+
+    def with_tint_by_tool(self, enabled: bool) -> ColorSettings:
+        return replace(self, tint_by_tool=bool(enabled))
+
+    def for_device(
+        self,
+        *,
+        led_direction: object = "forward",
+        dot_travel_style: object = "wipe",
+    ) -> ColorSettings:
+        """These settings as one device draws them: which way round its
+        strip is mounted and how a Dot travels."""
+        from .motion_shapes import DOT_TRAVEL_STYLES, normalize_led_direction
+
+        travel = (
+            dot_travel_style
+            if dot_travel_style in DOT_TRAVEL_STYLES
+            else DEFAULT_DOT_TRAVEL_STYLE
+        )
+        return replace(
+            self,
+            render_led_direction=normalize_led_direction(led_direction),
+            render_dot_travel=str(travel),
+        )
+
+    def with_render_tool_family(self, family: str | None) -> ColorSettings:
+        """The tool family the tint gate chose for this render (or None)."""
+        return replace(
+            self,
+            render_tool_family=family if family in TOOL_TINT_COLORS else None,
+        )
 
     def with_blend_mode(self, mode: str) -> ColorSettings:
         if mode not in BLEND_MODE_CHOICES:
@@ -1429,6 +1527,13 @@ class ColorSettings:
             "round_robin_urgency_alert": self.round_robin_urgency_alert,
             "done_celebration_enabled": self.done_celebration_enabled,
             "color_by_project": self.color_by_project,
+            "provider_animation_parameters": {
+                provider: dict(sorted(values.items()))
+                for provider, values in sorted(
+                    self.provider_animation_parameters.items()
+                )
+            },
+            "tint_by_tool": self.tint_by_tool,
         }
 
     @classmethod
@@ -1529,6 +1634,26 @@ class ColorSettings:
         raw_by_project = data.get("color_by_project")
         color_by_project = bool(raw_by_project) if isinstance(raw_by_project, bool) else False
 
+        provider_animation_parameters: dict[str, dict[str, Any]] = {}
+        raw_parameters = data.get("provider_animation_parameters")
+        if isinstance(raw_parameters, dict):
+            for provider, values in raw_parameters.items():
+                cleaned = clean_animation_parameters(values)
+                if isinstance(provider, str) and provider and cleaned:
+                    provider_animation_parameters[provider] = cleaned
+        elif "provider_animation_parameters" not in data:
+            # Written before per-provider tempo existed: every provider
+            # with a chosen motion keeps the tempo its lone-agent light
+            # actually played (J18), instead of jumping to the global cycle
+            # speed now that the live light follows the preview.
+            provider_animation_parameters = {
+                provider: {"duration_seconds": _seeded_motion_seconds(motion)}
+                for provider, motion in provider_animation.items()
+            }
+
+        raw_tint = data.get("tint_by_tool")
+        tint_by_tool = bool(raw_tint) if isinstance(raw_tint, bool) else False
+
         return cls(
             mode_colors=mode_colors,
             agent_colors=agent_colors,
@@ -1543,7 +1668,168 @@ class ColorSettings:
             round_robin_urgency_alert=round_robin_urgency_alert,
             done_celebration_enabled=done_celebration_enabled,
             color_by_project=color_by_project,
+            provider_animation_parameters=provider_animation_parameters,
+            tint_by_tool=tint_by_tool,
         )
+
+
+#: A provider's motion values are small: a few numbers, choices and colours.
+MAX_ANIMATION_PARAMETERS = 16
+MAX_ANIMATION_PALETTE = 4
+
+
+def clean_animation_parameters(values: object) -> dict[str, Any]:
+    """Motion values as they may be stored: string names, and only plain
+    numbers, booleans, short strings or short colour lists as values.
+
+    Unknown names are kept (a motion ignores what it does not read, and a
+    newer build's values must survive this one), but nothing that could
+    grow a settings file without bound gets through.
+    """
+    if not isinstance(values, dict):
+        return {}
+    cleaned: dict[str, Any] = {}
+    for name, value in values.items():
+        if not isinstance(name, str) or not name or len(name) > 64:
+            continue
+        if isinstance(value, bool):
+            cleaned[name] = value
+        elif isinstance(value, (int, float)):
+            if isinstance(value, float) and not math.isfinite(value):
+                continue
+            cleaned[name] = value
+        elif isinstance(value, str) and len(value) <= 64:
+            cleaned[name] = value
+        elif isinstance(value, (list, tuple)) and len(value) <= MAX_ANIMATION_PALETTE:
+            if all(isinstance(item, str) and len(item) <= 16 for item in value):
+                cleaned[name] = list(value)
+        if len(cleaned) >= MAX_ANIMATION_PARAMETERS:
+            break
+    return cleaned
+
+
+#: What J18's one-time seed gives each motion: the tempo its lone-agent
+#: light played before the live light followed the preview. Breathe was
+#: the human-rate 5.46 s breath and blink a 1.6 s square; everything else
+#: runs at the shipped 2.2 s cycle.
+_SEEDED_MOTION_SECONDS: dict[str, float] = {
+    MOTION_BREATHE: 5.5,
+    MOTION_BLINK: 1.6,
+}
+
+
+def _seeded_motion_seconds(motion: str) -> float:
+    return _SEEDED_MOTION_SECONDS.get(motion, DEFAULT_CYCLE_SPEED_SECONDS)
+
+
+#: The Dot's default travel, repeated from ``motion_shapes`` so settings
+#: code need not import the geometry.
+DEFAULT_DOT_TRAVEL_STYLE = "wipe"
+
+
+# --- Tool tint ---------------------------------------------------------------
+
+# bizantl/sidepulse (luka, faace13): the working head takes the hue of the
+# kind of tool the agent is using. Six families, each a colour well away
+# from the others; an MCP tool counts as web.
+TOOL_FAMILY_SHELL = "shell"
+TOOL_FAMILY_EDIT = "edit"
+TOOL_FAMILY_READ = "read"
+TOOL_FAMILY_WEB = "web"
+TOOL_FAMILY_TASK = "task"
+TOOL_FAMILY_PLAN = "plan"
+TOOL_TINT_COLORS: dict[str, str] = {
+    TOOL_FAMILY_SHELL: "#FF7A00",
+    TOOL_FAMILY_EDIT: "#FF2ECC",
+    TOOL_FAMILY_READ: "#2E6BFF",
+    TOOL_FAMILY_WEB: "#00D9A0",
+    TOOL_FAMILY_TASK: "#9D4BFF",
+    TOOL_FAMILY_PLAN: "#FFB000",
+}
+#: Normalised tool names (lower case, no spaces, dashes or underscores) by
+#: family, across the agents JR-Bar hears from.
+TOOL_TINT_FAMILIES: dict[str, str] = {
+    **dict.fromkeys(
+        ("bash", "shell", "exec", "execcommand", "runcommand", "terminal",
+         "killshell", "bashoutput", "localshell", "command"),
+        TOOL_FAMILY_SHELL,
+    ),
+    **dict.fromkeys(
+        ("edit", "multiedit", "write", "notebookedit", "applypatch", "patch",
+         "strreplace", "create", "writefile", "replace"),
+        TOOL_FAMILY_EDIT,
+    ),
+    **dict.fromkeys(
+        ("read", "grep", "glob", "ls", "list", "search", "find", "view",
+         "readfile", "notebookread", "codebasesearch"),
+        TOOL_FAMILY_READ,
+    ),
+    **dict.fromkeys(
+        ("webfetch", "websearch", "fetch", "browse", "browser", "mcp"),
+        TOOL_FAMILY_WEB,
+    ),
+    **dict.fromkeys(
+        ("task", "agent", "subagent", "spawnagent", "dispatchagent"),
+        TOOL_FAMILY_TASK,
+    ),
+    **dict.fromkeys(
+        ("todowrite", "todoread", "plan", "updateplan", "exitplanmode",
+         "enterplanmode", "think"),
+        TOOL_FAMILY_PLAN,
+    ),
+}
+#: The fewest seconds between two rewrites that only change the tint. The
+#: SidePulse is an emulated FAT volume that can wedge under a write storm
+#: (gourneau's LEARNINGS), and a tool changes far faster than that.
+TOOL_TINT_MIN_REWRITE_SECONDS = 3.0
+
+
+def tool_family(tool_name: object) -> str | None:
+    """The tint family a tool belongs to, or None for a tool it does not know.
+
+    ``mcp__server__tool`` names are web/MCP whatever the server.
+    """
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return None
+    raw = tool_name.strip().lower()
+    if raw.startswith("mcp__") or raw.startswith("mcp:") or raw.startswith("mcp."):
+        return TOOL_FAMILY_WEB
+    key = "".join(character for character in raw if character.isalnum())
+    return TOOL_TINT_FAMILIES.get(key)
+
+
+class ToolTintGate:
+    """Decides which tool family the working head shows, and when it may
+    change.
+
+    Only the FAMILY matters -- Read then Grep is the same light, so a tool
+    change inside a family changes nothing and writes nothing. A new family
+    is taken at most once every ``min_seconds``; until then the head keeps
+    the family it already shows. Thread-safe: every device's writer asks
+    the same gate, so the Pro and the Dot agree.
+    """
+
+    def __init__(self, min_seconds: float = TOOL_TINT_MIN_REWRITE_SECONDS) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._min_seconds = float(min_seconds)
+        self._shown: str | None = None
+        self._changed_at: float | None = None
+
+    def family(self, tool_name: object, now: float) -> str | None:
+        wanted = tool_family(tool_name)
+        with self._lock:
+            if wanted == self._shown:
+                return self._shown
+            if (
+                self._changed_at is not None
+                and now - self._changed_at < self._min_seconds
+            ):
+                return self._shown
+            self._shown = wanted
+            self._changed_at = now
+            return self._shown
 
 
 # --- Urgency weighting -----------------------------------------------------
@@ -1843,6 +2129,12 @@ PROVIDER_ANIMATION_STYLES: dict[str, str] = {
     MOTION_AURORA: ANIMATION_STYLE_PULSE,
     MOTION_TIDE: ANIMATION_STYLE_ROLL,
     MOTION_MARQUEE: ANIMATION_STYLE_ROLL,
+    MOTION_EMBER: ANIMATION_STYLE_PULSE,
+    MOTION_BLOOM: ANIMATION_STYLE_ROLL,
+    MOTION_FRONTIER: ANIMATION_STYLE_PULSE,
+    MOTION_GLINT: ANIMATION_STYLE_ROLL,
+    MOTION_RIPPLE: ANIMATION_STYLE_PULSE,
+    MOTION_PENDULUM: ANIMATION_STYLE_ROLL,
     MOTION_STEADY: ANIMATION_STYLE_SOLID,
     MOTION_BLINK: ANIMATION_STYLE_BLINK,
 }
@@ -1898,9 +2190,7 @@ def _single_agent_program(
         and not _is_static_agent_state(state)
         and settings.agent_animation(provider) != PROVIDER_ANIMATION_AUTO
     ):
-        duration_ms = max(
-            1, int(settings.effective_speed_seconds(BLEND_MODE_CYCLE) * 1000)
-        )
+        duration_ms = provider_cycle_ms(provider, settings)
         settle_ms = settle_duration_ms(duration_ms)
         floor_color = _floor_for_state(color, state, settings)
         body = _motion_turn_lines(
@@ -1917,7 +2207,14 @@ def _single_agent_program(
         # settle line goes first and the motion stays -- refusing the write
         # entirely would freeze the strip on its previous program.
         lead = f"{floor_color} {settle_ms}ms cosine"
-        for candidate in ([lead, *body, "repeat"], [*body, "repeat"]):
+        candidates = [[lead, *body, "repeat"], [*body, "repeat"]]
+        if agent_motion(
+            state, cycle_ms=duration_ms, provider=provider, settings=settings
+        ) == MOTION_STEADY:
+            # A held colour has no breath to interrupt; easing down to the
+            # floor at the top of every loop would only make it blink.
+            candidates = candidates[1:]
+        for candidate in candidates:
             program = apply_brightness("\n".join(candidate), brightness)
             if _within_firmware_budget(program):
                 return program
@@ -1939,6 +2236,49 @@ def _single_agent_program(
         **_color_kwargs_for_state(state, color),
         **fade_kwargs,
     )
+
+
+def provider_cycle_ms(provider: str | None, settings: ColorSettings) -> int:
+    """One cycle of this provider's chosen motion, in ms: its own tempo from
+    Effect Studio when it has one, else the global cycle speed."""
+    fallback = max(1, int(settings.effective_speed_seconds(BLEND_MODE_CYCLE) * 1000))
+    return settings.agent_cycle_ms(provider, fallback)
+
+
+def provider_motion_lines(
+    provider: str,
+    color: str,
+    settings: ColorSettings,
+    *,
+    led_count: int = 8,
+    state: LedDisplayState = LedDisplayState.WORKING,
+) -> tuple[list[str], str] | None:
+    """The body of one provider's chosen motion, and the short ease to its
+    resting colour that goes in front of it.
+
+    What the live Pro plays for one working agent and what every preview
+    shows are both built from this, so they cannot drift apart again. None
+    when the provider has no chosen motion (Automatic) or the state is not
+    one a motion may drive.
+    """
+    if (
+        not provider
+        or state in URGENT_STATES
+        or _is_static_agent_state(state)
+        or settings.agent_animation(provider) == PROVIDER_ANIMATION_AUTO
+    ):
+        return None
+    duration_ms = provider_cycle_ms(provider, settings)
+    body = _motion_turn_lines(
+        color,
+        state,
+        settings,
+        provider=provider,
+        led_count=led_count,
+        duration_ms=duration_ms,
+    )
+    lead = f"{_floor_for_state(color, state, settings)} {settle_duration_ms(duration_ms)}ms cosine"
+    return body, lead
 
 
 def provider_motion_preview_program(
@@ -2128,6 +2468,7 @@ def _speed_safe_motion(motion: str, *, cycle_ms: int) -> str:
         MOTION_AURORA,
         MOTION_DUOTONE,
         MOTION_EMBER,
+        MOTION_RIPPLE,
     ):
         return MOTION_BREATHE
     if motion == MOTION_BLINK:
@@ -2144,6 +2485,7 @@ def _speed_safe_motion(motion: str, *, cycle_ms: int) -> str:
         MOTION_BLOOM,
         MOTION_FRONTIER,
         MOTION_GLINT,
+        MOTION_PENDULUM,
     ):
         return MOTION_CHASE
     return motion
@@ -2374,10 +2716,19 @@ def _motion_segments(
             f"{led_index}:{bed} {settle_ms}ms cosine",
             f"{led_index}:{peak} {width_ms}ms pulse {delay_ms + chase_delay_ms}ms",
         )
+    if motion == MOTION_RIPPLE:
+        # A ring passing through one LED: a swell over a faint bed, lower
+        # than a breath's so a shared ripple still reads as fading water.
+        bed = scale_hex_brightness(peak, 0.12)
+        return (
+            f"{led_index}:{bed} {settle_ms}ms cosine",
+            f"{led_index}:{peak} {max(MIN_FLASH_CYCLE_MS, (cycle_ms * 3) // 5)}ms pulse{tail}",
+        )
     if motion in (
         MOTION_CHASE,
         MOTION_SCANNER,
         MOTION_KITT,
+        MOTION_PENDULUM,
         MOTION_COMET,
         MOTION_STACK,
         MOTION_CONVERGE,
@@ -2397,6 +2748,7 @@ def _motion_segments(
         if motion in (
             MOTION_SCANNER,
             MOTION_KITT,
+            MOTION_PENDULUM,
             MOTION_COMET,
             MOTION_MARQUEE,
             MOTION_GRADIENT,
@@ -2448,29 +2800,6 @@ def _cycle_turn_lines(
     )
 
 
-#: How many laps a circulating motion rolls before repainting its profile.
-#: The repaint is a ~200 ms hesitation once per set, so amortising it over
-#: several laps is the difference between a wave and a wave with a hiccup.
-MOTION_ROLL_LAPS = 6
-
-
-def _travel_step_ms(duration_ms: int, led_count: int) -> int:
-    """The step a bouncing head takes between neighbours.
-
-    A bounce is two sweeps, and a sweep costs one step per LED plus the two
-    the tail needs at each end, so this is the step that makes one there-and-
-    back take the configured cycle -- about one sweep a second at the default
-    speed.
-    """
-    from . import motion_shapes
-
-    span = 2 * (max(2, int(led_count)) + 1)
-    return max(
-        motion_shapes.MIN_STEP_MS,
-        min(motion_shapes.MAX_STEP_MS, max(1, int(duration_ms)) // span),
-    )
-
-
 def _motion_turn_lines(
     color: str,
     state: LedDisplayState,
@@ -2484,12 +2813,11 @@ def _motion_turn_lines(
     """A whole-strip rendering of this color/state's chosen rhythm.
 
     The owner of these lines has the full strip for `duration_ms`, so
-    positional shapes get a real line to travel. Every shape comes from
-    ``motion_shapes``, whose geometry was measured against the firmware
-    rather than inferred (see that module's header): the travelling ones are
-    built on ``roll``, which crossfades continuously and therefore has no
-    seam, and the bouncing ones hand the crest from line to line at full
-    brightness rather than letting the strip go dark to turn around.
+    positional shapes get a real line to travel. The geometry itself is
+    ``motion_shapes.render_motion``, the one dispatcher every surface uses;
+    this wrapper decides what it is given: the state's crest and rest, the
+    rhythm urgency and the speed guard allow, the provider's own motion
+    values, the tool tint, and how the device's Dot travels.
 
     Deterministic bytes -- write dedupe holds. Shared by the Cycle layout's
     turns and the solo/preview render.
@@ -2508,146 +2836,30 @@ def _motion_turn_lines(
         provider=provider,
         settings=settings,
     )
-    if motion == MOTION_STEADY:
-        return [f"{peak} {duration_ms}ms cosine"]
-    if motion == MOTION_BLINK:
-        # The one shape that is meant to have hard edges. Everything else in
-        # the vocabulary eases, which is what keeps a blink readable as an
-        # interruption rather than as a faster breath.
-        half = max(1, duration_ms // 2)
-        return [f"{peak} {half}ms none", f"{floor_color} {half}ms none"]
-    if motion == MOTION_HEARTBEAT:
-        return shapes.lub_dub(peak, floor_color, cycle_ms=duration_ms)
-    if motion == MOTION_DUOTONE:
-        from .presentation_policy import _hue_shifted_color
-
-        return shapes.crossfade(
-            peak, _hue_shifted_color(peak, 40.0), cycle_ms=duration_ms
-        )
-    if motion in (MOTION_TWINKLE, MOTION_FLICKER):
-        # Twinkle sparks over darkness; flicker shimmers over a lit bed at a
-        # shorter spark, so the two read as different weather rather than as
-        # one scatter with two names.
-        twinkle = motion == MOTION_TWINKLE
-        return shapes.scatter(
-            peak,
-            floor_color if twinkle else shapes.shade(peak, 0.12),
-            led_count=led_count,
-            cycle_ms=duration_ms,
-            spark_fraction=0.26 if twinkle else 0.15,
-            seed=3 if twinkle else 5,
-        )
-    if motion in (MOTION_DRIFT, MOTION_AURORA):
-        # Aurora rests on a LUMINOUS bed (light moving on water at night)
-        # where drift rests near-dark; the swells are wider still.
-        aurora = motion == MOTION_AURORA
-        return shapes.drift(
-            peak,
-            shapes.shade(peak, 0.22 if aurora else 0.06),
-            led_count=led_count,
-            cycle_ms=duration_ms,
-            seed=5 if aurora else 3,
-            stretch=2.0 if aurora else 1.6,
-        )
-    if motion == MOTION_EMBER:
-        return shapes.ember(
-            peak, floor_color, led_count=led_count, cycle_ms=duration_ms
-        )
-    if motion == MOTION_FRONTIER:
-        return shapes.frontier(
-            peak, floor_color, led_count=led_count, cycle_ms=duration_ms
-        )
-
-    laps = 1 if compact else MOTION_ROLL_LAPS
-    if motion in _TRAVELLING_MOTIONS and not shapes.positional(led_count):
-        # Two LEDs have nowhere for a head to travel. Rolling a bright/dim
-        # pair is a slow crossfade -- the Dot's whole positional vocabulary,
-        # and never a two-LED strobe.
-        return shapes.travelling_wave(
-            peak,
-            led_count=led_count,
-            lap_ms=duration_ms,
-            tail=shapes.DOT_TAIL,
-            laps=laps,
-        )
-    if motion == MOTION_CHASE:
-        return shapes.travelling_wave(
-            peak, led_count=led_count, lap_ms=duration_ms, laps=laps
-        )
-    if motion == MOTION_COMET:
-        return shapes.travelling_wave(
-            peak,
-            led_count=led_count,
-            lap_ms=max(1, int(duration_ms * 0.6)),
-            tail=shapes.COMET_TAIL,
-            laps=laps,
-        )
-    if motion == MOTION_GLINT:
-        # Glint keeps its lit bed on every strip length -- even the Dot,
-        # where the other travelling shapes degrade to a dark crossfade.
-        return shapes.glint(
-            peak, led_count=led_count, lap_ms=duration_ms, laps=laps
-        )
-    if motion == MOTION_MARQUEE:
-        return shapes.travelling_wave(
-            peak,
-            led_count=led_count,
-            lap_ms=duration_ms,
-            tail=shapes.MARQUEE_TAIL,
-            laps=laps,
-        )
-    if motion == MOTION_TIDE:
-        return shapes.travelling_wave(
-            peak,
-            led_count=led_count,
-            lap_ms=2 * duration_ms,
-            tail=shapes.TIDE_TAIL,
-            laps=laps,
-        )
-    if motion == MOTION_GRADIENT:
-        return shapes.gradient_wave(
-            peak, led_count=led_count, lap_ms=duration_ms, laps=laps
-        )
-    if motion == MOTION_KITT:
-        return shapes.bounce(
-            peak,
-            floor_color,
-            led_count=led_count,
-            step_ms=_travel_step_ms(duration_ms, led_count),
-            tail_leds=2.0,
-        )
-    if motion == MOTION_SCANNER:
-        # The same bounce with a tighter head and a quicker step: a machine
-        # looking for something, where KITT is a machine thinking.
-        return shapes.bounce(
-            peak,
-            floor_color,
-            led_count=led_count,
-            step_ms=max(
-                shapes.MIN_STEP_MS,
-                int(_travel_step_ms(duration_ms, led_count) * 0.7),
-            ),
-            tail_leds=1.5,
-        )
-    if motion == MOTION_CONVERGE:
-        return shapes.converge(
-            peak,
-            floor_color,
-            led_count=led_count,
-            step_ms=_travel_step_ms(duration_ms, led_count),
-        )
-    if motion == MOTION_BLOOM:
-        return shapes.bloom(
-            peak,
-            floor_color,
-            led_count=led_count,
-            step_ms=_travel_step_ms(duration_ms, led_count),
-        )
-    if motion == MOTION_STACK:
-        return shapes.fill(
-            peak, floor_color, led_count=led_count, cycle_ms=duration_ms
-        )
-    return shapes.breath(peak, floor_color, cycle_ms=duration_ms)
+    chosen = settings.agent_animation(provider) if provider else PROVIDER_ANIMATION_AUTO
+    params = settings.agent_animation_parameters(provider) if motion == chosen else {}
+    ceiling = 1.0
+    if state not in URGENT_STATES:
+        ceiling = settings.fade_range(_STATE_TO_FADE_MODE_KEY[state])[1]
+    head = None
+    if (
+        settings.tint_by_tool
+        and state is LedDisplayState.WORKING
+        and settings.render_tool_family is not None
+    ):
+        head = TOOL_TINT_COLORS.get(settings.render_tool_family)
+    return shapes.render_motion(
+        motion,
+        peak,
+        floor_color,
+        led_count=led_count,
+        cycle_ms=duration_ms,
+        params=params,
+        compact=compact,
+        dot_travel=settings.render_dot_travel,
+        head=head,
+        ceiling=ceiling,
+    )
 
 
 _TRAVELLING_MOTIONS = frozenset(
@@ -2661,6 +2873,7 @@ _TRAVELLING_MOTIONS = frozenset(
         MOTION_SCANNER,
         MOTION_CONVERGE,
         MOTION_STACK,
+        MOTION_PENDULUM,
     }
 )
 
@@ -2713,14 +2926,15 @@ def _cycle_program(
     # Cycle's classic whole-strip breath per agent exactly (same guard
     # the solo render uses), so the speed dial's rendered duration and
     # the layout's identity are unchanged for everyone who never opened
-    # the motion picker.
+    # the motion picker. A rich turn runs at its provider's own tempo when
+    # Effect Studio gave it one.
     turns = [
         (
             _cycle_turn_lines(
                 agent,
                 settings,
                 led_count=led_count,
-                duration_ms=duration_ms,
+                duration_ms=settings.agent_cycle_ms(agent.provider, duration_ms),
             )
             if settings.agent_animation(agent.provider) != PROVIDER_ANIMATION_AUTO
             else plain_turn(agent)
@@ -3062,6 +3276,35 @@ def _reset_segment_for_agent(led_index: int, agent: _ActiveAgent, settings: Colo
     return f"{led_index}:{floor_color} {settle_ms}ms cosine"
 
 
+def _honours_strip_direction(render):
+    """Draws a program for a strip mounted the other way round.
+
+    The two agent renderers below draw every layout -- one agent, a shared
+    strip, a Cycle turn -- for a strip whose LED 0 is on the left. A device
+    set to ``reversed`` (``ColorSettings.render_led_direction``) gets the
+    same drawing mirrored as the very last step, so every positional motion
+    keeps its direction on the desk however the strip is plugged in.
+    """
+    import functools
+
+    @functools.wraps(render)
+    def oriented_render(*args, **kwargs):
+        colors = kwargs.get("colors")
+        direction = getattr(colors, "render_led_direction", "forward")
+        if direction != "reversed":
+            return render(*args, **kwargs)
+        from .motion_shapes import oriented_program
+
+        kwargs["colors"] = replace(colors, render_led_direction="forward")
+        state, program = render(*args, **kwargs)
+        return state, oriented_program(
+            program, led_count=int(kwargs.get("led_count", 8)), direction=direction
+        )
+
+    return oriented_render
+
+
+@_honours_strip_direction
 def program_for_snapshot(
     statuses: tuple[AgentStatus, ...],
     *,
@@ -3259,6 +3502,7 @@ def plan_fleet_projection(
     )
 
 
+@_honours_strip_direction
 def program_for_projection(
     projection,
     *,
