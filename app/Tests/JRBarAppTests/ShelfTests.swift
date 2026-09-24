@@ -115,7 +115,7 @@ import JRBarCore
         tray.revalidate()
         let entry = tray.entries.first!
         #expect(tray.provider(for: entry) == nil)
-        #expect(tray.sharingServices(for: entry).isEmpty)
+        #expect(tray.shareableURLs(for: entry).isEmpty)
         #expect(!tray.canAttachCopy(entry))
     }
 

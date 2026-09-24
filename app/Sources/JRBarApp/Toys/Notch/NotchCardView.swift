@@ -1485,16 +1485,14 @@ private struct ShelfTrayRow: View {
         }
     }
 
-    /// Native share targets for the entry's files; a canceled sheet
-    /// delivers nothing and claims nothing.
+    /// The system's own share menu for the entry's files; a canceled
+    /// share delivers nothing and claims nothing. A shelf whose files
+    /// all moved offers nothing to share.
+    @ViewBuilder
     private func shareMenu(for entry: ShelfTrayModel.ShelfEntry) -> some View {
-        Menu("Share…") {
-            ForEach(tray.sharingServices(for: entry), id: \.title) { service in
-                Button(service.title) {
-                    service.perform(withItems: entry.items
-                        .filter { !$0.missing }.map(\.url))
-                }
-            }
+        let urls = tray.shareableURLs(for: entry)
+        if !urls.isEmpty {
+            ShareLink(items: urls) { Text("Share…") }
         }
     }
 }

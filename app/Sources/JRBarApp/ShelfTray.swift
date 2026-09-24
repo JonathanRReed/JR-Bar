@@ -450,15 +450,13 @@ final class ShelfTrayModel {
         return provider
     }
 
-    /// Native share: returns the services that can send this entry's
-    /// files so the caller can present them. A canceled picker claims
-    /// nothing (T50).
-    func sharingServices(for entry: ShelfEntry) -> [NSSharingService] {
+    /// Native share: the entry's files that still exist, for the
+    /// system's share menu (`ShareLink`) to offer. A moved file is
+    /// never offered, and a canceled share claims nothing (T50).
+    func shareableURLs(for entry: ShelfEntry) -> [URL] {
         revalidate()
-        let urls = entries.first(where: { $0.id == entry.id })?
+        return entries.first(where: { $0.id == entry.id })?
             .items.filter { !$0.missing }.map(\.url) ?? []
-        guard !urls.isEmpty else { return [] }
-        return NSSharingService.sharingServices(forItems: urls)
     }
 
     /// The dedicated one-click path: straight to AirDrop, no picker —
