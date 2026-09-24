@@ -194,12 +194,96 @@ public enum ScreenBarGeometry {
     /// drop here would hang the tray over them again.
     public static let wingEarDrop: CGFloat = 0
 
-    /// The screen the Screen Bar belongs on: the first with a safe-area
-    /// inset (the notched built-in), else the menu-bar screen. Never
-    /// `NSScreen.main`: that is whichever display holds the key window,
-    /// so opening Settings on an external would carry the band there.
+    /// The screen the Screen Bar and the notch island belong on, by the
+    /// Notch card's Display pick (`displayPick`): the notched built-in
+    /// (else the built-in, else the menu-bar screen), the main display
+    /// with the menu bar, or the display the pointer was seated on.
+    /// Never `NSScreen.main`: that is whichever display holds the key
+    /// window, so opening Settings on an external would carry the band
+    /// there.
     public static func preferredScreen() -> NSScreen? {
-        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.screens.first
+        let screens = NSScreen.screens
+        let candidates = screens.map { screen in
+            ScreenCandidate(id: displayID(of: screen), notched: screen.safeAreaInsets.top > 0,
+                            builtIn: CGDisplayIsBuiltin(displayID(of: screen)) != 0)
+        }
+        return preferredIndex(in: candidates, pick: displayPick, seat: pointerSeat).map { screens[$0] }
+    }
+
+    /// One display as the pick reads it.
+    public struct ScreenCandidate: Equatable, Sendable {
+        public var id: CGDirectDisplayID
+        public var notched: Bool
+        public var builtIn: Bool
+
+        public init(id: CGDirectDisplayID, notched: Bool, builtIn: Bool) {
+            self.id = id
+            self.notched = notched
+            self.builtIn = builtIn
+        }
+    }
+
+    /// The pure pick over `screens` in `NSScreen.screens` order, whose
+    /// first is the main display (the one with the menu bar). A seat on
+    /// a display that has gone falls back to the built-in rule.
+    public static func preferredIndex(in screens: [ScreenCandidate], pick: NotchDisplay,
+                                      seat: CGDirectDisplayID?) -> Int? {
+        guard !screens.isEmpty else { return nil }
+        let builtIn = screens.firstIndex { $0.notched } ?? screens.firstIndex { $0.builtIn } ?? 0
+        switch pick {
+        case .builtIn: return builtIn
+        case .main: return 0
+        case .pointer: return seat.flatMap { id in screens.firstIndex { $0.id == id } } ?? builtIn
+        }
+    }
+
+    /// The Notch card's Display pick, synced by the notch toy the way
+    /// `simulatedNotch` is. Written and read on the main thread only.
+    nonisolated(unsafe) public static var displayPick: NotchDisplay = .builtIn
+    /// For "Where the pointer is": the display the pointer was on when
+    /// the Space or the screens last changed. The island never chases the
+    /// pointer between those moments. Main thread only.
+    nonisolated(unsafe) public static var pointerSeat: CGDirectDisplayID?
+
+    /// Posted when the pick or the seat moves the island's display, so
+    /// the Screen Bar and the island reseat together.
+    public static let preferredScreenDidChange = Notification.Name("JRBarPreferredScreenDidChange")
+
+    /// Set the pick, and seat the pointer's display when the pick wants
+    /// it; posts `preferredScreenDidChange` when the answer moved.
+    @MainActor
+    public static func applyDisplayPick(_ pick: NotchDisplay, pointer: NSPoint = NSEvent.mouseLocation) {
+        let before = preferredScreen().map(displayID(of:))
+        displayPick = pick
+        if pick == .pointer, pointerSeat == nil { seatPointer(at: pointer) }
+        if preferredScreen().map(displayID(of:)) != before {
+            NotificationCenter.default.post(name: preferredScreenDidChange, object: nil)
+        }
+    }
+
+    /// Re-seat "Where the pointer is" on the display under the pointer —
+    /// a Space change or a screen change calls this, a pointer move never
+    /// does. Posts `preferredScreenDidChange` when the island moves.
+    @MainActor
+    public static func reseatPointer(at point: NSPoint = NSEvent.mouseLocation) {
+        guard displayPick == .pointer else { return }
+        let before = preferredScreen().map(displayID(of:))
+        seatPointer(at: point)
+        if preferredScreen().map(displayID(of:)) != before {
+            NotificationCenter.default.post(name: preferredScreenDidChange, object: nil)
+        }
+    }
+
+    @MainActor
+    private static func seatPointer(at point: NSPoint) {
+        if let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) {
+            pointerSeat = displayID(of: screen)
+        }
+    }
+
+    /// The display's Core Graphics id, 0 when AppKit does not say.
+    public static func displayID(of screen: NSScreen) -> CGDirectDisplayID {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
 
     public static func notchDepth(of screen: NSScreen) -> CGFloat {

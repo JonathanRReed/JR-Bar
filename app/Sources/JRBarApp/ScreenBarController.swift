@@ -419,6 +419,8 @@ final class ScreenBarController {
 
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(screensChanged(_:)), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        // The Notch card's Display pick moved the island: the band follows.
+        center.addObserver(self, selector: #selector(screensChanged(_:)), name: ScreenBarGeometry.preferredScreenDidChange, object: nil)
         // The island's frame is the band's silhouette while it is drawn:
         // every setFrame — each step of a morph included — re-reads it,
         // and the ordering notifications catch a show or a park that
