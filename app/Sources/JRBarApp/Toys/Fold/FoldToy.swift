@@ -511,7 +511,10 @@ final class FoldToy: Toy {
             noteDiag(stage: "paused")
             return
         }
-        if blackout.active {
+        if blackout.active && !isDuo {
+            // The look changed under the hold: the Room has no blackout.
+            endBlackout(hide: true)
+        } else if blackout.active {
             // The lid is back above the closed line: the reopen gets its
             // own watchdog to land a frame and cross the release angle.
             blackout.note(angle: gateAngle, at: CACurrentMediaTime())
@@ -1618,7 +1621,7 @@ private struct FoldControlsView: View {
 
             Toggle(isOn: toy.bind(\.wallpaperFallback)) {
                 SettingLabel(title: "Wallpaper without Screen Recording",
-                             subtitle: "With no permission, the wallpaper alone folds — same motion, no windows in the room.")
+                             subtitle: "With no permission, the wallpaper alone folds — same motion, just no windows.")
             }
 
             if toy.isOn && !FoldCapturePermission.granted {
