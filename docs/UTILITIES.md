@@ -75,7 +75,8 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > where an item happens to sit. Apple's own extras and bare helpers have
 > no path through the agent and take a cover where they sit, unless
 > `curation.concealAppleExtras` lets Weather, Passwords and Time Machine
-> hide like any app (off until a live probe shows they conceal cleanly). Reveal = invalidate, rehide = re-activate, a new
+> hide like any app (off until a live probe shows they conceal
+> cleanly). Reveal = invalidate, rehide = re-activate, a new
 > assertion goes up before the old comes down; clicks on the agent's own
 > clock/battery/Wi-Fi are held at an event tap, lifted for and replayed.
 >
@@ -203,16 +204,24 @@ reorder). A drop on the icon itself does nothing.
   5 s) so "left of the icon" is the agent's own order.
 - **The layout table** (Advanced › Menu bar layout table): pick
   `~/Library/Group Containers/com.apple.MenuBar/Library/Preferences/
-  com.apple.MenuBar.plist` once in an open panel and JR-Bar reads
+  com.apple.MenuBar.plist` once in an open panel (with Full Disk Access
+  already granted, the click reads it with no panel) and JR-Bar reads
   `TrailingItemPreferredPositions` — read-only, watched, never written.
-  It orders the Item Bar and the layout editor, confirms drags without
-  Accessibility, and flags an app whose section and place disagree with
-  a one-click section fix (a pick, never a move). The file's shape is
-  unverified until a real grant; the parser takes the likely forms.
+  It orders the Item Bar and the layout editor, backs a drag's confirm
+  when Accessibility is slow to answer, and — on the slot seat, where
+  the icon's sides are macOS's order — flags an app whose section and
+  place disagree with a one-click section fix (a pick, never a move).
+  The file's shape is unverified until a real grant; the parser takes
+  the likely forms.
 - **The clock and Control Center** (`concealSystemItems`, off,
-  experimental): a ⌘-drag may hide them through the assertion's system
-  item list. Wi-Fi, the battery and sound always stay. It stays off
-  unless a live probe shows they conceal and come back cleanly.
+  experimental, no card row): a ⌘-drag may hide them through the
+  assertion's system item list. Wi-Fi, the battery and sound always
+  stay. It stays off, and out of the card, unless a live probe shows
+  they conceal and come back cleanly.
+- **Apple's extras** (`concealAppleExtras`, the card's "Hide Apple's
+  extras like apps"): a file that never chose follows the code default,
+  and only a choice made on the card is written — so the default can
+  flip once the live probe passes and reach every file that never chose.
 
 Also in this pass: **New menu bar items** (`newItems`: where macOS
 puts them and the ear asks, straight to Shown, or straight to Hidden),
