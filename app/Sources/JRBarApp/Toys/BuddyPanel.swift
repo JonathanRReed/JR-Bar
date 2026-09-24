@@ -371,12 +371,20 @@ final class BuddyPanel: NSPanel {
         ignoresMouseEvents = true
         guard isVisible else {
             alphaValue = 0
-            model.drawsBuddy = false
+            letGo()
             return
         }
         NotchSurfaceMotion.dismiss(self, duration: 0.2, reducedDuration: 0.1,
                                    stillGone: { [weak self] in self?.showing == false },
-                                   then: { [weak self] in self?.model.drawsBuddy = false })
+                                   then: { [weak self] in self?.letGo() })
+    }
+
+    /// Gone: nothing drawn, and nothing under the pointer. A window that
+    /// is ordered out never hears the pointer leave, so a hover left
+    /// standing would show the caption unasked on the next float.
+    private func letGo() {
+        model.drawsBuddy = false
+        model.hovered = false
     }
 
     /// Meant to be on screen; a fade-out only orders the panel out while
