@@ -33,10 +33,11 @@ what comes after, in rough order.
    session-truth pieces that are already process-table work (liveness,
    Claude session files), then the transcript tails, leaving the daemon
    with usage, devices and policy.
-5. **Retire the legacy windows.** `open_legacy_window` still opens the
-   PyObjC Settings, Setup, Agent Browser, Effect Studio, Usage Center,
-   Control Center and Why panel on demand. Each has a Swift replacement;
-   delete them from the daemon as the replacements are confirmed complete.
+5. **Retire the legacy windows.** Done 2026-09-24: `open_legacy_window` is
+   gone, the Creator Micro's window keys ask the app for its own windows,
+   and the Setup, Effect Studio, Control Center and Why panel windows are
+   deleted. The Settings window and the modules only it imports go with the
+   settings-window removal (SP-10).
 6. **Smaller things.** A real app icon (the current one is programmatic);
    the Screen Bar's notch-silhouette measurement and standing gauges on
    the Swift side; a price table served by the daemon so the Usage Center's

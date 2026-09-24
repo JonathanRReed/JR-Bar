@@ -127,14 +127,6 @@ _TRANSIENT_KIND_DEADLINE: Final = {
     "peek": "peek_until",
     "signal_test": "test_signal_until",
 }
-LEGACY_WINDOWS: Final = {
-    "settings": "show_settings_window",
-    "setup": "show_setup_window",
-    "agent_browser": "openAgentBrowser_",
-    "effect_studio": "openEffectStudio_",
-    "usage_center": "openProviderUsageCenter_",
-    "why": "openWhyPanel_",
-}
 _APP_OWNED_DIAGNOSTICS: Final = frozenset({"alcove_follow_state"})
 _HEALTHY_DIAGNOSTIC_CODES: Final = frozenset(
     {
@@ -3291,28 +3283,6 @@ def _cmd_hooks_doctor(self, args):
     from .hook_doctor import hook_doctor_report
 
     return hook_doctor_report()
-
-
-@command("open_legacy_window")
-def _cmd_open_legacy_window(self, args):
-    name = str(args.get("name") or "")
-    selector = LEGACY_WINDOWS.get(name)
-    if selector is None:
-        raise CommandError("not_found", f"no legacy window named {name!r}")
-    method = getattr(self, selector, None)
-    if not callable(method):
-        raise CommandError("unsupported", f"{name} is unavailable in this build")
-    if selector.endswith("_"):
-        method(None)
-    else:
-        method()
-    from .window_presentation import activate_app
-
-    try:
-        activate_app()
-    except Exception:
-        pass
-    return {"window": name}
 
 
 @command("quit")

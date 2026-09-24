@@ -2424,49 +2424,6 @@ for (const event of [
     def test_first_launch_setup_window(self) -> None:
         """The setup window offers first-launch controls, hides once done,
         and its terminal installer opens a command file."""
-        # --- scenario: status_bar_setup_window_has_first_launch_controls
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        target = SimpleNamespace(setup_fields={}, setup_buttons={})
-
-        window = status_bar.build_setup_window(target)
-
-        self.assertEqual(window.title(), f"Welcome to {status_bar.PRODUCT_DISPLAY_NAME}")
-        self.assertIn("launch", target.setup_buttons)
-        self.assertIn("eject_guard", target.setup_buttons)
-        self.assertIn("eject_guard_uninstall", target.setup_buttons)
-        self.assertIn("sleep_helper", target.setup_buttons)
-        self.assertIn("launch_status", target.setup_fields)
-        self.assertIn("eject_status", target.setup_fields)
-        self.assertIn("sleep_status", target.setup_fields)
-        self.assertFalse(target.setup_fields["message"].usesSingleLineMode())
-        self.assertTrue(target.setup_fields["message"].cell().wraps())
-        # The welcome window's own additions: the live demo strip and one
-        # contextual connect row per registered provider.
-        self.assertIn("demo_view", target.setup_fields)
-        for provider in status_bar.HOOK_PROVIDERS:
-            self.assertIn(f"setup_{provider}_status", target.setup_fields)
-            self.assertIn(f"setup_{provider}_install", target.setup_buttons)
-        # First display is software-only and permission-free. System helpers,
-        # physical hardware, and optional integrations require an explicit click.
-        for key in ("launch", "eject_guard", "sleep_helper"):
-            self.assertEqual(target.setup_buttons[key].state(), 0)
-        for key in (
-            "screen_bar",
-            "privacy_mode",
-            "reset_celebrations",
-            "matched_lighting",
-            "sleep_dimming",
-            "idle_off",
-            "configure_physical_devices",
-            "configure_t3",
-            "configure_alcove",
-        ):
-            self.assertIn(key, target.setup_buttons)
-
         # --- scenario: setup_terminal_installer_opens_command_file
         try:
             from jrbar import status_bar

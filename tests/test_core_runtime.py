@@ -32,7 +32,7 @@ REQUIRED_COMMANDS = {
     "reset_settings", "set_brightness", "set_device_display", "apply_calibration", "preview_program",
     "preview_calibration", "end_calibration_preview",
     "apply_effect", "refresh_usage", "install_hooks", "uninstall_hooks", "set_closed_lid_policy",
-    "quiet", "list_history", "doctor", "quit", "open_legacy_window",
+    "quiet", "list_history", "doctor", "quit",
     # app-proposed extensions (app/README.md): Effect Studio and Usage Center
     "list_effects", "render_effect", "list_assignments", "set_assignment", "clear_assignment",
     "import_effect_pack", "export_effect_pack", "remove_effect_pack", "usage_history",
@@ -46,6 +46,8 @@ REQUIRED_COMMANDS = {
 def test_every_protocol_command_is_registered__and_2_more() -> None:
     # --- scenario: every_protocol_command_is_registered
     assert REQUIRED_COMMANDS <= set(command_names())
+    # The Python windows are retired; nothing on the socket opens one.
+    assert "open_legacy_window" not in set(command_names())
 
     # --- scenario: path_helpers
     document = {"colors": {"agent_colors": {"claude": "#D97757"}}, "devices": [{"brightness": 255}]}

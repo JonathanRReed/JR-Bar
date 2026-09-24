@@ -260,23 +260,6 @@ else:
 
             refresh_setup_window(self, _legacy)
 
-        def _open_setup_destination(self, page_key: str) -> None:
-            if self.setup_window is not None:
-                self.setup_window.performClose_(None)
-            self.select_settings_pane(page_key)
-            self.show_settings_window()
-
-        @_legacy.objc.IBAction
-        def openSetupPhysicalDevices_(self, _sender) -> None:
-            self._open_setup_destination("devices")
-
-        @_legacy.objc.IBAction
-        def openSetupT3_(self, _sender) -> None:
-            self._open_setup_destination("installed_agents")
-
-        @_legacy.objc.IBAction
-        def openSetupAlcove_(self, _sender) -> None:
-            self._open_setup_destination("colors_screen_bar")
 
         def run_first_launch_setup(self) -> None:
             from .onboarding_runtime import run_first_launch_setup

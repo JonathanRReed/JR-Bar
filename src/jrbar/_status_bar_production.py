@@ -23,11 +23,6 @@ from .ambient_effect_consumer import (
 from .battery_runtime import BatteryObservation, BatteryObservationService
 from .core_state import CoreDomain, CoreStateStore, StateDelta
 from .device_projection import light_rows_for_provider, projection_for_provider
-from .effect_studio_physical_preview import (
-    EffectStudioPhysicalPreviewAdapter,
-    PreviewReleaseReason,
-)
-from .effect_studio_window import EffectStudioWindowController
 from .hardware_write_policy import hardware_coalesce_key
 from .intake_runtime import IntakeProbeResult, IntakeProbeService
 from .ledger_runtime import LedgerPublishResult, RemoteLedgerPublisher
@@ -53,32 +48,6 @@ FULL_REFRESH_HEARTBEAT_SECONDS = _legacy.STATUS_BAR_REFRESH_SECONDS
 _LegacyStatusBarController = _legacy._AppKitStatusBarController
 
 
-def _release_effect_studio_preview(
-    controller,
-    reason: PreviewReleaseReason,
-) -> bool:
-    adapter = getattr(
-        controller,
-        "_effect_studio_physical_preview_adapter",
-        None,
-    )
-    if adapter is None:
-        return False
-    active = getattr(adapter, "active_session", None)
-    session_id = getattr(active, "session_id", None)
-    try:
-        released = bool(adapter.release(reason))
-    except Exception:
-        released = False
-    if not released:
-        return False
-    window = getattr(controller, "_effect_studio_window_controller", None)
-    callback = getattr(window, "physicalPreviewDidRelease_", None)
-    if callable(callback):
-        callback({"session_id": session_id, "reason": reason.value})
-    return True
-
-
 def _terminate_controller(controller, notification, *, legacy_terminate=None):
     if getattr(controller, "_runtime_termination_started", False):
         return None
@@ -90,15 +59,6 @@ def _terminate_controller(controller, notification, *, legacy_terminate=None):
         else legacy_terminate
     )
     try:
-        preview_released = _release_effect_studio_preview(
-            controller,
-            PreviewReleaseReason.APP_TERMINATION,
-        )
-        writer = getattr(controller, "_hardware_write_worker", None)
-        if preview_released and writer is not None:
-            wait_idle = getattr(writer, "wait_idle", None)
-            if callable(wait_idle):
-                wait_idle(timeout_seconds=1.0)
         for attribute in (
             "_production_battery_service",
             "_production_transcript_service",
@@ -141,113 +101,6 @@ else:
 
         def performance_snapshot(self) -> PerformanceSnapshot:
             return self._performance().snapshot()
-
-        def _effect_studio_preview_runtime(
-            self,
-        ) -> EffectStudioPhysicalPreviewAdapter:
-            adapter = getattr(
-                self,
-                "_effect_studio_physical_preview_adapter",
-                None,
-            )
-            if not isinstance(adapter, EffectStudioPhysicalPreviewAdapter):
-                adapter = EffectStudioPhysicalPreviewAdapter(self)
-                self._effect_studio_physical_preview_adapter = adapter
-            return adapter
-
-        @_legacy.objc.IBAction
-        def openEffectStudio_(self, _sender) -> None:
-            """Open the Studio through one retained AppKit owner and runtime cache."""
-
-            controller = getattr(self, "_effect_studio_window_controller", None)
-            if not isinstance(controller, EffectStudioWindowController):
-                controller = EffectStudioWindowController.alloc().init()
-                self._effect_studio_window_controller = controller
-            controller.open(
-                assignment_cache=getattr(
-                    self,
-                    "_effect_assignment_cache",
-                    None,
-                ),
-                physical_preview=self._effect_studio_preview_runtime(),
-            )
-
-        def _schedule_effect_studio_preview_timeout(
-            self,
-            session_id: str,
-            duration_seconds: float,
-        ) -> None:
-            self._cancel_effect_studio_preview_timeout()
-            self._effect_studio_preview_timer = (
-                _legacy.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                    min(30.0, max(0.001, float(duration_seconds))),
-                    self,
-                    "effectStudioPreviewExpired:",
-                    session_id,
-                    False,
-                )
-            )
-
-        def _cancel_effect_studio_preview_timeout(self) -> None:
-            timer = getattr(self, "_effect_studio_preview_timer", None)
-            self._effect_studio_preview_timer = None
-            if timer is not None:
-                timer.invalidate()
-
-        @_legacy.objc.IBAction
-        def effectStudioPreviewExpired_(self, timer) -> None:
-            session_id = str(timer.userInfo() or "")
-            adapter = self._effect_studio_preview_runtime()
-            active = adapter.active_session
-            if active is None or active.session_id != session_id:
-                return
-            _release_effect_studio_preview(self, PreviewReleaseReason.TIMEOUT)
-
-        @_legacy.objc.IBAction
-        def effectStudioPreviewWriteFailed_(self, payload) -> None:
-            adapter = self._effect_studio_preview_runtime()
-            active = adapter.active_session
-            hardware_device_id = str(
-                payload.get("hardware_device_id") or ""
-            ) if payload else ""
-            session_id = str(payload.get("session_id") or "") if payload else ""
-            if (
-                active is None
-                or not session_id
-                or active.session_id != session_id
-                or active.hardware_device_id != hardware_device_id
-            ):
-                return
-            _release_effect_studio_preview(self, PreviewReleaseReason.ERROR)
-
-        def _restore_effect_studio_physical_output(self, device_id: str) -> None:
-            self.reset_led_controllers_for_device(device_id)
-            snapshot = getattr(self, "last_snapshot", None)
-            if snapshot is None:
-                self.refresh_(None)
-                return
-            projection = getattr(self, "current_attention_projection", None)
-            self.sync_leds(
-                snapshot.aggregate.mode,
-                self.last_battery_snapshot,
-                self.active_led_display_kind(self.last_battery_snapshot),
-                tuple(snapshot.statuses),
-                projection=projection,
-            )
-
-        def dndWorkspaceWillSleep_(self, notification) -> None:
-            _release_effect_studio_preview(self, PreviewReleaseReason.SLEEP)
-            return _LegacyStatusBarController.dndWorkspaceWillSleep_(
-                self,
-                notification,
-            )
-
-        def dndScreensDidSleep_(self, notification) -> None:
-            _release_effect_studio_preview(self, PreviewReleaseReason.SLEEP)
-            return _LegacyStatusBarController.dndScreensDidSleep_(
-                self,
-                notification,
-            )
 
         def local_health_snapshot(
             self,
@@ -673,12 +526,7 @@ else:
                         label=(
                             f"{request.device.name} Ambient effect"
                             if request.coalesce_identity.startswith("ambient-")
-                            else (
-                                f"{request.device.name} Effect Studio preview"
-                                if request.coalesce_identity
-                                == "preview-effect-studio"
-                                else f"{request.device.name} Calibration preview"
-                            )
+                            else f"{request.device.name} Calibration preview"
                         ),
                         agent_display_rendered=False,
                         completed_at=self._runtime_worker_monotonic(),
@@ -713,18 +561,6 @@ else:
                 )
             except BaseException:
                 outcome = "error"
-                if request.coalesce_identity == "preview-effect-studio":
-                    try:
-                        self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                            "effectStudioPreviewWriteFailed:",
-                            {
-                                "hardware_device_id": request.device.device_id,
-                                "session_id": request.preview_session_id,
-                            },
-                            False,
-                        )
-                    except Exception:
-                        pass
                 raise
             finally:
                 self._performance().record(
@@ -732,41 +568,6 @@ else:
                     (time.perf_counter() - started) * 1000.0,
                     outcome=outcome,
                 )
-
-        def _apply_hardware_write_result(self, command, result) -> None:
-            applied = _LegacyStatusBarController._apply_hardware_write_result(
-                self,
-                command,
-                result,
-            )
-            if type(result) is not _legacy.HardwareWriteResult:
-                return applied
-            adapter = getattr(
-                self,
-                "_effect_studio_physical_preview_adapter",
-                None,
-            )
-            if adapter is None:
-                return applied
-            preview_session_id = result.request.preview_session_id
-            if adapter.handle_write_result(
-                result.request,
-                error=result.write.error,
-            ):
-                window = getattr(
-                    self,
-                    "_effect_studio_window_controller",
-                    None,
-                )
-                callback = getattr(window, "physicalPreviewDidRelease_", None)
-                if callable(callback):
-                    callback(
-                        {
-                            "session_id": preview_session_id,
-                            "reason": PreviewReleaseReason.ERROR.value,
-                        }
-                    )
-            return applied
 
         def _send_calibration_test(self) -> None:
             calibration = self.calibration_test

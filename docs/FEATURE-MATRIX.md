@@ -10,8 +10,8 @@ from `main` (installed build 22, signed, notarized and stapled —
   real device, account or tier has not yet been exercised (the reason is in
   the row).
 - **Daemon only**: the daemon does it and reports it; the Swift app has no
-  control for it yet (the legacy PyObjC window still can, through
-  `open_legacy_window`).
+  control for it yet. The legacy PyObjC windows that used to reach these are
+  retired, so a socket client (`jrbar` or the protocol) is the only way in.
 
 Anything not in this file is not a feature. The removed planes are listed
 at the end so nobody claims them.
@@ -50,7 +50,6 @@ at the end so nobody claims them.
 | Sparkle updates: manual check, opt-in automatic checks, stable/beta channel, feed on this repository's releases | Ships (no release published yet, so nothing to update to) | Automatic checks off |
 | Login item (`SMAppService`) | Ships | On, registered on first launch |
 | Daemon supervision: restart with backoff, "Core crashed" with Restart, orderly quit | Ships | Always |
-| Legacy PyObjC windows on demand (`open_legacy_window`) | Daemon only, being retired | Manual |
 
 ## Light surfaces
 
@@ -144,7 +143,10 @@ timebox/timer and its Shortcuts handshake, the operator history export,
 night warmth and the fixed 7 PM–7 AM dim (replaced by auto-dim), the PyObjC
 status bar as a UI (removed: `jrbar setup` installs no LaunchAgent, the
 daemon unloads the old one, and `jrbar status-bar` only manages the sleep
-helper),
+helper), its NSMenu dropdown, and the PyObjC windows the daemon could open
+on demand (`open_legacy_window`: Settings, Setup, Agent Browser, Effect
+Studio, Usage Center, Control Center, the Why panel; the Creator Micro's
+window keys open the app's windows instead),
 the architecture-policing meta-tests, and the old multi-receipt release
 gate (`verify_macos_release.sh`, `publish_release.sh`) as the way releases
 happen. Earlier removals (the delivery-planning plane, `runtime_truth`,

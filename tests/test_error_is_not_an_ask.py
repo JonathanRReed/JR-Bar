@@ -242,11 +242,9 @@ def test_the_creator_micro_keys_tell_broken_from_waiting__and_2_more() -> None:
 
     # --- scenario: the_effect_semantics_tell_broken_from_waiting
     from jrbar.core_effects import SEMANTIC_COLORS
-    from jrbar.effect_studio_physical_preview import _SEMANTIC_COLORS
 
-    for table in (SEMANTIC_COLORS, _SEMANTIC_COLORS):
-        assert table["failure"] == ERROR_RED
-        assert table["failure"] != table["asking"]
+    assert SEMANTIC_COLORS["failure"] == ERROR_RED
+    assert SEMANTIC_COLORS["failure"] != SEMANTIC_COLORS["asking"]
 
 
 

@@ -25,7 +25,6 @@ try:
         NSAlertFirstButtonReturn,
         NSApp,
         NSApplicationActivationPolicyAccessory,
-        NSBackingStoreBuffered,
         NSBezelStyleRounded,
         NSBezierPath,
         NSButton,
@@ -49,18 +48,12 @@ try:
         NSPopover,
         NSPopoverBehaviorTransient,
         NSScreen,
-        NSScrollView,
         NSSlider,
         NSStatusBar,
-        NSSwitch,
         NSTextField,
-        NSTextView,
         NSVariableStatusItemLength,
         NSView,
         NSViewController,
-        NSWindow,
-        NSWindowStyleMaskClosable,
-        NSWindowStyleMaskTitled,
         NSWorkspace,
         NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
         NSWorkspaceDidWakeNotification,
@@ -106,7 +99,6 @@ from . import (
 from . import colors as colors_module
 from . import signals as signals_module
 from .draw_guard import guard_draw
-from .setup_window import build_setup_window
 from .accessibility_display import (
     AccessibilityDisplayPreferences,
     refresh_accessibility_display_preferences,
@@ -334,9 +326,6 @@ from .credentials import (
 )
 from .decision_trace import (
     MENU_ITEM_TITLE as WHY_PANEL_MENU_TITLE,
-)
-from .decision_trace import (
-    PANEL_TITLE as WHY_PANEL_TITLE,
 )
 from .decision_trace import (
     build_decision_trace,
@@ -604,10 +593,8 @@ from .runtime_scheduler import (
     SubmissionDisposition,
 )
 from .sd_eject_guard_launch import (
-    SD_EJECT_GUARD_DISPLAY_NAME,
     install_sd_eject_guard,
     sd_eject_guard_installed,
-    uninstall_sd_eject_guard,
 )
 from .session_actions import (
     SESSION_OPEN_APP,
@@ -6696,33 +6683,9 @@ class StatusBarController(NSObject):
         self.refresh_(None)
 
 
-    @objc.IBAction
-    def openWhyPanel_(self, _sender):
-        self.show_why_panel()
-
     def why_panel_body(self, *, why_context=None) -> str:
         return why_panel_module.panel_body(self, why_context=why_context)
 
-    def show_why_panel(self) -> None:
-        why_panel_module.present_panel(
-            self,
-            self.why_panel_body(),
-            window_builder=build_why_panel_window,
-            presenter=present_window,
-            activator=activate_app,
-        )
-
-    @objc.IBAction
-    def runFirstLaunchSetup_(self, _sender):
-        self.run_first_launch_setup()
-
-    @objc.IBAction
-    def skipFirstLaunchSetup_(self, _sender):
-        self.complete_first_launch_setup("Setup skipped.")
-
-    @objc.IBAction
-    def uninstallSdEjectGuard_(self, _sender):
-        self.uninstall_sd_eject_guard_from_setup()
 
     @objc.IBAction
     def installCodexHooks_(self, _sender):
@@ -10748,14 +10711,6 @@ class StatusBarController(NSObject):
         self.virtual_status_device.reposition()
 
 
-    def show_setup_window(self) -> None:
-        if self.setup_window is None:
-            self.setup_window = build_setup_window(self)
-        self.refresh_setup_window()
-        present_window(self.setup_window)
-        self._reconcile_current_presentation_inputs()
-        activate_app()
-
     @objc.IBAction
     def redrawSetupDemo_(self, _sender):
         if self.setup_window is None or not self.setup_window.isVisible():
@@ -10774,28 +10729,6 @@ class StatusBarController(NSObject):
             set_checkbox_state(button, checked)
         button.setEnabled_(enabled)
 
-    def uninstall_sd_eject_guard_from_setup(self) -> None:
-        try:
-            results = uninstall_sd_eject_guard(scope="auto")
-        except Exception as exc:
-            set_field_value(
-                self.setup_fields.get("message"),
-                f"Could not uninstall {SD_EJECT_GUARD_DISPLAY_NAME}: {exc}",
-            )
-            self.refresh_setup_window()
-            return
-
-        removed = [path for result in results for path in result.removed_paths]
-        skipped = [result.skipped for result in results if result.skipped]
-        if skipped:
-            message = "  ".join(str(item) for item in skipped)
-        elif removed:
-            message = f"{SD_EJECT_GUARD_DISPLAY_NAME} uninstalled."
-        else:
-            message = f"{SD_EJECT_GUARD_DISPLAY_NAME} is not installed."
-        set_field_value(self.setup_fields.get("message"), message)
-        log_status_bar(f"setup: {message}")
-        self.refresh_setup_window()
 
     def complete_first_launch_setup(self, message: str) -> None:
         try:
@@ -16112,35 +16045,6 @@ def _canonical_operator_actions(state, target):
 _AppKitStatusBarController = StatusBarController
 
 
-SETUP_DEMO_WIDTH = 420.0
-SETUP_DEMO_HEIGHT = 30.0
-
-
-def _setup_toggle_row(title: str, help_text: str | None = None):
-    """A "Title ... status [switch]" row for the welcome window -- the
-    switch carries no action (its state is read when Set Up runs), the
-    status label reports installed-ness."""
-    switch = NSSwitch.alloc().init()
-    status = native_ui.make_label("", secondary=True, size=12.0)
-    cluster = native_ui.make_stack(orientation="horizontal", spacing=native_ui.SPACE_S)
-    cluster.addArrangedSubview_(status)
-    cluster.addArrangedSubview_(switch)
-    row = native_ui.make_row(title, cluster, help_text=help_text)
-    return row, switch, status
-
-
-def build_why_panel_window(target: StatusBarController) -> NSWindow:
-    return why_panel_module.build_window(
-        target,
-        window_class=NSWindow,
-        view_class=NSView,
-        style_mask=NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
-        backing_store=NSBackingStoreBuffered,
-        title=WHY_PANEL_TITLE,
-        text_view_builder=add_text_view,
-    )
-
-
 # --- Settings window: sidebar + detail pane ---------------------------
 #
 # Rebuilt from a single hand-positioned scrolling column into a System-
@@ -16553,23 +16457,6 @@ def provider_open_action_label(provider: str, action: str) -> str:
 
 def select_popup_action(popup, action: str) -> None:
     select_popup_item(popup, "action", action)
-
-
-def add_text_view(parent, text: str, x: int, y: int, width: int, height: int):
-    scroll = NSScrollView.alloc().initWithFrame_(((x, y), (width, height)))
-    scroll.setHasVerticalScroller_(True)
-    scroll.setHasHorizontalScroller_(False)
-    text_view = NSTextView.alloc().initWithFrame_(((0, 0), (width, height)))
-    text_view.setString_(text)
-    text_view.setVerticallyResizable_(True)
-    text_view.setHorizontallyResizable_(False)
-    try:
-        text_view.setFont_(NSFont.monospacedSystemFontOfSize_weight_(11.0, 0.0))
-    except Exception:
-        pass
-    scroll.setDocumentView_(text_view)
-    parent.addSubview_(scroll)
-    return text_view
 
 
 def add_separator(parent, x: int, y: int, width: int):

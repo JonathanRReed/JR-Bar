@@ -8,7 +8,6 @@ import pytest
 
 from jrbar import _status_bar_production as production
 from jrbar.dnd_policy import DndMode, DndSource, compose_dnd_contributions, contribution_for_mode
-from jrbar.effect_studio_physical_preview import PreviewReleaseReason
 from jrbar.local_health import LocalHealthMonitor
 from jrbar.models import AgentMode, AgentStatus
 from jrbar.performance_metrics import PerformanceRegistry
@@ -90,9 +89,6 @@ def test_production_shutdown_records_latency_without_changing_close_order__and_2
             events.append(self.name)
 
     target = _target(performance)
-    target._effect_studio_physical_preview_adapter = SimpleNamespace(
-        release=lambda reason: events.append(f"preview:{reason.value}")
-    )
     for attribute, name in (
         ("_production_battery_service", "battery"),
         ("_production_transcript_service", "transcript"),
@@ -114,7 +110,6 @@ def test_production_shutdown_records_latency_without_changing_close_order__and_2
 
     assert result == "closed"
     assert events == [
-        f"preview:{PreviewReleaseReason.APP_TERMINATION.value}",
         "battery",
         "transcript",
         "intake",

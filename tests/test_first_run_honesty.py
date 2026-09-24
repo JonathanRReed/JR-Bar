@@ -583,20 +583,6 @@ class WhyPanelTests(unittest.TestCase):
         self.assertIn("Rest ·", written[0])
         self.assertIn("Ask ·", written[1])
 
-    def test_the_panel_window_actually_builds_and_shows_the_body(self) -> None:
-        window = self.status_bar.build_why_panel_window(self.controller)
-        self.assertEqual(window.title(), decision_trace.PANEL_TITLE)
-        self.controller.why_panel_window = window
-        self.controller._current_resolved_glance = self._glance(GlanceSemantic.REST)
-        self.controller.current_intake_report = report([probe("claude", "Claude")])
-        self.status_bar.set_text_control_value(
-            self.controller.why_panel_text_view, self.controller.why_panel_body()
-        )
-        body = self.status_bar.text_control_value(self.controller.why_panel_text_view)
-        self.assertIn("THE RULE THAT PRODUCED IT", body)
-        # Copyable into a bug report in one gesture.
-        self.assertTrue(self.controller.why_panel_text_view.isSelectable())
-        self.assertFalse(self.controller.why_panel_text_view.isEditable())
 
     def test_a_closed_panel_is_never_repainted(self) -> None:
         self.controller.why_panel_window = SimpleNamespace(isVisible=lambda: False)

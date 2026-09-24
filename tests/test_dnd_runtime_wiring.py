@@ -457,10 +457,6 @@ class _DndActions:
 def test_dnd_environment_selectors_refresh_the_existing_controller__and_1_more(controller) -> None:
     # --- scenario: dnd_environment_selectors_refresh_the_existing_controller
     calls: list[str] = []
-    preview_releases = []
-    controller._effect_studio_physical_preview_adapter = SimpleNamespace(
-        release=lambda reason: preview_releases.append(reason)
-    )
     controller.dnd_controller = SimpleNamespace(
         projection=compose_dnd_contributions(()),
         handle_wake=lambda: calls.append("wake"),
@@ -489,7 +485,6 @@ def test_dnd_environment_selectors_refresh_the_existing_controller__and_1_more(c
         "clock",
         "timezone",
     ]
-    assert [reason.value for reason in preview_releases] == ["sleep", "sleep"]
 
     # --- scenario: dark_display_entry_is_an_explicit_off_program
     factory, state, label = controller.signal_display_entries()[

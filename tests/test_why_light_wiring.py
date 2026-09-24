@@ -4,10 +4,9 @@ import time
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 import jrbar.status_bar_legacy as status_bar_legacy
-import jrbar.why_panel as why_panel
 from jrbar.accessibility_display import AccessibilityDisplayPreferences
 from jrbar.core_state import StateDelta
 from jrbar.dnd_policy import (
@@ -283,35 +282,6 @@ class WhyLightWiringTests(unittest.TestCase):
         self.assertIn("Source age: 12.2 seconds", body)
         self.assertIn("Scene: Unavailable", body)
 
-    def test_refresh_and_show_preserve_the_panel_reading_position(self) -> None:
-        self.controller.why_panel_window = SimpleNamespace(isVisible=lambda: True)
-        self.controller.why_panel_text_view = SimpleNamespace(
-            setString_=lambda _value: None
-        )
-        with (
-            patch.object(
-                self.controller,
-                "why_panel_body",
-                return_value="BODY",
-            ),
-            patch.object(
-                why_panel,
-                "set_text_preserving_position",
-                autospec=True,
-            ) as helper,
-            patch.object(status_bar_legacy, "present_window", autospec=True),
-            patch.object(status_bar_legacy, "activate_app", autospec=True),
-        ):
-            self.assertTrue(self.controller.refresh_why_panel())
-            self.controller.show_why_panel()
-
-        self.assertEqual(
-            helper.call_args_list,
-            [
-                call(self.controller.why_panel_text_view, "BODY"),
-                call(self.controller.why_panel_text_view, "BODY"),
-            ],
-        )
 
     def test_production_context_reuses_screen_bar_renderer_timing(self) -> None:
         renderer_timing = LocalHealthTiming(
@@ -482,16 +452,6 @@ class WhyLightWiringTests(unittest.TestCase):
         self.assertEqual(events, [("legacy", False), ("panel", True)])
         self.assertEqual(health.call_count, 1)
 
-    def test_real_panel_assigns_keyboard_focus_and_accessibility_copy(self) -> None:
-        window = self.status_bar.build_why_panel_window(self.controller)
-        text_view = self.controller.why_panel_text_view
-
-        self.assertIs(window.initialFirstResponder(), text_view)
-        self.assertEqual(
-            text_view.accessibilityLabel(),
-            "Why this light explanation",
-        )
-        self.assertIn("selectable", text_view.accessibilityHelp().lower())
 
     def test_display_poll_caches_focus_observation_availability(self) -> None:
         command = self.status_bar.RuntimeWorkCommand(
