@@ -252,11 +252,10 @@ def lid_presets_document(settings, *, accent: str | None = None) -> dict:
 
 
 __all__ = [
-    "LID_KINDS",
-    "lid_presets_document",
     "ACTIVE_CLOSE_EMBER",
     "DEFAULT_LID_ACCENT",
     "LID_ANIMATION_PRESETS",
+    "LID_KINDS",
     "LID_PRESET_SHAPES",
     "LID_SHAPES",
     "LID_SHAPE_IRIS_CLOSE",
@@ -265,6 +264,7 @@ __all__ = [
     "LID_SHAPE_IRIS_OPEN_ACTIVE",
     "RETIRED_PRESET_PROGRAMS",
     "current_preset_name",
+    "lid_presets_document",
     "lid_program",
     "preset",
     "render_lid_shape",

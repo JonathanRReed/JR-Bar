@@ -34,8 +34,12 @@ if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 
 from jrbar import _led_status_legacy as led_status  # noqa: E402
+from jrbar import (  # noqa: E402
+    celebrations,
+    core_effects,
+    motion_shapes,
+)
 from jrbar import colors as colors_module  # noqa: E402
-from jrbar import core_effects  # noqa: E402
 from jrbar._led_wasm_legacy import SdLedWasmController  # noqa: E402  raw firmware
 from jrbar.animation import (  # noqa: E402
     animation_duration_ms,
@@ -44,7 +48,7 @@ from jrbar.animation import (  # noqa: E402
     read_program,
 )
 from jrbar.effect_registry import EFFECT_REGISTRY  # noqa: E402
-from jrbar.lid_presets import LID_ANIMATION_PRESETS  # noqa: E402
+from jrbar.lid_presets import LID_ANIMATION_PRESETS, LID_PRESET_SHAPES, lid_program  # noqa: E402
 from jrbar.models import AgentMode  # noqa: E402
 from jrbar.presentation_compiler import compile_presentation_program  # noqa: E402
 
@@ -314,8 +318,38 @@ def builtin_programs() -> list[tuple[str, str, int]]:
     entries.append(("first_light_8led", led_status.first_light_program(), 8))
     for kind, presets in LID_ANIMATION_PRESETS.items():
         for label, _seconds, program in presets:
-            slug = label.lower().replace(" ", "_")
-            entries.append((f"lid_{kind}_{slug}", program, 8))
+            slug = label.lower().replace(" ", "_").replace("(", "").replace(")", "")
+            shape = LID_PRESET_SHAPES.get((kind, label))
+            for led_count in (8, 2) if shape else (8,):
+                drawn = lid_program(program, shape, led_count=led_count, accent="#D97757")
+                entries.append((f"lid_{kind}_{slug}_{led_count}led", drawn, led_count))
+    for style in (celebrations.DONE_CELEBRATION_LAND, celebrations.DONE_CELEBRATION_RIPPLE):
+        for led_count in (8, 2):
+            entries.append(
+                (
+                    f"finish_{style}_{led_count}led",
+                    celebrations.done_celebration_program(style, "#00FF66", led_count=led_count),
+                    led_count,
+                )
+            )
+    # The tool tint: each family's colour on the head of every motion that
+    # can carry it, the provider colour kept on the tail.
+    for motion in sorted(motion_shapes.TINTABLE_MOTIONS):
+        for family in colors_module.TOOL_TINT_COLORS:
+            colors = (
+                settings.with_agent_animation("claude", motion)
+                .with_tint_by_tool(True)
+                .with_render_tool_family(family)
+            )
+            entries.append(
+                (
+                    f"tint_{motion}_{family}_8led",
+                    colors_module.provider_motion_preview_program(
+                        "claude", colors.agent_color("claude"), colors, led_count=8
+                    ),
+                    8,
+                )
+            )
     return entries
 
 

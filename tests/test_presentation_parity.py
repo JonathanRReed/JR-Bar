@@ -694,7 +694,7 @@ def test_solo_live_program_is_the_studio_preview(cycle_seconds: float) -> None:
     ~2.4 s one-way sweep, and every motion ignored the cycle speed.
     """
     from jrbar import colors as colors_module
-    from jrbar.presentation_policy import resolve_glance, GlanceInputs
+    from jrbar.presentation_policy import GlanceInputs, resolve_glance
 
     preferences = AccessibilityDisplayPreferences()
     resolved = resolve_glance(

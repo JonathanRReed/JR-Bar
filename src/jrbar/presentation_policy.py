@@ -516,8 +516,8 @@ def _chosen_motion_lines(
     tight -- refusing the write would freeze the strip on its old program.
     """
     from .colors import (
-        ColorSettings,
         PROVIDER_ANIMATION_AUTO,
+        ColorSettings,
         provider_motion_lines,
     )
 
