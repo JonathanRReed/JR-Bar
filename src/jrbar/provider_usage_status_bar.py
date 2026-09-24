@@ -302,12 +302,17 @@ else:
             service = getattr(self, "_jrbar_provider_usage_service", None)
             if type(service) is ProviderUsageService:
                 return service
+            from .cliproxy_hub import HubSource
+
             service = ProviderUsageService(
                 settings_loader=load_provider_usage_settings,
                 credentials=ProviderCredentialStore(),
                 home=Path.home(),
                 state_loader=load_provider_usage_state,
                 state_saver=save_provider_usage_state,
+                # The CLIProxyAPI hub's accounts (off unless cliproxy_hub
+                # is enabled; loopback only, every 5 min at most).
+                extra_source=HubSource(settings_loader=lambda: self.settings),
             )
             self._jrbar_provider_usage_service = service
             self._jrbar_provider_usage_state = service.snapshot()

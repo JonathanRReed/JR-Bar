@@ -380,9 +380,8 @@ def main(
                     forget_browser_import(args.provider)
                 except Exception:
                     pass
-            output.write(
-                f"{provider_descriptor(args.provider).label} credential stored in Keychain.\n"
-            )
+            label = "CLIProxyAPI" if args.provider == "cliproxy" else provider_descriptor(args.provider).label
+            output.write(f"{label} credential stored in Keychain.\n")
             return 0
         if args.credential_command == "remove":
             removed = credential_store.delete(args.provider, account)

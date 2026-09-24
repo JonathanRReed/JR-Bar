@@ -329,6 +329,7 @@ class ProviderUsageService:
         state_saver: Callable[[ProviderUsageState], object] | None = None,
         receipt_handler: Callable[[RefreshPublicationReceipt], object] | None = None,
         incident_lookup: IncidentLookup = _default_incident_lookup,
+        extra_source: Callable[..., tuple[ProviderUsageSnapshot, ...]] | None = None,
     ) -> None:
         self._settings_loader = settings_loader
         self._credentials = credentials
@@ -340,6 +341,9 @@ class ProviderUsageService:
             raise ValueError("invalid refresh receipt handler")
         self._receipt_handler = receipt_handler
         self._incident_lookup = incident_lookup
+        #: Snapshots from outside the configured providers: the CLIProxyAPI
+        #: hub's accounts (cliproxy_hub.HubSource), each its own instance.
+        self._extra_source = extra_source
         self._lock = threading.RLock()
         self._closed = False
         self._settings_snapshot: ProviderUsageSettings | None = None
@@ -707,6 +711,14 @@ class ProviderUsageService:
             for snapshot in snapshots
         ]
         ordered = tuple(incident_snapshots)
+        if self._extra_source is not None:
+            ordered = self._with_extra_snapshots(
+                ordered,
+                previous_state,
+                observed_at=observed_at,
+                force=force,
+                wanted=selected is None or bool({"claude", "codex"} & selected_provider_ids),
+            )
         cadence_plan = plan_adaptive_refresh_cadence(
             ordered,
             observed_at=observed_at,
@@ -761,6 +773,38 @@ class ProviderUsageService:
             error_code=publication_error,
         )
         return result, publication_outcome
+
+    def _with_extra_snapshots(
+        self,
+        ordered: tuple[ProviderUsageSnapshot, ...],
+        previous_state: ProviderUsageState,
+        *,
+        observed_at: float,
+        force: bool,
+        wanted: bool,
+    ) -> tuple[ProviderUsageSnapshot, ...]:
+        """The extra source's snapshots after the configured ones; a refresh
+        scoped elsewhere keeps the last ones. A configured identity always
+        wins over an extra one."""
+        taken = {snapshot.identity for snapshot in ordered}
+        if wanted:
+            try:
+                extra = tuple(self._extra_source(observed_at, force=force))
+            except Exception:
+                extra = ()
+        else:
+            extra = tuple(
+                snapshot
+                for snapshot in previous_state.snapshots
+                if snapshot.source_instance_id.startswith("cliproxy")
+            )
+        kept: list[ProviderUsageSnapshot] = []
+        for snapshot in extra:
+            if type(snapshot) is not ProviderUsageSnapshot or snapshot.identity in taken:
+                continue
+            taken.add(snapshot.identity)
+            kept.append(snapshot)
+        return (*ordered, *kept)
 
     def refresh_now(
         self,
