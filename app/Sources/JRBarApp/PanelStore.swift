@@ -1054,10 +1054,13 @@ final class PanelStore {
     // MARK: Derived: why this light
 
     /// "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)".
+    /// The wait counts on `stalenessReference`: the notch card reads this
+    /// line with the panel closed, where `now` stopped at the last close.
     var lightExplanation: LightExplanation? {
         guard core.isLive else { return nil }
         let settings = core.settings.map { SettingsDocument($0.document) }
-        return LightExplainer.explain(lights: core.lights, state: core.state, settings: settings, now: now)
+        return LightExplainer.explain(lights: core.lights, state: core.state, settings: settings,
+                                      now: stalenessReference)
     }
 
     func whyHover(_ hovering: Bool, frame: CGRect) {

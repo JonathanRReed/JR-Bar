@@ -296,6 +296,28 @@ struct AskSurfacesTests {
         #expect(store.toast == "This one has no rule to remember — approve it once instead")
     }
 
+    @Test("with the panel closed, the light's why counts the wait on the wall clock, not the panel's")
+    func whyLineClockWhileClosed() throws {
+        let core = CoreModel()
+        core.handle(.connected)
+        let opened = Date().timeIntervalSince1970 - 150
+        let surface = CoreLightSurface(program: "#FF3A00 1.6s pulse\nrepeat", ledCount: 8, motion: "beat",
+                                       staticFallback: "#FF3A00", why: "needs_you")
+        core.apply(.lights(CoreLights(surfaces: ["hardware": surface, "screen_bar": surface])))
+        core.apply(.state(CoreState(
+            sessions: [CoreSession(id: "codex:1", provider: "codex", label: "sidepulse-core", mode: "waiting",
+                                   lifecycle: "active", since: opened,
+                                   ask: CoreAsk(kind: "permission", openedAt: opened, summary: "Run"))],
+            asks: [CoreAsk(session: "codex:1", kind: "permission", openedAt: opened, summary: "Run")])))
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+                               screenBarShown: false)
+        // The panel last closed an hour ago: its clock stopped there.
+        store.now = Date().addingTimeInterval(-3_600)
+        let reason = try #require(store.lightExplanation?.reason)
+        #expect(reason.hasSuffix("(permission, 2 min)"), "\(reason)")
+        #expect(store.screenBarFocus.explanation == reason, "the notch card reads the same line")
+    }
+
     @Test("the notch card's Open falls back to the window locator only for a running session")
     func notchCardOpenFallback() async {
         let presenter = NotchCardPresenter(model: makeTestCardModel())
