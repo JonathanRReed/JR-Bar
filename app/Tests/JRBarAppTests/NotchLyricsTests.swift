@@ -126,7 +126,9 @@ struct NotchLyricsTests {
         store.enabled = { true }
         store.note(media: media)
         #expect(!store.inFlight.isEmpty)
-        let deadline = Date().addingTimeInterval(5)
+        // The lookup starts on the main actor, which a loaded parallel
+        // run can hold for seconds; the wait ends as soon as it lands.
+        let deadline = Date().addingTimeInterval(60)
         while LyricsRecordingProtocol.hosts(for: media.title).isEmpty, Date() < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
