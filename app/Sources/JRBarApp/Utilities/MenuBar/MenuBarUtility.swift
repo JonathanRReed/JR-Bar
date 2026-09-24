@@ -102,16 +102,13 @@ final class MenuBarUtility: Toy {
         return accessibilityGranted
     }
 
-    /// The chevron status item — the hidden run's toggle on the row.
-    /// Target/action needs an `NSObject`, so the buttons' clicks land
-    /// on this box and forward.
-    @ObservationIgnored private let chevronActions = MenuBarChevronActions()
-    /// Readable for the teardown test; only `install`/`removeChevron` write it.
-    @ObservationIgnored private(set) var chevron: NSStatusItem?
+    /// The hidden-items submenu's target: target/action needs an
+    /// `NSObject`, so its rows' clicks land on this box and forward.
+    @ObservationIgnored private let menuActions = MenuBarMenuActions()
     /// The spacer/label items settings carries — keyed by `Spacer.id`.
-    /// Same rules as the chevron: born visible, never re-registered.
+    /// Born visible, never re-registered.
     @ObservationIgnored private var spacerItems: [String: NSStatusItem] = [:]
-    /// The spacer buttons' target — a click reveals like the chevron's.
+    /// The spacer buttons' target — a click reveals like the ‹'s.
     @ObservationIgnored private let spacerActions = MenuBarSpacerActions()
     /// The agent-state item and its click target.
     @ObservationIgnored private var agentItem: NSStatusItem?
@@ -250,13 +247,13 @@ final class MenuBarUtility: Toy {
     /// The boundary's host — the app's own status item. Everything
     /// left of it is the hidden run; it grows the spacer, draws the
     /// hint, takes the reveal click and carries the hidden-items
-    /// submenu. Without a host the fallback chevron item stands in.
+    /// submenu. Without a host there is no boundary.
     @ObservationIgnored weak var host: (any MenuBarBoundaryHost)? {
         didSet {
             host?.onBoundaryClick = { [weak self] in self?.boundaryClicked() }
             host?.hiddenItemsMenu = { [weak self] in self?.hiddenItemsMenu() }
             host?.onFaceChange = { [weak self] in self?.faceChanged() }
-            if running { installChevron(); hider.controlsReinstalled() }
+            if running { installBoundary(); hider.controlsReinstalled() }
         }
     }
 
@@ -285,7 +282,7 @@ final class MenuBarUtility: Toy {
             // plan never lags a reconcile behind the listing.
             self.hider.externalPlan = self.concealer == nil ? nil : self.lastPlan
             self.watchConcealedEscapees(in: plan)
-            self.refreshChevron()
+            self.refreshBoundary()
             // Ear limits read the raw listing — the items physically on
             // the row. The concealed plan's hidden runs carry remembered
             // positions (knownItems) that would gate the ears by ghosts.
@@ -356,10 +353,9 @@ final class MenuBarUtility: Toy {
         reveal.revealZone = { [weak self] in self?.revealZone() }
         // The « is the affordance — hovering it reveals too (Bartender's
         // chevron opens on hover), while its click stays its own toggle.
-        // The frame is the live control's — the host's boundary when one
-        // hosts, the fallback chevron otherwise — and under the concealer
-        // the ear's ‹ handle, its frame published by the screen bar,
-        // while it stands.
+        // The frame is the live control's — the host's boundary — and
+        // under the concealer the ear's ‹ handle, its frame published by
+        // the screen bar, while it stands.
         reveal.hotFrames = { [weak self] in
             guard let self else { return [] }
             if self.concealer != nil {
@@ -481,8 +477,8 @@ final class MenuBarUtility: Toy {
             self.hider.reconcile()
         }
         stateRules.onOutcomeChange = { [weak self] in self?.stateOutcomeVersion += 1 }
-        chevronActions.utility = self
-        spacerActions.onClick = { [weak self] in self?.chevronClicked() }
+        menuActions.utility = self
+        spacerActions.onClick = { [weak self] in self?.spacerClicked() }
         agentActions.onClick = { [weak self] in self?.onOpenOverview() }
         // Provider watch: a counterpart launching or quitting flips
         // the card's note live — the concealer's own launch watch is
@@ -505,7 +501,6 @@ final class MenuBarUtility: Toy {
     }
 
     isolated deinit {
-        if let chevron { NSStatusBar.system.removeStatusItem(chevron) }
         for (_, item) in spacerItems { NSStatusBar.system.removeStatusItem(item) }
         if let agentItem { NSStatusBar.system.removeStatusItem(agentItem) }
         combinedItem.remove()
@@ -1115,7 +1110,7 @@ final class MenuBarUtility: Toy {
         } else if running {
             // The control set is settings-driven too — a combined-mode
             // flip or a profile apply lands here between covers.
-            installChevron()
+            installBoundary()
             syncConcealerChoice()
             hider.reconcile()
             syncActions()
@@ -1207,7 +1202,8 @@ final class MenuBarUtility: Toy {
         startGeneration += 1
         let generation = startGeneration
         probeAccessibility()
-        installChevron()
+        Self.forgetRetiredItems()
+        installBoundary()
         if MenuBarAssessmentBackend.isAvailable, host != nil {
             // The agent honours an allowlist only for apps that pass
             // Gatekeeper: from an unnotarized build the agent hides
@@ -1257,7 +1253,7 @@ final class MenuBarUtility: Toy {
         hider.stop()
         actions.stop()
         stopConcealer()
-        removeChevron()
+        removeBoundary()
         removeExtras()
         // An update reveal's pending re-hide belongs to this run.
         updateHideTask?.cancel()
@@ -1715,8 +1711,8 @@ final class MenuBarUtility: Toy {
             })
         }
         MenuBarAssessmentBackend.log.notice("conceal: engine up (MenuBarClientCore resolved)")
-        installChevron()
-        refreshChevron()
+        installBoundary()
+        refreshBoundary()
         iconMirror = makeIconMirror()
         updateIconMirror()
         menuHandleChanged()
@@ -2490,17 +2486,16 @@ final class MenuBarUtility: Toy {
             && onRow(item.bounds) && !agentOwned(item) { coverAlways.append(item) }
         var blockers = plan.shown.map(\.bounds)
         if let boundary = host?.boundaryFrame { blockers.append(boundary) }
-        // The island (notch plus shoulders — the ears' home), the icon's
-        // mirror (its ‹ included) and the standalone chevron are ours: a
-        // merged run must break at them or the cover paves a surface it
-        // shares the window level with. Their frames are AppKit's beside
+        // The island (notch plus shoulders — the ears' home) and the
+        // icon's mirror (its ‹ included) are ours: a merged run must
+        // break at them or the cover paves a surface it shares the
+        // window level with. Their frames are AppKit's beside
         // the items' Quartz ones — `coverRuns` reads only x, which the
         // two spaces share.
         if let island = ScreenBarGeometry.islandScreenRect { blockers.append(island) }
         // The mirror's frame from before this pass seats it: a seat
         // that then moves re-plans the covers (`recutCovers`).
         if let mirror = standingMirrorFrame { blockers.append(mirror) }
-        if let chevron = chevronScreenFrame() { blockers.append(chevron) }
         plan.hiddenCovers = MenuBarItemHider.coverRuns(covered: coverHidden, blockers: blockers)
         plan.alwaysHiddenCovers = MenuBarItemHider.coverRuns(covered: coverAlways, blockers: blockers)
         return plan
@@ -2578,7 +2573,7 @@ final class MenuBarUtility: Toy {
 
     private func concealerChanged() {
         clickBridge?.update(items: lastPlan.shown, concealing: concealer?.isConcealing ?? false)
-        refreshChevron()
+        refreshBoundary()
         updateIconMirror()
         engineVersion += 1
         // An assertion refused or recovered: the ear's alert follows at
@@ -2979,12 +2974,9 @@ final class MenuBarUtility: Toy {
             NSRect(x: $0.bounds.minX, y: height - $0.bounds.maxY,
                    width: $0.bounds.width, height: $0.bounds.height)
         }
-        // The standalone chevron (no host): its own button
-        // action is the toggle — a click there must not ALSO land as a
-        // blank-stretch reveal or a hide click double-fires. The same
-        // for the extra items (spacers, agent, combined): their own
-        // actions answer the click.
-        if let frame = chevronScreenFrame() { frames.append(frame) }
+        // The extra items (spacers, agent, combined): their own actions
+        // answer the click — it must not ALSO land as a blank-stretch
+        // reveal, or a hide click double-fires.
         for item in spacerItems.values + [agentItem, combinedItem.item].compactMap({ $0 }) {
             if let quartz = Self.quartzFrame(of: item) {
                 let height = CGDisplayBounds(CGMainDisplayID()).height
@@ -3090,69 +3082,42 @@ final class MenuBarUtility: Toy {
         }
     }
 
-    /// The boundary. With a host — the app's own status item — the
-    /// boundary is the host's spacer (and, under the concealer, the
-    /// mirror's ‹); without one (tests, a build that never wired it) the
-    /// separate chevron stands in. With a host the chevron does not exist
-    /// at all: JR-Bar registers one status item, and a registered-but-
-    /// hidden second one still read frames into the hot zones, the cover
-    /// blockers and the ear limits. A host arriving while it stands
-    /// takes it down. Safe to call any time.
-    func installChevron() {
-        if host == nil {
-            // Registered once, born visible — a born-hidden item's
-            // surface parks where it was born and never re-composites.
-            installChevronItem()
-        } else {
-            removeChevronItem()
-        }
+    /// The boundary: the host's spacer — the app's own status item, one
+    /// of ours on the row — and, under the concealer, the mirror's ‹.
+    /// No host, no boundary: JR-Bar never registers a second item to
+    /// stand in (a registered one, even hidden, still read frames into
+    /// the hot zones, the cover blockers and the ear limits). Safe to
+    /// call any time.
+    func installBoundary() {
         // Under the agent the hider never sizes the control — and no
         // affordance is claimed: the width pushed our slot into the
         // notch dead zone and parked the item. Under the spacer engine
         // the plan's own writes floor the mark; this only makes it
         // immediate.
         host?.setBoundarySpacer(concealer == nil ? Self.boundaryAffordance : 0)
-        // The always-hidden control of earlier builds left its slot in
-        // our defaults; a stale key is harmless but says nothing true.
-        UserDefaults.standard.removeObject(
-            forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control")
     }
 
-    /// The fallback chevron: a status item of its own.
-    private func installChevronItem() {
-        guard chevron == nil else { return }
-        // A fresh autosave name: the old record accumulated a dead
-        // slot across the remove/install churn, and every recreation
-        // under it was born parked. "v2" registers clean.
-        Self.seedPreferredPosition(470, autosaveName: "com.jonathanreed.jrbar.menubar-chevron-v2")
-        let item = NSStatusBar.system.statusItem(withLength: MenuBarControlFrames.glyphLength)
-        item.autosaveName = "com.jonathanreed.jrbar.menubar-chevron-v2"
-        if let button = item.button {
-            Self.style(button, symbol: Self.chevronSymbol(revealed: false),
-                       length: MenuBarControlFrames.glyphLength,
-                       description: "JR-Bar hidden items")
-            button.toolTip = "JR-Bar — items left of this chevron are hidden. Click to reveal; ⌘-drag items across it."
-            button.target = chevronActions
-            button.action = #selector(MenuBarChevronActions.clicked(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
-        chevron = item
+    /// The status items earlier builds registered and this one never
+    /// will — the always-hidden control and the fallback chevron. Their
+    /// slots stay in our defaults; a stale key is harmless but says
+    /// nothing true. The app's own item (`…status-item`) is never
+    /// touched.
+    nonisolated static let retiredItemKeys = [
+        "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control",
+        "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-chevron-v2",
+        "NSStatusItem VisibleCC com.jonathanreed.jrbar.menubar-chevron-v2",
+    ]
+
+    /// Clear `retiredItemKeys` — each start, a no-op once they are gone.
+    nonisolated static func forgetRetiredItems(
+        _ remove: (String) -> Void = { UserDefaults.standard.removeObject(forKey: $0) }
+    ) {
+        for key in retiredItemKeys { remove(key) }
     }
 
-    private func removeChevronItem() {
-        guard let chevron else { return }
-        chevron.button?.target = nil
-        chevron.button?.action = nil
-        NSStatusBar.system.removeStatusItem(chevron)
-        self.chevron = nil
-    }
-
-    /// The whole teardown: off the bar, target/action dropped, the
-    /// reference nil, the host's spacer folded — a disable can never
-    /// leave a dead control parked and a re-enable never stacks a
-    /// second one (the install guards on the reference).
-    func removeChevron() {
-        removeChevronItem()
+    /// The whole teardown: the host's spacer folded, its counts cleared
+    /// and the ears let go.
+    func removeBoundary() {
         host?.setBoundarySpacer(0)
         host?.hiddenCount = 0
         host?.hiddenRevealed = false
@@ -3160,9 +3125,9 @@ final class MenuBarUtility: Toy {
         ScreenBarGeometry.earItemLimitRight = nil
     }
 
-    /// Left-click on the fallback chevron toggles the hidden run;
-    /// right-click (or ⌥-click) opens the Item Bar.
-    fileprivate func chevronClicked() {
+    /// A spacer item's click: left toggles the hidden run; right-click
+    /// (or ⌥-click) opens the Item Bar.
+    fileprivate func spacerClicked() {
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp || event.modifierFlags.contains(.option) {
             bar.toggle()
@@ -3191,16 +3156,16 @@ final class MenuBarUtility: Toy {
             case .toggleHidden:
                 let menuItem = NSMenuItem(
                     title: entry.title,
-                    action: #selector(MenuBarChevronActions.menuToggleHidden(_:)),
+                    action: #selector(MenuBarMenuActions.menuToggleHidden(_:)),
                     keyEquivalent: "")
-                menuItem.target = chevronActions
+                menuItem.target = menuActions
                 menu.addItem(menuItem)
             case .openBar:
                 let menuItem = NSMenuItem(
                     title: entry.title,
-                    action: #selector(MenuBarChevronActions.menuOpenBar(_:)),
+                    action: #selector(MenuBarMenuActions.menuOpenBar(_:)),
                     keyEquivalent: "")
-                menuItem.target = chevronActions
+                menuItem.target = menuActions
                 // The row names the toggle hotkey when it is on — the
                 // keyboard's own way to the same bar.
                 if settings().revealStyle == .bar,
@@ -3213,9 +3178,9 @@ final class MenuBarUtility: Toy {
             case .item(let id, _):
                 let menuItem = NSMenuItem(
                     title: entry.title,
-                    action: #selector(MenuBarChevronActions.menuItemClicked(_:)),
+                    action: #selector(MenuBarMenuActions.menuItemClicked(_:)),
                     keyEquivalent: "")
-                menuItem.target = chevronActions
+                menuItem.target = menuActions
                 menuItem.representedObject = id
                 if let listed = (lastPlan.hidden + lastPlan.alwaysHidden)
                     .first(where: { $0.id == id }) {
@@ -3250,9 +3215,9 @@ final class MenuBarUtility: Toy {
             }
             for row in hideRows {
                 let menuItem = NSMenuItem(title: row.title,
-                                          action: #selector(MenuBarChevronActions.menuHideApp(_:)),
+                                          action: #selector(MenuBarMenuActions.menuHideApp(_:)),
                                           keyEquivalent: "")
-                menuItem.target = chevronActions
+                menuItem.target = menuActions
                 menuItem.representedObject = row.itemID
                 if let listed = lastPlan.shown.first(where: { $0.id == row.itemID }) {
                     let icon = listed.owner?.icon.flatMap { $0.copy() as? NSImage }
@@ -3273,9 +3238,9 @@ final class MenuBarUtility: Toy {
             menu.addItem(header)
             for row in rows {
                 let menuItem = NSMenuItem(title: row.title,
-                                          action: #selector(MenuBarChevronActions.menuApplyProfile(_:)),
+                                          action: #selector(MenuBarMenuActions.menuApplyProfile(_:)),
                                           keyEquivalent: "")
-                menuItem.target = chevronActions
+                menuItem.target = menuActions
                 menuItem.representedObject = row.id
                 menuItem.state = row.active ? .on : .off
                 menu.addItem(menuItem)
@@ -3365,7 +3330,7 @@ final class MenuBarUtility: Toy {
             }
             reveal.rearm()
         }
-        refreshChevron()
+        refreshBoundary()
     }
 
     /// The "Hidden Menu Bar Items" menu popped at the control that was
@@ -3377,14 +3342,14 @@ final class MenuBarUtility: Toy {
         guard let menu = hiddenItemsMenu() else { return }
         // entries() emits [toggle, openBar, items…]; drop the toggle.
         if let toggle = menu.items.first(where: {
-            $0.action == #selector(MenuBarChevronActions.menuToggleHidden(_:)) }) {
+            $0.action == #selector(MenuBarMenuActions.menuToggleHidden(_:)) }) {
             menu.removeItem(toggle)
         }
         // The hide rows teach by acting; the hint speaks only when there
         // is nothing on the bar a click could hide. Under the concealer
         // position teaches nothing — the picker is the way in; under the
         // spacer the mark is the separator.
-        if !menu.items.contains(where: { $0.action == #selector(MenuBarChevronActions.menuHideApp(_:))
+        if !menu.items.contains(where: { $0.action == #selector(MenuBarMenuActions.menuHideApp(_:))
                                           || $0.submenu != nil }) {
             let hint = NSMenuItem(
                 title: concealer != nil
@@ -3424,11 +3389,9 @@ final class MenuBarUtility: Toy {
         toggleHiddenSection()
     }
 
-    /// The faces follow the run's state: the fallback chevron points at
-    /// where the items are (left while they are packed off the left
-    /// edge, right while the run is out); the host takes the counts and
-    /// draws its own hint.
-    private func refreshChevron() {
+    /// The faces follow the run's state: the host takes the counts and
+    /// draws its own hint, and the ear's ‹ turns with the run.
+    private func refreshBoundary() {
         let revealed = hider.revealed.contains(.hidden)
         if let host {
             host.hiddenCount = lastPlan.hidden.count + lastPlan.alwaysHidden.count
@@ -3439,20 +3402,11 @@ final class MenuBarUtility: Toy {
             handleRevealedSeen = revealed
             if concealer != nil { menuHandleChanged() }
         }
-        guard let chevron, let button = chevron.button else { return }
-        Self.style(button, symbol: Self.chevronSymbol(revealed: hider.revealed.contains(.hidden)),
-                   length: chevron.length, description: "JR-Bar hidden items")
-    }
-
-    private static func chevronSymbol(revealed: Bool) -> String {
-        revealed ? "chevron.right" : "chevron.left"
     }
 
     /// The hider's length write. For the hidden run the host takes
     /// everything past its own glyph as spacer (a length at or under
-    /// the glyph folds it); the fallback chevron takes the whole length
-    /// and redraws its glyph flush right so the spacer part reads as
-    /// empty bar.
+    /// the glyph folds it).
     private func setControlLength(_ section: MenuBarItemSection, length: CGFloat) {
         if concealer != nil {
             // The agent hides; nothing of ours ever grows — the
@@ -3463,35 +3417,29 @@ final class MenuBarUtility: Toy {
         }
         switch section {
         case .hidden:
-            if let host {
-                host.setBoundarySpacer(max(Self.boundaryAffordance,
-                                         length - host.boundaryGlyphLength))
-                return
-            }
-            guard let chevron, let button = chevron.button else { return }
-            if abs(chevron.length - length) >= 1 { chevron.length = length }
-            Self.style(button, symbol: Self.chevronSymbol(revealed: hider.revealed.contains(.hidden)),
-                       length: length, description: "JR-Bar hidden items")
+            guard let host else { return }
+            host.setBoundarySpacer(max(Self.boundaryAffordance,
+                                     length - host.boundaryGlyphLength))
         case .alwaysHidden, .shown:
             return
         }
     }
 
-    /// The live control frame for the hider: the host's item (or the
-    /// fallback chevron), with the boundary's glyph share.
+    /// The live control frame for the hider: the host's item, with the
+    /// boundary's glyph share — none without a host.
     private func controlFrames() -> MenuBarControlFrames {
         // Under the concealer there is no boundary once the map is
         // seeded: no positional sections, no spacer, no « to read.
         if concealer != nil, settings().concealSeeded { return MenuBarControlFrames() }
         return MenuBarControlFrames(
-            hidden: host?.boundaryFrame ?? Self.quartzFrame(of: chevron),
+            hidden: host?.boundaryFrame,
             hiddenGlyph: host?.boundaryGlyphLength ?? MenuBarControlFrames.glyphLength)
     }
 
     /// The nearest on-row item edge on each notch flank — the x each ear
     /// stops short of, so a drawn wing never paves a real item (the « a
-    /// hidden run keeps beside the notch, our own chevron, whatever
-    /// macOS parks in the flank). Item bounds and the island share the
+    /// hidden run keeps beside the notch, whatever macOS parks in the
+    /// flank). Item bounds and the island share the
     /// x axis across the Quartz/AppKit flip — only x limits are read.
     /// nil per side while the flank is free.
     private func publishEarAvoidance(_ plan: MenuBarHidePlan) {
@@ -3505,7 +3453,7 @@ final class MenuBarUtility: Toy {
             items: plan.shown + plan.hidden + plan.alwaysHidden,
             island: island, row: MenuBarItemLister.menuBarRow(),
             concealedApps: s.concealedApps, sections: s.sections,
-            revealed: hider.revealed, chevron: chevronScreenFrame(),
+            revealed: hider.revealed,
             ourPID: ProcessInfo.processInfo.processIdentifier)
         if ScreenBarGeometry.earItemLimitLeft != left {
             ScreenBarGeometry.earItemLimitLeft = left
@@ -3535,7 +3483,7 @@ final class MenuBarUtility: Toy {
         items: [MenuBarItem], island: CGRect, row: CGRect,
         concealedApps: [String: MenuBarItemSection],
         sections: [String: MenuBarItemSection],
-        revealed: Set<MenuBarItemSection>, chevron: CGRect?,
+        revealed: Set<MenuBarItemSection>,
         ourPID: pid_t
     ) -> (left: CGFloat?, right: CGFloat?) {
         var left: CGFloat? = nil
@@ -3555,23 +3503,7 @@ final class MenuBarUtility: Toy {
                 right = min(right ?? .infinity, f.minX)
             }
         }
-        // The standalone chevron is ours — the lister keeps it out of
-        // the plan, so its live frame joins the limits separately.
-        if let chevron {
-            if chevron.midX <= island.midX {
-                left = max(left ?? -.infinity, chevron.maxX)
-            } else {
-                right = min(right ?? .infinity, chevron.minX)
-            }
-        }
         return (left, right)
-    }
-
-    /// The chevron's live frame in AppKit screen coordinates — nil until
-    /// its button has a window.
-    private func chevronScreenFrame() -> NSRect? {
-        guard let button = chevron?.button, let window = button.window else { return nil }
-        return window.convertToScreen(button.frame)
     }
 
     /// The stretch a hover or an empty-space click reveals: from the
@@ -3744,38 +3676,6 @@ final class MenuBarUtility: Toy {
             draft.curation.updateWatch.removeAll { $0 == key }
             if on { draft.curation.updateWatch.append(key) }
         }
-    }
-
-    /// A control's face: a template image as wide as the control with
-    /// the glyph in its right-most `glyphLength`, so an expanded control
-    /// draws its glyph exactly where the collapsed one did and the rest
-    /// is the bar's own material.
-    private static func style(_ button: NSStatusBarButton, symbol: String,
-                              length: CGFloat, description: String) {
-        button.image = controlImage(symbol: symbol, length: length, description: description)
-        button.imagePosition = .imageOnly
-        button.imageScaling = .scaleNone
-        button.alignment = .right
-    }
-
-    /// The composite face image; pure over its inputs so a test can pin
-    /// the size.
-    nonisolated static func controlImage(symbol: String, length: CGFloat,
-                                         description: String) -> NSImage? {
-        guard let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium)) else { return nil }
-        let glyphSize = glyph.size
-        let height: CGFloat = 18
-        let width = max(length, MenuBarControlFrames.glyphLength) - 8
-        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
-            let x = width - (MenuBarControlFrames.glyphLength - 8) / 2 - glyphSize.width / 2
-            let y = (height - glyphSize.height) / 2
-            glyph.draw(in: NSRect(x: x, y: y, width: glyphSize.width, height: glyphSize.height))
-            return true
-        }
-        image.isTemplate = true
-        image.accessibilityDescription = description
-        return image
     }
 
     /// A control's live frame in Quartz coordinates (top-left origin),
@@ -4145,16 +4045,12 @@ protocol MenuBarBoundaryHost: AnyObject {
     var hiddenRevealed: Bool { get set }
 }
 
-/// The chevron button's target: an `NSObject` shim so `MenuBarUtility`
+/// The hidden-items submenu's target: an `NSObject` shim so `MenuBarUtility`
 /// stays a plain `@Observable` class (the `BuddyMenuActions` pattern).
 /// The button's action only ever fires on the main thread.
 @MainActor
-private final class MenuBarChevronActions: NSObject {
+private final class MenuBarMenuActions: NSObject {
     weak var utility: MenuBarUtility?
-
-    @objc func clicked(_ sender: Any?) {
-        utility?.chevronClicked()
-    }
 
     @objc func menuToggleHidden(_ sender: NSMenuItem) {
         utility?.menuToggleHiddenActivated()

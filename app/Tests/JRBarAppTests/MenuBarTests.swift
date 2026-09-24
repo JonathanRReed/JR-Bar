@@ -705,27 +705,6 @@ struct MenuBarTests {
     }
 
     @MainActor
-    @Test("the control installs once per run and stop tears it all the way down")
-    func chevronLifecycle() {
-        let utility = MenuBarUtility()
-        utility.installChevron()
-        let first = utility.chevron
-        #expect(first != nil)
-        utility.installChevron()
-        #expect(utility.chevron === first, "a second install must not stack a status item")
-        utility.removeChevron()
-        #expect(utility.chevron == nil)
-        // disable → enable leaves exactly one; disable again drops it.
-        utility.installChevron()
-        #expect(utility.chevron != nil)
-        utility.removeChevron()
-        #expect(utility.chevron == nil)
-        // stop on a parked utility is a no-op.
-        utility.stop()
-        #expect(utility.chevron == nil)
-    }
-
-    @MainActor
     @Test("stopping the hider puts everything back and forgets the reveal")
     func hiderStopResets() {
         let hider = makeHider(items: [item("A", x: 100), item("B", x: 200)],

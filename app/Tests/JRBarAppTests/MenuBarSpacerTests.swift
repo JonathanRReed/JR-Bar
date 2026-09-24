@@ -550,18 +550,6 @@ struct MenuBarSpacerTests {
         #expect(state.sections == ["WeatherMenu": .alwaysHidden])
     }
 
-    @Test("the control face is as wide as the control (less the bar's inset) and template")
-    func controlFace() {
-        let collapsed = MenuBarUtility.controlImage(symbol: "chevron.left", length: 24,
-                                                    description: "x")
-        #expect(collapsed?.size.width == 16)
-        #expect(collapsed?.isTemplate == true)
-        let expanded = MenuBarUtility.controlImage(symbol: "chevron.left", length: 120,
-                                                   description: "x")
-        #expect(expanded?.size.width == 112)
-        #expect(expanded?.size.height == collapsed?.size.height)
-    }
-
     // MARK: Show All — explicit, it survives a restart, and it forgets nothing
 
     /// Show all used to write every app Shown, so one press (or one rule
@@ -948,7 +936,7 @@ struct MenuBarSpacerTests {
     }
 
     @MainActor
-    @Test("with a host the boundary is the JR-Bar icon: no chevron item, the spacer is the length past the icon")
+    @Test("with a host the boundary is the JR-Bar icon: the spacer is the length past the icon")
     func hostIsTheBoundary() {
         let utility = MenuBarUtility()
         let host = FakeHost()
@@ -961,10 +949,7 @@ struct MenuBarSpacerTests {
         utility.hider.shuttersSuppressed = true
         utility.hider.listItems = { [self.item("Left", x: 1000), self.item("Right", x: 1130)] }
         utility.hider.now = Self.fastClock()
-        utility.installChevron()
-        // One status item of ours: with a host the chevron is never
-        // registered, not even hidden.
-        #expect(utility.chevron == nil, "the host stands in for the chevron")
+        utility.installBoundary()
         settle(utility.hider)
         // The icon's right edge is 1123: 1123 − 902 = 221 of length,
         // less the 39-point icon = 182 of spacer.
@@ -975,7 +960,7 @@ struct MenuBarSpacerTests {
         utility.hider.reveal([.hidden])
         #expect(host.spacers.last == 30, "revealed, the affordance floor keeps the drop zone visible")
         #expect(host.hiddenRevealed)
-        utility.removeChevron()
+        utility.removeBoundary()
         #expect(host.hiddenCount == 0)
         #expect(host.mirrors.isEmpty, "the spacer engine never hands the face to a mirror — the real item is the icon")
     }
@@ -1007,17 +992,37 @@ struct MenuBarSpacerTests {
     }
 
     @MainActor
-    @Test("a host arriving takes the fallback chevron down — one status item of ours")
-    func hostRetiresTheChevron() {
+    @Test("the boundary is the host's spacer: install claims the affordance, teardown folds it, no host holds none")
+    func boundaryLifecycle() {
         let utility = MenuBarUtility()
         utility.settings = { MenuBarSettings(enabled: true) }
-        utility.installChevron()
-        #expect(utility.chevron != nil, "no host: the chevron is the boundary")
+        // No host, no boundary: nothing is registered to stand in.
+        utility.installBoundary()
+        utility.removeBoundary()
         let host = FakeHost()
         utility.host = host
-        utility.installChevron()
-        #expect(utility.chevron == nil)
-        utility.removeChevron()
+        #expect(host.spacers.isEmpty, "a parked utility claims nothing when the host arrives")
+        utility.installBoundary()
+        utility.installBoundary()
+        #expect(host.spacers == [30, 30], "the affordance, however often the settings re-apply")
+        host.hiddenCount = 3
+        host.hiddenRevealed = true
+        utility.removeBoundary()
+        #expect(host.spacers.last == 0, "teardown folds the spacer")
+        #expect(host.hiddenCount == 0)
+        #expect(!host.hiddenRevealed)
+        // Stop on a parked utility is a no-op.
+        utility.stop()
+        #expect(host.spacers.count == 3)
+    }
+
+    @Test("the retired items' slots are cleared, and the app's own item's never")
+    func retiredItemKeys() {
+        var removed: [String] = []
+        MenuBarUtility.forgetRetiredItems { removed.append($0) }
+        #expect(removed == MenuBarUtility.retiredItemKeys)
+        #expect(removed.contains("NSStatusItem VisibleCC com.jonathanreed.jrbar.menubar-chevron-v2"))
+        #expect(!removed.contains { $0.hasSuffix(".status-item") }, "the icon's own slot stays")
     }
 
     @Test("the host folds the icon at the right end of its spacer, ‹ mark drawn inside it")
@@ -1060,7 +1065,7 @@ struct MenuBarSpacerTests {
         let further = item("Right", x: 1130)
         let (left, right) = MenuBarUtility.earLimits(
             items: [straddler, further], island: island, row: row,
-            concealedApps: [:], sections: [:], revealed: [], chevron: nil,
+            concealedApps: [:], sections: [:], revealed: [],
             ourPID: 999)
         #expect(right == 824, "the straddler's left edge is the right ear's limit")
         #expect(left == nil)
@@ -1068,7 +1073,7 @@ struct MenuBarSpacerTests {
         let leftItem = item("Left", x: 700, w: 24)
         let (l2, _) = MenuBarUtility.earLimits(
             items: [leftItem], island: island, row: row,
-            concealedApps: [:], sections: [:], revealed: [], chevron: nil,
+            concealedApps: [:], sections: [:], revealed: [],
             ourPID: 999)
         #expect(l2 == 724)
         // A concealed item not revealed earns no limit — it is invisible.
@@ -1076,7 +1081,7 @@ struct MenuBarSpacerTests {
         let (_, r3) = MenuBarUtility.earLimits(
             items: [hidden], island: island, row: row,
             concealedApps: [:], sections: ["Hidden": .hidden], revealed: [],
-            chevron: nil, ourPID: 999)
+            ourPID: 999)
         #expect(r3 == nil, "a covered item paves nothing — the wing may stand on it")
     }
 
@@ -1092,7 +1097,7 @@ struct MenuBarSpacerTests {
         let foreign = item("Foreign", x: 1130, pid: 700)
         let (left, right) = MenuBarUtility.earLimits(
             items: [anchor, foreign], island: island, row: row,
-            concealedApps: [:], sections: [:], revealed: [], chevron: nil,
+            concealedApps: [:], sections: [:], revealed: [],
             ourPID: 500)
         #expect(right == 1130, "our anchor is exempt — the foreign item still limits")
         #expect(left == nil)
@@ -1100,7 +1105,7 @@ struct MenuBarSpacerTests {
         let foreignAnchor = item("ForeignAnchor", x: 824, w: 28, pid: 700)
         let (_, r2) = MenuBarUtility.earLimits(
             items: [foreignAnchor], island: island, row: row,
-            concealedApps: [:], sections: [:], revealed: [], chevron: nil,
+            concealedApps: [:], sections: [:], revealed: [],
             ourPID: 500)
         #expect(r2 == 824)
     }
