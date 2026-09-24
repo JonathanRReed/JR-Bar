@@ -286,26 +286,11 @@ final class ConfettiToy: Toy {
     static func screensWithoutFullscreenApps() -> [NSScreen?] {
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return [nil] }
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                              kCGNullWindowID) as? [[String: Any]] ?? []
-        var rects: [CGRect] = []
-        for entry in info {
-            guard (entry[kCGWindowLayer as String] as? Int) == 0,
-                  (entry[kCGWindowOwnerPID as String] as? Int32) != ownPID,
-                  (entry[kCGWindowAlpha as String] as? Double ?? 1) > 0.01,
-                  let bounds = entry[kCGWindowBounds as String] as? [String: Any],
-                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary)
-            else { continue }
-            rects.append(rect)
-        }
+        let rects = OnScreenWindows.quartzFrames()
         // The window list is top-left origin at the primary display's
         // top edge; AppKit is bottom-left.
         let primaryHeight = screens.first?.frame.maxY ?? 0
-        let frames = screens.map {
-            CGRect(x: $0.frame.minX, y: primaryHeight - $0.frame.maxY,
-                   width: $0.frame.width, height: $0.frame.height)
-        }
+        let frames = screens.map { OnScreenWindows.appKit($0.frame, primaryHeight: primaryHeight) }
         let covered = ConfettiRoom.coveredScreens(windows: rects, screens: frames)
         return screens.enumerated().filter { !covered.contains($0.offset) }.map { $0.element }
     }
