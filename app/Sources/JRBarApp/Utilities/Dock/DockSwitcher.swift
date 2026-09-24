@@ -2156,7 +2156,8 @@ struct DockSwitcherView: View {
                 // hover/selection.
                 if let item = zoomed {
                     zoom(item)
-                        .frame(maxWidth: Self.zoomWidth, minHeight: Self.zoomHeight, alignment: .top)
+                        .frame(maxWidth: Self.zoomWidth, minHeight: Self.zoomHeight(hasStills: hasStills),
+                               alignment: .top)
                         .padding(.top, 18)
                         .padding(.horizontal, 18)
                         .id(item.id)
@@ -2226,9 +2227,16 @@ struct DockSwitcherView: View {
 
     static let zoomWidth: CGFloat = 360
     /// The still's slot in the pane — fixed, so the title under it sits
-    /// on one line whatever the window's shape.
-    static let zoomStillHeight: CGFloat = 184
-    static let zoomHeight: CGFloat = 240
+    /// on one line whatever the window's shape. A strip with no stills
+    /// at all (no Screen Recording) keeps a shorter slot: the icon, not
+    /// the void where a still would be.
+    static func zoomSlot(hasStills: Bool) -> CGFloat { hasStills ? 184 : 124 }
+    /// The pane: its slot, then the title, the app line and the agent's.
+    static func zoomHeight(hasStills: Bool) -> CGFloat { zoomSlot(hasStills: hasStills) + 56 }
+
+    /// Whether the thumbnail pass has granted any still yet — the strip
+    /// and the pane size to stills once one lands.
+    private var hasStills: Bool { !model.thumbnails.isEmpty }
 
     /// The preview pane's contents — the selected card at full size: the
     /// window still when the thumbnail pass granted one, the app icon
@@ -2262,8 +2270,8 @@ struct DockSwitcherView: View {
                         }
                 }
             }
-            .frame(maxWidth: Self.zoomWidth - 20, maxHeight: Self.zoomStillHeight)
-            .frame(height: Self.zoomStillHeight)
+            .frame(maxWidth: Self.zoomWidth - 20, maxHeight: Self.zoomSlot(hasStills: hasStills))
+            .frame(height: Self.zoomSlot(hasStills: hasStills))
             VStack(spacing: 3) {
                 Text(zoomTitle(item))
                     .font(.system(size: 13, weight: .semibold))
@@ -2331,7 +2339,7 @@ struct DockSwitcherView: View {
     static func ringRadius(inset: CGFloat) -> CGFloat { max(cardRadius - inset, 0) }
 
     private func card(_ item: SwitcherItem, selected: Bool) -> some View {
-        let slot = Self.slotWidth(hasStills: !model.thumbnails.isEmpty)
+        let slot = Self.slotWidth(hasStills: hasStills)
         let shape = RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous)
         return VStack(spacing: 7) {
             Group {
