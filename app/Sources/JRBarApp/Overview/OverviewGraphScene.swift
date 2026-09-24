@@ -270,6 +270,19 @@ private struct GraphPainter {
         Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
     }
 
+    /// A glow's fade from full to nothing, eased so its edge never shows
+    /// as a ring.
+    static func falloff(_ color: Color) -> Gradient {
+        Gradient(stops: [
+            .init(color: color, location: 0),
+            .init(color: color.opacity(0.82), location: 0.2),
+            .init(color: color.opacity(0.5), location: 0.45),
+            .init(color: color.opacity(0.2), location: 0.7),
+            .init(color: color.opacity(0.05), location: 0.88),
+            .init(color: color.opacity(0), location: 1),
+        ])
+    }
+
     /// A horizontal S from one port to another.
     static func bezier(_ start: CGPoint, _ end: CGPoint) -> Path {
         var path = Path()
@@ -360,8 +373,8 @@ private struct GraphPainter {
         let heart = camera.screen(CGPoint.zero)
         let reach = max(size.width, size.height) * 0.6
         let glow = dark ? Color.white.opacity(0.045) : Color.white.opacity(0.9)
-        context.fill(Path(bounds), with: .radialGradient(Gradient(colors: [glow, glow.opacity(0)]),
-                                                         center: heart, startRadius: 0, endRadius: reach))
+        context.fill(Path(bounds), with: .radialGradient(Self.falloff(glow), center: heart, startRadius: 0,
+                                                         endRadius: reach))
         // A dot grid that pans and zooms with the map, thinned out when
         // zoomed far out and doubled up when zoomed far in: one tiled fill,
         // however many dots.
@@ -394,8 +407,7 @@ private struct GraphPainter {
             pool.scaleBy(x: 1, y: halo.height / halo.width)
             let reach = halo.width / 2
             pool.fill(Self.circle(.zero, reach), with: .radialGradient(
-                Gradient(colors: [haloColor, haloColor.opacity(0)]),
-                center: .zero, startRadius: reach * 0.35, endRadius: reach))
+                Self.falloff(haloColor), center: .zero, startRadius: reach * 0.3, endRadius: reach))
             let pane = Path(roundedRect: rect, cornerRadius: 24, style: .continuous)
             c.fill(pane, with: .color(clusterFill))
             if waiting { c.fill(pane, with: .color(.orange.opacity(dark ? 0.03 : 0.025))) }
@@ -484,8 +496,8 @@ private struct GraphPainter {
             // A halo of its own colour, a hairline orbit, then the orb: a
             // lit top, a deeper rim, and a glassy highlight.
             c.fill(Self.circle(center, radius * 2.1), with: .radialGradient(
-                Gradient(colors: [accent.opacity(dark ? 0.3 : 0.2), accent.opacity(0)]),
-                center: center, startRadius: radius * 0.6, endRadius: radius * 2.1))
+                Self.falloff(accent.opacity(dark ? 0.3 : 0.2)), center: center,
+                startRadius: radius * 0.6, endRadius: radius * 2.1))
             c.stroke(Self.circle(center, radius + 7), with: .color(accent.opacity(0.25)), lineWidth: hairline * 1.2)
             let orb = Self.circle(center, radius)
             c.fill(orb, with: .radialGradient(
