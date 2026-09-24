@@ -73,24 +73,49 @@ import Testing
         }
     }
 
-    @Test func everyToyCatalogTitleIsStillARowItsCardDraws() throws {
+    @Test func everyToyCatalogTitleIsStillARowItsCardDraws() {
         // The card rows are hand-kept too: each title must still be the
-        // exact `SettingLabel` title a card's controls draw.
+        // exact `SettingLabel` title that card's own controls draw, and
+        // each key must still be the id its card declares. Reading only
+        // the card's own files keeps a same-named row on another card
+        // ("Render with", "Density") from vouching for this one.
         let sources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appending(path: "Sources/JRBarApp")
-        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
-        var text = ""
-        for case let url as URL in files
-        where url.pathExtension == "swift" && url.lastPathComponent != "ToySearchRows.swift" {
-            text += (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let homes: [String: [String]] = [
+            "notch": ["Toys/NotchToy.swift", "Toys/NotchControlsView.swift"],
+            "notch-buddy": ["Toys/NotchBuddyToy.swift"],
+            "confetti": ["Toys/ConfettiToy.swift"],
+            "aquarium": ["Toys/Aquarium"],
+            "fold": ["Toys/Fold"],
+            "menuBar": ["Utilities/MenuBar"],
+            "dock": ["Utilities/Dock"],
+            "agents": ["Utilities/Agents"],
+        ]
+        func text(of home: String) -> String {
+            let url = sources.appending(path: home)
+            guard url.pathExtension != "swift" else {
+                return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            }
+            var joined = ""
+            let walker = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil)
+            while let file = walker?.nextObject() as? URL {
+                guard file.pathExtension == "swift" else { continue }
+                joined += (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+            }
+            return joined
         }
-        #expect(!text.isEmpty)
+        #expect(Set(homes.keys) == Set(ToySearchCatalog.rows.keys), "every listed card says where it lives")
         for (card, rows) in ToySearchCatalog.rows {
+            let cardText = (homes[card] ?? []).map(text(of:)).joined()
+            #expect(!cardText.isEmpty, "\(card)'s files are gone")
             #expect(!rows.isEmpty, "\(card) lists no rows")
-            #expect(text.contains("\"\(card)\""), "no card has the id \(card)")
+            #expect(cardText.contains("let id = \"\(card)\"")
+                    || cardText.contains("var id: String { \"\(card)\" }"),
+                    "no card declares the id \(card)")
             for row in rows {
-                #expect(text.contains("title: \"\(row.title)\""), "\(card) no longer draws \(row.title)")
+                #expect(cardText.contains("SettingLabel(title: \"\(row.title)\""),
+                        "\(card) no longer draws \(row.title)")
             }
             #expect(Set(rows.map(\.title)).count == rows.count, "\(card) lists a row twice")
         }
