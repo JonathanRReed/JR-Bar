@@ -6,7 +6,9 @@ import SwiftUI
 /// accessory app activates itself only while this window is up.
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
-    static let defaultSize = NSSize(width: 760, height: 520)
+    /// Room for a card's head and its switch column side by side and a
+    /// page header above the fold; the frame is remembered after that.
+    static let defaultSize = NSSize(width: 820, height: 620)
 
     let store: SettingsStore
     private var window: NSWindow?

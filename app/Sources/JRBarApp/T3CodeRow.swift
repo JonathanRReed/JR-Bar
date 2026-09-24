@@ -187,7 +187,6 @@ struct T3CodeRow: View {
                     get: { status.enabled },
                     set: { model.setEnabled($0, core: core) }))
                     .toggleStyle(.switch)
-                    .controlSize(.small)
                     .labelsHidden()
                     .disabled(!core.isLive || model.busy || status.readOnly)
                     .help("Reads T3 Code's local database, read-only, to list its threads with your sessions")

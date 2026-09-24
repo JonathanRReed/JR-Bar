@@ -140,6 +140,7 @@ struct ToyCard: View {
     @Environment(SettingsStore.self) private var settings: SettingsStore?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ViewState private var localExpanded = false
+    @ViewState private var hovering = false
 
     private var expanded: Bool {
         settings.map { $0.expandedCards.contains(toy.id) } ?? localExpanded
@@ -202,11 +203,12 @@ struct ToyCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    DisclosureChevron(open: expanded)
+                    DisclosureChevron(open: expanded, hovering: hovering)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .onHover { hovering = $0 }
             .accessibilityLabel("\(expanded ? "Hide" : "Show") \(toy.name) settings")
             Toggle(toy.name, isOn: toggle)
                 .labelsHidden()

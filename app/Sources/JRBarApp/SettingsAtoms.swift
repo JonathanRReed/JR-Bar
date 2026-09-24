@@ -277,6 +277,7 @@ struct SettingsDisclosureStyle: DisclosureGroupStyle {
 private struct SettingsDisclosure: View {
     let configuration: DisclosureGroupStyleConfiguration
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewState private var hovering = false
 
     var body: some View {
         let open = configuration.isExpanded
@@ -289,12 +290,13 @@ private struct SettingsDisclosure: View {
                 HStack(alignment: .center, spacing: SettingsMetrics.m) {
                     configuration.label
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    DisclosureChevron(open: open)
+                    DisclosureChevron(open: open, hovering: hovering)
                 }
                 .padding(.vertical, SettingsMetrics.rowPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .onHover { hovering = $0 }
             .accessibilityAddTraits(.isButton)
             .accessibilityHint(open ? "Collapses" : "Expands")
             if open {
@@ -315,17 +317,20 @@ private struct SettingsDisclosure: View {
     }
 }
 
-/// The chevron every disclosure turns: right when shut, down when open.
+/// The chevron every disclosure turns: right when shut, down when open,
+/// its well a shade deeper under the pointer.
 struct DisclosureChevron: View {
     let open: Bool
+    var hovering = false
 
     var body: some View {
         Image(systemName: "chevron.right")
             .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(hovering ? .primary : .secondary)
             .rotationEffect(.degrees(open ? 90 : 0))
             .frame(width: 22, height: 22)
-            .background(Circle().fill(Color.primary.opacity(0.06)))
+            .background(Circle().fill(Color.primary.opacity(hovering ? 0.12 : 0.06)))
+            .animation(.easeOut(duration: 0.12), value: hovering)
             .accessibilityHidden(true)
     }
 }
