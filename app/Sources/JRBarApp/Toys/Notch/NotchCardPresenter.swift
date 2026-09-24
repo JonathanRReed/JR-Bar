@@ -15,6 +15,8 @@ final class NotchCardPresenter {
 
     private(set) var isShown = false
     var isPinned: Bool { panel.isPinned }
+    /// Whether Esc is listened for — only while the card is pinned.
+    var listensForEscape: Bool { !pinnedKeyMonitors.isEmpty }
 
     /// The shown card's frame — both owners' hover regions union it in,
     /// so crossing band, island and card never counts as leaving.
@@ -101,7 +103,9 @@ final class NotchCardPresenter {
     /// The full card, held open and mouse-accepting — a band click's
     /// deliberate pin, or the island's hover.
     func pin() {
-        panel.setPinned(true)
+        // Through our own setter, not the panel's: it is what installs
+        // the Esc monitors that let a pinned card go.
+        setPinned(true)
         present()
     }
 

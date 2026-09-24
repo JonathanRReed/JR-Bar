@@ -147,6 +147,21 @@ struct NotchCapsuleTests {
         #expect(!presenter.isShown)
     }
 
+    @Test("a pinned glass card listens for Esc, and lets go of it when it hides")
+    func pinnedCardListensForEscape() {
+        let presenter = NotchCardPresenter(model: makeTestCardModel())
+        presenter.surface = { .glass }
+        presenter.focus = { ScreenBarFocus(style: nil, label: "JR-Bar",
+                                           word: "Working", clickSession: nil) }
+        presenter.anchor = { NSRect(x: 0, y: 0, width: 180, height: 6) }
+        presenter.pin()
+        #expect(presenter.isPinned)
+        #expect(presenter.listensForEscape, "a pinned card must close on Esc")
+        presenter.hide()
+        #expect(!presenter.isPinned)
+        #expect(!presenter.listensForEscape)
+    }
+
     @Test("a shelf that outlives its capsule's freshness is dropped, not replayed")
     func staleShelfDropsOnCollapse() {
         let (toy, store) = makeToy()
