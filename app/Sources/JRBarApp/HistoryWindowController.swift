@@ -27,7 +27,7 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
     }
 
     /// History on its Events tab — what the Event Replay window was; the
-    /// status menu's Event Replay item lands here.
+    /// status menu's Event Replay item (⌘R) and the palette's land here.
     func showEvents() {
         store.mode = .events
         show()

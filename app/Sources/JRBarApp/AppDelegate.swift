@@ -22,7 +22,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var historyStore: HistoryStore?
     private var historyWindow: HistoryWindowController?
     private var overviewWindow: OverviewWindowController?
-    private var replayWindow: ReplayWindowController?
     private var usageStore: UsageCenterStore?
     private var usageWindow: UsageCenterWindowController?
     private var effectsStore: EffectStudioStore?
@@ -534,14 +533,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return MenuBarCoreFacts.read(core: core, aggregate: store.aggregate)
         }
 
-        // Event Replay: the read-only journaled-events surface (S7.4).
-        let replayStore = ReplayStore(core: core)
-        let replayWindow = ReplayWindowController(store: replayStore)
-        self.replayWindow = replayWindow
-        statusItem.onOpenReplay = { [weak replayWindow] in replayWindow?.show() }
-        // History owns the journal now (its Events tab), and its rows point
-        // at the Overview's inspector for a session's full story.
-        replayWindow.redirect = { [weak historyWindow] in historyWindow?.showEvents() }
+        // Event Replay is History's Events tab: History owns the journal,
+        // and its rows point at the Overview's inspector for a session's
+        // full story.
+        statusItem.onOpenReplay = { [weak historyWindow] in historyWindow?.showEvents() }
         historyStore.onRevealSession = { [weak overviewWindow] id in overviewWindow?.show(selecting: id) }
 
         // Usage Center (⌘U) and Effect Studio windows.
@@ -611,7 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 history: { [weak historyWindow] in historyWindow?.show() },
                 effects: { [weak effectsWindow] in effectsWindow?.show() },
                 deck: { [weak controlCenterWindow] in controlCenterWindow?.show() },
-                replay: { [weak replayWindow] in replayWindow?.show() },
+                replay: { [weak historyWindow] in historyWindow?.showEvents() },
                 panel: { [weak panel] in panel?.toggle() },
                 checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
                 settings: { [weak settingsWindow] page in settingsWindow?.show(page: page) }))
