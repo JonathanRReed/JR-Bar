@@ -159,7 +159,7 @@ struct AquariumView: View {
         let settings = tankSettings
         let labelStyle = settings.labelStyle
         let showLabels = labelStyle == .always
-        let plankton = max(0.1, settings.density)
+        let plankton = max(0, settings.density)
         let bubbles = settings.bubbles
         let density = settings.scenery.fraction
         let paused = ambient ? !ambientVisible

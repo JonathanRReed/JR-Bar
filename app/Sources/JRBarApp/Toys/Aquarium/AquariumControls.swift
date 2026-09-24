@@ -141,7 +141,7 @@ struct AquariumControlsView: View {
             LabeledContent {
                 slider(bind(\.density), in: AquariumSettings.densityRange)
             } label: {
-                SettingLabel(title: "Plankton", subtitle: "The motes drifting in the water.")
+                SettingLabel(title: "Plankton", subtitle: "The motes drifting in the water. None at 0.")
             }
             LabeledContent {
                 slider(bind(\.bubbles), in: AquariumSettings.bubblesRange)

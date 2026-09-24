@@ -182,7 +182,7 @@ struct ToysStateTests {
         #expect(wild.labelStyle == .always, "an unknown style falls back to the old switch")
         #expect(wild.scenery == .full)
         #expect(wild.sound == false)
-        let low = try decode(AquariumSettings.self, #"{"density": 0.01, "bubbles": 5}"#)
+        let low = try decode(AquariumSettings.self, #"{"density": -1, "bubbles": 5}"#)
         #expect(low.density == AquariumSettings.densityRange.lowerBound)
         #expect(low.bubbles == AquariumSettings.bubblesRange.upperBound)
         let future = try decode(AquariumSettings.self, #"{"dayNight": "alwaysNight"}"#)

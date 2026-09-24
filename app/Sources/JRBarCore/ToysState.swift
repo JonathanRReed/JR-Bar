@@ -296,8 +296,9 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     public static let idleFillChoices = [0, 5, 10, 15, 30]
     /// Fish at once, as the card offers it; 0 is all.
     public static let maxFishChoices = [0, 6, 10, 16, 24]
-    /// Plankton's range.
-    public static let densityRange: ClosedRange<Double> = 0.25...2
+    /// Plankton's range; 0 clears the water. The same track as
+    /// Bubbles, so the two sliders' knobs agree at the same value.
+    public static let densityRange: ClosedRange<Double> = 0...2
     /// Bubbles' range; 0 turns the stream off.
     public static let bubblesRange: ClosedRange<Double> = 0...2
 
