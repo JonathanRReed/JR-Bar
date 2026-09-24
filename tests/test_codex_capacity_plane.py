@@ -299,22 +299,24 @@ def _drifted_limits():
     }
 
 
-def _rendered_capacity_text(target, status_bar) -> str:
-    """Every string the owner can actually read, menu and Settings."""
-    status_bar.build_usage_menu_item(target)
+def _capacity_copy(target, status_bar):
+    """The capacity row's primary line, its secondary line and one line per
+    further window, as the copy rules write them for the current model."""
     model = target._usage_provider_models["codex"]
-    return " | ".join(
-        (
-            target._usage_menu_labels["codex"].stringValue(),
-            target._usage_menu_secondary_labels["codex"].stringValue(),
-            *(
-                field.stringValue()
-                for field in target._usage_menu_window_labels["codex"]
-            ),
-            model.menu_line,
-            model.settings_text,
-        )
+    epoch = time.time()
+    primary, secondary = status_bar.capacity_menu_lines(
+        model,
+        monotonic_now=time.monotonic(),
+        epoch_now=epoch,
     )
+    return primary, secondary, status_bar.capacity_window_lines(model, epoch_now=epoch)
+
+
+def _rendered_capacity_text(target, status_bar) -> str:
+    """Every string the capacity copy rules can produce for this model."""
+    primary, secondary, rows = _capacity_copy(target, status_bar)
+    model = target._usage_provider_models["codex"]
+    return " | ".join((primary, secondary, *rows, model.menu_line, model.settings_text))
 
 
 def test_a_codex_refresh_publishes_contract_stamped_observations(controller) -> None:
@@ -347,8 +349,8 @@ def test_a_codex_refresh_publishes_contract_stamped_observations(controller) -> 
     assert len(state.last_known_good.lanes) == 2
 
 
-def test_every_codex_ceiling_reaches_the_dropdown_named_and_numbered__and_2_more(controller,) -> None:
-    # --- scenario: every_codex_ceiling_reaches_the_dropdown_named_and_numbered
+def test_every_codex_ceiling_reaches_the_capacity_copy_named_and_numbered__and_2_more(controller,) -> None:
+    # --- scenario: every_codex_ceiling_reaches_the_capacity_copy_named_and_numbered
     target, status_bar = controller
 
     _run_codex_refresh(target, status_bar, _live_limits())
@@ -359,13 +361,11 @@ def test_every_codex_ceiling_reaches_the_dropdown_named_and_numbered__and_2_more
     assert {window.lane_key.pool for window in model.windows} == {"codex-chatgpt-plan"}
     assert {window.lane_key.opaque_scope for window in model.windows} == {"all"}
 
-    status_bar.build_usage_menu_item(target)
+    primary, secondary, rows = _capacity_copy(target, status_bar)
 
-    assert target._usage_menu_labels["codex"].stringValue() == "Codex · 5h 75% left"
-    assert "resets in" in target._usage_menu_secondary_labels["codex"].stringValue()
-    assert tuple(
-        field.stringValue() for field in target._usage_menu_window_labels["codex"]
-    ) == ("Weekly 30% left · resets in 1d 1h",)
+    assert primary == "Codex · 5h 75% left"
+    assert "resets in" in secondary
+    assert rows == ("Weekly 30% left · resets in 1d 1h",)
     assert model.settings_text == "5h 75% left · 7d 30% left"
 
     # --- scenario: a_drifted_codex_payload_renders_nothing_rather_than_raw_percentages
@@ -392,10 +392,9 @@ def test_every_codex_ceiling_reaches_the_dropdown_named_and_numbered__and_2_more
     assert model.error_text == status_bar.CAPACITY_UNAUTHORISED_COPY
 
     rendered = _rendered_capacity_text(target, status_bar)
-    assert target._usage_menu_labels["codex"].stringValue() == (
-        "Codex · Capacity reading unavailable"
-    )
-    assert target._usage_menu_window_labels["codex"] == ()
+    primary, _secondary, rows = _capacity_copy(target, status_bar)
+    assert primary == "Codex · Capacity reading unavailable"
+    assert rows == ()
     assert model.settings_text == status_bar.CAPACITY_UNAUTHORISED_COPY
     # No number, no label the contract never declared, no invented countdown.
     assert "%" not in rendered
@@ -717,8 +716,7 @@ def test_the_display_gate_carries_the_freshness_it_decided__and_2_more(controlle
         assert model.windows[0].reset_state is ResetState.STALE
         assert model.windows[0].reset_known is False
 
-        status_bar.build_usage_menu_item(target)
-        secondary = target._usage_menu_secondary_labels["codex"].stringValue()
+        _primary, secondary, _rows = _capacity_copy(target, status_bar)
         assert "stale" in secondary
         assert "resets" not in secondary
 

@@ -44,7 +44,7 @@ def test_ingest_and_leds_name_their_stages__and_2_more() -> None:
     assert fields["leds"] == 2286
     assert fields["leds.device_write"] == 2200
     assert fields["leds.compute"] == 86
-    assert fields["menu"] == 4
+    assert fields["rest"] == 4
 
     # --- scenario: the_parts_never_exceed_their_stage
     # A write stamp from a stale tick (or a clock quirk) cannot claim more

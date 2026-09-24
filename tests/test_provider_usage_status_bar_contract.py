@@ -4,15 +4,9 @@ import ast
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-
-import jrbar.usage_menu_injection as usage_menu_injection
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "src" / "jrbar" / "provider_usage_status_bar.py"
-# The usage-row builder was extracted here for the facade's size ratchet
-# (2026-08-27); the menu-composition contract spans both files.
-MENU_MODULE = ROOT / "src" / "jrbar" / "usage_menu_injection.py"
 SETTINGS_CATEGORY_MODULE = ROOT / "src" / "jrbar" / "settings_category_runtime.py"
 SETTINGS_WINDOW_MODULE = ROOT / "src" / "jrbar" / "settings_window.py"
 ONBOARDING_MODULE = ROOT / "src" / "jrbar" / "onboarding_runtime.py"
@@ -54,7 +48,7 @@ def _calls(node):
     return tuple(result)
 
 
-def test_provider_usage_runs_through_background_service_and_main_thread_apply__and_2_more() -> None:
+def test_provider_usage_runs_through_background_service_and_main_thread_apply__and_1_more() -> None:
     # --- scenario: provider_usage_runs_through_background_service_and_main_thread_apply
     request_calls = _calls(_method("_request_provider_usage"))
     apply_calls = _calls(_method("applyProviderUsageState_"))
@@ -79,12 +73,11 @@ def test_provider_usage_runs_through_background_service_and_main_thread_apply__a
     )
     assert "refresh_now" not in refresh_calls
 
-    # --- scenario: usage_apply_and_menu_projection_do_not_reload_settings_on_the_ui_thread
+    # --- scenario: usage_apply_does_not_reload_settings_on_the_ui_thread
     ready = _method("_provider_usage_ready")
     ready_calls = _calls(ready)
     apply_calls = _calls(_method("applyProviderUsageState_"))
     menu_settings_calls = _calls(_method("_usage_menu_settings"))
-    native_menu_calls = _calls(_function(MENU_MODULE, "native_usage_menu_item"))
 
     assert "settings_snapshot" in ready_calls
     assert "refresh_cached_merged_sync" in ready_calls
@@ -107,36 +100,6 @@ def test_provider_usage_runs_through_background_service_and_main_thread_apply__a
     assert refresh.lineno < dispatch.lineno
     assert "load_provider_usage_settings" not in apply_calls
     assert "load_provider_usage_settings" not in menu_settings_calls
-    assert "_usage_menu_settings" in native_menu_calls
-    assert "load_provider_usage_settings" not in native_menu_calls
-    menu_source = MENU_MODULE.read_text(encoding="utf-8")
-    assert "ProviderInstancePolicyProjection" in menu_source
-    assert "visual=visual" in menu_source
-    assert "privacy_mode = settings.menu_display.privacy_mode" in menu_source
-    assert "privacy_mode=privacy_mode" in menu_source
-    assert "active_instances=active_instances" in menu_source
-    assert "setToolTip_" in menu_source
-    assert "setAccessibilityLabel_" in menu_source
-
-    # --- scenario: unknown_menu_settings_hide_observed_instances_and_enable_privacy
-    state = SimpleNamespace(
-        snapshots=(
-            SimpleNamespace(provider_id="claude", source_instance_id="work"),
-            SimpleNamespace(provider_id="codex", source_instance_id="default"),
-        )
-    )
-
-    assert hasattr(usage_menu_injection, "_fail_closed_menu_projection_settings")
-    display, hidden, hidden_instances, thresholds, privacy_mode = (
-        usage_menu_injection._fail_closed_menu_projection_settings(state)
-    )
-
-    assert display is None
-    assert hidden == frozenset()
-    assert hidden_instances == frozenset({("claude", "work"), ("codex", "default")})
-    assert thresholds is None
-    assert privacy_mode is True
-
 
 
 def test_usage_summary_and_checkbox_repaint_do_not_reload_settings__and_2_more() -> None:
@@ -196,7 +159,6 @@ def test_usage_summary_and_checkbox_repaint_do_not_reload_settings__and_2_more()
     }
 
 
-
 def test_provider_feedback_dispatch_is_extracted_behind_controller_methods__and_2_more() -> None:
     # --- scenario: provider_feedback_dispatch_is_extracted_behind_controller_methods
     delegates = {
@@ -235,7 +197,6 @@ def test_provider_feedback_dispatch_is_extracted_behind_controller_methods__and_
     assert "with_idle_auto_off_enabled" in idle_source
 
 
-
 def test_settings_panes_consume_device_and_alcove_caches_without_probing__and_2_more() -> None:
     # --- scenario: settings_panes_consume_device_and_alcove_caches_without_probing
     devices_calls = set(_calls(_function(SETTINGS_WINDOW_MODULE, "_build_devices_pane")))
@@ -265,8 +226,7 @@ def test_settings_panes_consume_device_and_alcove_caches_without_probing__and_2_
     assert "refresh_native_usage_summary" in source
 
 
-
-def test_profile_settings_selector_delegates_save_and_ui_freshness_as_one_action__and_2_more() -> None:
+def test_profile_settings_selector_delegates_save_and_ui_freshness_as_one_action__and_1_more() -> None:
     # --- scenario: profile_settings_selector_delegates_save_and_ui_freshness_as_one_action
     calls = _calls(_method("updateProviderInstanceProfile_"))
 
@@ -282,27 +242,8 @@ def test_profile_settings_selector_delegates_save_and_ui_freshness_as_one_action
     assert _calls(why_method).count("provider_usage_why_panel_body") == 1
     assert "privacy_mode=privacy_mode" in ast.unparse(why_helper)
 
-    # --- scenario: compact_usage_menu_receives_exact_active_provider_instances
-    method = _function(STATUS_PROJECTION_MODULE, "active_usage_instances")
-    menu_calls = _calls(_function(MENU_MODULE, "native_usage_menu_item"))
 
-    assert "_active_usage_instances" in menu_calls
-    assert "provider_usage_state" in ast.unparse(method)
-    assert "source_instance_id" in ast.unparse(method)
-
-
-
-def test_menu_replaces_legacy_capacity_card_with_compact_native_usage__and_2_more() -> None:
-    # --- scenario: menu_replaces_legacy_capacity_card_with_compact_native_usage
-    source = MODULE.read_text(encoding="utf-8")
-    menu_source = MENU_MODULE.read_text(encoding="utf-8")
-    assert "_original_build_menu" in source
-    assert "_usage_menu_item" in menu_source
-    assert "project_usage_menu" in menu_source
-    assert "Open Usage Center…" in menu_source
-    assert "No reading" not in source
-    assert "no reading" not in source
-
+def test_wrapper_does_not_rebind_objc_super_through_a_mutable_global__and_1_more() -> None:
     # --- scenario: wrapper_does_not_rebind_objc_super_through_a_mutable_global
     source = MODULE.read_text(encoding="utf-8")
     assert "def init(" not in source
@@ -311,7 +252,6 @@ def test_menu_replaces_legacy_capacity_card_with_compact_native_usage__and_2_mor
     # --- scenario: termination_closes_provider_service
     calls = _calls(_method("applicationWillTerminate_"))
     assert "close" in calls
-
 
 
 def test_session_opening_consults_exact_instance_policy_before_legacy_router__and_1_more() -> None:
@@ -335,7 +275,6 @@ def test_session_opening_consults_exact_instance_policy_before_legacy_router__an
     )
     keywords = {keyword.arg for keyword in base_call.keywords}
     assert "why_context" in keywords
-
 
 
 _STATUS_BAR_PROBE_PREAMBLE = """
@@ -438,4 +377,3 @@ assert "just checked" in fresh
 assert "checked 1m ago" in due
 """
     )
-

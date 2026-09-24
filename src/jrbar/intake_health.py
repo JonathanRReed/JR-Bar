@@ -168,14 +168,6 @@ class IntakeReport:
     def stuck_providers(self) -> tuple[ProviderIntake, ...]:
         return tuple(item for item in self.providers if item.stuck)
 
-    def newest_heard_age_seconds(self) -> float | None:
-        ages = [
-            item.heard_age_seconds
-            for item in self.providers
-            if item.heard_age_seconds is not None
-        ]
-        return min(ages) if ages else None
-
 
 def _age_seconds(now_epoch: float, epoch: float | None) -> float | None:
     if epoch is None:
@@ -461,8 +453,8 @@ def idle_disclosure(report: IntakeReport | None) -> str | None:
     """The honest replacement for "Idle", or None when Idle is the truth.
 
     Only whole-surface failures reach the menu bar. One stuck provider
-    beside one live provider is a dropdown row naming the provider, never
-    a title claiming JR-Bar hears nothing -- it hears the other one.
+    beside one live provider is never a title claiming JR-Bar hears
+    nothing -- it hears the other one.
     """
     if type(report) is not IntakeReport:
         return None
@@ -471,106 +463,3 @@ def idle_disclosure(report: IntakeReport | None) -> str | None:
     if report.source_health.code is DiagnosticCode.UNAVAILABLE and report.any_installed:
         return NOT_HEARING_LABEL
     return None
-
-
-def intake_alert_title(report: IntakeReport | None) -> str | None:
-    """The one dropdown row that names the fault and earns the Setup click."""
-    if type(report) is not IntakeReport:
-        return None
-    if report.hook_state.code is DiagnosticCode.NOT_CONFIGURED:
-        return "⚠ Not set up — connect your agents in Setup…"
-    stuck = report.stuck_providers
-    if report.source_health.code is DiagnosticCode.UNAVAILABLE and report.any_installed:
-        if stuck:
-            return (
-                f"⚠ {_provider_names(stuck)}: writing to the log, "
-                "nothing arriving — reinstall in Setup…"
-            )
-        age = report.newest_heard_age_seconds()
-        if age is None:
-            return (
-                "⚠ No agent event has ever arrived — "
-                "reinstall in Setup…"
-            )
-        return (
-            f"⚠ No agent events for {format_duration(age)} — "
-            "hooks may be broken. Reinstall in Setup…"
-        )
-    if stuck:
-        return (
-            f"⚠ {_provider_names(stuck)}: writing to the log, "
-            "nothing arriving — reinstall in Setup…"
-        )
-    return None
-
-
-def _provider_names(providers: tuple[ProviderIntake, ...]) -> str:
-    labels = [item.label for item in providers]
-    if len(labels) <= 2:
-        return " and ".join(labels)
-    return f"{labels[0]}, {labels[1]} and {len(labels) - 2} more"
-
-
-def last_heard_summary(report: IntakeReport | None) -> str | None:
-    """Parent row text: the freshest thing JR-Bar has heard from anyone."""
-    if type(report) is not IntakeReport or not report.known:
-        return None
-    return f"Last heard from · {format_age_ago(report.newest_heard_age_seconds())}"
-
-
-def intake_content_signature(report: IntakeReport | None) -> tuple:
-    """Everything the dropdown renders from intake, ages bucketed to the
-    minute -- the rows say "4m ago", so a second is not a change.
-
-    Without this the alarm row would sit on screen for up to the menu
-    signature's 30s safety valve after the user finished Setup, which is
-    the worst possible half-minute to still be calling them unconnected.
-    """
-    if type(report) is not IntakeReport:
-        return ()
-    return (
-        report.hook_state.code.value,
-        report.hook_state.count,
-        report.source_health.code.value,
-        report.source_health.count,
-        tuple(
-            (
-                item.provider,
-                item.code.value,
-                (
-                    -1
-                    if item.heard_age_seconds is None
-                    else int(item.heard_age_seconds // 60.0)
-                ),
-            )
-            for item in report.known
-        ),
-    )
-
-
-def last_heard_rows(report: IntakeReport | None) -> tuple[str, ...]:
-    """One row per provider this Mac actually has, newest first."""
-    if type(report) is not IntakeReport:
-        return ()
-    rows: list[tuple[float, str]] = []
-    for item in report.known:
-        rows.append(
-            (
-                float("inf") if item.heard_age_seconds is None else item.heard_age_seconds,
-                _last_heard_row(item),
-            )
-        )
-    rows.sort(key=lambda row: (row[0], row[1]))
-    return tuple(text for _age, text in rows)
-
-
-def _last_heard_row(item: ProviderIntake) -> str:
-    if item.code is DiagnosticCode.PARTIAL:
-        return f"⚠ {item.label} · writing to the log, nothing arriving"
-    if item.code is DiagnosticCode.UNAVAILABLE and item.installed:
-        return f"⚠ {item.label} · {format_age_ago(item.heard_age_seconds)}"
-    if item.code is DiagnosticCode.CONFIGURED:
-        return f"{item.label} · connected, nothing yet"
-    if item.code is DiagnosticCode.NOT_CONFIGURED:
-        return f"{item.label} · not connected · last heard {format_age_ago(item.heard_age_seconds)}"
-    return f"{item.label} · {format_age_ago(item.heard_age_seconds)}"

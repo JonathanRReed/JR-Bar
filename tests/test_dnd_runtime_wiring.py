@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -153,9 +152,9 @@ def test_focus_summary_withholds_private_detail_without_public_active_truth(cont
         assert secret not in summary
 
 
-def test_settings_and_menu_summary_share_the_gated_focus_view__and_1_more(controller,
+def test_the_settings_summary_reads_the_gated_focus_view__and_1_more(controller,
     monkeypatch: pytest.MonkeyPatch,) -> None:
-    # --- scenario: settings_and_menu_summary_share_the_gated_focus_view
+    # --- scenario: the_settings_summary_reads_the_gated_focus_view
     from jrbar.settings_window import refresh_dnd_settings_controls
 
     secret = "private-focus-must-not-reach-surfaces"
@@ -187,20 +186,9 @@ def test_settings_and_menu_summary_share_the_gated_focus_view__and_1_more(contro
     controller.settings_buttons = {}
 
     refresh_dnd_settings_controls(controller)
-    snapshot = SimpleNamespace(
-        statuses=(),
-        stale_statuses=(),
-        collected_at=datetime.now(timezone.utc),
-    )
-    controller.status_bar_devices = lambda *args, **kwargs: []
-    signature = status_bar.menu_content_signature(
-        snapshot,
-        status_bar.STATE_IDLE,
-        controller,
-    )
 
     assert settings_values == ["No Focus is active.", "No Focus is active."]
-    assert secret not in repr(signature)
+    assert secret not in repr(settings_values)
 
     # --- scenario: focus_summary_uses_retained_named_detail_only_while_public_active
     monkeypatch.undo()
@@ -225,7 +213,6 @@ def test_settings_and_menu_summary_share_the_gated_focus_view__and_1_more(contro
     )
 
     assert controller.active_focus_summary() == "focus-work \u2014 shared dim"
-
 
 
 def test_mute_keeps_visual_grant_and_refuses_each_outbound_axis__and_2_more(controller) -> None:
@@ -267,7 +254,6 @@ def test_mute_keeps_visual_grant_and_refuses_each_outbound_axis__and_2_more(cont
         controller.current_attention_projection = _attention(lifecycle)
 
         assert controller.active_led_display_kind_for_device(_device(), None) == expected
-
 
 
 def test_restrictive_dnd_transition_consumes_prearmed_finite_cues_without_replay__and_1_more(controller) -> None:
@@ -350,7 +336,6 @@ def test_restrictive_dnd_transition_consumes_prearmed_finite_cues_without_replay
         controller._dnd_projection_changed(visual)
 
         assert controller.completion_sweep_until == deadline
-
 
 
 def test_async_calendar_cue_armed_during_pause_is_consumed_without_replay(
@@ -459,7 +444,6 @@ def test_standing_critical_truth_returns_after_fully_dark_without_finite_replay_
     assert controller.effective_signal_brightness_for_device(device) == 0
 
 
-
 class _DndActions:
     def __init__(self, projection) -> None:
         self.projection = projection
@@ -468,60 +452,6 @@ class _DndActions:
     def set_override(self, override: DndOverride | None):
         self.overrides.append(override)
         return SimpleNamespace(applied=True, projection=self.projection, failure=None)
-
-
-def test_legacy_quiet_action_delegates_to_durable_mute_override__and_2_more(controller,
-    monkeypatch: pytest.MonkeyPatch,) -> None:
-    # --- scenario: legacy_quiet_action_delegates_to_durable_mute_override
-    now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc).timestamp()
-    actions = _DndActions(compose_dnd_contributions(()))
-    controller.dnd_controller = actions
-    monkeypatch.setattr(status_bar.time, "time", lambda: now)
-    controller.refresh_ = lambda _sender: None
-
-    controller.toggleQuietHour_(None)
-
-    override = actions.overrides[-1]
-    assert type(override) is DndOverride
-    assert override.mode is DndMode.MUTE
-    assert override.created_epoch == now
-    assert override.until_epoch == now + 3_600.0
-
-    # --- scenario: legacy_quiet_duration_action_uses_the_same_durable_mute_override
-    monkeypatch.undo()
-    now = 1_800_000_000.0
-    actions = _DndActions(compose_dnd_contributions(()))
-    controller.dnd_controller = actions
-    monkeypatch.setattr(status_bar.time, "time", lambda: now)
-
-    controller.startQuiet_(SimpleNamespace(representedObject=lambda: 7_200.0))
-
-    override = actions.overrides[-1]
-    assert type(override) is DndOverride
-    assert override.mode is DndMode.MUTE
-    assert override.until_epoch == now + 7_200.0
-
-    # --- scenario: exact_menu_mode_selectors_delegate_to_one_hour_override
-    monkeypatch.undo()
-    now = 1_800_000_000.0
-    actions = _DndActions(compose_dnd_contributions(()))
-    controller.dnd_controller = actions
-    monkeypatch.setattr(status_bar.time, "time", lambda: now)
-    controller.refresh_ = lambda _sender: None
-
-    for selector, mode in (
-        (controller.setDndMuteForHour_, DndMode.MUTE),
-        (controller.setDndDimForHour_, DndMode.DIM),
-        (controller.setDndPauseForHour_, DndMode.PAUSE),
-        (controller.setDndAsksOnlyForHour_, DndMode.ASKS_ONLY),
-        (controller.setDndDarkForHour_, DndMode.DARK),
-    ):
-        selector(None)
-        override = actions.overrides[-1]
-        assert type(override) is DndOverride
-        assert override.mode is mode
-        assert override.until_epoch == now + 3_600.0
-
 
 
 def test_dnd_environment_selectors_refresh_the_existing_controller__and_1_more(controller) -> None:
@@ -569,7 +499,6 @@ def test_dnd_environment_selectors_refresh_the_existing_controller__and_1_more(c
     assert factory(255, 8) == "off"
     assert state is status_bar.LedDisplayState.IDLE
     assert label(_device(), None) == "Test Device DND presentation held"
-
 
 
 def test_fully_dark_physical_write_keeps_zero_after_resting_glow_boundary(

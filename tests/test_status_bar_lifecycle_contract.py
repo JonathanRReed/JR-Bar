@@ -733,7 +733,9 @@ def test_application_closes_dnd_before_other_lifecycle_and_native_surfaces(
     target.dnd_controller.close.assert_called_once_with()
 
 
-def test_clear_agents_state_restore_and_async_results_are_generation_fenced() -> None:
+def test_clear_agents_state_is_restored_at_launch() -> None:
+    # The commit and undo paths are the daemon's (core_runtime
+    # _apply_clear_agents_plan); the controller owns the state and its restore.
     source = STATUS_BAR_LEGACY.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(STATUS_BAR_LEGACY))
     controller = next(
@@ -752,36 +754,16 @@ def test_clear_agents_state_restore_and_async_results_are_generation_fenced() ->
         source,
         methods["load_operator_local_state"],
     )
-    submit_source = ast.get_source_segment(
-        source,
-        methods["_submit_clear_agents_plan"],
-    )
-    apply_source = ast.get_source_segment(
-        source,
-        methods["applyClearAgentsPersistenceResult_"],
-    )
 
     assert init_source is not None
     assert restore_source is not None
-    assert submit_source is not None
-    assert apply_source is not None
     for field in (
         "self.clear_agents_state = ClearAgentsState()",
         "self.clear_agents_path = default_clear_agents_path()",
         "self._clear_agents_preview",
-        "self._clear_agents_presenter",
         "self._clear_agents_commit_plan",
-        "self._clear_agents_operation_generation = 0",
         "self._clear_agents_operation_pending = False",
     ):
         assert field in init_source
     assert "load_clear_agents_state(self.clear_agents_path)" in restore_source
     assert "self.clear_agents_state = clear_restore.state" in restore_source
-    assert "self._clear_agents_operation_generation += 1" in submit_source
-    assert '"clear-agents-state"' in submit_source
-    assert "receipt_handler=_apply" in submit_source
-    assert "payload[0] == self._clear_agents_operation_generation" in apply_source
-    assert "if not receipt.succeeded:" in apply_source
-    assert apply_source.index("if not receipt.succeeded:") < apply_source.index(
-        "self.clear_agents_state = plan.next_state"
-    )

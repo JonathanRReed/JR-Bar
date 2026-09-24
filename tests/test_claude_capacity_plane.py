@@ -26,7 +26,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from jrbar import claude_quota, usage_card
+from jrbar import claude_quota
 from jrbar.capacity_authority import select_binding_lanes
 from jrbar.capacity_refresh import RefreshCause
 from jrbar.capacity_sources import (
@@ -177,7 +177,6 @@ def test_only_declared_windows_become_lanes__and_2_more() -> None:
     )
 
 
-
 def test_declaration_order_survives_a_reshuffled_payload__and_2_more() -> None:
     # --- scenario: declaration_order_survives_a_reshuffled_payload
     """Reading order is a product decision, not the endpoint's key order."""
@@ -235,7 +234,6 @@ def test_declaration_order_survives_a_reshuffled_payload__and_2_more() -> None:
     assert lanes[1].value.remaining == 12.0
 
 
-
 def test_the_evidence_stays_used_first_until_the_single_conversion__and_2_more() -> None:
     # --- scenario: the_evidence_stays_used_first_until_the_single_conversion
     """One place converts, so there is one place to get it wrong."""
@@ -281,7 +279,6 @@ def test_the_evidence_stays_used_first_until_the_single_conversion__and_2_more()
     assert opus.reset.reset_epoch == NOW + 10_800.0
     assert five_hour.reset.window_minutes == 300.0
     assert weekly.reset.window_minutes == 10_080.0
-
 
 
 # --------------------------------------------------------------------------
@@ -423,22 +420,6 @@ def _run_claude_refresh(target, status_bar, payload_windows):
     return published[0]
 
 
-def _one_line_measure(text, style, width):
-    """Deterministic stand-in for AppKit: every string fits on one line.
-
-    macOS line heights for the card's two sizes, so the derived geometry is
-    the real one -- the point is to pin the coordinates, not to re-measure the
-    system font.
-    """
-    del text, width
-    line_height = 14.0 if style.font_size >= 11.0 else 13.0
-    return usage_card.TextMetrics(
-        natural_width=10.0,
-        wrapped_height=line_height,
-        line_height=line_height,
-    )
-
-
 def _live_windows():
     reset = time.time() + 3_600.0
     return [
@@ -499,7 +480,21 @@ def test_a_refresh_publishes_contract_stamped_observations(controller) -> None:
     assert len(state.last_known_good.lanes) == 4
 
 
-def test_every_window_reaches_the_dropdown_with_usage_and_reset(controller) -> None:
+def _capacity_copy(target, status_bar, provider_id: str = "claude"):
+    """The capacity row's primary line, its secondary line and one line per
+    further window, as the copy rules write them for the current model."""
+    model = target._usage_provider_models[provider_id]
+    now = time.monotonic()
+    epoch = time.time()
+    primary, secondary = status_bar.capacity_menu_lines(
+        model,
+        monotonic_now=now,
+        epoch_now=epoch,
+    )
+    return primary, secondary, status_bar.capacity_window_lines(model, epoch_now=epoch)
+
+
+def test_every_window_reaches_the_capacity_copy_with_usage_and_reset(controller) -> None:
     """The ledger showed windows[0] and dropped the rest -- including Opus."""
     target, status_bar = controller
 
@@ -508,15 +503,10 @@ def test_every_window_reaches_the_dropdown_with_usage_and_reset(controller) -> N
     model = target._usage_provider_models["claude"]
     assert len(model.windows) == 4
 
-    status_bar.build_usage_menu_item(target)
-    primary = target._usage_menu_labels["claude"].stringValue()
-    rows = tuple(
-        field.stringValue()
-        for field in target._usage_menu_window_labels["claude"]
-    )
+    primary, secondary, rows = _capacity_copy(target, status_bar)
 
     assert primary == "Claude · 5h 90% left"
-    assert "resets in" in target._usage_menu_secondary_labels["claude"].stringValue()
+    assert "resets in" in secondary
     # The sub-cap that actually stops the owner's work is visible, named, and
     # carries both numbers. Three "7d" rows would have hidden it.
     assert rows == (
@@ -526,75 +516,7 @@ def test_every_window_reaches_the_dropdown_with_usage_and_reset(controller) -> N
     )
 
 
-def test_the_card_grows_for_extra_windows_without_moving_a_single_row() -> None:
-    """Zero extra windows must lay out exactly as the literal geometry did.
-
-    The geometry is measured from the drawn text now rather than assembled
-    from per-row literals, so this pins the two things that has to preserve:
-    content that fits on one line lands on exactly the coordinates the literal
-    card used, and each extra window still costs exactly one row.
-    """
-    rows = usage_card.capacity_card_rows(
-        (
-            ("codex", "Codex · 5h 62% left", "resets in 2h", ()),
-            ("claude", "Claude · 5h 90% left", "resets in 1d 1h", ()),
-        )
-    )
-    layout = usage_card.usage_card_layout(rows, measure=_one_line_measure)
-
-    assert (layout.height, layout.row("header").rect.y) == (110, 87)
-    assert layout.row("codex:primary").rect.y == 64
-    assert layout.row("codex:secondary").rect.y == 47
-    assert layout.row("claude:primary").rect.y == 25
-    assert layout.row("claude:secondary").rect.y == 8
-
-    taller_rows = usage_card.capacity_card_rows(
-        (
-            ("codex", "Codex · 5h 62% left", "resets in 2h", ()),
-            (
-                "claude",
-                "Claude · 5h 90% left",
-                "resets in 1d 1h",
-                ("Weekly 80% left", "Weekly Opus 12% left", "Weekly Sonnet 60% left"),
-            ),
-        )
-    )
-    taller = usage_card.usage_card_layout(taller_rows, measure=_one_line_measure)
-
-    assert taller.height > layout.height
-    assert taller.row("header").rect.y > layout.row("header").rect.y
-    # Rows read downward, so the first extra window sits highest.
-    assert tuple(
-        taller.row(f"claude:window:{index}").rect.y for index in range(3)
-    ) == (42, 25, 8)
-
-
-def test_in_place_updates_never_silently_drop_a_window__and_1_more(controller) -> None:
-    # --- scenario: in_place_updates_never_silently_drop_a_window
-    """A card built for one window must not eat a second one when it appears."""
-    target, status_bar = controller
-
-    _run_claude_refresh(target, status_bar, _live_windows()[:1])
-    status_bar.build_usage_menu_item(target)
-    assert target._usage_menu_window_labels["claude"] == ()
-
-    _run_claude_refresh(target, status_bar, _live_windows())
-    target._menu_signature = "unchanged"
-    target.update_usage_menu_fields()
-
-    # Nothing to fold into, so the card asks to be rebuilt rather than
-    # pretending the extra ceilings do not exist.
-    assert target._menu_signature is None
-
-    # And once the card has been rebuilt at the right size it stops asking,
-    # rather than invalidating the menu on every refresh forever.
-    status_bar.build_usage_menu_item(target)
-    target._menu_signature = "unchanged"
-    target.update_usage_menu_fields()
-    assert target._menu_signature == "unchanged"
-    assert len(target._usage_menu_window_labels["claude"]) == 3
-
-    # --- scenario: the_publish_path_still_refuses_untyped_observations
+def test_the_publish_path_still_refuses_untyped_observations(controller) -> None:
     """The producer is the only way in; a hand-rolled tuple stays refused."""
     target, _status_bar = controller
     target.settings = target.settings.with_claude_plan_limits_enabled(True)
@@ -632,7 +554,6 @@ def test_in_place_updates_never_silently_drop_a_window__and_1_more(controller) -
     assert target._usage_provider_states["claude"].consecutive_failures == 1
 
 
-
 # --------------------------------------------------------------------------
 # The authority layer's veto must never be the trigger for a bypass.
 # --------------------------------------------------------------------------
@@ -658,21 +579,10 @@ def _drifted_windows():
 
 
 def _rendered_capacity_text(target, status_bar) -> str:
-    """Every string the owner can actually read, menu and Settings."""
-    status_bar.build_usage_menu_item(target)
+    """Every string the capacity copy rules can produce for this model."""
+    primary, secondary, rows = _capacity_copy(target, status_bar)
     model = target._usage_provider_models["claude"]
-    return " | ".join(
-        (
-            target._usage_menu_labels["claude"].stringValue(),
-            target._usage_menu_secondary_labels["claude"].stringValue(),
-            *(
-                field.stringValue()
-                for field in target._usage_menu_window_labels["claude"]
-            ),
-            model.menu_line,
-            model.settings_text,
-        )
-    )
+    return " | ".join((primary, secondary, *rows, model.menu_line, model.settings_text))
 
 
 def test_a_totally_drifted_payload_renders_nothing_rather_than_raw_percentages(
@@ -702,10 +612,9 @@ def test_a_totally_drifted_payload_renders_nothing_rather_than_raw_percentages(
     assert model.error_text == status_bar.CAPACITY_UNAUTHORISED_COPY
 
     rendered = _rendered_capacity_text(target, status_bar)
-    assert target._usage_menu_labels["claude"].stringValue() == (
-        "Claude · Capacity reading unavailable"
-    )
-    assert target._usage_menu_window_labels["claude"] == ()
+    primary, _secondary, rows = _capacity_copy(target, status_bar)
+    assert primary == "Claude · Capacity reading unavailable"
+    assert rows == ()
     assert model.settings_text == status_bar.CAPACITY_UNAUTHORISED_COPY
     # No number, no label the contract never declared, no invented countdown.
     assert "%" not in rendered

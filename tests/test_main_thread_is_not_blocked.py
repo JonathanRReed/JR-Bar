@@ -17,11 +17,10 @@ running app -- 100.7% CPU sustained, and 65.7% of the main thread inside
    10       xpc_connection_send_message_with_reply_sync
 
 Reading an accessibility label made AppKit fake-open the whole menu and
-run this app's own delegates -- 15 fsync calls to USB mass storage on the
-main thread in an 8 second window, with menuDidClose_ able to re-enter
-update_status_menu. The Alcove probe made one blocking LaunchServices XPC
-round trip per running app, on a 2s timer, behind a 3s TTL that did not
-cover its own cadence.
+run this app's own delegates; that menu is gone with the retired menu bar.
+The Alcove probe made one blocking LaunchServices XPC round trip per
+running app, on a 2s timer, behind a 3s TTL that did not cover its own
+cadence.
 """
 
 from __future__ import annotations
@@ -29,85 +28,7 @@ from __future__ import annotations
 import threading
 import time
 
-from jrbar import status_bar, virtual_device
-
-
-class _RecordingMenuItem:
-    """An NSMenuItem stand-in that screams if anyone reads accessibility."""
-
-    def __init__(self, title: str) -> None:
-        self._title = title
-        self.accessibility_reads: list[str] = []
-
-    def title(self):
-        return self._title
-
-    def keyEquivalent(self):
-        return ""
-
-    def isEnabled(self):
-        return True
-
-    def state(self):
-        return 0
-
-    def submenu(self):
-        return None
-
-    def accessibilityLabel(self):
-        self.accessibility_reads.append("accessibilityLabel")
-        return "read back from AppKit"
-
-    def accessibilityValue(self):
-        self.accessibility_reads.append("accessibilityValue")
-        return "read back from AppKit"
-
-    def accessibilityHelp(self):
-        self.accessibility_reads.append("accessibilityHelp")
-        return "read back from AppKit"
-
-
-def test_building_the_menu_snapshot_never_reads_accessibility_off_an_item__and_1_more() -> None:
-    # --- scenario: building_the_menu_snapshot_never_reads_accessibility_off_an_item
-    """Any read here fake-opens the menu and runs menuWillOpen_."""
-    item = _RecordingMenuItem("Agent Mailbox · 3 active · 0 need you")
-
-    state = status_bar._native_item_state(
-        item,
-        item_key="agent-mailbox:summary",
-        parent_key=None,
-        order=0,
-        submenu_key=None,
-        action_kind=None,
-    )
-
-    assert item.accessibility_reads == []
-    assert state.accessibility_label == "Agent Mailbox summary"
-
-    # --- scenario: every_root_item_kind_still_gets_a_screen_reader_label
-    """Not reading back is not the same as not labelling."""
-    labels = {
-        key: status_bar._native_item_state(
-            _RecordingMenuItem("row"),
-            item_key=key,
-            parent_key=None,
-            order=0,
-            submenu_key=None,
-            action_kind=None,
-        ).accessibility_label
-        for key in (
-            "agent-mailbox:summary",
-            "agent-mailbox:urgent:claude:local:local.01:sessions:w",
-            "agent-mailbox:overflow:g1",
-            "agent-mailbox:browser:g1",
-            "agent-mailbox:urgent:x:action:open",
-        )
-    }
-
-    assert all(labels.values())
-    assert len(set(labels.values())) == len(labels)
-
-
+from jrbar import virtual_device
 
 # --- the LaunchServices probe ----------------------------------------------
 
@@ -174,7 +95,6 @@ def test_the_alcove_probe_is_sampled_once_then_never_blocks_again__and_2_more() 
 
     assert elapsed < 0.5
     assert len(probe.calls) <= 2
-
 
 
 def test_the_probe_answers_not_running_rather_than_raising() -> None:

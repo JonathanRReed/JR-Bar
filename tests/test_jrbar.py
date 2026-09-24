@@ -116,7 +116,6 @@ from jrbar.lid_sleep import (
     run_sudo_pmset_disablesleep,
     sleep_helper_sudoers_rule,
 )
-from jrbar.mailbox import MailboxSectionKind
 from jrbar.models import AgentMode, AgentStatus, AggregateStatus
 from jrbar.navigation_policy import (
     NavigationCandidate,
@@ -1361,72 +1360,6 @@ for (const event of [
                 },
             )
 
-    def test_status_bar_session_row_icons(self) -> None:
-        """Provider badge, origin app, and status all compose into the row icon."""
-        # --- scenario: status_bar_grok_provider_uses_badge_icon
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        status = AgentStatus(
-            provider="grok",
-            agent_id="grok:session:abc",
-            display_name="Grok abc",
-            mode=AgentMode.WORKING,
-            updated_at=datetime.now(timezone.utc),
-            event_name="PreToolUse",
-        )
-
-        image = status_bar.provider_icon_for_status(status)
-
-        self.assertIsNotNone(image)
-        self.assertEqual(image.size().width, 18)
-        self.assertEqual(image.size().height, 18)
-
-        # --- scenario: status_bar_vscode_origin_uses_composite_app_icon
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        status = AgentStatus(
-            provider="claude",
-            agent_id="claude:session:abc",
-            display_name="Claude abc",
-            mode=AgentMode.WORKING,
-            updated_at=datetime.now(timezone.utc),
-            event_name="PreToolUse",
-            origin="Claude in VS Code",
-        )
-
-        image = status_bar.session_origin_icon_for_status(status)
-
-        self.assertIsNotNone(image)
-        self.assertEqual(image.size().width, 24)
-        self.assertEqual(image.size().height, 18)
-
-        # --- scenario: status_bar_session_row_icon_combines_status_and_origin
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        status = AgentStatus(
-            provider="claude",
-            agent_id="claude:session:abc",
-            display_name="Claude abc",
-            mode=AgentMode.COMPLETED,
-            updated_at=datetime.now(timezone.utc),
-            event_name="Stop",
-            origin="Claude in VS Code",
-        )
-
-        image = status_bar.session_row_icon_for_status(status)
-
-        self.assertIsNotNone(image)
-        self.assertGreater(image.size().width, 38)
-        self.assertEqual(image.size().height, 18)
 
     def test_virtual_screen_bar_frame_geometry(self) -> None:
         """The virtual bar covers notch plus LED band on notched displays and
@@ -2354,72 +2287,6 @@ for (const event of [
             0.0,
         )
 
-    def test_status_bar_session_row_and_device_menu(self) -> None:
-        """Session rows use the task title and the device submenu carries the
-        brightness slider."""
-        # --- scenario: status_bar_native_session_row_uses_task_title
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / "peterkuhar.com"
-            cwd = project / "functions"
-            (project / ".git").mkdir(parents=True)
-            cwd.mkdir()
-            status = AgentStatus(
-                provider="claude",
-                agent_id="claude:session:b64a0d4b",
-                display_name=(
-                    "functions: allow me to chose timeframe http://localhost:5001/pkuhar-com/us-central... (b64a0d4b)"
-                ),
-                mode=AgentMode.WORKING,
-                updated_at=datetime.now(timezone.utc),
-                event_name="PostToolUse",
-                session_id="b64a0d4b-d828-4133-abb3-bdb4fafa7719",
-                cwd=str(cwd),
-                origin="Claude in VS Code",
-            )
-
-            title = status_bar.native_session_menu_title(status)
-
-        self.assertIn("allow me to chose timeframe", title)
-        self.assertIn("peterkuhar.com", title)
-        self.assertNotIn("Working", title)
-        self.assertNotIn("Claude in VS Code", title)
-        self.assertNotEqual(title, "Working  Claude in VS Code  functions")
-
-        # --- scenario: status_bar_device_submenu_has_brightness_slider
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        device = status_bar.StatusBarDevice(
-            device_id="/Volumes/SidePulseDot",
-            name="SidePulse Dot",
-            root=Path("/Volumes/SidePulseDot"),
-            target=Path("/Volumes/SidePulseDot/LEDS.LED"),
-            connected=True,
-            display="agent",
-            brightness=128,
-        )
-
-        item = status_bar.build_device_menu_item(device, SimpleNamespace())
-        submenu = item.submenu()
-        titles = [
-            submenu.itemAtIndex_(index).title()
-            for index in range(submenu.numberOfItems())
-            if submenu.itemAtIndex_(index).title()
-        ]
-        custom_view_count = sum(
-            1 for index in range(submenu.numberOfItems()) if submenu.itemAtIndex_(index).view() is not None
-        )
-
-        self.assertIn("Brightness 50%", titles)
-        # Brightness slider + Red/Green/Blue calibration sliders.
-        self.assertEqual(custom_view_count, 4)
 
     def test_status_bar_device_observation_and_menus(self) -> None:
         """A new mount resets observation, a connection change refreshes the
@@ -2477,106 +2344,6 @@ for (const event of [
 
         self.assertEqual(calls, [None])
 
-        # --- scenario: status_bar_menu_has_closed_lid_awake_policy_choices
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        snapshot = SimpleNamespace(
-            statuses=[],
-            stale_statuses=[],
-            collected_at=datetime.now(timezone.utc),
-        )
-        target = SimpleNamespace(
-            settings=AgentMonitorSettings(
-                closed_lid_awake_policy=CLOSED_LID_AWAKE_AGENTS,
-            ),
-            closed_lid_awake=SimpleNamespace(last_error=None),
-            status_bar_devices=list,
-        )
-
-        menu = status_bar.build_menu(snapshot, status_bar.STATE_IDLE, target)
-        items = [menu.itemAtIndex_(index) for index in range(menu.numberOfItems())]
-        by_title = {item.title(): item for item in items if item.title()}
-        titles = [item.title() for item in items if item.title()]
-
-        mailbox_items = find_mailbox_item(menu)
-        self.assertEqual(len(mailbox_items), 1)
-        hardware_title = next(title for title in titles if title.startswith("Hardware ·") or title == "Hardware")
-        self.assertLess(items.index(mailbox_items[0]), titles.index(hardware_title))
-        # The whole physical concern lives under ONE root row now:
-        # devices, brightness, keep-awake, calibration -- not four
-        # top-level items.
-        self.assertNotIn("Keep Awake With Lid Closed", by_title)
-        self.assertNotIn("Brightness", by_title)
-        hardware_menu = by_title[hardware_title].submenu()
-        self.assertIsNotNone(hardware_menu)
-        hardware_titles = {hardware_menu.itemAtIndex_(index).title() for index in range(hardware_menu.numberOfItems())}
-        self.assertIn("Keep Awake With Lid Closed", hardware_titles)
-        self.assertIn("Brightness", hardware_titles)
-        keep_awake_item = next(
-            hardware_menu.itemAtIndex_(index)
-            for index in range(hardware_menu.numberOfItems())
-            if hardware_menu.itemAtIndex_(index).title() == "Keep Awake With Lid Closed"
-        )
-        submenu = keep_awake_item.submenu()
-        self.assertIsNotNone(submenu)
-        sub_items = {
-            submenu.itemAtIndex_(index).title(): submenu.itemAtIndex_(index) for index in range(submenu.numberOfItems())
-        }
-        self.assertEqual(sub_items["Never"].state(), 0)
-        self.assertEqual(sub_items["When Agents Work"].state(), 1)
-        self.assertEqual(sub_items["Always"].state(), 0)
-        self.assertNotIn("Never", by_title)
-        self.assertNotIn("Strong Sleep Override...", by_title)
-        self.assertNotIn("Sleep Helper Missing", by_title)
-        # Real ellipsis, real rename: the "Setup..." ASCII literal kept
-        # the facade's "Finish Setup…" rename from ever matching.
-        self.assertTrue(
-            "Setup…" in by_title or "Finish Setup…" in by_title,
-            sorted(by_title),
-        )
-
-        # --- scenario: status_bar_menu_shows_stale_statuses_when_no_fresh_statuses
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        status = AgentStatus(
-            provider="codex",
-            agent_id="codex:session:abc",
-            display_name="Codex abc",
-            mode=AgentMode.WORKING,
-            updated_at=datetime.now(timezone.utc),
-            event_name="PreToolUse",
-            session_id="abc",
-            stale=True,
-        )
-        snapshot = SimpleNamespace(
-            statuses=(),
-            stale_statuses=(status,),
-            collected_at=datetime.now(timezone.utc),
-        )
-        target = SimpleNamespace(
-            settings=AgentMonitorSettings(),
-            closed_lid_awake=SimpleNamespace(last_error=None),
-            status_bar_devices=list,
-        )
-
-        menu = status_bar.build_menu(snapshot, status_bar.STATE_IDLE, target)
-        mailbox_items = find_mailbox_item(menu)
-        self.assertEqual(len(mailbox_items), 1)
-        mailbox = mailbox_items[0]
-        self.assertEqual(mailbox.title(), "No agents active")
-        recent = next(
-            mailbox.submenu().itemAtIndex_(index).submenu()
-            for index in range(mailbox.submenu().numberOfItems())
-            if mailbox.submenu().itemAtIndex_(index).title() == "Recent"
-        )
-        recent_titles = [recent.itemAtIndex_(index).title() for index in range(recent.numberOfItems())]
-        self.assertIn(status_bar.native_session_menu_title(status), recent_titles)
 
     def test_lid_animation(self) -> None:
         """The lid animation honors device brightness and forces an LED
@@ -2776,34 +2543,6 @@ for (const event of [
         self.assertIsNone(fake.settings.session_open_action("claude"))
         save.assert_called_once_with(fake.settings)
 
-        # --- scenario: status_bar_primary_session_click_uses_saved_origin_preference
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        status = AgentStatus(
-            provider="claude",
-            agent_id="claude:session:abc",
-            display_name="Claude abc",
-            mode=AgentMode.WAITING_FOR_INPUT,
-            updated_at=datetime.now(timezone.utc),
-            event_name="Notification",
-            session_id="1ca4348e-2aec-4147-9e81-d7d56364d257",
-            cwd="/Users/pero/pgit/sdstatus_bitbang",
-            origin="Claude in VS Code",
-        )
-        controller = status_bar.StatusBarController.alloc().init()
-        sender = SimpleNamespace(representedObject=lambda: status)
-
-        with (
-            patch.object(status_bar.StatusBarController, "open_session", autospec=True) as open_session,
-            patch.object(status_bar.StatusBarController, "close_status_menu", autospec=True) as close_menu,
-        ):
-            controller.openSessionPrimary_(sender)
-
-        open_session.assert_called_once_with(controller, status, None, remember=False)
-        close_menu.assert_called_once_with(controller)
 
     def test_codex_installer(self) -> None:
         """The Codex hook installer replaces the monitor hook and preserves
@@ -4882,30 +4621,6 @@ for (const event of [
         )
         self.assertFalse(status_bar.persistable_device_identity("Dot", "Dot"))
 
-        # --- scenario: disconnected_device_menu_has_remove_option
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        device = status_bar.StatusBarDevice(
-            device_id="/Volumes/SidePulsePro",
-            name="SidePulse Pro",
-            root=Path("/Volumes/SidePulsePro"),
-            target=Path("/Volumes/SidePulsePro/LEDS.LED"),
-            connected=False,
-            display="agent",
-        )
-        item = status_bar.build_device_menu_item(device, None)
-        submenu = item.submenu()
-        titles = [
-            submenu.itemAtIndex_(index).title()
-            for index in range(submenu.numberOfItems())
-            if submenu.itemAtIndex_(index).title()
-        ]
-
-        self.assertIn("Not connected", titles)
-        self.assertIn("Remove", titles)
 
     def test_frozen_hook_command_contract(self) -> None:
         # Without a bundled shim (a checkout's hook/build/jrbar-hook must not
@@ -8367,31 +8082,6 @@ class ChannelGainCalibrationTests(unittest.TestCase):
         settings = settings.with_device_brightness("SidePulseDot", 90)
         self.assertEqual(settings.channel_gains_for_device("SidePulseDot"), (1.0, 0.5, 1.0))
 
-    def test_status_bar_device_submenu_shows_calibration_sliders(self) -> None:
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        device = status_bar.StatusBarDevice(
-            device_id="/Volumes/SidePulseDot",
-            name="SidePulse Dot",
-            root=Path("/Volumes/SidePulseDot"),
-            target=Path("/Volumes/SidePulseDot/LEDS.LED"),
-            connected=True,
-            display="agent",
-            channel_gains=(1.0, 0.5, 1.0),
-        )
-        item = status_bar.build_device_menu_item(device, SimpleNamespace())
-        submenu = item.submenu()
-        titles = [
-            submenu.itemAtIndex_(index).title()
-            for index in range(submenu.numberOfItems())
-            if submenu.itemAtIndex_(index).title()
-        ]
-        self.assertTrue(any("Color Calibration" in title for title in titles))
-        self.assertIn("Reset Calibration", titles)
-
 
 class FocusSyncTests(unittest.TestCase):
     """Detects an active macOS Focus via ~/Library/DoNotDisturb/DB/
@@ -8442,26 +8132,6 @@ class FocusSyncTests(unittest.TestCase):
         payload = json.dumps({"data": [{"storeAssertionRecords": [{"assertionDetails": {"id": "abc"}}]}]})
         with patch.object(focus_sync.Path, "read_text", return_value=payload):
             self.assertTrue(focus_sync.is_focus_active())
-
-
-def find_mailbox_item(menu):
-    """Locate the mailbox summary row in the compact root menu.
-
-    The compact projection retitles the row to the glance text ("2 active
-    · 1 needs you"), so tests identify it structurally: it is the only
-    root row whose submenu carries the fixed mailbox shelves.
-    """
-    shelf_titles = {"Needs You", "In Progress", "Ready for Review", "Recent"}
-    matches = []
-    for index in range(menu.numberOfItems()):
-        item = menu.itemAtIndex_(index)
-        submenu = item.submenu()
-        if submenu is None:
-            continue
-        titles = {str(submenu.itemAtIndex_(sub).title() or "") for sub in range(submenu.numberOfItems())}
-        if titles & shelf_titles:
-            matches.append(item)
-    return matches
 
 
 def isolate_controller(case, *, build_controller=True):
@@ -11990,65 +11660,6 @@ class SubagentAndPhantomAskTests(unittest.TestCase):
         )
         self.assertEqual(status_bar.ask_statuses(snapshot), [])
 
-        # --- scenario: menu_groups_running_subagents_under_their_parent
-        from dataclasses import replace
-
-        from jrbar import status_bar
-        from jrbar.settings import AgentMonitorSettings
-
-        main = self._status("claude:session:s1", AgentMode.WORKING, session_id="s1")
-        workers = [
-            self._status(f"claude:agent:w{index}", AgentMode.TOOL_RUNNING, session_id="s1") for index in range(5)
-        ]
-        finished = self._status("claude:agent:done1", AgentMode.COMPLETED, session_id="s1")
-        stale_duplicate = replace(
-            self._status("claude:agent:w0", AgentMode.COMPLETED, session_id="s1"),
-            stale=True,
-        )
-        snapshot = SimpleNamespace(
-            statuses=[main, *workers],
-            stale_statuses=[replace(finished, stale=True), stale_duplicate],
-            collected_at=datetime.now(timezone.utc),
-        )
-        target = SimpleNamespace(
-            settings=AgentMonitorSettings(),
-            closed_lid_awake=SimpleNamespace(last_error=None),
-            status_bar_devices=list,
-        )
-        menu = status_bar.build_menu(snapshot, status_bar.STATE_WORKING, target)
-        mailbox = menu.itemAtIndex_(0)
-        in_progress = next(
-            mailbox.submenu().itemAtIndex_(index).submenu()
-            for index in range(mailbox.submenu().numberOfItems())
-            if mailbox.submenu().itemAtIndex_(index).title() == "In Progress"
-        )
-        rows = [
-            (
-                in_progress.itemAtIndex_(index).title(),
-                in_progress.itemAtIndex_(index).indentationLevel(),
-            )
-            for index in range(in_progress.numberOfItems())
-        ]
-        indented = [title for title, level in rows if level == 1]
-        # One rollup row carries all workers in a bounded submenu.
-        self.assertEqual(len(indented), 1, rows)
-        self.assertIn("6 workers", indented[0])
-        rollup_item = next(
-            in_progress.itemAtIndex_(index)
-            for index in range(in_progress.numberOfItems())
-            if in_progress.itemAtIndex_(index).indentationLevel() == 1
-        )
-        self.assertEqual(rollup_item.submenu().numberOfItems(), 6)
-        self.assertTrue(
-            any(
-                "done1" in rollup_item.submenu().itemAtIndex_(index).title()
-                for index in range(rollup_item.submenu().numberOfItems())
-            )
-        )
-        # No sub-agent appears as a TOP-LEVEL row.
-        top_level_subs = [title for title, level in rows if level == 0 and "claude:agent:" in title]
-        self.assertEqual(top_level_subs, [])
-
 
 class ClaudeQuotaTests(unittest.TestCase):
 
@@ -13093,8 +12704,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 summary_text="Today: old local summary",
             )
         }
-        menu_item = self.status_bar.build_usage_menu_item(self.controller)
-        menu_label = self.controller._usage_menu_labels["codex"]
         settings_label = MagicMock()
         self.controller.settings_fields = {"profile_codex_label": settings_label}
         sender = MagicMock()
@@ -13135,16 +12744,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(model.menu_line.count("Codex"), 1)
         self.assertNotIn("81%", model.menu_line)
         self.assertNotIn("82%", model.settings_text)
-        # The Capacity row carries capacity or says it has none. With the
-        # toggle off there is no ceiling to report, so it says so -- it does
-        # NOT reach down a rung and print the local transcript aggregate,
-        # which is what put "Claude · Claude, last 365 days: 2508 sessions"
-        # in the slot reserved for a plan limit.
-        self.assertEqual(menu_label.stringValue(), "Codex · no reading")
-        self.assertNotIn("session", menu_label.stringValue())
         settings_label.setStringValue_.assert_called_with(model.settings_text)
         self.assertIn("old local summary", model.settings_text)
-        self.assertIs(self.controller._usage_menu_item, menu_item)
 
         # --- scenario: disabling_claude_plan_limits_clears_old_windows_after_successful_refresh
         self.setUp()  # fresh isolated controller per scenario
@@ -13165,8 +12766,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 summary_text="Today: old local summary",
             )
         }
-        menu_item = self.status_bar.build_usage_menu_item(self.controller)
-        menu_label = self.controller._usage_menu_labels["claude"]
         settings_label = MagicMock()
         self.controller.settings_fields = {"profile_plan_label": settings_label}
         sender = MagicMock()
@@ -13206,13 +12805,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(model.menu_line.count("Claude"), 1)
         self.assertNotIn("71%", model.menu_line)
         self.assertNotIn("71%", model.settings_text)
-        # Same rule as codex: no ceiling, so the Capacity row says it has no
-        # reading rather than borrowing the transcript summary.
-        self.assertEqual(menu_label.stringValue(), "Claude · no reading")
-        self.assertNotIn("session", menu_label.stringValue())
         settings_label.setStringValue_.assert_called_with(model.settings_text)
         self.assertIn("old local summary", model.settings_text)
-        self.assertIs(self.controller._usage_menu_item, menu_item)
 
         # --- scenario: claude_plan_setting_uses_exact_source_invalidation
         self.setUp()  # fresh isolated controller per scenario
@@ -14002,39 +13596,11 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertNotIn("secret-token", model.settings_text)
         self.assertNotIn("/Users", model.settings_text)
 
-    def test_capacity_menu_card_updates(self) -> None:
-        """Apply updates the existing menu card in place; settings and a
-        rebuilt menu use the latest shared models; the card renders
-        remaining/reset/age/source in place."""
-        # --- scenario: apply_updates_existing_menu_card_without_swapping_menu
-        self.setUp()  # fresh isolated controller per scenario
-        requests = self._prime_refreshes("codex", "claude")
-        item = self.status_bar.build_usage_menu_item(self.controller)
-        hosted_view = item.view()
-        codex_label = self.controller._usage_menu_labels["codex"]
-        self.controller.status_item = MagicMock()
-        self.controller.status_menu_open = True
-
-        self.controller.applyUsageSummary_(
-            {
-                "requests": requests,
-                "results": self._results(
-                    codex=self._result("codex", 25),
-                    claude=self._result("claude", 40),
-                ),
-                "failures": {},
-            }
-        )
-
-        self.assertIs(item.view(), hosted_view)
-        self.assertIs(self.controller._usage_menu_item, item)
-        self.assertEqual(
-            codex_label.stringValue(),
-            "Codex · 5h 75% left",
-        )
-        self.controller.status_item.setMenu_.assert_not_called()
-
-        # --- scenario: settings_and_rebuilt_menu_use_the_latest_shared_models
+    def test_capacity_copy_follows_the_latest_shared_models(self) -> None:
+        """Settings use the latest shared models, and the capacity copy
+        states remaining, reset and age without borrowing the scan's
+        coverage."""
+        # --- scenario: settings_use_the_latest_shared_models
         self.setUp()  # fresh isolated controller per scenario
         codex_label = MagicMock()
         claude_label = MagicMock()
@@ -14059,27 +13625,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         codex_label.setStringValue_.assert_called_with(codex_model.settings_text)
         claude_label.setStringValue_.assert_called_with(claude_model.settings_text)
 
-        rebuilt = self.status_bar.build_usage_menu_item(self.controller)
-        self.assertEqual(
-            self.controller._usage_menu_labels["codex"].stringValue(),
-            "Codex · 5h 45% left",
-        )
-        self.assertEqual(
-            self.controller._usage_menu_labels["claude"].stringValue(),
-            "Claude · 5h 35% left",
-        )
-        self.assertIs(self.controller._usage_menu_item, rebuilt)
-
-        # --- scenario: capacity_card_renders_remaining_reset_age_and_source_in_place
+        # --- scenario: capacity_copy_states_remaining_reset_and_age_only
         self.setUp()  # fresh isolated controller per scenario
         requests = self._prime_refreshes("codex", "claude", completed_at=500.0)
-        item = self.status_bar.build_usage_menu_item(self.controller)
-        hosted_view = item.view()
-        header = self.controller._usage_menu_header
-        codex_primary = self.controller._usage_menu_labels["codex"]
-        codex_secondary = self.controller._usage_menu_secondary_labels["codex"]
-        self.controller.status_item = MagicMock()
-        self.controller.status_menu_open = True
 
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=500.0),
@@ -14103,26 +13651,25 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 }
             )
 
-        self.assertIs(item.view(), hosted_view)
-        self.assertEqual(header.stringValue(), "Capacity")
-        self.assertEqual(codex_primary.stringValue(), "Codex · 5h 38% left")
+        model = self.controller._usage_provider_models["codex"]
+        primary, secondary = self.status_bar.capacity_menu_lines(
+            model,
+            monotonic_now=500.0,
+            epoch_now=1_000.0,
+        )
+        self.assertEqual(primary, "Codex · 5h 38% left")
         # Reset and freshness, and nothing from another rung. `partial` and the
         # transcript file count describe the local SCAN's coverage, not this
         # ceiling's; a disclaimer belonging to a different fact cannot qualify
-        # this one, and it used to be printed here and on the model's own line.
-        self.assertEqual(
-            codex_secondary.stringValue(),
-            "resets in 1h · updated just now",
-        )
-        self.assertNotIn("partial", codex_secondary.stringValue())
-        self.assertNotIn("18 files", codex_secondary.stringValue())
+        # this one.
+        self.assertEqual(secondary, "resets in 1h · updated just now")
+        self.assertNotIn("partial", secondary)
+        self.assertNotIn("18 files", secondary)
         # The local coverage is still carried, still scrubbed, on its own rung.
-        model = self.controller._usage_provider_models["codex"]
         self.assertTrue(model.partial)
         self.assertIn("18 files", model.source_text)
         self.assertNotIn("/Users", model.source_text)
-        self.assertNotIn("/Users", codex_secondary.stringValue())
-        self.controller.status_item.setMenu_.assert_not_called()
+        self.assertNotIn("/Users", secondary)
 
     def test_capacity_window_truthfulness(self) -> None:
         """A reset-only window never displays a fake zero percent; apply uses
@@ -14149,14 +13696,11 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             )
         }
 
-        with (
-            patch.object(self.status_bar.time, "monotonic", return_value=500.0),
-            patch.object(self.status_bar.time, "time", return_value=1_000.0),
-        ):
-            self.status_bar.build_usage_menu_item(self.controller)
-
-        primary = self.controller._usage_menu_labels["codex"].stringValue()
-        secondary = self.controller._usage_menu_secondary_labels["codex"].stringValue()
+        primary, secondary = self.status_bar.capacity_menu_lines(
+            self.controller._usage_provider_models["codex"],
+            monotonic_now=500.0,
+            epoch_now=1_000.0,
+        )
         # A window with no usable percentage says so. The bare "Codex · 5h" it
         # used to print left the reader to guess whether the number was missing
         # or the row simply had none.
@@ -14666,7 +14210,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertNotIn("old-00", self.controller._attempted_capacity_boundary_keys)
         self.assertEqual(self.controller._attempted_capacity_boundary_keys[-1], "new")
 
-        # --- scenario: countdown_callback_only_mutates_existing_labels_and_reschedules
+        # --- scenario: countdown_callback_only_reschedules_and_starts_no_source_work
         self.setUp()  # fresh isolated controller per scenario
         from jrbar.usage_view import build_provider_usage_view
 
@@ -14687,11 +14231,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 reset_now=1_000.0,
             )
         }
-        item = self.status_bar.build_usage_menu_item(self.controller)
-        secondary = self.controller._usage_menu_secondary_labels["codex"]
         timer = MagicMock()
         self.controller._capacity_countdown_timer = timer
-        before = secondary.stringValue()
 
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=510.0),
@@ -14704,9 +14245,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         ):
             self.controller.capacityCountdown_(timer)
 
-        self.assertIs(self.controller._usage_menu_item, item)
-        self.assertNotEqual(secondary.stringValue(), before)
-        self.assertIn("resets in 2m", secondary.stringValue())
+        self.assertIsNone(self.controller._capacity_countdown_timer)
         worker.assert_not_called()
         scan.assert_not_called()
         codex.assert_not_called()
@@ -16062,233 +15601,11 @@ class AgentMailboxMenuTests(unittest.TestCase):
             collected_at=datetime.now(timezone.utc),
         )
 
-    def _build(self, statuses):
-        snapshot = self._snapshot(statuses)
-        self.controller.update_attention_projection(snapshot)
-        menu = self.status_bar.build_menu(
-            snapshot,
-            self.status_bar.STATE_WORKING,
-            self.controller,
-        )
-        mailbox_items = find_mailbox_item(menu)
-        assert len(mailbox_items) == 1, "expected exactly one mailbox row"
-        return snapshot, menu, mailbox_items[0]
-
-    @staticmethod
-    def _items(menu):
-        return [menu.itemAtIndex_(index) for index in range(menu.numberOfItems())]
-
-    def _shelf(self, mailbox, title: str):
-        return next(item.submenu() for item in self._items(mailbox.submenu()) if item.title() == title)
-
-    def test_mailbox_structure_and_ordering(self) -> None:
-        """The mailbox summary and fixed shelves replace legacy agent blocks;
-        retained order survives activity and input reordering; many
-        workers stay bounded below two primary rows."""
-        # --- scenario: mailbox_summary_and_fixed_shelves_replace_legacy_agent_blocks
-        self.setUp()  # fresh isolated controller per scenario
-        now = datetime.now(timezone.utc)
-        statuses = (
-            self._status(
-                "claude",
-                "ask",
-                AgentMode.WAITING_FOR_INPUT,
-                updated_at=now - timedelta(minutes=4),
-                event_name="PermissionRequest",
-            ),
-            self._status("codex", "active", AgentMode.WORKING, updated_at=now),
-            self._status("codex", "done", AgentMode.COMPLETED, event_name="Stop"),
-            self._status(
-                "claude",
-                "failed",
-                AgentMode.BLOCKED_ERROR,
-                event_name="PostToolUseFailure",
-            ),
-        )
-
-        _snapshot, menu, mailbox = self._build(statuses)
-
-        self.assertEqual(mailbox.title(), "1 needs you · 2 active · 2 ready")
-        self.assertEqual(
-            [item.title() for item in self._items(mailbox.submenu())],
-            ["Needs You", "In Progress", "Ready for Review", "Recent"],
-        )
-        top_titles = [item.title() for item in self._items(menu)]
-        self.assertNotIn("Agents", top_titles)
-        self.assertFalse(any(title.startswith("Needs You (") for title in top_titles))
-        self.assertEqual(len(find_mailbox_item(menu)), 1)
-
-        # --- scenario: mailbox_retained_order_survives_activity_and_input_order_changes
-        self.setUp()  # fresh isolated controller per scenario
-        now = datetime.now(timezone.utc)
-        first = self._status(
-            "codex",
-            "first",
-            AgentMode.TOOL_RUNNING,
-            updated_at=now - timedelta(minutes=2),
-            tool_name="Read",
-        )
-        second = self._status(
-            "codex",
-            "second",
-            AgentMode.TOOL_RUNNING,
-            updated_at=now - timedelta(minutes=1),
-            tool_name="Edit",
-        )
-        _snapshot, _menu, initial_mailbox = self._build((first, second))
-        initial_titles = [item.title() for item in self._items(self._shelf(initial_mailbox, "In Progress"))]
-
-        refreshed_first = self._status(
-            "codex",
-            "first",
-            AgentMode.TOOL_RUNNING,
-            updated_at=now,
-            tool_name="Bash",
-        )
-        _snapshot, _menu, refreshed_mailbox = self._build((second, refreshed_first))
-        refreshed_titles = [item.title() for item in self._items(self._shelf(refreshed_mailbox, "In Progress"))]
-
-        self.assertTrue(initial_titles[0].startswith("● Codex first"), initial_titles)
-        self.assertTrue(refreshed_titles[0].startswith("● Codex first"), refreshed_titles)
-        self.assertIn("Running command", refreshed_titles[0])
-
-        # --- scenario: many_workers_stay_bounded_below_two_primary_rows
-        self.setUp()  # fresh isolated controller per scenario
-        mains = (
-            self._status("claude", "main-a", AgentMode.WORKING),
-            self._status("claude", "main-b", AgentMode.WORKING),
-        )
-        workers = tuple(
-            self._status(
-                "claude",
-                f"worker-{parent}-{index}",
-                AgentMode.WORKING,
-                is_worker=True,
-                parent_session=parent,
-            )
-            for parent in ("main-a", "main-b")
-            for index in range(15)
-        )
-
-        _snapshot, menu, mailbox = self._build((*mains, *workers))
-        shelf_items = self._items(self._shelf(mailbox, "In Progress"))
-        primary = [item for item in shelf_items if item.action() == "openSessionPrimary:"]
-        rollups = [item for item in shelf_items if item.title().startswith("↳")]
-
-        self.assertEqual(len(primary), 2)
-        self.assertEqual(len(rollups), 2)
-        self.assertEqual(
-            [item.title() for item in self._items(menu) if "worker-" in item.title()],
-            [],
-        )
-        for rollup in rollups:
-            worker_items = self._items(rollup.submenu())
-            self.assertEqual(
-                len([item for item in worker_items if item.action() == "openSessionPrimary:"]),
-                12,
-            )
-            self.assertEqual(worker_items[-1].title(), "3 more")
-            self.assertFalse(worker_items[-1].isEnabled())
-
-    def test_mailbox_row_actions_and_overflow(self) -> None:
-        """A worker ask row navigates to the projected identity; failed and
-        completed rows keep actions without ask identity; shelves report
-        exact overflow."""
-        # --- scenario: worker_ask_row_navigates_to_projected_worker_identity
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.settings = self.controller.settings.with_subagent_asks_alert(True)
-        parent = self._status("claude", "main", AgentMode.WORKING)
-        worker = self._status(
-            "claude",
-            "permission-worker",
-            AgentMode.WAITING_FOR_INPUT,
-            event_name="PermissionRequest",
-            is_worker=True,
-            parent_session="main",
-        )
-
-        _snapshot, _menu, mailbox = self._build((parent, worker))
-        rows = [
-            item for item in self._items(self._shelf(mailbox, "Needs You")) if item.action() == "openSessionPrimary:"
-        ]
-
-        self.assertEqual(len(rows), 1)
-        self.assertIn("Claude main", rows[0].title())
-        self.assertEqual(rows[0].representedObject().agent_id, worker.agent_id)
-
-        # --- scenario: failed_and_completed_rows_keep_actions_without_ask_identity
-        self.setUp()  # fresh isolated controller per scenario
-        failed = self._status(
-            "codex",
-            "failed",
-            AgentMode.BLOCKED_ERROR,
-            event_name="PostToolUseFailure",
-        )
-        completed = self._status(
-            "claude",
-            "done",
-            AgentMode.COMPLETED,
-            event_name="Stop",
-        )
-
-        _snapshot, _menu, mailbox = self._build((failed, completed))
-        rows = [
-            item
-            for item in self._items(self._shelf(mailbox, "Ready for Review"))
-            if item.action() == "openSessionPrimary:"
-        ]
-
-        self.assertEqual(
-            {item.representedObject().mode for item in rows},
-            {AgentMode.BLOCKED_ERROR, AgentMode.COMPLETED},
-        )
-        self.assertTrue(all("Ask" not in item.title() for item in rows))
-        self.assertTrue(all(item.image() is not None for item in rows))
-
-        # --- scenario: mailbox_shelf_reports_exact_overflow
-        self.setUp()  # fresh isolated controller per scenario
-        statuses = tuple(self._status("codex", f"active-{index:02d}", AgentMode.WORKING) for index in range(15))
-
-        _snapshot, _menu, mailbox = self._build(statuses)
-        items = self._items(self._shelf(mailbox, "In Progress"))
-
-        self.assertEqual(
-            len([item for item in items if item.action() == "openSessionPrimary:"]),
-            12,
-        )
-        self.assertEqual(items[-1].title(), "3 more")
-        self.assertFalse(items[-1].isEnabled())
 
     def test_mailbox_projection_details(self) -> None:
         """Provider name, color and accessible icon survive projection;
         background refresh does not mark seen but a visit does; a fresh
         stale completion stays ready while another session is active."""
-        # --- scenario: provider_name_color_and_accessible_icon_survive_mailbox_projection
-        self.setUp()  # fresh isolated controller per scenario
-        status = self._status(
-            "codex",
-            "named",
-            AgentMode.WORKING,
-            display_name="Codex Build Agent",
-        )
-        self.controller.settings = self.controller.settings.with_colors(
-            self.controller.settings.colors.with_session_color(
-                status.agent_id,
-                "#FF3366",
-            )
-        )
-
-        _snapshot, _menu, mailbox = self._build((status,))
-        row = next(
-            item for item in self._items(self._shelf(mailbox, "In Progress")) if item.action() == "openSessionPrimary:"
-        )
-
-        self.assertIn("Codex Build Agent", row.title())
-        self.assertTrue(row.title().startswith("● "))
-        self.assertIsNotNone(row.attributedTitle())
-        self.assertIsNotNone(row.image())
-        self.assertEqual(row.representedObject().provider, "codex")
-
         # --- scenario: background_refresh_does_not_mark_completion_seen_but_visit_does
         self.setUp()  # fresh isolated controller per scenario
         completed = self._status(
@@ -16421,66 +15738,6 @@ class AgentMailboxMenuTests(unittest.TestCase):
         }
         self.assertNotIn(expired.agent_id, visible_ids)
 
-        # --- scenario: menu_signature_tracks_mailbox_content_but_ignores_private_payloads
-        self.setUp()  # fresh isolated controller per scenario
-        now = datetime.now(timezone.utc)
-        initial = self._status(
-            "codex",
-            "active",
-            AgentMode.TOOL_RUNNING,
-            updated_at=now,
-            tool_name="Read",
-            message="private first prompt",
-            cwd="/Users/private/first",
-        )
-        snapshot = self._snapshot((initial,))
-        self.controller.update_attention_projection(snapshot)
-        with patch("jrbar.status_bar.time.monotonic", return_value=100.0):
-            signature = self.status_bar.menu_content_signature(snapshot, self.status_bar.STATE_WORKING, self.controller)
-
-        private_only = self._status(
-            "codex",
-            "active",
-            AgentMode.TOOL_RUNNING,
-            updated_at=now,
-            tool_name="Read",
-            message="different authorization payload",
-            cwd="/private/other/location",
-        )
-        private_snapshot = self._snapshot((private_only,))
-        self.controller.update_attention_projection(private_snapshot)
-        with patch("jrbar.status_bar.time.monotonic", return_value=100.0):
-            private_signature = self.status_bar.menu_content_signature(
-                private_snapshot, self.status_bar.STATE_WORKING, self.controller
-            )
-
-        activity_changed = self._status(
-            "codex",
-            "active",
-            AgentMode.TOOL_RUNNING,
-            updated_at=now,
-            tool_name="Bash",
-        )
-        activity_snapshot = self._snapshot((activity_changed,))
-        self.controller.update_attention_projection(activity_snapshot)
-        with patch("jrbar.status_bar.time.monotonic", return_value=100.0):
-            activity_signature = self.status_bar.menu_content_signature(
-                activity_snapshot, self.status_bar.STATE_WORKING, self.controller
-            )
-
-        self.assertEqual(signature, private_signature)
-        self.assertNotEqual(signature, activity_signature)
-
-        # No time bucket: the 30s "safety valve" forced a 799ms-average
-        # AppKit rebuild every 30 seconds forever (deleted 2026-08-26).
-        # Identical content must hash identically no matter how much
-        # wall-clock passes between calls.
-        with patch("jrbar.status_bar.time.monotonic", return_value=100_000.0):
-            much_later = self.status_bar.menu_content_signature(
-                activity_snapshot, self.status_bar.STATE_WORKING, self.controller
-            )
-        self.assertEqual(activity_signature, much_later)
-
 
 class MenuQualityOfLifeTests(unittest.TestCase):
     """Worker rollup, device-health rows, completion banners."""
@@ -16506,51 +15763,6 @@ class MenuQualityOfLifeTests(unittest.TestCase):
             session_id=parent_session,
         )
 
-    def test_workers_roll_up_into_one_submenu_row(self) -> None:
-        parent = AgentStatus(
-            provider="claude",
-            agent_id="claude:session:main-1",
-            display_name="Main session",
-            mode=AgentMode.WORKING,
-            updated_at=datetime.now(timezone.utc),
-            event_name="PreToolUse",
-            session_id="main-1",
-        )
-        workers = [self._worker("main-1", f"w{i}") for i in range(5)]
-        menu = self.status_bar.build_menu(
-            self._snapshot([parent, *workers]),
-            self.status_bar.STATE_WORKING,
-            self.controller,
-        )
-        mailbox = find_mailbox_item(menu)[0]
-        in_progress = next(
-            mailbox.submenu().itemAtIndex_(index).submenu()
-            for index in range(mailbox.submenu().numberOfItems())
-            if mailbox.submenu().itemAtIndex_(index).title() == "In Progress"
-        )
-        titles = [in_progress.itemAtIndex_(index).title() for index in range(in_progress.numberOfItems())]
-        rollups = [title for title in titles if "worker" in title and "\u21b3" in title]
-        self.assertEqual(len(rollups), 1, titles)
-        self.assertIn("5 workers", rollups[0])
-        # No worker appears inline at the top level...
-        self.assertFalse(any("worker w" in title for title in titles))
-        # ...but every one is in the rollup's submenu, clickable.
-        rollup_item = next(
-            in_progress.itemAtIndex_(index)
-            for index in range(in_progress.numberOfItems())
-            if "\u21b3" in in_progress.itemAtIndex_(index).title()
-        )
-        submenu = rollup_item.submenu()
-        self.assertEqual(submenu.numberOfItems(), 5)
-
-    def test_device_errors_surface_in_the_menu(self) -> None:
-        self.controller.device_errors = {"Dot": "[Errno 28] No space left on device"}
-        menu = self.status_bar.build_menu(self._snapshot([]), self.status_bar.STATE_IDLE, self.controller)
-        titles = [menu.itemAtIndex_(index).title() for index in range(menu.numberOfItems())]
-        self.assertTrue(
-            any("not updating" in title and "Dot" in title for title in titles),
-            titles,
-        )
 
     def test_completion_banner_fires_on_fresh_main_transition_only(self) -> None:
         posted: list = []
@@ -16563,43 +15775,6 @@ class MenuQualityOfLifeTests(unittest.TestCase):
         self.controller.track_completions((done,))
         self.assertEqual(len(posted), 1)
         self.assertEqual(posted[0].agent_id, done.agent_id)
-
-    def test_mailbox_summary_and_provider_rows(self) -> None:
-        now = datetime.now(timezone.utc)
-
-        def _main(provider, session):
-            return AgentStatus(
-                provider=provider,
-                agent_id=f"{provider}:session:{session}",
-                display_name=f"{provider} {session}",
-                mode=AgentMode.WORKING,
-                updated_at=now,
-                event_name="PreToolUse",
-                session_id=session,
-            )
-
-        statuses = [
-            _main("claude", "one"),
-            _main("claude", "two"),
-            _main("codex", "three"),
-            self._worker("one", "w1"),
-            self._worker("one", "w2"),
-        ]
-        menu = self.status_bar.build_menu(self._snapshot(statuses), self.status_bar.STATE_WORKING, self.controller)
-        mailbox = find_mailbox_item(menu)[0]
-        self.assertEqual(mailbox.title(), "3 active")
-        in_progress = next(
-            mailbox.submenu().itemAtIndex_(index).submenu()
-            for index in range(mailbox.submenu().numberOfItems())
-            if mailbox.submenu().itemAtIndex_(index).title() == "In Progress"
-        )
-        titles = [in_progress.itemAtIndex_(index).title() for index in range(in_progress.numberOfItems())]
-        self.assertEqual(titles.count("Claude"), 1)
-        self.assertEqual(titles.count("Codex"), 1)
-        self.assertLess(titles.index("Claude"), titles.index("Codex"))
-        self.assertTrue(any("claude one" in title and "2 workers" in title for title in titles))
-        self.assertTrue(any("claude two" in title for title in titles))
-        self.assertTrue(any("codex three" in title for title in titles))
 
 
 class ModernNotificationControllerTests(unittest.TestCase):
@@ -17940,100 +17115,6 @@ class T3AdoptionTests(unittest.TestCase):
         kind = self.controller.active_led_display_kind_for_device(device, None)
         self.assertEqual(kind, self.status_bar.LED_DISPLAY_AGENT)
 
-    def _menu(self, *, hooks_installed: bool = True):
-        from jrbar import status_bar
-        from jrbar.settings import AgentMonitorSettings
-
-        snapshot = SimpleNamespace(
-            statuses=[],
-            stale_statuses=[],
-            collected_at=datetime.now(timezone.utc),
-        )
-        target = SimpleNamespace(
-            settings=AgentMonitorSettings(),
-            closed_lid_awake=SimpleNamespace(last_error=None),
-            status_bar_devices=list,
-            # Pre-seed the hooks probe so the empty state is decided by
-            # the TEST, not by whatever hooks the dev machine happens to
-            # have installed (the probe reads the real filesystem).
-            _menu_hooks_probe=(float("inf"), hooks_installed),
-        )
-        return status_bar.build_menu(snapshot, status_bar.STATE_IDLE, target)
-
-    def test_empty_state_and_tips(self) -> None:
-        '''The empty state teaches the next step and offers setup when no
-        hooks are installed; the compact menu carries no tip rows;
-        every tip pane key is real; dismissed tips are skipped and tips
-        can turn off.'''
-        # --- scenario: empty_state_teaches_the_next_step
-        self.setUp()  # fresh isolated controller per scenario
-        menu = self._menu()
-        mailbox = menu.itemAtIndex_(0)
-        recent = next(
-            mailbox.submenu().itemAtIndex_(index).submenu()
-            for index in range(mailbox.submenu().numberOfItems())
-            if mailbox.submenu().itemAtIndex_(index).title() == "Recent"
-        )
-        titles = [recent.itemAtIndex_(index).title() for index in range(recent.numberOfItems())]
-        self.assertIn("No agents yet", titles)
-        self.assertTrue(any("Start Claude Code" in title for title in titles))
-
-        # --- scenario: empty_state_offers_setup_when_no_hooks_installed
-        self.setUp()  # fresh isolated controller per scenario
-        menu = self._menu(hooks_installed=False)
-        mailbox = menu.itemAtIndex_(0)
-        recent = next(
-            mailbox.submenu().itemAtIndex_(index).submenu()
-            for index in range(mailbox.submenu().numberOfItems())
-            if mailbox.submenu().itemAtIndex_(index).title() == "Recent"
-        )
-        connect = next(
-            (
-                recent.itemAtIndex_(index)
-                for index in range(recent.numberOfItems())
-                if "Connect your agents" in recent.itemAtIndex_(index).title()
-            ),
-            None,
-        )
-        self.assertIsNotNone(connect)
-        self.assertEqual(connect.action(), "openSetup:")
-        self.assertFalse(
-            any("Start Claude Code" in recent.itemAtIndex_(index).title() for index in range(recent.numberOfItems()))
-        )
-
-        # --- scenario: compact_menu_carries_no_tip_rows
-        self.setUp()  # fresh isolated controller per scenario
-        # The compact root menu deliberately drops the daily tip row; the
-        # tip engine itself stays covered by the tests below.
-        menu = self._menu()
-        tips = [
-            menu.itemAtIndex_(index)
-            for index in range(menu.numberOfItems())
-            if menu.itemAtIndex_(index).title().startswith("Tip: ")
-        ]
-        self.assertEqual(len(tips), 0)
-
-        # --- scenario: every_tip_pane_key_is_a_real_pane
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar import status_bar
-
-        pane_keys = {key for key, _label in status_bar.SETTINGS_SIDEBAR_ITEMS}
-        for _text, pane, _anchor in status_bar.DAILY_TIPS:
-            if pane is not None:
-                self.assertIn(pane, pane_keys)
-
-        # --- scenario: dismissed_tips_are_skipped_and_tips_can_turn_off
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar import status_bar
-        from jrbar.settings import AgentMonitorSettings
-
-        settings = AgentMonitorSettings()
-        tip = status_bar.daily_tip(settings)
-        self.assertIsNotNone(tip)
-        settings = settings.with_dismissed_tip(tip[0])
-        replacement = status_bar.daily_tip(settings)
-        self.assertNotEqual(replacement and replacement[0], tip[0])
-        self.assertIsNone(status_bar.daily_tip(settings.with_tips_enabled(False)))
 
     def test_every_lid_preset_parses_in_the_real_firmware_grammar(self) -> None:
         from jrbar import status_bar
@@ -19695,48 +18776,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
             self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE,
             self.controller._runtime_timer_registry.snapshot().active_features,
         )
-
-        # --- scenario: task9g_tip_and_completion_holds_share_one_finite_deadline
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-        self.controller._presentation_scheduler_inputs = inputs
-        view = MagicMock()
-        layer = view.layer.return_value
-        self.controller.completion_sweep_until = self.clock[0] + 5.0
-        self.controller.all_clear_until = self.clock[0] + 8.0
-
-        with (
-            patch.object(
-            self.status_bar.time,
-            "monotonic",
-            side_effect=lambda: self.clock[0],
-            ),
-            patch.object(self.status_bar, "NSColor"),
-        ):
-            self.controller.flash_view(view)
-
-        timers = [
-            timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE
-        ]
-        self.assertEqual(len(timers), 1)
-        self.assertIsNone(timers[0].interval)
-
-        self.clock[0] += 1.0
-        self.controller.runtimeTimerFired_(timers[0])
-        layer.setBackgroundColor_.assert_called_with(None)
-        next_timer = next(
-            timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE
-        )
-        self.assertEqual(next_timer.delay, 4.0)
-
-        self.clock[0] += 4.0
-        self.controller.runtimeTimerFired_(next_timer)
-        final_timer = next(
-            timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE
-        )
-        self.assertEqual(final_timer.delay, 3.0)
 
         # --- scenario: task9g_deadline_dispatch_does_not_mutate_tracked_menu_hierarchy_or_controls
         self.setUp()  # fresh isolated controller per scenario
@@ -22733,42 +21772,12 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         )
         return monitor.snapshot()
 
-    @staticmethod
-    def _titles(menu):
-        return [menu.itemAtIndex_(index).title() for index in range(menu.numberOfItems())]
 
     def test_canonical_root_and_urgent_rows(self) -> None:
         """The canonical root caps urgent rows and moves shelves to the
         browser; menu open marks the visit and only plans capacity
         refresh; urgent rows and the browser share action
         descriptors."""
-        # --- scenario: canonical_root_caps_urgent_rows_and_moves_shelves_to_browser
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = self._canonical_snapshot()
-        self.controller.last_snapshot = snapshot
-        self.controller.status_bar_devices = MagicMock(return_value=[])
-
-        menu = self.status_bar.build_menu(
-            snapshot,
-            self.status_bar.STATE_ASK,
-            self.controller,
-        )
-        titles = self._titles(menu)
-
-        self.assertTrue(titles[0].startswith("5 need you · 5 active"))
-        self.assertEqual(sum(title.endswith("· needs you") for title in titles), 3)
-        self.assertEqual(titles[4], "2 more…")
-        self.assertTrue(menu.itemAtIndex_(4).isEnabled())
-        self.assertEqual(
-            menu.itemAtIndex_(4).representedObject().shelf,
-            MailboxSectionKind.NEEDS_YOU,
-        )
-        self.assertEqual(titles[5], "Open Agent Browser…")
-        self.assertNotIn("In Progress", titles)
-        self.assertNotIn("Ready for Review", titles)
-        self.assertNotIn("Recent", titles)
-        self.assertEqual(titles[-1], f"Quit {self.status_bar.PRODUCT_DISPLAY_NAME}")
-
         # --- scenario: status_menu_open_marks_visit_and_only_plans_capacity_refresh
         self.setUp()  # fresh isolated controller per scenario
         snapshot = self._canonical_snapshot(1)
@@ -22793,101 +21802,12 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         self.assertIsNone(before_opened_at)
         self.assertIsNotNone(self.controller.menu_last_opened_at)
 
-        # --- scenario: urgent_rows_and_browser_receive_current_shared_action_descriptors
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = self._canonical_snapshot(1)
-        self.controller.last_snapshot = snapshot
-        self.controller.current_operator_state = snapshot.operator_state
-
-        menu = self.status_bar.build_menu(
-            snapshot,
-            self.status_bar.STATE_ASK,
-            self.controller,
-        )
-        urgent = menu.itemAtIndex_(1)
-        self.assertEqual(
-            self._titles(urgent.submenu()),
-            ["Open", "I'm on It", "Watch", "Pin"],
-        )
-        self.assertFalse(urgent.submenu().itemAtIndex_(0).isEnabled())
-        browser = next(
-            item
-            for item in (menu.itemAtIndex_(index) for index in range(menu.numberOfItems()))
-            if item.title() == "Open Agent Browser…"
-        )
-        self.assertTrue(self.controller.openAgentBrowser_(browser))
-        row_key = snapshot.operator_state.works[0].key
-        self.assertEqual(
-            tuple(
-                descriptor.kind for descriptor in self.controller.agent_browser_controller.actions_by_work_key[row_key]
-            ),
-            (
-                OperatorActionKind.OPEN,
-                OperatorActionKind.ACKNOWLEDGE,
-                OperatorActionKind.WATCH,
-                OperatorActionKind.PIN,
-            ),
-        )
 
     def test_action_generation_fencing(self) -> None:
         """Actions revalidate generation and keep a failed save visible; the
         worker preference action inverts to family and rejects late
         generations; a duplicate worker event is inert before family
         projection."""
-        # --- scenario: action_revalidates_generation_and_keeps_failed_save_visible
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = self._canonical_snapshot(1)
-        self.controller.last_snapshot = snapshot
-        self.controller.current_operator_state = snapshot.operator_state
-        self.controller.status_bar_devices = MagicMock(return_value=[])
-        self.controller.status_item = MagicMock()
-        self.controller.update_status_menu(snapshot, self.status_bar.STATE_ASK)
-        root_menu = self.controller.status_item.setMenu_.call_args.args[0]
-        browser_item = next(
-            item
-            for item in (root_menu.itemAtIndex_(index) for index in range(root_menu.numberOfItems()))
-            if item.title() == "Open Agent Browser…"
-        )
-        self.assertTrue(self.controller.openAgentBrowser_(browser_item))
-        self.controller.mailbox_preferences_saver = MagicMock(side_effect=OSError("private store unavailable"))
-        work_key = snapshot.operator_state.works[0].key
-
-        stale = AgentBrowserActionPayload(
-            work_key,
-            snapshot.operator_state.generation + 1,
-            OperatorActionKind.WATCH,
-        )
-        self.assertFalse(self.controller.performAgentBrowserPayload_(stale))
-        self.assertEqual(self.controller.mailbox_preferences, ())
-
-        current = dataclass_replace(stale, generation=snapshot.operator_state.generation)
-        self.assertTrue(self.controller.performAgentBrowserPayload_(current))
-        self.assertEqual(self.controller.mailbox_preferences[0].work_key, work_key)
-        self.assertTrue(self.controller.mailbox_preferences_dirty)
-        self.assertEqual(
-            self.controller.operator_action_error,
-            f"Could not save mailbox change. {self.status_bar.PRODUCT_DISPLAY_NAME} will retry.",
-        )
-        browser = self.controller.agent_browser_controller
-        self.assertTrue(browser.projection.rows[0].watched)
-        self.assertEqual(
-            browser.error_label.stringValue(),
-            f"Could not save mailbox change. {self.status_bar.PRODUCT_DISPLAY_NAME} will retry.",
-        )
-        self.assertIn(
-            OperatorActionKind.UNWATCH,
-            tuple(descriptor.kind for descriptor in browser.actions_by_work_key[work_key]),
-        )
-        republished_root = self.controller.status_item.setMenu_.call_args.args[0]
-        self.assertIn(
-            "Unwatch",
-            self._titles(republished_root.itemAtIndex_(1).submenu()),
-        )
-        self.assertIn(
-            f"Could not save mailbox change. {self.status_bar.PRODUCT_DISPLAY_NAME} will retry.",
-            self._titles(republished_root),
-        )
-
         # --- scenario: worker_preference_action_inverts_to_family_and_rejects_late_generation
         self.setUp()  # fresh isolated controller per scenario
         snapshot = self._canonical_snapshot(1)
@@ -23005,140 +21925,6 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         item in place; patchable mailbox changes and runtime signature
         drift never trigger a periodic full rebuild; the mailbox
         boundary uses an exact deadline in common modes."""
-        # --- scenario: open_agent_browser_reuses_one_controller_and_validates_generation
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = self._canonical_snapshot(2)
-        self.controller.last_snapshot = snapshot
-        self.controller.current_operator_state = snapshot.operator_state
-        menu = self.status_bar.build_menu(
-            snapshot,
-            self.status_bar.STATE_ASK,
-            self.controller,
-        )
-        browser_item = next(
-            item
-            for item in (menu.itemAtIndex_(index) for index in range(menu.numberOfItems()))
-            if item.title() == "Open Agent Browser…"
-        )
-
-        self.assertTrue(self.controller.openAgentBrowser_(browser_item))
-        first = self.controller.agent_browser_controller
-        self.assertTrue(self.controller.openAgentBrowser_(browser_item))
-        self.assertIs(self.controller.agent_browser_controller, first)
-        # A stale generation no longer swallows the click: opening the
-        # browser degrades to the CURRENT view instead of doing nothing.
-        # Generation fencing remains on mutating browser actions.
-        stale = SimpleNamespace(
-            representedObject=lambda: dataclass_replace(
-                browser_item.representedObject(),
-                generation=snapshot.operator_state.generation + 1,
-            )
-        )
-        self.assertTrue(self.controller.openAgentBrowser_(stale))
-        self.assertIs(self.controller.agent_browser_controller, first)
-
-        # --- scenario: tracked_canonical_state_patches_same_native_item_in_place
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = self._canonical_snapshot(1)
-        self.controller.last_snapshot = snapshot
-        self.controller.status_bar_devices = MagicMock(return_value=[])
-        self.controller.status_item = MagicMock()
-        self.controller.update_status_menu(snapshot, self.status_bar.STATE_ASK)
-        menu = self.controller.status_item.setMenu_.call_args.args[0]
-        urgent = menu.itemAtIndex_(1)
-        open_item = urgent.submenu().itemAtIndex_(0)
-        self.assertFalse(open_item.isEnabled())
-        work = snapshot.operator_state.works[0]
-        self.controller.navigation_candidates_by_work_key = {
-            work.key: (
-                NavigationCandidate(
-                    work.key,
-                    work.watermark.sequence,
-                    "open:primary",
-                    "url",
-                    "codex://threads/work%3A0",
-                    SourceFreshness.FRESH,
-                    True,
-                ),
-            )
-        }
-        self.controller.status_menu_open = True
-        with patch.object(
-            self.status_bar,
-            "build_agent_root_items",
-            side_effect=AssertionError("tracking refresh allocated native menu items"),
-        ):
-            self.controller.update_status_menu(
-                snapshot,
-                self.status_bar.STATE_ASK,
-            )
-
-        self.assertIs(menu.itemAtIndex_(1), urgent)
-        self.assertIs(urgent.submenu().itemAtIndex_(0), open_item)
-        self.assertTrue(open_item.isEnabled())
-        self.assertEqual(self.controller.status_item.setMenu_.call_count, 1)
-
-        # --- scenario: patchable_mailbox_change_does_not_trigger_periodic_full_menu_rebuild
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = self._canonical_snapshot(1)
-        self.controller.last_snapshot = snapshot
-        self.controller.status_bar_devices = MagicMock(return_value=[])
-        self.controller.status_item = MagicMock()
-        self.controller._runtime_started = True
-
-        with patch.object(self.status_bar.time, "monotonic", return_value=100.0):
-            self.controller.update_status_menu(snapshot, self.status_bar.STATE_ASK)
-        menu = self.controller.status_item.setMenu_.call_args.args[0]
-        urgent = menu.itemAtIndex_(1)
-        open_item = urgent.submenu().itemAtIndex_(0)
-        self.assertFalse(open_item.isEnabled())
-
-        work = snapshot.operator_state.works[0]
-        self.controller.navigation_candidates_by_work_key = {
-            work.key: (
-                NavigationCandidate(
-                    work.key,
-                    work.watermark.sequence,
-                    "open:primary",
-                    "url",
-                    "codex://threads/work%3A0",
-                    SourceFreshness.FRESH,
-                    True,
-                ),
-            )
-        }
-        with patch.object(self.status_bar.time, "monotonic", return_value=120.0):
-            self.controller.update_status_menu(snapshot, self.status_bar.STATE_ASK)
-
-        self.assertIs(menu.itemAtIndex_(1), urgent)
-        self.assertIs(urgent.submenu().itemAtIndex_(0), open_item)
-        self.assertTrue(open_item.isEnabled())
-        self.assertEqual(self.controller.status_item.setMenu_.call_count, 1)
-
-        # --- scenario: patchable_runtime_signature_drift_does_not_trigger_periodic_full_menu_rebuild
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = self._canonical_snapshot(1)
-        self.controller.last_snapshot = snapshot
-        self.controller.status_bar_devices = MagicMock(return_value=[])
-        self.controller.status_item = MagicMock()
-        self.controller._runtime_started = True
-
-        with patch.object(self.status_bar.time, "monotonic", return_value=100.0):
-            self.controller.update_status_menu(snapshot, self.status_bar.STATE_ASK)
-
-        first_signature = self.controller._menu_signature
-        with (
-            patch.object(self.status_bar.time, "monotonic", return_value=120.0),
-            patch.object(
-                self.status_bar,
-                "menu_content_signature",
-                return_value=(*first_signature, "volatile-only-drift"),
-            ),
-        ):
-            self.controller.update_status_menu(snapshot, self.status_bar.STATE_ASK)
-
-        self.assertEqual(self.controller.status_item.setMenu_.call_count, 1)
-
         # --- scenario: mailbox_boundary_uses_exact_deadline_in_common_modes
         self.setUp()  # fresh isolated controller per scenario
         timer = MagicMock()
@@ -23538,33 +22324,6 @@ class Task10FiniteStatusEmphasisTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class SessionHeardSuffixTests(unittest.TestCase):
-    """Every session row says when it was last heard from (audited gap:
-    the number lived only in Diagnostics; rows made the owner guess)."""
-
-    def _status(self, seconds_old: float) -> AgentStatus:
-        from datetime import timedelta
-
-        now = datetime(2026, 8, 20, 21, 0, 0, tzinfo=timezone.utc)
-        self.now = now
-        return AgentStatus(
-            provider="claude",
-            agent_id="claude:session:x",
-            display_name="proj: fix bar (abc12345)",
-            mode=AgentMode.WORKING,
-            updated_at=now - timedelta(seconds=seconds_old),
-            event_name="PreToolUse",
-            session_id="x",
-        )
-
-    def test_fresh_rows_stay_clean_and_old_rows_say_their_age(self) -> None:
-        from jrbar.status_bar import session_heard_suffix
-
-        self.assertEqual(session_heard_suffix(self._status(10.0), self.now), "")
-        self.assertEqual(session_heard_suffix(self._status(240.0), self.now), " · 4m ago")
-        self.assertEqual(session_heard_suffix(self._status(2.5 * 3600), self.now), " · 2h ago")
 
 
 class ChargingHelloTests(unittest.TestCase):

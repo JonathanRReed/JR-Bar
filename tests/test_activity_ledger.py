@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -155,23 +154,6 @@ def _snapshot(statuses=(), stale=()):
     )
 
 
-def _titles(menu):
-    return [menu.itemAtIndex_(index).title() for index in range(menu.numberOfItems())]
-
-
-def _activity_item(menu):
-    for index in range(menu.numberOfItems()):
-        item = menu.itemAtIndex_(index)
-        title = item.title()
-        if (
-            title.startswith("Since you left")
-            or title.startswith("Since you were away")
-            or title == "Recent activity"
-        ):
-            return item
-    return None
-
-
 # --------------------------------------------------------------------------
 # The pure model: bounds, identity, the "left" watermark.
 # --------------------------------------------------------------------------
@@ -228,7 +210,6 @@ def test_the_ledger_is_bounded_by_entry_count_and_by_bytes__and_2_more() -> None
     assert len(ledger.entries) == 1
 
 
-
 def test_two_facts_at_the_same_instant_both_survive__and_2_more() -> None:
     # --- scenario: two_facts_at_the_same_instant_both_survive
     """Same timestamp, different sessions -- two events, not one."""
@@ -259,7 +240,6 @@ def test_two_facts_at_the_same_instant_both_survive__and_2_more() -> None:
     marked = mark_activity_seen(ledger, NOW - 30.0)
 
     assert [entry.subject_id for entry in marked.unseen] == ["b"]
-
 
 
 def test_relative_times_read_the_way_the_rest_of_the_menu_does__and_2_more() -> None:
@@ -303,7 +283,6 @@ def test_relative_times_read_the_way_the_rest_of_the_menu_does__and_2_more() -> 
 
     assert cleaned == "evil name with junk"
     assert ActivityEntry(ActivityKind.COMPLETED, NOW, cleaned, "claude").label == cleaned
-
 
 
 def test_an_unprintable_label_is_refused_rather_than_stored() -> None:
@@ -482,7 +461,6 @@ def test_a_first_observation_is_never_news__and_2_more() -> None:
     assert fired == ()
 
 
-
 def test_an_ancient_transition_is_not_replayed_as_fresh() -> None:
     now = datetime.now(timezone.utc)
     stale = _status(
@@ -506,37 +484,25 @@ def test_an_ancient_transition_is_not_replayed_as_fresh() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_a_completion_that_fired_while_you_were_away_is_in_the_dropdown(
+def test_a_completion_that_fired_while_you_were_away_is_in_the_ledger(
     controller,
 ) -> None:
     """The headline. Before this, that completion left no trace anywhere."""
-    target, status_bar, _path = controller
+    target, _status_bar, _path = controller
     working = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")
     done = _status("claude:session:one", AgentMode.COMPLETED)
 
     target.track_completions((working,))
     target.track_completions((done,))
 
-    menu = status_bar.build_menu(
-        _snapshot(stale=(done,)),
-        status_bar.STATE_IDLE,
-        target,
-    )
-    item = _activity_item(menu)
-
-    assert item is not None, _titles(menu)
-    assert item.title() == "Since you left · 1"
-    rows = [
-        item.submenu().itemAtIndex_(index).title()
-        for index in range(item.submenu().numberOfItems())
-    ]
-    assert "sidepulse-manager · finished · just now" in rows
-    # The boundary is stated, not implied.
-    assert rows[0] == "Menu not opened yet · showing everything kept"
+    entries = target.activity_ledger.entries
+    assert [entry.kind for entry in entries] == [ActivityKind.COMPLETED]
+    assert entries[0].label == "sidepulse-manager"
+    assert entries[0].subject_id == "claude:session:one"
 
 
-def test_an_ask_and_an_error_reach_the_dropdown_too(controller) -> None:
-    target, status_bar, _path = controller
+def test_an_ask_and_an_error_reach_the_ledger_too(controller) -> None:
+    target, _status_bar, _path = controller
     target.track_completions(
         (
             _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse"),
@@ -566,17 +532,11 @@ def test_an_ask_and_an_error_reach_the_dropdown_too(controller) -> None:
         )
     )
 
-    kinds = {entry.kind for entry in target.activity_ledger.entries}
-    assert kinds == {ActivityKind.ASKED, ActivityKind.BLOCKED}
-
-    menu = status_bar.build_menu(_snapshot(), status_bar.STATE_ASK, target)
-    item = _activity_item(menu)
-    rows = [
-        item.submenu().itemAtIndex_(index).title()
-        for index in range(item.submenu().numberOfItems())
-    ]
-    assert "sidepulse-manager · asked you · just now" in rows
-    assert "codex-thing · hit an error · just now" in rows
+    labels = {entry.kind: entry.label for entry in target.activity_ledger.entries}
+    assert labels == {
+        ActivityKind.ASKED: "sidepulse-manager",
+        ActivityKind.BLOCKED: "codex-thing",
+    }
 
 
 def test_a_sub_agent_never_reaches_the_ledger(controller) -> None:
@@ -607,106 +567,7 @@ def test_a_sub_agent_never_reaches_the_ledger(controller) -> None:
     assert target.activity_ledger.entries == ()
 
 
-def test_the_section_is_absent_when_nothing_has_happened(controller) -> None:
-    """A permanent "Since you left · 0" is the same cry-wolf failure the
-    capacity card was just taught not to commit."""
-    target, status_bar, _path = controller
-
-    menu = status_bar.build_menu(_snapshot(), status_bar.STATE_IDLE, target)
-
-    assert _activity_item(menu) is None
-    assert not any("Since you left" in title for title in _titles(menu))
-
-
-def test_opening_the_menu_is_the_visit_that_clears_since_you_left(
-    controller,
-) -> None:
-    target, status_bar, _path = controller
-    working = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")
-    done = _status("claude:session:one", AgentMode.COMPLETED)
-    target.track_completions((working,))
-    target.track_completions((done,))
-    snapshot = _snapshot(stale=(done,))
-    target.last_snapshot = snapshot
-
-    assert _activity_item(
-        status_bar.build_menu(snapshot, status_bar.STATE_IDLE, target)
-    ).title() == "Since you left · 1"
-
-    with (
-        patch.object(target, "maybe_refresh_usage_summary"),
-        patch.object(target, "schedule_capacity_timers"),
-    ):
-        target.menuWillOpen_(None)
-
-    item = _activity_item(status_bar.build_menu(snapshot, status_bar.STATE_IDLE, target))
-    # Read, not deleted: it is still the answer to "what happened today".
-    assert item.title() == "Recent activity"
-    rows = [
-        item.submenu().itemAtIndex_(index).title()
-        for index in range(item.submenu().numberOfItems())
-    ]
-    assert any("finished" in row for row in rows)
-    assert rows[0].startswith("Menu last opened")
-
-
-def test_clicking_a_row_reveals_that_session(controller) -> None:
-    """The same action every other session row in this dropdown carries."""
-    target, status_bar, _path = controller
-    working = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")
-    done = _status("claude:session:one", AgentMode.COMPLETED)
-    target.track_completions((working,))
-    target.track_completions((done,))
-
-    menu = status_bar.build_menu(
-        _snapshot(stale=(done,)),
-        status_bar.STATE_IDLE,
-        target,
-    )
-    submenu = _activity_item(menu).submenu()
-    row = next(
-        submenu.itemAtIndex_(index)
-        for index in range(submenu.numberOfItems())
-        if "finished" in submenu.itemAtIndex_(index).title()
-    )
-
-    assert row.isEnabled()
-    assert row.action() == "openSessionPrimary:"
-    assert row.representedObject().agent_id == "claude:session:one"
-
-    with (
-        patch.object(status_bar.StatusBarController, "open_session", autospec=True) as open_session,
-        patch.object(status_bar.StatusBarController, "close_status_menu", autospec=True),
-    ):
-        target.openSessionPrimary_(SimpleNamespace(representedObject=row.representedObject))
-
-    assert open_session.call_args.args[1].agent_id == "claude:session:one"
-
-
-def test_a_row_whose_session_is_gone_stays_visible_and_disabled(
-    controller,
-) -> None:
-    target, status_bar, _path = controller
-    working = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")
-    done = _status("claude:session:one", AgentMode.COMPLETED)
-    target.track_completions((working,))
-    target.track_completions((done,))
-
-    # The session has aged out of the snapshot entirely.
-    menu = status_bar.build_menu(_snapshot(), status_bar.STATE_IDLE, target)
-    submenu = _activity_item(menu).submenu()
-    row = next(
-        submenu.itemAtIndex_(index)
-        for index in range(submenu.numberOfItems())
-        if "finished" in submenu.itemAtIndex_(index).title()
-    )
-
-    assert not row.isEnabled()
-    assert row.action() is None
-
-
-def test_the_ledger_survives_a_restart__and_1_more(controller) -> None:
-    # --- scenario: the_ledger_survives_a_restart
+def test_the_ledger_survives_a_restart(controller) -> None:
     """Persistence is the whole point: "while I was gone" outlives a relaunch."""
     target, status_bar, path = controller
     working = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")
@@ -724,58 +585,13 @@ def test_the_ledger_survives_a_restart__and_1_more(controller) -> None:
     ]
     assert restarted.activity_ledger.entries[0].label == "sidepulse-manager"
 
-    # --- scenario: the_menu_rebuilds_when_the_ledger_changes
-    """Otherwise the section renders once and then freezes for 30 seconds."""
-    target, status_bar, _path = controller
-    target.status_bar_devices = lambda *args, **kwargs: []
-    snapshot = _snapshot()
 
-    with patch("jrbar.status_bar.time.monotonic", return_value=100.0):
-        before = status_bar.menu_content_signature(
-            snapshot, status_bar.STATE_IDLE, target
-        )
-        target.track_completions(
-            (_status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse"),)
-        )
-        target.track_completions((_status("claude:session:one", AgentMode.COMPLETED),))
-        after = status_bar.menu_content_signature(
-            snapshot, status_bar.STATE_IDLE, target
-        )
-        target.mark_activity_seen_now(time.time())
-        seen = status_bar.menu_content_signature(
-            snapshot, status_bar.STATE_IDLE, target
-        )
-
-    assert before != after
-    assert after != seen
-
-
-
-def test_a_ledger_that_cannot_be_read_is_an_empty_section_not_a_crash__and_1_more(controller,) -> None:
-    # --- scenario: a_ledger_that_cannot_be_read_is_an_empty_section_not_a_crash
-    target, status_bar, path = controller
+def test_a_ledger_that_cannot_be_read_restores_empty_not_a_crash(controller) -> None:
+    target, _status_bar, path = controller
     path.write_text("{not json", encoding="utf-8")
 
-    menu = status_bar.build_menu(_snapshot(), status_bar.STATE_IDLE, target)
-
-    assert _activity_item(menu) is None
+    assert target.ensure_activity_ledger() == ActivityLedger()
     assert target.activity_ledger == ActivityLedger()
-
-    # --- scenario: malformed_away_summary_input_falls_back_to_legacy_activity_menu
-    target, status_bar, _path = controller
-    target.settings = replace(target.settings, operator_history_retention_days=7)
-    target.operator_history_store = SimpleNamespace(state="not-history")
-    working = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")
-    done = _status("claude:session:one", AgentMode.COMPLETED)
-    target.track_completions((working,))
-    target.track_completions((done,))
-
-    menu = status_bar.build_menu(_snapshot(stale=(done,)), status_bar.STATE_IDLE, target)
-    item = _activity_item(menu)
-
-    assert item is not None
-    assert item.title() == "Since you left · 1"
-
 
 
 # --------------------------------------------------------------------------

@@ -110,7 +110,9 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
             keyword.arg for keyword in node.keywords if keyword.arg is not None
         )
 
-    assert {"controller", "final_controller", "menu_binding"} <= receipt_keywords
+    assert {"controller", "final_controller"} <= receipt_keywords
+    # The NSMenu tree is gone, so there is no menu binding left to record.
+    assert "menu_binding" not in receipt_keywords
 
     # --- scenario: status_bar_modules_stop_bootstrapping_on_import
     for path in (
@@ -157,14 +159,12 @@ threading.Thread.start = guarded_start
 from jrbar import status_bar_legacy as legacy
 
 controller_before = legacy.StatusBarController
-menu_before = legacy.build_menu
 
 from jrbar import _status_bar_production as production
 from jrbar import provider_usage_status_bar as provider
 from jrbar import status_bar as public_status_bar
 
 assert legacy.StatusBarController is controller_before
-assert legacy.build_menu is menu_before
 assert not thread_starts
 
 from jrbar.application_composition import compose_status_bar_application
@@ -176,7 +176,6 @@ assert receipt is second
 assert not thread_starts
 assert receipt.controller is production.JRStatusBarController
 assert receipt.final_controller is provider.JRProviderUsageStatusBarController
-assert receipt.menu_binding is provider.build_menu
 assert receipt.steps == (
     "production-controller",
     "status-bar-facade",
@@ -186,7 +185,7 @@ assert receipt.steps == (
     "provider-usage-controller",
 )
 assert legacy.StatusBarController is provider.JRProviderUsageStatusBarController
-assert legacy.build_menu is provider.build_menu
+assert not hasattr(legacy, "build_menu")
 assert public_status_bar.StatusBarController is production.JRStatusBarController
 print(json.dumps({"ok": True}))
 """

@@ -100,9 +100,9 @@ JR-Bar 0.8.0 (<commit>)
 
   The public key is baked into every app as `SUPublicEDKey`. Changing keys
   means changing `packaging/sparkle_public_ed_key.txt`,
-  `scripts/generate_sparkle_channel.py`, `src/jrbar/sparkle_updater.py` and
-  the tests (`tests/test_sparkle_channel.py` pins its SHA-256 fingerprint)
-  before the first release that uses it.
+  `scripts/generate_sparkle_channel.py` and the tests
+  (`tests/test_sparkle_channel.py` pins its SHA-256 fingerprint) before the
+  first release that uses it.
 - **The in-app updater** is `app/Sources/JRBarApp/SparkleUpdater.swift` over
   the embedded framework: "Check for Updates…" in the app menu, automatic
   checks off until Settings › General turns them on, and the `stable` / `beta`

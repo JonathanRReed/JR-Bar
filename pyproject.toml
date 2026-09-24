@@ -119,7 +119,6 @@ ignore = [
 "src/jrbar/settings.py" = ["I001"]
 "src/jrbar/_settings_legacy.py" = ["I001"]
 "src/jrbar/settings_window.py" = ["F821"]
-"src/jrbar/usage_card.py" = ["RUF022"]
 "src/jrbar/virtual_device.py" = ["I001"]
 "tests/test_capacity_authority.py" = ["I001"]
 "tests/test_claude_limits_reachable.py" = ["I001"]

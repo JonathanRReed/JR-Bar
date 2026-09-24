@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from test_jrbar import isolate_controller
 
 from jrbar._settings_legacy import AgentMonitorSettings
-from jrbar.status_bar_legacy import BRIGHTNESS_PRESET_CHOICES, StatusBarDevice
+from jrbar.status_bar_legacy import StatusBarDevice
 
 
 def _device() -> StatusBarDevice:
@@ -85,20 +85,3 @@ def test_the_dial_scales_both_brightness_paths__and_2_more(request) -> None:
     assert emit(3) == 3  # coming back from black emits immediately
     controller.settings = controller.settings.with_global_brightness_scale(0.5)
     assert emit(121) == 121  # a settings write re-emits under the band
-
-    # --- scenario: the_menu_action_persists_the_preset
-    case = SimpleNamespace(
-        addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
-    )
-    isolate_controller(case)
-    controller = case.controller
-    controller.refresh_ = lambda *_args: None  # the isolated guard forbids
-    label, value = BRIGHTNESS_PRESET_CHOICES[0]
-    assert label == "Dim"
-    sender = SimpleNamespace(representedObject=lambda: value)
-    controller.setGlobalBrightness_(sender)
-    assert abs(controller.settings.global_brightness_scale - value) < 0.001
-    # And nonsense from a stale menu is refused, not crashed on.
-    controller.setGlobalBrightness_(SimpleNamespace(representedObject=lambda: None))
-    assert abs(controller.settings.global_brightness_scale - value) < 0.001
-

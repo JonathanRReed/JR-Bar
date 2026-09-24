@@ -13,15 +13,11 @@ from .provider_usage_status_bar_probe import (
 from .provider_usage_status_bar_probe import (
     ProbeLegacyShim as _ProbeLegacyShim,
 )
-from .provider_usage_status_bar_probe import (
-    probe_build_menu,
-)
 
 if _PROBE_IMPORT_MODE:
     _settings_navigation = None
     _legacy = _ProbeLegacyShim()
     _BaseStatusBarController = object
-    _original_build_menu = None
 else:
     from . import settings_navigation as _settings_navigation
     from . import status_bar as _host
@@ -78,22 +74,10 @@ else:
         show_category,
     )
     from .settings_destination_refresh import refresh_settings_destination
-    from .sparkle_updater import (
-        BETA_CHANNEL,
-        STABLE_CHANNEL,
-        inject_software_update_submenu,
-        start_sparkle_updater,
-    )
     from .usage_event_hooks import (
         detect_usage_hook_events,
         hook_path_message,
         run_usage_hooks,
-    )
-    from .usage_menu_injection import (
-        menu_index,
-        native_usage_menu_item,
-        remove_legacy_usage_item,
-        remove_redundant_separators,
     )
     from .usage_percent_history import record_state_observations
 
@@ -101,38 +85,6 @@ else:
     from .deck_status_bar import install_deck_status_bar
 
     _BaseStatusBarController = install_deck_status_bar(_host.JRStatusBarController)
-    _original_build_menu = _host.build_menu
-
-
-def build_menu(snapshot, state, target):
-    if _PROBE_IMPORT_MODE:
-        return probe_build_menu(snapshot, state, target)
-    menu = _original_build_menu(snapshot, state, target)
-    remove_legacy_usage_item(menu, target)
-    native_item = native_usage_menu_item(target)
-    # Prefix match covers both the plain "Devices" title and the compact
-    # facade's retitled "Devices · N connected" row.
-    index = menu_index(menu, "Devices")
-    if index < 0:
-        index = menu_index(menu, "Hardware")
-    if index < 0:
-        index = min(4, menu.numberOfItems())
-    menu.insertItem_atIndex_(native_item, index)
-    if index + 1 < menu.numberOfItems():
-        next_item = menu.itemAtIndex_(index + 1)
-        if not next_item.isSeparatorItem():
-            menu.insertItem_atIndex_(_legacy.NSMenuItem.separatorItem(), index + 1)
-    inject_software_update_submenu(
-        menu,
-        target,
-        getattr(target, "_jrbar_sparkle_updater", None),
-    )
-    center = _legacy.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        "Control Center…", "openDeckControlCenter:", "")
-    center.setTarget_(target)
-    menu.insertItem_atIndex_(center, min(index + 1, menu.numberOfItems()))
-    remove_redundant_separators(menu)
-    return menu
 
 
 def _settings_category_at_row(row: int):
@@ -417,20 +369,6 @@ else:
                 return
 
         @_legacy.objc.IBAction
-        def openTodayTarget_(self, sender) -> None:
-            from .today_menu import open_today_target
-
-            open_today_target(str(sender.representedObject() or ""))
-
-        @_legacy.objc.IBAction
-        def openProviderStatusPage_(self, sender) -> None:
-            url = str(sender.representedObject() or "")
-            if url.startswith("https://"):
-                from AppKit import NSURL, NSWorkspace
-
-                NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
-
-        @_legacy.objc.IBAction
         def applyUsageEventHook_(self, sender) -> None:
             self.settings = self.settings.with_usage_event_hook_path(str(sender.stringValue() or ""))
             _legacy.save_settings(self.settings)
@@ -695,9 +633,6 @@ else:
 
             return capacity_settings_text(self, provider_id, wall_clock=wall_clock)
 
-        def jr_plane_owns_usage_menu_item(self) -> bool:
-            return True
-
         def jr_plane_owns_capacity(self, provider_id: str) -> bool:
             """Claude usage polling is owned here, not by the legacy scheduler."""
             return provider_id == "claude"
@@ -756,13 +691,6 @@ else:
 
             return active_usage_providers(self, _legacy)
 
-        def _active_usage_instances(self) -> frozenset[tuple[str, str]]:
-            """Exact active account identities when session provenance matches."""
-
-            from .provider_usage_status_projection import active_usage_instances
-
-            return active_usage_instances(self, _legacy)
-
         def _append_quota_to_status_title(self, *, wall_clock: Callable[[], float] = time.time) -> None:
             from .provider_usage_status_projection import append_quota_to_status_title
 
@@ -798,38 +726,9 @@ else:
                 log=_legacy.log_status_bar,
             )
 
-        @_legacy.objc.IBAction
-        def performProviderUsageAction_(self, sender) -> None:
-            perform_provider_usage_action(
-                self,
-                sender,
-                open_center=True,
-                log=_legacy.log_status_bar,
-            )
-
-        @_legacy.objc.IBAction
-        def checkForSoftwareUpdates_(self, sender) -> None:
-            runtime = getattr(self, "_jrbar_sparkle_updater", None)
-            if runtime is not None:
-                runtime.check_for_updates(sender)
-
-        def _select_update_channel(self, channel: str) -> None:
-            runtime = getattr(self, "_jrbar_sparkle_updater", None)
-            if runtime is not None and runtime.select_channel(channel):
-                self._menu_signature = None
-
-        @_legacy.objc.IBAction
-        def selectStableUpdates_(self, _sender) -> None:
-            self._select_update_channel(STABLE_CHANNEL)
-
-        @_legacy.objc.IBAction
-        def selectBetaUpdates_(self, _sender) -> None:
-            self._select_update_channel(BETA_CHANNEL)
-
         def applicationDidFinishLaunching_(self, notification):
             if getattr(self, "_runtime_started", False) or getattr(self, "_runtime_termination_started", False):
                 return None
-            self._jrbar_sparkle_updater = start_sparkle_updater()
             result = _BaseStatusBarController.applicationDidFinishLaunching_(
                 self,
                 notification,
@@ -911,17 +810,15 @@ else:
 
 
 def install_provider_usage_status_bar():
-    """Install the final provider controller and root-menu wrapper once."""
+    """Install the final provider controller once."""
     if _PROBE_IMPORT_MODE:
         from . import status_bar_legacy as legacy
 
         legacy.StatusBarController = JRProviderUsageStatusBarController
-        legacy.build_menu = build_menu
-        return JRProviderUsageStatusBarController, build_menu
+        return JRProviderUsageStatusBarController
     _host.install_status_bar_facade()
     _legacy.StatusBarController = JRProviderUsageStatusBarController
-    _legacy.build_menu = build_menu
-    return JRProviderUsageStatusBarController, build_menu
+    return JRProviderUsageStatusBarController
 
 
 __all__ = [

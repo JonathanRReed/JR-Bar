@@ -1130,25 +1130,6 @@ else:
                     outcome=outcome,
                 )
 
-        def update_status_menu(self, snapshot, state) -> None:
-            started = time.perf_counter()
-            outcome = "ok"
-            try:
-                return _LegacyStatusBarController.update_status_menu(
-                    self,
-                    snapshot,
-                    state,
-                )
-            except BaseException:
-                outcome = "error"
-                raise
-            finally:
-                self._performance().record(
-                    "menu_apply",
-                    (time.perf_counter() - started) * 1000.0,
-                    outcome=outcome,
-                )
-
         def ensure_settings_pane(self, key: str) -> None:
             started = time.perf_counter()
             outcome = "ok"
