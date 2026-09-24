@@ -267,6 +267,22 @@ final class NotchToy: Toy {
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                // "Where the pointer is" seats afresh when screens come
+                // and go — the only moments besides a Space change.
+                ScreenBarGeometry.reseatPointer()
+                self?.displayVersion += 1
+            }
+        })
+        observers.append(workspace.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { ScreenBarGeometry.reseatPointer() }
+        })
+        // The Display pick or its seat moved the island: reframe there.
+        observers.append(NotificationCenter.default.addObserver(
+            forName: ScreenBarGeometry.preferredScreenDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
             MainActor.assumeIsolated { self?.displayVersion += 1 }
         })
         observe()
@@ -570,11 +586,11 @@ final class NotchToy: Toy {
 
     /// The hover path: a cursor on the resting island earns the wink —
     /// a few points of grow (`islandHoverPeek`), never the card — and
-    /// only a cursor that STAYS, past `hoverExpandDelay`, earns the
+    /// only a cursor that STAYS, past `hoverDelays.expand`, earns the
     /// grow `expandOnHover` promised. A pointer cutting across the
     /// notch to reach a menu gets the wink and nothing else; that is
     /// the whole reason the debounce exists — and why an arrival by the
-    /// menu bar's row floors at `hoverExpandDelayFromBar` while one
+    /// menu bar's row floors at `NotchMotion.barArrivalFloor` while one
     /// straight onto the island answers quicker. On the grown card the
     /// hover just holds it open — the card IS the island's window, so
     /// the pointer wandering down into the rows is still the same
@@ -583,13 +599,14 @@ final class NotchToy: Toy {
     /// owns the island, so the hover is only remembered then — it
     /// lands its grow when the capsule steps down.
     private static let collapseDelay: TimeInterval = 0.18
-    /// Alcove-quick: a pointer that reaches the notch itself wants the
-    /// card, and the notch sits where nothing else is aimed at.
-    private static let hoverExpandDelay: TimeInterval = 0.12
-    /// Arriving down from the menu bar's row floors here instead — the
-    /// pointer that high may only be reaching a menu, so the tell shows
-    /// first and the card waits (Boring Notch's floor).
-    private static let hoverExpandDelayFromBar: TimeInterval = 0.30
+    /// How long a resting pointer waits for the card, and for the breath
+    /// before it: the Notch card's "Open after" (Alcove-quick 0.12 s by
+    /// default — a pointer that reaches the notch itself wants the card),
+    /// floored for an arrival down from the menu bar's row, which may
+    /// only be reaching a menu (`NotchMotion.hoverDelays`).
+    private var hoverDelays: (peek: TimeInterval, expand: TimeInterval) {
+        NotchMotion.hoverDelays(openAfter: settings.hoverOpenDelay, fromBar: hoverArrivedFromBar)
+    }
     /// The arrival path of the current hover, latched on the enter
     /// edge: an ear or tray landing starts the longer clock, and the
     /// pointer crossing on to the island mid-pause keeps it.
@@ -663,7 +680,7 @@ final class NotchToy: Toy {
                     }
                 }
                 peekWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + NotchMotion.hoverDelay,
+                DispatchQueue.main.asyncAfter(deadline: .now() + hoverDelays.peek,
                                              execute: work)
             }
         } else {
@@ -683,8 +700,7 @@ final class NotchToy: Toy {
                 // crossing from an ear onto the island — keeps the
                 // deadline the arrival already set.
                 if expandWork == nil {
-                    let delay = hoverArrivedFromBar
-                        ? Self.hoverExpandDelayFromBar : Self.hoverExpandDelay
+                    let delay = hoverDelays.expand
                     let work = DispatchWorkItem { [weak self] in
                         MainActor.assumeIsolated { self?.hoverExpandFired() }
                     }
@@ -1186,6 +1202,8 @@ final class NotchToy: Toy {
         onMediaGateChanged()
         // The simulate-notch flag every band-hanging surface reads.
         ScreenBarGeometry.simulatedNotch = settings.simulateNotch
+        // The Display pick the island and the Screen Bar share.
+        ScreenBarGeometry.applyDisplayPick(settings.notchDisplay)
         // Sessions, usage or the focus may have moved while the card is
         // grown — refill before the frame re-measures its height.
         if islandExpanded { feedCard() }

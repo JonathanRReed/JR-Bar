@@ -625,6 +625,21 @@ public enum NotchMotion {
     /// long earns the tell — a few points of grow and a subtle swell
     /// of the marks inside.
     public static let hoverDelay: TimeInterval = 0.12
+    /// An arrival down from the menu bar's row never grows the card
+    /// sooner than this — the pointer that high may only be reaching a
+    /// menu (Boring Notch's floor).
+    public static let barArrivalFloor: TimeInterval = 0.30
+
+    /// The hover's two clocks for the Notch card's "Open after"
+    /// (`NotchSettings.hoverOpenDelay`): the card grows once the pointer
+    /// has rested that long — never sooner than `barArrivalFloor` for an
+    /// arrival down from the menu bar — and the breath lands at the
+    /// standard delay or sooner, so a short setting still tells first.
+    public static func hoverDelays(openAfter: Double, fromBar: Bool) -> (peek: TimeInterval, expand: TimeInterval) {
+        let setting = openAfter.isFinite ? min(1, max(0, openAfter)) : hoverDelay
+        let expand = fromBar ? max(setting, barArrivalFloor) : setting
+        return (min(setting, hoverDelay), expand)
+    }
     /// The breath's frame half: the island widens and deepens by a
     /// few points, symmetric on a drawn face, straight down on the
     /// bare housing.
