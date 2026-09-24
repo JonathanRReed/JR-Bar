@@ -109,7 +109,27 @@ final class DockEnhancePreferences {
         set { write?({ var s = read(); s.clickToMinimize = newValue; return s }()) }
     }
 
+    /// How much air the preview keeps — one scale for every inset.
+    var previewSpacing: Double {
+        get { read().previewSpacing }
+        set { write?({ var s = read(); s.previewSpacing = newValue; return s }()) }
+    }
+    /// Points between the Dock icon and the preview's glass.
+    var dockGap: Double {
+        get { read().dockGap }
+        set { write?({ var s = read(); s.dockGap = newValue; return s }()) }
+    }
+    /// The preview covers the Dock's name bubble rather than clearing it.
+    var coverDockLabel: Bool {
+        get { read().coverDockLabel }
+        set { write?({ var s = read(); s.coverDockLabel = newValue; return s }()) }
+    }
+    /// The metrics every inset in the preview reads, at the stored scale.
+    var metrics: DockPreviewMetrics { DockPreviewMetrics.scaled(read().previewSpacing) }
+
     static let delayRange: ClosedRange<Double> = DockEnhanceSettings.delayRange
+    static let spacingRange: ClosedRange<Double> = DockEnhanceSettings.spacingRange
+    static let dockGapRange: ClosedRange<Double> = DockEnhanceSettings.dockGapRange
     static let defaultDelay: Double = DockEnhanceSettings.defaultDelay
     /// The pre-schema `UserDefaults` keys, kept for the one-shot
     /// migration `DockUtility.migrateLegacyEnhanceDefaults` runs.
