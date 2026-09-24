@@ -508,15 +508,17 @@ extension CartoonFish {
                      pt(0.11, 0.19), pt(0.02, 0.28), pt(-0.07, 0.36), pt(-0.10, 0.45),
                      pt(-0.05, 0.52), pt(0.03, 0.53), pt(0.07, 0.48), pt(0.04, 0.43)]
         let widths = [0.16, 0.19, 0.25, 0.30, 0.30, 0.24, 0.17, 0.13, 0.10, 0.085, 0.07, 0.055, 0.045]
-        let trunk = ribbon(spine, widths: widths)
-        var body = trunk
-        body.addPath(Path(ellipseIn: CGRect(x: 0.08, y: -0.455, width: 0.26, height: 0.21)))
-        body.addPath(spline([k(0.27, -0.40), k(0.40, -0.395), corner(0.50, -0.41),
-                             corner(0.51, -0.325), k(0.40, -0.325), k(0.27, -0.31)]))
+        // Trunk, head, snout and coronet merged into one silhouette, so
+        // where they overlap the body stays solid instead of the parts'
+        // opposing windings punching a hole beside the eye.
+        var body = ribbon(spine, widths: widths)
+            .union(Path(ellipseIn: CGRect(x: 0.08, y: -0.455, width: 0.26, height: 0.21)))
+            .union(spline([k(0.27, -0.40), k(0.40, -0.395), corner(0.50, -0.41),
+                           corner(0.51, -0.325), k(0.40, -0.325), k(0.27, -0.31)]))
         for (x, h) in [(0.14, 0.06), (0.19, 0.08), (0.24, 0.055)] as [(Double, Double)] {
-            body.addPath(spline([corner(x - 0.035, -0.42), k(x - 0.012, -0.43 - h * 0.6),
-                                 corner(x, -0.43 - h), k(x + 0.012, -0.43 - h * 0.6),
-                                 corner(x + 0.035, -0.42)]))
+            body = body.union(spline([corner(x - 0.035, -0.42), k(x - 0.012, -0.43 - h * 0.6),
+                                      corner(x, -0.43 - h), k(x + 0.012, -0.43 - h * 0.6),
+                                      corner(x + 0.035, -0.42)]))
         }
         // Rings across the trunk, square to the spine.
         var rings = Path()
@@ -539,8 +541,9 @@ extension CartoonFish {
             fin(pt(-0.02, -0.10), pt(-0.01, 0.12),
                 edge: [k(-0.11, -0.10), k(-0.19, 0.0), k(-0.17, 0.08), k(-0.10, 0.13)],
                 rays: 7, motion: .ripple(1.6)),
-            fin(pt(0.14, -0.28), pt(0.12, -0.24), edge: [k(0.07, -0.30), k(0.05, -0.25)],
-                rays: 3, motion: .paddle(1.2), layer: .near),
+            fin(pt(0.145, -0.28), pt(0.135, -0.235),
+                edge: [k(0.10, -0.305), k(0.06, -0.29), k(0.045, -0.255), k(0.07, -0.225), k(0.11, -0.218)],
+                rays: 4, motion: .paddle(1.2), layer: .near),
         ]
         return Art(
             body: body, bounds: body.boundingRect, fins: fins,

@@ -364,8 +364,8 @@ enum CartoonFish {
 
         let body = pose.body(art.body)
         // The silhouette's edge goes down first, twice as wide as it
-        // shows: the body fills over its inner half, so compound
-        // bodies (the seahorse) keep one clean outline.
+        // shows: the body fills over its inner half, so the outline
+        // hugs the fill with no seam between them.
         f.stroke(body, with: .color(palette.outline),
                  style: StrokeStyle(lineWidth: lw * 2, lineJoin: .round))
         var near: [(fin: Fin, path: Path)] = []
