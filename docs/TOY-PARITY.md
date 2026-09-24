@@ -76,7 +76,7 @@ a `?` never blocks JR-Bar's own Done/Won't.
 | Focus mode change capsule | yes | no | Done | `~/Library/DoNotDisturb/DB/Assertions.json` + the daemon's `focus_sync` |
 | Display connect / disconnect capsule | yes | no | Done | `NSApplication.didChangeScreenParameters` |
 | Screen recording indicator capsule | yes | no | Won't | Mechanism verified private: Atoll binds `CGSIsScreenWatcherPresent` + `CGSRegisterNotifyProc` (CGS events 1502/1503) via `@_silgen_name` — event-driven, no public equivalent (`SCWindow.isActive` is Stage Manager state, not capture). Gray-area fallback: poll `CGSessionCopyCurrentDictionary()["CGSSessionScreenIsCaptured"]` — key-presence semantics confirmed live, but coverage of local SCK streams is unverified; we won't link private CGS for a capsule |
-| Notification banners mirrored into the island | yes | under consideration | Won't | Needs private notification-center hooks; Alcove's own FAQ says these can break any release |
+| Notification banners mirrored into the island | yes | yes (2.8, through Accessibility) | Won't | boring.notch 2.8 does it through Accessibility, so "needs private hooks" no longer holds. The reason now: it reads every other app's banners, and a surface that watches agents does not need to |
 | Calendar: next event, join link | yes | yes | Done | EventKit, "Show calendar" grant |
 | Reminders | no | yes | Done | EventKit, "Show reminders" grant; check-off writes back |
 | Weather | yes | roadmap | Done | Open-Meteo keyless (no WeatherKit entitlement), off by default |
@@ -85,7 +85,11 @@ a `?` never blocks JR-Bar's own Done/Won't.
 | Mirror (camera preview) | no | yes | Done | `ShelfMirrorModel` — AVFoundation session on a private queue, consent asked on the toggle, lens closes when the card folds away; off by default |
 | Swipe gestures on the island | yes | yes | Done | |
 | Hover tell while bare | yes (ear swell) | peek | Done | The Screen Bar ear under the pointer swells outward — the wink the bare island could never draw |
-| Hover-open delay: menu-bar drift vs direct | 0.3 s-ish | — | Done | 0.12 s onto the island, a third of a second arriving from the bar row; ear→island keeps the original deadline |
+| Hover-open delay: menu-bar drift vs direct | 0.3 s-ish | `minimumHoverDuration` 0.3 | Done (adjustable) | Open after (`hoverOpenDelay`, 0–1 s, default 0.12) sets the card's clock; an arrival from the bar row still waits a third of a second; ear→island keeps the original deadline. MewNotch's slider, boring.notch's minimum hover |
+| Which display the island lives on | — | `showOnAllDisplays` / `automaticallySwitchDisplay` | Done | `notchDisplay`: Built-in, Main display, or Where the pointer is (re-seated on a Space or screen change only); the Screen Bar follows through `preferredScreen()` |
+| Sound output picker | no | yes (2.8) | Done | The volume row's route button: every output device, the default checked; the pick sets `kAudioHardwarePropertyDefaultOutputDevice` (public HAL) |
+| Adapter watts and time to empty | no | yes (2.8) | Done | The battery line names the charger's rating (`IOPSCopyExternalPowerAdapterDetails`); on battery it already gave `IOPSGetTimeRemainingEstimate` |
+| A second island running beside ours | — | — | Done | A note under Render with (`UtilityRivals`, role notch): Alcove, Boring Notch, Atoll, MewNotch and more; Hand over to Alcove or Boring Notch, Quit on a click |
 | Suppress hover-open under a fullscreen app | yes | no | Done | Frontmost app's presentation options; the wink still answers |
 | Haptic on open | yes | no | Done | `NSHapticFeedbackManager` tick; Notch settings toggle |
 | Ears as lobes of the notch | yes (wings drop below the bezel line) | ears | Done | Claimed ears widen one black tray, ear to ear, that ends flush with the bezel's bottom edge — no drop below the menu-bar line, where a black tab read as the notch grown downward (turned down 2026-09-16); the lit strip seated under the tray marks each wing's reach, and an unclaimed side ends at its own bezel edge |
@@ -252,8 +256,29 @@ parity bar; "Pro" extras (Top Shelf) are called out where they're separate.
 
 | Feature | Dropover (free + Pro $6.99 IAP) | Yoink (~$8.99 Mac) | Dropzone 4 (Pro Lifetime ~$35 / Yearly ~$20) | boring.notch shelf (GPL-3) | JR-Bar Tray | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| File drop shelf | yes (shake-to-summon, multi-shelf) | yes (edge shelf + stacks + QuickLook + file icons) | yes (Drop Bar stash, detachable) | yes (Shelf 2.0: context menu, multi-select, move-by-default, drag-into-notch) | Done (tray + AirDrop + QuickLook + ⌃⌥D summon) | `NSSharingService` AirDrop on the tray chip's menu; `QLPreviewPanel` on double-click/menu; URL drops → `.webloc`, text drops → deterministic `.txt`; drag-to-notch summon; top-edge + ⌃⌥D hotkey summon; swipe-up fold; real file-type icons via `NSWorkspace.icon(forFile:)` + async Quick Look thumbnail upgrade; drop-onto-chip reorder persists; Folder Pop chips drag files OUT; the 12-item cap names the chip it evicted for a few seconds instead of letting it go silently. Honest gaps: no stacks, no multi-shelf, no shake-to-summon; sources: dropoverapp.com, Yoink MAS, aptonic.com, boring.notch v2.7 notes |
+| File drop shelf | yes (shake-to-summon, multi-shelf) | yes (edge shelf + stacks + QuickLook + file icons) | yes (Drop Bar stash, detachable) | yes (Shelf 2.0: context menu, multi-select, move-by-default, drag-into-notch) | Done (tray + AirDrop + QuickLook + ⌃⌥D summon) | `NSSharingService` AirDrop on the tray chip's menu; `QLPreviewPanel` on double-click/menu; URL drops → `.webloc`, text drops → deterministic `.txt`; drag-to-notch summon; top-edge + ⌃⌥D hotkey summon; swipe-up fold; real file-type icons via `NSWorkspace.icon(forFile:)` + async Quick Look thumbnail upgrade; drop-onto-chip reorder persists; Folder Pop chips drag files OUT; the 40-item cap names the chip it evicted for a few seconds instead of letting it go silently. Stacks and shake-to-summon are in (rows below). Honest gap: no multi-shelf; sources: dropoverapp.com, Yoink MAS, aptonic.com, boring.notch v2.7 notes |
 | Shelf with AirDrop | no (share links) | no (Handoff to iOS) | yes (AirDrop action grid) | yes (shelf + AirDrop) | Done | Same as above — direct Dropzone overlap |
+| Drag-out copies, not moves | ? | yes (⌥ copy, ⌘ move) | ? | `copyOnDrag` | Done | `shelfDragOut` (Copy by default, Atoll #682's choice): the chip drags through `ShelfDragSource`, whose mask is copy outside JR-Bar; ⌘ held at the start of the drag moves; the Move setting makes move the default |
+| Remove after dragging out | ? | yes | ? | `autoRemoveShelfItems` | Done | `shelfRemoveAfterDragOut`: only the dragged chip, only for a drop outside JR-Bar that landed |
+| Multi-select, Clear Shelf | ? | yes | yes | yes (Shelf 2.0) | Done | ⌘- and ⇧-click pick chips (⌥-click splits a stack); a verb on a picked chip acts on the pick; Clear Shelf drops every reference, files untouched. No marquee yet |
+| Instant actions: ZIP, copy text, convert, copy/move to | yes (resize, extract text, ZIP) | no | yes (action grid) | no | Done | Compress (`ditto`, beside the files), Copy Text (Vision on-device; a PDF's own text), Convert to PNG / JPEG (ImageIO), Copy to… / Move to…; Finder's free names, never an overwrite |
+| Shake sensitivity and app exclusions | yes | ignore apps | no | no | Done | `shelfShakeSensitivity` (three 20 pt swings … six 45 pt) and `shelfShakeExcludedBundleIDs` |
+| Steps aside for another shelf app | — | — | — | — | Done | `shelfYieldToRivals` (on): while Dropover, Yoink or Dropzone runs, the shake summon stands down; dropping on the notch still works |
+| Newest first; shelf off | no | no | no | yes (2.8 reverse order, disable Shelf) | Done | `shelfNewestFirst`; `shelfEnabled` off hides the tray and takes no drops |
+
+## Keep-awake (vs Amphetamine, KeepingYouAwake, Atoll)
+
+| Feature | Amphetamine (free, MAS) | KeepingYouAwake (MIT) | Atoll (GPL-3) | JR-Bar Keep Awake | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Session presets (15 m … 4 h), indefinitely | yes | yes (custom list) | yes (cup in the notch header) | Done | `KeepAwakeMenu` on the Awake chip, the footer cup and the Screen Bar's ear; the presets are the person's own list (`jrbar.keepAwakeDurations`) |
+| Until a time | yes | no | no | Done | Until 08:00, the panel's next-morning rule |
+| While an app / process runs | yes | no | no | Done (agents) | Until the agents finish — the daemon's agents lease; the agents' own hold runs while any works |
+| Keep the display on | yes | yes (allow display sleep) | yes | Done | App-local `keepAwakeDisplay`; the daemon rows add Keep display awake while agents run |
+| Closed-display mode | yes | no | no | Done | Lid closed policy (daemon) |
+| Battery floor, Low Power Mode | yes (battery) | yes (both) | no | Done (battery) / Planned (Low Power Mode) | The daemon yields at the battery floor; a `low_power` pause already reads "Low Power Mode is on" — the yield itself lands with the daemon lane |
+| Triggers (display, app, Wi-Fi, schedule…) | yes | external display only | no | Planned | Through the menu bar's rule engine (its lane) |
+| Who else holds the Mac awake | no | no | no | Done | The card's Other apps, read-only from `IOPMCopyAssertionsByProcess` |
+| A card of its own | — | — | — | Done | Utilities › Keep Awake, after Dock |
 
 ## Mirror / Calendar / Reminders (vs Dato, Fantastical, NotchNook peek, Itsycal, boring.notch)
 
