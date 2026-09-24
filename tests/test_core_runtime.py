@@ -2781,6 +2781,50 @@ def test_dismiss_session_hides_a_live_row_until_it_speaks__and_2_more(cleared) -
 
 
 
+def test_history_rows_take_the_name_the_panel_shows_now(headless) -> None:
+    """A History row is named from the last published roster, where the
+    provider's own title lives; a session the roster no longer lists keeps
+    the label it was recorded with, and nothing off-main asks for extras."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+
+    def entry(subject: str, label: str, detail: str | None, at: float) -> SimpleNamespace:
+        return SimpleNamespace(
+            occurred_at_epoch=at, kind=SimpleNamespace(value="completed"), provider="claude",
+            subject_id=subject, label=label, detail=detail, duration_seconds=None,
+        )
+
+    now = time.time()
+    ledger = SimpleNamespace(
+        last_seen_epoch=now - 3600,
+        entries=[
+            entry("claude:session:known", "claude session 1f2e3d4c", "Fix the login flow", now - 60),
+            entry("claude:session:gone", "Old prompt words", "JR-Bar", now - 30),
+            entry("claude:session:same", "Refactor serve", None, now - 10),
+        ],
+    )
+    controller.ensure_activity_ledger = lambda: ledger
+    controller._core_extras_for = MagicMock(side_effect=AssertionError("extras read off-main"))
+    with controller._core_lock:
+        controller._core_documents["state"] = {
+            "sessions": [
+                {"id": "claude:session:known", "label": "Fix the login flow"},
+                {"id": "claude:session:same", "label": "Refactor serve"},
+                {"id": "claude:session:blank", "label": "  "},
+                "not a row",
+            ]
+        }
+    rows = {row["session"]: row for row in controller._core_dispatch("list_history", {})["rows"]}
+    # The roster's title replaces the recorded guess, and the detail that
+    # repeated it goes.
+    assert rows["claude:session:known"]["label"] == "Fix the login flow"
+    assert rows["claude:session:known"]["detail"] is None
+    # A session the roster no longer lists keeps what was recorded.
+    assert (rows["claude:session:gone"]["label"], rows["claude:session:gone"]["detail"]) == ("Old prompt words", "JR-Bar")
+    assert rows["claude:session:same"]["label"] == "Refactor serve"
+    controller._core_extras_for.assert_not_called()
+
+
 def test_mark_history_seen_advances_the_watermark(headless) -> None:
     controller = headless
     controller.applicationDidFinishLaunching_(None)

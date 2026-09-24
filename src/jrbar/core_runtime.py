@@ -2657,6 +2657,41 @@ def _cmd_resolve_effect(self, args):
     return core_lights.resolve_effect(self, args)
 
 
+def _history_rows_named(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Name each History row the way the panel names its session now.
+
+    A row keeps the label written when it was recorded, often the
+    collector's project/prompt guess or a bare id; the last published
+    roster carries the provider's own title. The names are read from that
+    document only: this command runs off the main thread, where
+    ``_core_extras_for`` must never be called. A session the roster no
+    longer lists keeps its stored label."""
+    with self._core_lock:
+        state = self._core_documents.get("state") or {}
+    names: dict[str, str] = {}
+    for session in state.get("sessions") or ():
+        if not isinstance(session, dict):
+            continue
+        session_id, label = session.get("id"), session.get("label")
+        if isinstance(session_id, str) and isinstance(label, str) and label.strip():
+            names[session_id] = label.strip()
+    if not names:
+        return rows
+    named: list[dict[str, Any]] = []
+    for row in rows:
+        label = names.get(row.get("session")) if isinstance(row.get("session"), str) else None
+        if label is None or label == row.get("label"):
+            named.append(row)
+            continue
+        renamed = {**row, "label": label}
+        # The recorded detail was the label without the provider's title;
+        # once the title is the label, repeating it under itself says nothing.
+        if renamed.get("detail") == label:
+            renamed["detail"] = None
+        named.append(renamed)
+    return named
+
+
 @command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")
@@ -2668,7 +2703,9 @@ def _cmd_list_history(self, args):
     # state), so it is fetched there; the frozen object then reads off-main.
     on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
     ledger = on_main(lambda: self.ensure_activity_ledger())
-    rows = history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
+    rows = _history_rows_named(
+        self, history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
+    )
     # The power log's rows ("let go: Mac too hot", "put the Mac to sleep")
     # sit beside the sessions' in the one History list.
     from . import core_power
