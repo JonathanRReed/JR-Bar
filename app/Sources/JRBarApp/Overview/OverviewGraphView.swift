@@ -95,11 +95,16 @@ private struct GraphHeader: View {
                 chips(counts, words: false)
             }
             Spacer(minLength: 8)
-            Text("Scroll to pan · pinch to zoom · double-click to open")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .layoutPriority(-1)
+            // Whole or not at all: a narrow window drops the hint rather
+            // than cutting it off.
+            ViewThatFits(in: .horizontal) {
+                Text("Scroll to pan · pinch to zoom · double-click to open")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                Color.clear.frame(width: 0, height: 0)
+            }
+            .layoutPriority(-1)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -615,24 +620,30 @@ private struct GraphHoverCard: View {
     let entry: CoreRosterEntry
     let store: OverviewStore
 
+    /// The provider tile's width, which every row's mark centres on, so
+    /// all the words start on one line.
+    static let mark: CGFloat = 22
+    static let gutter: CGFloat = 8
+
     var body: some View {
         let session = entry.session
         let style = ProviderStyle.style(for: node.provider)
         VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .top, spacing: 8) {
-                ProviderTile(style: style, size: 22)
+            HStack(alignment: .top, spacing: Self.gutter) {
+                ProviderTile(style: style, size: Self.mark)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(node.label).font(.system(size: 12.5, weight: .semibold)).lineLimit(2)
                     Text(whereLine).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
-            HStack(spacing: 6) {
+            row {
                 Circle().fill(node.activity.tint).frame(width: 7, height: 7)
+            } text: {
                 Text(stateLine)
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
                     .foregroundStyle(node.activity.wordIsLoud ? node.activity.tint : .primary)
             }
-            .font(.system(size: 11, weight: .medium))
-            .monospacedDigit()
             if let ask = session.ask {
                 Text(ask.summary ?? ask.preview ?? "Waiting on you")
                     .font(.system(size: 10.5))
@@ -641,25 +652,45 @@ private struct GraphHoverCard: View {
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.orange.opacity(0.1)))
+                    // The words on the card's line, the box hanging just
+                    // outside it.
+                    .padding(.leading, Self.mark + Self.gutter - 8)
             } else if let tool = session.tool, !tool.isEmpty {
-                Label("Last tool: \(tool)", systemImage: "hammer")
-                    .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                row("hammer", "Last tool: \(tool)")
             }
             if let spend = spendLine {
-                Label(spend, systemImage: "chart.bar")
-                    .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                row("chart.bar", spend)
             }
             if session.workers > 0 {
-                Label(session.workers == 1 ? "1 worker" : "\(session.workers) workers", systemImage: "person.2")
-                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                row("person.2", session.workers == 1 ? "1 worker" : "\(session.workers) workers")
             }
             Text(store.canOpen(entry) ? "Click to inspect · double-click to open" : "On the peer Mac · click to inspect")
                 .font(.system(size: 10)).foregroundStyle(.tertiary)
+                .padding(.leading, Self.mark + Self.gutter)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
+    }
+
+    /// A mark centred under the provider tile, then its words.
+    private func row(@ViewBuilder icon: () -> some View, @ViewBuilder text: () -> some View) -> some View {
+        HStack(spacing: Self.gutter) {
+            icon().frame(width: Self.mark)
+            text()
+        }
+    }
+
+    private func row(_ symbol: String, _ words: String) -> some View {
+        row {
+            Image(systemName: symbol).font(.system(size: 10, weight: .medium))
+        } text: {
+            Text(words).lineLimit(1)
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
     }
 
     private var whereLine: String {
@@ -704,14 +735,15 @@ private struct GraphHubCard: View {
         let style = ProviderStyle.style(for: provider)
         let counts = Dictionary(grouping: sessions, by: \.activity).mapValues(\.count)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                ProviderTile(style: style, size: 22)
+            HStack(spacing: GraphHoverCard.gutter) {
+                ProviderTile(style: style, size: GraphHoverCard.mark)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(style.name).font(.system(size: 12.5, weight: .semibold))
                     Text(reach).font(.system(size: 10.5)).foregroundStyle(.secondary)
                 }
             }
-            HStack(spacing: 6) {
+            // A busy provider's states wrap onto a second row, words kept.
+            WrapRow {
                 ForEach(Self.order, id: \.self) { activity in
                     if let count = counts[activity], count > 0 {
                         GraphStateChip(activity: activity, count: count)
@@ -719,11 +751,13 @@ private struct GraphHubCard: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
     }
+
 }
 
 /// − 85% + and fit, floating in glass at the map's corner.

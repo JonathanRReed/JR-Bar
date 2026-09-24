@@ -8,11 +8,11 @@ import Testing
 /// Render proof for the Overview's Graph: a busy fleet (sixteen sessions
 /// across Claude, Codex, Gemini and JR-Bar's own background agents, three
 /// projects, workers, every state) and a sparse one, in light and dark,
-/// hovered and selected, in the default window's narrow column, and a
-/// sixty-session fleet, at 2×, so a human can eyeball the map the way a
-/// screenshot would show it. Off by default; set `JRBAR_RENDER_PROOF=1` to write
-/// `overview-graph-*.png` into `JRBAR_RENDER_PROOF_DIR` (default
-/// `/tmp/jrbar-audit`).
+/// hovered, asked and selected, in the default window's narrow column,
+/// and a sixty-session fleet with a busy hub hovered, at 2×, so a human
+/// can eyeball the map the way a screenshot would show it. Off by
+/// default; set `JRBAR_RENDER_PROOF=1` to write `overview-graph-*.png`
+/// into `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
 @Suite("Overview graph render proof")
 @MainActor
 struct OverviewGraphRenderProofTests {
@@ -175,6 +175,8 @@ struct OverviewGraphRenderProofTests {
                  hover: .node("claude:night"), selected: "codex:ci"),
             Shot(name: "overview-graph-busy-dark-hub", roster: busy, scheme: .dark, size: wide,
                  hover: .hub("codex"), selected: "claude:sampler"),
+            Shot(name: "overview-graph-busy-dark-ask", roster: busy, scheme: .dark, size: wide,
+                 hover: .node("codex:ci")),
             Shot(name: "overview-graph-sparse-light", roster: sparse, scheme: .light, size: CGSize(width: 900, height: 560)),
             Shot(name: "overview-graph-sparse-dark", roster: sparse, scheme: .dark, size: CGSize(width: 900, height: 560)),
             // The Overview's default window leaves the content column about
@@ -182,6 +184,8 @@ struct OverviewGraphRenderProofTests {
             Shot(name: "overview-graph-compact-light", roster: busy, scheme: .light, size: CGSize(width: 560, height: 470)),
             Shot(name: "overview-graph-fleet-dark", roster: Self.fleetRoster(now: now), scheme: .dark,
                  size: CGSize(width: 1400, height: 900)),
+            Shot(name: "overview-graph-fleet-light-hub", roster: Self.fleetRoster(now: now), scheme: .light,
+                 size: CGSize(width: 1400, height: 900), hover: .hub("gemini")),
         ]
         var written: [String] = []
         for shot in shots {
