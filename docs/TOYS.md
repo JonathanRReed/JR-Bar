@@ -397,8 +397,9 @@ at 30 fps + `Canvas` draws only what moves — fish labels resolve once
 and are cached. It reads `core.state.sessions` (mains AND workers) and
 stops its timelines while occluded. Controls: see "The card" below.
 Reduce Motion:
-rays, shimmer & kelp hold still, tails don't wag, the jellyfish &
-snail freeze, the manta and the visitors skip their pass (a queued
+rays, shimmer & kelp hold still, tails don't wag, the jellyfish
+freezes, the snail skips its walk and is simply at each pearl, the
+manta and the visitors skip their pass (a queued
 visitor is still marked seen and its caption tells the story), tapped
 fish do no tricks, and the sips, spirals, rings & bursts hold at a
 still pose — poses stay.
@@ -418,8 +419,9 @@ body is five rows:
   name tag under the pointer — what "Show labels" off always really
   did), or Never (the selected fish still names itself).
 - **Day & night** — the clock, the sun, **Follow Light & Dark** (eases
-  over two seconds when macOS flips), the four-minute cycle, **Always
-  day** or **Always night**.
+  over two seconds when macOS flips — the water, back wall and sand
+  redraw quickly until it lands, so the whole tank dims together), the
+  four-minute cycle, **Always day** or **Always night**.
 - **Sound** — off by default. A plop when food lands, a gulp when a fish
   eats, a clink for a pearl or coin, a chime for a purchase or a reward
   card, a whoosh for a visitor (`AquariumSound`, synthesized, no asset).
@@ -430,11 +432,14 @@ body is five rows:
 A folded **Fine-tune** holds the numbers: **Fish at once** (All, 6, 10,
 16, 24 — past it, residents rest first, least raised first, then quiet
 sessions, then working ones; an ask, a failure or a finish always shows,
-and fry go with their parent: `AquariumModel.cap`), **Raised fish
-stay**, **Plankton**, **Bubbles** (0 turns the stream off), **Scenery**
+a finished fish frees its place once it has swum off, and fry go with
+their parent: `AquariumModel.cap`), **Raised fish stay**, **Plankton**
+(0 clears the water), **Bubbles** (0 turns the stream off; the two share
+one 0–2 track), **Scenery**
 (full, light or bare seeded dressing — what you bought always stays;
 the fish's work stations use the same share), **Visitors** (off stops
-any visitor from queuing, the alien included) and **Reset fine-tune**.
+any visitor from queuing, the alien included, and sends away one already
+waiting) and **Reset fine-tune**.
 A Settings search that lands on one of these rows opens Fine-tune
 (`ToysStore.revealRow`). **Outside the window** keeps Fill screen, Live
 wallpaper, Screensaver and its clock.
@@ -458,7 +463,8 @@ Three shop items, look only — the economy doesn't change:
   and the flight home follow.
 - **Candy gravel** (substrates, 35): a light tan bed under round beads
   in pink, lemon, cyan, lime and violet, with candy pebbles. Baked on the
-  still pass like every floor.
+  still pass like every floor; the shop tile and the card's swatch show
+  the beads on the tan.
 - **Toy reef** (back wall, 110, level 3): a painted stage set that
   changes with the tank level — a bubble cave (levels 0–2), pink ruins
   (3–5), a coral city whose windows glow at night (6–8) and a star
@@ -476,7 +482,9 @@ hat to.
 - **The snail fetches** (`SnailSim`). With the window open it hustles to
   the oldest resting pearl and picks it up (`snailCollected`); the tick
   only sweeps up drops older than 120 s as a backstop. With the window
-  closed the tick collects after 10 s as before. With no pearls it
+  closed the tick collects after 10 s as before. A pearl that rests past
+  the end of its bed (a leaving fish's, dropped at the glass) is fetched
+  from the end it can reach. With no pearls it
   creeps end to end and naps after five quiet minutes; an hour with no
   pearl warms its shell toward red and it huffs. It turns by squashing
   through zero over 0.6 s — never a one-frame flip — and the hermit crab
@@ -502,7 +510,8 @@ hat to.
 - The care records are pruned with the window closed too (from the
   session refresh, at most once a minute), passers-by first — small
   nameless fish, then small named ones, then the oldest — never a live
-  fish or a resident.
+  fish or a resident. Nothing is pruned until the core has sent its
+  session list: before that every live session would look gone.
 
 ## Notch Buddy (native)
 
