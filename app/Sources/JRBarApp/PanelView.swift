@@ -1186,33 +1186,32 @@ struct UsageSection: View {
 }
 
 /// The providers with nothing to say — every window at 0 %, no window
-/// at all, the source not found or off — as one row: their tiles, their
-/// names and why ("2 at 0% · 1 not found"). A click opens the Usage
+/// at all, the source not found or off — as one row: a neutral tile in
+/// the tile column, so the names line up with the rows above, their
+/// names, and why ("2 at 0% · 1 not found"). A click opens the Usage
 /// Center, on the provider when there is only one.
 struct UsageQuietRow: View {
     let providers: [CoreProviderUsage]
     @Bindable var store: PanelStore
     @ViewState private var hovering = false
 
-    /// Tiles past this many would crowd the names out.
-    static let maxTiles = 4
-
-    private var styles: [ProviderStyle] {
-        providers.map { ProviderStyle.style(for: $0.id, document: store.settingsDocument) }
+    private var providerNames: [String] {
+        providers.map { ProviderStyle.style(for: $0.id, document: store.settingsDocument).name }
     }
 
     var body: some View {
-        let styles = styles
+        let names = providerNames
         HStack(spacing: 9) {
-            HStack(spacing: -6) {
-                ForEach(Array(styles.prefix(Self.maxTiles).enumerated()), id: \.offset) { _, style in
-                    ProviderTile(style: style, size: 20)
-                        .saturation(0.35)
-                        .opacity(0.8)
-                }
+            ZStack {
+                RoundedRectangle(cornerRadius: 20 * 0.28, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2]))
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.tertiary)
             }
+            .frame(width: 20, height: 20)
             VStack(alignment: .leading, spacing: 3) {
-                Text(styles.map(\.name).joined(separator: ", "))
+                Text(names.joined(separator: ", "))
                     .fontWeight(.medium)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -1238,16 +1237,16 @@ struct UsageQuietRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { store.openUsageCenter(provider: providers.count == 1 ? providers.first?.id : nil) }
-        .help(tooltip(styles))
+        .help(tooltip(names))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(tooltip(styles))
+        .accessibilityLabel(tooltip(names))
         .accessibilityHint("Opens the Usage Center")
         .accessibilityAddTraits(.isButton)
     }
 
     /// "Gemini: at 0%", one line per provider.
-    private func tooltip(_ styles: [ProviderStyle]) -> String {
-        zip(styles, providers).map { "\($0.name): \(PanelStore.quietWord($1))" }.joined(separator: "\n")
+    private func tooltip(_ names: [String]) -> String {
+        zip(names, providers).map { "\($0): \(PanelStore.quietWord($1))" }.joined(separator: "\n")
     }
 }
 
