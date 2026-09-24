@@ -391,13 +391,8 @@ enum DockSwitcherList {
         }
     }
 
-    // MARK: Scope
+    // MARK: Order
 
-    /// "Only this display": rows whose window sits on `display` (a
-    /// Quartz-space screen frame, judged by the window's centre). A
-    /// minimized window belongs to no display and stays, as does a row
-    /// with no frame to judge — the filter narrows, it never hides
-    /// what it can't place.
     /// The strip in the card's order: as built (most recent window
     /// first), or each app's windows together, the apps in the order of
     /// their most recent window and each app's windows keeping theirs.
@@ -427,6 +422,13 @@ enum DockSwitcherList {
         }
     }
 
+    // MARK: Scope
+
+    /// "Only this display": rows whose window sits on `display` (a
+    /// Quartz-space screen frame, judged by the window's centre). A
+    /// minimized window belongs to no display and stays, as does a row
+    /// with no frame to judge — the filter narrows, it never hides
+    /// what it can't place.
     static func onDisplay(_ items: [SwitcherItem], display: CGRect) -> [SwitcherItem] {
         items.filter { item in
             guard !item.minimized, let frame = item.frame else { return true }
@@ -2551,6 +2553,7 @@ struct DockSwitcherView: View {
     }
 
     private func help(for item: SwitcherItem) -> String {
+        if item.windowless { return "\(item.appName) — no open windows" }
         var text = item.minimized ? "\(item.appName) — \(item.title) (minimized)" : "\(item.appName) — \(item.title)"
         if let agent = item.agent {
             text += "\n\(agent.providerName) · \(agent.label) — \(agent.statusLine)"
