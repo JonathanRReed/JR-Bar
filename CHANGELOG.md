@@ -69,6 +69,18 @@ All notable changes to JR-Bar are documented here.
 - Exactly one JR-Bar is registered with Launch Services: packaging takes
   its intermediate copies back out (even when a build fails part-way)
   and `make install-pkg` registers the installed app.
+- From the first live check of the build: a stale usage source names its
+  fix ("Reconnect Claude", "Run grok login") on the panel, the Usage
+  Center, the notch card, the palette and the Screen Bar ear instead of
+  "waiting for a new reading"; the panel's laptop mark says the lid is
+  closed only when it is; stale readings draw faint (or unread once the
+  window has lapsed) in every menu-bar icon style and its previews; the
+  panel's header says its word once ("2 of 3 sessions"), titles get
+  their room, context hairlines span the whole column and the half-cut
+  Usage row fades whole; titled windows take their content at full size,
+  so opening the Overview no longer trips a constraint fault. The mock
+  daemon the render proofs start now exits with the test run that
+  started it.
 
 ### Overnight pass (2026-09-24)
 
