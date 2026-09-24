@@ -591,6 +591,12 @@ final class NotchToy: Toy {
     /// ear is not a leave.
     var pointerOnBand: @MainActor () -> Bool = { false }
 
+    /// ⌃⌥D and `jrbar://shelf` while the band's glass card is the
+    /// notch's surface — the delegate hands in the band's own toggle
+    /// (`ScreenBarInteraction.toggleShelfCard`). nil once it acted, else
+    /// the sentence a link says.
+    var toggleGlassShelf: @MainActor () -> String? = { "JR-Bar is still starting." }
+
     /// The grown card's target frame, published for the HUD's toast
     /// anchor — a pill hung under the band while the card is open
     /// would land on its face. Same write/read discipline as

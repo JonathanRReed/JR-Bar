@@ -964,6 +964,27 @@ final class ScreenBarInteraction {
         hideTooltip()
     }
 
+    /// ⌃⌥D and `jrbar://shelf` while the glass card is the notch's
+    /// surface (`NotchToy.toggleShelf`): the card pinned straight onto
+    /// its Shelf page, the band click's own pin, or let go when it is
+    /// already up pinned. nil once it acted, else the sentence a link
+    /// says; a card with nothing to hang from leaves no pin and no
+    /// Shelf page waiting behind it.
+    func toggleShelfCard() -> String? {
+        if card.isShown && card.isPinned {
+            hideTooltip()
+            return nil
+        }
+        card.model.show(.shelf)
+        pinCard()
+        guard card.isShown else {
+            hideTooltip()
+            card.model.show(.now)
+            return "The Shelf card has nowhere to open right now."
+        }
+        return nil
+    }
+
     // MARK: Card
 
     private func showTooltip(_ focus: ScreenBarFocus) {

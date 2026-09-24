@@ -43,20 +43,22 @@ final class DataHoarderUtility: Toy {
     }
 
     func openArchive() {
-        if window == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 620),
-                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                                  backing: .buffered, defer: false)
-            window.title = "Data Hoarder"
-            window.identifier = NSUserInterfaceItemIdentifier("data-hoarder")
-            window.contentView = NSHostingView(rootView: DataHoarderView(model: model))
-            window.minSize = NSSize(width: 740, height: 480)
-            window.isReleasedWhenClosed = false
-            window.center()
-            self.window = window
-        }
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        let archive = window ?? makeArchiveWindow()
+        window = archive
+        WindowFront.bring(archive)
+    }
+
+    private func makeArchiveWindow() -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 620),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                              backing: .buffered, defer: false)
+        window.title = "Data Hoarder"
+        window.identifier = NSUserInterfaceItemIdentifier("data-hoarder")
+        window.contentView = NSHostingView(rootView: DataHoarderView(model: model))
+        window.minSize = NSSize(width: 740, height: 480)
+        window.isReleasedWhenClosed = false
+        window.center()
+        return window
     }
 }
 

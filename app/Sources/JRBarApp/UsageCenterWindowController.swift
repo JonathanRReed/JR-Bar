@@ -26,9 +26,7 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
         self.window = window
         attachContent(to: window)
         store.windowDidOpen()
-        NSRunningApplication.current.activate()
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
+        WindowFront.bring(window)
     }
 
     func toggle() {

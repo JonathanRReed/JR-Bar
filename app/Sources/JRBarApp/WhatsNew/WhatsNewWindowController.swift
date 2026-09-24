@@ -30,19 +30,17 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
     var isVisible: Bool { window?.isVisible ?? false }
 
     /// Opened by hand — a menu, a link, the palette: in front and key,
-    /// like any window.
+    /// like any window (`WindowFront`).
     func show() {
         disarm()
         let window = self.window ?? makeWindow()
         self.window = window
         attachContent(to: window)
-        NSRunningApplication.current.activate()
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
+        WindowFront.bring(window)
     }
 
     /// On its own: in front of whatever is up, without taking the app
-    /// active. A click makes it key.
+    /// active — never through `WindowFront`. A click makes it key.
     private func present() {
         let window = self.window ?? makeWindow()
         self.window = window

@@ -39,41 +39,16 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
     func show(activate: Bool) {
         let window = self.window ?? makeWindow()
         self.window = window
+        // `jrbar://aquarium` from Terminal or a Quicklink arrives while
+        // another app has the screen: the tank comes in front of it
+        // (`WindowFront`). Left on at quit, it comes back at launch
+        // without taking focus.
         if activate {
-            bringForward(window)
+            WindowFront.bring(window)
         } else {
             window.orderFront(nil)
         }
         noteOcclusion()
-    }
-
-    /// Puts the tank in front of whatever app is frontmost, the way the
-    /// Overview comes forward: `jrbar://aquarium` from Terminal or a
-    /// Quicklink arrives while another app has the screen, and the
-    /// deprecated `activate(ignoringOtherApps:)` could leave the tank
-    /// behind it with nothing appearing to happen.
-    private func bringForward(_ window: NSWindow) {
-        NSRunningApplication.current.activate()
-        NSApp.activate()
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        // A tank left on another Space would order front there; this
-        // pulls it onto the current one for the order-in, then comes
-        // straight off so it stays put.
-        if !window.isOnActiveSpace {
-            window.collectionBehavior.insert(.moveToActiveSpace)
-        }
-        window.makeKeyAndOrderFront(nil)
-        window.collectionBehavior.remove(.moveToActiveSpace)
-        // Activation is cooperative: when the frontmost app does not
-        // yield, the request above is dropped. Opening ourselves through
-        // Launch Services is the sanctioned way through anyway.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            guard !NSApp.isActive else { return }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            configuration.createsNewApplicationInstance = false
-            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in }
-        }
     }
 
     func close() {
@@ -124,8 +99,7 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
         window.styleMask = [.borderless]
         window.level = .screenSaver
         window.setFrame(screen.frame, display: true)
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        WindowFront.bring(window)
         installEscMonitor()
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification,

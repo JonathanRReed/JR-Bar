@@ -7,6 +7,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = ROOT / "packaging" / "build_macos_pkg.sh"
 HOOK_BENCHMARK = ROOT / "scripts" / "benchmark_hook_ingress.py"
+INSTALL_SCRIPT = ROOT / "scripts" / "install-agents.sh"
+LSREGISTER = (
+    "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/"
+    "LaunchServices.framework/Versions/A/Support/lsregister"
+)
 
 
 def test_package_builder_fails_fast_and_never_defaults_to_apple_python_39__and_2_more() -> None:
@@ -245,3 +250,36 @@ def test_hook_ingress_benchmark_has_bounded_content_free_report_contract__and_1_
     assert result.returncode != 0
     assert "at least 50" in result.stderr
 
+
+
+def test_package_builder_leaves_no_registered_jrbar_copy__and_1_more() -> None:
+    # --- scenario: package_builder_unregisters_its_intermediate_bundles
+    # Launch Services registers the bundles a build leaves behind, and any of
+    # them can win a jrbar:// link; the one JR-Bar is ~/Applications'.
+    text = BUILD_SCRIPT.read_text(encoding="utf-8")
+
+    assert f'LSREGISTER_TOOL="${{LSREGISTER_TOOL:-{LSREGISTER}}}"' in text
+    function = text.index("unregister_build_copies() {")
+    unregister = text.index('"$LSREGISTER_TOOL" -u "$bundle" >/dev/null 2>&1 || true')
+    trap = text.index("trap unregister_build_copies EXIT")
+    assert function < text.index('for bundle in "$APP_PATH" "$SWIFT_APP"; do') < unregister < trap
+    # Guarded, and armed on every exit once the build directory is made,
+    # before the first JR-Bar.app exists: a failed notary or appcast step
+    # leaves the same copies behind as a made package.
+    assert function < text.index('if [ -x "$LSREGISTER_TOOL" ]; then') < unregister
+    assert text.index('/bin/mkdir -p "$BUILD_DIR" "$DIST_DIR"') < trap
+    assert trap < text.index('JRBAR_BUNDLE="$SWIFT_APP"')
+    assert text.count("\ntrap ") == 1
+
+    # --- scenario: pkg_install_registers_the_home_applications_copy
+    text = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    pkg_branch = text[text.index('if [[ "$MODE" == "pkg" ]]; then'):text.index("    exit 0\nfi\n")]
+
+    assert f'LSREGISTER="${{LSREGISTER_TOOL:-{LSREGISTER}}}"' in text
+    assert 'if [[ -x "$LSREGISTER" ]]; then' in pkg_branch
+    register = pkg_branch.index('if "$LSREGISTER" -f "$APP" >/dev/null 2>&1; then')
+    # After the install is verified, before the app is launched.
+    assert pkg_branch.index('codesign --verify --deep --strict "$APP"') < register
+    assert register < pkg_branch.index('open -a "$APP"')
+    # A refusal is said, never fatal.
+    assert "jrbar:// links may open another copy" in pkg_branch

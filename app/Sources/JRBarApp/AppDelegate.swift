@@ -245,13 +245,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         self.hotkey = hotkey
         // Yoink's drop-target summon: ⌃⌥D toggles the island's shelf
-        // card — open pinned, a second press folds it. The band click's
-        // own expand/collapse pair drives both directions so the card
-        // obeys every existing guard (fold engaged, capsule mid-show).
+        // card (the band's glass card with no island drawn) — open
+        // pinned, a second press folds it. The band click's own
+        // expand/collapse pair drives both directions so the card obeys
+        // every existing guard (fold engaged, capsule mid-show).
         let shelfHotkey = PanelHotkey(signature: OSType(0x6A726273),
                                       keyCode: UInt32(kVK_ANSI_D))
         shelfHotkey.onPress = { [weak toysStore] in
-            toysStore?.notch.toggleShelfFromHotkey()
+            _ = toysStore?.notch.toggleShelf()
         }
         shelfHotkey.setEnabled(settingsStore.shelfHotkeyEnabled)
         settingsStore.shelfHotkeyRegistrationFailed = shelfHotkey.registrationFailed
@@ -354,6 +355,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // alive while the island's debounce decides on the card.
         interaction.onWingHover = { [weak screenBar] side in screenBar?.hoverWing(side) }
         toysStore.notch.pointerOnBand = { [weak interaction] in interaction?.hovering ?? false }
+        // With no island drawn, ⌃⌥D and `jrbar://shelf` open the glass
+        // card on its Shelf page instead — the same two pages.
+        toysStore.notch.toggleGlassShelf = { [weak interaction] in
+            interaction?.toggleShelfCard() ?? "JR-Bar is still starting."
+        }
         // The grown island's card reads the same facts the glass one
         // does.
         toysStore.notch.cardFocus = { [weak self] in self?.store?.screenBarFocus }
@@ -762,7 +768,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         wireShell()
 
         // The first-run walkthrough: agents, permissions, menu bar.
-        // `shouldPresentOnLaunch` gates the auto-show; Settings ›
+        // `shouldPresentOnLaunch` gates the auto-show, which asks to come
+        // active but never forces it (`showOnLaunch`); Settings ›
         // General's "Run Setup Again" opens the same window.
         let setup = SetupWindowController.shared
         setup.store.model = .live(core: core)
@@ -774,7 +781,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         setup.store.model.setIconStyle = { [weak settingsStore] in settingsStore?.menuBarIconStyle = $0 }
         setup.store.onOpenToys = { [weak settingsWindow] in settingsWindow?.show(page: .toys) }
         let setupShown = setup.store.shouldPresentOnLaunch
-        if setupShown { setup.show() }
+        if setupShown { setup.showOnLaunch() }
 
         // What's New: once per release, after Setup has run to its end
         // and never in the launch that shows it, at the first moment the
@@ -1845,10 +1852,11 @@ extension AppDelegate {
             self?.panel?.open()
             return nil
         }
+        // The ⌃⌥D key's own toggle, so the link lands on the Shelf page
+        // too rather than on Now.
         router.toggleShelf = { [weak self] in
             guard let notch = self?.toysStore?.notch else { return "JR-Bar is still starting." }
-            if notch.islandExpanded { notch.collapseFromBand() } else { notch.expandFromBand() }
-            return nil
+            return notch.toggleShelf()
         }
     }
 

@@ -21,8 +21,7 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
         self.window = window
         attachContent(to: window)
         store.windowDidOpen()
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        WindowFront.bring(window)
         installKeyMonitor()
     }
 
