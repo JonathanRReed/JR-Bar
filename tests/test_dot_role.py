@@ -357,7 +357,7 @@ def test_shift_program_phase_reanchors_the_loop_by_the_skew__and_3_more() -> Non
     """A ``pulse`` is exactly two ``cosine`` halves on the firmware, so a cut
     at the peak is exact -- the rotation used to refuse every pulse."""
     assert shift_program_phase("#FF0000 500ms pulse\noff 500ms\nrepeat", 250) == (
-        "#000000 250ms cosine\noff 500ms\n#FF0000 250ms cosine\nrepeat"
+        "off 250ms cosine\noff 500ms\n#FF0000 250ms cosine\nrepeat"
     )
 
     # --- scenario: a_cut_on_a_step_boundary_is_a_pure_rotation
@@ -931,3 +931,34 @@ def test_the_period_lock_holds_for_every_corpus_program__and_1_more() -> None:
             continue
         for shift in (13.3, 25.6, 56.3, 81.4):
             assert shift_program_phase(narrowed, shift) is not None, (name, shift)
+
+
+def test_the_lights_frame_asks_only_for_role_and_why__and_1_more(monkeypatch) -> None:
+    # --- scenario: describing_an_extend_dot_plans_no_program
+    """The lights frame reads the plan's role and ``why`` on every build;
+    ``describe_only`` gives it those without working out the Dot's
+    continuation, which cost the main thread about 50 ms a frame."""
+    import sys
+    from pathlib import Path
+
+    from jrbar import dot_continue, linked_sync
+
+    scripts = str(Path(__file__).resolve().parents[1] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from review_effects import effect_programs
+
+    comet = next(p for n, p, leds in effect_programs() if n == "effect_comet_8led")
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("the lights frame planned the Dot's program")
+
+    monkeypatch.setattr(dot_continue, "continue_program", refuse)
+    monkeypatch.setattr(linked_sync, "period_locked_dot", refuse)
+    plan = plan_dot_surface(
+        role="extend", semantic="active", strip_program=comet, extend_style="continue", describe_only=True
+    )
+    assert plan is not None and plan.program == "" and plan.why == "working" and plan.role == "extend"
+
+    # --- scenario: nothing_to_extend_is_still_nothing
+    assert plan_dot_surface(role="extend", strip_program=None, describe_only=True) is None

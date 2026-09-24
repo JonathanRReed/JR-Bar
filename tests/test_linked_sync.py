@@ -267,3 +267,142 @@ def test_the_period_lock_steps_down_rather_than_change_the_period() -> None:
     strip_lap = _lap(compile_presentation_program(scanner, led_count=8).program, 8)
     dot_lap = _lap(compile_presentation_program(locked.program, led_count=2).program, 2)
     assert locked.lap_ms == strip_lap == dot_lap
+
+
+# --- Continue: the light runs on into the Dot ------------------------------------
+
+
+def _luma(color) -> float:
+    return 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+
+
+def _bump_tops(series: list[tuple[int, float]], *, share: float = 0.6, apart: int = 80) -> list[int]:
+    """The moments a sampled LED peaks: each run of samples at least
+    ``share`` of its brightest is one bump, and its top is the middle of
+    the samples within a code of that run's highest (an engine rounds a
+    pulse's crest to a few equal frames)."""
+    top = max(value for _moment, value in series)
+    runs: list[list[tuple[int, float]]] = []
+    for moment, value in series:
+        if value < share * top:
+            continue
+        if runs and moment - runs[-1][-1][0] <= apart:
+            runs[-1].append((moment, value))
+        else:
+            runs.append([(moment, value)])
+    tops = []
+    for run in runs:
+        highest = max(value for _moment, value in run)
+        crest = [moment for moment, value in run if value >= highest - 1.0]
+        tops.append((crest[0] + crest[-1]) // 2)
+    return tops
+
+
+@pytest.mark.parametrize("effect", ["effect_comet_8led", "effect_chase_8led"])
+def test_continue_carries_every_pass_onto_the_dot__and_1_more(effect: str) -> None:
+    # --- scenario: every_head_leaving_led_7_reaches_the_dot_one_step_later
+    """Written the way the daemon writes a linked Dot -- rotated to the
+    strip's phase from its recorded start, from the program's own origin --
+    and played on the firmware engine beside the strip: every time the head
+    peaks on LED 7, the Dot's first LED peaks one travel step later and its
+    second a step after that, within a frame, and no pass is missed or
+    added. The first spelling lost two passes in six and lit the Dot early."""
+    from jrbar.dot_continue import continue_program
+    from jrbar.led_wasm import RawSdLedWasmController
+    from jrbar.presentation_compiler import compile_presentation_program
+
+    program = next(p for n, p, leds in CORPUS if n == effect)
+    strip = compile_presentation_program(program, led_count=8).program
+    locked = continue_program(program, source_leds=8)
+    assert locked is not None and locked.rung == "continue"
+    lap = locked.lap_ms
+    joined_at = 3.217
+    timed = apply_device_timing(
+        locked.program,
+        DeviceTiming(anchor=0.0, rate=1.0, trim_ms=-locked.origin_ms),
+        led_count=2,
+        now=joined_at,
+        latency_ms=0.0,
+    )
+    assert timed.rotation == "exact" and fits_budget(timed.program)
+    pro = RawSdLedWasmController(8)
+    dot = RawSdLedWasmController(2)
+    assert pro.parse(strip, 0).ok and dot.parse(timed.program, int(joined_at * 1000)).ok
+    led6: list[tuple[int, float]] = []
+    led7: list[tuple[int, float]] = []
+    first: list[tuple[int, float]] = []
+    second: list[tuple[int, float]] = []
+    for moment in range(0, 3 * lap, 5):
+        pro_frame = pro.step(moment)
+        dot_frame = dot.step(moment) if moment >= joined_at * 1000 else None
+        if moment < lap or dot_frame is None:
+            continue
+        led6.append((moment, _luma(pro_frame[6])))
+        led7.append((moment, _luma(pro_frame[7])))
+        first.append((moment, _luma(dot_frame[0])))
+        second.append((moment, _luma(dot_frame[1])))
+    exits = _bump_tops(led7)
+    step = min(exit - top for exit in exits[1:2] for top in _bump_tops(led6) if top < exit)
+    assert 150 <= step <= 290
+    arrivals, onward = _bump_tops(first), _bump_tops(second)
+    frame = 17
+    checked = 0
+    for exit in exits:
+        if exit + 2 * step + frame >= 3 * lap:
+            continue
+        assert any(abs(top - (exit + step)) <= frame for top in arrivals), (effect, exit, arrivals)
+        assert any(abs(top - (exit + 2 * step)) <= frame for top in onward), (effect, exit, onward)
+        checked += 1
+    assert checked >= 10
+    # One Dot pass for every strip pass: nothing missing, nothing extra.
+    window = [top for top in arrivals if lap + step + frame < top < 3 * lap - frame]
+    expected = [exit for exit in exits if lap + frame < exit + step < 3 * lap - frame]
+    assert abs(len(window) - len(expected)) <= 1
+
+    # --- scenario: cut_anywhere_it_still_fits_exactly
+    """Wherever the strip is when the Dot is written, the rotation is exact
+    and inside the firmware's budget, with the Dot's brightness line in
+    front -- never snapped to a line boundary half a pass off."""
+    from jrbar.dot_role import apply_brightness_line
+
+    dressed = apply_brightness_line(locked.program, 77)
+    for index in range(40):
+        moment = 0.001 + lap * index / 40 / 1000.0
+        timed = apply_device_timing(
+            dressed,
+            DeviceTiming(anchor=0.0, rate=DOT_RATE, trim_ms=-locked.origin_ms),
+            led_count=2,
+            now=moment,
+            latency_ms=20.0,
+        )
+        assert timed.rotation == "exact", (effect, index)
+        assert fits_budget(timed.program)
+
+
+def test_continue_mirrors_what_it_cannot_carry__and_1_more() -> None:
+    # --- scenario: nothing_travels_so_the_dot_mirrors
+    """A breathe lights every LED together; there is nothing to carry on,
+    so Continue answers ``None`` and the caller mirrors."""
+    from jrbar.dot_continue import continuation_quality, continue_program
+
+    breathe = next(p for n, p, leds in CORPUS if n == "effect_breathe_8led")
+    assert continue_program(breathe, source_leds=8) is None
+
+    # --- scenario: what_it_carries_it_carries_truly
+    """Every program it does continue stays within the gate: the worst
+    moment inside 40% of the light's own range, the average inside 12%. The
+    marquee, twelve passes a lap, does not fit a line per pass and mirrors
+    rather than skip ten of them."""
+    marquee = next(p for n, p, leds in CORPUS if n == "effect_marquee_8led")
+    assert continue_program(marquee, source_leds=8) is None
+    carried = 0
+    for name, program, leds in CORPUS:
+        if leds != 8:
+            continue
+        quality = continuation_quality(program, source_leds=8)
+        if quality is None:
+            continue
+        worst, mean, span = quality
+        assert worst <= 0.40 * span and mean <= 0.12 * span, name
+        carried += 1
+    assert carried >= 4

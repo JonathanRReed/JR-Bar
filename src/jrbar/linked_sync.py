@@ -291,6 +291,42 @@ def _hold(duration: float) -> Timing:
     return Timing(duration_ms=max(1, int(round(duration))))
 
 
+def _whole_pulse(curves: list[_Curve], start: float, stop: float) -> bool:
+    """The two cosine halves of one pulse, both inside ``[start, stop)``."""
+    if len(curves) != 2:
+        return False
+    rise, fall = curves
+    return (
+        rise.easing == fall.easing == "cosine"
+        and abs(rise.end - fall.begin) < 1e-6
+        and rise.start == fall.target
+        and rise.target == fall.start
+        and rise.begin >= start - 1e-6
+        and fall.end <= stop + 1e-6
+    )
+
+
+def _pulse_breaks(curves: dict[int, list[_Curve]], breaks: set[float]) -> None:
+    """Add the midpoint of every pulse a window cuts, until none is cut
+    across its middle: one line holds one transition per LED, and a pulse's
+    halves are two, unless the whole pulse sits inside one line."""
+    changed = True
+    while changed:
+        changed = False
+        points = sorted(breaks)
+        for led_curves in curves.values():
+            if len(led_curves) != 2:
+                continue
+            middle = led_curves[0].end
+            for left, right in pairwise(points):
+                if left + 0.5 < middle < right - 0.5 and not _whole_pulse(led_curves, left, right):
+                    breaks.add(middle)
+                    changed = True
+                    break
+            if changed:
+                break
+
+
 def _window_line(
     curves: dict[int, list[_Curve]],
     state_at: dict[int, RGB],
@@ -314,6 +350,22 @@ def _window_line(
         if not moving:
             color = state_at[led]
             segments.append(IndexedPaint(((led, _hex(color)),), _hold(width)))
+            continue
+        if _whole_pulse(moving, start, stop):
+            # Both halves of a pulse inside the window: still one pulse,
+            # exact and a third of the bytes of its halves.
+            rise, fall = moving
+            delay = int(round(rise.begin - start))
+            segments.append(
+                IndexedPaint(
+                    ((led, _hex(rise.target)),),
+                    Timing(
+                        duration_ms=max(2, int(round(fall.end - rise.begin))),
+                        easing="pulse",
+                        delay_ms=delay or None,
+                    ),
+                )
+            )
             continue
         curve = moving[0]
         if curve.easing == "none":
@@ -343,6 +395,13 @@ def _window_line(
         begin = max(curve.begin, start)
         end = min(curve.end, stop)
         easing, error, _from, to = _fit(curve, begin, end)
+        drift = max(abs(a - b) for a, b in zip(state_at[led], to))
+        if drift <= MAX_SLICE_ERROR_CODES:
+            # A move too small to see: held (to where it ends) for the
+            # whole window, which costs a third of the bytes.
+            worst = max(worst, drift)
+            segments.append(IndexedPaint(((led, _hex(to)),), _hold(width)))
+            continue
         worst = max(worst, error)
         delay = int(round(begin - start))
         duration = max(1, int(round(end - begin)))
@@ -385,18 +444,16 @@ def slice_window(
     bisected until it is within ``max_error`` codes or ``max_lines`` is
     spent. ``None`` only when the window is empty.
 
-    The run's own line boundaries sit on the pulse midpoints inside the
-    window, because one line can hold only one transition per LED.
+    The run's own line boundaries sit on the midpoints of the pulses the
+    window cuts, because one line can hold only one transition per LED; a
+    pulse wholly inside a line stays one ``pulse``.
     """
     if stop - start < 0.5:
         return None
     curves = line_curves(step, state, led_count)
     breaks = {start, stop}
-    for led_curves in curves.values():
-        if len(led_curves) == 2:
-            middle = led_curves[0].end
-            if start + 0.5 < middle < stop - 0.5:
-                breaks.add(middle)
+    _pulse_breaks(curves, breaks)
+
     def window(left: float, right: float) -> tuple[PaintStep, float]:
         return _window_line(curves, _state_at(curves, state, left, led_count), left, right, led_count)
 
@@ -412,20 +469,30 @@ def slice_window(
         if worst_at is None or len(points) - 1 >= max_lines:
             break
         _error, left, right = worst_at
-        # Split where it helps most: of a few candidate points, the one
-        # whose worse half fits best. Bisecting blindly spent twice the
-        # lines on a cosine cut near its inflection.
+        # Split where it helps most: of a few candidate points inside the
+        # curves that are moving in this window, the one whose worse half
+        # fits best. Bisecting blindly spent twice the lines on a cosine
+        # cut near its inflection, and a split in a stretch where every
+        # LED holds spent a line on nothing.
+        spans = [
+            (max(curve.begin, left), min(curve.end, right))
+            for led_curves in curves.values()
+            for curve in led_curves
+            if curve.easing != "none" and min(curve.end, right) - max(curve.begin, left) > 2.0
+        ] or [(left, right)]
         best: tuple[float, float] | None = None
-        for fraction in (0.5, 1.0 / 3.0, 2.0 / 3.0, 0.25, 0.75):
-            split = float(round(left + (right - left) * fraction))
-            if split <= left + 1 or split >= right - 1:
-                continue
-            score = max(window(left, split)[1], window(split, right)[1])
-            if best is None or score < best[1]:
-                best = (split, score)
+        for low, high in spans:
+            for fraction in (0.5, 1.0 / 3.0, 2.0 / 3.0, 0.25, 0.75):
+                split = float(round(low + (high - low) * fraction))
+                if split <= left + 1 or split >= right - 1:
+                    continue
+                score = max(window(left, split)[1], window(split, right)[1])
+                if best is None or score < best[1]:
+                    best = (split, score)
         if best is None:
             break
         breaks.add(best[0])
+        _pulse_breaks(curves, breaks)
     points = sorted(breaks)
     padded: list[PaintStep] = []
     for line, left, right in zip(lines, points, points[1:]):
@@ -450,12 +517,13 @@ def slice_window(
 def _compact(step: PaintStep, led_count: int) -> PaintStep:
     """A line that names every LED with one shared timing, spelled as a
     colour list (or one colour for the whole bar): the same instruction in
-    half the bytes, which the 512-byte budget needs."""
+    half the bytes, which the 512-byte budget needs. With timings that
+    differ, the first LED's segment becomes a whole-bar one and the rest
+    override it (the firmware keeps an LED's last assignment on a line):
+    two bytes a line, which is what lets a Dot's continuation be cut
+    anywhere and still fit."""
     segments = step.segments
     if len(segments) != led_count or any(type(s) is not IndexedPaint for s in segments):
-        return step
-    timings = {s.timing for s in segments}
-    if len(timings) != 1:
         return step
     by_led = {}
     for segment in segments:
@@ -463,11 +531,22 @@ def _compact(step: PaintStep, led_count: int) -> PaintStep:
             by_led[int(index)] = color
     if sorted(by_led) != list(range(led_count)):
         return step
+    timings = {s.timing for s in segments}
+    if len(timings) != 1:
+        first = segments[0]
+        if len(first.assignments) != 1 or any(len(s.assignments) != 1 for s in segments):
+            return step
+        return PaintStep((WholeBar(_bar(first.assignments[0][1]), first.timing), *segments[1:]))
     timing = timings.pop()
     colors = tuple(by_led[index] for index in range(led_count))
     if len(set(colors)) == 1:
-        return PaintStep((WholeBar(colors[0], timing),))
+        return PaintStep((WholeBar(_bar(colors[0]), timing),))
     return PaintStep((ColorList(colors, timing),))
+
+
+def _bar(color: str) -> str:
+    """A whole-bar colour in its shortest spelling: black is ``off``."""
+    return OFF if _rgb(color) == _BLACK and color.strip().lower() in (OFF, "#000000") else color
 
 
 def _fix_run_length(lines: list[PaintStep], want: float) -> None:
@@ -914,9 +993,11 @@ def apply_device_timing(
         wanted = min(elapsed, total - 1.0) if elapsed > 0.0 and total > 1 else 0.0
     candidates: list[tuple[str, float, str]] = []
     if wanted:
-        # The finest cut first, then a cheaper one, before giving up
-        # exactness at all: bytes are the Dot's scarcest resource.
-        for extra in (MAX_SLICE_EXTRA_LINES, 2):
+        # The finest cut first, then cheaper ones -- the last spends no
+        # line on accuracy, each piece in the one easing that fits it
+        # best -- before giving up exactness at all: bytes are the Dot's
+        # scarcest resource.
+        for extra in (MAX_SLICE_EXTRA_LINES, 2, 0):
             rotated = rotate_program(program, wanted, led_count=led_count, max_extra_lines=extra)
             if rotated is not None:
                 candidates.append((rotated, wanted, "exact"))
@@ -1020,6 +1101,11 @@ class LockedDot:
     #: The strip's program as the safety gate compiled it: what the strip
     #: really runs, and what the Dot was derived from.
     pro_compiled: str
+    #: The strip phase (ms into its lap) the program's first line plays. A
+    #: ``continue`` Dot starts in a dark stretch between passes, so the
+    #: write boundary's cut rarely has to split a pass; the write rotates
+    #: from here.
+    origin_ms: float = 0.0
 
 
 def _soften(program: str, led_count: int) -> str | None:

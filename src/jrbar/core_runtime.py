@@ -3902,6 +3902,8 @@ def build_headless_controller_class() -> type:
             # baked in -- ``_apply_hardware_write_result`` reports both.
             self._core_linked_dot_plan = None
             self._core_linked_corrected_ms: float | None = None
+            # Where the Dot's last timed program starts in the strip's lap.
+            self._core_linked_dot_origin_ms = 0.0
             # The strip's latest nominal program and its LED count: what a
             # linked ``extend`` Dot replays. Set on every write to the
             # followed strip, cleared when no connected strip remains --
@@ -4670,6 +4672,7 @@ def build_headless_controller_class() -> type:
             self._core_linked_skew_median_ms = None
             self._core_linked_corrected_ms = None
             self._core_linked_dot_plan = None
+            self._core_linked_dot_origin_ms = 0.0
             self._core_linked_pair_ok = False
             self._core_linked_dot_error = None
             self._core_linked.forget()
@@ -4725,7 +4728,9 @@ def build_headless_controller_class() -> type:
                 lid_closed=core_power.lid_closed(self) is True,
             )
 
-        def _core_dot_plan(self, controller=None, program: str | None = None, device=None):
+        def _core_dot_plan(
+            self, controller=None, program: str | None = None, device=None, *, describe_only: bool = False
+        ):
             """The role's whole answer for the Dot, or ``None`` to fall through.
 
             ``None`` means ``status`` (or ``extend`` with nothing to extend):
@@ -4734,7 +4739,9 @@ def build_headless_controller_class() -> type:
             as an unlinked Dot always has.
 
             ``controller`` is optional because the ``lights`` frame wants the
-            role and the ``why`` without wanting a brightness line.
+            role and the ``why`` without wanting a brightness line; it also
+            passes ``describe_only``, so an ``extend`` Dot's program is not
+            worked out on the main thread every frame.
 
             Brightness: with ``linked_follow_brightness`` (the default) the
             Dot takes the STRIP's policy -- the brightness lines already in
@@ -4810,6 +4817,7 @@ def build_headless_controller_class() -> type:
                 include_completions=bool(
                     getattr(self.settings, "dot_role_include_completions", False)
                 ),
+                describe_only=describe_only,
             )
 
         def _core_linked_dot_follows(self, request) -> bool:
@@ -4917,7 +4925,13 @@ def build_headless_controller_class() -> type:
                 force, reason = True, pending
             epoch = link.epoch
             self._core_linked_dot_plan_seen = getattr(plan, "rung", None)
-            if plan.role != DotRole.EXTEND.value or not plan.timed or epoch is None:
+            timed = plan.role == DotRole.EXTEND.value and plan.timed and epoch is not None
+            # Where the Dot's program starts in the strip's lap: the lights
+            # frame plays it from the strip's start plus this, as the Dot does.
+            self._core_linked_dot_origin_ms = (
+                float(getattr(plan, "origin_ms", 0.0) or 0.0) if timed else 0.0
+            )
+            if not timed:
                 if force:
                     return controller.sync_program(plan.program, state, force=True)
                 return controller.sync_program(plan.program, state)
@@ -4925,6 +4939,10 @@ def build_headless_controller_class() -> type:
             drifted = link.current_error(link.now())
             rate = link.rate_for_write(device.device_id, correction=correction, commit=force)
             trim = trim_setting(self.settings)
+            # The program starts ``origin_ms`` into the strip's lap (a
+            # ``continue`` Dot starts between two passes), so the rotation
+            # the phase asks for is that much shorter.
+            phase_trim = trim - float(getattr(plan, "origin_ms", 0.0) or 0.0)
             # The Dot's own transfer (its calibration gains and resting glow)
             # changes the bytes without changing the plan, so it is part of
             # the identity: a calibration applied to a linked Dot used to be
@@ -4945,7 +4963,7 @@ def build_headless_controller_class() -> type:
                 dedupe_token=token,
                 force=force,
                 trim_on_reassert=False,
-                timing=DeviceTiming(anchor=epoch.anchor, rate=rate, trim_ms=trim),
+                timing=DeviceTiming(anchor=epoch.anchor, rate=rate, trim_ms=phase_trim),
             )
             if getattr(write, "changed", False) and getattr(write, "error", None) is None:
                 sample = None
@@ -4958,7 +4976,7 @@ def build_headless_controller_class() -> type:
                     dot_id=device.device_id,
                     write=write,
                     epoch=epoch,
-                    trim_ms=trim,
+                    trim_ms=phase_trim,
                     reason=reason,
                     sample=sample,
                 )
@@ -6845,20 +6863,25 @@ def build_headless_controller_class() -> type:
                 # long-finished quota alert kept the Dot's ``why`` at
                 # ``capacity`` beside a strip that said ``working``.
                 dot = surfaces["dot"]
-                dot_plan = self._core_dot_plan()
+                # The role and the why only: planning the Dot's program here
+                # ran a comet's whole continuation on the main thread every
+                # frame.
+                dot_plan = self._core_dot_plan(describe_only=True)
                 # Linked Pro + Dot also share an anchor, so the app reads the
                 # two as one unit (core_runtime linked writes) -- but only a
                 # coupled batch that landed clean earns the shared stamp. A
                 # batch that went out uncoupled or failed leaves the Dot its
                 # own anchor rather than claiming a sync nobody measured.
-                anchor = (
-                    hardware_anchor
-                    if devices_linked
+                coupled = (
+                    devices_linked
                     and "hardware" in surfaces
                     and hardware_anchor is not None
                     and self._core_linked_pair_ok
-                    else dot.anchor
                 )
+                # A ``continue`` Dot's program starts between two passes,
+                # ``origin_ms`` into the strip's lap.
+                origin_s = float(getattr(self, "_core_linked_dot_origin_ms", 0.0) or 0.0) / 1000.0
+                anchor = hardware_anchor + origin_s if coupled else dot.anchor
                 why = dot_plan.why if dot_plan is not None else dot.why
                 surfaces["dot"] = SurfaceFacts(
                     program=dot.program,

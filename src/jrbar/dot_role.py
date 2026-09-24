@@ -232,6 +232,10 @@ class DotSurfacePlan:
     lap_ms: int | None = None
     rung: str | None = None
     timed: bool = False
+    #: The strip phase (ms into its lap) this program's first line plays:
+    #: a ``continue`` Dot starts between two passes, so the write boundary
+    #: rotates from there rather than from the strip's own start.
+    origin_ms: float = 0.0
 
 
 # Escalation is meant to be VISIBLE without ever becoming a hazard. Each
@@ -917,8 +921,14 @@ def plan_dot_surface(
     colors: DotRoleColors = DEFAULT_DOT_ROLE_COLORS,
     include_completions: bool = False,
     led_count: int = DOT_LED_COUNT,
+    describe_only: bool = False,
 ) -> DotSurfacePlan | None:
     """The Dot's whole surface for this instant, or ``None`` to fall through.
+
+    ``describe_only`` answers the role and the ``why`` without narrowing an
+    ``extend`` Dot's program (the plan's ``program`` is empty): the lights
+    frame wants only those two, on every build, and working out a comet's
+    continuation there cost the main thread 50 ms a frame.
 
     ``None`` is a real answer with two meanings, and both mean "this module
     is not driving the Dot right now": the role is ``status`` (the Dot owns
@@ -978,6 +988,17 @@ def plan_dot_surface(
             reasons=reasons,
         )
 
+    if describe_only:
+        if not (strip_program or "").strip():
+            return None
+        return DotSurfacePlan(
+            program="",
+            why=_WHY_FOR_SEMANTIC.get(str(getattr(semantic, "value", semantic) or ""), "idle"),
+            role=resolved,
+            led_count=led_count,
+            reasons=("extend", "described"),
+        )
+
     from .led_status import scale_program_brightness
     from .linked_sync import period_locked_dot
 
@@ -1025,6 +1046,7 @@ def plan_dot_surface(
         lap_ms=locked.lap_ms,
         rung=locked.rung,
         timed=locked.rung != "static",
+        origin_ms=float(getattr(locked, "origin_ms", 0.0) or 0.0),
     )
 
 
