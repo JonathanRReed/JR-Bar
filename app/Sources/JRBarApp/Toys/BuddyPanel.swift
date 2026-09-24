@@ -467,8 +467,9 @@ final class BuddyPanel: NSPanel {
             walk.release(at: now)
         }
         // Once a second: Reduce Motion still off (turned on mid-walk, the
-        // buddy is simply home — a plain reposition), nothing asking, and
-        // the edge still there.
+        // buddy is simply home — a plain reposition), walks still allowed
+        // ("Take walks" turned off mid-walk heads home), nothing asking,
+        // and the edge still there.
         if now - lastLedgeLook >= 1, NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             endStroll()
             return
@@ -476,9 +477,12 @@ final class BuddyPanel: NSPanel {
         if now - lastLedgeLook >= 1, walk.plan.legs.count > 1 {
             lastLedgeLook = now
             let digest = toy.sessionDigest()
-            if digest.waiting > 0 || digest.failed > 0 || digest.working == 0
-                || !toy.isOn || !toy.isFree
-                || !BuddyStroll.ledgeStands(walk.plan.ledge, in: BuddyStroll.windowFrames()) {
+            let ledge = walk.plan.ledge
+            let carriesOn = BuddyStroll.carriesOn(
+                working: digest.working, waiting: digest.waiting, failed: digest.failed,
+                showing: toy.isOn, free: toy.isFree, takesWalks: toy.takesWalks,
+                ledgeStands: BuddyStroll.ledgeStands(ledge, in: BuddyStroll.windowFrames()))
+            if !carriesOn {
                 walk.headHome(from: CGPoint(x: frame.midX, y: frame.midY), home: home, at: now)
             }
         }

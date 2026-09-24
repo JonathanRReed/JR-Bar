@@ -99,6 +99,26 @@ struct BuddyStrollTests {
         #expect(!go(roll: 0.9), "and only now and then")
     }
 
+    @Test("a walk under way heads home once walks are off, an ask opens or its edge goes")
+    func walkCarriesOn() {
+        var looked = 0
+        func keepsOn(working: Int = 1, waiting: Int = 0, failed: Int = 0, showing: Bool = true,
+                     free: Bool = true, takesWalks: Bool = true, ledge: Bool = true) -> Bool {
+            BuddyStroll.carriesOn(working: working, waiting: waiting, failed: failed,
+                                  showing: showing, free: free, takesWalks: takesWalks,
+                                  ledgeStands: { () -> Bool in looked += 1; return ledge }())
+        }
+        #expect(keepsOn())
+        #expect(!keepsOn(takesWalks: false), "Take walks turned off mid-walk")
+        #expect(!keepsOn(waiting: 1))
+        #expect(!keepsOn(failed: 1))
+        #expect(!keepsOn(working: 0))
+        #expect(!keepsOn(showing: false))
+        #expect(!keepsOn(free: false))
+        #expect(!keepsOn(ledge: false))
+        #expect(looked == 2, "the window list is read only when everything else holds")
+    }
+
     @Test("the walk dial sets the cadence, and twelve minutes is the old one")
     func cadence() {
         #expect(BuddyStroll.minGap(every: 12) == 8 * 60)

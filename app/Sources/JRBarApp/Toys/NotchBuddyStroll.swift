@@ -74,6 +74,17 @@ struct BuddyStroll: Equatable {
             && sinceLast >= minGap(every: every) && roll < chance(every: every)
     }
 
+    /// Whether a walk under way carries on, asked once a second: the
+    /// same calm a walk starts on, the buddy still out and floating,
+    /// walks still allowed (turning "Take walks" off mid-walk sends it
+    /// home), and its edge still standing. The edge is looked up only
+    /// when everything else holds.
+    static func carriesOn(working: Int, waiting: Int, failed: Int, showing: Bool, free: Bool,
+                          takesWalks: Bool, ledgeStands: @autoclosure () -> Bool) -> Bool {
+        guard working > 0, waiting == 0, failed == 0, showing, free, takesWalks else { return false }
+        return ledgeStands()
+    }
+
     // MARK: Where
 
     /// The path from `home` (the parked centre) for a pet `size` big on
