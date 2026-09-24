@@ -588,4 +588,13 @@ struct DataHoarderModelTests {
         #expect(try await archive.records().first { $0.id == unstamped.id }?.provider == "pi")
         #expect(DataHoarderProviders.sourceProvider(forPath: "/elsewhere/run.jsonl", sources: [source]) == nil)
     }
+
+    @Test func aResumeTheDaemonCannotPlacePointsAtTheCopy() {
+        let unknown = CoreReplyError(code: "not_found", message: "JR-Bar has no record of where that session ran.")
+        #expect(DataHoarderProviders.resumeRefusal(unknown, title: "review")
+                == "JR-Bar has no record of where that session ran — Copy Resume Command instead.")
+        let remote = CoreReplyError(code: "unsupported", message: "A session on another Mac resumes on that Mac.")
+        #expect(DataHoarderProviders.resumeRefusal(remote, title: "review") == remote.message)
+        #expect(DataHoarderProviders.resumeRefusal(nil, title: "review") == "Could not resume review")
+    }
 }

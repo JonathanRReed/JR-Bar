@@ -55,6 +55,18 @@ enum DataHoarderProviders {
         return "cd \(shellQuoted(project)) && \(line)"
     }
 
+    /// The line under the header when the daemon refuses a Resume. It
+    /// knows only the sessions its own process registry saw start, so an
+    /// older archive record often has no place to resume in; the copied
+    /// command still works in any terminal, so the refusal says so.
+    static func resumeRefusal(_ error: CoreReplyError?, title: String) -> String {
+        guard let error else { return "Could not resume \(title)" }
+        let said = error.message ?? "Could not resume \(title)"
+        guard error.code == "not_found" else { return said }
+        let sentence = said.hasSuffix(".") ? String(said.dropLast()) : said
+        return sentence + " — Copy Resume Command instead."
+    }
+
     /// The agent id the daemon's `resume_session` takes.
     static func agentID(provider: String, sessionID: String) -> String {
         "\(provider):session:\(sessionID)"
@@ -112,7 +124,7 @@ extension DataHoarderModel {
                 let reply = try await send(id)
                 self?.message = reply.ok
                     ? HistoryStore.resumedText(reply.result, title: title)
-                    : reply.error?.message ?? "Could not resume \(title)"
+                    : DataHoarderProviders.resumeRefusal(reply.error, title: title)
             } catch {
                 self?.message = "The monitor is not answering — Copy Resume Command instead."
             }
