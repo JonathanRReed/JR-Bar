@@ -121,16 +121,16 @@ extension MenuBarUtility {
         relaunchingApps = apps
         Task { @MainActor [weak self] in
             for id in apps {
-                guard let running = NSRunningApplication.runningApplications(withBundleIdentifier: id).first,
-                      let url = running.bundleURL else { continue }
+                guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first,
+                      let url = app.bundleURL else { continue }
                 MenuBarAssessmentBackend.log.notice("spacing: relaunching \(id, privacy: .public)")
-                running.terminate()
+                app.terminate()
                 var waited = 0
-                while !running.isTerminated, waited < 50 {
+                while !app.isTerminated, waited < 50 {
                     try? await Task.sleep(nanoseconds: 100_000_000)
                     waited += 1
                 }
-                guard running.isTerminated else {
+                guard app.isTerminated else {
                     MenuBarAssessmentBackend.log.notice("spacing: \(id, privacy: .public) did not quit — left running")
                     continue
                 }

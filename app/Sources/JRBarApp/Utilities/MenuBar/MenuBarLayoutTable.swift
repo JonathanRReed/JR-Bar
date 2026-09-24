@@ -265,19 +265,19 @@ final class MenuBarLayoutTableReader {
         guard let url else { return }
         let descriptor = open(url.path, O_EVTONLY)
         guard descriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(
+        let watcher = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: descriptor, eventMask: [.write, .rename, .delete, .extend], queue: .main)
-        source.setEventHandler { [weak self] in
+        watcher.setEventHandler { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, let source = self.source else { return }
-                let replaced = !source.data.isDisjoint(with: [.rename, .delete])
+                guard let self, let live = self.source else { return }
+                let replaced = !live.data.isDisjoint(with: [.rename, .delete])
                 self.read()
                 if replaced { self.rewatchSoon() }
             }
         }
-        source.setCancelHandler { close(descriptor) }
-        self.source = source
-        source.resume()
+        watcher.setCancelHandler { close(descriptor) }
+        self.source = watcher
+        watcher.resume()
     }
 
     private func rewatchSoon() {

@@ -15,14 +15,14 @@ struct MenuBarNewItemsTests {
     }
 
     @Test("a newcomer stays where macOS put it, or goes straight to Shown or Hidden")
-    func newcomerSection() {
+    func newcomerPlacement() {
         #expect(MenuBarUtility.newcomerSection(.asPlaced) == nil, "the ear asks")
         #expect(MenuBarUtility.newcomerSection(.shown) == .shown)
         #expect(MenuBarUtility.newcomerSection(.hidden) == .hidden)
     }
 
     @Test("a relaunch lists someone else's apps once each, by name — never Apple's, never ours, never the system's")
-    func relaunchCandidates() {
+    func relaunchList() {
         var items = [
             item("Zoom", owner: "zoom.us", bundle: "us.zoom.xos"),
             item("iStat Menus#0", owner: "iStat Menus", bundle: "com.bjango.istatmenus"),

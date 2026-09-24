@@ -1075,16 +1075,16 @@ final class MenuBarBar {
         } ?? NSScreen.screens.first
         guard let screen else { return }
         noteModel.note = text
-        let panel = MenuBarBarPanel(model: noteModel, tiles: tiles, onTrigger: { _ in },
+        let glass = MenuBarBarPanel(model: noteModel, tiles: tiles, onTrigger: { _ in },
                                     onRevealItem: { _ in }, itemSection: { _ in .hidden },
                                     onMoveItem: { _, _ in })
-        panel.ignoresMouseEvents = true
+        glass.ignoresMouseEvents = true
         let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
-        panel.setFrame(MenuBarBarLayout.noteFrame(size: MenuBarBarLayout.noteSize(text), menuBarDepth: depth,
+        glass.setFrame(MenuBarBarLayout.noteFrame(size: MenuBarBarLayout.noteSize(text), menuBarDepth: depth,
                                                   on: screen.frame, anchorMidX: anchor?.midX),
                        display: false)
-        panel.orderFrontRegardless()
-        notePanel = panel
+        glass.orderFrontRegardless()
+        notePanel = glass
         noteExpiry = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0.5, seconds) * 1e9))
             guard !Task.isCancelled else { return }

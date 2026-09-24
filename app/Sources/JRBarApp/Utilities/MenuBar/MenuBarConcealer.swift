@@ -784,8 +784,8 @@ final class MenuBarConcealer {
 
     private func converge() async {
         let concealed = target.intersection(seenRunning)
-        let systemItems = self.systemItems
-        if concealed.isEmpty, systemItems == MenuBarConcealPlan.allSystemItems {
+        let keptItems = self.systemItems
+        if concealed.isEmpty, keptItems == MenuBarConcealPlan.allSystemItems {
             // Nothing asked for, so nothing is failing.
             activationFailing = false
             dropLive()
@@ -796,23 +796,23 @@ final class MenuBarConcealer {
         // allowlist, or a changed concealed set. A quit, a snapshot
         // blip, a re-read of the same universe — the live assertion
         // already covers all of those, so it stays.
-        if let live, live.concealed == concealed, live.systemItems == systemItems,
+        if let live, live.concealed == concealed, live.systemItems == keptItems,
            Set(allowlist).isSubset(of: Set(live.allowlist)),
            backend.isAlive(live.token) { return }
         do {
             let token = try await backend.activate(allowedBundleIDs: allowlist,
-                                                   allowedSystemItems: systemItems)
+                                                   allowedSystemItems: keptItems)
             activationFailing = false
             // A release or retarget that landed mid-activation wins:
             // the plan this token was built for no longer stands, so
             // it goes straight back rather than resurrecting a
             // concealment the caller already dropped.
-            guard target.intersection(seenRunning) == concealed, self.systemItems == systemItems else {
+            guard target.intersection(seenRunning) == concealed, self.systemItems == keptItems else {
                 backend.invalidate(token)
                 return
             }
             let old = live
-            live = Live(concealed: concealed, allowlist: allowlist, systemItems: systemItems, token: token)
+            live = Live(concealed: concealed, allowlist: allowlist, systemItems: keptItems, token: token)
             if let old { backend.invalidate(old.token) }
             MenuBarAssessmentBackend.log.notice("conceal: \(concealed.count, privacy: .public) apps hidden by the agent (\(concealed.sorted().joined(separator: ", "), privacy: .public)); allowlist \(allowlist.count, privacy: .public) apps, ours \(allowlist.contains(Bundle.main.bundleIdentifier ?? "-") ? "in" : "MISSING", privacy: .public)")
         } catch {

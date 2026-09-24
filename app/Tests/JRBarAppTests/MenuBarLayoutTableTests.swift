@@ -87,11 +87,11 @@ struct MenuBarLayoutTableTests {
     @Test("the table orders the Item Bar and confirms a drop by the side of our slot")
     func orderAndConfirm() throws {
         let table = try #require(MenuBarLayoutTable.parse(Data(Self.fixture.utf8)))
-        let ranks = MenuBarLayoutTable.ranks(apps: Self.apps, table: table)
-        #expect(ranks["com.tinyspeck.slackmacgap"] == 0)
-        #expect(ranks["com.openai.chat"] == 1)
-        #expect(ranks["io.tailscale.ipn.macsys"] == 3)
-        #expect(ranks["com.bjango.istatmenus"] == 4)
+        let rankOf = MenuBarLayoutTable.ranks(apps: Self.apps, table: table)
+        #expect(rankOf["com.tinyspeck.slackmacgap"] == 0)
+        #expect(rankOf["com.openai.chat"] == 1)
+        #expect(rankOf["io.tailscale.ipn.macsys"] == 3)
+        #expect(rankOf["com.bjango.istatmenus"] == 4)
         #expect(MenuBarLayoutTable.side(of: "com.openai.chat", ours: Self.ours, table: table, known: Self.apps) == .left)
         #expect(MenuBarLayoutTable.side(of: "io.tailscale.ipn.macsys", ours: Self.ours, table: table,
                                         known: Self.apps) == .right)
@@ -106,7 +106,7 @@ struct MenuBarLayoutTableTests {
         // The Item Bar's order under the concealer follows the ranks.
         let order = MenuBarUtility.concealedOrder(
             apps: ["io.tailscale.ipn.macsys": .hidden, "com.openai.chat": .hidden, "x.app": .hidden],
-            lastX: ranks.mapValues { CGFloat($0) })
+            lastX: rankOf.mapValues { CGFloat($0) })
         #expect(order.map(\.id) == ["com.openai.chat", "io.tailscale.ipn.macsys", "x.app"])
     }
 

@@ -72,18 +72,18 @@ struct MenuBarDragLearnTests {
     @Test("the intent table: left hides, right shows, on the icon or off the row or a ⌘-click is nothing, ⌥ is Always")
     func intentTable() {
         let start = CGPoint(x: 1131, y: 18)
-        func intent(_ x: CGFloat, y: CGFloat = 18, option: Bool = false) -> MenuBarDragIntent {
+        func dropIntent(_ x: CGFloat, y: CGFloat = 18, option: Bool = false) -> MenuBarDragIntent {
             MenuBarDragLearn.intent(from: start, to: CGPoint(x: x, y: y), icon: Self.icon,
                                     row: Self.row, option: option)
         }
-        #expect(intent(1000) == .hide(always: false))
-        #expect(intent(1000, option: true) == .hide(always: true))
-        #expect(intent(1300) == .show)
-        #expect(intent(1075) == .none, "on the icon")
-        #expect(intent(1040 - 2) == .none, "on the icon's edge, inside the slack")
-        #expect(intent(1112 + 2) == .none)
-        #expect(intent(1040 - 4) == .hide(always: false), "just past the slack")
-        #expect(intent(1000, y: 120) == .none, "dropped off the bar")
+        #expect(dropIntent(1000) == .hide(always: false))
+        #expect(dropIntent(1000, option: true) == .hide(always: true))
+        #expect(dropIntent(1300) == .show)
+        #expect(dropIntent(1075) == .none, "on the icon")
+        #expect(dropIntent(1040 - 2) == .none, "on the icon's edge, inside the slack")
+        #expect(dropIntent(1112 + 2) == .none)
+        #expect(dropIntent(1040 - 4) == .hide(always: false), "just past the slack")
+        #expect(dropIntent(1000, y: 120) == .none, "dropped off the bar")
         #expect(MenuBarDragLearn.intent(from: start, to: CGPoint(x: 1136, y: 18), icon: Self.icon,
                                         row: Self.row, option: false) == .none, "a ⌘-click, not a drag")
         #expect(MenuBarDragLearn.crossed(from: start, to: CGPoint(x: 1000, y: 18), icon: Self.icon))
@@ -94,7 +94,7 @@ struct MenuBarDragLearnTests {
     // MARK: The grabbed item
 
     @Test("the press takes hold of the drawn item under it — never ours, the «, our family or a ghost")
-    func grabbed() {
+    func grabbedItem() {
         let bar = Self.bar()
         func grab(_ x: CGFloat, items: [MenuBarItem] = Self.bar(), concealed: Set<String> = []) -> String? {
             MenuBarDragLearn.grabbed(at: CGPoint(x: x, y: 2), items: items, concealed: concealed,
@@ -136,23 +136,23 @@ struct MenuBarDragLearnTests {
 
     @Test("every drop that asked for something says what it did — or why not")
     func outcomes() {
-        func outcome(_ intent: MenuBarDragIntent, _ grabbed: MenuBarDragLearn.Grabbed,
+        func dropOutcome(_ intent: MenuBarDragIntent, _ grabbed: MenuBarDragLearn.Grabbed,
                      current: MenuBarItemSection = .shown, count: Int = 1) -> MenuBarDragLearn.Outcome {
             MenuBarDragLearn.outcome(intent: intent, current: current, grabbed: grabbed,
                                      appName: "iStat Menus", appItemCount: count)
         }
         let hide = MenuBarDragIntent.hide(always: false)
-        #expect(outcome(hide, .app) == .init(section: .hidden))
-        #expect(outcome(hide, .system) == .init(note: .systemItem), "macOS's own: a note, never a write")
-        #expect(outcome(.show, .system) == .init(), "nothing asked of a system item that stays")
-        #expect(outcome(hide, .appleExtra) == .init(section: .hidden, note: .appleExtraCovered))
-        #expect(outcome(.show, .appleExtra, current: .hidden) == .init(section: .shown))
-        #expect(outcome(hide, .app, count: 2) == .init(section: .hidden,
+        #expect(dropOutcome(hide, .app) == .init(section: .hidden))
+        #expect(dropOutcome(hide, .system) == .init(note: .systemItem), "macOS's own: a note, never a write")
+        #expect(dropOutcome(.show, .system) == .init(), "nothing asked of a system item that stays")
+        #expect(dropOutcome(hide, .appleExtra) == .init(section: .hidden, note: .appleExtraCovered))
+        #expect(dropOutcome(.show, .appleExtra, current: .hidden) == .init(section: .shown))
+        #expect(dropOutcome(hide, .app, count: 2) == .init(section: .hidden,
                                                          note: .wholeApp(name: "iStat Menus", hidden: true)))
-        #expect(outcome(.show, .app, current: .hidden, count: 2)
+        #expect(dropOutcome(.show, .app, current: .hidden, count: 2)
                 == .init(section: .shown, note: .wholeApp(name: "iStat Menus", hidden: false)))
-        #expect(outcome(hide, .systemConcealable) == .init(section: .hidden))
-        #expect(outcome(.none, .app) == .init())
+        #expect(dropOutcome(hide, .systemConcealable) == .init(section: .hidden))
+        #expect(dropOutcome(.none, .app) == .init())
         let notes: [MenuBarDropNote] = [.systemItem, .appleExtraCovered, .otherDisplay,
                                         .wholeApp(name: "iStat Menus", hidden: true), .notMoved]
         #expect(Set(notes.map(\.text)).count == notes.count)
@@ -186,9 +186,9 @@ struct MenuBarDragLearnTests {
         #expect(!notCrossed.confirmed)
         #expect(notCrossed.anchorDrifted)
         let tailscale = try #require(before.first { $0.id == "Tailscale" })
-        let crossed = MenuBarDragLearn.verdict(grabbed: tailscale, before: before, after: shifted,
-                                               crossed: true, row: Self.row, concealed: [])
-        #expect(crossed.confirmed && crossed.anchorDrifted)
+        let acrossIcon = MenuBarDragLearn.verdict(grabbed: tailscale, before: before, after: shifted,
+                                                  crossed: true, row: Self.row, concealed: [])
+        #expect(acrossIcon.confirmed && acrossIcon.anchorDrifted)
         // The indicator between the item and a clock that stays put: the
         // item moved against the anchor, but nothing reordered.
         let between = Self.bar(shift: -56)
