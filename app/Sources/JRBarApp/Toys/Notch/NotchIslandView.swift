@@ -705,9 +705,11 @@ struct NotchDot: View {
     }
 }
 
-/// A notice's glyph: the kind's symbol in its colour, lit from behind by
-/// a soft halo of the same colour — the one flourish the black lip
-/// allows, and it stays inside the line's room.
+/// A notice's glyph: the kind's symbol solid in its colour — a filled
+/// disc keeps its mark cut clean through to the black, as the system
+/// draws it — lit from behind by a soft halo of the same colour, the
+/// one flourish the black lip allows, and it stays inside the line's
+/// room.
 struct NotchGlyph: View {
     let symbol: String
     let tint: Color
@@ -716,7 +718,6 @@ struct NotchGlyph: View {
     var body: some View {
         Image(systemName: symbol)
             .font(.system(size: size, weight: .semibold))
-            .symbolRenderingMode(.hierarchical)
             .foregroundStyle(tint)
             .shadow(color: tint.opacity(0.5), radius: 3.5)
             .accessibilityHidden(true)
