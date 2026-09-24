@@ -449,9 +449,9 @@ struct SessionsSection: View {
     }
 
     /// The rows' shared trailing column, as wide as the widest state word
-    /// among them.
+    /// among them, or a quiet row's "quiet 1h 05m".
     private var trailingWidth: CGFloat {
-        SessionRowView.trailingWidth(for: store.visiblePlainRows.map(\.activity))
+        SessionRowView.trailingWidth(rows: store.visiblePlainRows, now: store.now)
     }
 
     /// "3" — or, while a find query narrows the list, "“opus” · 2 of 5".
@@ -680,13 +680,23 @@ struct SessionRowView: View {
 
     /// The trailing column: as wide as the widest state word the list
     /// shows plus its mark, and never narrower than the longest elapsed
-    /// time. Shared, it keeps every row's title the same room and every
-    /// context hairline the same length; it moves only when a row's word
-    /// changes, never as the clock ticks. A list of working rows leaves
-    /// its titles the width "Waiting on you" used to hold back.
-    static func trailingWidth(for activities: [SessionActivity]) -> CGFloat {
+    /// time a row can show -- "23h 59m", or "quiet 23h 59m" once a working
+    /// row has gone quiet (`quiet`). Shared, it keeps every row's title the
+    /// same room and every context hairline the same length; it moves only
+    /// when a row's word changes or a row goes quiet, never as the clock
+    /// ticks. A list of working rows leaves its titles the width "Waiting
+    /// on you" used to hold back.
+    static func trailingWidth(for activities: [SessionActivity], quiet: Bool = false) -> CGFloat {
         let widest = activities.map { wordWidths[$0] ?? 0 }.max() ?? 0
-        return max(elapsedWidth, widest + markRoom).rounded(.up)
+        let elapsed = quiet ? quietElapsedWidth : elapsedWidth
+        return max(elapsed, widest + markRoom).rounded(.up)
+    }
+
+    /// The column for these rows as they read at `now`: a quiet working
+    /// row's warning is never cut short.
+    static func trailingWidth(rows: [SessionRow], now: Date) -> CGFloat {
+        let quiet = rows.contains { $0.isQuiet(now: now) }
+        return trailingWidth(for: rows.map(\.activity), quiet: quiet)
     }
 
     /// The word's HStack spacing and the 8 pt mark.
@@ -702,10 +712,16 @@ struct SessionRowView: View {
     }()
 
     /// The longest elapsed time `PanelStore.elapsed` writes ("23h 59m").
-    static let elapsedWidth: CGFloat = {
+    static let elapsedWidth: CGFloat = elapsedTextWidth("00h 00m")
+
+    /// The same, on a working row gone quiet (`SessionRow.quietText`).
+    static let quietElapsedWidth: CGFloat = elapsedTextWidth("quiet 00h 00m")
+
+    /// `text` in the elapsed line's type.
+    static func elapsedTextWidth(_ text: String) -> CGFloat {
         let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        return ("00h 00m" as NSString).size(withAttributes: [.font: font]).width
-    }()
+        return (text as NSString).size(withAttributes: [.font: font]).width
+    }
 
     /// Waiting and failed are the words that shout -- a failure used to be
     /// as quiet as "Idle" here, which is the app-side half of the same
