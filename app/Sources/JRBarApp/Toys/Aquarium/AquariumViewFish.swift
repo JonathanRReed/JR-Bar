@@ -405,6 +405,10 @@ extension AquariumView {
         }
     }
 
+    /// A grown, mid-lane fish's drawn length in points before its
+    /// species and depth scale it.
+    static let fishBaseLength = 54.0
+
     func drawFish(canvas: inout GraphicsContext, size: CGSize, t: Double, now: Date,
                           fish: Fish, layout l: Layout,
                           parent: (fish: Fish, layout: Layout)?, showLabels: Bool) {
@@ -420,7 +424,7 @@ extension AquariumView {
         // the species aspect is softened — a shark stays long, a puffer
         // stays round, and nobody pancakes.
         let cartoonAspect = sqrt(fish.species.aspect)
-        let length = 46.0 * l.scale * fish.species.sizeScale
+        let length = Self.fishBaseLength * l.scale * fish.species.sizeScale
             * (fish.isFry ? AquariumModel.fryScale : 1) * stageScale
         let height = length * cartoonAspect
 
@@ -591,7 +595,7 @@ extension AquariumView {
         // Waiting at the glass: a soft glow ring pulses off its nose,
         // like a tap on the pane asking for you.
         if l.tapRing >= 0, !fish.isFry {
-            let rr = (10 + l.tapRing * 54) * (length / 46)
+            let rr = (10 + l.tapRing * 54) * (length / Self.fishBaseLength)
             var g = canvas
             g.blendMode = .plusLighter
             g.stroke(Path(ellipseIn: CGRect(x: l.x + l.facing * length * 0.30 - rr,

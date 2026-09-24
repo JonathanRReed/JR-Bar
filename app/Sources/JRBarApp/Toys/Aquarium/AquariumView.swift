@@ -248,7 +248,7 @@ struct AquariumView: View {
                                      showLabels: showLabels && aFish.id != nameplateID)
                             // The hover/tap hit area: a soft-edged box
                             // around the drawn body, front-most fish wins.
-                            let len = 46 * l.scale * aFish.species.sizeScale
+                            let len = Self.fishBaseLength * l.scale * aFish.species.sizeScale
                                 * (aFish.isFry ? AquariumModel.fryScale : 1)
                             let hgt = len * aFish.species.aspect
                             hoverProbe.boxes.append((
