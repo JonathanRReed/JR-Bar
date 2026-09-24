@@ -63,6 +63,10 @@ struct NotchIslandView: View {
                     NotchCardView(model: toy.cardModel, style: .island,
                                   width: toy.expandedCardWidth)
                 }
+                    // No scroller on the black and no rubber band on a
+                    // card that fits: it scrolls only when it must.
+                    .scrollIndicators(.hidden)
+                    .scrollBounceBehavior(.basedOnSize)
                     .padding(.top, toy.cardTopPad)
                     .transition(.opacity)
             } else {
