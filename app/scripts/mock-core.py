@@ -1129,7 +1129,37 @@ def default_settings_document() -> dict:
         "webhook_events": [],
         # Forward-compatibility bait: the Settings window must ignore this.
         "x_mock_future_setting": {"nested": [1, 2, 3]},
+        # Usage hooks v2 and the usage sources (lane oss): two rules, one
+        # of which can never run, so the Hooks section has both kinds.
+        "usage_hooks": {"enabled": True, "rules": [
+            {"id": "chime", "enabled": True, "event": "quota_low", "provider": "claude",
+             "threshold_remaining": 20.0, "executable": "/Users/me/bin/chime.sh", "arguments": ["--soft"],
+             "timeout_seconds": 15.0, "argv": "json"},
+            {"id": "log", "enabled": False, "event": "*", "provider": None, "threshold_remaining": None,
+             "executable": "log-usage.py", "arguments": [], "timeout_seconds": 15.0, "argv": "json"},
+        ]},
+        "claude_statusline_source": False,
+        "statusline_text_enabled": True,
+        "cliproxy_hub": {"enabled": False, "url": "http://127.0.0.1:8317", "min_interval_seconds": 300},
+        "provider_extra_homes": {"claude": [], "codex": []},
+        "pricing_overrides": {},
+        "keep_awake_yield_low_power_mode": True,
     }
+
+
+def usage_hooks_status(document: dict, results: dict) -> dict:
+    """The daemon's `usage_hooks_status` for the mock's rules."""
+    hooks = document.get("usage_hooks") or {}
+    rows = []
+    for rule in hooks.get("rules") or []:
+        row = dict(rule)
+        executable = str(rule.get("executable") or "")
+        row["problem"] = None if executable.startswith("/") else "the executable must be an absolute path"
+        row["last_result"] = results.get(rule.get("id"))
+        rows.append(row)
+    return {"enabled": bool(hooks.get("enabled")), "problem": None, "rules": rows,
+            "events": ["quota_low", "quota_reached", "quota_reset", "usage_updated",
+                       "provider_unavailable", "provider_recovered", "refresh_failed"]}
 
 
 HOOK_PROVIDERS = ("claude", "codex", "gemini", "pi", "grok", "devin", "opencode", "openclaw", "antigravity",
@@ -1443,6 +1473,10 @@ class World:
         self.hot_history = False
         #: --usage-scenario: a focused provider set in place of the default one.
         self.usage_scenario: str | None = None
+        #: usage_hooks_test answers, by rule, for usage_hooks_status.
+        self.hook_results: dict[str, dict] = {"chime": {
+            "rule": "chime", "event": "quota_low", "provider": "claude", "at": time.time() - 540,
+            "outcome": "ok", "exit_code": 0, "duration_seconds": 0.08, "sentence": "quota_low: exit 0 in 0.1 s"}}
         self.quota_crossed: dict[str, set] = {}
         self.ask_opened_at: dict[str, float] = {}
         self._seed_history(now)
@@ -3231,6 +3265,20 @@ class World:
                                        for layer, scope in sorted(self.deck_layer_map.items())]
                 result["scopes"] = list(self.deck_scopes_extra)
             self.push_state()
+        elif name == "usage_hooks_status":
+            with self.lock:
+                result = usage_hooks_status(self.document, self.hook_results)
+        elif name == "usage_hooks_test":
+            # The mock runs nothing: it answers as a hook that exited 0.
+            rule_id = str(args.get("rule") or "")
+            event = str(args.get("event") or "quota_low")
+            outcome = {"rule": rule_id, "event": event, "provider": str(args.get("provider") or "claude"),
+                       "at": time.time(), "outcome": "ok", "exit_code": 0, "duration_seconds": 0.12,
+                       "sentence": f"{event}: exit 0 in 0.1 s"}
+            with self.lock:
+                self.hook_results[rule_id] = outcome
+                result = {"event": event, "provider": outcome["provider"], "results": [outcome],
+                          "status": usage_hooks_status(self.document, self.hook_results)}
         elif name == "quit":
             result = {"bye": True}
         elif name == "doctor":

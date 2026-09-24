@@ -77,9 +77,10 @@ else:
     )
     from .settings_destination_refresh import refresh_settings_destination
     from .usage_event_hooks import (
+        config_for_settings,
         detect_usage_hook_events,
+        dispatch_usage_hooks,
         hook_path_message,
-        run_usage_hooks,
     )
     from .usage_percent_history import record_state_observations
 
@@ -464,13 +465,13 @@ else:
                 state.snapshots,
                 thresholds,
             )
-            # Edge-triggered user hooks: transitions only, never states,
-            # so a chime/webhook script needs no rate limiting of its own.
-            # Their quota_reset events are the confirmed ones above.
-            hook_path = str(getattr(self.settings, "usage_event_hook_path", "") or "")
-            if hook_path:
-                run_usage_hooks(
-                    hook_path,
+            # Usage hooks (usage_event_hooks): edges only, never states, run
+            # by rule with a small environment and JSON on stdin. Their
+            # quota_reset events are the confirmed ones above.
+            hook_config = config_for_settings(self.settings)
+            if hook_config.enabled and hook_config.rules:
+                dispatch_usage_hooks(
+                    hook_config,
                     detect_usage_hook_events(
                         previous_state.snapshots,
                         state.snapshots,

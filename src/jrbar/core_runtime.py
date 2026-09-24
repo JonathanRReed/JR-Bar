@@ -2215,6 +2215,21 @@ def _cmd_refresh_usage(self, args):
     return {"requested_at": time.time(), "providers": list(providers)}
 
 
+# Usage hooks (lane oss): the Settings Hooks section's rules and Test button.
+@command("usage_hooks_status", main_thread=False)
+def _cmd_usage_hooks_status(self, args):
+    from .usage_hooks_cli import core_status_command
+
+    return core_status_command(self, args)
+
+
+@command("usage_hooks_test", main_thread=False)
+def _cmd_usage_hooks_test(self, args):
+    from .usage_hooks_cli import core_test_command
+
+    return core_test_command(self, args)
+
+
 def _provider_credentials(self):
     from .provider_credential_store import ProviderCredentialStore
 

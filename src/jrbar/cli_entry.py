@@ -15,6 +15,14 @@ def jrbar_main(argv: list[str] | None = None) -> int:
         return integration_main(args[1:])
     if args[:1] == ["providers"]:
         return provider_main(args[1:])
+    if args[:1] == ["usage"]:
+        from .usage_cli import main as usage_main
+
+        return usage_main(args[1:])
+    if args[:1] == ["usage-hooks"]:
+        from .usage_hooks_cli import main as usage_hooks_main
+
+        return usage_hooks_main(args[1:])
     # The control verbs drive the running monitor and app (status, quiet,
     # snooze, set, get over core.sock; toggle, awake, open as jrbar://
     # links) -- one small module, loaded only when asked for.

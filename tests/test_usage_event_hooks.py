@@ -61,7 +61,9 @@ def test_quota_low_fires_on_the_downward_crossing_only__and_2_more() -> None:
         (snapshot((lane(18.0),)),),
         thresholds=THRESHOLDS,
     )
-    assert [event.name for event in events] == ["quota_low"]
+    # Every move is also a usage_updated (hooks v2); the limiter, not the
+    # detector, keeps that one from firing on every refresh.
+    assert [event.name for event in events] == ["quota_low", "usage_updated"]
     assert events[0].detail == "18"
 
     # Sitting under the threshold: no repeat.
@@ -70,7 +72,7 @@ def test_quota_low_fires_on_the_downward_crossing_only__and_2_more() -> None:
         (snapshot((lane(15.0),)),),
         thresholds=THRESHOLDS,
     )
-    assert again == ()
+    assert [event.name for event in again] == ["usage_updated"]
 
     # --- scenario: quota_reached_and_reset_edges
     reached = detect_usage_hook_events(
@@ -79,7 +81,7 @@ def test_quota_low_fires_on_the_downward_crossing_only__and_2_more() -> None:
         thresholds=THRESHOLDS,
     )
     # 3% was already under the 20% threshold -- no second quota_low.
-    assert [event.name for event in reached] == ["quota_reached"]
+    assert [event.name for event in reached] == ["quota_reached", "usage_updated"]
 
     # A jump alone is not a reset for a hook: the hook takes the reset the
     # celebrations confirmed (provider_usage_qol.confirm_reset_events).
@@ -88,7 +90,7 @@ def test_quota_low_fires_on_the_downward_crossing_only__and_2_more() -> None:
         (snapshot((lane(100.0),)),),
         thresholds=THRESHOLDS,
     )
-    assert [event.name for event in jump_only] == []
+    assert [event.name for event in jump_only] == ["usage_updated"]
 
     from jrbar.provider_usage_qol import ResetEvent
 
@@ -99,8 +101,8 @@ def test_quota_low_fires_on_the_downward_crossing_only__and_2_more() -> None:
         thresholds=THRESHOLDS,
         reset_events=(confirmed,),
     )
-    assert [event.name for event in reset] == ["quota_reset"]
-    assert reset[0].detail == "100"
+    assert [event.name for event in reset] == ["usage_updated", "quota_reset"]
+    assert reset[1].detail == "100"
 
     # --- scenario: provider_availability_edges
     down = detect_usage_hook_events(
