@@ -199,7 +199,10 @@ def test_the_hook_the_celebration_and_the_wire_event_share_one_event_id() -> Non
     )
 
     assert celebration.events[0].event_id == event.event_id
-    assert [hook.name for hook in hooks] == ["quota_reset"]
+    # The move from 12 % to 96 % is also a usage_updated; the one reset
+    # the hooks see is the confirmed one, with its id.
+    resets = [hook for hook in hooks if hook.name == "quota_reset"]
+    assert [hook.event_id for hook in resets] == [event.event_id]
     assert sent[0][1]["event_id"] == event.event_id
 
 
