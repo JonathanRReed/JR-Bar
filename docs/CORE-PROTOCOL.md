@@ -381,7 +381,10 @@ Vocabulary:
   while the agents' hold is in it; `suspended` names a yield that took the
   hold away while the demand stands -- `thermal` (the thermal state
   reached `serious` with the lid shut or `critical` with it open, released
-  until five cool minutes pass) or `battery` (the low-battery floor);
+  until five cool minutes pass), `battery` (the low-battery floor) or
+  `low_power` (macOS Low Power Mode is on, read from `pmset -g` at most
+  once a minute, while `keep_awake_yield_low_power_mode` is on, the
+  default; heat and the battery floor outrank it);
   `thermal` is `nominal`/`fair`/`serious`/`critical` or null.
   `closed_lid` adds `lid_closed` (the daemon's last reading, null while it
   has none or while nothing watches the lid -- the lid is polled only
@@ -393,7 +396,7 @@ Vocabulary:
   `always` policy), `last_sleep_at` and `sleep_error`. `last_release` is
   the newest release worth reading, `{kind, reason, at, duration,
   finished, slept_at}`: `kind` `lease_ended` (`reason`
-  `expired`/`finished`), `suspended` (`thermal`/`battery`),
+  `expired`/`finished`), `suspended` (`thermal`/`battery`/`low_power`),
   `lid_hold_ended` (`duration` the held stretch, `finished` how many runs
   the activity ledger saw finish during it) or `slept` (carrying the
   stretch it closed, so one row reads "ran 2 h 40 m closed, 3 finished,
@@ -760,7 +763,7 @@ than 10 s. Revealing an ask puts it on the panel; it never answers it.
 `power` goes out once per power-log entry worth a line: `power` is the
 entry's kind (`lease_ended`, `suspended`, `lid_hold_ended`, `slept`),
 `detail` its reason (`expired`, `finished`, `thermal`, `battery`,
-`agents_idle`, `policy`), `label` History's words for it ("Keep awake let
+`low_power`, `agents_idle`, `policy`), `label` History's words for it ("Keep awake let
 go", "Put the Mac to sleep"), `duration` the held stretch where there
 is one and, on `lid_hold_ended`, `finished` the runs that finished during
 it -- the lid-open report's "3 finished".

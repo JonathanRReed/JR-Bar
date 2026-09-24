@@ -423,3 +423,57 @@ def test_history_rows_merge_newest_first_within_the_limit() -> None:
     power = [{"at": 20.0, "kind": "power"}]
     merged = merge_history_rows(rows, power, limit=2)
     assert [row["kind"] for row in merged] == ["completed", "power"]
+
+
+# --- Low Power Mode (lane oss) ------------------------------------------------
+
+
+def test_low_power_mode_suspends_the_hold_and_keeps_the_countdown() -> None:
+    clock = _Clock()
+    controller = _controller(clock)
+    controller.power_log = PowerLog(clock=clock)
+    controller.start_lease(AwakeLease(LEASE_DURATION, NOW, NOW + 7200))
+
+    controller.observe_environment(low_power=True)
+    assert not controller.update(AgentMode.WORKING, now=0.0)
+    assert controller.suspension == "low_power"
+    assert controller.hold_document()["suspended"] == "low_power"
+    assert controller.lease is not None, "a yield never ends the person's lease"
+    assert controller.power_log.last(POWER_SUSPENDED).reason == "low_power"
+    assert controller.detail() == "Keep awake let go: Low Power Mode is on"
+    assert merge_history_rows([], controller.power_log.history_rows(), limit=5)[0]["detail"] == "Low Power Mode"
+
+    controller.observe_environment(low_power=False)
+    assert controller.update(AgentMode.WORKING, now=1.0)
+    assert controller.power_log.last(POWER_RESUMED).reason == "low_power"
+
+
+def test_heat_and_a_dying_battery_outrank_low_power_mode() -> None:
+    clock = _Clock()
+    controller = _controller(clock)
+    controller.observe_environment(low_power=True, battery_floor=True)
+    assert not controller.update(AgentMode.WORKING, now=0.0)
+    assert controller.suspension == "battery"
+
+
+def test_pmset_output_is_read_for_low_power_mode() -> None:
+    from types import SimpleNamespace
+
+    import jrbar.keep_awake as keep_awake
+
+    sample = "System-wide power settings:\nCurrently in use:\n standby              1\n lowpowermode         1\n sleep                1\n"
+    assert keep_awake.parse_pmset_low_power(sample) is True
+    assert keep_awake.parse_pmset_low_power(sample.replace("lowpowermode         1", "lowpowermode         0")) is False
+    assert keep_awake.parse_pmset_low_power("sleep 1\n") is None
+
+    calls: list[list[str]] = []
+
+    def runner(argv, **_kwargs):
+        calls.append(argv)
+        return SimpleNamespace(stdout=sample)
+
+    keep_awake._low_power_cache = None
+    assert keep_awake.read_low_power_mode(now=100.0, runner=runner) is True
+    assert keep_awake.read_low_power_mode(now=130.0, runner=runner) is True
+    assert calls == [["/usr/bin/pmset", "-g"]], "read once a minute at most"
+    keep_awake._low_power_cache = None

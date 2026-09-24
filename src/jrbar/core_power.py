@@ -154,6 +154,11 @@ def observe_environment(controller: Any) -> None:
         battery_floor=battery_yields_hold(battery, getattr(controller, "settings", None)),
         thermal_state=keep_awake_module.read_thermal_state(),
         lid_closed=lid if isinstance(lid, bool) else None,
+        # A hold yields to macOS Low Power Mode unless the person said not to.
+        low_power=bool(
+            getattr(getattr(controller, "settings", None), "keep_awake_yield_low_power_mode", True)
+            and keep_awake_module.read_low_power_mode()
+        ),
     )
 
 

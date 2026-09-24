@@ -113,3 +113,44 @@ def test_hold_self_expires_and_the_next_tick_renews_it__and_1_more() -> None:
     assert not battery_yields_hold(plugged, settings)
     assert not battery_yields_hold(None, settings)
 
+
+
+def test_the_daemon_passes_low_power_mode_only_while_the_setting_allows() -> None:
+    """core_power reads Low Power Mode and the keep_awake_yield_low_power_mode
+    setting (on by default) before each sync."""
+    from types import SimpleNamespace
+
+    import jrbar.core_power as core_power
+    import jrbar.keep_awake as keep_awake
+
+    seen: list[bool] = []
+    controller = SimpleNamespace(
+        keep_awake=SimpleNamespace(observe_environment=lambda **kwargs: seen.append(kwargs["low_power"])),
+        last_snapshot=None,
+        settings=SimpleNamespace(keep_awake_yield_low_power_mode=True, low_battery_threshold_percent=5.0),
+    )
+    original = keep_awake.read_low_power_mode
+    keep_awake.read_low_power_mode = lambda **_kwargs: True
+    try:
+        core_power.observe_environment(controller)
+        controller.settings.keep_awake_yield_low_power_mode = False
+        core_power.observe_environment(controller)
+    finally:
+        keep_awake.read_low_power_mode = original
+    assert seen == [True, False]
+
+
+def test_the_low_power_setting_round_trips(tmp_path) -> None:
+    import json
+
+    from jrbar.settings import load_settings, save_settings
+
+    target = tmp_path / "settings.json"
+    assert load_settings(target).keep_awake_yield_low_power_mode is True
+    target.write_text(json.dumps({"keep_awake_yield_low_power_mode": "no"}))
+    assert load_settings(target).keep_awake_yield_low_power_mode is True
+    target.write_text(json.dumps({"keep_awake_yield_low_power_mode": False}))
+    loaded = load_settings(target)
+    assert loaded.keep_awake_yield_low_power_mode is False
+    save_settings(loaded, target)
+    assert json.loads(target.read_text())["keep_awake_yield_low_power_mode"] is False
