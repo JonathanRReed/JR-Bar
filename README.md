@@ -143,10 +143,13 @@ make clean-install    # installs it into ~/Applications (no password) and opens 
 `/Applications` instead. On first launch the app starts its daemon, points
 every provider's hook at the bundled shim, and registers itself as a login
 item. Click the icon for the panel; right-click for the menu. The command
-line lives inside the bundle:
+line lives inside the bundle; **Settings › Shortcuts › Command line ›
+Install** links it as `~/.local/bin/jrbar` (put `~/.local/bin` on your
+`PATH` if it is not already). The link follows the app when you update it,
+and Remove takes it away again.
 
 ```sh
-alias jrbar='~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core'
+jrbar usage           # every provider's windows: "Claude  5h 58% left · resets 2h14m" (--json, --brief)
 jrbar hooks doctor    # what each provider's config runs today, and the sockets
 jrbar doctor          # daemon commit, memory, checks
 jrbar status          # sessions and asks right now (--json for scripts)
@@ -167,9 +170,13 @@ build can't write the metadata Shortcuts lists them from. Settings ›
 Shortcuts lists the links and binds a global key to any action or
 toggle. No link answers an ask.
 
-To remove it: quit the app, delete `JR-Bar.app`, and run
-`jrbar agent-monitor uninstall all` first if you want the hooks gone.
-`scripts/uninstall-macos.sh` does the same for a `/Applications` install.
+To remove it: `sudo ./scripts/uninstall-macos.sh` takes out the hooks,
+the helpers, the `jrbar` link and the app, wherever they were installed
+(`~/Applications` or `/Applications`; `~/.local/bin` or `/usr/local/bin`),
+and leaves any file it did not put there alone. `--dry-run` shows the
+steps without taking them, `--keep-app` keeps the app and `--purge-state`
+also removes settings and history. By hand: quit the app, run
+`jrbar agent-monitor uninstall all`, then delete `JR-Bar.app`.
 
 ### Permissions
 
