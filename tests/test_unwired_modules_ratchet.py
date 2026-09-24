@@ -17,7 +17,10 @@ refused and why, and remembers how the numbers moved. `provider_runtime`,
 were second implementations of jobs the shipped code already does
 (`capacity_refresh` plus the status bar's own workers, and the activity
 ledger's own store), and the third classified message replies for an inbox
-this product does not have.
+this product does not have. The W21/W24/W25/W26 scaffolds (`acp_transport`,
+`coordinator_policy`, `opencode_bridge`, `utility_generation`) sat here
+waiting for adapters that were never built, and were deleted the same way;
+git history keeps them for the day an adapter lands.
 
 KNOWN THIS RATCHET CANNOT SEE: it measures IMPORTS, not CALLS. A module
 imported at the top of a live file passes even when nothing ever calls into
@@ -44,20 +47,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "jrbar"
 # accident: an entry here is a decision deferred, and the deferral is what
 # cost this project its blend modes, its log janitors and a 1,139-line
 # presentation layer.
-KNOWN_UNWIRED: dict[str, str] = {
-    # W21: the JSON-RPC spine the managed-session adapters (W20/W22/W23)
-    # will drive — nothing owns a live transport until one exists.
-    "acp_transport": "shared transport; first caller is a W20/W22 adapter",
-    # W25: the assistant layer's contract; its caller is the composer UI
-    # and an LLM front-end that are not built yet.
-    "coordinator_policy": "policy surface; first caller is the W25 composer",
-    # W26: the OpenCode serve probe; its caller is the provider
-    # management UI — probed live, not yet wired into a card.
-    "opencode_bridge": "capability probe; first caller is provider management",
-    # W24: title-generation policy; its caller is an adapter over the
-    # W19/W20 execution contract.
-    "utility_generation": "generation policy; first caller is a W24 adapter",
-}
+KNOWN_UNWIRED: dict[str, str] = {}
 
 # Legitimate separate entry points -- not imported by the app by design.
 # Fixture ownership is a build/test provenance gate, not shipped runtime work.
