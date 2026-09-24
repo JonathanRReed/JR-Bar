@@ -5,10 +5,10 @@ import Testing
 @testable import JRBarCore
 
 /// The Menu Bar utility's pure halves (docs/UTILITIES.md): the window
-/// list's filter rules, the zone plan, and the position seeding that
-/// drives the ⌘-drag mover. All are functions of plain inputs so the
+/// list's filter rules, the cover plan, the reveal's state machine and
+/// the Item Bar's layout. All are functions of plain inputs so the
 /// rules get tested without a screen, a status item, or another app's
-/// items to move.
+/// items.
 @Suite("Menu Bar")
 struct MenuBarTests {
     /// A `CGWindowList` window-info dict the way the real list hands
@@ -39,14 +39,6 @@ struct MenuBarTests {
     /// The menu bar strip the tests filter against.
     private let row = CGRect(x: 0, y: 0, width: 1512, height: 24)
     private let ownPID: pid_t = 42
-
-    /// A fixed zone layout: always-hidden under x=100, hidden in
-    /// 124–500, shown right of x=524.
-    private let zones = MenuBarZones(
-        regionMin: 0,
-        alwaysHiddenControl: CGRect(x: 100, y: 0, width: 24, height: 24),
-        hiddenControl: CGRect(x: 500, y: 0, width: 24, height: 24),
-        regionMax: 1512)
 
     // MARK: Lister — one dict → an item or not
 
@@ -174,32 +166,6 @@ struct MenuBarTests {
                     .allSatisfy { $0.bundleID == nil })
     }
 
-    // MARK: Zones — the physical section model
-
-    @Test("an item's section is the zone its center sits in")
-    func zoneMembership() {
-        #expect(zones.section(atCenterX: 60) == .alwaysHidden)
-        #expect(zones.section(atCenterX: 110) == .hidden)   // inside the ah control's own frame
-        #expect(zones.section(atCenterX: 300) == .hidden)
-        #expect(zones.section(atCenterX: 490) == .hidden)   // up to the chevron's left edge
-        #expect(zones.section(atCenterX: 600) == .shown)
-    }
-
-    @Test("drops target the zone's near edge so reflow finds the slot")
-    func zoneDropTargets() {
-        #expect(zones.dropX(for: .alwaysHidden) == zones.regionMin + 14)
-        #expect(zones.dropX(for: .hidden) == zones.alwaysHiddenControl.maxX
-                + (zones.hiddenControl.minX - zones.alwaysHiddenControl.maxX) / 2)
-        #expect(zones.dropX(for: .shown) == zones.hiddenControl.maxX + 16)
-        // A hidden zone collapsed to a sliver still drops just left of
-        // the chevron.
-        let tight = MenuBarZones(regionMin: 0,
-                                 alwaysHiddenControl: CGRect(x: 100, y: 0, width: 24, height: 24),
-                                 hiddenControl: CGRect(x: 130, y: 0, width: 24, height: 24),
-                                 regionMax: 1512)
-        #expect(tight.dropX(for: .hidden) == tight.hiddenControl.minX - 14)
-    }
-
     // MARK: Hider — the plan
 
     @Test("an assigned item is covered where it sits — nothing is ever moved")
@@ -315,47 +281,6 @@ struct MenuBarTests {
         #expect(plan.hidden.map(\.id) == ["Keep"])
         #expect(plan.shown.map(\.id) == ["Up"])
         #expect(plan.hiddenCovers == [600...624])
-    }
-
-    // MARK: Mover — position seeding
-
-    @Test("an assigned item in the wrong zone earns a drag into its zone")
-    func moveStepsBasics() {
-        let items = [item("Hide", x: 800), item("Show", x: 300), item("Keep", x: 700)]
-        let steps = MenuBarItemMover.moveSteps(
-            items: items, zones: zones,
-            sections: ["Hide": .hidden, "Show": .shown], row: row)
-        // "Show" is already in the hidden zone and assigned shown → it
-        // drags right of the chevron. "Hide" is in the shown zone → it
-        // drags between the controls. "Keep" is unassigned → untouched.
-        #expect(steps.count == 2)
-        let hide = steps.first { $0.itemID == "Hide" }
-        #expect(hide?.from.x == 812)
-        #expect(hide?.to.x == zones.dropX(for: .hidden))
-        let show = steps.first { $0.itemID == "Show" }
-        #expect(show?.to.x == zones.dropX(for: .shown))
-    }
-
-    @Test("protected, unassigned, and parked items are never moved")
-    func moveStepsExclusions() {
-        let items = [
-            item("Sys", owner: "MenuBarAgent", x: 800),
-            item("Free", x: 850),
-            item("Parked", x: 7, y: 970),
-        ]
-        let steps = MenuBarItemMover.moveSteps(
-            items: items, zones: zones,
-            sections: ["Sys": .hidden, "Parked": .hidden], row: row)
-        #expect(steps.isEmpty)
-    }
-
-    @Test("always-hidden drops go first — a later leftward push can't undo them")
-    func moveStepsOrdering() {
-        let items = [item("ToAH", x: 800), item("ToHidden", x: 850)]
-        let steps = MenuBarItemMover.moveSteps(
-            items: items, zones: zones,
-            sections: ["ToAH": .alwaysHidden, "ToHidden": .hidden], row: row)
-        #expect(steps.map(\.itemID) == ["ToAH", "ToHidden"])
     }
 
     // MARK: The Item Bar's layout

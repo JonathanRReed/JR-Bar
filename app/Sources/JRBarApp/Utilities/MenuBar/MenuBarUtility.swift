@@ -43,8 +43,8 @@ final class MenuBarUtility: Toy {
     let reveal = MenuBarReveal()
     /// The glass bar of hidden-item tiles.
     let bar = MenuBarBar()
-    /// Arrange mode, the ⌘⇧K command bar, the global hotkeys and the
-    /// trigger engine — the utility implements `MenuBarActionsDelegate`
+    /// The ⌘⇧K command bar, the global hotkeys and the trigger engine
+    /// — the utility implements `MenuBarActionsDelegate`
     /// (bottom of file) so every action lands on the same machinery
     /// the card's own rows use.
     let actions = MenuBarActions()
@@ -72,10 +72,6 @@ final class MenuBarUtility: Toy {
     /// Wi-Fi stay native while the run is concealed. Set from the
     /// bridge's own start, not inferred.
     private(set) var clickBridgeFailed = false
-    /// The last arrange run's outcome — the card's report line.
-    private(set) var lastArrangeOutcome: MenuBarArrangeOutcome?
-    /// True while an arrange is dragging — the card disables its button.
-    private(set) var arranging = false
 
     /// The latest layout — the card's count row and item list read it.
     /// While the utility runs the hider keeps it fresh; while it is
@@ -982,7 +978,7 @@ final class MenuBarUtility: Toy {
         update { MenuBarProfiles.delete(id: id, in: &$0) }
     }
 
-    // MARK: Actions (hotkeys, triggers, arrange, command bar)
+    // MARK: Actions (hotkeys, triggers, command bar)
 
     /// The bindings the hotkey registry actually uses — the persisted
     /// list, or the shipping set while the file has never carried one.
@@ -1014,77 +1010,6 @@ final class MenuBarUtility: Toy {
 
     /// The ⌘⇧K palette — also the card's "Command bar" button.
     func openCommandBar() { actions.openCommandBar() }
-
-    /// The arrange editor's list: the layout a run would drive the bar
-    /// to — unnamed movable items keep their bar order as the deep
-    /// (left) block, named ids pack right of it in saved order.
-    var arrangeItems: [MenuBarItem] {
-        let movable = listedItems.filter { !MenuBarItemLister.isProtected($0) }
-        let order = settings().arrangeOrder
-        var used: Set<String> = []
-        let named = order.compactMap { id -> MenuBarItem? in
-            guard !used.contains(id),
-                  let item = movable.first(where: { $0.id == id }) else { return nil }
-            used.insert(id)
-            return item
-        }
-        return movable.filter { !used.contains($0.id) } + named
-    }
-
-    /// Move an item one slot in the editor; the write carries the whole
-    /// resolved order so the arrange run drives every item it reaches.
-    func moveArrangeItem(id: String, by delta: Int) {
-        var order = arrangeItems.map(\.id)
-        guard let i = order.firstIndex(of: id), order.indices.contains(i + delta) else { return }
-        order.swapAt(i, i + delta)
-        update { $0.arrangeOrder = order }
-    }
-
-    /// Whether Arrange can do anything at all: only under the spacer
-    /// engine. Under the macOS 27 concealer MenuBarAgent orders the bar
-    /// itself and a concealed item cannot be ⌘-dragged, so a run would
-    /// move the real cursor and deliver nothing — the card hides the
-    /// section and the palette's row finds no order to drive. Pure so a
-    /// test pins the gate.
-    var arrangeAvailable: Bool { Self.arrangeAvailable(concealing: concealer != nil) }
-
-    nonisolated static func arrangeAvailable(concealing: Bool) -> Bool { !concealing }
-
-    /// The explicit arrange action — the only caller of the synthetic
-    /// ⌘-drag machinery. The banner, cursor restore and abort watcher
-    /// are the coordinator's; this just runs it and reports.
-    func arrangeNow() {
-        guard !arranging, arrangeAvailable else { return }
-        // An empty order is a no-op — materialize the editor's list so
-        // the button always does what the list shows.
-        if settings().arrangeOrder.isEmpty {
-            update { $0.arrangeOrder = arrangeItems.map(\.id) }
-        }
-        arranging = true
-        // The spacers collapse first: an expanded chevron reaches to
-        // the region's edge, and the plan would pack against it.
-        hider.reveal([.hidden, .alwaysHidden])
-        Task { [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            self.lastArrangeOutcome = await self.actions.arrangeMenuBar()
-            self.arranging = false
-            self.hider.hide()
-        }
-    }
-
-    /// What the last arrange run reported — the card's status line.
-    var arrangeNote: String? {
-        switch lastArrangeOutcome {
-        case .completed(let n):
-            return n == 0 ? "Already in that order." : "Arranged — \(n) item\(n == 1 ? "" : "s") moved."
-        case .alreadyInOrder: return "Already in that order."
-        case .aborted(let n): return "Cancelled — \(n) move\(n == 1 ? "" : "s") had landed."
-        case .incomplete(let n): return "Stopped — the bar never settled (\(n) moves)."
-        case .busy: return "An arrange is already running."
-        case nil: return nil
-        }
-    }
 
     // MARK: Trigger rules
 
@@ -4095,20 +4020,6 @@ extension MenuBarUtility: MenuBarActionsDelegate {
         var map: [String: MenuBarItemSection] = [:]
         for item in listedItems { map[item.id] = effectiveSection(for: item) }
         return map
-    }
-
-    /// Empty under the concealer — the palette's "Arrange…" row then has
-    /// no order to drive and never moves the cursor (see
-    /// `arrangeAvailable`).
-    func menuBarArrangeOrder(for _: MenuBarActions) -> [String] {
-        arrangeAvailable ? settings().arrangeOrder : []
-    }
-
-    func menuBarArrangeBoundary(for _: MenuBarActions) -> CGFloat {
-        MenuBarArrangePlan.rightBoundary(
-            items: listedItems,
-            regionMax: CGDisplayBounds(CGMainDisplayID()).maxX,
-            row: MenuBarItemLister.menuBarRow())
     }
 
     func menuBarActions(_: MenuBarActions, setSection section: MenuBarItemSection,

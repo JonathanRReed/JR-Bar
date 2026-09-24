@@ -49,8 +49,7 @@ struct PaletteRenderProofTests {
                         bounds: CGRect(x: 640, y: 0, width: 24, height: 24), title: nil,
                         windowID: 0, bundleID: "com.bjango.istatmenus"),
         ]
-        items += MenuBarCommands.build(items: bar, sections: ["ist": .hidden], concealing: true,
-                                       ownBundleID: nil)
+        items += MenuBarCommands.build(items: bar, sections: ["ist": .hidden], ownBundleID: nil)
             .map { $0.paletteItem { _ in } }
         items += QuietPaletteRows.items(mode: "pause", quietLabel: nil, quietIsOurs: false, now: now,
                                         verbs: QuietPaletteVerbs(quiet: { _, _ in }, end: {}))

@@ -10,10 +10,6 @@ import OSLog
 /// Wiring checklist (see MenuBarActions' doc comment for the flow):
 ///   * `menuBarItems` → `MenuBarItemLister.list()`
 ///   * `menuBarSections` → `settings().sections`
-///   * `menuBarArrangeOrder` → the persisted arrange order (a new
-///     `[String]` field on `MenuBarSettings`, e.g. `arrangeOrder`)
-///   * `menuBarArrangeBoundary` →
-///     `MenuBarArrangePlan.rightBoundary(items:regionMax:row:)`
 ///   * `setSection` → the existing `setSection(_:for:)`
 ///   * `openItem` → the Item Bar tile's `trigger(_:)`
 ///   * `revealHidden`/`revealFor` → `hider.reveal([.hidden])` +
@@ -24,19 +20,10 @@ import OSLog
 ///   * `cycleProfile` → step through `settings().profiles` wrapping
 @MainActor
 protocol MenuBarActionsDelegate: AnyObject {
-    /// The live listing, for the palette's commands and the arrange
-    /// plan.
+    /// The live listing, for the palette's commands.
     func menuBarItems(for actions: MenuBarActions) -> [MenuBarItem]
     /// The persisted section map.
     func menuBarSections(for actions: MenuBarActions) -> [String: MenuBarItemSection]
-    /// The desired left→right order the arrange button applies —
-    /// item ids. Empty means "nothing asked for" and `arrange()` is
-    /// a no-op.
-    func menuBarArrangeOrder(for actions: MenuBarActions) -> [String]
-    /// The x the movable run packs against — pass
-    /// `MenuBarArrangePlan.rightBoundary(items:regionMax:row:)` so the
-    /// plan packs against the real fixed items.
-    func menuBarArrangeBoundary(for actions: MenuBarActions) -> CGFloat
 
     /// Assign one item a section (`.shown` clears the key — the
     /// utility's `updatedSections` already knows that rule).
@@ -73,9 +60,6 @@ protocol MenuBarActionsDelegate: AnyObject {
     /// Bartender, Ice or Hidden Bar. The parked ⌘⇧K still opens the
     /// palette; its menu-bar verbs wait for this.
     func menuBarRunning(for actions: MenuBarActions) -> Bool
-    /// Whether the macOS 27 concealer drives hiding right now — the
-    /// palette hides Arrange while it does.
-    func menuBarConcealing(for actions: MenuBarActions) -> Bool
     /// The saved profiles, in the card's order.
     func menuBarProfiles(for actions: MenuBarActions) -> [MenuBarSettings.Profile]
     /// The profile the bar wears now (`MenuBarProfiles.noneID` for the
@@ -98,7 +82,6 @@ protocol MenuBarActionsDelegate: AnyObject {
 
 extension MenuBarActionsDelegate {
     func menuBarRunning(for _: MenuBarActions) -> Bool { true }
-    func menuBarConcealing(for _: MenuBarActions) -> Bool { false }
     func menuBarProfiles(for _: MenuBarActions) -> [MenuBarSettings.Profile] { [] }
     func menuBarActiveProfileID(for _: MenuBarActions) -> String? { nil }
     func menuBarActions(_: MenuBarActions, applyProfileID _: String) {}
@@ -108,26 +91,19 @@ extension MenuBarActionsDelegate {
     func menuBarActionsFoldItemBar(_: MenuBarActions) {}
 }
 
-/// The ACTIONS track's single owner: arrange mode, the ⌘⇧K command
-/// bar, the Carbon hotkeys, and the trigger engine — bundled so the
-/// maintainer holds one object on `MenuBarUtility` and implements one
-/// delegate.
+/// The ACTIONS track's single owner: the ⌘⇧K command bar, the Carbon
+/// hotkeys, and the trigger engine — bundled so the maintainer holds
+/// one object on `MenuBarUtility` and implements one delegate.
 ///
 /// `init` wires the internal seams to the delegate automatically;
 /// the maintainer still owns lifecycle (`start()`/`stop()` from the
-/// utility's own) and persistence (bindings, rules, and the arrange
-/// order are Codable values ready for `MenuBarSettings` fields).
+/// utility's own) and persistence (bindings and rules are Codable
+/// values ready for `MenuBarSettings` fields).
 ///
-/// ⚠️ `arrange` is the only member that posts events: it physically
-/// drags the person's cursor. It runs only from `arrange(to:)` — the
-/// card button, the palette's "Arrange…" row — never from
-/// `applySettings`, a trigger, or a timer. Trigger rules therefore
-/// have no arrange action, and that is deliberate.
+/// Nothing here posts an event or moves the pointer.
 @MainActor
 final class MenuBarActions {
     nonisolated static let log = Logger(subsystem: "devin.jrbar", category: "menubar")
-    /// The arrange run — user-initiated only, see the warning above.
-    let arrange = MenuBarArrangeCoordinator()
     /// The palette.
     let commandBar = MenuBarCommandBar()
     /// The Carbon hotkeys (start/stop with the utility).
@@ -154,17 +130,6 @@ final class MenuBarActions {
         wireTriggerSource()
     }
 
-    /// The arrange button and the palette's "Arrange…" row: pull the
-    /// persisted order from the delegate and run once. An empty order
-    /// is a no-op — arranging to nothing would move nothing anyway,
-    /// but saying so beats a banner flash.
-    @discardableResult
-    func arrangeMenuBar() async -> MenuBarArrangeOutcome {
-        guard let order = delegate?.menuBarArrangeOrder(for: self),
-              !order.isEmpty else { return .alreadyInOrder }
-        return await arrange.arrange(to: order)
-    }
-
     /// The hotkey/palette route in.
     func openCommandBar() { togglePalette() }
 
@@ -189,7 +154,6 @@ final class MenuBarActions {
         hotkeys.stop()
         triggerSource?.stop()
         commandBar.close()
-        arrange.cancel()
         syncParkedPaletteKey()
     }
 
@@ -261,16 +225,6 @@ final class MenuBarActions {
     // MARK: Internal routing — everything lands on the delegate
 
     private func rewire() {
-        arrange.listItems = { [weak self] in
-            guard let self, let delegate = self.delegate else { return [] }
-            return delegate.menuBarItems(for: self)
-        }
-        arrange.rightBoundary = { [weak self] in
-            guard let self, let delegate = self.delegate else {
-                return CGDisplayBounds(CGMainDisplayID()).maxX
-            }
-            return delegate.menuBarArrangeBoundary(for: self)
-        }
         commandBar.items = { [weak self] in
             guard let self, let delegate = self.delegate else { return [] }
             return delegate.menuBarItems(for: self)
@@ -282,10 +236,6 @@ final class MenuBarActions {
         commandBar.running = { [weak self] in
             guard let self, let delegate = self.delegate else { return true }
             return delegate.menuBarRunning(for: self)
-        }
-        commandBar.concealing = { [weak self] in
-            guard let self, let delegate = self.delegate else { return false }
-            return delegate.menuBarConcealing(for: self)
         }
         commandBar.profiles = { [weak self] in
             guard let self, let delegate = self.delegate else { return [] }
@@ -342,17 +292,6 @@ final class MenuBarActions {
             delegate.menuBarActionsHideAll(self)
         case .showAll:
             delegate.menuBarActionsShowAll(self)
-        case .arrange:
-            // The palette never lists Arrange under the concealer or
-            // with the utility parked; a stale row that lands here
-            // anyway is refused rather than dragging a pointer that
-            // cannot reorder anything.
-            guard delegate.menuBarRunning(for: self),
-                  !delegate.menuBarConcealing(for: self) else { return }
-            Task { [weak self] in
-                guard let self else { return }
-                _ = await self.arrangeMenuBar()
-            }
         case .applyProfile(let id):
             delegate.menuBarActions(self, applyProfileID: id)
         case .runRule(let id):
@@ -452,8 +391,6 @@ final class MenuBarActions {
 /// saved or renamed from the palette is the card's own save or rename.
 extension MenuBarUtility {
     func menuBarRunning(for _: MenuBarActions) -> Bool { running }
-
-    func menuBarConcealing(for _: MenuBarActions) -> Bool { concealing }
 
     func menuBarProfiles(for _: MenuBarActions) -> [MenuBarSettings.Profile] {
         settings().profiles

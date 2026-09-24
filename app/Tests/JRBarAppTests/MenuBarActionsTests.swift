@@ -4,295 +4,17 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-/// The ACTIONS track's pure halves (docs/UTILITIES.md): the arrange
-/// plan's ordering and skip rules, the palette's fuzzy matcher, the
-/// hotkey model's conflicts and display strings, the trigger engine's
-/// edge detection — plus the arrange coordinator's abort semantics
-/// driven through an injected fake watcher and a recording poster.
-/// Nothing here posts a real event or moves a real cursor: every
-/// event-posting seam is a recorder.
+/// The ACTIONS track's pure halves (docs/UTILITIES.md): the palette's
+/// rows and fuzzy matcher, the hotkey model's conflicts and display
+/// strings, the trigger engine's edge detection, and the facade's
+/// routing to its delegate. Nothing here posts a real event.
 @Suite("Menu Bar actions")
 struct MenuBarActionsTests {
-    private let row = CGRect(x: 0, y: 0, width: 1512, height: 24)
-
     private func item(_ id: String, owner: String = "App", x: Double,
                       y: Double = 0, w: Double = 24) -> MenuBarItem {
         MenuBarItem(id: id, ownerPID: 500, ownerName: owner,
                     bounds: CGRect(x: x, y: y, width: w, height: 24),
                     title: nil, windowID: 0)
-    }
-
-    // MARK: ArrangePlan — the order model
-
-    @Test("a run already in the desired order earns no drags")
-    func arrangeAlreadyOrdered() {
-        let items = [item("A", x: 600), item("B", x: 700)]
-        let steps = MenuBarArrangePlan.steps(items: items, order: ["A", "B"],
-                                             boundary: 900, row: row)
-        #expect(steps.isEmpty)
-    }
-
-    @Test("only the out-of-order item moves — the kept chain is the LCS")
-    func arrangeMinimalMove() {
-        // Current [A, B, C], desired [C, A, B]: A and B already sit in
-        // the right relative order — only C is lifted out and dropped
-        // at the deep end.
-        let items = [item("A", x: 600), item("B", x: 700), item("C", x: 800)]
-        let steps = MenuBarArrangePlan.steps(items: items, order: ["C", "A", "B"],
-                                             boundary: 1000, row: row)
-        #expect(steps.map(\.itemID) == ["C"])
-        // C's slot is the run's deep end: two items pack right of it.
-        let targets = MenuBarArrangePlan.targetCenters(
-            MenuBarArrangePlan.resolvedOrder(items: items,
-                                             order: ["C", "A", "B"], row: row),
-            boundary: 1000)
-        #expect(steps.first?.to.x == targets["C"])
-    }
-
-    @Test("steps emit desired-rightmost first so each drop lands on a placed neighbor")
-    func arrangeStepOrder() {
-        // Desired is a full reversal — two of three must move, and the
-        // one that belongs furthest right is dragged first.
-        let items = [item("A", x: 600), item("B", x: 700), item("C", x: 800)]
-        let steps = MenuBarArrangePlan.steps(items: items, order: ["C", "B", "A"],
-                                             boundary: 1000, row: row)
-        #expect(steps.count == 2)
-        #expect(steps.map(\.itemID) == ["A", "B"])
-        #expect(steps[0].to.x > steps[1].to.x,
-                "the desired-rightmost item drops at the largest x")
-    }
-
-    @Test("unnamed items keep their order as a block at the deep end; unknown ids are ignored")
-    func arrangeResolvedOrder() {
-        let items = [item("X", x: 600), item("A", x: 700), item("B", x: 800)]
-        let resolved = MenuBarArrangePlan.resolvedOrder(
-            items: items, order: ["Ghost", "B", "A"], row: row)
-        #expect(resolved.map(\.id) == ["X", "B", "A"])
-    }
-
-    @Test("protected and parked items are never in the movable run")
-    func arrangeExclusions() {
-        let items = [item("A", x: 600),
-                     item("Sys", owner: "Control Center", x: 1400),
-                     item("Parked", x: 7, y: 970)]
-        let movable = MenuBarArrangePlan.movableItems(items, row: row)
-        #expect(movable.map(\.id) == ["A"])
-        // The boundary packs against the leftmost fixed item — the
-        // protected one — not the display edge.
-        let boundary = MenuBarArrangePlan.rightBoundary(items: items,
-                                                        regionMax: 1512, row: row)
-        #expect(boundary == 1400)
-        let steps = MenuBarArrangePlan.steps(
-            items: items, order: ["Sys", "Parked", "A"], boundary: boundary, row: row)
-        #expect(steps.allSatisfy { $0.itemID == "A" })
-    }
-
-    @Test("simulated drags converge: replaying the plan against a fake bar reaches the order")
-    func arrangeConverges() {
-        // Re-planning after each drop is the coordinator's loop; the
-        // fake bar's insert-at-slot reflow is what the real system does.
-        let bar = FakeBar()
-        bar.setOrder(["A", "B", "C", "D"])
-        let desired = ["D", "B", "A", "C"]
-        var moves = 0
-        for _ in 0..<10 {
-            let steps = MenuBarArrangePlan.steps(items: bar.items(), order: desired,
-                                               boundary: bar.boundary, row: row)
-            guard let step = steps.first else { break }
-            bar.post(from: step.from, to: step.to)
-            moves += 1
-        }
-        #expect(bar.barOrder == desired)
-        #expect(moves >= 1 && moves <= 4,
-                "the LCS keeps a subsequence seated — at most the out-of-order items move, plus reflow slack")
-    }
-
-    // MARK: The coordinator — abort semantics with a fake watcher
-
-    /// A watcher a test flips by hand — no event ever posts. The
-    /// coordinator reads `cancelled` on the main actor; a test's
-    /// `postDrag` (a @Sendable closure on the detached task) may write
-    /// it, so both sides take the lock.
-    private final class FakeWatcher: MenuBarArrangeWatching, @unchecked Sendable {
-        private let lock = NSLock()
-        private var _cancelled = false
-        private var _stopped = false
-        var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return _cancelled }
-        var stopped: Bool { lock.lock(); defer { lock.unlock() }; return _stopped }
-        func setCancelled() { lock.lock(); _cancelled = true; lock.unlock() }
-        func stop() { lock.lock(); _stopped = true; lock.unlock() }
-    }
-
-    /// A bar a test steers, modeled the way macOS actually behaves:
-    /// the state is an *order* (left→right ids); slot frames derive
-    /// from it by packing against a fixed right boundary. A drop on a
-    /// slot takes that slot — the occupant slides toward the gap the
-    /// dragged item left, the same reflow the real bar does.
-    /// Lock-guarded because `postDrag` runs on the coordinator's
-    /// detached task while `listItems` runs on the main actor.
-    private final class FakeBar: @unchecked Sendable {
-        private let lock = NSLock()
-        private var order: [String] = []
-        private var _drags: [(from: CGPoint, to: CGPoint)] = []
-        private var _warps: [CGPoint] = []
-        let boundary: CGFloat = 900
-        let width: CGFloat = 24
-        let gap: CGFloat = 2
-
-        var drags: [(from: CGPoint, to: CGPoint)] {
-            lock.lock(); defer { lock.unlock() }; return _drags
-        }
-        var warps: [CGPoint] {
-            lock.lock(); defer { lock.unlock() }; return _warps
-        }
-        var barOrder: [String] {
-            lock.lock(); defer { lock.unlock() }; return order
-        }
-        /// Seed the bar left→right.
-        func setOrder(_ ids: [String]) {
-            lock.lock(); order = ids; lock.unlock()
-        }
-
-        /// Slot frames for an ordering, packed right against boundary.
-        private func slots(for ids: [String]) -> [String: CGRect] {
-            var edge = boundary
-            var out: [String: CGRect] = [:]
-            for id in ids.reversed() {
-                let minX = edge - gap - width
-                out[id] = CGRect(x: minX, y: 0, width: width, height: 24)
-                edge = minX
-            }
-            return out
-        }
-
-        func items() -> [MenuBarItem] {
-            lock.lock(); defer { lock.unlock() }
-            let s = slots(for: order)
-            return order.map {
-                MenuBarItem(id: $0, ownerPID: 1, ownerName: "App",
-                            bounds: s[$0] ?? .zero, title: nil, windowID: 0)
-            }
-        }
-
-        /// The recorder standing in for `postCommandDrag`: the drop
-        /// takes the slot containing `to.x` and the displaced items
-        /// slide toward the gap — remove, then insert on the side the
-        /// item came from.
-        func post(from: CGPoint, to: CGPoint) {
-            lock.lock(); defer { lock.unlock() }
-            _drags.append((from, to))
-            let s = slots(for: order)
-            guard let oldIndex = order.firstIndex(where: { s[$0]?.contains(
-                CGPoint(x: from.x, y: 12)) == true }) else { return }
-            let id = order[oldIndex]
-            let dropIndex = order.firstIndex(where: { s[$0]?.contains(
-                CGPoint(x: to.x, y: 12)) == true })
-                ?? (to.x > (s[order.last ?? id]?.midX ?? 0) ? order.count - 1 : 0)
-            order.remove(at: oldIndex)
-            order.insert(id, at: min(dropIndex, order.count))
-        }
-
-        func warp(_ point: CGPoint) {
-            lock.lock(); _warps.append(point); lock.unlock()
-        }
-    }
-
-    @MainActor
-    private func makeCoordinator(bar: FakeBar,
-                                 watcher: FakeWatcher) -> MenuBarArrangeCoordinator {
-        let coordinator = MenuBarArrangeCoordinator()
-        coordinator.bannerSuppressed = true
-        coordinator.listItems = { bar.items() }
-        coordinator.rowRect = { CGRect(x: 0, y: 0, width: 1512, height: 24) }
-        // The fake bars below pack contiguously against 900 the way a
-        // real extras run packs against its fixed items — the plan's
-        // absolute targets coincide with real slots.
-        coordinator.rightBoundary = { 900 }
-        coordinator.cursorLocation = { CGPoint(x: 400, y: 400) }
-        coordinator.warpCursor = { bar.warp($0) }
-        coordinator.postDrag = { bar.post(from: $0, to: $1) }
-        coordinator.settle = { }
-        coordinator.makeWatcher = { _ in watcher }
-        return coordinator
-    }
-
-    @MainActor
-    @Test("a clean run drags each step, restores the cursor, and reports completed")
-    func coordinatorCompletes() async throws {
-        let bar = FakeBar()
-        bar.setOrder(["A", "B", "C"])
-        let watcher = FakeWatcher()
-        let coordinator = makeCoordinator(bar: bar, watcher: watcher)
-        let outcome = await coordinator.arrange(to: ["C", "A", "B"])
-        #expect(outcome == .completed(moves: 1))
-        #expect(bar.drags.count == 1)
-        #expect(bar.warps == [CGPoint(x: 400, y: 400)],
-                "the cursor goes home after the drag")
-        #expect(watcher.stopped)
-        #expect(bar.barOrder == ["C", "A", "B"])
-    }
-
-    @MainActor
-    @Test("a bar already in order reports alreadyInOrder and never touches the poster")
-    func coordinatorNoOp() async {
-        let bar = FakeBar()
-        bar.setOrder(["A", "B"])
-        let watcher = FakeWatcher()
-        let coordinator = makeCoordinator(bar: bar, watcher: watcher)
-        let outcome = await coordinator.arrange(to: ["A", "B"])
-        #expect(outcome == .alreadyInOrder)
-        #expect(bar.drags.isEmpty)
-        #expect(bar.warps.isEmpty)
-    }
-
-    @MainActor
-    @Test("a foreign event mid-run aborts after the in-flight drag and still restores the cursor")
-    func coordinatorAborts() async {
-        let bar = FakeBar()
-        // A non-converging bar: the drag never lands (the fake refuses
-        // to move items), so the loop would run to the cap without the
-        // abort — the watcher is the only way out.
-        bar.setOrder(["A", "B"])
-        let watcher = FakeWatcher()
-        let coordinator = makeCoordinator(bar: bar, watcher: watcher)
-        coordinator.postDrag = { _, _ in watcher.setCancelled() }
-        let outcome = await coordinator.arrange(to: ["B", "A"])
-        #expect(outcome == .aborted(completedMoves: 1))
-        #expect(bar.warps.count == 1)
-        #expect(watcher.stopped)
-    }
-
-    @MainActor
-    @Test("a second arrange call while one runs reports busy, not a stacked cursor driver")
-    func coordinatorBusy() async throws {
-        let bar = FakeBar()
-        bar.setOrder(["A", "B"])
-        let watcher = FakeWatcher()
-        let coordinator = makeCoordinator(bar: bar, watcher: watcher)
-        // Hold the run inside settle until released.
-        let gate = Gate()
-        coordinator.settle = { await gate.wait() }
-        let first = Task { await coordinator.arrange(to: ["B", "A"]) }
-        await Task.yield()
-        let second = await coordinator.arrange(to: ["B", "A"])
-        #expect(second == .busy)
-        await gate.open()
-        _ = await first.value
-    }
-
-    /// A one-shot async gate for the busy test.
-    private actor Gate {
-        var opened = false
-        var waiters: [CheckedContinuation<Void, Never>] = []
-        func wait() async {
-            if opened { return }
-            await withCheckedContinuation { waiters.append($0) }
-        }
-        func open() {
-            opened = true
-            for w in waiters { w.resume() }
-            waiters = []
-        }
     }
 
     // MARK: Commands — one row per app, bar-wide rows, fuzzy match
@@ -327,7 +49,7 @@ struct MenuBarActionsTests {
         #expect(!commands.contains { ($0.subtitle ?? "").localizedCaseInsensitiveContains("cover") })
         let titles = commands.map(\.title)
         for title in ["Reveal Hidden Items", "Reveal Always-Hidden Items", "Toggle Hidden Items",
-                      "Hide All Apps", "Show All Apps", "Arrange Menu Bar Items…"] {
+                      "Hide All Apps", "Show All Apps"] {
             #expect(titles.contains(title), "\(title)")
         }
     }
@@ -358,14 +80,6 @@ struct MenuBarActionsTests {
         #expect(apps.map(\.section) == [.shown, .hidden])
         #expect(Set(apps.map(\.id)).count == 2, "split rows keep distinct ids")
         #expect(apps[1].verbs[1].action == .setAppSection(itemIDs: ["a2"], .shown))
-    }
-
-    @Test("Arrange is offered only on the spacer engine — under the concealer macOS orders the bar")
-    func commandBuildArrangeGate() {
-        let concealed = MenuBarCommands.build(items: [], sections: [:], concealing: true)
-        #expect(!concealed.contains { $0.id == "menubar.arrange" })
-        let spacer = MenuBarCommands.build(items: [], sections: [:], concealing: false)
-        #expect(spacer.contains { $0.id == "menubar.arrange" })
     }
 
     @Test("protected items and our own app get no rows — the palette cannot hide the clock")
@@ -777,11 +491,6 @@ struct MenuBarActionsTests {
         func menuBarItems(for actions: MenuBarActions) -> [MenuBarItem] { items }
         func menuBarRunning(for actions: MenuBarActions) -> Bool { running }
         func menuBarSections(for actions: MenuBarActions) -> [String: MenuBarItemSection] { sections }
-        func menuBarArrangeOrder(for actions: MenuBarActions) -> [String] {
-            arrangeOrderReads += 1
-            return []
-        }
-        func menuBarArrangeBoundary(for actions: MenuBarActions) -> CGFloat { 1512 }
         func menuBarActions(_ actions: MenuBarActions,
                             setSection section: MenuBarItemSection, for itemID: String) {
             calls.append("setSection:\(itemID):\(section.rawValue)")
@@ -805,10 +514,7 @@ struct MenuBarActionsTests {
         func menuBarActions(_ actions: MenuBarActions, cycleProfile direction: Int) {
             calls.append("cycle:\(direction)")
         }
-        var concealing = false
         var profiles: [MenuBarSettings.Profile] = []
-        var arrangeOrderReads = 0
-        func menuBarConcealing(for actions: MenuBarActions) -> Bool { concealing }
         func menuBarProfiles(for actions: MenuBarActions) -> [MenuBarSettings.Profile] { profiles }
         func menuBarActions(_ actions: MenuBarActions, applyProfileID id: String) {
             calls.append("profileID:\(id)")
@@ -834,8 +540,6 @@ struct MenuBarActionsTests {
     private final class MinimalDelegate: MenuBarActionsDelegate {
         func menuBarItems(for actions: MenuBarActions) -> [MenuBarItem] { [] }
         func menuBarSections(for actions: MenuBarActions) -> [String: MenuBarItemSection] { [:] }
-        func menuBarArrangeOrder(for actions: MenuBarActions) -> [String] { [] }
-        func menuBarArrangeBoundary(for actions: MenuBarActions) -> CGFloat { 1512 }
         func menuBarActions(_ actions: MenuBarActions,
                             setSection section: MenuBarItemSection, for itemID: String) {}
         func menuBarActions(_ actions: MenuBarActions, openItem itemID: String) {}
@@ -871,12 +575,9 @@ struct MenuBarActionsTests {
             "toggleReveal", "profileID:p1", "reveal:3.0", "rule:r:true",
         ])
         // The palette's inputs read the delegate's truth at the keystroke.
-        delegate.concealing = true
         delegate.profiles = [MenuBarSettings.Profile(id: "p", name: "Desk", sections: [:])]
-        #expect(actions.commandBar.concealing())
         #expect(actions.commandBar.profiles().map(\.id) == ["p"])
         #expect(actions.commandBar.rules().map(\.id) == ["r"])
-        #expect(!actions.commandBar.menuBarItems().contains { $0.id == "menubar.arrange" })
         #expect(actions.commandBar.menuBarItems().contains { $0.id == "menubar.profile.p" })
     }
 
@@ -923,7 +624,6 @@ struct MenuBarActionsTests {
         let delegate = MinimalDelegate()
         actions.delegate = delegate
         #expect(actions.commandBar.running(), "a delegate that cannot say is taken as running")
-        #expect(!actions.commandBar.concealing())
         #expect(actions.commandBar.profiles().isEmpty)
         // No-ops, not crashes.
         actions.commandBar.onAction(.applyProfile(id: "p"))
@@ -963,7 +663,6 @@ struct MenuBarActionsTests {
         // An unknown id is a no-op, never a clear.
         utility.actions.commandBar.onAction(.applyProfile(id: "gone"))
         #expect(box.settings.curation.activeProfileID == "p")
-        #expect(!utility.actions.commandBar.concealing(), "a parked utility runs no concealer")
         #expect(!utility.actions.commandBar.running(), "a switched-off utility answers parked")
         #expect(utility.actions.commandBar.menuBarItems().map(\.id) == ["menubar.off"])
         #expect(utility.actions.commandBar.profiles().map(\.id) == ["p"])
@@ -974,22 +673,6 @@ struct MenuBarActionsTests {
         #expect(box.settings.profiles.last?.concealedApps == ["com.example.a": .hidden], "the live layout")
         utility.actions.commandBar.onAction(.renameProfile(id: "p", name: "Office"))
         #expect(box.settings.profiles.map(\.name) == ["Office", "Travel"])
-    }
-
-    @MainActor
-    @Test("a stale Arrange row is refused while the concealer runs — no pointer drags")
-    func paletteArrangeGate() async {
-        let actions = MenuBarActions(bindings: [])
-        let delegate = FakeDelegate()
-        delegate.concealing = true
-        actions.delegate = delegate
-        actions.commandBar.onAction(.arrange)
-        for _ in 0..<50 { await Task.yield() }
-        #expect(delegate.arrangeOrderReads == 0)
-        delegate.concealing = false
-        actions.commandBar.onAction(.arrange)
-        for _ in 0..<500 where delegate.arrangeOrderReads == 0 { await Task.yield() }
-        #expect(delegate.arrangeOrderReads == 1, "the spacer engine still runs it")
     }
 
     @MainActor
@@ -1011,7 +694,7 @@ struct MenuBarActionsTests {
         let rows = actions.commandBar.menuBarItems()
         #expect(rows.map(\.id) == ["menubar.off"])
         let verbs = rows.flatMap(\.actions).map(\.title)
-        for word in ["Hide", "Show", "Always", "Reveal", "Toggle", "Arrange", "Apply", "Run", "Turn", "Save"] {
+        for word in ["Hide", "Show", "Always", "Reveal", "Toggle", "Apply", "Run", "Turn", "Save"] {
             #expect(!verbs.contains { $0.hasPrefix(word) }, "no “\(word)” verb while parked")
         }
         var opened = 0
@@ -1019,10 +702,6 @@ struct MenuBarActionsTests {
         #expect(rows.first?.primary?.run() == nil, "the settings page is its own proof")
         #expect(opened == 1)
         #expect(delegate.calls.isEmpty)
-        // A stale Arrange is refused: no order read, no drag.
-        actions.commandBar.onAction(.arrange)
-        for _ in 0..<50 { await Task.yield() }
-        #expect(delegate.arrangeOrderReads == 0)
     }
 
     /// The parked key's binding, boxed so the test can flip it.

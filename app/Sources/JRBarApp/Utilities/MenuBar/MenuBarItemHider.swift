@@ -151,9 +151,8 @@ struct MenuBarHidePlan: Equatable, Sendable {
 /// drawing — and a screen change reloads the edge learned for that
 /// screen.
 ///
-/// Nothing in this file posts events or moves the pointer. Physically
-/// reordering items belongs to `MenuBarItemMover`, which only an
-/// explicit, user-initiated arrange gesture may ever invoke.
+/// Nothing in this file posts events or moves the pointer, and nothing
+/// in JR-Bar reorders the bar: that is the person's own ⌘-drag.
 ///
 /// Reconcile runs after every AX scan, on a 1 Hz timer while a boundary
 /// stands or the listing is the live window list (`timerTick`), and on

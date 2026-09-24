@@ -24,9 +24,6 @@ enum MenuBarCommandAction: Equatable, Sendable {
     case hideAll
     /// Every app shown, and kept that way.
     case showAll
-    /// The physical reorder flow — drags the pointer. Offered only on
-    /// the spacer engine; under the concealer macOS orders the bar.
-    case arrange
     /// A saved profile, or `MenuBarProfiles.noneID`.
     case applyProfile(id: String)
     /// The live layout saved under a name — a same-named profile is
@@ -234,7 +231,6 @@ enum MenuBarCommands {
     /// than the picker can.
     nonisolated static func build(items: [MenuBarItem],
                                   sections: [String: MenuBarItemSection],
-                                  concealing: Bool = false,
                                   profiles: [MenuBarSettings.Profile] = [],
                                   activeProfileID: String? = nil,
                                   rules: [MenuBarTriggerRule] = [],
@@ -256,7 +252,7 @@ enum MenuBarCommands {
             appRow(key: group.key, section: group.section, items: group.items,
                    split: splitKeys.contains(group.key))
         }
-        out += commandRows(concealing: concealing)
+        out += commandRows()
         out += profileRows(profiles, active: activeProfileID)
         out += rules.map(ruleRow)
         return out
@@ -325,12 +321,9 @@ enum MenuBarCommands {
             keywords: first.bundleID.map { [$0] } ?? [], verbs: verbs)
     }
 
-    /// The bar-wide commands. Arrange is the app's only synthetic
-    /// pointer input and cannot deliver under the concealer — macOS
-    /// orders the bar itself on 27 — so it is offered only while the
-    /// spacer engine runs.
-    nonisolated static func commandRows(concealing: Bool) -> [MenuBarCommand] {
-        var rows = [
+    /// The bar-wide commands.
+    nonisolated static func commandRows() -> [MenuBarCommand] {
+        [
             MenuBarCommand(
                 id: "menubar.reveal", kind: .command, title: "Reveal Hidden Items",
                 subtitle: "The hidden apps, back until the re-hide clock runs out",
@@ -362,30 +355,20 @@ enum MenuBarCommands {
                 verbs: [MenuBarCommandVerb(id: "run", title: "Show All", symbol: "eye",
                                            action: .showAll, confirmation: "All apps shown")]),
         ]
-        if !concealing {
-            rows.append(MenuBarCommand(
-                id: "menubar.arrange", kind: .command, title: "Arrange Menu Bar Items…",
-                subtitle: "⌘-drags items into your saved order — the pointer moves",
-                symbol: "arrow.left.arrow.right", tint: .gray, keywords: ["reorder", "sort"],
-                verbs: [MenuBarCommandVerb(id: "run", title: "Arrange", symbol: "arrow.left.arrow.right",
-                                           action: .arrange)]))
-        }
-        return rows
     }
 
     /// The parked utility's one row. ⌘⇧K still opens the palette with
     /// the Menu Bar utility off or handed to Bartender, Ice or Hidden
     /// Bar, but nothing on the bar answers JR-Bar then: a Hide would
-    /// write maps no engine reads while the HUD said it worked, a
-    /// reveal would poke a stopped clock, and Arrange would drag the
-    /// pointer for nobody. So the verbs wait, and the row says where
-    /// the utility switches back on.
+    /// write maps no engine reads while the HUD said it worked, and a
+    /// reveal would poke a stopped clock. So the verbs wait, and the
+    /// row says where the utility switches back on.
     nonisolated static func parkedRows() -> [MenuBarCommand] {
         [MenuBarCommand(
             id: "menubar.off", kind: .command, title: "Menu Bar Utility Is Off",
             subtitle: "Off or handed to another app — hiding, profiles and rules wait for it",
             symbol: "menubar.rectangle", tint: .gray,
-            keywords: ["hide", "reveal", "show", "profile", "rule", "arrange",
+            keywords: ["hide", "reveal", "show", "profile", "rule",
                        "bartender", "ice", "hidden bar"],
             verbs: [MenuBarCommandVerb(id: "settings", title: "Open Utilities Settings",
                                        symbol: "gearshape", action: .openSettings)])]
@@ -562,8 +545,6 @@ final class MenuBarCommandBar {
     /// Whether the utility runs. Parked, the listing and maps are the
     /// card's leftovers, so the rows built from them would lie.
     var running: @MainActor () -> Bool = { true }
-    /// Whether the concealer runs — Arrange's row hides while it does.
-    var concealing: @MainActor () -> Bool = { false }
     var profiles: @MainActor () -> [MenuBarSettings.Profile] = { [] }
     /// The profile the bar wears now — its row is tagged Current.
     var activeProfileID: @MainActor () -> String? = { nil }
@@ -589,7 +570,7 @@ final class MenuBarCommandBar {
     /// The menu bar's rows at this moment.
     func menuBarItems() -> [PaletteItem] {
         let commands = running()
-            ? MenuBarCommands.build(items: items(), sections: sections(), concealing: concealing(),
+            ? MenuBarCommands.build(items: items(), sections: sections(),
                                     profiles: profiles(), activeProfileID: activeProfileID(), rules: rules())
             : MenuBarCommands.parkedRows()
         return commands
