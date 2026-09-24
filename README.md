@@ -174,12 +174,14 @@ The user guides, from usage hooks and Claude Code's status line to the
 xbar and Raycast examples, are indexed in [docs/README.md](docs/README.md).
 
 To remove it: `sudo ./scripts/uninstall-macos.sh` takes out the hooks,
-the helpers, the `jrbar` link and the app, wherever they were installed
+Claude Code's status line (putting back the one you had), the helpers,
+the `jrbar` link and the app, wherever they were installed
 (`~/Applications` or `/Applications`; `~/.local/bin` or `/usr/local/bin`),
 and leaves any file it did not put there alone. `--dry-run` shows the
 steps without taking them, `--keep-app` keeps the app and `--purge-state`
 also removes settings and history. By hand: quit the app, run
-`jrbar agent-monitor uninstall all`, then delete `JR-Bar.app`.
+`jrbar agent-monitor uninstall all` (it also puts back Claude Code's
+status line), then delete `JR-Bar.app`.
 
 ### Permissions
 

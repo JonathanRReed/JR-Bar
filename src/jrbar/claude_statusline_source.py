@@ -620,6 +620,40 @@ def core_uninstall_command(controller, _args: dict[str, Any]) -> dict[str, Any]:
     return {"removed": bool(result["changed"]), "restored": bool(result.get("restored"))}
 
 
+def uninstall_with_claude_hooks(
+    *,
+    dry_run: bool = False,
+    settings_path: Path | None = None,
+    state_dir: Path | None = None,
+) -> int:
+    """``jrbar agent-monitor uninstall all`` (or ``claude``) also puts back
+    Claude Code's status line. The line points at a shim inside JR-Bar.app,
+    so leaving it behind after the app is deleted would break Claude
+    Code's status line and lose the one the person had before. Quiet when
+    the status line is not JR-Bar's."""
+    import sys
+
+    from .state_paths import default_state_dir
+
+    target = settings_path or claude_settings_path()
+    try:
+        result = uninstall_statusline(
+            settings_path=target, state_dir=state_dir or default_state_dir(), dry_run=dry_run
+        )
+    except (ValueError, OSError) as error:
+        print(f"claude statusLine: {error}", file=sys.stderr)
+        return 1
+    if not result["changed"]:
+        return 0
+    if not dry_run:
+        _set_source_setting(False)
+    verb = "would put back" if dry_run else "put back"
+    what = "your previous statusLine" if result["restored"] else "no statusLine (JR-Bar's removed)"
+    print(f"claude statusLine: {verb} {what}")
+    print(f"  config: {target}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     """``jrbar agent-monitor install|uninstall claude-statusline [--wrap] [--dry-run]``."""
     import argparse
@@ -685,4 +719,5 @@ __all__ = [
     "statusline_command",
     "statusline_text",
     "uninstall_statusline",
+    "uninstall_with_claude_hooks",
 ]

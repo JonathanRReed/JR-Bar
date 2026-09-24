@@ -129,3 +129,17 @@ def test_without_a_home_install_it_falls_back_to_applications(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stderr
     assert "JR-Bar.app: /Applications/JR-Bar.app" in result.stdout
+
+
+def test_claude_codes_status_line_is_put_back_before_the_app_goes(tmp_path: Path) -> None:
+    """The status line points at a shim inside the bundle; deleting the app
+    first would leave Claude Code running a missing program."""
+    home = tmp_path / "home"
+    app = _fake_app(home / "Applications")
+
+    result = _dry_run(home)
+
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    statusline = out.index("agent-monitor uninstall claude-statusline")
+    assert statusline < out.index("agent-monitor uninstall all") < out.index(f"/bin/rm -rf {app}")

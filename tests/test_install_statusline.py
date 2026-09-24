@@ -142,3 +142,44 @@ def test_the_cli_routes_install_and_refuses_without_wrap(places, monkeypatch, ca
     assert code == 0
     assert flips == [True, False]
     assert _read(settings)["statusLine"]["command"] == "echo mine"
+
+
+@pytest.mark.parametrize(
+    ("argv", "puts_back"),
+    [
+        (["agent-monitor", "uninstall", "all"], True),
+        (["agent-monitor", "uninstall"], True),
+        (["agent-monitor", "uninstall", "claude", "--dry-run"], True),
+        (["agent-monitor", "uninstall", "--claude-log", "/tmp/x.jsonl", "claude"], True),
+        (["agent-monitor", "uninstall", "codex"], False),
+    ],
+)
+def test_uninstalling_claudes_hooks_also_puts_back_its_status_line(
+    places, monkeypatch, capsys, argv, puts_back
+) -> None:
+    """The README's by-hand steps are `uninstall all` and then delete the
+    app: the status line must not be left pointing into the deleted app."""
+    from jrbar import claude_statusline_source, cli_entry
+
+    settings, state, shim = places
+    theirs = {"type": "command", "command": "echo mine"}
+    settings.write_text(json.dumps({"statusLine": theirs}))
+    install_statusline(shim=shim, settings_path=settings, state_dir=state, wrap=True)
+    legacy: list[list[str]] = []
+    monkeypatch.setattr(cli_entry, "_legacy_jrbar_main", lambda args: legacy.append(args) or 0)
+    monkeypatch.setattr(claude_statusline_source, "claude_settings_path", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr("jrbar.state_paths.default_state_dir", lambda: state)
+    flips: list[bool] = []
+    monkeypatch.setattr(claude_statusline_source, "_set_source_setting", flips.append)
+
+    assert cli_entry.jrbar_main(argv) == 0
+
+    assert legacy == [argv], "the hooks are removed as before"
+    line = _read(settings)["statusLine"]
+    if puts_back and "--dry-run" not in argv:
+        assert line == theirs
+        assert flips == [False]
+        assert "put back your previous statusLine" in capsys.readouterr().out
+    else:
+        assert is_ours(line)
+        assert flips == []

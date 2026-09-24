@@ -19,6 +19,13 @@ def jrbar_main(argv: list[str] | None = None) -> int:
         from .claude_statusline_source import main as statusline_main
 
         return statusline_main(args[1:])
+    if args[:2] == ["agent-monitor", "uninstall"] and _uninstalls_claude(args[2:]):
+        # Claude's hooks and its status line go together: the uninstaller
+        # runs `uninstall all` before it deletes the app the line points at.
+        code = _legacy_jrbar_main(args)
+        from .claude_statusline_source import uninstall_with_claude_hooks
+
+        return uninstall_with_claude_hooks(dry_run="--dry-run" in args) or code
     if args[:1] == ["usage"]:
         from .usage_cli import main as usage_main
 
@@ -37,6 +44,20 @@ def jrbar_main(argv: list[str] | None = None) -> int:
 
         return control_main(args)
     return _legacy_jrbar_main(args)
+
+
+def _uninstalls_claude(rest: list[str]) -> bool:
+    """Whether ``agent-monitor uninstall`` with these arguments removes
+    Claude's hooks: ``all`` (also the default) or ``claude``."""
+    if "-h" in rest or "--help" in rest:
+        return False
+    positional = [
+        token
+        for index, token in enumerate(rest)
+        if not token.startswith("-")
+        and not (index > 0 and rest[index - 1].startswith("--") and rest[index - 1].endswith("-log"))
+    ]
+    return (positional[0] if positional else "all") in ("all", "claude")
 
 
 __all__ = ["jrbar_main"]

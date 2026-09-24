@@ -134,6 +134,9 @@ for label in $RETIRED_AGENT_LABELS; do
         act /bin/rm -f "$plist"
     fi
 done
+# Claude Code's status line points at a shim inside this bundle: put back
+# the one the person had (or remove ours) before the bundle goes.
+run_as_user "$CORE_BINARY" agent-monitor uninstall claude-statusline
 run_as_user "$CORE_BINARY" agent-monitor uninstall all
 run_as_user "$CORE_BINARY" sdejectguard uninstall --scope user
 

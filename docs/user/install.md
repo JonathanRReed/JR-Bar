@@ -73,5 +73,6 @@ Options:
 To remove it by hand:
 
 1. Quit the app.
-2. Run `jrbar agent-monitor uninstall all`.
+2. Run `jrbar agent-monitor uninstall all`. It removes the hooks and puts
+   back Claude Code's status line if JR-Bar's was in it.
 3. Delete `JR-Bar.app`.
