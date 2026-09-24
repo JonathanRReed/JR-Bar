@@ -113,7 +113,7 @@ struct GraphScene: View, Animatable {
             } symbols: {
                 ForEach(Array(model.nodes.values)) { node in
                     GraphNodeLabel(node: node, caption: model.captions[node.id],
-                                   side: painter.side(of: node.id), worker: painter.isWorker(node.id))
+                                   side: painter.nodeSide(node.id), worker: painter.isWorker(node.id))
                         .tag("label." + node.id)
                 }
                 ForEach(model.hubsDrawn) { hub in
@@ -162,7 +162,7 @@ private struct GraphPainter {
 
     // MARK: Where things are
 
-    func side(of id: String) -> Layout.Side {
+    func nodeSide(_ id: String) -> Layout.Side {
         model.layout.nodes[id]?.side ?? model.previous?.nodes[id]?.side ?? .right
     }
 
@@ -234,10 +234,10 @@ private struct GraphPainter {
         return 1 - 0.74 * dim
     }
 
-    func accent(_ provider: String) -> Color { accents[provider] ?? .gray }
+    func providerColor(_ provider: String) -> Color { accents[provider] ?? .gray }
 
     /// A finished run's check fades over its first hour, never to nothing.
-    func fade(_ node: OverviewGraphNode) -> Double {
+    func doneFade(_ node: OverviewGraphNode) -> Double {
         guard node.activity == .done else { return 1 }
         let age = max(0, model.now - node.lastActive)
         return 1 - min(1, age / 3_600) * 0.55
@@ -248,7 +248,7 @@ private struct GraphPainter {
         switch node.activity {
         case .idle: 0.62
         case .ended: 0.5
-        case .done: 0.72 + 0.28 * fade(node)
+        case .done: 0.72 + 0.28 * doneFade(node)
         default: 1
         }
     }
@@ -425,15 +425,15 @@ private struct GraphPainter {
     private func drawSpokes(_ context: inout GraphicsContext) {
         for hub in model.hubsDrawn {
             let (center, hubAlpha) = hubCenter(hub)
-            let accent = accent(hub.id)
+            let accent = providerColor(hub.id)
             for id in spokeIDs(hub) {
                 guard let node = model.nodes[id], let (rect, alpha) = frame(of: id) else { continue }
-                let side = side(of: id)
+                let side = nodeSide(id)
                 let start = CGPoint(x: center.x + side.sign * Layout.Metrics.hubDiameter / 2, y: center.y)
                 let end = CGPoint(x: side == .right ? rect.minX : rect.maxX, y: rect.midY)
                 let lit = min(light(id), light("hub:" + hub.id))
                 strokeEdge(&context, from: start, to: end, start: accent, activity: node.activity,
-                           alpha: min(alpha, hubAlpha) * lit * fade(node))
+                           alpha: min(alpha, hubAlpha) * lit * doneFade(node))
             }
         }
     }
@@ -442,12 +442,12 @@ private struct GraphPainter {
         for edge in model.layout.edges {
             guard let parent = model.nodes[edge.from], let child = model.nodes[edge.to],
                   let (from, fromAlpha) = frame(of: edge.from), let (to, toAlpha) = frame(of: edge.to) else { continue }
-            let side = side(of: edge.to)
+            let side = nodeSide(edge.to)
             let start = CGPoint(x: side == .right ? from.maxX : from.minX, y: from.midY)
             let end = CGPoint(x: side == .right ? to.minX : to.maxX, y: to.midY)
             let lit = min(light(edge.from), light(edge.to))
-            strokeEdge(&context, from: start, to: end, start: accent(parent.provider), activity: child.activity,
-                       alpha: min(fromAlpha, toAlpha) * lit * fade(child))
+            strokeEdge(&context, from: start, to: end, start: providerColor(parent.provider), activity: child.activity,
+                       alpha: min(fromAlpha, toAlpha) * lit * doneFade(child))
         }
     }
 
@@ -477,7 +477,7 @@ private struct GraphPainter {
             let (center, alpha) = hubCenter(hub)
             var c = context
             c.opacity = alpha * light("hub:" + hub.id)
-            let accent = accent(hub.id)
+            let accent = providerColor(hub.id)
             let radius = Layout.Metrics.hubDiameter / 2
             // A halo of its own colour, a hairline orbit, then the orb: a
             // lit top, a deeper rim, and a glassy highlight.
@@ -508,9 +508,9 @@ private struct GraphPainter {
 
     private func drawNode(_ context: inout GraphicsContext, id: String, visible: CGRect) {
         guard let node = model.nodes[id], let (rect, alpha) = frame(of: id), rect.intersects(visible) else { return }
-        let side = side(of: id)
+        let side = nodeSide(id)
         let worker = isWorker(id)
-        let accent = accent(node.provider)
+        let accent = providerColor(node.provider)
         let lit = light(id)
         var c = context
         c.opacity = alpha * lit * presence(node)
@@ -621,7 +621,7 @@ private struct GraphPainter {
             context.stroke(path, with: .color(.red), lineWidth: width)
             drawBadge(&context, center: center, ring: ring, worker: worker, color: .red, check: false, alpha: 1)
         case .done:
-            let fade = fade(node)
+            let fade = doneFade(node)
             context.stroke(path, with: .color(.green.opacity(0.8 * fade)), lineWidth: width - 0.4)
             drawBadge(&context, center: center, ring: ring, worker: worker, color: .green, check: true, alpha: fade)
         case .idle:
@@ -679,10 +679,10 @@ private struct GraphPainter {
         if dark { sparks.blendMode = .plusLighter }
         for hub in model.layout.hubs {
             let (center, hubAlpha) = hubCenter(hub)
-            let accent = accent(hub.id)
+            let accent = providerColor(hub.id)
             for id in hub.sessionIDs where model.nodes[id]?.activity == .working {
                 guard let (rect, alpha) = frame(of: id) else { continue }
-                let side = side(of: id)
+                let side = nodeSide(id)
                 let start = CGPoint(x: center.x + side.sign * Layout.Metrics.hubDiameter / 2, y: center.y)
                 let end = CGPoint(x: side == .right ? rect.minX : rect.maxX, y: rect.midY)
                 drawSparks(&sparks, from: start, to: end, color: accent, seed: id,
@@ -692,20 +692,21 @@ private struct GraphPainter {
         for edge in model.layout.edges where model.nodes[edge.to]?.activity == .working {
             guard let parent = model.nodes[edge.from],
                   let (from, fromAlpha) = frame(of: edge.from), let (to, toAlpha) = frame(of: edge.to) else { continue }
-            let side = side(of: edge.to)
+            let side = nodeSide(edge.to)
             let start = CGPoint(x: side == .right ? from.maxX : from.minX, y: from.midY)
             let end = CGPoint(x: side == .right ? to.minX : to.maxX, y: to.midY)
-            drawSparks(&sparks, from: start, to: end, color: accent(parent.provider), seed: edge.to,
+            drawSparks(&sparks, from: start, to: end, color: providerColor(parent.provider), seed: edge.to,
                        alpha: min(fromAlpha, toAlpha) * min(light(edge.from), light(edge.to)), time: time)
         }
 
         // A hub whose work is running sends out a slow ring now and then.
         for hub in model.layout.hubs where hub.sessionIDs.contains(where: { model.nodes[$0]?.activity == .working }) {
             let (center, alpha) = hubCenter(hub)
-            let phase = CGFloat(((time + Double(Self.seed(hub.id)) * 0.37) / 3.2).truncatingRemainder(dividingBy: 1))
+            let cycle = (time + Double(Self.seed(hub.id)) * 0.37) / 3.2
+            let phase = CGFloat(cycle.truncatingRemainder(dividingBy: 1))
             let radius = Layout.Metrics.hubDiameter / 2 + 7 + phase * 22
-            world.stroke(Self.circle(center, radius), with: .color(accent(hub.id).opacity(0.4 * Double(1 - phase) * alpha
-                                                                                            * light("hub:" + hub.id))),
+            let strength = 0.4 * Double(1 - phase) * alpha * light("hub:" + hub.id)
+            world.stroke(Self.circle(center, radius), with: .color(providerColor(hub.id).opacity(strength)),
                          lineWidth: 1.4 * (1 - phase) + 0.3)
         }
 
@@ -715,7 +716,7 @@ private struct GraphPainter {
             var c = world
             c.opacity = alpha * light(id)
             let worker = isWorker(id)
-            let (center, radius) = Self.orb(in: rect, side: side(of: id), worker: worker)
+            let (center, radius) = Self.orb(in: rect, side: nodeSide(id), worker: worker)
             if node.activity == .working {
                 // A comet: the head, then two fading lengths of tail.
                 let ring = radius + (worker ? 3 : 4)

@@ -148,10 +148,12 @@ private struct GraphStateChip: View {
     let count: Int
     var words = true
 
+    private var label: String { words ? "\(count) \(GraphHeader.word(activity))" : "\(count)" }
+
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(activity.tint).frame(width: 7, height: 7)
-            Text(words ? "\(count) \(GraphHeader.word(activity))" : "\(count)")
+            Text(label)
                 .foregroundStyle(activity.wordIsLoud ? activity.tint : .secondary)
                 .lineLimit(1)
         }

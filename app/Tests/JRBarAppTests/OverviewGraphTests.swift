@@ -197,25 +197,50 @@ import JRBarCore
     @Test("the camera fits the map, zooms about the pointer and pans only as far as it must")
     func camera() {
         let bounds = CGRect(x: -400, y: -200, width: 800, height: 400)
-        let fit = GraphCamera.fit(bounds, in: CGSize(width: 1_000, height: 400), inset: 0)
-        #expect(abs(fit.scale - 1) < 0.001)
-        #expect(fit.screen(CGPoint(x: bounds.midX, y: bounds.midY)) == CGPoint(x: 500, y: 200))
+        let whole = GraphCamera.fit(bounds, in: CGSize(width: 1_000, height: 400), inset: 0)
+        #expect(abs(whole.scale - 1) < 0.001)
+        #expect(whole.screen(CGPoint(x: bounds.midX, y: bounds.midY)) == CGPoint(x: 500, y: 200))
         let tiny = GraphCamera.fit(CGRect(x: 0, y: 0, width: 10, height: 10), in: CGSize(width: 800, height: 600))
         #expect(tiny.scale == GraphCamera.maxFitScale, "a small map is never blown up past the cap")
 
         let anchor = CGPoint(x: 120, y: 80)
-        let pinned = fit.world(anchor)
-        let zoomed = fit.zoomed(by: 2, about: anchor)
-        #expect(zoomed.scale == 2)
-        #expect(abs(zoomed.screen(pinned).x - anchor.x) < 0.001 && abs(zoomed.screen(pinned).y - anchor.y) < 0.001)
-        #expect(fit.zoomed(by: 100, about: anchor).scale == GraphCamera.maxScale)
-        #expect(fit.zoomed(by: 0.001, about: anchor).scale == GraphCamera.minScale)
+        let pinned = whole.world(anchor)
+        let closer = whole.zoomed(by: 2, about: anchor)
+        #expect(closer.scale == 2)
+        #expect(abs(closer.screen(pinned).x - anchor.x) < 0.001 && abs(closer.screen(pinned).y - anchor.y) < 0.001)
+        #expect(whole.zoomed(by: 100, about: anchor).scale == GraphCamera.maxScale)
+        #expect(whole.zoomed(by: 0.001, about: anchor).scale == GraphCamera.minScale)
 
         let size = CGSize(width: 1_000, height: 400)
-        #expect(fit.revealing(CGRect(x: 0, y: 0, width: 50, height: 50), in: size) == nil)
-        let moved = fit.revealing(CGRect(x: 600, y: 0, width: 50, height: 50), in: size, margin: 20)
-        #expect(moved?.scale == fit.scale)
+        #expect(whole.revealing(CGRect(x: 0, y: 0, width: 50, height: 50), in: size) == nil)
+        let moved = whole.revealing(CGRect(x: 600, y: 0, width: 50, height: 50), in: size, margin: 20)
+        #expect(moved?.scale == whole.scale)
         #expect(moved.map { $0.screen(CGRect(x: 600, y: 0, width: 50, height: 50)).maxX } == 980)
+    }
+
+    @Test("the Graph opens whole when it reads, else readable on its middle with the first ask in sight")
+    func opening() {
+        let size = CGSize(width: 600, height: 400)
+        let small = CGRect(x: -300, y: -200, width: 600, height: 400)
+        #expect(GraphCamera.opening(small, in: size, focus: nil, inset: 0) == GraphCamera.fit(small, in: size, inset: 0))
+
+        let big = CGRect(x: -1_500, y: -1_000, width: 3_000, height: 2_000)
+        let middle = GraphCamera.opening(big, in: size, focus: nil)
+        #expect(middle.scale == GraphCamera.readableScale)
+        #expect(middle.screen(CGPoint.zero) == CGPoint(x: 300, y: 200))
+        let ask = CGRect(x: 1_000, y: 800, width: 200, height: 50)
+        let found = GraphCamera.opening(big, in: size, focus: ask)
+        #expect(found.scale == GraphCamera.readableScale)
+        let shown = found.screen(ask)
+        #expect(shown.minX >= 0 && shown.maxX <= size.width && shown.minY >= 0 && shown.maxY <= size.height)
+    }
+
+    @Test("a hub's caption counts its sessions and names the loudest state among them")
+    func hubCaptions() {
+        #expect(OverviewGraphCanvas.hubCaption([.working]) == "1 session · 1 working")
+        #expect(OverviewGraphCanvas.hubCaption([.working, .failed, .done]) == "3 sessions · 1 failed")
+        #expect(OverviewGraphCanvas.hubCaption([.working, .waiting, .waiting]) == "3 sessions · 2 waiting")
+        #expect(OverviewGraphCanvas.hubCaption([.done, .idle]) == "2 sessions")
     }
 
     @Test("two fingers pan, a wheel pans in bigger steps, and ⌘ turns either into a zoom")
