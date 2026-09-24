@@ -1178,11 +1178,28 @@ final class DockEnhanceController {
     /// the ask rows and Quit's guard. Re-run whenever the card list
     /// changes under the panel.
     private func applyAgents(to content: DockPreviewContent) {
+        let marks = agentMarks()
         let mapped = DockEnhanceMath.agentMap(windows: content.windows,
                                               bundleID: content.bundleID,
-                                              marks: agentMarks())
+                                              marks: marks,
+                                              soleAppWindows: isSoleAppWindow(content, marks: marks))
         content.agents = mapped.cards
         content.appAgents = mapped.app
+    }
+
+    /// Whether the previewed app-hosted agent's one card is its only
+    /// window anywhere — the sole-window rule weighed as ⌥⇥ weighs it,
+    /// against every window the window server lists for the app: other
+    /// displays, other Spaces and the Dock count, though the display
+    /// filter, AX and a minimized tile's own card leave them out.
+    /// Asked only when the answer could mark a card.
+    private func isSoleAppWindow(_ content: DockPreviewContent, marks: [DockAgentMark]) -> Bool {
+        guard content.windows.count == 1, let pid = content.processIdentifier,
+              let bundleID = content.bundleID, DockAgentMatch.appHostedBundleIDs.contains(bundleID),
+              marks.contains(where: { $0.hosts.contains(bundleID) }) else { return false }
+        let listed = DockSwitcherList.onScreenRows(running: [pid]).count
+            + DockSwitcherList.offScreenRows(running: [pid]).count
+        return listed <= 1
     }
 
     /// A minimized-window tile: the Dock gives the tile the window's

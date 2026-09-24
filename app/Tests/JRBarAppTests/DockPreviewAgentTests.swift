@@ -42,6 +42,24 @@ struct DockPreviewAgentTests {
         #expect(none.cards.isEmpty && none.app.isEmpty)
     }
 
+    @Test("one Claude card that is not Claude's only window takes no session; the header still counts it")
+    func soleCardNotSoleWindow() {
+        let claude = DockAgentMatch.appHostedBundleIDs.first { $0.contains("claude") } ?? ""
+        let marks = DockAgentMark.marks(from: [
+            session("ask", label: "Asker", waiting: true, host: claude),
+            session("work", label: "Worker", host: claude),
+        ])
+        let cards = [window(1, "Claude")]
+        let sole = DockEnhanceMath.agentMap(windows: cards, bundleID: claude, marks: marks)
+        #expect(sole.cards[1]?.label == "Asker", "Claude's only window carries its waiting session")
+        let elsewhere = DockEnhanceMath.agentMap(windows: cards, bundleID: claude, marks: marks,
+                                                 soleAppWindows: false)
+        #expect(elsewhere.cards.isEmpty,
+                "a second window on another display or Space leaves nothing to say which holds the ask")
+        #expect(elsewhere.app.map(\.label) == ["Asker", "Worker"],
+                "the waiting session still counts for the header and its ask row")
+    }
+
     @Test("close all keeps the windows a live agent runs in")
     func closeAllSkipsAgents() {
         let marks = DockAgentMark.marks(from: [session("a", label: "Build the thing")])

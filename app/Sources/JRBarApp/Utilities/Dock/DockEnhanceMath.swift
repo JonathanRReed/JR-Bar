@@ -515,9 +515,12 @@ enum DockEnhanceMath {
     /// A preview's agents: card id → the session that window exclusively
     /// hosts, and every live session the app hosts at all (most urgent
     /// first). Nothing for a folder, a bare tile, or an app no session
-    /// names as its host.
+    /// names as its host. `soleAppWindows` is `DockAgentMatch.match`'s,
+    /// and only the caller can say it: the cards are what AX and the
+    /// display filter left, so one card is not one window.
     static func agentMap(windows: [DockPreviewWindow], bundleID: String?,
-                         marks: [DockAgentMark]) -> (cards: [Int: DockAgentMark], app: [DockAgentMark]) {
+                         marks: [DockAgentMark],
+                         soleAppWindows: Bool = true) -> (cards: [Int: DockAgentMark], app: [DockAgentMark]) {
         guard let bundleID else { return ([:], []) }
         let hosted = marks.filter { $0.hosts.contains(bundleID) }
         guard !hosted.isEmpty else { return ([:], []) }
@@ -525,7 +528,8 @@ enum DockEnhanceMath {
             DockAgentMatch.Candidate(key: String($0.id), bundleID: bundleID, title: $0.title)
         }
         var cards: [Int: DockAgentMark] = [:]
-        for (key, mark) in DockAgentMatch.match(marks: hosted, candidates: candidates) {
+        for (key, mark) in DockAgentMatch.match(marks: hosted, candidates: candidates,
+                                                soleAppWindows: soleAppWindows) {
             if let id = Int(key) { cards[id] = mark }
         }
         let app = hosted.filter(\.isLive).enumerated()
