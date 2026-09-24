@@ -625,7 +625,8 @@ struct DockPreviewView: View {
         let captions = captionLines
         ForEach(content.windows) { window in
             DockPreviewCard(window: window, icon: content.icon,
-                            size: DockEnhanceMath.cardSize(large: content.largeCards),
+                            size: cardSize(window),
+                            fillsStill: content.hugWindows,
                             selected: window.id == content.selectedWindowID,
                             showsTitle: showsTitle(window),
                             captionLines: captions,
@@ -635,6 +636,13 @@ struct DockPreviewView: View {
                             metrics: metrics,
                             actions: actions)
         }
+    }
+
+    /// A card's still box: 16:10, or the window's own shape when the
+    /// cards hug their windows.
+    private func cardSize(_ window: DockPreviewWindow) -> CGSize {
+        guard content.hugWindows else { return DockEnhanceMath.cardSize(large: content.largeCards) }
+        return DockEnhanceMath.cardSize(large: content.largeCards, aspect: DockEnhanceMath.aspect(of: window))
     }
 
     /// A card whose title is just the app name again — "Claude" under a
@@ -765,6 +773,9 @@ struct DockPreviewCard: View {
     let window: DockPreviewWindow
     let icon: NSImage?
     let size: CGSize
+    /// The still fills its box (cropped at the edges) rather than fitting
+    /// inside it — for a box already cut to the window's shape.
+    var fillsStill = false
     var selected = false
     /// nil-equivalent title rows are suppressed — the header already
     /// names the app, and the Dock's own bubble does too.
@@ -899,7 +910,7 @@ struct DockPreviewCard: View {
     private var face: some View {
         Group {
             if let thumbnail = window.thumbnail {
-                DockStill(image: thumbnail, ring: ring, ringWidth: armedNote != nil ? 3 : 2)
+                DockStill(image: thumbnail, ring: ring, ringWidth: armedNote != nil ? 3 : 2, fill: fillsStill)
                     .opacity(window.minimized ? 0.55 : 1)
                     .overlay(alignment: .bottomLeading) {
                         if window.minimized { DockMinimizedMark().padding(6) }

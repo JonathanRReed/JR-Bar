@@ -270,6 +270,10 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Large cards",
                              subtitle: "Bigger thumbnails for reading the window, not just the title.")
             }
+            Toggle(isOn: cardsHugWindows) {
+                SettingLabel(title: "Cards take each window's shape",
+                             subtitle: "A tall window gets a narrow card and a wide one a wide card, its still filling it — no bars beside a portrait window.")
+            }
             Toggle(isOn: offscreen) {
                 SettingLabel(title: "Capture every window",
                              subtitle: "Thumbnails for windows on other Spaces and minimized ones too; the cards list them either way.")
@@ -428,6 +432,10 @@ struct DockUtilityControls: View {
     private var dockGap: Binding<Double> {
         Binding(get: { utility.enhance.preferences.dockGap },
                 set: { utility.enhance.preferences.dockGap = $0.rounded() })
+    }
+    private var cardsHugWindows: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.cardsHugWindows },
+                set: { utility.enhance.preferences.cardsHugWindows = $0 })
     }
     private var coverDockLabel: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.coverDockLabel },

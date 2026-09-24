@@ -705,6 +705,7 @@ final class DockEnhanceController {
         mediaToken = nil
         preview.largeCards = preferences.largePreviews
         preview.metrics = preferences.metrics
+        preview.hugWindows = preferences.cardsHugWindows
         fill(preview, for: item)
 
         // Nothing to preview — no windows to raise — is no panel. A

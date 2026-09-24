@@ -165,6 +165,16 @@ struct UtilitySurfacesRenderProofTests {
                 }
             }
         }
+        // Windows of three shapes: letterboxed in 16:10 boxes, then in
+        // cards that take each window's shape.
+        for (name, hug) in [("dock-shapes-fit", false), ("dock-shapes-hug", true)] {
+            let content = DockPreviewSamples.shapes(hug: hug)
+            for dark in [true, false] {
+                let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
+                try Self.write(view, glassRadius: content.metrics.panelRadius, name: name, dark: dark,
+                               canvas: CGSize(width: 900, height: 420))
+            }
+        }
         // Where the glass sits off a 55 pt tile, from the frame math:
         // covering the name bubble at the default 4 pt, and the classic
         // band that clears it.

@@ -327,6 +327,25 @@ enum DockPreviewSamples {
         return content
     }
 
+    /// Safari with a phone-tall window, a page and a ribbon-wide window:
+    /// the letterbox case, and with `hug` the cards that take each
+    /// window's shape.
+    static func shapes(hug: Bool, spacing: Double = DockEnhanceSettings.defaultSpacing) -> DockPreviewContent {
+        let content = DockPreviewContent()
+        content.metrics = DockPreviewMetrics.scaled(spacing)
+        content.hugWindows = hug
+        content.appName = "Safari"
+        content.icon = appIcon("com.apple.Safari")
+        content.bundleID = "com.apple.Safari"
+        content.isRunning = true
+        content.windows = [
+            window(1, "Mobile layout — jr-bar.dev", still: DockSampleStill.portrait(hue: 0.55)),
+            window(2, "Liquid Glass — Apple Developer", still: browserStills[0]),
+            window(3, "Build dashboard", still: DockSampleStill.browser(hue: 0.33, size: CGSize(width: 960, height: 280))),
+        ]
+        return content
+    }
+
     /// Music with a track playing.
     static func music(spacing: Double = 1) -> DockPreviewContent {
         let content = DockPreviewContent()
@@ -452,8 +471,8 @@ enum DockSampleStill {
         }
     }
 
-    static func browser(hue: CGFloat) -> NSImage {
-        draw(CGSize(width: 480, height: 312)) { rect in
+    static func browser(hue: CGFloat, size: CGSize = CGSize(width: 480, height: 312)) -> NSImage {
+        draw(size) { rect in
             NSColor.white.setFill()
             NSBezierPath(rect: rect).fill()
             titleBar(rect, dark: false, title: "")

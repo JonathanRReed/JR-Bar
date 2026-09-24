@@ -135,6 +135,7 @@ enum ToySearchCatalog {
             ToySearchRow("Window thumbnails", keywords: ["capture", "screen recording"]),
             ToySearchRow("Live card under the pointer", keywords: ["live", "video"]),
             ToySearchRow("Large cards", keywords: ["bigger"]),
+            ToySearchRow("Cards take each window's shape", keywords: ["aspect", "letterbox", "portrait", "fill"]),
             ToySearchRow("Capture every window", keywords: ["spaces", "minimized"]),
             ToySearchRow("Only windows on this display", keywords: ["multiple displays"]),
             ToySearchRow("Switcher", keywords: ["alt tab", "option tab"]),

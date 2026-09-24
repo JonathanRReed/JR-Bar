@@ -188,6 +188,8 @@ final class DockPreviewContent {
     /// The insets and corners the panel draws, from the card's Spacing —
     /// set at each show, so a late thumbnail re-renders at the same air.
     var metrics = DockPreviewMetrics.standard
+    /// Each card takes its window's shape (the card's opt-in).
+    var hugWindows = false
     /// True when the window count passed `compactListLimit` — the
     /// panel lists titles instead of thumbnails and skips captures.
     var compact = false

@@ -46,20 +46,20 @@ struct DockPanelRule: View {
 
 /// A window's still as every Dock surface draws it: fitted, its own
 /// corners rounded (not the letterbox's), a hairline rim and a soft
-/// lift off the glass. A waiting agent's ring sits just outside the
-/// still's own edge, concentric with it, and glows a little.
+/// lift off the glass. `fill` covers the whole box instead, cropping
+/// what spills — for a box already cut to the window's shape. A waiting
+/// agent's ring sits just outside the still's own edge, concentric with
+/// it, and glows a little.
 struct DockStill: View {
     let image: NSImage
     var radius: CGFloat = DockChrome.stillRadius
     var ring: Color? = nil
     var ringWidth: CGFloat = 2
+    var fill = false
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        Image(nsImage: image)
-            .resizable()
-            .interpolation(.high)
-            .aspectRatio(contentMode: .fit)
+        face
             .clipShape(shape)
             .overlay(shape.strokeBorder(DockChrome.hairline, lineWidth: 0.5))
             .shadow(color: .black.opacity(0.24), radius: 5, y: 2)
@@ -72,6 +72,26 @@ struct DockStill: View {
                         .allowsHitTesting(false)
                 }
             }
+    }
+
+    @ViewBuilder
+    private var face: some View {
+        if fill {
+            // The box takes the proposed size; the picture covers it
+            // from the top-leading corner, so a crop takes the far edge
+            // and the bottom, never the title bar and traffic lights.
+            Color.clear.overlay(alignment: .topLeading) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+            }
+        } else {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+        }
     }
 }
 

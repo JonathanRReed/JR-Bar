@@ -204,4 +204,14 @@ struct DockSettingsTests {
             #expect(DockEnhanceSettings.spacingRange.contains(stop.scale))
         }
     }
+
+    @Test("cards that take each window's shape are off, decode tolerantly and round-trip")
+    func hugKey() throws {
+        #expect(DockSettings().enhance.cardsHugWindows == false)
+        #expect(try decode(DockSettings.self, #"{"enhance": {"cardsHugWindows": "yes"}}"#).enhance.cardsHugWindows == false)
+        #expect(try decode(DockSettings.self, #"{"enhance": {"cardsHugWindows": true}}"#).enhance.cardsHugWindows)
+        var round = DockSettings()
+        round.enhance.cardsHugWindows = true
+        #expect(try decode(DockSettings.self, encode(round)) == round)
+    }
 }

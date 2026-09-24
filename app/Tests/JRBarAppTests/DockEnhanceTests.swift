@@ -248,6 +248,26 @@ import Testing
                 "a tile already bigger than the magnified size reaches nothing")
     }
 
+    @Test func aCardThatHugsItsWindowTakesItsShapeWithinBounds() {
+        let small = DockEnhanceMath.cardSize(large: false)
+        #expect(DockEnhanceMath.cardSize(large: false, aspect: nil) == small, "no aspect keeps the 16:10 box")
+        #expect(DockEnhanceMath.cardSize(large: false, aspect: .nan) == small)
+        #expect(DockEnhanceMath.cardSize(large: false, aspect: 1.6) == CGSize(width: 144, height: 90))
+        #expect(DockEnhanceMath.cardSize(large: false, aspect: 300.0 / 520) == CGSize(width: 54, height: 90),
+                "a phone-tall window: a narrow card at 0.6 of the height")
+        #expect(DockEnhanceMath.cardSize(large: false, aspect: 4) == CGSize(width: 171, height: 90),
+                "a ribbon-wide window stops at 1.9 of the height")
+        #expect(DockEnhanceMath.cardSize(large: false, aspect: 1) == CGSize(width: 90, height: 90))
+        #expect(DockEnhanceMath.cardSize(large: true, aspect: 0.75) == CGSize(width: 98, height: 130))
+        let framed = DockPreviewWindow(id: 1, title: "", minimized: false, fullScreen: nil,
+                                       frame: CGRect(x: 0, y: 0, width: 400, height: 800), thumbnail: nil,
+                                       element: nil)
+        #expect(DockEnhanceMath.aspect(of: framed) == 0.5, "the frame answers before any still lands")
+        let bare = DockPreviewWindow(id: 2, title: "", minimized: false, fullScreen: nil, frame: nil,
+                                     thumbnail: nil, element: nil)
+        #expect(DockEnhanceMath.aspect(of: bare) == nil)
+    }
+
     @Test func theRoadToTheCardsHoldsAtEveryDistance() {
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let size = CGSize(width: 300, height: 120)

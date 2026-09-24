@@ -124,6 +124,11 @@ final class DockEnhancePreferences {
         get { read().coverDockLabel }
         set { write?({ var s = read(); s.coverDockLabel = newValue; return s }()) }
     }
+    /// Cards take each window's shape instead of a 16:10 box.
+    var cardsHugWindows: Bool {
+        get { read().cardsHugWindows }
+        set { write?({ var s = read(); s.cardsHugWindows = newValue; return s }()) }
+    }
     /// The metrics every inset in the preview reads, at the stored scale.
     var metrics: DockPreviewMetrics { DockPreviewMetrics.scaled(read().previewSpacing) }
 

@@ -238,6 +238,10 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// app. Off, it sits under the Dock's level and keeps a band clear
     /// for the bubble, the look before this setting.
     public var coverDockLabel: Bool
+    /// Each card takes its window's shape — a tall window a narrow card,
+    /// a wide one a wide card — with the still filling it, instead of a
+    /// 16:10 box that letterboxes anything else. Off by default.
+    public var cardsHugWindows: Bool
 
     public static let delayRange: ClosedRange<Double> = 0.05...1.0
     public static let defaultDelay: Double = 0.25
@@ -268,7 +272,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 frontAppChord: Bool = false,
                 previewSpacing: Double = DockEnhanceSettings.defaultSpacing,
                 dockGap: Double = DockEnhanceSettings.defaultDockGap,
-                coverDockLabel: Bool = true) {
+                coverDockLabel: Bool = true,
+                cardsHugWindows: Bool = false) {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.largePreviews = largePreviews
@@ -290,6 +295,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.previewSpacing = Self.clampedSpacing(previewSpacing)
         self.dockGap = Self.clampedDockGap(dockGap)
         self.coverDockLabel = coverDockLabel
+        self.cardsHugWindows = cardsHugWindows
     }
 
     static func clampedCompactLimit(_ value: Int) -> Int {
@@ -320,6 +326,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         case previewTrigger, scrollGestures, clickToMinimize, learnedPicks, liveCard
         case frontAppChord
         case previewSpacing, dockGap, coverDockLabel
+        case cardsHugWindows
     }
 
     public init(from decoder: any Decoder) throws {
@@ -349,6 +356,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         dockGap = Self.clampedDockGap(
             (try? c.decodeIfPresent(Double.self, forKey: .dockGap)) ?? Self.defaultDockGap)
         coverDockLabel = (try? c.decodeIfPresent(Bool.self, forKey: .coverDockLabel)) ?? true
+        cardsHugWindows = (try? c.decodeIfPresent(Bool.self, forKey: .cardsHugWindows)) ?? false
     }
 }
 

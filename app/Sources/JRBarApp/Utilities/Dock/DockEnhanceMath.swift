@@ -233,6 +233,26 @@ enum DockEnhanceMath {
         large ? CGSize(width: 208, height: 130) : CGSize(width: 144, height: 90)
     }
 
+    /// A card that takes its window's shape: the box's height, and a
+    /// width that follows the window's aspect, held between 0.6 and 1.9
+    /// of the height so a phone-tall window or a ribbon-wide one still
+    /// reads as a card. No aspect to go on keeps the 16:10 box.
+    static func cardSize(large: Bool, aspect: CGFloat?) -> CGSize {
+        let box = cardSize(large: large)
+        guard let aspect, aspect.isFinite, aspect > 0 else { return box }
+        let h = box.height
+        return CGSize(width: min(max(h * aspect, h * 0.6), h * 1.9).rounded(), height: h)
+    }
+
+    /// A card's window aspect: its frame's while AX reports one (known
+    /// before the still lands, so the strip doesn't reflow when it does),
+    /// else the still's own.
+    static func aspect(of window: DockPreviewWindow) -> CGFloat? {
+        if let frame = window.frame, frame.width > 0, frame.height > 0 { return frame.width / frame.height }
+        if let size = window.thumbnail?.size, size.width > 0, size.height > 0 { return size.width / size.height }
+        return nil
+    }
+
     /// Whether `windowCount` crossed the compact-list limit — 0 is
     /// "never compact", and a list at the limit counts as past it.
     static func compactList(windowCount: Int, limit: Int) -> Bool {
