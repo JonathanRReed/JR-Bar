@@ -1321,7 +1321,7 @@ struct OverviewView: View {
 /// transcript aggregates, ledger interruptions — with the benchmark
 /// warning and named gaps always visible, never a verdict the facts
 /// cannot carry.
-private struct CompareRunsSheet: View {
+struct CompareRunsSheet: View {
     let comparison: CoreRunComparison
     /// Both sides' `session_usage` — model, tokens, cost — which the
     /// daemon's comparison names as untracked; read here, per side.
@@ -1482,9 +1482,14 @@ private struct CompareRunsSheet: View {
         }
     }
 
-    private static func durationText(_ seconds: Double) -> String {
+    /// Whole minutes and seconds under an hour and a half: a formatted
+    /// `seconds / 60` rounds, so 119 s would read "2m 59s".
+    static func durationText(_ seconds: Double) -> String {
         if seconds < 90 { return String(format: "%.0fs", seconds) }
-        if seconds < 5400 { return String(format: "%.0fm %.0fs", seconds / 60, seconds.truncatingRemainder(dividingBy: 60)) }
+        if seconds < 5400 {
+            let whole = Int(seconds)
+            return "\(whole / 60)m \(whole % 60)s"
+        }
         return String(format: "%.1fh", seconds / 3600)
     }
 
