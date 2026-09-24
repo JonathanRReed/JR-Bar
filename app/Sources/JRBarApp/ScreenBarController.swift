@@ -376,6 +376,11 @@ final class ScreenBarController {
     /// of playing it. Live-read and re-presented on the workspace's change.
     private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     var isShown: Bool { visibility.shown }
+    /// The frame clock is ticking right now — false whenever nobody can
+    /// see the band (the off-cost check reads it).
+    var clockRunning: Bool { displayLink.map { !$0.isPaused } ?? false }
+    /// The band's window is on screen.
+    var panelOnScreen: Bool { panel.isVisible }
     private(set) var programText: String = ""
     /// The raw text of the last ACCEPTED program -- refusal never reaches
     /// it, so a refused republish can neither dedupe against nor move the

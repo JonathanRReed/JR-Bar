@@ -89,6 +89,9 @@ final class SystemTogglesStore {
         /// under the cup counts down without a daemon frame.
         private(set) var awakeClock = Date()
         @ObservationIgnored private var awakeTick: Task<Void, Never>?
+        /// The countdown's clock or the local hold's deadline is running —
+        /// what "off leaves nothing behind" checks.
+        var awakeClockRunning: Bool { awakeTick != nil || awakeTimer != nil }
         /// A hand-over of the app's assertion to the daemon is in flight.
         @ObservationIgnored private var handingOver = false
         /// This connection's daemon answered a lease with "no such
