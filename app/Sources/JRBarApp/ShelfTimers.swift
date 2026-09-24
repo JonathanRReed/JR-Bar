@@ -70,7 +70,12 @@ final class ShelfTimerModel {
     /// A silenced timer still marks itself fired and leaves the strip.
     var firePredicate: (@MainActor (Entry) -> Bool)?
 
+    /// One wake, armed for the soonest deadline still to come — none at
+    /// all while no timer runs, so an empty shelf costs nothing.
     private var tick: Timer?
+    /// When the armed wake is due; nil while nothing is armed. Tests read
+    /// it rather than wait for the wake.
+    private(set) var armedFor: Date?
     private var observers: [NSObjectProtocol] = []
     private let storeURL: URL
 
@@ -79,13 +84,13 @@ final class ShelfTimerModel {
         self.storeURL = storeURL ?? Self.defaultStoreURL()
         entries = Self.load(from: self.storeURL)
         // Recovery sweep: anything that came due while the app was down
-        // fires exactly once now (T51's "one overdue notification").
+        // fires exactly once now (T51's "one overdue notification"). It
+        // arms the wake for whatever is still to come.
         sweep()
-        startTicking()
         observeClockAndWake()
     }
 
-    // No deinit cleanup: the model lives for the app's run — the tick
+    // No deinit cleanup: the model lives for the app's run — the wake
     // is a main-runloop timer and the observers are app-lifetime too.
     // Isolated deinit would be nonisolated and can't touch them anyway.
 
@@ -102,6 +107,7 @@ final class ShelfTimerModel {
         entries.append(entry)
         sortEntries()
         persist()
+        rearm()
         return entry
     }
 
@@ -118,6 +124,7 @@ final class ShelfTimerModel {
     func remove(_ entry: Entry) {
         entries.removeAll { $0.id == entry.id }
         persist()
+        rearm()
     }
 
     /// Bank the time left; the chip reads "paused" and nothing fires.
@@ -126,6 +133,7 @@ final class ShelfTimerModel {
               !entries[index].fired, !entries[index].paused else { return }
         entries[index].pausedRemaining = max(1, entries[index].deadline.timeIntervalSinceNow)
         persist()
+        rearm()
     }
 
     /// Carry on from where it was paused, on a fresh absolute deadline.
@@ -136,6 +144,7 @@ final class ShelfTimerModel {
         entries[index].pausedRemaining = nil
         sortEntries()
         persist()
+        rearm()
     }
 
     /// "+1 min", "+5 min": a running timer gains the time; a done one
@@ -156,6 +165,7 @@ final class ShelfTimerModel {
         }
         sortEntries()
         persist()
+        rearm()
     }
 
     /// Soonest first; paused timers sort by what they have left.
@@ -163,12 +173,24 @@ final class ShelfTimerModel {
         entries.sort { $0.remaining < $1.remaining }
     }
 
-    // MARK: - Tick and recovery
+    // MARK: - Wake and recovery
 
-    /// The 1 s heartbeat; firing is edge-triggered on `fired` so a
-    /// restart after the deadline delivers one notice, not a storm.
-    private func startTicking() {
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+    /// The soonest deadline a running, unfired timer still has — the one
+    /// moment the model needs to wake for.
+    nonisolated static func nextDeadline(_ entries: [Entry]) -> Date? {
+        entries.filter { !$0.fired && !$0.paused }.map(\.deadline).min()
+    }
+
+    /// Arm the one wake for `nextDeadline`, replacing any before it; with
+    /// nothing running, nothing is armed. Firing stays edge-triggered on
+    /// `fired`, so a restart after the deadline delivers one notice, not
+    /// a storm.
+    private func rearm() {
+        tick?.invalidate()
+        tick = nil
+        armedFor = Self.nextDeadline(entries)
+        guard let due = armedFor else { return }
+        let timer = Timer(fire: max(due, Date()), interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.sweep() }
         }
         timer.tolerance = 0.3
@@ -176,9 +198,10 @@ final class ShelfTimerModel {
         tick = timer
     }
 
-    /// Re-check every deadline — called by the tick, by wake, and by
-    /// clock-change so sleep and wall-clock edits are handled the same.
-    /// Internal so tests can run a sweep without the heartbeat.
+    /// Re-check every deadline — called by the wake, by the system's
+    /// wake and by clock-change so sleep and wall-clock edits are handled
+    /// the same — then arm for the next one. Internal so tests can run a
+    /// sweep without waiting for the wake.
     func sweep() {
         var changed = false
         var retired: [String] = []
@@ -197,6 +220,7 @@ final class ShelfTimerModel {
         }
         if !retired.isEmpty { entries.removeAll { retired.contains($0.id) } }
         if changed { persist() }
+        rearm()
     }
 
     private func observeClockAndWake() {
