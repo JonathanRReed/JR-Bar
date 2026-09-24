@@ -1114,3 +1114,82 @@ def test_open_session_raises_on_the_socket_thread__and_3_more(monkeypatch, tmp_p
     reply = core_runtime._cmd_open_session(controller, {"session": row.agent_id})
     assert reply == {"session": row.agent_id, "activated": None, "origin": None}
     assert ("ladder", True) in seen and all(on for _name, on in seen if _name != "osascript")
+
+
+def test_a_start_that_lands_as_the_recorder_sleeps_is_probed_at_once__and_1_more(tmp_path: Path) -> None:
+    import threading
+
+    # --- scenario: a start queued the moment the worker finds the queue empty is not lost
+    """The audit's repro: the worker found the queue empty, then cleared its
+    wake event outside the lock; a start queued between the two was missed
+    and waited out the 30 s timeout. The producer now fires at exactly that
+    moment, and the second start is still probed at once."""
+    probed: list[str] = []
+    second = threading.Event()
+
+    class Recorder(SurfaceRecorder):
+        def _probe(self, provider, session_id, cwd, ppid, user_start=True, *, late=False):
+            probed.append(session_id)
+            if session_id == "B":
+                second.set()
+
+    recorder = Recorder(path=tmp_path / "race.json", runner=FakeRunner(), process_table=lambda: GHOSTTY_CODEX)
+    real = recorder._arrived
+
+    class RacingCondition:
+        fired = False
+
+        def notify(self, n: int = 1) -> None:
+            real.notify(n)
+
+        def wait(self, timeout: float | None = None) -> bool:
+            if not RacingCondition.fired:
+                RacingCondition.fired = True
+                producer = threading.Thread(
+                    target=lambda: recorder.note_session_start("codex", _start("B"), 500), daemon=True
+                )
+                producer.start()
+            return real.wait(timeout)
+
+    recorder._arrived = RacingCondition()
+    assert recorder.note_session_start("codex", _start("A"), 500)
+    assert second.wait(5.0), "the second start waited out the recorder's timeout"
+    assert probed == ["A", "B"]
+
+    # --- scenario: a start probed more than 2 s after it arrived records no surface
+    # Arrived at 100 s; popped behind slow probes past the bound.
+    readings = iter([100.0, 100.0 + surfaces.SURFACE_PROBE_MAX_AGE_SECONDS + 0.5])
+    runner = FakeRunner(focused="T7\t/Users/me/repo")
+    stored = threading.Event()
+
+    class Late(SurfaceRecorder):
+        def _probe(self, *args, **kwargs):
+            try:
+                super()._probe(*args, **kwargs)
+            finally:
+                stored.set()
+
+    late = Late(
+        path=tmp_path / "late.json",
+        runner=runner,
+        process_table=lambda: GHOSTTY_CODEX,
+        monotonic=lambda: next(readings),
+    )
+    assert late.note_session_start("codex", _start(), 500)
+    assert stored.wait(5.0)
+    assert late.recorded("codex", "s-1") is None
+    assert late.recorded_host("codex", "s-1") == "com.mitchellh.ghostty"
+    assert late.recorded_cwd("codex", "s-1") == "/Users/me/repo"
+    assert ("ghostty-focused",) not in runner.calls
+    # The same start probed inside the bound proves its terminal.
+    readings = iter([100.0, 100.5])
+    stored.clear()
+    fresh = Late(
+        path=tmp_path / "fresh.json",
+        runner=FakeRunner(focused="T7\t/Users/me/repo"),
+        process_table=lambda: GHOSTTY_CODEX,
+        monotonic=lambda: next(readings),
+    )
+    assert fresh.note_session_start("codex", _start(), 500)
+    assert stored.wait(5.0)
+    assert fresh.recorded("codex", "s-1") == "T7"

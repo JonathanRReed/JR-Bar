@@ -654,6 +654,11 @@ def _surface_key(provider: str, session_id: str) -> str:
 #: Claude Code and Codex also send ``compact``, which fires on
 #: auto-compaction mid-turn with whatever terminal the owner is looking at.
 USER_START_SOURCES: Final = frozenset({"startup", "resume", "clear", "fork"})
+#: A SessionStart probed later than this after it arrived records no
+#: Ghostty surface: the focused terminal is the one the command was typed
+#: into only while it is still fresh, and by then it can be a sibling split
+#: in the same repo, where a typed reply would run as a shell command.
+SURFACE_PROBE_MAX_AGE_SECONDS: Final = 2.0
 
 
 class SurfaceRecorder:
@@ -665,7 +670,9 @@ class SurfaceRecorder:
 
     ``note_session_start`` is called by the hook ingress for every
     SessionStart and returns at once; the probe runs on one worker thread
-    with a bounded queue, so a burst of starts never slows a hook.
+    with a bounded queue, so a burst of starts never slows a hook. A start
+    that waited in that queue past ``SURFACE_PROBE_MAX_AGE_SECONDS`` records
+    its host app and directory but no surface.
 
     Only a start the owner made records a surface, and it replaces the
     record -- or, when it cannot place the session, forgets the old surface,
@@ -680,17 +687,24 @@ class SurfaceRecorder:
         runner: SurfaceRunner | None = None,
         process_table: Callable[[], Mapping[int, Any]] | None = None,
         wall_clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
         synchronous: bool = False,
     ) -> None:
         self._path = path
         self._runner = runner or SurfaceRunner()
         self._table = process_table
         self._wall = wall_clock
+        self._monotonic = monotonic
         self._synchronous = synchronous
         self._lock = threading.Lock()
         self._records: dict[str, dict[str, Any]] | None = None
-        self._queue: deque[tuple[str, str, str | None, int | None, bool]] = deque(maxlen=8)
-        self._wake = threading.Event()
+        # Each start with the moment it arrived.
+        self._queue: deque[tuple[tuple[str, str, str | None, int | None, bool], float]] = deque(maxlen=8)
+        # The worker sleeps on this and the producer notifies it, both under
+        # the lock: a start that lands as the worker finds the queue empty
+        # is seen, where an Event cleared outside the lock lost it and left
+        # the start waiting out the 30 s timeout.
+        self._arrived = threading.Condition(self._lock)
         self._worker: threading.Thread | None = None
 
     # -- reading --
@@ -757,27 +771,24 @@ class SurfaceRecorder:
             self._probe(*item)
             return True
         with self._lock:
-            self._queue.append(item)
+            self._queue.append((item, self._monotonic()))
             if self._worker is None or not self._worker.is_alive():
                 self._worker = threading.Thread(target=self._drain, name="JRBarSurfaceRecorder", daemon=True)
                 self._worker.start()
-        self._wake.set()
+            self._arrived.notify()
         return True
 
     def _drain(self) -> None:
         while True:
             with self._lock:
-                item = self._queue.popleft() if self._queue else None
-            if item is None:
-                self._wake.clear()
-                if not self._wake.wait(30.0):
-                    with self._lock:
-                        if not self._queue:
-                            self._worker = None
-                            return
-                continue
+                if not self._queue:
+                    self._arrived.wait(30.0)
+                if not self._queue:
+                    self._worker = None
+                    return
+                item, arrived = self._queue.popleft()
             try:
-                self._probe(*item)
+                self._probe(*item, late=self._monotonic() - arrived > SURFACE_PROBE_MAX_AGE_SECONDS)
             except Exception:
                 continue
 
@@ -788,6 +799,8 @@ class SurfaceRecorder:
         cwd: str | None,
         ppid: int | None,
         user_start: bool = True,
+        *,
+        late: bool = False,
     ) -> None:
         if ppid is None or not cwd:
             if user_start:
@@ -810,7 +823,10 @@ class SurfaceRecorder:
             # split in the same repo. Keep the record its own start made.
             self._keep(provider, session_id, host_bundle=bundle, cwd=cwd)
             return
-        self._store(provider, session_id, host_bundle=bundle, terminal_id=self._ghostty_surface(bundle, cwd), cwd=cwd)
+        # Probed late, the focused terminal proves nothing: the record says
+        # where the session runs, and "unproven" is the safe answer.
+        terminal_id = None if late else self._ghostty_surface(bundle, cwd)
+        self._store(provider, session_id, host_bundle=bundle, terminal_id=terminal_id, cwd=cwd)
 
     def _ghostty_surface(self, bundle: str, cwd: str) -> str | None:
         """The focused Ghostty terminal, when it is provably this session's:
