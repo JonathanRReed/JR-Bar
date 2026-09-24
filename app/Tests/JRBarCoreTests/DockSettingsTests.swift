@@ -146,4 +146,62 @@ struct DockSettingsTests {
         s.enabled = false
         #expect(!s.previewsWanted && !s.switcherWanted)
     }
+
+    @Test("the preview's air defaults to Tight, 4 pt off the Dock, over the name bubble")
+    func airDefaults() throws {
+        let s = DockSettings().enhance
+        #expect(s.previewSpacing == 0.6)
+        #expect(s.dockGap == 4)
+        #expect(s.coverDockLabel == true)
+        let blank = try decode(DockSettings.self, #"{"enhance": {"previewDelay": 0.4}}"#).enhance
+        #expect(blank.previewSpacing == 0.6, "a blob from before the knob lands on Tight")
+        #expect(blank.dockGap == 4)
+        #expect(blank.coverDockLabel == true)
+    }
+
+    @Test("spacing, gap and the label cover decode tolerantly and clamp")
+    func airDecodesTolerantly() throws {
+        let junk = try decode(DockSettings.self,
+                              #"{"enhance": {"previewSpacing": "wide", "dockGap": "near", "coverDockLabel": 1}}"#).enhance
+        #expect(junk.previewSpacing == DockEnhanceSettings.defaultSpacing)
+        #expect(junk.dockGap == DockEnhanceSettings.defaultDockGap)
+        #expect(junk.coverDockLabel == true, "a number is not a switch")
+        let high = try decode(DockSettings.self, #"{"enhance": {"previewSpacing": 9, "dockGap": 99}}"#).enhance
+        #expect(high.previewSpacing == 1.6)
+        #expect(high.dockGap == 40)
+        let low = try decode(DockSettings.self, #"{"enhance": {"previewSpacing": -1, "dockGap": -5}}"#).enhance
+        #expect(low.previewSpacing == 0.5)
+        #expect(low.dockGap == 0)
+        #expect(DockEnhanceSettings(previewSpacing: .nan).previewSpacing == DockEnhanceSettings.defaultSpacing)
+        #expect(DockEnhanceSettings(dockGap: .infinity).dockGap == DockEnhanceSettings.defaultDockGap)
+        var edited = DockEnhanceSettings()
+        edited.previewSpacing = 9
+        edited.dockGap = -3
+        #expect(edited.previewSpacing == 1.6 && edited.dockGap == 0, "a write clamps too")
+    }
+
+    @Test("spacing, gap and the label cover round-trip")
+    func airRoundTrips() throws {
+        var round = DockSettings()
+        round.enhance.previewSpacing = 1.15
+        round.enhance.dockGap = 22
+        round.enhance.coverDockLabel = false
+        let back = try decode(DockSettings.self, encode(round))
+        #expect(back == round)
+        #expect(back.enhance.previewSpacing == 1.15 && back.enhance.dockGap == 22)
+        #expect(back.enhance.coverDockLabel == false)
+    }
+
+    @Test("the spacing stops name their scales, and a scale between them is Custom")
+    func spacingStops() {
+        #expect(DockPreviewSpacing.stop(for: 0.6) == .tight)
+        #expect(DockPreviewSpacing.stop(for: 1.0) == .standard)
+        #expect(DockPreviewSpacing.stop(for: 1.4) == .roomy)
+        #expect(DockPreviewSpacing.stop(for: 0.85) == nil)
+        #expect(DockPreviewSpacing.stop(for: DockEnhanceSettings.defaultSpacing) == .tight)
+        #expect(DockPreviewSpacing.allCases.map(\.title) == ["Tight", "Standard", "Roomy"])
+        for stop in DockPreviewSpacing.allCases {
+            #expect(DockEnhanceSettings.spacingRange.contains(stop.scale))
+        }
+    }
 }
