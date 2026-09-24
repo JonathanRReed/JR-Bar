@@ -113,6 +113,37 @@ import Testing
         #expect(parse("jrbar://session?id=claude%3Asession%3Aabc") == .openSession("claude:session:abc"))
     }
 
+    @Test func everyCommandsLinkReadsBackAsItself() {
+        var commands: [AppCommand] = [
+            .panel(toggle: false), .panel(toggle: true),
+            .settings(page: nil), .settings(page: "notifications"),
+            .toggle(.darkMode, on: nil), .toggle(.keepAwake, on: true), .toggle(.mute, on: false),
+            .keepAwake(seconds: nil), .keepAwake(seconds: 0), .keepAwake(seconds: 5400),
+            .quiet(mode: nil, seconds: 3600), .quiet(mode: "asks_only", seconds: 900), .endQuiet,
+            .deepWork(seconds: 1500),
+            .screenBar(on: nil), .screenBar(on: true), .screenBar(on: false),
+            .confetti(), .confetti(tint: .provider("codex")), .confetti(tint: .session("claude:session:abc")),
+            .openSession("claude:session:abc"), .revealAsk, .shelf,
+        ]
+        commands += AppCommand.AppWindow.allCases.map(AppCommand.window)
+        commands += AppCommand.MenuBarVerb.allCases.map(AppCommand.menuBar)
+        for command in commands {
+            #expect(AppCommand.parse(command.link) == command, "\(command.link.absoluteString)")
+        }
+    }
+
+    @Test func aSessionLinkCarriesItsIDInTheQuery() {
+        #expect(AppCommand.openSession("claude:session:abc").link.absoluteString
+                == "jrbar://session?id=claude:session:abc")
+        // Whatever an id holds arrives whole: nothing in it reads as the
+        // link's own structure.
+        for id in ["codex:session:a b", "odd&id=1+2#x/y?z", "café:session:ü", "remote:studio-mac:claude:session:9"] {
+            let link = AppCommand.openSession(id).link
+            #expect(link.absoluteString.hasPrefix("jrbar://session?id="))
+            #expect(AppCommand.parse(link) == .openSession(id), "\(link.absoluteString)")
+        }
+    }
+
     @Test func aConfettiLinkNamesWhoseColoursItWears() {
         #expect(parse("jrbar://confetti?provider=Codex") == .confetti(tint: .provider("codex")))
         #expect(parse("jrbar://confetti?session=claude%3Asession%3Aabc") == .confetti(tint: .session("claude:session:abc")))

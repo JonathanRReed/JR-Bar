@@ -223,6 +223,77 @@ enum AppCommand: Equatable, Sendable {
         }
     }
 
+    /// The `jrbar://` link that names this command, the one `parse` reads
+    /// back: what a reminder, a deck key or a menu row carries to run it
+    /// later. Values ride in the query, percent-encoded, so a session id
+    /// keeps its colons out of the path and whatever else it holds
+    /// arrives whole (`jrbar://session?id=claude:session:…`).
+    nonisolated var link: URL {
+        var path: [String]
+        var query: [(name: String, value: String)] = []
+        switch self {
+        case .panel(let toggle):
+            path = toggle ? ["panel", "toggle"] : ["panel"]
+        case .settings(let page):
+            path = ["settings"] + (page.map { [$0] } ?? [])
+        case .window(let window):
+            path = ["window", window.rawValue]
+        case .toggle(let toggle, let on):
+            path = ["toggle", toggle.rawValue]
+            if let on { query.append(("on", on ? "1" : "0")) }
+        case .keepAwake(let seconds):
+            path = ["awake"]
+            if let seconds { query.append(("for", String(seconds))) }
+        case .quiet(let mode, let seconds):
+            path = ["quiet"]
+            if let mode { query.append(("mode", mode)) }
+            query.append(("for", String(seconds)))
+        case .endQuiet:
+            path = ["quiet", "end"]
+        case .deepWork(let seconds):
+            path = ["deepwork"]
+            query.append(("for", String(seconds)))
+        case .screenBar(let on):
+            path = ["screenbar", on.map { $0 ? "on" : "off" } ?? "toggle"]
+        case .confetti(let tint):
+            path = ["confetti"]
+            switch tint {
+            case .focused: break
+            case .provider(let id): query.append(("provider", id))
+            case .session(let id): query.append(("session", id))
+            }
+        case .menuBar(let verb):
+            path = ["menubar", verb.rawValue]
+        case .openSession(let id):
+            path = ["session"]
+            query.append(("id", id))
+        case .revealAsk:
+            path = ["ask"]
+        case .shelf:
+            path = ["shelf"]
+        }
+        var parts = URLComponents()
+        parts.scheme = Self.scheme
+        parts.host = path[0]
+        parts.percentEncodedPath = path.dropFirst().map { "/" + linkEncoded($0) }.joined()
+        if !query.isEmpty {
+            parts.percentEncodedQuery = query.map { $0.name + "=" + linkEncoded($0.value) }.joined(separator: "&")
+        }
+        // Every piece above is encoded down to URL-safe ASCII, so the
+        // components always make a URL.
+        return parts.url!
+    }
+
+    /// Everything but unreserved ASCII and the colon a daemon id is built
+    /// from, percent-encoded: `&`, `=`, `+`, `#`, `/` and anything past
+    /// ASCII can't be misread as structure.
+    nonisolated private static let linkSafe = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:")
+
+    nonisolated private func linkEncoded(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: Self.linkSafe) ?? ""
+    }
+
     /// Seconds from `now` to the next time the clock reads `raw` —
     /// `08:00`, `8am`, `8:30pm`, `20:30` — later today, or tomorrow
     /// once today's has passed; Amphetamine's "until 8 AM". nil for
