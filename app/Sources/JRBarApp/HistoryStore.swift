@@ -201,6 +201,9 @@ final class HistoryStore {
     /// Whether Data Hoarder's full-content switch is on — the sheet's
     /// consent text says verbatim, not redacted, when it is.
     @ObservationIgnored var hoarderFullContent: () -> Bool = { false }
+    /// When each agent source was last kept — the sheet's estimate for a
+    /// source kept before counts what changed since, not the window.
+    @ObservationIgnored var hoarderResumePoints: @MainActor ([String]) async -> [String: Date] = { _ in [:] }
     /// The folders the sheet looks in; tests point it at fixtures.
     @ObservationIgnored var offerSources: () -> [ArchiveSource] = { DataHoarderModel.agentSources() }
     /// The open consent sheet, if any.
@@ -217,17 +220,23 @@ final class HistoryStore {
     /// are read for its estimate; contents wait for its Turn On.
     func offerHoarder() {
         guard offersHoarder, let keep = keepTranscripts else { return }
-        hoarderOffer = DataHoarderOffer(sources: offerSources(), fullContent: hoarderFullContent()) { [weak self] sourceIDs, days in
+        hoarderOffer = DataHoarderOffer(sources: offerSources(), fullContent: hoarderFullContent(),
+                                        resumePoints: hoarderResumePoints) { [weak self] sourceIDs, days in
+            let resuming = self?.hoarderOffer?.resumesEveryChosenSource ?? false
             keep(sourceIDs, days)
-            self?.hoarderTurnedOn(days: days)
+            self?.hoarderTurnedOn(days: days, resuming: resuming)
         }
     }
 
     /// Turn On landed: the search reruns against what is indexed so far,
-    /// and the notice says the copy is still filling.
-    func hoarderTurnedOn(days: Int) {
+    /// and the notice says the copy is still filling — or, when every
+    /// chosen folder was kept before, that it picks up where it stopped.
+    func hoarderTurnedOn(days: Int, resuming: Bool = false) {
         hoarderOffer = nil
-        say("Data Hoarder is reading the last \(days) days — search reaches it as it indexes", isError: false)
+        say(resuming
+                ? "Data Hoarder picks up where it stopped — search reaches it as it indexes"
+                : "Data Hoarder is reading the last \(days) days — search reaches it as it indexes",
+            isError: false)
         searchTranscripts(debounce: .seconds(2))
     }
 

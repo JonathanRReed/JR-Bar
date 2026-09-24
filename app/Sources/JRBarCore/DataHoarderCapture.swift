@@ -308,6 +308,19 @@ public actor DataHoarderCapture {
         "capture_last_scan:\(sourceID)"
     }
 
+    /// When each source was last reconciled; a source never scanned is
+    /// absent. Its first start reads the backfill window, while one scanned
+    /// before resumes from its saved positions whatever the window says.
+    public func lastScans(sourceIDs: [String]) async -> [String: Date] {
+        var scans: [String: Date] = [:]
+        for id in sourceIDs {
+            guard let raw = try? await archive.metadata(key: lastScanKey(id)),
+                  let seconds = TimeInterval(raw), seconds > 0 else { continue }
+            scans[id] = Date(timeIntervalSince1970: seconds)
+        }
+        return scans
+    }
+
     /// Per-pass ceiling on the bytes one capture pulls off disk. Anything
     /// past it waits for the next pass — the ledger offset makes resume
     /// exact, and a multi-GB catch-up never holds the whole delta at once.

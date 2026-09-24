@@ -182,9 +182,11 @@ struct DataHoarderCaptureTests {
             [.modificationDate: now.addingTimeInterval(-60 * 86_400)], ofItemAtPath: old.path)
         let archive = DataHoarderArchive(root: fixture.archive)
         let capture = DataHoarderCapture(archive: archive)
+        #expect(await capture.lastScans(sourceIDs: [source.id]).isEmpty, "never scanned: the window applies")
 
         await capture.start(sources: [source], fullContent: true,
                             backfillSince: now.addingTimeInterval(-30 * 86_400))
+        #expect(await capture.lastScans(sourceIDs: [source.id, "unknown"]).keys.sorted() == [source.id])
         let records = try await archive.records()
         #expect(records.count == 1)
         let record = try #require(records.first)

@@ -106,12 +106,58 @@ import JRBarCore
         #expect(!note.contains("[redacted]"))
     }
 
+    @Test("a folder kept before counts what changed since, whatever the window")
+    func keptBeforeResumes() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let claude = root.appending(path: "claude")
+        try FileManager.default.createDirectory(at: claude, withIntermediateDirectories: true)
+        try Data(repeating: 0x61, count: 1_000).write(to: claude.appending(path: "fresh.jsonl"))
+        let older = claude.appending(path: "older.jsonl")
+        try Data(repeating: 0x62, count: 4_000).write(to: older)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-10 * 86_400)], ofItemAtPath: older.path)
+        let keptAt = Date().addingTimeInterval(-5 * 86_400)
+
+        let (history, box) = store(keeps: false)
+        history.offerSources = {
+            [ArchiveSource(id: "claude-projects", name: "Claude Code projects", root: claude, extensions: ["jsonl"])]
+        }
+        history.hoarderResumePoints = { ids in ids.contains("claude-projects") ? ["claude-projects": keptAt] : [:] }
+        history.filter.text = "auth middleware"
+        history.offerHoarder()
+        let offer = try #require(history.hoarderOffer)
+        await offer.load()
+
+        #expect(offer.resumesFrom == ["claude-projects": keptAt])
+        #expect(offer.chosen == ["claude-projects"])
+        // The engine resumes a folder it kept before: only what changed
+        // since is read, and the window picker has nothing to change.
+        #expect(offer.total == ArchiveBackfillEstimate(fileCount: 1, byteCount: 1_000))
+        offer.days = 90
+        #expect(offer.total == ArchiveBackfillEstimate(fileCount: 1, byteCount: 1_000))
+        #expect(!offer.windowApplies)
+        #expect(offer.resumesEveryChosenSource)
+
+        offer.accept()
+        #expect(box.accepted?.0 == ["claude-projects"])
+        #expect(history.notice?.text.contains("picks up where it stopped") == true)
+    }
+
     @Test("the estimate reads in plain words")
     func summaryWords() {
         #expect(DataHoarderOffer.summary(.zero).hasPrefix("No files in this window"))
         let one = DataHoarderOffer.summary(ArchiveBackfillEstimate(fileCount: 1, byteCount: 2_000_000))
         #expect(one.contains("from 1 file,"))
         #expect(DataHoarderOffer.rowDetail(.zero, days: 7) == "nothing in 7 days")
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let kept = now.addingTimeInterval(-3 * 86_400)
+        #expect(DataHoarderOffer.rowDetail(.zero, days: 7, resumesFrom: kept, now: now).hasPrefix("nothing new since "))
+        let resumed = DataHoarderOffer.rowDetail(ArchiveBackfillEstimate(fileCount: 3, byteCount: 2_000_000),
+                                                 days: 7, resumesFrom: kept, now: now)
+        #expect(resumed.hasPrefix("since ") && resumed.contains("· 3 files ·"))
+        #expect(!DataHoarderOffer.day(kept, now: now).contains("2026"))
+        #expect(DataHoarderOffer.day(now.addingTimeInterval(-400 * 86_400), now: now).contains("2025"))
         #expect(DataHoarderOffer.provider(of: "codex-archived-sessions") == "codex")
     }
 }

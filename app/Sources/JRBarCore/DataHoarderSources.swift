@@ -126,6 +126,14 @@ public struct ArchiveBackfillEstimate: Sendable, Equatable {
         return ArchiveBackfillEstimate(fileCount: files.count, byteCount: sum(files.map(\.byteCount)))
     }
 
+    /// Files modified after `since` — at most what a source scanned before
+    /// reads when it resumes: new files whole, grown files from their
+    /// saved offsets.
+    public static func of(_ inventory: ArchiveSourceInventory, changedAfter since: Date) -> ArchiveBackfillEstimate {
+        let files = inventory.files.filter { ($0.modifiedAt ?? .distantPast) > since }
+        return ArchiveBackfillEstimate(fileCount: files.count, byteCount: sum(files.map(\.byteCount)))
+    }
+
     /// Several sources' estimates added, saturating rather than wrapping.
     public static func total(_ parts: [ArchiveBackfillEstimate]) -> ArchiveBackfillEstimate {
         ArchiveBackfillEstimate(fileCount: parts.reduce(0) { $0 + $1.fileCount },

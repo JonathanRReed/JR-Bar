@@ -22,19 +22,26 @@ final class DataHoarderOffer: Identifiable {
     /// Data Hoarder's own "Store full prompts and responses" switch. Turn
     /// On leaves it as it is, so the sheet must say which copy it keeps.
     let fullContent: Bool
+    /// When each listed source was last kept. The engine's window reads
+    /// only sources new to it; one kept before picks up where it stopped,
+    /// so its estimate counts what changed since instead.
+    private(set) var resumesFrom: [String: Date] = [:]
 
     private let sources: [ArchiveSource]
     private let scanner: DataHoarderSourceScanner
+    private let resumePoints: @MainActor ([String]) async -> [String: Date]
     private let onAccept: @MainActor (_ sourceIDs: [String], _ days: Int) -> Void
     @ObservationIgnored private let now: () -> Date
 
     init(sources: [ArchiveSource] = DataHoarderModel.agentSources(),
          scanner: DataHoarderSourceScanner = DataHoarderSourceScanner(),
          fullContent: Bool = false,
+         resumePoints: @escaping @MainActor ([String]) async -> [String: Date] = { _ in [:] },
          now: @escaping () -> Date = Date.init,
          accept: @escaping @MainActor (_ sourceIDs: [String], _ days: Int) -> Void) {
         self.sources = sources
         self.fullContent = fullContent
+        self.resumePoints = resumePoints
         self.scanner = scanner
         self.now = now
         onAccept = accept
@@ -42,19 +49,39 @@ final class DataHoarderOffer: Identifiable {
 
     /// Reads the folders' metadata once. A folder that is missing or not a
     /// folder is left out — the sheet lists what this Mac actually has.
-    /// Every source with a file in the default window starts chosen.
+    /// Every source with a file in the default window starts chosen, and
+    /// so does every source kept before — it was chosen once already.
     func load() async {
         guard !loading, !loaded else { return }
         loading = true
         defer { loading = false }
         let found = (try? await scanner.scan(sources)) ?? []
-        inventories = found.filter { !$0.files.isEmpty }
-        chosen = Set(inventories.filter { estimate(for: $0).fileCount > 0 }.map(\.id))
+        let listed = found.filter { !$0.files.isEmpty }
+        resumesFrom = await resumePoints(listed.map(\.id))
+        inventories = listed
+        chosen = Set(inventories.filter {
+            resumesFrom[$0.id] != nil || estimate(for: $0).fileCount > 0
+        }.map(\.id))
         loaded = true
     }
 
     func estimate(for inventory: ArchiveSourceInventory) -> ArchiveBackfillEstimate {
-        ArchiveBackfillEstimate.of(inventory, days: days, now: now())
+        if let since = resumesFrom[inventory.id] {
+            return ArchiveBackfillEstimate.of(inventory, changedAfter: since)
+        }
+        return ArchiveBackfillEstimate.of(inventory, days: days, now: now())
+    }
+
+    /// Whether the window picker changes anything: some listed source is
+    /// new to the Data Hoarder.
+    var windowApplies: Bool {
+        !loaded || inventories.contains { resumesFrom[$0.id] == nil }
+    }
+
+    /// Every chosen source was kept before, so Turn On resumes rather
+    /// than reading a window.
+    var resumesEveryChosenSource: Bool {
+        !chosen.isEmpty && chosen.allSatisfy { resumesFrom[$0] != nil }
     }
 
     /// What the chosen folders' window adds up to.
@@ -91,11 +118,27 @@ final class DataHoarderOffer: Identifiable {
             : "Prompts and responses are kept as “[redacted]”: the copy holds each session's projects, branches, tools, models and times. Full content is a separate switch in Data Hoarder."
     }
 
-    /// A source row's trailing detail: "212 files · 1.3 GB".
-    static func rowDetail(_ estimate: ArchiveBackfillEstimate, days: Int) -> String {
+    /// A source row's trailing detail: "212 files · 1.3 GB", or for a
+    /// source kept before, "since Sep 12 · 3 files · 20 MB".
+    static func rowDetail(_ estimate: ArchiveBackfillEstimate, days: Int,
+                          resumesFrom: Date? = nil, now: Date = Date()) -> String {
+        if let resumesFrom {
+            let day = Self.day(resumesFrom, now: now)
+            guard estimate.fileCount > 0 else { return "nothing new since \(day)" }
+            let files = estimate.fileCount == 1 ? "1 file" : "\(estimate.fileCount) files"
+            return "since \(day) · \(files) · \(DataHoarderModel.bytes(estimate.byteCount))"
+        }
         guard estimate.fileCount > 0 else { return "nothing in \(days) days" }
         let files = estimate.fileCount == 1 ? "1 file" : "\(estimate.fileCount) files"
         return "\(files) · \(DataHoarderModel.bytes(estimate.byteCount))"
+    }
+
+    /// "Sep 12", with the year once it is not this one.
+    static func day(_ date: Date, now: Date = Date()) -> String {
+        let calendar = Calendar.current
+        let style = Date.FormatStyle(date: .omitted, time: .omitted).month(.abbreviated).day()
+        return calendar.isDate(date, equalTo: now, toGranularity: .year)
+            ? date.formatted(style) : date.formatted(style.year())
     }
 
     /// The provider tile a source's row wears.
@@ -135,6 +178,13 @@ struct DataHoarderOfferSheet: View {
                     Text(DataHoarderOffer.contentNote(fullContent: offer.fullContent))
                 } icon: {
                     Image(systemName: offer.fullContent ? "text.quote" : "text.redaction")
+                }
+                if !offer.resumesFrom.isEmpty {
+                    Label {
+                        Text("Folders kept before pick up where they stopped; the window reads only folders new to Data Hoarder.")
+                    } icon: {
+                        Image(systemName: "arrow.uturn.forward")
+                    }
                 }
                 Label {
                     Text("Nothing leaves this Mac. Turn it off any time under Utilities › Data Hoarder.")
@@ -192,7 +242,9 @@ struct DataHoarderOfferSheet: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .disabled(!offer.windowApplies)
         }
+        .help(offer.windowApplies ? "" : "Every folder here was kept before, so it picks up where it stopped")
     }
 
     @ViewBuilder
@@ -204,7 +256,7 @@ struct DataHoarderOfferSheet: View {
             }
             .frame(maxWidth: .infinity, minHeight: 60)
         } else if offer.inventories.isEmpty {
-            Text("No agent transcript folders on this Mac yet. Turning this on keeps new sessions as they are written.")
+            Text("No agent transcript folders on this Mac yet, so there is nothing to keep. History offers this again once an agent has written one.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
@@ -229,7 +281,8 @@ struct DataHoarderOfferSheet: View {
                 ProviderTile(style: style, size: 18)
                 Text(inventory.source.name).font(.system(size: 12, weight: .medium))
                 Spacer(minLength: 8)
-                Text(DataHoarderOffer.rowDetail(estimate, days: offer.days))
+                Text(DataHoarderOffer.rowDetail(estimate, days: offer.days,
+                                                resumesFrom: offer.resumesFrom[inventory.id]))
                     .font(.system(size: 11))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
