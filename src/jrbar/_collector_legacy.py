@@ -129,7 +129,11 @@ TRANSCRIPT_FILE_LIST_CACHE_MAX_ENTRIES = 16
 # Keep a day of finished sessions: latest.json once accumulated every
 # session ever seen and was re-serialized on every hook event.
 STATUS_RETENTION_SECONDS = 24 * 3600.0
-LATEST_STATE_WRITE_INTERVAL_SECONDS = 1.0
+# latest.json is the restore snapshot, not a live feed: socket clients get
+# every change as it lands, and a restart replays the newest event per
+# session from the hook logs. At 1 s the daemon rewrote and fsynced 145 KB
+# about 0.6 times a second while agents worked.
+LATEST_STATE_WRITE_INTERVAL_SECONDS = 5.0
 # Transcript detail is capped before any UI surface (T3 caps at 160 --
 # long tool output in a menu row is noise at best, a leak at worst).
 DETAIL_TEXT_CAP = 160
@@ -1178,6 +1182,7 @@ class LiveAgentMonitor(LiveSessionMemory):
         self.restore_health = RestoreHealth.NOT_ATTEMPTED
         self._latest_state_dirty = False
         self._latest_state_written_at = 0.0
+        self._latest_state_digest: bytes | None = None
         self._latest_state_write_lock = threading.Lock()
         self.acknowledged_requests_supplier = acknowledged_requests_supplier
         self.load_latest_state()
@@ -1550,7 +1555,12 @@ class LiveAgentMonitor(LiveSessionMemory):
                     state,
                     overlays=MappingProxyType(overlays),
                 )
-                atomic_private_write(self.latest_state_path, serialized)
+                digest = hashlib.blake2b(serialized.encode("utf-8"), digest_size=16).digest()
+                # A debounced write of the bytes already on disk is skipped;
+                # the shutdown flush always writes.
+                if force or digest != self._latest_state_digest:
+                    atomic_private_write(self.latest_state_path, serialized)
+                    self._latest_state_digest = digest
             except (OSError, ValueError):
                 return
             with self.lock:
