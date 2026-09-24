@@ -39,11 +39,11 @@ extension AquariumView {
         var light: Bool
     }
 
-    /// ~110 grains scattered over the bed, seeded once. The hash goes
+    /// ~400 grains scattered over the bed, seeded once. The hash goes
     /// through the same murmur-style finalizer `decorSet` uses —
     /// FNV-1a's low bits cluster on sequential tags and would lay the
     /// grains out in rows.
-    private static let sandSpeckles: [Speck] = (0..<150).map { i in
+    private static let sandSpeckles: [Speck] = (0..<400).map { i in
         var h = AquariumModel.stableHash("speck-\(i)")
         h ^= h >> 33
         h &*= 0xff51afd7ed558ccd
@@ -190,6 +190,19 @@ extension AquariumView {
                           style: StrokeStyle(lineWidth: 1.6 - Double(i) * 0.4, lineCap: .round))
         }
 
+        // Mottling: broad soft patches of darker and paler sand, so the
+        // bed is not one flat gradient.
+        var rng = TankPaint.Seeded(0x5A4D)
+        for k in 0..<14 {
+            let mx = rng.next(0, size.width)
+            let top = sandTop(atX: mx, in: size)
+            let my = top + rng.next(0.2, 0.9) * max(0, size.height - top)
+            let mw = rng.next(60, 170), mh = rng.next(10, 22)
+            let tone = k.isMultiple(of: 2) ? sand.speckDark.opacity(0.10) : sand.speckLight.opacity(0.08)
+            canvas.fill(Path(ellipseIn: CGRect(x: mx - mw / 2, y: my - mh / 2, width: mw, height: mh)),
+                        with: .radialGradient(Gradient(colors: [tone, tone.opacity(0)]),
+                                              center: CGPoint(x: mx, y: my), startRadius: 0, endRadius: mw / 2))
+        }
         // Grain scale & contrast per substrate: basalt gravel is
         // chunky and high-contrast, aragonite fine and bright, the
         // classic tan somewhere between.
@@ -206,6 +219,25 @@ extension AquariumView {
                         with: .color(speck.light
                                      ? sand.speckLight.opacity(min(1, 0.20 * grainAlpha))
                                      : sand.speckDark.opacity(min(1, 0.25 * grainAlpha))))
+        }
+        // Pebbles: a scatter of little lit stones and shell chips half
+        // set into the sand, bigger toward the glass.
+        for k in 0..<26 {
+            let px = rng.next(0, size.width)
+            let top = sandTop(atX: px, in: size)
+            let depth = rng.next(0.08, 0.95)
+            let py = top + 3 + depth * max(0, size.height - top - 6)
+            let pw = (2.2 + rng.next(0, 3.2)) * (0.7 + depth * 0.7) * (substrateKey == "black" ? 1.3 : 1)
+            let ph = pw * rng.next(0.55, 0.75)
+            let pebble = Path(ellipseIn: CGRect(x: px - pw / 2, y: py - ph / 2, width: pw, height: ph))
+            let shellChip = k % 5 == 0
+            let lit = shellChip ? Color(red: 1.0, green: 0.92, blue: 0.86) : sand.speckLight
+            let base = shellChip ? Color(red: 0.90, green: 0.70, blue: 0.62) : sand.frontB
+            let shade = shellChip ? Color(red: 0.55, green: 0.36, blue: 0.30) : sand.speckDark
+            groundShadow(canvas: &canvas, x: px + pw * 0.15, y: py + ph * 0.4, halfW: pw * 0.7, halfH: ph * 0.35, alpha: 0.22)
+            canvas.fill(pebble, with: .radialGradient(
+                Gradient(colors: [lit.opacity(0.85), base.opacity(0.9), shade.opacity(0.9)]),
+                center: CGPoint(x: px - pw * 0.2, y: py - ph * 0.3), startRadius: 0, endRadius: pw * 0.7))
         }
     }
 

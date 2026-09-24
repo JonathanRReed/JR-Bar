@@ -66,6 +66,7 @@ extension AquariumView {
                                density: Double, front: Bool, keepClear: CGRect? = nil) {
         let shown = Int((Double(Self.decor.count) * min(1, density)).rounded(.up))
         let clearZone = keepClear?.insetBy(dx: -10, dy: -34)
+        let tone = decorTone()
         // The kelp forest theme thickens the stand — three extra
         // seeded strands behind the lane on top of the usual set.
         if themeKey == "kelp" && !front {
@@ -78,7 +79,7 @@ extension AquariumView {
                     depth: 0.30 + Double((h >> 16) & 0xFF) / 0xFF * 0.25,
                     scale: 0.85 + Double((h >> 24) & 0xFF) / 0xFF * 0.45,
                     bits: h)
-                drawKelp(canvas: &canvas, size: size, t: t, piece: extra)
+                drawKelp(canvas: &canvas, size: size, t: t, piece: extra, tone: tone)
             }
         }
         for piece in Self.decor where (piece.depth > 0.6) == front {
@@ -90,8 +91,8 @@ extension AquariumView {
                 // foreground falls off like a camera's would.
                 var g = canvas
                 g.addFilter(.blur(radius: 1.6))
-                drawKelp(canvas: &g, size: size, t: t, piece: piece)
-            case .kelp: drawKelp(canvas: &canvas, size: size, t: t, piece: piece)
+                drawKelp(canvas: &g, size: size, t: t, piece: piece, tone: tone)
+            case .kelp: drawKelp(canvas: &canvas, size: size, t: t, piece: piece, tone: tone)
             case .grass: drawGrass(canvas: &canvas, size: size, t: t, piece: piece)
             case .chest where !front:
                 drawChestBurp(canvas: &canvas, size: size, t: t, piece: piece)
@@ -208,7 +209,8 @@ extension AquariumView {
     /// near-glass ones draw as wider, darker teal silhouettes over the
     /// fish — translucent, so they stay plants, not slabs. Reduce
     /// Motion freezes the sway.
-    private func drawKelp(canvas: inout GraphicsContext, size: CGSize, t: Double, piece: TankDecor) {
+    private func drawKelp(canvas: inout GraphicsContext, size: CGSize, t: Double, piece: TankDecor,
+                          tone: TankPaint.Tone = .none) {
         let b = piece.bits
         let baseX = piece.x * size.width
         let baseY = decorBaseY(piece, in: size)
@@ -255,29 +257,32 @@ extension AquariumView {
             let tipColor: Color
             let ribColor: Color
             let edgeColor: Color
+            let shadeColor: Color
             if front {
-                // Foreground: a wide glass-side frond sliding over the
-                // fish — deep teal and translucent, not a black slab.
-                rootColor = Color(red: 0.03, green: 0.17, blue: 0.18).opacity(0.55)
-                tipColor = Color(red: 0.09, green: 0.30, blue: 0.28).opacity(0.42)
-                ribColor = Color(red: 0.01, green: 0.08, blue: 0.10).opacity(0.45)
-                edgeColor = Color(red: 0.44, green: 0.70, blue: 0.62).opacity(0.36)
+                // Foreground: a glass-side frond sliding over the fish,
+                // out of focus — a soft, lit green veil, never a slab.
+                rootColor = Color(red: 0.10, green: 0.32, blue: 0.22).opacity(0.50)
+                tipColor = Color(red: 0.36, green: 0.62, blue: 0.34).opacity(0.34)
+                ribColor = Color(red: 0.70, green: 0.88, blue: 0.52).opacity(0.18)
+                edgeColor = Color(red: 0.78, green: 0.96, blue: 0.70).opacity(0.34)
+                shadeColor = Color(red: 0.02, green: 0.10, blue: 0.08).opacity(0.22)
             } else {
-                // Translucent leaf green, lit toward the tip where the
-                // light gets through, melted toward the water by depth.
+                // Olive at the holdfast, golden-lime where the light
+                // comes through the tip, melted toward the water by
+                // depth.
                 let g0 = Self.waterNS.blended(
-                    withFraction: 1 - wash * 0.38,
-                    of: NSColor(srgbRed: 0.07, green: 0.34, blue: 0.18, alpha: 1))
+                    withFraction: 1 - wash * 0.55,
+                    of: NSColor(srgbRed: 0.12, green: 0.34, blue: 0.14, alpha: 1))
                     ?? Self.waterNS
                 let g1 = Self.waterNS.blended(
-                    withFraction: 1 - wash * 0.30,
-                    of: NSColor(srgbRed: 0.34, green: 0.68, blue: 0.38, alpha: 1))
+                    withFraction: 1 - wash * 0.45,
+                    of: NSColor(srgbRed: 0.58, green: 0.76, blue: 0.30, alpha: 1))
                     ?? Self.waterNS
-                rootColor = Color(nsColor: g0).opacity(0.75 - wash * 0.15)
-                tipColor = Color(nsColor: g1).opacity(0.55 - wash * 0.12)
-                ribColor = Color(red: 0.03, green: 0.16, blue: 0.10).opacity(0.45)
-                edgeColor = Color(red: 0.60, green: 0.90, blue: 0.60)
-                    .opacity(0.40 * (1 - wash * 0.5))
+                rootColor = tone(Color(nsColor: g0)).opacity(0.88 - wash * 0.18)
+                tipColor = tone(Color(nsColor: g1)).opacity(0.72 - wash * 0.16)
+                ribColor = Color(red: 0.80, green: 0.92, blue: 0.50).opacity(0.34 * (1 - wash * 0.5))
+                edgeColor = Color(red: 0.86, green: 1.0, blue: 0.66).opacity(0.52 * (1 - wash * 0.5))
+                shadeColor = Color(red: 0.02, green: 0.12, blue: 0.06).opacity(0.34 * (1 - wash * 0.4))
             }
             canvas.fill(rib.fill, with: .linearGradient(
                 Gradient(stops: [
@@ -285,10 +290,38 @@ extension AquariumView {
                     .init(color: tipColor, location: 1),
                 ]),
                 startPoint: root, endPoint: tip))
+            // The blade's far margin falls into shade; the near one
+            // catches the light.
+            var shaded = canvas
+            shaded.clip(to: rib.fill)
+            shaded.stroke(rib.fill, with: .color(shadeColor),
+                          style: StrokeStyle(lineWidth: max(2, w0 * 0.22)))
+            // Light through the upper blade — the sun behind the leaf.
+            if !front {
+                var glow = shaded
+                glow.blendMode = .plusLighter
+                glow.fill(rib.fill, with: .radialGradient(
+                    Gradient(colors: [Color(red: 0.55, green: 0.70, blue: 0.25).opacity(0.28 * (1 - wash * 0.6)),
+                                      .clear]),
+                    center: CGPoint(x: (tip.x * 2 + root.x) / 3, y: (tip.y * 2 + root.y) / 3),
+                    startRadius: 0, endRadius: hgt * 0.45))
+            }
             canvas.stroke(rib.midrib, with: .color(ribColor),
-                          style: StrokeStyle(lineWidth: max(1.2, w0 * 0.09), lineCap: .round))
+                          style: StrokeStyle(lineWidth: max(1.0, w0 * 0.06), lineCap: .round))
             canvas.stroke(rib.edge, with: .color(edgeColor),
-                          style: StrokeStyle(lineWidth: max(1.0, w0 * 0.05), lineCap: .round))
+                          style: StrokeStyle(lineWidth: max(1.0, w0 * 0.045), lineCap: .round))
+            // A float bladder where the blade meets its stipe.
+            if !front {
+                let bladder = CGPoint(x: root.x + (c1.x - root.x) * 0.18, y: baseY - hgt * 0.06)
+                let r = max(2.2, w0 * 0.10)
+                canvas.fill(Path(ellipseIn: CGRect(x: bladder.x - r, y: bladder.y - r * 1.2,
+                                                   width: r * 2, height: r * 2.4)),
+                            with: .radialGradient(
+                                Gradient(colors: [Color(red: 0.72, green: 0.78, blue: 0.36).opacity(0.85 - wash * 0.3),
+                                                  Color(red: 0.24, green: 0.34, blue: 0.12).opacity(0.85 - wash * 0.3)]),
+                                center: CGPoint(x: bladder.x - r * 0.3, y: bladder.y - r * 0.5),
+                                startRadius: 0, endRadius: r * 1.4))
+            }
         }
     }
 
@@ -365,6 +398,12 @@ extension AquariumView {
             canvas.fill(Path(ellipseIn: CGRect(x: rx - rw * 0.30, y: ry - rh * 0.40,
                                                width: rw * 0.36, height: rh * 0.22)),
                         with: .color(.white.opacity(0.18 - wash * 0.07)))
+            // Grain, a dark edge, and weed where it meets the sand.
+            TankPaint.speckle(&canvas, boulder, seed: rb, count: Int(rw * 1.2), size: max(0.8, rw * 0.05),
+                              dark: .black.opacity(0.24 - wash * 0.08), light: .white.opacity(0.12 - wash * 0.05))
+            canvas.stroke(boulder, with: .color(.black.opacity(0.32 - wash * 0.12)), lineWidth: 0.8)
+            TankPaint.moss(&canvas, clip: boulder, from: rx - rw / 2, to: rx + rw / 2, y: ry + rh / 2,
+                           height: rh * 0.22, seed: rb >> 3, fade: 0.85 - wash * 0.4)
         }
     }
 
@@ -458,17 +497,30 @@ extension AquariumView {
             Gradient(colors: [lit.opacity(0.9 - wash * 0.3), dark.opacity(0.9 - wash * 0.25)]),
             center: CGPoint(x: baseX - r * 0.2, y: baseY - r * 0.8),
             startRadius: 0, endRadius: r * 1.5))
-        // The grooves: same dome shrunk, stroked into the shade.
-        for g in [0.72, 0.48, 0.26] as [Double] {
-            let gr = r * g
-            var groove = Path()
-            groove.move(to: CGPoint(x: baseX - gr, y: baseY))
-            groove.addCurve(to: CGPoint(x: baseX + gr, y: baseY),
-                            control1: CGPoint(x: baseX - gr, y: baseY - gr * 1.15),
-                            control2: CGPoint(x: baseX + gr, y: baseY - gr * 1.15))
-            canvas.stroke(groove, with: .color(dark.opacity(0.55 - wash * 0.2)),
-                          style: StrokeStyle(lineWidth: max(0.8, r * 0.08), lineCap: .round))
+        // The ridges: meandering grooves across the dome, a lit lip on
+        // each, the way a brain coral folds.
+        var ridges = canvas
+        ridges.clip(to: dome)
+        var maze = Path()
+        let rows = 6
+        for k in 0..<rows {
+            let gy = baseY - r * 0.95 + Double(k) * r * 0.19
+            var gx = baseX - r
+            maze.move(to: CGPoint(x: gx, y: gy))
+            var flip = k.isMultiple(of: 2)
+            while gx < baseX + r {
+                let step = r * 0.22
+                maze.addQuadCurve(to: CGPoint(x: gx + step, y: gy + (flip ? r * 0.05 : -r * 0.05)),
+                                  control: CGPoint(x: gx + step * 0.5, y: gy + (flip ? -r * 0.09 : r * 0.09)))
+                gx += step
+                flip.toggle()
+            }
         }
+        ridges.stroke(maze, with: .color(dark.opacity(0.62 - wash * 0.2)),
+                      style: StrokeStyle(lineWidth: max(0.8, r * 0.06), lineCap: .round))
+        ridges.stroke(maze.offsetBy(dx: 0, dy: -max(0.6, r * 0.04)), with: .color(.white.opacity(0.16 - wash * 0.06)),
+                      style: StrokeStyle(lineWidth: max(0.5, r * 0.03), lineCap: .round))
+        canvas.stroke(dome, with: .color(dark.opacity(0.7 - wash * 0.25)), lineWidth: 0.8)
         // Pores.
         for i in 0..<5 {
             let pb = scatter(b, i &+ 31)
@@ -575,9 +627,17 @@ extension AquariumView {
         // The cork & a highlight down the flank.
         c.fill(Path(CGRect(x: 0.60, y: -0.075, width: 0.08, height: 0.15)),
                with: .color(Color(red: 0.55, green: 0.40, blue: 0.24).opacity(0.9)))
-        c.fill(Path(roundedRect: CGRect(x: -0.42, y: -0.18, width: 0.5, height: 0.07),
-                    cornerRadius: 0.035),
-               with: .color(.white.opacity(0.16)))
+        // A message rolled up inside, and the glass's shine.
+        var note = c
+        note.clip(to: body)
+        note.fill(Path(roundedRect: CGRect(x: -0.36, y: -0.08, width: 0.44, height: 0.16), cornerRadius: 0.06),
+                  with: .color(Color(red: 0.92, green: 0.86, blue: 0.66).opacity(0.55)))
+        note.stroke(Path(roundedRect: CGRect(x: -0.36, y: -0.08, width: 0.44, height: 0.16), cornerRadius: 0.06),
+                    with: .color(Color(red: 0.55, green: 0.40, blue: 0.20).opacity(0.5)), lineWidth: 0.02)
+        c.fill(Path(roundedRect: CGRect(x: -0.44, y: -0.20, width: 0.56, height: 0.06),
+                    cornerRadius: 0.03),
+               with: .color(.white.opacity(0.32)))
+        c.stroke(body, with: .color(Color(red: 0.55, green: 0.85, blue: 0.70).opacity(0.45)), lineWidth: 0.03)
         // A lip of sand over the low corner buries it.
         canvas.fill(Path(ellipseIn: CGRect(x: baseX - s * 0.6, y: baseY - 3,
                                            width: s * 1.1, height: 5)),
@@ -608,11 +668,16 @@ extension AquariumView {
         c.translateBy(x: x, y: y - s * 0.18)
         c.rotate(by: .radians(Double(piece.bits & 0xFF) / 0xFF * .pi * 2))
         c.scaleBy(x: s, y: s)
-        c.fill(Self.starPath,
-               with: .color(Color(red: 0.90, green: 0.55, blue: 0.35).opacity(0.9)))
+        c.fill(Self.starPath, with: .radialGradient(
+            Gradient(colors: [Color(red: 1.0, green: 0.70, blue: 0.46), Color(red: 0.86, green: 0.40, blue: 0.24),
+                              Color(red: 0.56, green: 0.20, blue: 0.10)]),
+            center: CGPoint(x: -0.06, y: -0.08), startRadius: 0, endRadius: 0.55))
+        TankPaint.speckle(&c, Self.starPath, seed: piece.bits, count: 40, size: 0.05,
+                          dark: Color(red: 0.45, green: 0.14, blue: 0.06).opacity(0.45),
+                          light: Color(red: 1.0, green: 0.90, blue: 0.75).opacity(0.7))
         c.stroke(Self.starPath,
-                 with: .color(Color(red: 0.55, green: 0.28, blue: 0.14).opacity(0.6)),
-                 lineWidth: 0.05)
+                 with: .color(Color(red: 0.45, green: 0.18, blue: 0.08).opacity(0.75)),
+                 lineWidth: 0.04)
         // A smaller, lighter star on top reads as the raised centre.
         var inner = c
         inner.scaleBy(x: 0.5, y: 0.5)
@@ -640,59 +705,13 @@ extension AquariumView {
         let h = 26 * piece.scale * Self.decorBoost
         let x = piece.x * size.width
         let y = decorBaseY(piece, in: size) + 2
-        let wood = Color(red: 0.40, green: 0.28, blue: 0.15)
-        let woodDark = Color(red: 0.24, green: 0.16, blue: 0.08)
-        let brass = Color(red: 0.78, green: 0.62, blue: 0.30)
-
-        groundShadow(canvas: &canvas, x: x, y: y + 1, halfW: w * 0.62, halfH: 5, alpha: 0.32)
-
-        // Body planks.
-        let body = CGRect(x: x - w / 2, y: y - h * 0.60, width: w, height: h * 0.60)
-        canvas.fill(Path(roundedRect: body, cornerRadius: 5),
-                    with: .linearGradient(
-                        Gradient(colors: [wood, woodDark]),
-                        startPoint: CGPoint(x: x, y: y - h * 0.60),
-                        endPoint: CGPoint(x: x, y: y)))
-        for seam in [-0.17, 0.17] as [Double] {
-            canvas.fill(Path(CGRect(x: x + w * seam - 1.0, y: y - h * 0.58,
-                                    width: 2, height: h * 0.56)),
-                        with: .color(woodDark.opacity(0.6)))
-        }
-
-        // The domed lid, a shade lighter than the body.
-        var lid = Path()
-        lid.move(to: CGPoint(x: x - w / 2 - 2.5, y: y - h * 0.58))
-        lid.addQuadCurve(to: CGPoint(x: x + w / 2 + 2.5, y: y - h * 0.58),
-                         control: CGPoint(x: x, y: y - h * 1.22))
-        lid.closeSubpath()
-        canvas.fill(lid, with: .linearGradient(
-            Gradient(colors: [Color(red: 0.52, green: 0.36, blue: 0.19), wood]),
-            startPoint: CGPoint(x: x, y: y - h), endPoint: CGPoint(x: x, y: y - h * 0.58)))
-        canvas.stroke(lid, with: .color(.black.opacity(0.3)), lineWidth: 1.2)
-        // The lid's lit crest.
-        var crest = Path()
-        crest.move(to: CGPoint(x: x - w * 0.28, y: y - h * 0.94))
-        crest.addQuadCurve(to: CGPoint(x: x + w * 0.28, y: y - h * 0.94),
-                           control: CGPoint(x: x, y: y - h * 1.14))
-        canvas.stroke(crest, with: .color(Color(red: 0.9, green: 0.75, blue: 0.5).opacity(0.4)),
-                      lineWidth: 2)
-
-        // Brass bands over the lid & body, and the latch.
-        for bandX in [-0.30, 0.30] as [Double] {
-            let bx = x + w * bandX
-            canvas.fill(Path(CGRect(x: bx - 2.6, y: y - h * 0.60, width: 5.2, height: h * 0.60)),
-                        with: .color(brass.opacity(0.75)))
-            var band = Path()
-            band.move(to: CGPoint(x: bx - 2.6, y: y - h * 0.58))
-            band.addQuadCurve(to: CGPoint(x: bx + 2.6, y: y - h * 0.58),
-                              control: CGPoint(x: bx, y: y - h * (0.58 + 0.64 * (1 - abs(bandX) * 2.2))))
-            canvas.stroke(band, with: .color(brass.opacity(0.75)), lineWidth: 5.2)
-        }
-        let latch = CGRect(x: x - 4, y: y - h * 0.72, width: 8, height: h * 0.20)
-        canvas.fill(Path(roundedRect: latch, cornerRadius: 1.6),
-                    with: .color(brass.opacity(0.85)))
-        canvas.fill(Path(ellipseIn: CGRect(x: x - 1.6, y: y - h * 0.66, width: 3.2, height: 4)),
-                    with: .color(woodDark.opacity(0.9)))
+        groundShadow(canvas: &canvas, x: x, y: y + 1, halfW: w * 0.62, halfH: 5, alpha: 0.34)
+        var c = canvas
+        c.translateBy(x: x, y: y)
+        Self.paintChest(&c, width: w, height: h, open: 0, t: 0, reduceMotion: true, tone: decorTone())
+        // Half sunk: a lip of sand over its foot.
+        c.fill(Path(ellipseIn: CGRect(x: -w * 0.62, y: -3, width: w * 1.24, height: 6)),
+               with: .color(Color(red: 0.62, green: 0.52, blue: 0.36).opacity(0.85)))
     }
 
     /// Every few seconds the chest burps a single bubble, the tank's

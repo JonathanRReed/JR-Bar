@@ -46,7 +46,7 @@ struct AquariumView: View {
     /// Themes dark enough that the warm sun glow cools to moonlight.
     var isDarkTheme: Bool { themeKey == "midnight" || themeKey == "abyss" }
     /// The column's floor colour — what deep water attenuates toward.
-    private var floorColor: Color {
+    var floorColor: Color {
         waterStops.last?.color ?? Color(red: 0.015, green: 0.06, blue: 0.22)
     }
     var floorNS: NSColor { NSColor(floorColor) }
@@ -70,6 +70,13 @@ struct AquariumView: View {
             return AquariumSun.night(at: date)
                 ?? AquariumBehavior.realTimeNight(at: date, calendar: .current)
         }
+    }
+
+    /// The shop decor's tone for this moment (`TankPaint.Tone`).
+    func decorTone() -> TankPaint.Tone {
+        let night = nightFactor(t: Date().timeIntervalSince1970)
+        let wash = max(isDarkTheme ? 0.40 : 0.06, night * 0.34)
+        return TankPaint.Tone(wash: wash, toward: floorNS)
     }
 
     init(toy: AquariumToy, ambient: Bool = false) {
@@ -135,6 +142,11 @@ struct AquariumView: View {
                     // still, so they bake into the bed.
                     drawOwnedBackDecor(canvas: &canvas, size: size,
                                        t: context.date.timeIntervalSince1970)
+                    // The shop's still pieces and the front row's
+                    // unmoving ones bake in too; only what sways, glows
+                    // or streams stays on the live pass.
+                    drawShopDecorStill(canvas: &canvas, size: size)
+                    drawOwnedFrontStill(canvas: &canvas, size: size)
                 }
             }
             .drawingGroup(opaque: false, colorMode: .nonLinear)
