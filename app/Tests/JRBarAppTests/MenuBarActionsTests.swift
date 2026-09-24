@@ -871,5 +871,10 @@ struct MenuBarActionsTests {
         #expect(MenuBarTriggerAction.clampedAwake(10) == 60)
         #expect(MenuBarTriggerAction.clampedAwake(999_999) == 86_400)
         #expect(MenuBarTriggerAction.clampedAwake(nil) == nil)
+        // The card's minutes: clamped before the multiply, so any typed
+        // number is at most a day and never traps.
+        #expect(MenuBarTriggerAction.awakeSeconds(minutes: 45) == 2700)
+        #expect(MenuBarTriggerAction.awakeSeconds(minutes: Int.max) == 86_400)
+        #expect(MenuBarTriggerAction.awakeSeconds(minutes: -5) == 60)
     }
 }

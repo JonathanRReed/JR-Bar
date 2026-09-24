@@ -1190,7 +1190,8 @@ private struct MenuBarAutomationControls: View {
             return false
         }
         if actionKind == "reveal" && actionSeconds < 1 { return false }
-        if actionKind == "awake" && actionMinutes < 1 { return false }
+        if actionKind == "awake"
+            && !(1...MenuBarTriggerAction.holdAwakeMaxMinutes).contains(actionMinutes) { return false }
         if actionKind == "script" && actionScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return false
         }
@@ -1241,7 +1242,7 @@ private struct MenuBarAutomationControls: View {
         case "reveal": action = .reveal(seconds: actionSeconds)
         case "script": action = .runScript(
             command: actionScript.trimmingCharacters(in: .whitespacesAndNewlines))
-        case "awake": action = .holdAwake(seconds: MenuBarTriggerAction.clampedAwake(actionMinutes * 60))
+        case "awake": action = .holdAwake(seconds: MenuBarTriggerAction.awakeSeconds(minutes: actionMinutes))
         case "awakeHold": action = .holdAwake(seconds: nil)
         case "awakeOff": action = .releaseAwake
         default: action = .hideAll

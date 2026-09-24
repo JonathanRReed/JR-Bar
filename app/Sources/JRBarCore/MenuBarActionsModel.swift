@@ -116,6 +116,15 @@ public enum MenuBarTriggerAction: Equatable, Codable, Sendable {
     public static func clampedAwake(_ seconds: Int?) -> Int? {
         seconds.map { min(max($0, holdAwakeRange.lowerBound), holdAwakeRange.upperBound) }
     }
+
+    /// The most minutes a rule's hold may name: a day.
+    public static let holdAwakeMaxMinutes = holdAwakeRange.upperBound / 60
+
+    /// A hold of `minutes` typed on the card, in seconds — clamped before
+    /// the multiply, so a huge number is a day, never an overflow.
+    public static func awakeSeconds(minutes: Int) -> Int {
+        min(max(minutes, 1), holdAwakeMaxMinutes) * 60
+    }
 }
 
 /// One rule. `id` is a stable string (UUIDs are fine) — the engine's
