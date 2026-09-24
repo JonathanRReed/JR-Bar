@@ -8,8 +8,9 @@ import JRBarCore
 /// nothing here blocks the UI or the media push.
 ///
 /// Honesty rules (T48):
-/// * A track with no artist/title never reaches the network, and with
-///   the Lyrics switch off no track does.
+/// * A track with no artist/title never reaches the network, and until
+///   the Lyrics switch is on and agreed to no track does. Both are off
+///   out of the box: nothing leaves the Mac without opt-in.
 /// * A miss is cached too — a song with no lyrics doesn't re-fetch
 ///   every time it comes on — and both hits and misses persist across
 ///   launches (`LyricsDiskCache`), so the regular rotation asks once.
@@ -36,17 +37,24 @@ final class LyricsStore {
     /// after the track changed publishes nothing.
     private var currentKey: String?
     /// In-flight keys — a second observer of the same track doesn't
-    /// double the request.
-    private var inFlight: Set<String> = []
+    /// double the request. Read by tests: a key here is a lookup on
+    /// its way to LRCLIB.
+    private(set) var inFlight: Set<String> = []
 
     private let session: URLSession
     /// Lookups that outlive the launch — hits and misses both, so the
     /// regular rotation never re-asks LRCLIB. nil keeps memory only.
     private let disk: LyricsDiskCache?
 
-    /// The Lyrics switch (`NotchSettings.lyrics`). Off, nothing about
-    /// the track leaves the machine and the line stays down.
-    var enabled: () -> Bool = { true }
+    /// The Lyrics switch and its consent (`NotchSettings.lyricsAllowed`).
+    /// Off, as it starts, nothing about the track leaves the machine
+    /// and the line stays down.
+    var enabled: () -> Bool = { false }
+    /// Whether the card offers its one-line chip: the switch is on in
+    /// Settings but LRCLIB was never agreed to. Never while it is off.
+    var offersConsent: () -> Bool = { false }
+    /// The chip's click — records the yes; the caller re-notes the track.
+    var consent: () -> Void = {}
 
     init(session: URLSession = .shared, diskURL: URL? = nil) {
         self.session = session

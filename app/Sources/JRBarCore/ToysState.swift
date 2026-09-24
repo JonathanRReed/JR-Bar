@@ -901,9 +901,17 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// (ipapi.co). Off by default: it sends the IP to a second third
     /// party, so an empty city otherwise just means no weather row.
     public var weatherUseIPLocation: Bool = false
-    /// Synced lyrics from LRCLIB under the card's media row. On by
-    /// default, as it shipped; off, nothing about the track is sent.
-    public var lyrics: Bool = true
+    /// Synced lyrics from LRCLIB under the card's media row. Off by
+    /// default: it sends the track's title, artist, album and length to
+    /// a third party, so it waits for the person's own switch.
+    public var lyrics: Bool = false
+    /// The person said yes to LRCLIB: the switch turned on in Settings,
+    /// or the card's one-line offer clicked. Lyrics shipped on by
+    /// default, so a saved `lyrics: true` from then carries no consent:
+    /// a missing key reads false and the card offers it once.
+    public var lyricsConsented: Bool = false
+    /// Lookups may leave the Mac: the switch is on and agreed to.
+    public var lyricsAllowed: Bool { lyrics && lyricsConsented }
     /// While the Mac is quiet (a Focus synced in, or a quiet mode),
     /// completions and quota resets wait and replay as one summary
     /// capsule afterwards; asks and failures still show.
@@ -961,6 +969,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case calendar, reminders
         case weatherUseIPLocation
         case lyrics
+        case lyricsConsented
         case holdNewsWhileQuiet
         case meetingAlerts
         case timerLights
@@ -993,7 +1002,8 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         calendar = (try? c.decodeIfPresent(Bool.self, forKey: .calendar)) ?? true
         reminders = (try? c.decodeIfPresent(Bool.self, forKey: .reminders)) ?? true
         weatherUseIPLocation = (try? c.decodeIfPresent(Bool.self, forKey: .weatherUseIPLocation)) ?? false
-        lyrics = (try? c.decodeIfPresent(Bool.self, forKey: .lyrics)) ?? true
+        lyrics = (try? c.decodeIfPresent(Bool.self, forKey: .lyrics)) ?? false
+        lyricsConsented = (try? c.decodeIfPresent(Bool.self, forKey: .lyricsConsented)) ?? false
         holdNewsWhileQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .holdNewsWhileQuiet)) ?? true
         meetingAlerts = (try? c.decodeIfPresent(Bool.self, forKey: .meetingAlerts)) ?? false
         timerLights = (try? c.decodeIfPresent(Bool.self, forKey: .timerLights)) ?? true

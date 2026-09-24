@@ -232,7 +232,7 @@ final class NotchToy: Toy {
         cardModel.utility.weather.allowIPLocation = { [weak self] in
             self?.settings.weatherUseIPLocation ?? false
         }
-        cardModel.utility.lyrics.enabled = { [weak self] in self?.settings.lyrics ?? true }
+        wireLyrics(cardModel.utility.lyrics)
         cardModel.heldAwake = { [weak self] in self?.core.state?.power?.keepAwake == true }
         // A due timer morphs the island into its capsule, and a nudge
         // about a run only speaks while that run is still working.
@@ -2424,6 +2424,29 @@ final class NotchToy: Toy {
             })
     }
 
+    /// The Synced lyrics switch. Turning it on here, beside the words
+    /// that name LRCLIB, is the consent as well.
+    var lyricsBinding: Binding<Bool> {
+        Binding(
+            get: { self.settings.lyrics },
+            set: { on in
+                self.store?.state.notch.lyrics = on
+                if on { self.store?.state.notch.lyricsConsented = true }
+            })
+    }
+
+    /// A card's lyrics follow the switch and its consent — the island's
+    /// card and the glass card alike. The card's one-line offer shows
+    /// only while the switch is on and the yes is missing.
+    func wireLyrics(_ lyrics: LyricsStore) {
+        lyrics.enabled = { [weak self] in self?.settings.lyricsAllowed ?? false }
+        lyrics.offersConsent = { [weak self] in
+            guard let settings = self?.settings else { return false }
+            return settings.lyrics && !settings.lyricsConsented
+        }
+        lyrics.consent = { [weak self] in self?.store?.state.notch.lyricsConsented = true }
+    }
+
     /// The Reminders switch — the same ask-on-enable as `calendarBinding`.
     var remindersBinding: Binding<Bool> {
         Binding(
@@ -2450,6 +2473,17 @@ final class NotchToy: Toy {
 
     var controls: AnyView {
         AnyView(NotchControlsView(toy: self))
+    }
+
+    /// The lyrics row's subtitle names the third party it asks, and says
+    /// so while a switch left on from before still waits for its yes.
+    var lyricsSubtitle: String {
+        let base = "The current line and the next under the track, swept in time. "
+            + "Looks the song up on LRCLIB (title, artist, album, length — nothing else) "
+            + "and remembers the answer. Off, nothing is sent."
+        let settings = settings
+        guard settings.lyrics, !settings.lyricsConsented else { return base }
+        return base + " Waiting for your yes: the card offers it once under the track."
     }
 }
 
@@ -2554,9 +2588,8 @@ private struct NotchControlsView: View {
                     SettingLabel(title: "Audio visualizer (reacts to what's playing)",
                                  subtitle: "Six live bands on the media row, tapped from the playing app's own audio — asks for the system-audio permission once. Off or denied keeps the decorative animation.")
                 }
-                Toggle(isOn: toy.bind(\.lyrics)) {
-                    SettingLabel(title: "Synced lyrics",
-                                 subtitle: "The current line and the next under the track, swept in time. Looks the song up on LRCLIB (title, artist, album, length — nothing else) and remembers the answer. Off, nothing is sent.")
+                Toggle(isOn: toy.lyricsBinding) {
+                    SettingLabel(title: "Synced lyrics", subtitle: toy.lyricsSubtitle)
                 }
             }
             Toggle(isOn: toy.bind(\.mediaHUD)) {

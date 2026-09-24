@@ -316,9 +316,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.model.utility.weather.allowIPLocation = { [weak toysStore] in
             toysStore?.state.notch.weatherUseIPLocation ?? false
         }
-        notchCard.model.utility.lyrics.enabled = { [weak toysStore] in
-            toysStore?.state.notch.lyrics ?? true
-        }
+        // Lyrics ask LRCLIB only once the switch is on and agreed to.
+        toysStore.notch.wireLyrics(notchCard.model.utility.lyrics)
         notchCard.model.heldAwake = { [weak self] in self?.core?.state?.power?.keepAwake == true }
         // A reminder left from the glass card's session row says where
         // the run worked, as the island's does.

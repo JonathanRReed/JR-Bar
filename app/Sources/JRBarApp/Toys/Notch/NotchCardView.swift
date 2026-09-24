@@ -909,6 +909,8 @@ private struct ShelfMediaRow: View {
                 }
                 if let synced = utility.lyrics.lyrics {
                     LyricLines(lyrics: synced, utility: utility, playing: media.playing, style: style)
+                } else if utility.lyrics.offersConsent(), LyricsQuery(media: media) != nil {
+                    lyricsOffer
                 }
                 if let volume = utility.outputVolume {
                     // Fine adjustment without the keys — the same
@@ -930,6 +932,25 @@ private struct ShelfMediaRow: View {
             }
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// Lyrics stay off until asked for: while the switch is on from
+    /// before but never agreed to, one quiet line offers it. A click is
+    /// the yes; nothing about the track is sent before it.
+    private var lyricsOffer: some View {
+        Button { utility.agreeToLyrics() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "quote.bubble")
+                    .font(.system(size: 8))
+                Text("Show synced lyrics — looks the song up on LRCLIB")
+                    .font(.system(size: 9))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(style.faintColor)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Sends the title, artist, album and length to lrclib.net")
     }
 
     private static func clock(_ seconds: Double) -> String {
