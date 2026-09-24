@@ -10,10 +10,11 @@ import JRBarUI
 /// as it measured on 2026-09-24 (the Screen Bar's band to 980, the icon's
 /// mirror, Passwords, Wi-Fi, the battery, Weather, Control Center and the
 /// clock), with the mirror drawn by `MenuBarIconMirror` itself at the
-/// seat its own rules give — today, mid-drag with the icon frozen, just
-/// after a hide, after a show-drop, the drag's reveal and its divider, a
-/// drop's note under the icon, both seats — plus the card's new rows and
-/// the empty run's hint. Off by default; `JRBAR_RENDER_PROOF=1` writes
+/// seat its own rules give — today, Tailscale shown by a drop right of
+/// the icon and ⌘-dragged back left (hidden, the icon holding its x a
+/// beat), Passwords mid-drag with the icon frozen, the drag's reveal and
+/// its divider, a drop's note under the icon, Passwords' cover-drop, both
+/// seats — plus the card's new rows and the empty run's hint. Off by default; `JRBAR_RENDER_PROOF=1` writes
 /// PNGs into `JRBAR_RENDER_PROOF_DIR` (default /tmp/jrbar-audit/menubar).
 @Suite("Menu Bar drag render proof")
 @MainActor
@@ -126,6 +127,9 @@ struct MenuBarDragRenderProofTests {
         var pointerX: CGFloat?
         /// Items the drag's reveal brought in, left of the icon.
         var revealed: [BarItem] = []
+        /// Items under a cover — a hole in the bar, outlined so the
+        /// proof says what the blank is.
+        var covered: [BarItem] = []
         var note: String?
         /// Our real slot, outlined (the slot seat).
         var slot: CGRect?
@@ -136,16 +140,27 @@ struct MenuBarDragRenderProofTests {
     @Test("the fixture seats the icon flush left of Passwords today, and the drag's states differ as they should")
     func fixtureSeats() throws {
         let width: CGFloat = 73
-        let today = Self.gapSeat(Self.today, width: width)
-        #expect(today == Self.passwords.x - MenuBarIconMirror.itemGap - width)
+        let todaySeat = Self.gapSeat(Self.today, width: width)
+        #expect(todaySeat == Self.passwords.x - MenuBarIconMirror.itemGap - width)
         let afterHide = Self.gapSeat(Self.without(Self.weather, from: Self.today), width: width)
-        #expect(afterHide > today, "once thawed the icon follows the run right")
+        #expect(afterHide > todaySeat, "once thawed the icon follows the run right")
         let afterShow = Self.gapSeat(Self.adding(Self.tailscale, before: Self.passwords, to: Self.today),
                                      width: width)
-        #expect(afterShow == today - Self.tailscale.width - MenuBarIconMirror.itemGap,
+        #expect(afterShow == todaySeat - Self.tailscale.width - MenuBarIconMirror.itemGap,
                 "a show-drop slides the icon left by the item's width")
         let (_, mirrorWidth) = try Self.mirror(Self.face(hidden: 10), dark: false)
         #expect(mirrorWidth > MenuBarIconMirror.chevronZone)
+        // The mid-drag glyph ends clear of the frozen icon, and of the band.
+        let frozenSeat = Self.gapSeat(Self.today, width: mirrorWidth)
+        let dragX = Self.pointer(ending: frozenSeat, glyph: Self.passwords)
+        #expect(dragX + Self.passwords.width / 2 <= frozenSeat - 4)
+        #expect(dragX - Self.passwords.width / 2 >= Self.clearOf)
+        // The drag's reveal never draws under the band.
+        let brought = Self.revealedRun(endingAt: frozenSeat)
+        #expect(!brought.isEmpty && brought.allSatisfy { $0.x >= Self.clearOf })
+        // A cover-drop: the icon settles left of the covered hole.
+        let drop = Self.coverDrop(Self.passwords, in: Self.today)
+        #expect(Self.gapSeat(drop.run, width: mirrorWidth) + mirrorWidth <= drop.item.x)
     }
 
     // MARK: Proof shots
@@ -162,31 +177,35 @@ struct MenuBarDragRenderProofTests {
             let slotLength = MenuBarSlotLength.quantized(width, floor: StatusItemController.anchorSlimLength)
             let slotMaxX = Self.passwords.x - MenuBarIconMirror.itemGap
             let slot = CGRect(x: slotMaxX - slotLength, y: 6.5, width: slotLength, height: 24)
+            let shownSeat = Self.gapSeat(shownRun, width: width)
+            let dragPointer = Self.pointer(ending: todaySeat, glyph: Self.passwords)
+            let covered = Self.coverDrop(Self.passwords, in: Self.today)
             let states: [BarState] = [
                 BarState(name: "today", caption: "Today — the icon flush left of Passwords, ten apps hidden",
                          run: Self.today, hidden: 10, seat: { Self.gapSeat(Self.today, width: $0) }),
-                BarState(name: "mid-drag",
-                         caption: "⌘-dragging Weather left — the icon frozen where it stood, no Item Bar",
-                         run: Self.today.filter { $0.x != Self.weather.x }, hidden: 10, seat: { _ in todaySeat },
-                         dragged: Self.weather, pointerX: 1016),
-                BarState(name: "after-hide",
-                         caption: "Dropped: Weather hidden, the icon at the same x, eleven behind the ‹",
-                         run: hiddenRun, hidden: 11, seat: { _ in todaySeat }),
                 BarState(name: "after-show",
                          caption: "A show-drop: Tailscale right of the icon, the icon slid left by its width",
                          run: shownRun, hidden: 9, seat: { Self.gapSeat(shownRun, width: $0) }),
-                BarState(name: "drag-reveal",
-                         caption: "Show hidden items while ⌘-dragging: the run beside the icon, the ‹ a divider",
+                BarState(name: "mid-drag",
+                         caption: "⌘-dragging Passwords left across the icon — the icon frozen where it stood, no Item Bar",
                          run: Self.today.filter { $0.x != Self.passwords.x }, hidden: 10, seat: { _ in todaySeat },
-                         divider: true, revealed: Self.revealedRun(endingAt: todaySeat)),
+                         dragged: Self.passwords, pointerX: dragPointer),
+                BarState(name: "after-hide",
+                         caption: "Tailscale ⌘-dragged back left: hidden through macOS, the icon holds its x a beat, then settles",
+                         run: Self.today, hidden: 10, seat: { _ in shownSeat }),
+                BarState(name: "drag-reveal",
+                         caption: "Show hidden items while ⌘-dragging: what fits comes in beside the icon, the ‹ a divider",
+                         run: Self.today.filter { $0.x != Self.passwords.x }, hidden: 10, seat: { _ in todaySeat },
+                         divider: true, dragged: Self.passwords, pointerX: Self.passwords.x + 12,
+                         revealed: Self.revealedRun(endingAt: todaySeat)),
                 BarState(name: "note",
                          caption: "A drop the bar can't honour says why, under the icon, for four seconds",
                          run: Self.today, hidden: 10, seat: { Self.gapSeat(Self.today, width: $0) },
                          note: MenuBarDropNote.systemItem.text),
                 BarState(name: "note-covered",
-                         caption: "Passwords dropped left: a cover where it sits, and the note says so",
-                         run: Self.without(Self.passwords, from: Self.today), hidden: 10,
-                         seat: { _ in todaySeat }, note: MenuBarDropNote.appleExtraCovered.text),
+                         caption: "Passwords dropped left: macOS moved it past JR-Bar's slot, a cover (dashed) blanks it there",
+                         run: covered.run, hidden: 10, seat: { Self.gapSeat(covered.run, width: $0) },
+                         covered: [covered.item], note: MenuBarDropNote.appleExtraCovered.text),
                 BarState(name: "seat-slot",
                          caption: "The slot seat: the icon on JR-Bar's own slot (dashed), sized to it",
                          run: Self.today, hidden: 10, seat: { slotMaxX - $0 }, slot: slot),
@@ -201,17 +220,39 @@ struct MenuBarDragRenderProofTests {
         }
     }
 
-    /// The hidden run a drag's reveal brings in, packed left of the icon.
+    /// The hidden run a drag's reveal brings in, packed left of the icon
+    /// — only what fits clear of the band; macOS keeps the rest in its
+    /// own overflow.
     static func revealedRun(endingAt seat: CGFloat) -> [BarItem] {
-        let symbols = ["message.fill", "cloud.fill"]
+        let symbols = ["message.fill", "cloud.fill", "bolt.horizontal.fill"]
         var x = seat - MenuBarIconMirror.itemGap
         var run: [BarItem] = []
         for symbol in symbols {
             x -= 24
+            guard x >= clearOf + MenuBarIconMirror.itemGap else { break }
             run.append(BarItem(x: x, width: 24, symbol: symbol))
             x -= MenuBarIconMirror.itemGap
         }
         return run
+    }
+
+    /// Where the pointer rests so the dragged glyph ends a clear 4 pt
+    /// left of the frozen icon's seat — past it, not on its ‹.
+    static func pointer(ending seat: CGFloat, glyph: BarItem) -> CGFloat {
+        seat - 4 - glyph.width / 2
+    }
+
+    /// A cover-drop of `item` left of the icon: macOS moves it just past
+    /// JR-Bar's slim slot, which stays right of it, and the run packs
+    /// from the right. The covered item still counts as drawn for the
+    /// seat, so the icon settles left of the hole.
+    static func coverDrop(_ item: BarItem, in run: [BarItem]) -> (run: [BarItem], item: BarItem) {
+        let rest = run.filter { $0.x != item.x }
+        let next = rest.filter { $0.x > item.x }.map(\.x).min() ?? item.x + item.width
+        let slotMinX = next - MenuBarIconMirror.itemGap - StatusItemController.anchorSlimLength
+        var moved = item
+        moved.x = slotMinX - MenuBarIconMirror.itemGap - item.width
+        return ((rest + [moved]).sorted { $0.x < $1.x }, moved)
     }
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the menu bar card PNGs"))
@@ -228,22 +269,26 @@ struct MenuBarDragRenderProofTests {
         }
         utility.concealer = MenuBarConcealer(backend: Quiet())
         for dark in [false, true] {
-            let rows = VStack(alignment: .leading, spacing: 0) {
-                SettingLabel(title: "Menu Bar — how hiding works")
-                    .cardHeading()
-                CardNote(MenuBarDragRows.cardNote(concealing: true, dragToHide: true))
-                    .padding(.vertical, SettingsMetrics.xs)
-                MenuBarDragRows(utility: utility)
-                MenuBarItemBarAnchorRow(utility: utility)
-                SettingLabel(title: "Advanced")
-                    .cardHeading()
-                MenuBarPlacementRows(utility: utility)
-                MenuBarSpacingRelaunchRow(utility: utility)
+            // In a grouped form, as the card sits on the Utilities page, so
+            // the switches and pickers stand in the card's own column.
+            let rows = Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 0) {
+                        CardNote(MenuBarDragRows.cardNote(concealing: true, dragToHide: true))
+                            .padding(.vertical, SettingsMetrics.xs)
+                        MenuBarDragRows(utility: utility)
+                        MenuBarItemBarAnchorRow(utility: utility)
+                        CardSectionHeader("Advanced")
+                        MenuBarPlacementRows(utility: utility)
+                        MenuBarSpacingRelaunchRow(utility: utility)
+                    }
+                    .cardBodyStyle()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            .cardBodyStyle()
-            .padding(20)
-            .frame(width: 560, alignment: .topLeading)
-            try Self.write(rows, name: "menubar-drag-card", dark: dark, size: CGSize(width: 560, height: 820),
+            .formStyle(.grouped)
+            .frame(width: 560, height: 640, alignment: .top)
+            try Self.write(rows, name: "menubar-drag-card", dark: dark, size: CGSize(width: 560, height: 640),
                            window: true)
             let hint = HintMenuProof(hint: MenuBarUtility.emptyRunHint(concealing: true, dragToHide: true))
             try Self.write(hint, name: "menubar-drag-hint-menu", dark: dark, size: CGSize(width: 420, height: 150))
@@ -327,7 +372,14 @@ private struct BarProof: View {
                     .offset(x: x(slot.minX), y: 5.5)
             }
             ForEach(Array((state.revealed + state.run).enumerated()), id: \.offset) { _, item in
-                glyph(item).offset(x: x(item.x), y: 6.5)
+                if state.covered.contains(where: { $0.x == item.x }) {
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(ink.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                        .frame(width: item.width, height: 22)
+                        .offset(x: x(item.x), y: 7.5)
+                } else {
+                    glyph(item).offset(x: x(item.x), y: 6.5)
+                }
             }
             Image(nsImage: mirror)
                 .frame(width: mirrorWidth, height: MenuBarIconMirror.itemHeight)

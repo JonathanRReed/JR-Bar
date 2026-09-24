@@ -36,6 +36,12 @@ struct MenuBarUtilityControls: View {
     @ViewState private var showOverrides = false
     @ViewState private var showExtras = false
 
+    /// The card body, Advanced folded; a render proof opens it.
+    init(utility: MenuBarUtility, showAdvanced: Bool = false) {
+        self.utility = utility
+        _showAdvanced = ViewState(initialValue: showAdvanced)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Picker(selection: utility.providerBinding) {
