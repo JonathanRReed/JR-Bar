@@ -87,12 +87,19 @@ _COALESCED_KINDS: Final = ("state", "lights", "settings")
 # a ping -- waited just as long. These run on one worker shared by every
 # client: in order among themselves, so two scans never overlap and fight
 # for the GIL, and out of order with everything else.
+#
+# ``mark_history_seen`` is not a scan, but History sends it right behind a
+# ``list_history`` whose ``unseen`` flags measure from the watermark it
+# moves. Inline it would overtake the queued read and every row would come
+# back seen; on the lane it waits its turn. It is ``main_thread=True``, so
+# the dispatch still hops it to the main thread from the worker.
 SLOW_LANE_COMMANDS: Final = frozenset(
     {
         "usage_graph",
         "usage_history",
         "session_timeline",
         "list_history",
+        "mark_history_seen",
         "compare_sessions",
         "session_usage",
         "doctor",

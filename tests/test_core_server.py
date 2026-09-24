@@ -488,3 +488,44 @@ def test_a_slow_read_never_holds_up_a_later_command_on_the_same_socket__and_2_mo
     finally:
         release.set()
         instance.stop()
+
+
+def test_mark_history_seen_waits_behind_the_list_history_sent_before_it(sock_dir: Path) -> None:
+    """History opens with list_history then mark_history_seen on one socket.
+    With the read on the slow lane and the mark inline, the mark reached the
+    main thread first and moved the watermark the read measures ``unseen``
+    from, so every row came back seen. The mark now queues behind it."""
+    watermark = {"last_seen": "old"}
+    threads: dict[str, str] = {}
+
+    def dispatch(name: str, args: dict) -> object:
+        threads[name] = threading.current_thread().name
+        if name == "list_history":
+            time.sleep(0.05)
+            return {"measured_from": watermark["last_seen"]}
+        if name == "mark_history_seen":
+            watermark["last_seen"] = "new"
+            return {"last_seen": "new"}
+        return {}
+
+    instance = CoreServer(
+        dispatch=dispatch,
+        initial_documents=lambda: [],
+        socket_path=sock_dir / "core.sock",
+    )
+    instance.start()
+    try:
+        client = _connect(instance)
+        _read_frames(client, 1)
+        client.sendall(
+            encode_frame({"t": "command", "v": 1, "id": "list", "name": "list_history", "args": {}})
+            + encode_frame({"t": "command", "v": 1, "id": "mark", "name": "mark_history_seen", "args": {}})
+        )
+        replies = _read_frames(client, 2)
+        assert [reply["id"] for reply in replies] == ["list", "mark"]
+        assert replies[0]["result"] == {"measured_from": "old"}
+        assert replies[1]["result"] == {"last_seen": "new"}
+        assert threads["mark_history_seen"] == "JRBarCoreSlowLane"
+        client.close()
+    finally:
+        instance.stop()
