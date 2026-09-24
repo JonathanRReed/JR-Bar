@@ -3,9 +3,9 @@ import JRBarCore
 import SwiftUI
 
 /// The Menu Bar card's ⌘-drag rows, under the card's first note: the
-/// drag itself, the reveal while dragging, and Apple's extras. Only where
-/// macOS's concealer exists — under the spacer engine a ⌘-drag across
-/// the icon already is the section, natively.
+/// drag itself, the reveal while dragging, and Apple's extras. Only while
+/// macOS's concealer runs — under the spacer engine a ⌘-drag across the
+/// icon already is the section, natively, and these would do nothing.
 struct MenuBarDragRows: View {
     let utility: MenuBarUtility
 
@@ -21,7 +21,7 @@ struct MenuBarDragRows: View {
     }
 
     var body: some View {
-        if utility.concealerAvailable {
+        if utility.concealing {
             Toggle(isOn: utility.bind(\.curation.dragToHide)) {
                 SettingLabel(title: "⌘-drag across the icon hides or shows",
                              subtitle: "Drop an item left of the JR-Bar icon to hide its app, right of it to show it. Hold ⌥ at the drop for Always Hidden.")
@@ -59,8 +59,9 @@ struct MenuBarItemBarAnchorRow: View {
     }
 }
 
-/// The Advanced rows for where things stand: the icon's seat, where new
-/// apps go, the clock and Control Center, and the layout table.
+/// The Advanced rows for where things stand: where new apps go, and —
+/// while the concealer runs — the icon's seat and the layout table.
+/// `concealSystemItems` has no row: it waits on the live probe (J22).
 struct MenuBarPlacementRows: View {
     let utility: MenuBarUtility
 
@@ -77,7 +78,7 @@ struct MenuBarPlacementRows: View {
             SettingLabel(title: "New menu bar items",
                          subtitle: "An app's first item: ask on the ear, keep it shown, or tuck it away.")
         }
-        if utility.concealerAvailable {
+        if utility.concealing {
             LabeledContent {
                 Picker(selection: utility.bind(\.curation.mirrorSeat)) {
                     Text("Beside the first shown item").tag(MenuBarMirrorSeat.gap)
@@ -88,10 +89,6 @@ struct MenuBarPlacementRows: View {
             } label: {
                 SettingLabel(title: "Icon seat",
                              subtitle: "On its own slot, left of the icon is macOS's own order; the slot takes the icon's width.")
-            }
-            Toggle(isOn: utility.bind(\.curation.concealSystemItems)) {
-                SettingLabel(title: "Hide the clock and Control Center",
-                             subtitle: "Experimental: lets a ⌘-drag hide them through macOS's own list. Wi-Fi, the battery and sound always stay.")
             }
             MenuBarLayoutTableRows(utility: utility)
         }
