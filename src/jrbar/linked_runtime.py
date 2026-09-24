@@ -56,13 +56,12 @@ REANCHOR_AT_SHARE: Final = 0.75
 
 @dataclass(frozen=True, slots=True)
 class LinkedEpoch:
-    """The followed strip's current program and the moment it started."""
+    """The moment the followed strip's current program started: monotonic
+    (``anchor``, what the Dot is phased from) and wall-clock (what the
+    lights frame names), and which strip."""
 
     anchor: float
     anchor_epoch: float
-    program: str
-    state: object
-    leds: int
     device_id: str
 
 

@@ -1077,7 +1077,6 @@ def test_the_skew_is_a_diagnostic_and_never_rotates_the_dot(headless) -> None:
     ]
     # The skew is the I/O gap (fsync to fsync), not the worker's stamps.
     assert controller._core_linked_skew_ms == 20.0
-    assert controller._core_linked_skew_median_ms is None
     lights = controller._core_build_lights()
     assert lights["linked_skew_ms"] == 20.0
     assert "linked_skew_corrected_ms" not in lights
@@ -3645,7 +3644,6 @@ def test_every_strip_restart_rewrites_the_dot_and_nothing_else_does__and_2_more(
 
     # --- scenario: a_skew_change_alone_never_rewrites_the_dot
     controller._core_linked_skew_ms = 233.0
-    controller._core_linked_skew_median_ms = 57.0
     again = controller._sync_hardware_device(dot_request)
     assert again.write.changed is False
 
@@ -3722,7 +3720,7 @@ def test_the_sync_tick_reanchors_at_most_once_in_twenty_seconds(headless, tmp_pa
 
     link = LinkedSync(DeviceClocks(None), reader=reader, spawn=lambda work: work(), now=lambda: clock[0])
     controller._core_linked = link
-    link.note_epoch(LinkedEpoch(500.0, 1.0, "#FF0000 500ms\noff 500ms\nrepeat", None, 8, pro.device_id))
+    link.note_epoch(LinkedEpoch(500.0, 1.0, pro.device_id))
     link.note_dot_write(
         dot_id=dot.device_id,
         write=SimpleNamespace(

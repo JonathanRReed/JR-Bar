@@ -3896,16 +3896,6 @@ def build_headless_controller_class() -> type:
             self._core_linked_companion: tuple[str, int, Any] | None = None
             self._core_linked_results: dict[str, tuple[Any, Any]] = {}
             self._core_linked_skew_ms: float | None = None
-            # The skew's rolling median: the last eight coupled-write gaps
-            # per (pro, dot) pair. The median, not the latest sample, is
-            # what the Dot's next program compensates for -- one slow write
-            # should not re-phase the loop.
-            self._core_linked_skew_samples: dict[tuple[str, str], deque[float]] = {}
-            self._core_linked_skew_median_ms: float | None = None
-            # The plan behind the pending companion write, and the shift it
-            # baked in -- ``_apply_hardware_write_result`` reports both.
-            self._core_linked_dot_plan = None
-            self._core_linked_corrected_ms: float | None = None
             # Where the Dot's last timed program starts in the strip's lap.
             self._core_linked_dot_origin_ms = 0.0
             # The strip's latest nominal program and its LED count: what a
@@ -4510,14 +4500,7 @@ def build_headless_controller_class() -> type:
             if not followed and not self._core_is_followed_strip(device):
                 return
             self._core_linked.note_epoch(
-                LinkedEpoch(
-                    anchor=float(started),
-                    anchor_epoch=float(anchor),
-                    program=write.nominal_program or write.program,
-                    state=write.state,
-                    leds=leds,
-                    device_id=device.device_id,
-                )
+                LinkedEpoch(anchor=float(started), anchor_epoch=float(anchor), device_id=device.device_id)
             )
 
         def _core_followed_strip_id(self) -> str | None:
@@ -4672,10 +4655,6 @@ def build_headless_controller_class() -> type:
             self._core_linked_pro_leds = 8
             self._core_linked_skew_ms = None
             self._core_linked_skew_at = None
-            self._core_linked_skew_samples.clear()
-            self._core_linked_skew_median_ms = None
-            self._core_linked_corrected_ms = None
-            self._core_linked_dot_plan = None
             self._core_linked_dot_origin_ms = 0.0
             self._core_linked_pair_ok = False
             self._core_linked_dot_error = None
@@ -5168,7 +5147,6 @@ def build_headless_controller_class() -> type:
             except Exception as exc:
                 self._core_linked_dot_error = f"{exc.__class__.__name__}"
                 self._core_linked_pair_ok = False
-                self._core_linked_dot_plan = None
                 legacy.log_status_bar(f"core: linked dot write failed: {exc.__class__.__name__}")
                 return result
             dot_command = self._hardware_write_command(dot_request, command.deadline - 1.0)
@@ -5218,7 +5196,6 @@ def build_headless_controller_class() -> type:
             self._core_linked_pro_program = (program, write.state)
             controller = self.agent_controller_for_device(dot_request.device)
             plan = self._core_dot_plan(controller, program, device=dot_request.device)
-            self._core_linked_dot_plan = plan
             if plan is None:
                 return self._sync_hardware_device(dot_request)
             dot_write = self._core_linked_write_dot(
@@ -5271,8 +5248,6 @@ def build_headless_controller_class() -> type:
                 self._core_linked_skew_at = time.time()
                 legacy.log_status_bar(f"linked write: dot {self._core_linked_skew_ms} ms after pro")
             self._core_note_hardware_write(dot_command, dot_result)
-            self._core_linked_dot_plan = None
-            self._core_linked_corrected_ms = None
             self._core_publish_lights()
 
         def _core_linked_follow_uncoupled_restart(self, result) -> None:
@@ -7122,8 +7097,6 @@ def build_headless_controller_class() -> type:
             ):
                 document["linked_skew_ms"] = self._core_linked_skew_ms
                 document["linked_skew_at"] = self._core_linked_skew_at
-                if self._core_linked_corrected_ms is not None:
-                    document["linked_skew_corrected_ms"] = self._core_linked_corrected_ms
             try:
                 from . import core_lights
 

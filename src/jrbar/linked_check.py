@@ -84,16 +84,7 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
         raise CommandError("refused", f"the SidePulse refused the check: {exc}") from exc
     started = write.applied_at or time.monotonic()
     anchor = core_runtime.mono_to_epoch(started) or time.time()
-    link.note_epoch(
-        LinkedEpoch(
-            anchor=float(started),
-            anchor_epoch=float(anchor),
-            program=write.nominal_program or program,
-            state=write.state,
-            leds=led_count_for_target(strip.target),
-            device_id=strip.device_id,
-        )
-    )
+    link.note_epoch(LinkedEpoch(anchor=float(started), anchor_epoch=float(anchor), device_id=strip.device_id))
     runtime._core_linked_pro_program = (write.nominal_program or program, write.state)
     runtime._core_hardware_anchor[strip.device_id] = anchor
     link.start_check(until, until_epoch)

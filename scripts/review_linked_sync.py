@@ -187,7 +187,7 @@ def simulate(
         # Started a lap early, so its time 0 is strip phase ``origin`` and it
         # is already running when the strip starts.
         reference.parse(ideal, int(round(at * 1000.0 + origin - (_lap(ideal, 2) or 0.0))))
-        link.note_epoch(LinkedEpoch(at, at, pro_text, None, 8, "pro"))
+        link.note_epoch(LinkedEpoch(at, at, "pro"))
 
     def write_dot(at: float, reason: str) -> None:
         """The Dot's write, the way the daemon's write boundary does it."""

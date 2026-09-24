@@ -1291,13 +1291,6 @@ class AgentMonitorSettings:
             ),
         )
 
-    def with_dot_extend(self, style: object = None, side: object = None) -> AgentMonitorSettings:
-        return replace(
-            self,
-            dot_extend_style=self.dot_extend_style if style is None else _extend_style(style),
-            dot_extend_side=self.dot_extend_side if side is None else _extend_side(side),
-        )
-
     def with_screen_bar_gauges_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, screen_bar_gauges_enabled=bool(enabled))
 

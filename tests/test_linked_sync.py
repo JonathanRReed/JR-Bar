@@ -252,7 +252,7 @@ def test_the_closed_loop_reanchors_at_most_every_twenty_seconds() -> None:
         return DeviceStatus(clock[0], {"ticks": f"{ticks[0]:.0f}"})
 
     link = LinkedSync(DeviceClocks(None), reader=reader, spawn=lambda work: work(), now=lambda: clock[0])
-    link.note_epoch(LinkedEpoch(100.0, 1.0, "#FF0000 500ms\noff 500ms\nrepeat", None, 8, "pro"))
+    link.note_epoch(LinkedEpoch(100.0, 1.0, "pro"))
 
     class Timed:
         phase_ms = 0.0

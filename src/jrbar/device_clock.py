@@ -325,14 +325,6 @@ class DeviceClockEstimator:
             source="measured",
         )
 
-    def clock_at(self, host_at: float) -> float | None:
-        """The device clock the fit expects at ``host_at``, from the newest
-        sample: what ``ticks`` read at a moment nobody sampled."""
-        if not self.samples:
-            return None
-        last_host, last_clock = self.samples[-1]
-        return last_clock + (host_at - last_host) * 1000.0 * self.estimate.rate
-
 
 def _clamp_rate(value: object) -> float:
     try:

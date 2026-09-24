@@ -52,7 +52,6 @@ from .animation import (
     WholeBar,
     errors_only,
     loop_duration_ms,
-    normalize_color,
     read_program,
     render_animation,
     step_duration_ms,
@@ -1258,7 +1257,3 @@ __all__ = [
     "wrap_ms",
 ]
 
-
-# ``normalize_color`` and ``ColorList`` are re-exported names other modules
-# reach through here; keep the linter from calling them unused.
-_ = (normalize_color, ColorList, CommentStep)
