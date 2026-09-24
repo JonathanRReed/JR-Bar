@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Testing
+import UserNotifications
 @testable import JRBarApp
 @testable import JRBarCore
 
@@ -586,6 +587,16 @@ struct AskSurfacesTests {
         #expect(NotificationBridge.liveAsk(session: "s", request: "r1", in: asks) != nil)
         #expect(NotificationBridge.liveAsk(session: "s", request: "r0", in: asks) == nil)
         #expect(NotificationBridge.liveAsk(session: "s", request: nil, in: asks) != nil, "an unpinned banner")
+    }
+
+    @Test("an ask banner stays time-sensitive when its category drops Approve and Deny")
+    func askBannerUrgency() {
+        let plainAsk = NotificationBridge.interruptionLevel(category: .plain, timeSensitive: true)
+        #expect(plainAsk == UNNotificationInterruptionLevel.timeSensitive, "a held question still breaks through Focus")
+        let actionable = NotificationBridge.interruptionLevel(category: .ask, timeSensitive: nil)
+        #expect(actionable == UNNotificationInterruptionLevel.timeSensitive)
+        let quiet = NotificationBridge.interruptionLevel(category: .plain, timeSensitive: nil)
+        #expect(quiet == UNNotificationInterruptionLevel.active, "every other banner stays active")
     }
 
     @Test("the daemon going away shrinks a takeover card back to its capsule")

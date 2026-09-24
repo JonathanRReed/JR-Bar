@@ -142,7 +142,8 @@ final class EventCoordinator {
 
     /// Posts an ask banner once the state carrying its ask has landed (or
     /// `askBannerWait` has passed), in the category that ask's verbs
-    /// allow and pinned to its request.
+    /// allow and pinned to its request. Time-sensitive either way: the
+    /// category drops the actions, never the urgency of "X needs you".
     private func deliverAskBanner(_ notification: EventDelivery.Notification, session: String, request: String?) {
         let token = UUID()
         waitingAskBanners[notification.identifier] = token
@@ -159,7 +160,7 @@ final class EventCoordinator {
             self.waitingAskBanners[notification.identifier] = nil
             var banner = notification
             banner.category = Self.bannerCategory(for: ask)
-            self.notifications.deliver(banner, request: ask?.request ?? request)
+            self.notifications.deliver(banner, request: ask?.request ?? request, timeSensitive: true)
         }
     }
 

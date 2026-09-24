@@ -58,9 +58,21 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// How hard a banner may break through Focus. An ask banner is
+    /// time-sensitive whatever its actions — a held question or one that
+    /// wants a typed reply needs the person as much as one Approve would
+    /// answer — so the caller may say so apart from the category, which
+    /// only picks the action set. Without a word from the caller, the ask
+    /// category is time-sensitive and everything else is active.
+    nonisolated static func interruptionLevel(category: EventDelivery.Notification.Category,
+                                              timeSensitive: Bool?) -> UNNotificationInterruptionLevel {
+        (timeSensitive ?? (category == .ask)) ? .timeSensitive : .active
+    }
+
     /// `request` rides an ask banner's userInfo, so its Approve and Deny
     /// answer the episode it was posted for and no later one.
-    func deliver(_ notification: EventDelivery.Notification, request: String? = nil) {
+    /// `timeSensitive` overrides the urgency the category would give.
+    func deliver(_ notification: EventDelivery.Notification, request: String? = nil, timeSensitive: Bool? = nil) {
         guard let center else {
             onLog?("notification (unbundled, not shown): \(notification.title) — \(notification.body)")
             return
@@ -73,7 +85,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             content.body = notification.body
             content.categoryIdentifier = notification.category == .ask ? Self.askCategory : Self.plainCategory
             content.threadIdentifier = notification.session ?? "jrbar"
-            content.interruptionLevel = notification.category == .ask ? .timeSensitive : .active
+            content.interruptionLevel = Self.interruptionLevel(category: notification.category, timeSensitive: timeSensitive)
             if let session = notification.session { content.userInfo["session"] = session }
             if let request { content.userInfo[Self.requestKey] = request }
             content.userInfo["identifier"] = notification.identifier
