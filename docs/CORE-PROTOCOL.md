@@ -1128,7 +1128,12 @@ while the answer is still delivered.
   for a key that can only send a URL) or a JSON object body (which wins
   where both name a field); `answers` (an object, JSON only) goes with
   `answer`, `request` pins the ask. A session runs `answer_ask`
-  (`only_if_frontmost: true`), a slot `deck_answer`. `200 {ok: true,
+  (`only_if_frontmost: true`), a slot `deck_answer`. A slot answer that
+  pins no `request` is refused `stale_request` while the ask on that slot
+  is under 1.5 s old: the key may still have shown the ask it replaced, so
+  a second press answers the one it shows now. A standalone
+  `jrbar serve --allow-answers` reads the switch and the asks over one core
+  connection, reused for a second. `200 {ok: true,
   result: {session, decision, answered, delivered, mechanism, code,
   message, confirmation}}` -- never the host's pid, tty or window
   evidence. Refusals are `{ok: false, error: {code, message}}` with the

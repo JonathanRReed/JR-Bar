@@ -17,6 +17,8 @@ from jrbar.serve import create_serve_server
 from jrbar.serve_answers import (
     ANSWER_SOCKET_TIMEOUT_SECONDS,
     DECK_SLOTS,
+    READ_CACHE_SECONDS,
+    SLOT_ANSWER_SETTLE_SECONDS,
     ControllerAnswers,
     CoreSocketAnswers,
     ServeAnswerRefused,
@@ -234,7 +236,8 @@ def test_a_standalone_answer_outwaits_the_daemons_answer_budget() -> None:
     answers = CoreSocketAnswers(Path("/tmp/core.sock"), connect=connect)
     assert answers.enabled() and answers.asks()
     answers.answer({"slot": 3, "decision": "deny"})
-    reads, answer = opened[:2], opened[2]
+    reads, answer = opened[:-1], opened[-1]
+    assert len(reads) == 1  # the switch and the asks share one connection
     assert answer == ("/tmp/core.sock", ANSWER_SOCKET_TIMEOUT_SECONDS)
     assert ANSWER_SOCKET_TIMEOUT_SECONDS > ANSWER_REPLY_BUDGET_SECONDS + 2.0
     # The reads stay quick: a wedged monitor must not hold /asks.json.
@@ -396,3 +399,75 @@ def test_answering_from_serve_is_off_by_default_and_round_trips(tmp_path: Path) 
     assert settings_from_document(document, scratch_dir=tmp_path).serve_answer_enabled is True
     mistyped = {**document, "serve_answer_enabled": "yes"}
     assert settings_from_document(mistyped, scratch_dir=tmp_path).serve_answer_enabled is False
+
+
+def test_a_poll_reads_the_switch_and_the_asks_over_one_connection__and_1_more() -> None:
+    # --- scenario: one connection serves the reads for a second, then a fresh one
+    opened: list[_Connection] = []
+    clock = [100.0]
+
+    def connect(_path: Path, **_kw) -> _Connection:
+        opened.append(_Connection())
+        return opened[-1]
+
+    answers = CoreSocketAnswers(Path("/tmp/core.sock"), connect=connect, monotonic=lambda: clock[0])
+    assert answers.enabled() and len(answers.asks()) == 2
+    assert answers.enabled() and len(answers.asks()) == 2
+    assert len(opened) == 1
+    clock[0] += READ_CACHE_SECONDS
+    assert answers.enabled()
+    assert len(opened) == 2
+
+    # --- scenario: a failed read caches nothing
+    failures = [ControlError("the JR-Bar monitor is not running", 1)]
+
+    class _Down(_Connection):
+        def __enter__(self):
+            if failures:
+                raise failures.pop()
+            return self
+
+    flaky = CoreSocketAnswers(Path("/x"), connect=lambda _path, **_kw: _Down(), monotonic=lambda: 5.0)
+    assert not flaky.enabled()
+    assert flaky.enabled()
+
+
+def test_a_slot_answer_waits_out_an_ask_that_just_replaced_the_keys__and_2_more() -> None:
+    """``/answer?slot=2&decision=approve`` names no request, and deck_answer
+    answers whatever that slot holds when the press lands -- possibly an ask
+    that replaced the one the key showed a moment ago."""
+    fresh_state = {
+        **STATE,
+        "asks": [{**STATE["asks"][0], "opened_at": 1_000.0}, *STATE["asks"][1:]],
+    }
+
+    # --- scenario: the daemon's own source refuses stale_request until the ask settles
+    controller = _Controller(enabled=True)
+    controller._core_documents = {"state": fresh_state}
+    now = [1_000.0 + SLOT_ANSWER_SETTLE_SECONDS - 0.1]
+    answers = ControllerAnswers(controller, clock=lambda: now[0])
+    with pytest.raises(ServeAnswerRefused) as refused:
+        answers.answer({"slot": 5, "decision": "approve"})
+    assert refused.value.code == "stale_request" and refused.value.http_status == 409
+    assert controller.sent == []
+    now[0] = 1_000.0 + SLOT_ANSWER_SETTLE_SECONDS
+    assert answers.answer({"slot": 5, "decision": "approve"}) == {"answered": True}
+
+    # --- scenario: a pinned request, a session answer or another slot is never held back
+    now[0] = 1_000.0
+    answers.answer({"slot": 5, "decision": "approve", "request": "request:v1:a"})
+    answers.answer({"session": "claude:session:a", "decision": "approve"})
+    answers.answer({"slot": 1, "decision": "deny"})
+    assert [name for name, _args in controller.sent] == ["deck_answer", "deck_answer", "answer_ask", "deck_answer"]
+
+    # --- scenario: a standalone serve checks the state its answer connection opened with
+    class _Fresh(_Connection):
+        def document(self, kind):
+            return self.settings if kind == "settings" else {"t": "state", **fresh_state}
+
+    connection = _Fresh()
+    standalone = CoreSocketAnswers(Path("/x"), connect=lambda _path, **_kw: connection, clock=lambda: 1_000.5)
+    with pytest.raises(ServeAnswerRefused) as refused:
+        standalone.answer({"slot": 5, "decision": "deny"})
+    assert refused.value.code == "stale_request"
+    assert connection.commands == []
