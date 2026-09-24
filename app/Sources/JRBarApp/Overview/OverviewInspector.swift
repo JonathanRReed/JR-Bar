@@ -98,7 +98,7 @@ extension OverviewLink.Tone {
 }
 
 /// A link's mark: providers draw their brand tile; everything else takes
-/// the link's SF Symbol in a quiet tile of the same size.
+/// the link's SF Symbol, framed to the same size so the titles line up.
 struct OverviewLinkGlyph: View {
     let link: OverviewLink
     var size: CGFloat = 12
@@ -624,6 +624,8 @@ struct OverviewSessionInspector: View {
 struct OverviewStatePill: View {
     let activity: SessionActivity
 
+    private var calm: Bool { activity == .idle || activity == .ended }
+
     var body: some View {
         HStack(spacing: 4) {
             Circle().fill(activity.tint).frame(width: 6, height: 6)
@@ -633,7 +635,7 @@ struct OverviewStatePill: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 2)
-        .background(Capsule().fill(activity.tint.opacity(activity == .idle || activity == .ended ? 0.10 : 0.14)))
+        .background(Capsule().fill(activity.tint.opacity(calm ? 0.10 : 0.14)))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("State: \(activity.word)")
     }

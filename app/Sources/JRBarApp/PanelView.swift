@@ -903,12 +903,13 @@ struct AskCardPlate: View {
     static let radius: CGFloat = 10
 
     private var tint: Color { quiet ? .secondary : SessionActivity.waiting.tint }
+    private var top: Color { tint.opacity(selected ? 0.20 : 0.13) }
+    private var bottom: Color { tint.opacity(selected ? 0.12 : 0.06) }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
         shape
-            .fill(LinearGradient(colors: [tint.opacity(selected ? 0.20 : 0.13), tint.opacity(selected ? 0.12 : 0.06)],
-                                 startPoint: .top, endPoint: .bottom))
+            .fill(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom))
             .overlay(shape.strokeBorder(LinearGradient(colors: [tint.opacity(0.38), tint.opacity(0.16)],
                                                        startPoint: .top, endPoint: .bottom),
                                         lineWidth: 0.75))
@@ -1211,9 +1212,10 @@ struct PillButtonStyle: ButtonStyle {
     private func plate(pressed: Bool) -> some View {
         if prominent {
             let amber = SessionActivity.waiting.tint
+            let top = amber.opacity(pressed ? 0.8 : 1)
+            let bottom = amber.opacity(pressed ? 0.7 : 0.88)
             Capsule()
-                .fill(LinearGradient(colors: [amber.opacity(pressed ? 0.8 : 1), amber.opacity(pressed ? 0.7 : 0.88)],
-                                     startPoint: .top, endPoint: .bottom))
+                .fill(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom))
                 .brightness(hovering && isEnabled && !pressed ? 0.05 : 0)
                 .overlay(Capsule().strokeBorder(LinearGradient(colors: [Color.white.opacity(0.35), Color.white.opacity(0.05)],
                                                                startPoint: .top, endPoint: .bottom),

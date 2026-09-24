@@ -114,13 +114,19 @@ struct OverviewCountPill: View {
     let tint: Color
     var quiet = false
 
+    /// Grey counts read in the primary ink, dimmer when quiet.
+    private var ink: Color {
+        guard tint == .secondary else { return tint }
+        return Color.primary.opacity(quiet ? 0.55 : 0.75)
+    }
+
     var body: some View {
         HStack(spacing: 4) {
             Circle().fill(tint).frame(width: 5, height: 5).opacity(quiet ? 0.6 : 1)
             Text(text)
                 .font(.system(size: 11, weight: .medium))
                 .monospacedDigit()
-                .foregroundStyle(tint == .secondary ? Color.primary.opacity(quiet ? 0.55 : 0.75) : tint)
+                .foregroundStyle(ink)
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 2.5)

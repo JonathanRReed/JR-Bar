@@ -191,7 +191,7 @@ struct HistoryFilterBar: View {
                         Text("\(store.filtered.count) of \(store.rows.count)")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
-                        Text(store.loading ? "Refreshing…" : "updated \(PanelStore.elapsed(since: loadedAt, now: store.now) ?? "0s") ago")
+                        Text(freshness(loadedAt))
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
@@ -247,6 +247,13 @@ struct HistoryFilterBar: View {
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
+    }
+
+    /// "updated 12s ago", or "Refreshing…" while a load is out.
+    private func freshness(_ loadedAt: Date) -> String {
+        if store.loading { return "Refreshing…" }
+        let age = PanelStore.elapsed(since: loadedAt, now: store.now) ?? "0s"
+        return "updated \(age) ago"
     }
 }
 
@@ -310,6 +317,13 @@ struct HistoryRhythm: View {
         return formatter
     }()
 
+    /// Headroom over the busiest day for today's dot, and a little floor
+    /// under zero for the failure marks.
+    static func scale(peak: Int) -> ClosedRange<Double> {
+        let top = Double(peak)
+        return (-top * 0.14)...(top * 1.3)
+    }
+
     var body: some View {
         let days = days
         let peak = max(1, days.map(\.rows).max() ?? 1)
@@ -342,9 +356,7 @@ struct HistoryRhythm: View {
         }
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
-        // Headroom over the busiest day for today's dot, and a little
-        // floor under zero for the failure marks.
-        .chartYScale(domain: (-Double(peak) * 0.14)...(Double(peak) * 1.3))
+        .chartYScale(domain: Self.scale(peak: peak))
         .chartLegend(.hidden)
         .chartXSelection(value: $hovered)
         .chartOverlay { proxy in

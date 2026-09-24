@@ -25,6 +25,13 @@ struct WindowCard: ViewModifier {
     var highlight: Color? = nil
     @Environment(\.colorScheme) private var scheme
 
+    /// The card's edge: the highlight's tint while it washes, else a
+    /// hairline a touch stronger in dark.
+    private var edge: Color {
+        if let highlight { return highlight.opacity(0.65) }
+        return Color.primary.opacity(scheme == .dark ? 0.09 : 0.07)
+    }
+
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: WindowMetrics.cardRadius, style: .continuous)
         content
@@ -38,8 +45,7 @@ struct WindowCard: ViewModifier {
                 shape.fill((highlight ?? .clear).opacity(highlight == nil ? 0 : 0.10))
             }
             .overlay {
-                shape.strokeBorder(highlight.map { $0.opacity(0.65) } ?? Color.primary.opacity(scheme == .dark ? 0.09 : 0.07),
-                                   lineWidth: highlight == nil ? 0.5 : 1.5)
+                shape.strokeBorder(edge, lineWidth: highlight == nil ? 0.5 : 1.5)
             }
     }
 }
