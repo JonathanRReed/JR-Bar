@@ -1205,6 +1205,82 @@ def log(message: str) -> None:
     sys.stderr.flush()
 
 
+# -- usage scenarios (--usage-scenario) ----------------------------------------
+#
+# Focused Usage Center states for render proofs and hand checks. Each
+# scenario REPLACES the default providers with a small, deliberate set, in
+# the daemon's wire shape (`usage.providers[]`), rebuilt on every state so
+# the resets keep counting down.
+
+USAGE_SCENARIOS = ("opencode", "statusline", "hub")
+
+
+def scenario_usage(name: str, now: float) -> list[dict]:
+    def window(key, label, used, resets_in, *, bindable=True, source=None):
+        row = {"id": key, "name": label, "used_pct": used, "resets_at": now + resets_in, "bindable": bindable}
+        if source is not None:
+            row["source"] = source
+        return row
+
+    tokens = {"input": 2_140_000, "cached_input": 0, "output": 380_000}
+    if name == "opencode":
+        return [
+            # An OpenCode Go subscription: the rolling and weekly windows
+            # drive the lights, the monthly figure is detail.
+            {"id": "opencode", "instance": "default", "quota_source": True, "state": "ready",
+             "fidelity": "official", "observed_at": now - 40,
+             "account": {"plan": "Go", "label": "OpenCode Go", "fidelity": "official"},
+             "windows": [window("go-rolling", "5h", 42.5, 3 * 3600 + 1200, source="opencode-go-api"),
+                         window("go-weekly", "7d", 18.0, 4 * 86400, source="opencode-go-api"),
+                         window("go-monthly", "Monthly", 7.3, 6 * 86400 + 4 * 3600, bindable=False,
+                                source="opencode-go-api")],
+             "tokens": tokens},
+            # This Mac: no Go key, so no quota source at all. Tokens still count.
+            {"id": "opencode", "instance": "this-mac", "quota_source": False, "state": "unsupported",
+             "reason": "opencode_no_quota_source", "action": None, "fidelity": "official",
+             "observed_at": now - 40, "windows": [],
+             "tokens": {"input": 812_000, "cached_input": 0, "output": 96_000}},
+        ]
+    if name == "statusline":
+        return [
+            # The OAuth endpoint is rate limited; the 5h and 7d numbers come
+            # from Claude Code's own statusLine report instead.
+            {"id": "claude", "instance": "default", "quota_source": True, "state": "ready",
+             "fidelity": "official", "observed_at": now - 25,
+             "account": {"plan": "Max 20×", "label": None, "fidelity": "official"},
+             "windows": [window("five-hour", "5h", 42.0, 2 * 3600 + 900, source="claude-statusline"),
+                         window("weekly", "7d", 61.0, 3 * 86400 + 5 * 3600, source="claude-statusline")],
+             "tokens": tokens},
+            {"id": "codex", "instance": "default", "quota_source": True, "state": "ready",
+             "fidelity": "official", "observed_at": now - 60,
+             "account": {"plan": "Pro", "label": None, "fidelity": "official"},
+             "windows": [window("weekly", "7d", 30.0, 5 * 86400)]},
+        ]
+    if name == "hub":
+        return [
+            # The local Claude account, read from this Mac's own sign-in.
+            {"id": "claude", "instance": "default", "quota_source": True, "state": "ready",
+             "fidelity": "official", "observed_at": now - 30,
+             "account": {"plan": "Max 20×", "label": "jonathan@…", "fidelity": "official"},
+             "windows": [window("five-hour", "5h", 42.0, 2 * 3600 + 900, source="claude-oauth"),
+                         window("weekly", "7d", 61.0, 3 * 86400 + 5 * 3600, source="claude-oauth")],
+             "tokens": tokens},
+            # A second Claude account that only CLIProxyAPI signs in to. The
+            # proxy's copy of the local account is deduplicated away, so
+            # there is exactly one extra card, not two.
+            {"id": "claude", "instance": "cliproxy:3f2a9c1b0d4e", "quota_source": True, "state": "ready",
+             "fidelity": "official", "observed_at": now - 30,
+             "account": {"plan": "Pro", "label": "work@…", "fidelity": "official"},
+             "windows": [window("five-hour", "5h", 12.0, 4 * 3600, source="cliproxy"),
+                         window("weekly", "7d", 35.0, 6 * 86400, source="cliproxy")]},
+            {"id": "codex", "instance": "cliproxy:9b1e0a77c2d5", "quota_source": True, "state": "ready",
+             "fidelity": "official", "observed_at": now - 30,
+             "account": {"plan": "Pro", "label": "ChatGPT", "fidelity": "official"},
+             "windows": [window("weekly", "7d", 30.0, 5 * 86400, source="cliproxy")]},
+        ]
+    return []
+
+
 class World:
     """Everything the daemon knows, plus the timeline that mutates it."""
 
@@ -1365,6 +1441,8 @@ class World:
         self.history_inflight: set[tuple[str, str]] = set()
         self.history_scan_seconds = 3.0
         self.hot_history = False
+        #: --usage-scenario: a focused provider set in place of the default one.
+        self.usage_scenario: str | None = None
         self.quota_crossed: dict[str, set] = {}
         self.ask_opened_at: dict[str, float] = {}
         self._seed_history(now)
@@ -1507,7 +1585,8 @@ class World:
             ],
             "asks": list(self.asks),
             "devices": devices,
-            "usage": {"refreshed_at": self.usage_refreshed_at, "providers": providers},
+            "usage": {"refreshed_at": self.usage_refreshed_at,
+                      "providers": scenario_usage(self.usage_scenario, now) if self.usage_scenario else providers},
             "power": {"keep_awake": True, "closed_lid": {"policy": "agents", "holding": False, "helper_installed": True}},
             "focus": self.focus,
             "escalation": self.escalation,
@@ -2699,7 +2778,8 @@ class World:
         elif name == "usage_history":
             provider = str(args.get("provider", ""))
             range_name = str(args.get("range", "30d"))
-            if provider not in self.usage:
+            scenario_ids = {row["id"] for row in scenario_usage(self.usage_scenario, time.time())} if self.usage_scenario else set()
+            if provider not in self.usage and provider not in scenario_ids:
                 return self._error(cid, "not_found", f"no usage source for {provider}")
             if range_name not in ("7d", "30d", "90d", "365d"):
                 return self._error(cid, "invalid_range", "range must be 7d, 30d, 90d or 365d")
@@ -2726,7 +2806,7 @@ class World:
                 # Asked again while the scan runs: what memory holds, still
                 # marked partial (the daemon's `stale` answer).
                 result = usage_history(provider, range_name, time.time(), partial=inflight)
-            result["state"] = self.usage[provider]["state"]
+            result["state"] = self.usage[provider]["state"] if provider in self.usage else "ready"
         elif name == "usage_graph":
             # The shared-axis chart the Overview's Usage pane shows —
             # same document shape as the daemon's scan, built from the
@@ -3306,6 +3386,10 @@ def main() -> int:
                         help="how the Creator Micro 2 starts: approved over Bluetooth (default), connected but "
                              "not yet approved, not connected, approved over USB, or with an interrupted keymap "
                              "write that needs Restore")
+    parser.add_argument("--usage-scenario", choices=USAGE_SCENARIOS, default=None,
+                        help="replace the usage providers with a focused set: opencode (a Go subscription and a "
+                             "Mac with no quota source), statusline (Claude read from Claude Code's statusLine), "
+                             "hub (a second Claude and a Codex account read through CLIProxyAPI)")
     parser.add_argument("--parent-pid", type=int, default=None, metavar="PID",
                         help="stop by itself once process PID exits (tests pass their own pid, so a killed "
                              "test run leaves no mock behind); without it the mock runs until it is stopped")
@@ -3339,6 +3423,7 @@ def main() -> int:
     world.hot_history = args.hot_history
     world.history_scan_seconds = max(0.0, args.history_scan)
     world.hidden_count = max(0, args.hidden)
+    world.usage_scenario = args.usage_scenario
     world.deck_present = args.deck != "absent"
     world.deck_approved = args.deck in ("approved", "usb", "recovering")
     world.deck_transport = "usb" if args.deck == "usb" else "bluetooth"
