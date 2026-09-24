@@ -25,7 +25,6 @@ struct ConfettiLook {
         }
 
         var shading: GraphicsContext.Shading { .color(.sRGB, red: red, green: green, blue: blue, opacity: 1) }
-        var color: Color { Color(.sRGB, red: red, green: green, blue: blue, opacity: 1) }
 
         /// Brightness scaled, hue and saturation kept — a paper turned
         /// from the light darkens without greying.

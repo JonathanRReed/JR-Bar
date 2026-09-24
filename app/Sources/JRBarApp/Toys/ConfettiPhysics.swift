@@ -20,11 +20,6 @@ enum ConfettiPhysics {
         return v0 * tau * (1 - exp(-t / tau))
     }
 
-    /// The spray's speed `t` seconds in: v0·e^(−t/τ).
-    static func sprayVelocity(v0: Double, tau: Double, t: Double) -> Double {
-        v0 * exp(-max(0, t) / tau)
-    }
-
     /// Distance fallen `t` seconds in when the fall speed ramps from 0 to
     /// the flutter speed `vt` with time constant `tf`:
     /// vt·(t − tf·(1 − e^(−t/tf))). Its slope settles at exactly vt.
