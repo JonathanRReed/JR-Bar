@@ -197,6 +197,18 @@ public enum AquariumTurn {
         return base * pace.turnScale
     }
 
+    /// The shortest a turn ever runs, seconds: at Lively and the top
+    /// swimming speed a startle would otherwise flash round in under a
+    /// quarter of a second and skip its face.
+    public static let shortestTurn = 0.4
+
+    /// How long a turn of `kind` takes at `pace` once the swimming-speed
+    /// `tempo` divides it — never under `shortestTurn`, so even the
+    /// quickest turn shows its head-on frame.
+    public static func duration(for kind: SwimTurn.Kind, pace: SwimPace, tempo: Double) -> Double {
+        max(shortestTurn, duration(for: kind, pace: pace) / min(3, max(0.25, tempo)))
+    }
+
     /// The pose of `body` right now: its turn's, or side-on facing its
     /// way with its drawn pitch. Reduce Motion (`still`) only ever shows
     /// a turn's ends, so a fish is never drawn mid-turn.

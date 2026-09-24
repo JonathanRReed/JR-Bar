@@ -123,7 +123,7 @@ extension AquariumView {
         let u = cos(theta)
         // The turnaround: a cruise U-turn centred on each point where
         // the sweep reverses (u = 0).
-        let duration = AquariumTurn.duration(for: .cruise, pace: swimTuning.swimPace) / tempo
+        let duration = AquariumTurn.duration(for: .cruise, pace: swimTuning.swimPace, tempo: tempo)
         let halfWindow = max(0.02, omega * duration / 2)
         let k = ((theta - .pi / 2) / .pi).rounded()
         let delta = theta - (.pi / 2 + k * .pi)
@@ -337,7 +337,7 @@ extension AquariumView {
                 + sin(loopPhase) * loopR
             let facing = entryFacing(of: fish, body: body, patrol: p.pose)
             if facing < 0 {
-                let duration = AquariumTurn.duration(for: .cruise, pace: swimTuning.swimPace) / swimTempo
+                let duration = AquariumTurn.duration(for: .cruise, pace: swimTuning.swimPace, tempo: swimTempo)
                 var pt = clamp01(age / duration)
                 if reduceMotion { pt = pt < 0.5 ? 0 : 1 }
                 l.apply(AquariumTurn.pose(p: pt, dir0: -1, arc: -1))

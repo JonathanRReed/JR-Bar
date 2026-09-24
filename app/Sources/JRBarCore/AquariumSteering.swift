@@ -410,7 +410,7 @@ public enum AquariumSteering {
         // The glass ahead, seen far enough off that the turn's forward
         // drift and half a body still fit: a wall turn, no hesitation.
         let v = cruise * max(body.throttle, throttleTarget)
-        let wallT = AquariumTurn.duration(for: .wall, pace: pace) / tempo
+        let wallT = AquariumTurn.duration(for: .wall, pace: pace, tempo: tempo)
         let reach = v * wallT / .pi + 0.55 * body.length + v * dt
         let room = dir > 0 ? bounds.maxX - body.x : body.x - bounds.minX
         if room < reach, goalAheadX.map({ $0 >= room - 0.55 * body.length }) ?? true {
@@ -503,7 +503,7 @@ public enum AquariumSteering {
         if body.y - bounds.minY < 0.12 { arc = 1 }
         if bounds.maxY - body.y < 0.12 { arc = -1 }
         body.turn = SwimTurn(kind: kind, start: t,
-                             duration: AquariumTurn.duration(for: kind, pace: pace) / tempo,
+                             duration: AquariumTurn.duration(for: kind, pace: pace, tempo: tempo),
                              from: body.dir, arc: arc)
         body.backFor = 0
     }

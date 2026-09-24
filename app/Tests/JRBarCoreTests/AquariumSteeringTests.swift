@@ -435,4 +435,29 @@ struct AquariumSteeringTests {
         b.heading = 0.3
         #expect(b.dir == 1 && abs(b.climb - 0.3) < 1e-12)
     }
+
+    @Test("even the quickest turn lasts long enough to show a face")
+    func quickestTurnShowsItsFace() throws {
+        var b = SwimBody(x: 0.5, y: 0.5, dir: 1, speed: 0.05, turnRate: 3, energy: 1.12, homeY: 0.5)
+        AquariumSteering.step(&b, dt: 1.0 / 30, t: 20, seed: 4,
+                              context: SwimContext(bounds: Self.tank, food: (0.2, 0.5), startled: true,
+                                                   pace: .lively, tempo: 1.6))
+        let started = try #require(b.turn)
+        #expect(started.kind == .startle)
+        #expect(started.duration == AquariumTurn.shortestTurn)
+        var poses: [AquariumTurn.Pose] = []
+        var t = 20.0
+        while b.turn != nil {
+            poses.append(AquariumTurn.pose(of: b))
+            t += 1.0 / 30
+            AquariumSteering.step(&b, dt: 1.0 / 30, t: t, seed: 4,
+                                  context: SwimContext(bounds: Self.tank, food: (0.2, 0.5), startled: true,
+                                                       pace: .lively, tempo: 1.6))
+        }
+        let sawFace = poses.contains { $0.isFront }
+        #expect(sawFace, "it passed through the head-on frame")
+        for (a, next) in zip(poses, poses.dropFirst()) {
+            #expect(abs(next.c - a.c) <= 0.4, "the side-on share jumped \(next.c - a.c) in a frame")
+        }
+    }
 }

@@ -119,4 +119,17 @@ struct AquariumTurnTests {
         body.turn = nil
         #expect(AquariumTurn.pose(of: body).c == 1)
     }
+
+    @Test("the swimming speed shortens a turn, never below its shortest")
+    func tempoFloor() {
+        #expect(AquariumTurn.duration(for: .cruise, pace: .natural, tempo: 1) == 0.9)
+        #expect(abs(AquariumTurn.duration(for: .cruise, pace: .natural, tempo: 1.5) - 0.6) < 1e-12)
+        for kind in SwimTurn.Kind.allCases {
+            for pace in SwimPace.allCases {
+                #expect(AquariumTurn.duration(for: kind, pace: pace, tempo: 1.6) >= AquariumTurn.shortestTurn)
+            }
+        }
+        #expect(AquariumTurn.duration(for: .startle, pace: .lively, tempo: 1.6) == AquariumTurn.shortestTurn)
+        #expect(frames(AquariumTurn.shortestTurn).filter(\.isFront).count >= 1)
+    }
 }
