@@ -581,13 +581,15 @@ final class PanelStore {
             let total = state.mainSessions.count
             return total == 0 ? "No sessions" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
         }
-        return Self.countLine(parts: parts, headerWord: headerWord)
+        return Self.countLine(parts: parts, headerWord: headerWord, total: state.mainSessions.count)
     }
 
     /// The count parts beside the header word, the word said once: a lone
-    /// "2 working" under "Working" reads "2 sessions", since the word
-    /// already says what they are doing.
-    nonisolated static func countLine(parts: [String], headerWord: String) -> String {
+    /// "2 working" under "Working" reads "2 sessions" when those are all
+    /// the sessions listed, and "2 of 3 sessions" beside an idle or ended
+    /// one, since the word already says what they are doing. The number
+    /// never reads as the whole list when it is not.
+    nonisolated static func countLine(parts: [String], headerWord: String, total: Int) -> String {
         guard parts.count == 1, let part = parts.first, let space = part.firstIndex(of: " "),
               let count = Int(part[..<space]) else { return parts.joined(separator: " · ") }
         // "2 need you" is the plural of the header's "Needs you".
@@ -595,6 +597,10 @@ final class PanelStore {
             text.lowercased().replacingOccurrences(of: "needs you", with: "need you")
         }
         guard word(part[part.index(after: space)...]) == word(headerWord) else { return part }
+        // More than the list holds (two asks on one session) is not a
+        // count of sessions: the daemon's own words stand.
+        if count > total { return part }
+        if count < total { return "\(count) of \(total) sessions" }
         return count == 1 ? "1 session" : "\(count) sessions"
     }
 
