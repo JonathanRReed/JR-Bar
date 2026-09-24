@@ -84,6 +84,47 @@ struct ScreenBarAwakeMarkTests {
         #expect(!ScreenBarEarMarks.leaseSymbol.hasPrefix("moon"))
     }
 
+    @Test func aShortRunwayIsAnAmberMarkThatOutranksTheHold() throws {
+        var power = Self.lease("agents")
+        power.battery = CoreBattery(percent: 18, plugged: false,
+                                    runway: CoreBatteryRunway(agents: 2, minutesLeft: 22, short: true))
+        let short = try #require(ScreenBarEarMarks.awake(power: power))
+        #expect(short.symbol == ScreenBarEarMarks.runwaySymbol)
+        #expect(short.tone == .attention)
+        #expect(short.text == "The battery won't outlast the agents — under half an hour left"
+                + " · Held awake until the agents finish", "the peek and VoiceOver hear both")
+        // The words never count down: a minute later nothing repaints.
+        power.battery?.runway?.minutesLeft = 21
+        #expect(ScreenBarEarMarks.awake(power: power) == short)
+
+        // The charger falling behind needs no hold at all.
+        var plugged = CorePower()
+        plugged.battery = CoreBattery(percent: 60, plugged: true,
+                                      runway: CoreBatteryRunway(agents: 3, adapterShort: true, fullSpeedWatts: 96))
+        let adapter = try #require(ScreenBarEarMarks.awake(power: plugged))
+        #expect(adapter.symbol == ScreenBarEarMarks.adapterSymbol)
+        #expect(adapter.tone == .attention)
+        #expect(adapter.text == "The charger can't keep up with the agents — a 96 W adapter keeps up")
+
+        // A runway with room to spare is no mark; the hold's own stays.
+        power.battery?.runway = CoreBatteryRunway(agents: 2, minutesLeft: 140, short: false, adapterShort: false)
+        #expect(ScreenBarEarMarks.awake(power: power)?.symbol == ScreenBarEarMarks.leaseSymbol)
+        #expect(ScreenBarEarMarks.runway(battery: nil) == nil)
+    }
+
+    @Test func theRunwayMarkIsAMarkOnTheEarNeverWords() throws {
+        var marks = ScreenBarEarMarks()
+        marks.awake = ScreenBarEarMarks.runway(battery: CoreBattery(
+            runway: CoreBatteryRunway(short: true)))
+        let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
+        let right = try #require(ScreenBarEarMarks.apply(marks, to: ScreenBarWings(left: nil, right: meter)).right)
+        #expect(right.accessory == ScreenBarWingAccessory(symbol: ScreenBarEarMarks.runwaySymbol, tone: .attention))
+        #expect(right.meter == 0.42, "the meter keeps its ear")
+        let alone = try #require(ScreenBarEarMarks.apply(marks, to: .empty).right)
+        #expect(alone.symbol == ScreenBarEarMarks.runwaySymbol)
+        #expect(alone.tone == .attention)
+    }
+
     @Test func theMarkRidesTheRightEarWithoutTakingIt() throws {
         let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
         var marks = ScreenBarEarMarks()
