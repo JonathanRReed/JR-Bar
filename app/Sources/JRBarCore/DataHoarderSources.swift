@@ -255,3 +255,19 @@ public actor DataHoarderSourceScanner {
         return ArchiveSourceInventory(source: source, files: files, warnings: warnings)
     }
 }
+
+extension ArchiveSource {
+    /// The provider a source's files belong to when the transcript probe
+    /// cannot tell from the content — pi, Gemini CLI and Grok keep JSONL
+    /// the probe reads as "other", but the folder they came from says
+    /// whose they are. nil for Claude and Codex (the probe names those)
+    /// and for any folder the person added.
+    public static func namedProvider(of sourceID: String) -> String? {
+        switch sourceID {
+        case "pi-sessions": return "pi"
+        case "gemini-chats": return "gemini"
+        case "grok-sessions": return "grok"
+        default: return nil
+        }
+    }
+}

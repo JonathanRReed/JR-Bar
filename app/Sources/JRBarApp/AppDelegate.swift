@@ -198,6 +198,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // opens through the Dock's window locator, off main, instead of
         // stopping at "not found".
         SessionOpener.wiring = SessionOpener.Wiring(core: core, utilities: utilitiesStore)
+        // The archive's Resume: the daemon's resume_session, as History's.
+        DataHoarderModel.resumeSender = { [weak core] id in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.send("resume_session", args: ["session": .string(id)])
+        }
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater

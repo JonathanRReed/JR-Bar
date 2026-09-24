@@ -168,6 +168,7 @@ struct DataHoarderView: View {
             await model.refreshStorage()
             await model.refreshCaptureStatus()
             model.pumpSearchIndex()
+            await model.relabelSourceRecords()
         }
         .task(id: "\(model.busy):\(model.showTrash):\(model.query)") {
             // Debounced content search — each keystroke retires the last pass.
@@ -206,9 +207,12 @@ struct DataHoarderView: View {
             HStack(spacing: 6) {
                 Picker("Provider", selection: $model.searchFilter.provider) {
                     Text("All providers").tag(String?.none)
-                    Text("Claude").tag(String?.some("claude"))
-                    Text("Codex").tag(String?.some("codex"))
-                    Text("Other").tag(String?.some("other"))
+                    // Every capturing source's agent, so pi, Gemini and
+                    // Grok are findable by name, not only under Other.
+                    ForEach(DataHoarderProviders.choices(enabledSources: model.captureSettings.enabledSources),
+                            id: \.self) { provider in
+                        Text(DataHoarderProviders.title(provider)).tag(String?.some(provider))
+                    }
                 }
                 .pickerStyle(.menu).labelsHidden().frame(maxWidth: 120)
                 .accessibilityLabel("Filter by provider")
@@ -434,6 +438,7 @@ struct DataHoarderView: View {
                     }
                 }
                 .controlSize(.small)
+                resumeButtons(record)
                 if model.detailKind == .cliProxy {
                     cliProxyCard
                 }
@@ -445,6 +450,35 @@ struct DataHoarderView: View {
         } else {
             ContentUnavailableView("Select a saved file", systemImage: "doc.text.magnifyingglass",
                                    description: Text("Read its saved contents or export a copy."))
+        }
+    }
+
+    /// Resume and its copyable line for a record whose CLI can resume,
+    /// and the hand-off to Agent Sessions when it is installed.
+    @ViewBuilder
+    private func resumeButtons(_ record: ArchiveRecord) -> some View {
+        let command = model.resumeCommand(for: record)
+        let agentSessions = DataHoarderProviders.agentSessions.installed
+        if command != nil || agentSessions {
+            HStack(spacing: 8) {
+                if let command {
+                    Button { model.resume(record) } label: {
+                        Label("Resume", systemImage: "arrow.uturn.forward")
+                    }
+                    .help("Pick the session back up in the terminal it ran in")
+                    Button { model.copyResumeCommand(record) } label: {
+                        Label("Copy Resume Command", systemImage: "terminal")
+                    }
+                    .help(command)
+                }
+                if agentSessions {
+                    Button { model.openInAgentSessions() } label: {
+                        Label("Open in Agent Sessions", systemImage: "arrow.up.forward.app")
+                    }
+                    .help("Agent Sessions searches and resumes sessions across sixteen agents")
+                }
+            }
+            .controlSize(.small)
         }
     }
 

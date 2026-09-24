@@ -475,6 +475,11 @@ public actor DataHoarderCapture {
                 .split(separator: "\n", omittingEmptySubsequences: true)
                 .map(String.init)
             TranscriptProbe.ingest(lines: lines, into: &metadata, includeTitle: fullContent)
+            // Content the probe can't place still belongs to the agent
+            // whose folder it came from, so the archive can filter by it.
+            if metadata.provider == "other", let named = ArchiveSource.namedProvider(of: source.id) {
+                metadata.provider = named
+            }
             if metadata.provider != nil || metadata.sessionID != nil || metadata.lastActivityAt != nil {
                 try await archive.updateRecordMetadata(
                     id: recordID, provider: metadata.provider, sessionID: metadata.sessionID,
