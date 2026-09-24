@@ -311,8 +311,10 @@ connected, the app's own power assertion otherwise.
 "Still allowing them to be an option" cuts both ways: every utility can be
 switched off and costs nothing while off (`UtilityOffCostTests`), and an
 installed rival can have the surface. `UtilityRivals` is the one table of
-rival apps by role; `RivalGuardView` is the note any card mounts. What
-JR-Bar does while a rival runs depends on the role:
+rival apps by role; `RivalGuardView` is the note any card mounts. The menu
+bar keeps its own list and note this wave (`MenuBarRivals`), and so does
+the Dock card's switcher (its chord note). What JR-Bar does while a rival
+runs depends on the role:
 
 | Role | Rivals | While one runs | Where the note shows |
 | --- | --- | --- | --- |

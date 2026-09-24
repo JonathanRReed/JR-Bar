@@ -561,7 +561,7 @@ final class ShelfTrayModel {
         persist()
     }
 
-    /// A stack taken apart — the ⌘-click / Split verb. Members land
+    /// A stack taken apart — the ⌥-click / Split verb. Members land
     /// as loose chips where the stack stood.
     func dissolve(_ entry: ShelfEntry) {
         guard case .stack(let stack) = entry,
