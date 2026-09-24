@@ -61,6 +61,7 @@ struct PaletteRenderProofTests {
         let shots: [(name: String, query: String, actions: Bool, reply: Bool)] = [
             ("home", "", false, false), ("query", "hide 1p", false, false), ("actions", "", true, false),
             ("reply", "", false, true), ("typed", "dim 1h30", false, false),
+            ("empty", "qqzzxx", false, false),
         ]
         let quietVerbs = QuietPaletteVerbs(quiet: { _, _ in }, end: {})
         for shot in shots {

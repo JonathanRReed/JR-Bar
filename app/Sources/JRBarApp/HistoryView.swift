@@ -317,6 +317,18 @@ struct HistoryRhythm: View {
         return formatter
     }()
 
+    /// The day whose point is nearest `date`: the points sit at each
+    /// day's start, so the pointer snaps to the closer of two.
+    static func nearestDay(_ date: Date) -> Date {
+        Calendar.current.startOfDay(for: date.addingTimeInterval(12 * 3600))
+    }
+
+    /// First day to today, edge to edge.
+    static func span(_ days: [Day]) -> ClosedRange<Date> {
+        let first = days.first?.date ?? Date()
+        return first...max(first, days.last?.date ?? first)
+    }
+
     /// Headroom over the busiest day for today's dot, and a little floor
     /// under zero for the failure marks.
     static func scale(peak: Int) -> ClosedRange<Double> {
@@ -329,27 +341,27 @@ struct HistoryRhythm: View {
         let peak = max(1, days.map(\.rows).max() ?? 1)
         Chart {
             ForEach(days) { day in
-                AreaMark(x: .value("Day", day.date, unit: .day), y: .value("Rows", day.rows))
+                AreaMark(x: .value("Day", day.date), y: .value("Rows", day.rows))
                     .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.32), Color.accentColor.opacity(0.02)],
                                                     startPoint: .top, endPoint: .bottom))
                     .interpolationMethod(.monotone)
-                LineMark(x: .value("Day", day.date, unit: .day), y: .value("Rows", day.rows))
+                LineMark(x: .value("Day", day.date), y: .value("Rows", day.rows))
                     .foregroundStyle(Color.accentColor)
                     .lineStyle(StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
                 if day.failed > 0 {
-                    PointMark(x: .value("Day", day.date, unit: .day), y: .value("Rows", 0))
+                    PointMark(x: .value("Day", day.date), y: .value("Rows", 0))
                         .symbolSize(14)
                         .foregroundStyle(Color.red)
                 }
             }
             if let last = days.last {
-                PointMark(x: .value("Day", last.date, unit: .day), y: .value("Rows", last.rows))
+                PointMark(x: .value("Day", last.date), y: .value("Rows", last.rows))
                     .symbolSize(18)
                     .foregroundStyle(Color.accentColor)
             }
-            if let picked = store.filter.day ?? hovered {
-                RuleMark(x: .value("Day", picked, unit: .day))
+            if let picked = store.filter.day ?? hovered.map(Self.nearestDay) {
+                RuleMark(x: .value("Day", picked))
                     .foregroundStyle(Color.primary.opacity(store.filter.day == nil ? 0.2 : 0.45))
                     .lineStyle(StrokeStyle(lineWidth: 1))
             }
@@ -357,6 +369,7 @@ struct HistoryRhythm: View {
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
         .chartYScale(domain: Self.scale(peak: peak))
+        .chartXScale(domain: Self.span(days), range: .plotDimension(padding: 5))
         .chartLegend(.hidden)
         .chartXSelection(value: $hovered)
         .chartOverlay { proxy in
@@ -365,7 +378,7 @@ struct HistoryRhythm: View {
                     .onTapGesture { location in
                         guard let plot = proxy.plotFrame.map({ geometry[$0] }),
                               let date: Date = proxy.value(atX: location.x - plot.origin.x) else { return }
-                        let day = Calendar.current.startOfDay(for: date)
+                        let day = Self.nearestDay(date)
                         store.filter.day = store.filter.day.map { Calendar.current.isDate($0, inSameDayAs: day) } == true ? nil : day
                     }
             }
@@ -381,7 +394,7 @@ struct HistoryRhythm: View {
 
     /// "Tue 22 Sep · 12 rows · 1 failed" for the day under the pointer.
     private func hoverText(_ days: [Day]) -> String? {
-        guard let hovered, let day = days.first(where: { Calendar.current.isDate($0.date, inSameDayAs: hovered) }) else { return nil }
+        guard let hovered, let day = days.first(where: { $0.date == Self.nearestDay(hovered) }) else { return nil }
         var text = "\(Self.dayTitle.string(from: day.date)) · \(day.rows) row\(day.rows == 1 ? "" : "s")"
         if day.failed > 0 { text += " · \(day.failed) failed" }
         return text + " — click to show only this day"

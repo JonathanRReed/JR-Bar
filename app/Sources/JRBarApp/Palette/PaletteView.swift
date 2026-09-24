@@ -191,17 +191,20 @@ struct PaletteView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Image(systemName: model.searching ? "hourglass" : "magnifyingglass")
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(.tertiary)
-            Text(model.searching ? "Searching menus and the archive…" : "No results")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(.secondary)
+                .frame(width: 52, height: 52)
+                .background(Circle().fill(RadialGradient(colors: [Color.primary.opacity(0.10), Color.primary.opacity(0.03)],
+                                                         center: .center, startRadius: 3, endRadius: 28)))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+            Text(model.searching ? "Searching menus and the archive…" : "No results")
+                .font(.system(size: 14, weight: .semibold))
             if !model.searching {
                 Text("Try an app, a session, or a verb — “hide”, “quiet 45m”, “scene”.")
                     .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
