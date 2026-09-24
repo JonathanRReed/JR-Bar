@@ -396,10 +396,13 @@ extension AquariumView {
         if let last = memory.drawn[fish.id], last.state != fish.state,
            memory.handoffs[fish.id]?.state != fish.state {
             let fresh = t - last.t < 0.5
+            let gap = fresh ? 1.0 : 0.0
             memory.handoffs[fish.id] = TankSwimMemory.Handoff(
                 state: fish.state, t: t, facing: last.yawCos >= 0 ? 1 : -1,
-                dx: fresh ? last.x - raw.x : 0, dy: fresh ? last.y - raw.y : 0,
-                dc: fresh ? last.yawCos - raw.yawCos : 0, dpitch: fresh ? last.pitch - raw.pitch : 0)
+                dx: (last.x - raw.x) * gap, dy: (last.y - raw.y) * gap,
+                dc: (last.yawCos - raw.yawCos) * gap, dpitch: (last.pitch - raw.pitch) * gap,
+                dscale: (last.scale - raw.scale) * gap, dlead: (last.lead - raw.lead) * gap,
+                dwag: (last.wag - raw.wag) * gap, droll: (last.roll - raw.roll) * gap)
         }
         guard let handoff = memory.handoffs[fish.id], handoff.state == fish.state else { return l }
         let k = 1 - smooth(clamp01((t - handoff.t) / TankSwimMemory.settleTime))
@@ -408,6 +411,10 @@ extension AquariumView {
         l.y += handoff.dy * k
         l.yawCos += handoff.dc * k
         l.pitch += handoff.dpitch * k
+        l.scale += handoff.dscale * k
+        l.lead += handoff.dlead * k
+        l.wag += handoff.dwag * k
+        l.roll += handoff.droll * k
         l.turn = max(l.turn, 1 - abs(l.yawCos))
         return l
     }

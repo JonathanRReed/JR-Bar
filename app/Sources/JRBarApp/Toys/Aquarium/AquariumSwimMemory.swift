@@ -19,13 +19,18 @@ final class TankSwimMemory {
         var y: Double
         var yawCos: Double
         var pitch: Double
+        var scale: Double
+        var lead: Double
+        var wag: Double
+        var roll: Double
         /// The frame clock it was drawn at.
         var t: Double
     }
 
     /// A change of state: when it came, which way the fish faced going
     /// in, and the gap between the old state's last pose and the new
-    /// state's first, which eases away.
+    /// state's first, which eases away — its place, its turn, its size
+    /// (an ask draws a fish a touch bigger), its tail and its roll.
     struct Handoff {
         var state: FishState
         var t: Double
@@ -34,6 +39,10 @@ final class TankSwimMemory {
         var dy: Double
         var dc: Double
         var dpitch: Double
+        var dscale: Double
+        var dlead: Double
+        var dwag: Double
+        var droll: Double
     }
 
     var drawn: [String: Drawn] = [:]
@@ -44,7 +53,8 @@ final class TankSwimMemory {
     /// Remember where `fish` was drawn this frame.
     func record(_ fish: Fish, layout l: AquariumView.Layout, t: Double) {
         drawn[fish.id] = Drawn(state: fish.state, x: l.x, y: l.y, yawCos: l.yawCos,
-                               pitch: l.pitch, t: t)
+                               pitch: l.pitch, scale: l.scale, lead: l.lead, wag: l.wag,
+                               roll: l.roll, t: t)
     }
 
     /// Forget fish that have left the tank.

@@ -130,6 +130,12 @@ struct AquariumTurnLayoutTests {
         let answeredAt = frames.count
         for _ in 0..<(30 * 4) { t += dt; frames.append(frame(tank, [fish], fish, t: t)) }
         expectSmooth(frames, speed: nil, "ask")
+        // Answering doesn't pop the fish's size, its head or its tail:
+        // the ask's size-up and half-turn settle away.
+        let asked = frames[answeredAt - 1], answered = frames[answeredAt]
+        #expect(abs(answered.scale / asked.scale - 1) < 0.02, "size \(asked.scale) → \(answered.scale)")
+        #expect(abs(answered.lead - asked.lead) < 0.05, "head \(asked.lead) → \(answered.lead)")
+        #expect(abs(answered.wag - asked.wag) < 0.1, "tail \(asked.wag) → \(answered.wag)")
         // Answered, it swims back down from the glass instead of jumping.
         #expect(frames[answeredAt].y < 70)
         #expect(frames[frames.count - 1].y > frames[answeredAt].y)
