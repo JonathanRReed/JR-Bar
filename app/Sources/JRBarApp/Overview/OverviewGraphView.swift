@@ -504,16 +504,16 @@ struct OverviewGraphCanvas: View {
         case .node(let id)?:
             if let node = current.nodes[id], let placed = current.layout.nodes[id],
                let entry = store.roster.first(where: { $0.id == id }) {
-                let rect = view.screen(placed.frame)
                 GraphHoverCard(node: node, entry: entry, store: store)
-                    .modifier(GraphCardPlacement(anchor: rect, side: placed.side, size: size))
+                    .modifier(GraphCardPlacement(rect: view.screen(placed.frame), anchor: .node(placed.side), size: size))
             }
         case .hub(let provider)?:
             if let hub = current.layout.hubs.first(where: { $0.id == provider }) {
-                let rect = view.screen(hub.frame)
+                // Under the hub's name, not over it.
+                let named = hub.frame.union(hub.frame.offsetBy(dx: 0, dy: OverviewGraphLayout.Metrics.hubCaption))
                 GraphHubCard(provider: provider, sessions: hub.sessionIDs.compactMap { current.nodes[$0] },
                              projects: Set(hub.sessionIDs.compactMap { current.nodes[$0]?.project }).count)
-                    .modifier(GraphCardPlacement(anchor: rect, side: .right, size: size))
+                    .modifier(GraphCardPlacement(rect: view.screen(named), anchor: .hub, size: size))
             }
         default:
             EmptyView()
@@ -542,30 +542,55 @@ struct OverviewGraphCanvas: View {
     }
 }
 
-/// Puts a hover card beside what it describes: on the far side of the
-/// node from the hubs when there is room, else the near side, its top
-/// level with the node and kept inside the window.
+/// Puts a hover card by what it describes without covering what the hover
+/// lit: a node's card on its far side from the hubs when there is room,
+/// else under it (or over it, near the bottom); a hub's centred under its
+/// name. Always inside the window.
 private struct GraphCardPlacement: ViewModifier {
-    let anchor: CGRect
-    let side: OverviewGraphLayout.Side
+    enum Anchor { case node(OverviewGraphLayout.Side), hub }
+
+    let rect: CGRect
+    let anchor: Anchor
     let size: CGSize
 
     static let width: CGFloat = 264
 
     func body(content: Content) -> some View {
-        let right = anchor.maxX + 12
-        let left = anchor.minX - 12 - Self.width
-        let preferRight = side == .right ? right + Self.width <= size.width - 8 : left < 8
-        let x = min(max(8, preferRight ? right : left), max(8, size.width - Self.width - 8))
-        let top = anchor.minY - 2
-        let height = size.height
+        let (x, beside) = horizontal
+        let (top, bottom, height) = (rect.minY, rect.maxY, size.height)
         content
             .frame(width: Self.width)
             .fixedSize(horizontal: false, vertical: true)
             .alignmentGuide(.leading) { _ in -x }
-            .alignmentGuide(.top) { dimensions in -min(max(8, top), height - dimensions.height - 8) }
+            .alignmentGuide(.top) { dimensions in
+                let y: CGFloat
+                if beside {
+                    y = min(max(8, top - 2), height - dimensions.height - 8)
+                } else if bottom + 10 + dimensions.height <= height - 8 {
+                    y = bottom + 10
+                } else {
+                    y = max(8, top - 10 - dimensions.height)
+                }
+                return -y
+            }
             .allowsHitTesting(false)
             .transition(.opacity)
+    }
+
+    /// Where the card's left edge goes, and whether it sits beside rather
+    /// than under or over.
+    private var horizontal: (x: CGFloat, beside: Bool) {
+        let limit = max(8, size.width - Self.width - 8)
+        switch anchor {
+        case .node(let side):
+            let outward = side == .right ? rect.maxX + 12 : rect.minX - 12 - Self.width
+            if outward >= 8, outward <= limit { return (outward, true) }
+            // Under or over, flush with the node's outer end so it spills
+            // toward the hubs rather than across the workers.
+            return (min(max(8, side == .right ? rect.maxX - Self.width : rect.minX), limit), false)
+        case .hub:
+            return (min(max(8, rect.midX - Self.width / 2), limit), false)
+        }
     }
 }
 

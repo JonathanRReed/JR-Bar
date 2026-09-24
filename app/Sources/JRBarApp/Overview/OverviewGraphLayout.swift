@@ -67,11 +67,6 @@ struct OverviewGraphLayout: Equatable {
             let radius = Metrics.hubDiameter / 2
             return CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
         }
-
-        /// Where a spoke to this side leaves the hub.
-        func port(_ side: Side) -> CGPoint {
-            CGPoint(x: center.x + side.sign * Metrics.hubDiameter / 2, y: center.y)
-        }
     }
 
     struct Cluster: Identifiable, Equatable {
@@ -95,10 +90,6 @@ struct OverviewGraphLayout: Equatable {
 
         var isWorker: Bool { depth > 0 }
         var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
-        /// The end facing the hubs, where a node's incoming edge lands.
-        var inner: CGPoint { CGPoint(x: side == .right ? frame.minX : frame.maxX, y: frame.midY) }
-        /// The end facing away, where edges to its workers leave.
-        var outer: CGPoint { CGPoint(x: side == .right ? frame.maxX : frame.minX, y: frame.midY) }
     }
 
     struct Edge: Hashable {

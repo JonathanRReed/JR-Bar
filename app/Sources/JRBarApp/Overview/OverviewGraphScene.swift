@@ -379,7 +379,9 @@ private struct GraphPainter {
             let (rect, alpha) = clusterFrame(cluster)
             guard rect.intersects(visible) else { continue }
             var c = context
-            c.opacity = alpha * light("cluster:" + cluster.id)
+            // A hover keeps the cluster it reaches into, and dims the rest.
+            let reached = model.lit.map { lit in cluster.nodeIDs.contains(where: lit.contains) } ?? true
+            c.opacity = alpha * (reached ? 1 : 1 - 0.74 * dim)
             let waiting = (cluster.counts[.waiting] ?? 0) > 0
             // The halo: a soft pool of light under the cluster, then its
             // pane, a hairline, and its title. Someone waiting inside
