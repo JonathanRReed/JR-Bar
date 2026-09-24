@@ -45,6 +45,8 @@ struct KeepAwakeFooter: View {
             .help(([words.full] + reading.facts()).joined(separator: "\n"))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(words.full)
+            // The line names the hold; a right-click on it changes it.
+            .contextMenu { KeepAwakeMenuItems() }
         }
     }
 

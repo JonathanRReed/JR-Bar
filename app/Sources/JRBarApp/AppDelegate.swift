@@ -411,6 +411,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
             return true
         }
+        // The right ear carries the keep-awake cup: a right-click on it
+        // is the duration menu the notch chip and the footer cup offer.
+        interaction.onWingSecondaryClick = { side, point in
+            guard side == .right else { return false }
+            KeepAwakeMenu.popUp(at: point)
+            return true
+        }
         // The hidden-run ‹ lives in the island's own surface — a status
         // item kept parking under our own window, this one cannot. It is
         // the fallback affordance while the concealer runs and no mirror

@@ -1303,6 +1303,9 @@ struct LyricLines: View {
 private struct ShelfTogglesRow: View {
     let toggles: SystemTogglesStore
     let style: NotchCardStyle
+    /// When the long press's keep-awake menu last closed — the press's
+    /// own release must not also flip the chip.
+    @ViewState private var awakeMenuClosedAt: Date?
 
     /// Eight across, as the strip has always been; more wrap.
     private static let perRow = 8
@@ -1343,6 +1346,8 @@ private struct ShelfTogglesRow: View {
         let busy = toggles.applying.contains(toggle)
         let title = toggles.title(for: toggle)
         return Button {
+            if toggle == .keepAwake, let closed = awakeMenuClosedAt,
+               Date().timeIntervalSince(closed) < 0.4 { return }
             toggles.apply(toggle)
         } label: {
             // Eight share the card's width: each name keeps a little air
@@ -1370,6 +1375,33 @@ private struct ShelfTogglesRow: View {
         .help(toggles.help(for: toggle))
         .accessibilityLabel("\(title) toggle")
         .accessibilityValue(toggle.isMomentary ? "action" : (on ? "on" : "off"))
+        .modifier(AwakeChipMenu(active: toggle == .keepAwake, toggles: toggles,
+                                closedAt: $awakeMenuClosedAt))
+    }
+}
+
+/// The Awake chip's duration menu: a right-click shows it as a context
+/// menu, a long press pops the same list where the pointer is
+/// (`KeepAwakeMenu`). Every other chip keeps its plain click.
+private struct AwakeChipMenu: ViewModifier {
+    let active: Bool
+    let toggles: SystemTogglesStore
+    @Binding var closedAt: Date?
+
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .contextMenu { KeepAwakeMenuItems(store: toggles) }
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                    KeepAwakeMenu.popUp(at: NSEvent.mouseLocation, store: toggles)
+                    closedAt = Date()
+                })
+                .accessibilityAction(named: "Keep awake for…") {
+                    KeepAwakeMenu.popUp(at: NSEvent.mouseLocation, store: toggles)
+                }
+        } else {
+            content
+        }
     }
 }
 
