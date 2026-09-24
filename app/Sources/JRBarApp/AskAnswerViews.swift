@@ -50,10 +50,14 @@ struct AskHoldRing: View {
 
 /// What the agent wants to run, one line: the command, the file, the
 /// URL. Monospaced, cut in the middle so both ends of a path survive.
+/// `well` sets the line in a small code well — the panel's ask card,
+/// where it sits under the question and should read as the thing that
+/// runs rather than more of the sentence.
 struct AskPreviewLine: View {
     let text: String
     var size: CGFloat = 11
     var tint: Color = .secondary
+    var well = false
 
     var body: some View {
         Text(text)
@@ -61,6 +65,16 @@ struct AskPreviewLine: View {
             .foregroundStyle(tint)
             .lineLimit(1)
             .truncationMode(.middle)
+            .padding(.horizontal, well ? 6 : 0)
+            .padding(.vertical, well ? 1.5 : 0)
+            .background {
+                if well {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.primary.opacity(0.06))
+                        .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5))
+                }
+            }
             .help(text)
             .accessibilityLabel("Runs \(text)")
     }
