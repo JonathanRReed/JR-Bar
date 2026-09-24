@@ -218,6 +218,8 @@ struct LightMomentsView: View {
                     }
                 }
                 .windowCard(padding: 0)
+                LidMomentsSection(store: store)
+                FinishMomentsSection(store: store)
             }
             .padding(WindowMetrics.margin)
             .frame(maxWidth: 820, alignment: .leading)
@@ -354,3 +356,348 @@ extension EffectStudioStore {
         }
     }
 }
+
+// MARK: - Lid and finish
+
+/// One lid look as `list_lid_presets` reports it: the program the Pro plays
+/// and the one the Dot plays (the Iris looks are drawn for each), and the
+/// value `set_setting` takes to pick it.
+struct LidLook: Decodable, Identifiable, Equatable {
+    let name: String
+    let durationSeconds: Double
+    let shape: String?
+    let program: String
+    let dotProgram: String
+    let setting: JSONValue
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, shape, program, setting
+        case durationSeconds = "duration_seconds"
+        case dotProgram = "dot_program"
+    }
+}
+
+/// One lid transition: what it is called, the setting that holds its look,
+/// which look plays now (nil for a custom program), and every look offered.
+struct LidTransition: Decodable, Identifiable, Equatable {
+    let kind: String
+    let label: String
+    let path: String
+    let current: String?
+    let shipped: Bool
+    let presets: [LidLook]
+    var id: String { kind }
+
+    /// "Hello", "As shipped", "Custom program".
+    var currentName: String { current ?? (shipped ? "As shipped" : "Custom program") }
+}
+
+struct LidTransitionList: Decodable {
+    let kinds: [LidTransition]
+}
+
+/// Effect Studio › Moments › Lid: the four lid transitions, each with its
+/// looks as thumbnails. A thumbnail picks the look (it is written to the
+/// transition's setting); the play button runs the picked look on the
+/// strip and the Dot exactly as a lid change would. Iris is upstream
+/// SidePulse's lid-open and lid-close, drawn for each device.
+struct LidMomentsSection: View {
+    @Bindable var store: EffectStudioStore
+    /// What to show before the monitor answers (a render proof's data).
+    var seed: [LidTransition] = []
+    @ViewState private var transitions: [LidTransition] = []
+    @ViewState private var unsupported = false
+
+    private var shown: [LidTransition] { transitions.isEmpty ? seed : transitions }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MomentsSectionHeader(title: "Lid",
+                                 detail: "What the strip and the Dot play when the lid opens or closes, with and without agents running. Iris opens from the middle out and closes from the edges in, drawn for each device.")
+            if unsupported {
+                Text("This monitor does not list lid looks yet.").foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(shown) { transition in
+                        LidTransitionRow(store: store, transition: transition) { look in pick(look, for: transition) }
+                        if transition.id != shown.last?.id { Divider().padding(.leading, 14) }
+                    }
+                }
+                .windowCard(padding: 0)
+            }
+        }
+        .task(id: "\(store.isLive)-\(store.core.settings?.generation ?? 0)") { await load() }
+    }
+
+    private func load() async {
+        guard store.isLive else { return }
+        do {
+            transitions = try await store.core.request("list_lid_presets", as: LidTransitionList.self).kinds
+            unsupported = false
+        } catch {
+            unsupported = transitions.isEmpty
+        }
+    }
+
+    private func pick(_ look: LidLook, for transition: LidTransition) {
+        Task {
+            do {
+                let reply = try await store.core.setSetting(SettingsPath(transition.path), value: look.setting)
+                if reply.ok {
+                    store.show(status: "\(transition.label): \(look.name)")
+                } else {
+                    store.fail(reply.error?.message ?? "Lid look not changed")
+                }
+            } catch {
+                store.fail("Lid look not changed: \(EffectStudioStore.describe(error))")
+            }
+        }
+    }
+}
+
+private struct LidTransitionRow: View {
+    @Bindable var store: EffectStudioStore
+    let transition: LidTransition
+    let pick: (LidLook) -> Void
+
+    private var playing: LidLook? {
+        transition.presets.first { $0.name == transition.current }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(transition.label).font(.body.weight(.medium))
+                Text(transition.currentName).font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button {
+                    play()
+                } label: {
+                    Label("Play on strip", systemImage: "play.fill").labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .disabled(!store.isLive || playing == nil)
+                .help(playing.map { "Play \($0.name) on the strip and the Dot" } ?? "Pick a look to play it")
+            }
+            // Five looks fit the room's width side by side; they wrap
+            // onto a second line rather than scroll out of sight.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { thumbnails }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) { thumbnails(transition.presets.prefix(3)) }
+                    HStack(spacing: 10) { thumbnails(transition.presets.dropFirst(3)) }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private var thumbnails: some View { thumbnails(transition.presets[...]) }
+
+    private func thumbnails(_ looks: ArraySlice<LidLook>) -> some View {
+        ForEach(Array(looks)) { look in
+            LidLookThumbnail(look: look, selected: look.name == transition.current) { pick(look) }
+        }
+    }
+
+    private func play() {
+        guard let look = playing else { return }
+        let run: @MainActor () -> Void = { [store, transition] in
+            Task {
+                do {
+                    _ = try await store.core.request("play_lid_preset",
+                                                     args: ["kind": .string(transition.kind), "name": .string(look.name)],
+                                                     as: JSONValue.self)
+                    store.show(status: "Playing \(look.name) on the strip")
+                } catch {
+                    store.fail("Play failed: \(EffectStudioStore.describe(error))")
+                }
+            }
+        }
+        if store.hardwareConsent {
+            run()
+        } else {
+            store.pendingHardwarePlay = run
+            store.askingConsent = true
+        }
+    }
+}
+
+/// A look's thumbnail: its program looping on a small strip, the Dot's
+/// two-LED form beside Iris looks, and its name under it. The picked one
+/// carries the accent ring.
+private struct LidLookThumbnail: View {
+    let look: LidLook
+    let selected: Bool
+    let pick: () -> Void
+
+    var body: some View {
+        Button(action: pick) {
+            VStack(spacing: 5) {
+                HStack(spacing: 6) {
+                    LEDStripPreview(program: look.program, ledCount: 8, style: .dots, dotSize: 6, spacing: 4)
+                        .frame(width: 96)
+                    if look.shape != nil {
+                        LEDStripPreview(program: look.dotProgram, ledCount: 2, style: .dots, dotSize: 6, spacing: 4)
+                            .frame(width: 34)
+                    }
+                }
+                Text(look.name).font(.caption).foregroundStyle(selected ? .primary : .secondary)
+            }
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(selected ? Color.accentColor : Color.clear, lineWidth: 2))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(look.name)\(selected ? ", picked" : "")")
+        .help("Use \(look.name) (\(String(format: "%.1f", look.durationSeconds)) s)")
+    }
+}
+
+/// `list_finish_looks`: the done celebration's looks, drawn in the done
+/// colour for the Pro and the Dot, and the one in use.
+struct FinishLookList: Decodable {
+    struct Look: Decodable, Identifiable, Equatable {
+        let style: String
+        let label: String
+        let program: String
+        let dotProgram: String
+        var id: String { style }
+
+        enum CodingKeys: String, CodingKey {
+            case style, label, program
+            case dotProgram = "dot_program"
+        }
+    }
+
+    let current: String
+    let enabled: Bool
+    let looks: [Look]
+}
+
+/// Effect Studio › Moments › Finish: how a finished session is celebrated
+/// -- the shipped bloom, Land (a light falls to the far end, gathering
+/// speed, and splashes: "it arrived") or Ripple (one ring out from the
+/// middle). Picking one writes `colors.done_celebration_style`; the play
+/// button shows it on the Screen Bar.
+struct FinishMomentsSection: View {
+    @Bindable var store: EffectStudioStore
+    /// What to show before the monitor answers (a render proof's data).
+    var seed: FinishLookList? = nil
+    @ViewState private var loaded: FinishLookList?
+
+    private var list: FinishLookList? { loaded ?? seed }
+
+    static let meanings: [String: String] = [
+        "bloom": "A spark crosses the strip, then it blooms in the done colour and fades.",
+        "land": "A light falls to the far end, faster and faster, and lands with a splash.",
+        "ripple": "One ring runs out from the middle, dimming as it goes.",
+    ]
+
+    var body: some View {
+        if let list {
+            VStack(alignment: .leading, spacing: 8) {
+                MomentsSectionHeader(title: "Finish",
+                                     detail: list.enabled
+                                        ? "How the lights celebrate a session that finishes. It plays once and goes dark."
+                                        : "How the lights celebrate a finish, once Settings › Lighting › Celebrate completions is on.")
+                VStack(spacing: 0) {
+                    ForEach(list.looks) { look in
+                        finishRow(look, picked: look.style == list.current)
+                        if look.id != list.looks.last?.id { Divider().padding(.leading, 14) }
+                    }
+                }
+                .windowCard(padding: 0)
+                .opacity(list.enabled ? 1 : 0.55)
+            }
+        } else {
+            EmptyView()
+                .task(id: "\(store.isLive)-\(store.core.settings?.generation ?? 0)") { await load() }
+        }
+    }
+
+    private func finishRow(_ look: FinishLookList.Look, picked: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(picked ? Color.accentColor : Color.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(look.label).font(.body.weight(.medium))
+                Text(Self.meanings[look.style] ?? "").font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            LEDStripPreview(program: look.program, ledCount: 8, style: .band, dotSize: 7, spacing: 6)
+                .frame(width: 150)
+            Button {
+                store.playFinish(look)
+            } label: {
+                Image(systemName: "play.fill")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!store.isLive)
+            .help("Play \(look.label) on the Screen Bar")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture { pick(look) }
+        .accessibilityAddTraits(picked ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func load() async {
+        guard store.isLive else { return }
+        loaded = try? await store.core.request("list_finish_looks", as: FinishLookList.self)
+    }
+
+    private func pick(_ look: FinishLookList.Look) {
+        Task {
+            do {
+                let reply = try await store.core.setSetting("colors.done_celebration_style", value: .string(look.style))
+                guard reply.ok else { store.fail(reply.error?.message ?? "Finish not changed"); return }
+                loaded = try? await store.core.request("list_finish_looks", as: FinishLookList.self)
+            } catch {
+                store.fail("Finish not changed: \(EffectStudioStore.describe(error))")
+            }
+        }
+    }
+}
+
+/// A Moments section's title and its one-line explanation.
+private struct MomentsSectionHeader: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.title3.weight(.semibold))
+            Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 6)
+    }
+}
+
+extension EffectStudioStore {
+    /// Plays a finish look on the Screen Bar -- on-screen light, so no
+    /// hardware consent -- through the same compiler clamp as everything.
+    func playFinish(_ look: FinishLookList.Look) {
+        guard let compiled = LEDSPresentationCompiler.compileProgram(look.program, ledCount: 8)?.result.program else {
+            fail("The \(look.label) finish did not compile")
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.previewProgramNow(surface: "screen_bar", program: compiled, seconds: 5)
+                if reply.ok { self.show(status: "Playing \(look.label) on the Screen Bar") }
+                else { self.fail(reply.error?.message ?? "Play refused") }
+            } catch {
+                self.fail("Play failed: \(Self.describe(error))")
+            }
+        }
+    }
+}
+

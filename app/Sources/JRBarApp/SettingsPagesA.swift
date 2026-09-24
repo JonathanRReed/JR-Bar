@@ -729,6 +729,8 @@ struct DeviceCard: View {
                 Button("Calibrate…") { store.calibrating = device.id }
                     .disabled(!store.core.isLive)
             }
+            LEDDirectionRow(store: store, device: device)
+            DotTravelStyleRow(store: store, device: device)
             if device.kind == "dot" {
                 DotRoleControls(store: store, inDeviceCard: true)
             }
