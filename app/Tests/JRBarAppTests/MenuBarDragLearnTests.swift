@@ -513,6 +513,18 @@ struct MenuBarDragLearnTests {
         #expect(tolerant.dragToHide && tolerant.mirrorSeat == .gap && tolerant.itemBarAt == .icon)
         #expect(tolerant.newItems == .asPlaced && !tolerant.concealAppleExtras)
         #expect(tolerant.layoutTableBookmark == nil)
+        // Apple's extras: a file that never chose writes nothing and
+        // follows the code default, so flipping it (J23) reaches it; a
+        // choice made on the card is kept either way.
+        let untouched = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(MenuBarCuration())) as? [String: Any]
+        #expect(untouched?["concealAppleExtras"] == nil)
+        #expect(fresh.concealAppleExtrasChoice == nil)
+        #expect(fresh.concealAppleExtras == MenuBarCuration.concealAppleExtrasDefault)
+        let chosenOff = try JSONDecoder().decode(MenuBarCuration.self,
+                                                 from: Data(#"{"concealAppleExtras": false}"#.utf8))
+        #expect(chosenOff.concealAppleExtrasChoice == false)
+        #expect(!chosenOff.concealAppleExtras)
         // A bookmark past the limit is not one.
         #expect(MenuBarCuration.clampedBookmark(Data(count: MenuBarCuration.bookmarkLimit + 1)) == nil)
         #expect(MenuBarCuration.clampedBookmark(Data()) == nil)

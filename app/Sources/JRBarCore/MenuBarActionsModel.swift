@@ -346,11 +346,11 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     /// Bartender, Ice and Hidden Bar habit. Only the person's own
     /// press-and-release writes; a reflow never does.
     public var dragToHide: Bool
-    /// Apple's standalone extras (Weather, Passwords, Time Machine) hide
-    /// through macOS like any app instead of taking a cover where they
-    /// sit. Off until a live probe shows the agent conceals them by
-    /// omission; the system's own items never join.
-    public var concealAppleExtras: Bool
+    /// The person's own answer to `concealAppleExtras`; nil follows
+    /// `concealAppleExtrasDefault`. Only a choice made on the card is
+    /// written, so flipping the default reaches every file that never
+    /// made one.
+    public var concealAppleExtrasChoice: Bool?
     /// Where the icon stands under the concealer: flush left of the
     /// first drawn item (`gap`), or exactly on JR-Bar's own macOS slot,
     /// sized to the icon (`slot`) — then "left of the icon" is the
@@ -377,6 +377,18 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
 
     /// The profile model this build writes.
     public static let currentProfileModel = 1
+    /// What `concealAppleExtras` is for a file that never chose. Off
+    /// until a live probe shows the agent conceals Apple's extras by
+    /// omission (J13); turning it on is this one line (J23).
+    public static let concealAppleExtrasDefault = false
+
+    /// Apple's standalone extras (Weather, Passwords, Time Machine) hide
+    /// through macOS like any app instead of taking a cover where they
+    /// sit. The system's own items never join.
+    public var concealAppleExtras: Bool {
+        get { concealAppleExtrasChoice ?? Self.concealAppleExtrasDefault }
+        set { concealAppleExtrasChoice = newValue }
+    }
     /// A layout-table bookmark past this size is not one — dropped on
     /// decode rather than carried.
     public static let bookmarkLimit = 64 * 1024
@@ -386,7 +398,7 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
                 stateRules: [MenuBarStateRule] = [], sceneBeforeRule: String? = nil,
                 forceSpacerEngine: Bool = false, deskProfiles: [MenuBarDeskProfile] = [],
                 lastDeskKey: String? = nil, updateWatch: [String] = [],
-                dragToHide: Bool = true, concealAppleExtras: Bool = false,
+                dragToHide: Bool = true, concealAppleExtras: Bool? = nil,
                 mirrorSeat: MenuBarMirrorSeat = .gap, revealWhileDragging: Bool = false,
                 layoutTableBookmark: Data? = nil, itemBarAt: MenuBarItemBarAnchor = .icon,
                 newItems: MenuBarNewItemsPlacement = .asPlaced, concealSystemItems: Bool = false) {
@@ -400,7 +412,7 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
         self.lastDeskKey = lastDeskKey
         self.updateWatch = updateWatch
         self.dragToHide = dragToHide
-        self.concealAppleExtras = concealAppleExtras
+        self.concealAppleExtrasChoice = concealAppleExtras
         self.mirrorSeat = mirrorSeat
         self.revealWhileDragging = revealWhileDragging
         self.layoutTableBookmark = Self.clampedBookmark(layoutTableBookmark)
@@ -418,8 +430,9 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case overlay, activeProfileID, profileModel, stateRules, sceneBeforeRule, forceSpacerEngine
         case deskProfiles, lastDeskKey, updateWatch
-        case dragToHide, concealAppleExtras, mirrorSeat, revealWhileDragging, layoutTableBookmark
+        case dragToHide, mirrorSeat, revealWhileDragging, layoutTableBookmark
         case itemBarAt, newItems, concealSystemItems
+        case concealAppleExtrasChoice = "concealAppleExtras"
     }
 
     /// One element that swallows its own decode failure — a rule written
@@ -444,7 +457,7 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
         lastDeskKey = (try? c.decodeIfPresent(String.self, forKey: .lastDeskKey)) ?? nil
         updateWatch = (try? c.decodeIfPresent([String].self, forKey: .updateWatch)) ?? []
         dragToHide = (try? c.decodeIfPresent(Bool.self, forKey: .dragToHide)) ?? true
-        concealAppleExtras = (try? c.decodeIfPresent(Bool.self, forKey: .concealAppleExtras)) ?? false
+        concealAppleExtrasChoice = (try? c.decodeIfPresent(Bool.self, forKey: .concealAppleExtrasChoice)) ?? nil
         mirrorSeat = (try? c.decodeIfPresent(MenuBarMirrorSeat.self, forKey: .mirrorSeat)) ?? .gap
         revealWhileDragging = (try? c.decodeIfPresent(Bool.self, forKey: .revealWhileDragging)) ?? false
         layoutTableBookmark = Self.clampedBookmark(
