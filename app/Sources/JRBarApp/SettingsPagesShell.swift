@@ -388,6 +388,8 @@ private struct LinksGroup: View {
         ("jrbar://quiet?mode=dim&for=1h", "Quiet JR-Bar (until=08:00 works too; jrbar://quiet/end ends it)"),
         ("jrbar://deepwork?for=50m", "Deep work: asks-only quiet, then what the agents did meanwhile"),
         ("jrbar://ask", "Open the panel on the waiting ask"),
+        ("jrbar://overview/graph", "Open the Overview on its Graph"),
+        ("jrbar://aquarium", "Open the Aquarium, or bring it forward"),
         ("jrbar://menubar/reveal", "Reveal the hidden menu bar items"),
         ("jrbar://settings/shortcuts", "Open Settings on a page"),
     ]

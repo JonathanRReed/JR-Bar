@@ -18,6 +18,12 @@ enum AppCommand: Equatable, Sendable {
     /// Settings, on a page (a `SettingsStore.Page` raw value) or where it was.
     case settings(page: String?)
     case window(AppWindow)
+    /// The Overview on its Graph pane, brought forward whether it was
+    /// open or not. `.window(.overview)` opens it where it was.
+    case overviewGraph
+    /// The Aquarium's tank on screen and in front: opened when it is
+    /// shut, raised when it is open, never closed.
+    case aquarium
     /// A Control Center chip: flip it, or set it (`on`) — a verb chip
     /// (Lock, Saver) just fires.
     case toggle(SystemToggle, on: Bool?)
@@ -159,6 +165,8 @@ enum AppCommand: Equatable, Sendable {
         case "open", "window":
             guard let object, let window = AppWindow(linkName: object) else { return nil }
             return .window(window)
+        case "overview" where object?.lowercased() == "graph":
+            return .overviewGraph
         case "overview", "history", "usage", "effects", "creator-micro", "control-center", "setup", "whats-new":
             return AppWindow(linkName: verb).map(AppCommand.window)
         case "toggle":
@@ -234,6 +242,8 @@ enum AppCommand: Equatable, Sendable {
             return object == nil ? .revealAsk : nil
         case "shelf":
             return object == nil ? .shelf : nil
+        case "aquarium":
+            return object == nil ? .aquarium : nil
         default:
             return nil
         }
@@ -254,6 +264,10 @@ enum AppCommand: Equatable, Sendable {
             path = ["settings"] + (page.map { [$0] } ?? [])
         case .window(let window):
             path = ["window", window.rawValue]
+        case .overviewGraph:
+            path = ["overview", "graph"]
+        case .aquarium:
+            path = ["aquarium"]
         case .toggle(let toggle, let on):
             path = ["toggle", toggle.rawValue]
             if let on { query.append(("on", on ? "1" : "0")) }

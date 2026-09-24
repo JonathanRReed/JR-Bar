@@ -44,6 +44,24 @@ import Testing
         #expect(parse("jrbar://window") == nil)
     }
 
+    @Test func theGraphAndTheTankHaveLinksOfTheirOwn() {
+        #expect(AppCommand.overviewGraph.link.absoluteString == "jrbar://overview/graph")
+        #expect(AppCommand.aquarium.link.absoluteString == "jrbar://aquarium")
+        #expect(parse("jrbar://overview/graph") == .overviewGraph)
+        #expect(parse("jrbar://Overview/Graph") == .overviewGraph)
+        #expect(parse("jrbar:///overview/graph") == .overviewGraph)
+        #expect(parse("jrbar://aquarium") == .aquarium)
+        #expect(parse("jrbar://Aquarium") == .aquarium)
+        // The tank only opens: no link closes it or flips it.
+        #expect(parse("jrbar://aquarium/close") == nil)
+        #expect(parse("jrbar://aquarium/toggle") == nil)
+        // The Overview's own links still open it where it was.
+        #expect(parse("jrbar://overview") == .window(.overview))
+        #expect(parse("jrbar://open/overview") == .window(.overview))
+        #expect(parse("jrbar://window/overview") == .window(.overview))
+        #expect(AppCommand.window(.overview).link.absoluteString == "jrbar://window/overview")
+    }
+
     @Test func everySettingsPageALinkMayNameExists() {
         // The pure parser keeps its own list so it needs no main-actor
         // type; this keeps it honest against the real pages.
@@ -133,6 +151,7 @@ import Testing
             .screenBar(on: nil), .screenBar(on: true), .screenBar(on: false),
             .confetti(), .confetti(tint: .provider("codex")), .confetti(tint: .session("claude:session:abc")),
             .openSession("claude:session:abc"), .revealAsk, .shelf,
+            .overviewGraph, .aquarium,
         ]
         commands += AppCommand.AppWindow.allCases.map(AppCommand.window)
         commands += AppCommand.MenuBarVerb.allCases.map(AppCommand.menuBar)
@@ -231,6 +250,32 @@ import Testing
         #expect(router.perform(.panel(toggle: true)) == .done)
         #expect(opened == [true])
         #expect(router.open(URL(string: "jrbar://nonsense")!) != .done)
+        #expect(said.count == 3)
+    }
+
+    @MainActor
+    @Test func theGraphAndTheTankLinksReachTheirOwnHands() {
+        let router = AppCommandRouter()
+        var said: [String] = []
+        router.onRefused = { said.append($0) }
+        // Unwired, each is refused out loud like any other surface.
+        #expect(router.perform(.overviewGraph) == .refused("JR-Bar is still starting."))
+        #expect(router.perform(.aquarium) == .refused("JR-Bar is still starting."))
+        var hands: [String] = []
+        router.openWindow = { hands.append("window:\($0.rawValue)") }
+        router.openOverviewGraph = { hands.append("graph") }
+        router.openAquarium = {
+            hands.append("aquarium")
+            return nil
+        }
+        #expect(router.open(URL(string: "jrbar://overview/graph")!) == .done)
+        #expect(router.open(URL(string: "jrbar://overview")!) == .done)
+        #expect(router.open(URL(string: "jrbar://aquarium")!) == .done)
+        #expect(router.open(URL(string: "jrbar://aquarium")!) == .done, "a second open is the same open")
+        #expect(hands == ["graph", "window:overview", "aquarium", "aquarium"])
+        // The tank's own refusal is said the same way.
+        router.openAquarium = { "JR-Bar is still starting." }
+        #expect(router.perform(.aquarium) == .refused("JR-Bar is still starting."))
         #expect(said.count == 3)
     }
 

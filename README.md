@@ -158,11 +158,14 @@ jrbar toggle dark     # a quick toggle in the app; `jrbar awake 2h` keeps the Ma
 The app also answers `jrbar://` links (Raycast Quicklinks, Alfred,
 `open` in a script): `jrbar://panel/toggle`, `jrbar://toggle/mic?on=1`,
 `jrbar://awake?for=2h`, `jrbar://quiet?mode=dim&for=1h`,
-`jrbar://session?id=<id>`. Shortcuts reaches every verb the same way:
-an Open URLs action with the link. JR-Bar ships no Shortcuts actions of
-its own; the Command Line Tools build can't write the metadata Shortcuts
-lists them from. Settings › Shortcuts lists the links and binds a global
-key to any action or toggle. No link answers an ask.
+`jrbar://session?id=<id>`, `jrbar://overview/graph` (the Overview on its
+Graph; `jrbar://overview` opens it where it was), `jrbar://aquarium`
+(opens the tank, or brings it forward; it never closes it). Shortcuts
+reaches every verb the same way: an Open URLs action with the link.
+JR-Bar ships no Shortcuts actions of its own; the Command Line Tools
+build can't write the metadata Shortcuts lists them from. Settings ›
+Shortcuts lists the links and binds a global key to any action or
+toggle. No link answers an ask.
 
 To remove it: quit the app, delete `JR-Bar.app`, and run
 `jrbar agent-monitor uninstall all` first if you want the hooks gone.

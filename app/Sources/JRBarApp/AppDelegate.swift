@@ -1774,6 +1774,14 @@ extension AppDelegate {
             case .whatsNew: self?.whatsNewWindow?.show()
             }
         }
+        router.openOverviewGraph = { [weak self] in self?.overviewWindow?.showGraph() }
+        // The palette's Open the Tank, only ever on: a link that could
+        // close the tank would be a toggle, and this one is not.
+        router.openAquarium = { [weak self] in
+            guard let tank = self?.toysStore?.aquarium else { return "JR-Bar is still starting." }
+            tank.isOn = true
+            return nil
+        }
         router.quiet = { [weak self] mode, seconds in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
             guard core.isLive else { return "The monitor is not connected — quiet needs it." }
