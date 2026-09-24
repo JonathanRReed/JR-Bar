@@ -90,6 +90,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     var hiddenCount = 0 { didSet { if hiddenCount != oldValue { syncTooltip(); refold() } } }
     var hiddenRevealed = false { didSet { if hiddenRevealed != oldValue { refold() } } }
     private let hiddenItemsMenuItem = NSMenuItem(title: "Hidden Menu Bar Items", action: nil, keyEquivalent: "")
+    /// The catalog's Creator Micro row, shown once a pad has been seen.
+    private var creatorMicroItem: NSMenuItem?
     private var aggregateTint: NSColor?
     private(set) var isPulsing = false
     var onToggleScreenBar: (@MainActor (Bool) -> Void)?
@@ -101,6 +103,15 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     var onOpenUsageCenter: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
+    /// The ⇧⌘K palette.
+    var onOpenPalette: (@MainActor () -> Void)?
+    /// What's New, through the same route `jrbar://window/whats-new` takes.
+    var onOpenWhatsNew: (@MainActor () -> Void)? = { AppCommandRouter.shared.perform(.window(.whatsNew)) }
+    /// Sparkle's check, through the delegate.
+    var onCheckForUpdates: (@MainActor () -> Void)?
+    /// Whether a Creator Micro has been seen, read as the menu opens:
+    /// its item is listed only then (`PanelStore.hasCreatorMicro`).
+    var showsCreatorMicro: (@MainActor () -> Bool)?
     var onUnsnoozeAll: (@MainActor () -> Void)?
     var isScreenBarShown = true { didSet { showBarItem.state = isScreenBarShown ? .on : .off } }
     /// The style and ring the next `update` draws with.
@@ -171,44 +182,37 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         showBarItem.target = self
         showBarItem.state = .on
 
-        let open = NSMenuItem(title: "Open Panel", action: #selector(openPanel(_:)), keyEquivalent: "")
-        open.target = self
-        let history = NSMenuItem(title: "History…", action: #selector(openHistory(_:)), keyEquivalent: "y")
-        history.target = self
-        let overview = NSMenuItem(title: "Overview…", action: #selector(openOverview(_:)), keyEquivalent: "o")
-        overview.target = self
-        let replay = NSMenuItem(title: "Event Replay…", action: #selector(openReplay(_:)), keyEquivalent: "r")
-        replay.target = self
-        let usage = NSMenuItem(title: "Usage Center…", action: #selector(openUsageCenter(_:)), keyEquivalent: "u")
-        usage.target = self
-        let effects = NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: "")
-        effects.target = self
-        let controlCenter = NSMenuItem(title: "Control Center…", action: #selector(openControlCenter(_:)), keyEquivalent: "k")
-        controlCenter.target = self
-
         menu.addItem(headerItem)
         menu.addItem(detailItem)
         menu.addItem(coreItem)
         menu.addItem(feedItem)
         menu.addItem(snoozedItem)
         menu.addItem(escalationItem)
-        menu.addItem(.separator())
-        menu.addItem(open)
-        menu.addItem(history)
-        menu.addItem(overview)
-        menu.addItem(replay)
-        menu.addItem(usage)
-        menu.addItem(effects)
-        menu.addItem(controlCenter)
-        menu.addItem(showBarItem)
-        hiddenItemsMenuItem.isHidden = true
-        menu.addItem(hiddenItemsMenuItem)
-        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
-        settings.target = self
-        menu.addItem(settings)
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit JR-Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
+        // The verbs come from the catalog the panel's More menu shares;
+        // the item's own rows — Open Panel, Show Screen Bar, the hidden
+        // items — sit among them.
+        let sections = AppMenuCatalog.sections(creatorMicro: true)
+        for (index, verbs) in sections.enumerated() {
+            menu.addItem(.separator())
+            for verb in verbs {
+                let item = verb.menuItem(action: #selector(performVerb(_:)), target: self)
+                if verb == .creatorMicro {
+                    item.isHidden = true
+                    creatorMicroItem = item
+                }
+                menu.addItem(item)
+            }
+            if index == 0 {
+                let open = NSMenuItem(title: "Open Panel", action: #selector(openPanel(_:)), keyEquivalent: "")
+                open.target = self
+                menu.addItem(open)
+            }
+            if index == 1 {
+                menu.addItem(showBarItem)
+                hiddenItemsMenuItem.isHidden = true
+                menu.addItem(hiddenItemsMenuItem)
+            }
+        }
         menu.autoenablesItems = false
         menu.delegate = self
         update(state: .idle, detail: "Starting")
@@ -407,7 +411,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// status item's menu opens.
     func popUpMenu(in view: NSView) {
         guard let window = view.window else { return }
-        prepareHiddenItemsRow()
+        prepareMenu()
         let face = window.convertToScreen(view.convert(view.bounds, to: nil))
         let barBottom = (window.screen ?? NSScreen.screens.first)?.visibleFrame.maxY ?? face.minY
         // `popUp` tracks the menu until it closes — the face highlights
@@ -810,7 +814,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             }
         }
         if secondary {
-            prepareHiddenItemsRow()
+            prepareMenu()
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
             statusItem.menu = nil
@@ -822,6 +826,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The menu's "Hidden Menu Bar Items" row: the utility's submenu
     /// while it runs, gone while it is parked. Both secondary clicks —
     /// the button's and the mirror's — prepare it here.
+    /// The rows that depend on the moment: the hidden items, and Creator
+    /// Micro once a pad has been seen.
+    private func prepareMenu() {
+        prepareHiddenItemsRow()
+        creatorMicroItem?.isHidden = showsCreatorMicro?() != true
+    }
+
     private func prepareHiddenItemsRow() {
         if let submenu = hiddenItemsMenu?() {
             hiddenItemsMenuItem.submenu = submenu
@@ -844,28 +855,26 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         onOpenSettings?()
     }
 
-    @objc private func openHistory(_ sender: Any?) {
-        onOpenHistory?()
+    /// One of the catalog's verbs, named by the item's `representedObject`.
+    @objc private func performVerb(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let verb = AppMenuVerb(rawValue: raw) else { return }
+        perform(verb)
     }
 
-    @objc private func openOverview(_ sender: Any?) {
-        onOpenOverview?()
-    }
-
-    @objc private func openReplay(_ sender: Any?) {
-        onOpenReplay?()
-    }
-
-    @objc private func openUsageCenter(_ sender: Any?) {
-        onOpenUsageCenter?()
-    }
-
-    @objc private func openEffects(_ sender: Any?) {
-        onOpenEffects?()
-    }
-
-    @objc private func openControlCenter(_ sender: Any?) {
-        onOpenControlCenter?()
+    func perform(_ verb: AppMenuVerb) {
+        switch verb {
+        case .commandPalette: onOpenPalette?()
+        case .history: onOpenHistory?()
+        case .events: onOpenReplay?()
+        case .overview: onOpenOverview?()
+        case .usageCenter: onOpenUsageCenter?()
+        case .effects: onOpenEffects?()
+        case .creatorMicro: onOpenControlCenter?()
+        case .whatsNew: onOpenWhatsNew?()
+        case .checkForUpdates: onCheckForUpdates?()
+        case .settings: onOpenSettings?()
+        case .quit: NSApp.terminate(nil)
+        }
     }
 
     @objc private func toggleScreenBar(_ sender: NSMenuItem) {

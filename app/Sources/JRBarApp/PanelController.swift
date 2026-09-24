@@ -266,20 +266,11 @@ final class PanelController {
         case .keyDown:
             guard event.window === panel || panel.isKeyWindow else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "q" {
-                store.quit()
-                return nil
-            }
-            if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "y" {
-                store.openHistory()
-                return nil
-            }
-            if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "u" {
-                store.openUsageCenter()
-                return nil
-            }
-            if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "k" {
-                store.openControlCenter()
+            // The keys the More menu shows: ⌘Q, ⌘Y, ⌘R, ⌘O, ⌘U, ⌘, and
+            // ⌘K (with or without ⇧), which folds the panel into the palette.
+            if flags.contains(.command), flags.isDisjoint(with: [.control, .option]),
+               let verb = AppMenuVerb.verb(forKey: event.charactersIgnoringModifiers) {
+                store.perform(verb)
                 return nil
             }
             if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "d",

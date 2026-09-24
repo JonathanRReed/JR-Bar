@@ -208,6 +208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             MainActor.assumeIsolated { settingsStore?.refreshUpdater() }
         }
         store.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
+        statusItem.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
+        statusItem.showsCreatorMicro = { [weak store] in store?.hasCreatorMicro == true }
         installMainMenu()
         self.statusItem = statusItem
         self.screenBar = screenBar
@@ -465,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.historyStore = historyStore
         self.historyWindow = historyWindow
         store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
+        store.onOpenEvents = { [weak historyWindow] in historyWindow?.showEvents() }
         // History's search also reads what was said, when the Data
         // Hoarder keeps transcripts.
         historyStore.archiveSearch = { [weak utilitiesStore] query in
@@ -628,6 +631,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         commandBar.palette.toastFeed = { [weak store] in store?.toast }
         commandBar.openSettings = { [weak settingsWindow] in settingsWindow?.show(page: .utilities) }
+        // Command Palette… in More, the right-click menu and the app menu.
+        store.onOpenPalette = { [weak commandBar] in commandBar?.open() }
+        statusItem.onOpenPalette = { [weak commandBar] in commandBar?.open() }
         utilitiesStore.menuBar.actions.paletteBinding = { [weak utilitiesStore] in
             utilitiesStore?.menuBar.resolvedHotkeyBindings().first { $0.action == .commandBar }
         }
@@ -1070,12 +1076,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let main = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(AppMenuVerb.commandPalette.menuItem(action: #selector(openCommandPalette(_:)), target: nil))
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","))
         appMenu.addItem(NSMenuItem(title: "History", action: #selector(openHistory(_:)), keyEquivalent: "y"))
         appMenu.addItem(NSMenuItem(title: "Overview", action: #selector(openOverview(_:)), keyEquivalent: "o"))
         appMenu.addItem(NSMenuItem(title: "Usage Center", action: #selector(openUsageCenter(_:)), keyEquivalent: "u"))
         appMenu.addItem(NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
-        appMenu.addItem(NSMenuItem(title: "Control Center…", action: #selector(openControlCenter(_:)), keyEquivalent: "k"))
+        appMenu.addItem(NSMenuItem(title: "Creator Micro…", action: #selector(openControlCenter(_:)), keyEquivalent: ""))
         appMenu.addItem(.separator())
         let checkForUpdates = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
         checkForUpdates.target = self
@@ -1138,6 +1146,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc private func openControlCenter(_ sender: Any?) {
         controlCenterWindow?.show()
+    }
+
+    @objc private func openCommandPalette(_ sender: Any?) {
+        utilitiesStore?.menuBar.actions.commandBar.open()
     }
 
     @objc private func openEffects(_ sender: Any?) {

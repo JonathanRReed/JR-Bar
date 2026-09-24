@@ -304,6 +304,12 @@ final class PanelStore {
     var onOpenUsageCenter: (@MainActor (String?) -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
+    /// History's Events tab (the journal).
+    var onOpenEvents: (@MainActor () -> Void)?
+    /// The ⇧⌘K palette.
+    var onOpenPalette: (@MainActor () -> Void)?
+    /// What's New, through the same route `jrbar://window/whats-new` takes.
+    var onOpenWhatsNew: (@MainActor () -> Void)? = { AppCommandRouter.shared.perform(.window(.whatsNew)) }
     /// The overflow menu's "Check for Updates…" (Sparkle, through the delegate).
     var onCheckForUpdates: (@MainActor () -> Void)?
     var onRestartCore: (@MainActor () -> Void)?
@@ -1754,6 +1760,48 @@ final class PanelStore {
     func checkForUpdates() {
         onClose?()
         onCheckForUpdates?()
+    }
+
+    func openEvents() {
+        onClose?()
+        onOpenEvents?()
+    }
+
+    /// ⌘K in the panel, and the first item in More: the panel folds and
+    /// the palette opens in its place.
+    func openCommandPalette() {
+        onClose?()
+        onOpenPalette?()
+    }
+
+    func openWhatsNew() {
+        onClose?()
+        onOpenWhatsNew?()
+    }
+
+    /// A pad the daemon knows — approved, or seen by its HID probe — or
+    /// the pad switched on in its settings: then the menus list Creator
+    /// Micro. A Mac that never had one never sees the word.
+    var hasCreatorMicro: Bool {
+        guard let deck = core.state?.deck else { return false }
+        return deck.device != nil || deck.settings.enabled
+    }
+
+    /// Runs one of the menus' shared verbs (`AppMenuCatalog`).
+    func perform(_ verb: AppMenuVerb) {
+        switch verb {
+        case .commandPalette: openCommandPalette()
+        case .history: openHistory()
+        case .events: openEvents()
+        case .overview: openOverview()
+        case .usageCenter: openUsageCenter()
+        case .effects: openEffects()
+        case .creatorMicro: openControlCenter()
+        case .whatsNew: openWhatsNew()
+        case .checkForUpdates: checkForUpdates()
+        case .settings: openSettings()
+        case .quit: quit()
+        }
     }
 
     func restartCore() {

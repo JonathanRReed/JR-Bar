@@ -1818,7 +1818,7 @@ struct PanelFooterTrailing: View {
             .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More: Control Center (⌘K), Effects, History (⌘Y), Usage Center (⌘U), Check for Updates, Settings (⌘,), Quit (⌘Q)")
+            .help("More: the palette (⇧⌘K), History (⌘Y), Events (⌘R), Overview (⌘O), Usage Center (⌘U), Settings (⌘,), Quit (⌘Q)")
             .accessibilityLabel("More")
             Button { store.openSettings() } label: {
                 Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))
@@ -1831,27 +1831,33 @@ struct PanelFooterTrailing: View {
     }
 }
 
-/// The footer's More menu.
+/// The footer's More menu: the catalog the status item's right-click
+/// menu shares (`AppMenuCatalog`), section by section.
 struct PanelMoreMenuItems: View {
     @Bindable var store: PanelStore
 
     var body: some View {
-        Button { store.openControlCenter() } label: { Text("Control Center…") }
-            .keyboardShortcut("k", modifiers: .command)
-        Button { store.openEffects() } label: { Text("Effect Studio…") }
-        Button { store.openHistory() } label: { Text("History…") }
-            .keyboardShortcut("y", modifiers: .command)
-        Button { store.openOverview() } label: { Text("Overview…") }
-            .keyboardShortcut("o", modifiers: .command)
-        Button { store.openUsageCenter() } label: { Text("Usage Center…") }
-            .keyboardShortcut("u", modifiers: .command)
-        Divider()
-        Button { store.checkForUpdates() } label: { Text("Check for Updates…") }
-        Button { store.openSettings() } label: { Text("Settings…") }
-            .keyboardShortcut(",", modifiers: .command)
-        Divider()
-        Button { store.quit() } label: { Text("Quit JR-Bar") }
-            .keyboardShortcut("q", modifiers: .command)
+        let sections = AppMenuCatalog.sections(creatorMicro: store.hasCreatorMicro)
+        ForEach(Array(sections.enumerated()), id: \.offset) { index, verbs in
+            if index > 0 { Divider() }
+            ForEach(verbs) { verb in
+                PanelMoreMenuItem(verb: verb, store: store)
+            }
+        }
+    }
+}
+
+struct PanelMoreMenuItem: View {
+    let verb: AppMenuVerb
+    @Bindable var store: PanelStore
+
+    var body: some View {
+        if let shortcut = verb.shortcut {
+            Button(verb.title) { store.perform(verb) }
+                .keyboardShortcut(shortcut)
+        } else {
+            Button(verb.title) { store.perform(verb) }
+        }
     }
 }
 
