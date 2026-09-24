@@ -251,6 +251,15 @@ import JRBarCore
         #expect(OverviewGraphCanvas.hubCaption([.done, .idle]) == "2 sessions")
     }
 
+    @Test("a narrow caption drops the token count, then the cost, before it cuts a number")
+    func captionDetails() {
+        let full = GraphCaption(word: "Working", elapsed: "1h 02m", tokens: "3.3M", cost: "$16.99")
+        #expect(full.details == ["1h 02m · 3.3M · $16.99", "1h 02m · $16.99", "1h 02m"])
+        #expect(GraphCaption(word: "Working", elapsed: "4m").details == ["4m"])
+        #expect(GraphCaption(word: "Working", elapsed: "4m", tokens: "40k").details == ["4m · 40k", "4m"])
+        #expect(GraphCaption(word: "Idle").details == [""])
+    }
+
     @Test("two fingers pan, a wheel pans in bigger steps, and ⌘ turns either into a zoom")
     func pointerIntents() {
         let at = CGPoint(x: 10, y: 20)

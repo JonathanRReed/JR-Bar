@@ -6,7 +6,23 @@ import SwiftUI
 /// the run has cost so far when the transcript says.
 struct GraphCaption: Equatable {
     let word: String
-    let detail: String
+    /// How long it has been in that state: "42m".
+    var elapsed: String?
+    /// "1.2M".
+    var tokens: String?
+    /// "$2.31".
+    var cost: String?
+
+    /// What follows the state word, longest first: a label too narrow for
+    /// all of it drops the token count, then the cost, rather than cutting
+    /// a number in half.
+    var details: [String] {
+        let lines = [[elapsed, tokens, cost], [elapsed, cost], [elapsed]]
+            .map { $0.compactMap { $0 }.joined(separator: " · ") }
+        return lines.enumerated().compactMap { index, line in
+            index > 0 && line == lines[index - 1] ? nil : line
+        }
+    }
 }
 
 /// Everything the scene draws that does not move with the camera: the
@@ -850,11 +866,10 @@ struct GraphNodeLabel: View {
         worker ? CGSize(width: 116, height: 30) : CGSize(width: 160, height: 44)
     }
 
-    private var line: Text {
-        guard let caption else { return Text(verbatim: "") }
+    private func line(_ caption: GraphCaption, detail: String) -> Text {
         let word = Text(caption.word).foregroundStyle(node.activity.wordColor)
-        guard !caption.detail.isEmpty else { return word }
-        return Text("\(word)\(Text(verbatim: " · " + caption.detail).foregroundStyle(.secondary))")
+        guard !detail.isEmpty else { return word }
+        return Text("\(word)\(Text(verbatim: " · " + detail).foregroundStyle(.secondary))")
     }
 
     var body: some View {
@@ -864,8 +879,12 @@ struct GraphNodeLabel: View {
             Text(node.label)
                 .font(.system(size: worker ? 11 : 12.5, weight: worker ? .medium : .semibold))
                 .foregroundStyle(.primary)
-            if !worker, caption != nil {
-                line.font(.system(size: 10.5)).monospacedDigit()
+            if !worker, let caption {
+                ViewThatFits(in: .horizontal) {
+                    ForEach(caption.details, id: \.self) { detail in
+                        line(caption, detail: detail).font(.system(size: 10.5)).monospacedDigit()
+                    }
+                }
             }
         }
         .lineLimit(1)

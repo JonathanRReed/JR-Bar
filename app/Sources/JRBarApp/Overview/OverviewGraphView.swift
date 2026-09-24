@@ -392,16 +392,14 @@ struct OverviewGraphCanvas: View {
     /// it, and what the run has spent so far when its transcript says. A
     /// waiting session keeps to the state and the wait.
     private func caption(_ node: OverviewGraphNode, entry: CoreRosterEntry?) -> GraphCaption {
-        var parts: [String] = []
-        if let elapsed = PanelStore.elapsed(since: entry?.session.since.map { Date(timeIntervalSince1970: $0) },
-                                            now: store.now) {
-            parts.append(elapsed)
-        }
+        var words = GraphCaption(word: node.activity.word)
+        words.elapsed = PanelStore.elapsed(since: entry?.session.since.map { Date(timeIntervalSince1970: $0) },
+                                           now: store.now)
         if node.activity != .waiting, let usage = store.sessionUsage.usage(for: node.id) {
-            if usage.tokens.total > 0 { parts.append(UsageFormat.tokens(usage.tokens.total)) }
-            if let cost = usage.estimatedCostUSD, cost > 0 { parts.append(UsageFormat.cost(cost)) }
+            if usage.tokens.total > 0 { words.tokens = UsageFormat.tokens(usage.tokens.total) }
+            if let cost = usage.estimatedCostUSD, cost > 0 { words.cost = UsageFormat.cost(cost) }
         }
-        return GraphCaption(word: node.activity.word, detail: parts.joined(separator: " · "))
+        return words
     }
 
     private func refreshUsage(_ current: Shown) {
