@@ -386,6 +386,14 @@ struct WindowsRenderProofTests {
         try Self.write("overview-inspector", size: CGSize(width: 340, height: 900)) {
             OverviewSessionInspector(store: store, entry: asking) { _ in }
         }
+        store.filter = OverviewFilter(preset: .all)
+        try Self.write("overview-strips", size: CGSize(width: 760, height: 90)) {
+            VStack(spacing: 0) {
+                OverviewSummaryStrip(store: store)
+                OverviewConnectionsStrip(store: store)
+                Spacer(minLength: 0)
+            }
+        }
         store.windowDidClose()
     }
 }
