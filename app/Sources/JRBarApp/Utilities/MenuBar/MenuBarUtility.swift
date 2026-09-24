@@ -57,6 +57,9 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored let stateRules = MenuBarStateRunner()
     /// Whether the levels were seeded for the rules now enabled.
     @ObservationIgnored private var stateRulesSeeded = false
+    /// Whether this launch has checked for a scene a rule held when the
+    /// last one quit (`restoreSceneOnce`).
+    @ObservationIgnored private var sceneRestoreChecked = false
     /// Bumped whenever the rules' outcome moves, so the card's "holding
     /// now" line observes it.
     private(set) var stateOutcomeVersion = 0
@@ -1133,6 +1136,9 @@ final class MenuBarUtility: Toy {
         let facts = coreFacts()
         let samples = MenuBarCoreFacts.samples(from: lastCoreFacts, to: facts)
         lastCoreFacts = facts
+        // After this change's samples have reached the rules, whichever
+        // branch below runs.
+        defer { if facts.live { restoreSceneOnce() } }
         guard running else {
             // A stopped utility — disabled, or handed over to another
             // manager — holds nothing and writes nothing: the one-shot
@@ -1154,6 +1160,17 @@ final class MenuBarUtility: Toy {
         if stateRulesSeeded, facts.live, stateRules.levels.askPending != facts.askPending {
             stateRules.update { $0.askPending = facts.askPending }
         }
+    }
+
+    /// Once a launch, at the core's first live facts — `currentScene` and
+    /// `setScene` need the daemon — the relaunch half of a quit mid-rule:
+    /// the scene a "while" rule replaced goes back unless a rule holds one
+    /// again. It runs with the utility parked or no rule enabled too: then
+    /// nothing holds, and the scene is yours.
+    private func restoreSceneOnce() {
+        guard !sceneRestoreChecked else { return }
+        sceneRestoreChecked = true
+        stateRules.restoreSceneAfterRelaunch()
     }
 
     // MARK: Lifecycle
@@ -1303,8 +1320,12 @@ final class MenuBarUtility: Toy {
     }
 
     /// Everything down: the bar closes, the gestures stop, the covers
-    /// lift, and the control items leave the row.
-    func stop() {
+    /// lift, and the control items leave the row. `forQuit` leaves what
+    /// the "while" rules hold where it stands: a quit cannot put the
+    /// scene back (the daemon write is a task the process never runs),
+    /// and the saved scene-before-rule is what the next launch restores
+    /// (`restoreSceneOnce`). The quiet lease ends on the daemon's clock.
+    func stop(forQuit: Bool = false) {
         guard running else { return }
         bar.close()
         reveal.stop()
@@ -1333,7 +1354,7 @@ final class MenuBarUtility: Toy {
         // re-plan never reaches the hider that just stood down.
         if stateRulesSeeded {
             stateRulesSeeded = false
-            stateRules.stop()
+            if !forQuit { stateRules.stop() }
         }
     }
 
