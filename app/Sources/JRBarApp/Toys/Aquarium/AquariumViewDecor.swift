@@ -221,7 +221,7 @@ extension AquariumView {
         // the glass only the night's tone reaches it.
         let veil = atmosphere(depth: piece.depth, t: t)
         let haze = min(0.36, veil.haze)
-        let dim = 1 - veil.night * 0.55
+        let dim = (1 - veil.night * 0.55) * (isDarkTheme ? 0.72 : 1)
         func kelp(_ rgb: TankPaint.RGB, _ alpha: Double = 1) -> Color {
             front ? tone(TankPaint.color(rgb, alpha))
                 : TankPaint.color(TankPaint.mix(rgb * dim, veil.hazeColor, haze), alpha)
@@ -319,7 +319,7 @@ extension AquariumView {
         let front = piece.depth > 0.6
         let veil = atmosphere(depth: piece.depth, t: t)
         let haze = min(0.5, veil.haze)
-        let dim = 1 - veil.night * 0.55
+        let dim = (1 - veil.night * 0.55) * (isDarkTheme ? 0.72 : 1)
         func green(_ rgb: TankPaint.RGB) -> Color {
             front ? tone(TankPaint.color(rgb))
                 : TankPaint.color(TankPaint.mix(rgb * dim, veil.hazeColor, haze))

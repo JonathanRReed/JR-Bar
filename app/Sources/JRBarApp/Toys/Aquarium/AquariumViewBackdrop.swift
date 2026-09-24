@@ -88,7 +88,7 @@ extension AquariumView {
     private func tierBody(depth: Double) -> TankPaint.RGB {
         let behind = waterRGB(at: 0.72)
         if isDarkTheme { return TankPaint.mix(behind, water.light, 0.05 + 0.04 * depth) }
-        return TankPaint.mix(behind, waterRGB(at: 1), 0.28 + 0.40 * depth)
+        return TankPaint.mix(behind, waterRGB(at: 1), 0.24 + 0.32 * depth)
     }
 
     /// A tier's paint: its body with a crown lit from the surface, a
