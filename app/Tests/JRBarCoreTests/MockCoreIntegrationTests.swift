@@ -187,6 +187,11 @@ struct MockCoreIntegrationTests {
         #expect(!missing.ok)
         #expect(missing.error?.code == "not_found")
 
+        // A forgotten send the daemon refuses still leaves a line.
+        model.post("open_session", args: ["session": "nope"])
+        #expect(await Self.wait { model.lastDecodeFailure?.hasPrefix("open_session") == true })
+        #expect(model.logTail.contains { $0.message?.hasPrefix("open_session refused") == true && $0.level == "warn" })
+
         // The brightness write is reflected in the next state document.
         #expect(await Self.wait {
             model.devices.first { $0.kind == "pro" }?.brightnessFraction == 0.5

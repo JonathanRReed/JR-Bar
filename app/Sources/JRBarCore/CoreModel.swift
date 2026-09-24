@@ -111,11 +111,19 @@ public final class CoreModel {
         return try await client.send(name: name, args: args, timeout: timeout)
     }
 
-    /// Sends and forgets; failures land in `lastDecodeFailure` for the log view.
+    /// Sends and forgets; failures land in `lastDecodeFailure` for the log
+    /// view, and a refusal (`ok: false`) in the log tail as well — a
+    /// forgotten send the daemon turned down is still worth a line.
     public func post(_ name: String, args: [String: JSONValue] = [:]) {
         Task { [weak self] in
-            do { _ = try await self?.send(name, args: args) }
-            catch { await MainActor.run { self?.lastDecodeFailure = "\(name): \(error)" } }
+            do {
+                guard let reply = try await self?.send(name, args: args), !reply.ok else { return }
+                let why = reply.error?.message ?? reply.error?.code ?? "refused"
+                self?.lastDecodeFailure = "\(name): \(why)"
+                self?.appendLocalLog(level: "warn", "\(name) refused: \(why)")
+            } catch {
+                self?.lastDecodeFailure = "\(name): \(error)"
+            }
         }
     }
 

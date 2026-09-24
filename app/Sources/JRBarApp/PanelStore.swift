@@ -1053,15 +1053,16 @@ final class PanelStore {
         onWhyHover?(hovering, frame)
     }
 
+    /// The light's session, through `SessionOpener` like a row's click: a
+    /// peer's session is refused locally, and the panel closes only once
+    /// the session is in front.
     func openExplainedSession() {
         guard let session = lightExplanation?.session else { return }
-        // A light about a peer's session has no local window to raise.
-        guard !CoreSession.isRemoteID(session) else {
-            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac")")
-            return
+        Task { [weak self] in
+            let refusal = await SessionOpener.open(session)
+            guard let self else { return }
+            if let refusal { self.show(toast: refusal) } else { self.onClose?() }
         }
-        core.openSession(session)
-        onClose?()
     }
 
     // MARK: Derived: usage and devices

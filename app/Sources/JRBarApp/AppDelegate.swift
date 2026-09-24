@@ -409,7 +409,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let self, side == .left else { return false }
             let focus = self.store?.screenBarFocus
             guard let session = focus?.focusSession ?? focus?.clickSession else { return false }
-            self.core?.openSession(session)
+            Task { @MainActor [weak self] in
+                if let refusal = await SessionOpener.open(session) { self?.showFeedback(refusal) }
+            }
             return true
         }
         // The hidden-run ‹ lives in the island's own surface — a status
@@ -690,6 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             events?.hud.islandDropped(notice)
         }
         events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
+        events.onOpenRefused = { [weak self] text in self?.showFeedback(text) }
         // Approve/Deny on a banner are awaited, so a refused answer is
         // heard: the bridge turns it into a follow-up banner that opens
         // the session on click.
@@ -1721,9 +1724,15 @@ extension AppDelegate {
     /// The router's hands: the same paths the panel, the status menu and
     /// the summon keys already take, so a link or a shortcut does
     /// exactly what the click would.
+    /// A line for the person that did not come from a panel click — a
+    /// link, a shortcut, a banner, the ear: the panel's toast.
+    private func showFeedback(_ text: String) {
+        store?.show(toast: text)
+    }
+
     private func wireCommandRouter() {
         let router = AppCommandRouter.shared
-        router.onRefused = { [weak self] text in self?.store?.show(toast: text) }
+        router.onRefused = { [weak self] text in self?.showFeedback(text) }
         router.showPanel = { [weak self] toggle in
             if toggle { self?.panel?.toggle() } else { self?.panel?.open() }
         }
@@ -1789,10 +1798,14 @@ extension AppDelegate {
             }
             return nil
         }
+        // The checks a link can fail at once stay synchronous; the open
+        // itself is awaited, and a refusal after it is said the same way.
         router.openSession = { [weak self] id in
             guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
             guard core.state?.session(withID: id) != nil else { return "No session \(id.prefix(40)) is being watched." }
-            core.openSession(id)
+            Task { @MainActor [weak self] in
+                if let refusal = await SessionOpener.open(id) { self?.showFeedback(refusal) }
+            }
             return nil
         }
         router.revealAsk = { [weak self] in

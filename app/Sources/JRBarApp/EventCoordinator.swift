@@ -25,6 +25,10 @@ final class EventCoordinator {
     /// `EventPolicy` decided before anything plays; wired by the delegate,
     /// a pass-through until then.
     var deliveryRules: @MainActor (EventDelivery, CoreEvent) -> EventDelivery = { delivery, _ in delivery }
+    /// Where a banner click's refused open is said — the panel is closed
+    /// when a banner is clicked, so the delegate points it at the HUD.
+    /// Unset, the refusal is only logged.
+    var onOpenRefused: (@MainActor (String) -> Void)?
     /// The frontmost-app read, injectable so tests can stage the pane.
     var frontmostApp: @MainActor () -> (bundleID: String?, pid: Int32?) = {
         let app = NSWorkspace.shared.frontmostApplication
@@ -54,7 +58,7 @@ final class EventCoordinator {
         hud = NotchHUD(anchorRect: hudAnchor)
         sounds.onMissing = { [weak core] name in core?.appendLocalLog(level: "warn", "no system sound named \(name)") }
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
-        notifications.onOpenSession = { [weak core] session in core?.openSession(session) }
+        notifications.onOpenSession = { [weak self] session in self?.openFromBanner(session) }
         notifications.onAnswerAsk = { [weak core] session, approve in core?.answerAsk(session: session, approve: approve) }
         // One announcer at the top of the screen: the Mac's own news is
         // offered to the island first and takes the pill only when the
@@ -79,6 +83,17 @@ final class EventCoordinator {
             MainActor.assumeIsolated { self?.reapplyEscalationNoise() }
         }
         trackState()
+    }
+
+    /// A banner's click opens its session through `SessionOpener`, so a
+    /// live session the daemon cannot find still comes up through the
+    /// Dock's window locator, and a refusal is said rather than dropped.
+    private func openFromBanner(_ session: String) {
+        Task { [weak self] in
+            guard let refusal = await SessionOpener.open(session), let self else { return }
+            self.core.appendLocalLog("open_session refused: \(refusal)")
+            self.onOpenRefused?(refusal)
+        }
     }
 
     /// Re-arms an observation of the applied state after every document
