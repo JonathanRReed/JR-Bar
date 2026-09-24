@@ -140,7 +140,9 @@ def test_runner_invokes_the_executable_with_event_argv(tmp_path) -> None:
     )
     worker = run_usage_hooks(str(script), events)
     assert worker is not None
-    worker.join(timeout=1.0)
+    # Bounded, with room for a loaded machine: the worker starts the hook
+    # in its own session and waits for it.
+    worker.join(timeout=10.0)
     assert not worker.is_alive()
     assert record.read_text().strip() == "quota_low claude weekly 18"
 
