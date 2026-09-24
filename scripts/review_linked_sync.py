@@ -15,12 +15,13 @@ at ``now * rate``, with the Dot written the way the daemon writes it:
 * ``old``: what shipped before -- the Dot rotated by the measured write
   skew, never retimed, restarted only with the strip.
 
-It writes ``<out>/<effect>-<planner>.png``: time runs left to right, the
-Pro's eight LEDs on top, then the Dot as simulated, then the Dot as it
-should look (the strip's narrowed program on a perfect clock), then the
-phase error (the red line is the tolerance). A drifting pair shows as the
-middle band shearing away from the one below it; a locked pair shows the
-two bands as the same stripes.
+It writes ``<out>/<effect>-<planner>.png``: on top, thirty seconds from
+minute one with time running left to right -- the Pro's eight LEDs, then
+the Dot as simulated, then the Dot as it should look (the strip's narrowed
+program on a perfect clock); below, the phase error over the whole run
+(the red line is the tolerance). A drifting pair shows as the middle band
+shearing away from the one below it; a locked pair shows the two bands as
+the same stripes.
 
     .venv/bin/python scripts/review_linked_sync.py --out build/linked-sync
 """
@@ -116,8 +117,9 @@ def simulate(
     latency_jitter_ms: float = 4.0,
     read_jitter_ms: float = 6.0,
     seed: int = 1,
-    column_every_s: float = 0.2,
-    columns_for_s: float = 300.0,
+    column_every_s: float = 0.02,
+    columns_from_s: float = 60.0,
+    columns_for_s: float = 30.0,
 ) -> SimResult:
     """Play ``program`` on a linked pair for ``minutes`` at 60 Hz."""
     generator = random.Random(seed)
@@ -203,7 +205,7 @@ def simulate(
     write_dot(gap_ms / 1000.0, "coupled")
     frames = int(minutes * 60.0 / FRAME_S)
     next_reassert = STRIP_REASSERT_S
-    next_column = 0.0
+    next_column = columns_from_s
     for index in range(1, frames):
         t = index * FRAME_S
         now[0] = t
@@ -233,7 +235,7 @@ def simulate(
         result.errors.append((t, error))
         gap = max(abs(a - b) for x, y in zip(dot_frame, expected) for a, b in zip(x, y))
         result.engine_gaps.append(gap)
-        if t >= next_column and t <= columns_for_s:
+        if t >= next_column and t <= columns_from_s + columns_for_s:
             result.columns.append((pro_frame, dot_frame, expected, error))
             next_column += column_every_s
     return result
@@ -243,38 +245,44 @@ def simulate(
 
 
 def render(result: SimResult, path: Path, *, tolerance_ms: float = 40.0, scale_ms: float = 400.0) -> None:
+    """Two panels. On top, thirty seconds from minute one at 20 ms a column:
+    the Pro's eight LEDs, the Dot as simulated, the Dot as it should be. A
+    drifting pair shears (the middle band's stripes slide against the
+    bottom band's); a locked pair's two bands are the same stripes. Below,
+    the phase error over the whole run, the red line the tolerance."""
     from review_effects import _png_bytes
 
     background = (18, 18, 22)
     rows: list[list[tuple[int, int, int]]] = []
+    width = len(result.columns)
 
     def band(frames: list, led: int, height: int) -> None:
         line = [frame[led] for frame in frames]
         rows.extend([list(line) for _ in range(height)])
 
-    pro_frames = [column[0] for column in result.columns]
-    dot_frames = [column[1] for column in result.columns]
-    expected_frames = [column[2] for column in result.columns]
-    width = len(result.columns)
-    spacer = [[background] * width for _ in range(4)]
+    def spacer(height: int = 4) -> None:
+        rows.extend([[background] * width for _ in range(height)])
+
     for led in range(8):
-        band(pro_frames, led, 3)
-    rows.extend([list(row) for row in spacer])
+        band([column[0] for column in result.columns], led, 4)
+    spacer(6)
     for led in range(2):
-        band(dot_frames, led, 10)
-    rows.extend([list(row) for row in spacer])
+        band([column[1] for column in result.columns], led, 14)
+    spacer(3)
     for led in range(2):
-        band(expected_frames, led, 10)
-    rows.extend([list(row) for row in spacer])
-    trace_height = 60
+        band([column[2] for column in result.columns], led, 14)
+    spacer(10)
+    trace_height = 70
     trace = [[(30, 30, 36)] * width for _ in range(trace_height)]
     tolerance_row = trace_height - 1 - int(round(min(1.0, tolerance_ms / scale_ms) * (trace_height - 1)))
+    per_column = max(1, len(result.errors) // max(1, width))
     for x in range(width):
-        trace[tolerance_row][x] = (190, 50, 50)
-        error = abs(result.columns[x][3])
+        chunk = result.errors[x * per_column : (x + 1) * per_column]
+        error = max((abs(value) for _t, value in chunk), default=0.0)
         height = int(round(min(1.0, error / scale_ms) * (trace_height - 1)))
         for y in range(trace_height - 1 - height, trace_height):
             trace[y][x] = (90, 200, 240) if error <= tolerance_ms else (240, 170, 60)
+        trace[tolerance_row][x] = (190, 50, 50)
     rows.extend(trace)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(_png_bytes(rows))
