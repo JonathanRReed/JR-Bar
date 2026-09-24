@@ -215,6 +215,10 @@ public enum AquariumStations {
     public static let seekHunger = 0.55
     /// The pace at a holding station once the fish has arrived.
     public static let holdEffort = 0.35
+    /// Inside this distance (unit space) of its station's point a fish
+    /// has arrived: it slows to a hover and noses at the point within its
+    /// own facing instead of circling it.
+    public static let arriveRadius = 0.06
 
     /// How hard the fish swims toward its station point. The ranging
     /// stations keep moving; the holding ones — current, chest, bench,
