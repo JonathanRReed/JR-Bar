@@ -51,7 +51,7 @@ extension AquariumView {
                     .union(reefDressing(in: size, top: { _ in size.height * 0.75 }, unitScale: 0.8,
                                         count: 9, seed: 89))
             }
-            paintTier(reef, canvas: &canvas, size: size, depth: 0.3, top: size.height * 0.66)
+            paintTier(reef, canvas: &canvas, size: size, depth: 0.5, top: size.height * 0.66)
         }
         // The horizon's haze, where the far bed and the water meet: a
         // luminous band, not a darkening.
@@ -101,7 +101,7 @@ extension AquariumView {
         let base = size.height * 0.9
         let body = tierBody(depth: depth)
         let crown = TankPaint.mix(body, water.light, 0.05 + 0.06 * depth)
-        let rim = TankPaint.mix(body, water.light, 0.08 + 0.16 * depth)
+        let rim = TankPaint.mix(body, water.light, 0.03 + 0.22 * depth)
         canvas.fill(shape, with: .color(TankPaint.color(rim)))
         var inner = canvas
         inner.clip(to: shape)
