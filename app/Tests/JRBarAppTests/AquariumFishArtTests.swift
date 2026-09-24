@@ -106,4 +106,45 @@ struct AquariumFishArtTests {
         }
         #expect(twoTanks == oneTank)
     }
+
+    @Test("with no head lead a fish draws its cached paths untouched")
+    func noLeadIsFree() {
+        for species in FishSpecies.allCases {
+            let art = CartoonFish.art(for: species)
+            let turned = CartoonFish.Pose(art: art, swim: CartoonFish.Swim(thin: 0.5, lead: 0))
+            #expect(!turned.moving && !turned.warps)
+            #expect(turned.body(art.body) == art.body)
+            #expect(CartoonFish.HeadLead(art: art, thin: 0.5, lead: 0) == nil)
+            #expect(turned.warpX(0.3) == 0.3)
+        }
+        // A lead does move the head.
+        let art = CartoonFish.art(for: .clownfish)
+        let leading = CartoonFish.Pose(art: art, swim: CartoonFish.Swim(thin: 0.5, lead: 0.3))
+        #expect(leading.warps && leading.moving)
+        #expect(leading.body(art.body) != art.body)
+        #expect(leading.headThin < 0.5, "the head is further round than the middle")
+    }
+
+    @Test("the head lead never folds a body back on itself")
+    func leadNeverFolds() {
+        for species in FishSpecies.allCases where species != .seahorse {
+            let art = CartoonFish.art(for: species)
+            let e = art.extent
+            for thin in stride(from: AquariumTurn.frontCut, through: 1.0, by: 0.05) {
+                for lead in stride(from: -0.5, through: 0.5, by: 0.05) {
+                    guard let warp = CartoonFish.HeadLead(art: art, thin: thin, lead: lead) else { continue }
+                    var last = -Double.infinity
+                    for k in 0...120 {
+                        let x = e.minX + (e.maxX - e.minX) * Double(k) / 120
+                        let warped = warp.x(x)
+                        #expect(warped > last, "\(species) folds at x \(x), thin \(thin), lead \(lead)")
+                        last = warped
+                    }
+                    // The middle of the body keeps the caller's squash.
+                    let mid = (art.tailRootX + art.eye.x) / 2
+                    #expect(abs(warp.x(mid) - mid) < 1e-9)
+                }
+            }
+        }
+    }
 }
