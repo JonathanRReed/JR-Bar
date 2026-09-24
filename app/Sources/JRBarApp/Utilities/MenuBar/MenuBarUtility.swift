@@ -1904,10 +1904,6 @@ final class MenuBarUtility: Toy {
     /// Every display's menu bar row, the main one first — a test hands
     /// its own.
     @ObservationIgnored var dragRows: (@MainActor () -> [CGRect])?
-    /// The note standing under the icon after a drop, if any — observed
-    /// so a card or a proof can read it.
-    var dropNote: MenuBarDropNote?
-    @ObservationIgnored var dropNoteTask: Task<Void, Never>?
     /// Where a drop's note is said — the Item Bar's glass under the icon
     /// by default; a test records it instead of standing a panel.
     @ObservationIgnored var presentDropNote: (@MainActor (String) -> Void)?

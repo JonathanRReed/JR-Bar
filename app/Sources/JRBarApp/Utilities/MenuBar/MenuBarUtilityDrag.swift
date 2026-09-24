@@ -285,17 +285,10 @@ extension MenuBarUtility {
     /// Say `note` under the icon for `MenuBarDragLearn.noteSeconds` — the
     /// Item Bar's glass, which already hangs there; no new window.
     func showDropNote(_ note: MenuBarDropNote) {
-        dropNote = note
         if let presentDropNote {
             presentDropNote(note.text)
         } else {
             bar.showNote(note.text, for: MenuBarDragLearn.noteSeconds)
-        }
-        dropNoteTask?.cancel()
-        dropNoteTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(MenuBarDragLearn.noteSeconds * 1e9))
-            guard !Task.isCancelled else { return }
-            self?.dropNote = nil
         }
     }
 

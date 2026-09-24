@@ -1101,9 +1101,6 @@ final class MenuBarBar {
         noteModel.note = nil
     }
 
-    /// Whether a note stands right now.
-    var noteShowing: Bool { notePanel != nil }
-
     // MARK: A tile dragged out
 
     /// Start the bar's own drag session for a tile — the tile's face under
