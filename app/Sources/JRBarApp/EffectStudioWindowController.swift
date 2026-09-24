@@ -16,6 +16,7 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
     func show(effect: String? = nil) {
         let window = self.window ?? makeWindow()
         self.window = window
+        attachContent(to: window)
         if let effect { store.selectedID = effect }
         store.windowDidOpen()
         NSRunningApplication.current.activate()
@@ -25,12 +26,22 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
 
     var isVisible: Bool { window?.isVisible ?? false }
 
+    /// The studio's SwiftUI graph lives only while the window is open
+    /// (`WindowContentLifecycle`); the selection lives in the store.
+    /// Internal for the lifecycle test.
+    @discardableResult
+    func attachContent(to window: NSWindow) -> NSViewController {
+        WindowContentLifecycle.attach(to: window, title: "Effect Studio", subtitle: "JR-Bar") {
+            WindowContentLifecycle.hosting(EffectStudioView(store: store))
+        }
+    }
+
     private func makeWindow() -> NSWindow {
-        let controller = NSHostingController(rootView: EffectStudioView(store: store))
-        let window = NSWindow(contentViewController: controller)
-        window.title = "Effect Studio"
-        window.subtitle = "JR-Bar"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1060, height: 680),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        attachContent(to: window)
         window.toolbarStyle = .unified
         window.setContentSize(NSSize(width: 1060, height: 680))
         window.minSize = NSSize(width: 900, height: 540)
@@ -46,12 +57,8 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let closing = notification.object as? NSWindow { WindowContentLifecycle.detach(from: closing) }
         store.windowDidClose()
-        DispatchQueue.main.async {
-            if NSApp.windows.allSatisfy({ !$0.isVisible || $0 is NSPanel }) {
-                NSApp.hide(nil)
-                NSApp.unhide(nil)
-            }
-        }
+        WindowContentLifecycle.retractWhenLastWindowCloses()
     }
 }

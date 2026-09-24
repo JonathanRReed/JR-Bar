@@ -24,6 +24,7 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
         }
         let window = self.window ?? makeWindow()
         self.window = window
+        attachContent(to: window)
         store.windowDidOpen()
         NSRunningApplication.current.activate()
         NSApp.activate()
@@ -36,12 +37,22 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
 
     var isVisible: Bool { window?.isVisible ?? false }
 
+    /// The Usage Center's SwiftUI graph lives only while the window is
+    /// open (`WindowContentLifecycle`); the range, metric and focus live
+    /// in the store. Internal for the lifecycle test.
+    @discardableResult
+    func attachContent(to window: NSWindow) -> NSViewController {
+        WindowContentLifecycle.attach(to: window, title: "Usage Center", subtitle: "JR-Bar") {
+            WindowContentLifecycle.hosting(UsageCenterView(store: store))
+        }
+    }
+
     private func makeWindow() -> NSWindow {
-        let controller = NSHostingController(rootView: UsageCenterView(store: store))
-        let window = NSWindow(contentViewController: controller)
-        window.title = "Usage Center"
-        window.subtitle = "JR-Bar"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 720),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        attachContent(to: window)
         window.toolbarStyle = .unified
         window.setContentSize(NSSize(width: 760, height: 720))
         window.minSize = NSSize(width: 640, height: 440)
@@ -60,12 +71,8 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let closing = notification.object as? NSWindow { WindowContentLifecycle.detach(from: closing) }
         store.windowDidClose()
-        DispatchQueue.main.async {
-            if NSApp.windows.allSatisfy({ !$0.isVisible || $0 is NSPanel }) {
-                NSApp.hide(nil)
-                NSApp.unhide(nil)
-            }
-        }
+        WindowContentLifecycle.retractWhenLastWindowCloses()
     }
 }

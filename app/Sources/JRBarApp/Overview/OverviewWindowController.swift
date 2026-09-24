@@ -25,6 +25,7 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window
+        attachContent(to: window)
         store.windowDidOpen()
         // An accessory app is never frontmost on its own; the window needs
         // the app active to draw as key. `activate(ignoringOtherApps:)` is
@@ -137,12 +138,22 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         if let window, window.isVisible, window.isKeyWindow { window.performClose(nil) } else { show() }
     }
 
+    /// The Overview's SwiftUI graph lives only while the window is open
+    /// (`WindowContentLifecycle`); the preset, search and selection live
+    /// in the store. Internal for the lifecycle test.
+    @discardableResult
+    func attachContent(to window: NSWindow) -> NSViewController {
+        WindowContentLifecycle.attach(to: window, title: "Overview", subtitle: "JR-Bar") {
+            WindowContentLifecycle.hosting(OverviewView(store: store))
+        }
+    }
+
     private func makeWindow() -> NSWindow {
-        let controller = NSHostingController(rootView: OverviewView(store: store))
-        let window = NSWindow(contentViewController: controller)
-        window.title = "Overview"
-        window.subtitle = "JR-Bar"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        attachContent(to: window)
         window.toolbarStyle = .unified
         window.titlebarAppearsTransparent = false
         window.setContentSize(NSSize(width: 960, height: 540))
@@ -156,6 +167,7 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let closing = notification.object as? NSWindow { WindowContentLifecycle.detach(from: closing) }
         // A local monitor outlives its window; remove it with the window
         // and let show() install a fresh one next time.
         if let keyMonitor {

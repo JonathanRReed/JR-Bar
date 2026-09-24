@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import JRBarCore
 import Testing
 @testable import JRBarApp
 
@@ -79,5 +80,85 @@ struct WindowContentLifecycleTests {
     @Test func theHostingControllerLeavesTheLimitsToTheWindow() {
         let hosting = WindowContentLifecycle.hosting(Text("x"))
         #expect(hosting.sizingOptions == [])
+    }
+
+    // MARK: Every titled window
+
+    /// Attaches a controller's content to a plain window, lays it out so
+    /// the SwiftUI graph is really built, closes it through the
+    /// controller's own delegate method, and checks the graph went.
+    private func expectCloseReleasesContent(
+        of delegate: NSWindowDelegate, window: NSWindow = window(),
+        attach: (NSWindow) -> NSViewController,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async {
+        weak var host: NSViewController?
+        weak var view: NSView?
+        autoreleasepool {
+            let attached = attach(window)
+            attached.view.layoutSubtreeIfNeeded()
+            host = attached
+            view = attached.view
+            #expect(window.contentViewController === attached, sourceLocation: sourceLocation)
+        }
+        autoreleasepool {
+            delegate.windowWillClose?(Notification(name: NSWindow.willCloseNotification, object: window))
+        }
+        for _ in 0..<3 { await Task.yield() }
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(window.contentViewController == nil, sourceLocation: sourceLocation)
+        #expect(host == nil, "a closed window must not keep its SwiftUI graph", sourceLocation: sourceLocation)
+        #expect(view == nil, "the hosting view goes with its controller", sourceLocation: sourceLocation)
+    }
+
+    @Test func effectStudioDropsItsGraphOnClose() async {
+        let store = EffectStudioStore(core: CoreModel())
+        store.search = "aurora"
+        let controller = EffectStudioWindowController(store: store)
+        await expectCloseReleasesContent(of: controller) { controller.attachContent(to: $0) }
+        #expect(store.search == "aurora")
+    }
+
+    @Test func controlCenterDropsItsGraphOnClose() async {
+        let store = DeckStore(core: CoreModel())
+        store.applyAuxiliary = true
+        let controller = ControlCenterWindowController(store: store)
+        await expectCloseReleasesContent(of: controller) { controller.attachContent(to: $0) }
+        #expect(store.applyAuxiliary)
+        #expect(!store.isWindowOpen)
+    }
+
+    @Test func historyDropsItsGraphOnClose() async {
+        let store = HistoryStore(core: CoreModel())
+        store.mode = .events
+        let controller = HistoryWindowController(store: store)
+        await expectCloseReleasesContent(of: controller) { controller.attachContent(to: $0) }
+        #expect(store.mode == .events)
+    }
+
+    @Test func usageCenterDropsItsGraphOnClose() async {
+        let store = UsageCenterStore(core: CoreModel())
+        store.focusProvider = "codex"
+        let controller = UsageCenterWindowController(store: store)
+        await expectCloseReleasesContent(of: controller) { controller.attachContent(to: $0) }
+        #expect(store.focusProvider == "codex")
+    }
+
+    @Test func overviewDropsItsGraphOnClose() async {
+        let store = OverviewStore(core: CoreModel())
+        store.search = "ship"
+        let controller = OverviewWindowController(store: store)
+        await expectCloseReleasesContent(of: controller) { controller.attachContent(to: $0) }
+        #expect(store.search == "ship")
+    }
+
+    @Test func setupDropsItsGlassCardOnClose() async {
+        let store = SetupStore(model: SetupModel(), load: { SetupState() }, persist: { _ in })
+        store.jump(to: .agents)
+        let controller = SetupWindowController(store: store)
+        await expectCloseReleasesContent(of: controller, window: Self.window(resizable: false)) {
+            controller.attachContent(to: $0)
+        }
+        #expect(store.step == .agents)
     }
 }
