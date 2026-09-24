@@ -28,7 +28,8 @@
 # dist/JR-Bar-<version>.pkg (installed for this user with `installer
 # -target CurrentUserHomeDirectory`, no password) or a JR-Bar.app (copied);
 # the default is the PKG when it exists, else build/macos-pkg/app/JR-Bar.app.
-# Either way the app lands in ~/Applications/JR-Bar.app; the /Applications
+# Either way the app lands in ~/Applications/JR-Bar.app, registered with
+# Launch Services so jrbar:// links open that copy; the /Applications
 # install is `sudo installer -pkg dist/JR-Bar-<version>.pkg -target /`.
 #
 # Re-run after every commit you want running. To stop the dev layout:
@@ -51,6 +52,7 @@ OLD_LABEL="com.jonathanreed.jrbar.app"
 AGENTS="$HOME/Library/LaunchAgents"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/jrbar"
 DOMAIN="gui/$(id -u)"
+LSREGISTER="${LSREGISTER_TOOL:-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister}"
 COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 DIRTY="$(git -C "$ROOT" status --porcelain 2>/dev/null | grep -q . && echo '-dirty' || true)"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$ROOT/pyproject.toml" | head -1)"
@@ -64,7 +66,7 @@ while [[ $# -gt 0 ]]; do
             if [[ $# -gt 1 && "$2" != --* ]]; then PKG_SOURCE="$2"; shift; fi
             ;;
         -h|--help)
-            sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -148,6 +150,15 @@ if [[ "$MODE" == "pkg" ]]; then
     [[ -x "$APP/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core" ]] || { echo "$APP carries no bundled daemon" >&2; exit 1; }
     codesign --verify --deep --strict "$APP" && echo "codesign verify: ok"
     echo "installed $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist") ($(/usr/libexec/PlistBuddy -c 'Print :JRBarCommit' "$APP/Contents/Info.plist" 2>/dev/null || echo 'no commit'))"
+    # jrbar:// links open whichever copy Launch Services picks: make it
+    # this one. The package build unregisters its own intermediates.
+    if [[ -x "$LSREGISTER" ]]; then
+        if "$LSREGISTER" -f "$APP" >/dev/null 2>&1; then
+            echo "==> registered $APP with Launch Services"
+        else
+            echo "lsregister could not register $APP; jrbar:// links may open another copy" >&2
+        fi
+    fi
 
     echo "==> launch at login: $(JRBAR_LOGIN_ITEM=on "$BINARY" 2>/dev/null || echo 'could not register')"
     echo "==> launching $APP"

@@ -834,6 +834,13 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "dirname", "head", "mkdir", "pwd", "python3", "rm", "sed", "uname", "security", "codesign", "xcrun",
     ):
         _write_executable(fake_bin / command_name, "#!/bin/sh\nexit 93\n")
+    # Launch Services: the live database is never touched; the double
+    # records what it was asked to forget.
+    lsregister = tmp_path / "lsregister"
+    _write_executable(
+        lsregister,
+        '#!/bin/sh\necho "lsregister $*" >> "$PACKAGE_TEST_EVENT_LOG"\n',
+    )
     build_root = tmp_path / "isolated-build"
     output_root = tmp_path / "isolated-output"
     environment = {
@@ -848,6 +855,7 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "SECURITY_TOOL": str(fake_bin / "security"),
         "CODESIGN_TOOL": str(fake_bin / "codesign"),
         "XCRUN_TOOL": str(fake_bin / "xcrun"),
+        "LSREGISTER_TOOL": str(lsregister),
         "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
         "PACKAGE_TEST_EVENT_LOG": str(event_log),
         "PACKAGE_TEST_BUILD_ROOT": str(build_root),
@@ -920,7 +928,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert (app / "Contents" / "Resources" / "ThirdPartyLicenses" / "Sparkle.txt").read_text() == "fixture license\n"
 
     # Build order: Sparkle (the app links it), app, shim, sign, three
-    # verifiers, archive, PKG.
+    # verifiers, archive, PKG, and last the build's own JR-Bar.app copies
+    # leave Launch Services, so a jrbar:// link can only reach the one in
+    # ~/Applications. They stay on disk.
     assert event_log.read_text().splitlines() == [
         "prepare_sparkle.py",
         "build-app.sh 0.5.0",
@@ -931,7 +941,10 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "verify_sparkle_bundle.py",
         "package_sparkle_archive.py",
         "package_macos_artifact.py",
+        f"lsregister -u {app}",
+        f"lsregister -u {build_root / 'swift' / 'JR-Bar.app'}",
     ]
+    assert (build_root / "swift" / "JR-Bar.app").is_dir()
     assert (output_root / "JR-Bar-0.5.0.pkg").is_file()
     assert (output_root / "JR-Bar-0.5.0.zip").is_file()
     assert not list(output_root.glob("*appcast*"))
@@ -939,6 +952,30 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert "not notarized" in result.stdout
     assert "appcast not signed: ALLOW_UNSIGNED is local-only." in result.stdout
     assert "JR-Bar 0.5.0 (build 1801, " in result.stdout
+
+    # The unregistering never fails a build: a missing lsregister is
+    # skipped with a note, and one that fails is ignored.
+    missing = dict(environment, LSREGISTER_TOOL=str(tmp_path / "no-lsregister"))
+    skipped = subprocess.run(
+        ["/bin/bash", str(packaging_dir / "build_macos_pkg.sh")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=missing,
+    )
+    assert skipped.returncode == 0, skipped.stderr
+    assert "copies stay registered" in skipped.stdout
+    failing = tmp_path / "failing-lsregister"
+    _write_executable(failing, "#!/bin/sh\necho refused >&2\nexit 1\n")
+    ignored = subprocess.run(
+        ["/bin/bash", str(packaging_dir / "build_macos_pkg.sh")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(environment, LSREGISTER_TOOL=str(failing)),
+    )
+    assert ignored.returncode == 0, ignored.stderr
+    assert "JR-Bar 0.5.0 (build 1801, " in ignored.stdout
 
     # No history to count and no override: the builder refuses rather than
     # stamp a build number that could sort behind a shipped one. A marketing
