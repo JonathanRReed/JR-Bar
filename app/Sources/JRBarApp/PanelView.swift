@@ -744,6 +744,10 @@ struct SessionRowView: View {
                     }
                     .font(.system(size: 11))
                 }
+                // The label column runs to the trailing column whatever the
+                // title's length, so every hairline's track is the same and
+                // one row's fraction reads against another's.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .overlay(alignment: .bottomLeading) {
                     // How full the run's context window is: a hairline under
                     // the words, below the text so nothing moves when it
