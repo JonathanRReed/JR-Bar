@@ -979,8 +979,15 @@ enum AppleDockReader {
     /// asking for a while instead of paying the wait on every open.
     @MainActor
     static func windowsReading(pid: pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool) {
+        windowsReading(pid: pid, stamp: nextStamp())
+    }
+
+    /// A fresh stamp for one app's rows — taken on main for a read that
+    /// runs elsewhere (the switcher's side-by-side reads).
+    @MainActor
+    static func nextStamp() -> Int {
         rowStamp &+= 1
-        return windowsReading(pid: pid, stamp: rowStamp << 20)
+        return rowStamp << 20
     }
 
     /// The read itself, callable off the main thread (`DockAXWorker`):
@@ -1676,6 +1683,7 @@ final class DockEnhanceController {
             self?.previewAction(action)
         }
         self.switcher.onFrontPreview = { [weak self] in self?.previewFrontApp() }
+        self.switcher.cachedBadges = { [weak self] in self?.freshBadges() }
         windowObserver.onChange = { [weak self] in self?.refreshLiveWindows() }
         liveStill.onFrame = { [weak self] windowID, image in
             guard let self, let row = self.preview.windows.firstIndex(where: { $0.windowID == windowID })
@@ -1988,6 +1996,14 @@ final class DockEnhanceController {
         let items = AppleDockReader.items(list: list.element)
         cachedItems = (list.frame, items, now)
         return items
+    }
+
+    /// The Dock's unread badges from the tile read the tick keeps, while
+    /// it is inside `itemsTTL` — the ⌥⇥ strip's cards take them without
+    /// a walk of their own. nil once the read has aged.
+    func freshBadges(now: TimeInterval = CACurrentMediaTime()) -> [String: String]? {
+        guard let cached = cachedItems, now - cached.at < Self.itemsTTL else { return nil }
+        return DockSwitcherList.badges(of: cached.items)
     }
 
     static let log = Logger(subsystem: "devin.jrbar", category: "dock")
