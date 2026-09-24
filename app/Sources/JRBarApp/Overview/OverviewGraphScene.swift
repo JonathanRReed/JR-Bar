@@ -196,27 +196,35 @@ private struct GraphPainter {
         case let (before?, now?): return (Self.mix(before, now, progress), 1)
         case let (nil, now?):
             let grow = 0.9 + 0.1 * progress
-            return (now.insetBy(dx: now.width * (1 - grow) / 2, dy: now.height * (1 - grow) / 2), progress)
-        case let (before?, nil): return (before, 1 - progress)
+            return (now.insetBy(dx: now.width * (1 - grow) / 2, dy: now.height * (1 - grow) / 2), arriving)
+        case let (before?, nil): return (before, leaving)
         case (nil, nil): return nil
         }
     }
+
+    /// How present something leaving is: gone by the settle's middle, so
+    /// a row it hands to an arrival never shows both sets of words.
+    var leaving: Double { max(0, 1 - progress / 0.45) }
+
+    /// How present an arrival is: it comes up once the leaver has mostly
+    /// gone.
+    var arriving: Double { min(1, max(0, (progress - 0.3) / 0.7)) }
 
     /// A hub's centre through the settle: one arriving fades up, one
     /// leaving fades out where it stood.
     func hubCenter(_ hub: Layout.Hub) -> (point: CGPoint, alpha: Double) {
         guard settling else { return (hub.center, 1) }
         let before = model.previous?.hubs.first { $0.id == hub.id }
-        guard model.layout.hubs.contains(where: { $0.id == hub.id }) else { return (hub.center, 1 - progress) }
-        guard let before else { return (hub.center, progress) }
+        guard model.layout.hubs.contains(where: { $0.id == hub.id }) else { return (hub.center, leaving) }
+        guard let before else { return (hub.center, arriving) }
         return (Self.mix(before.center, hub.center, progress), 1)
     }
 
     func clusterFrame(_ cluster: Layout.Cluster) -> (rect: CGRect, alpha: Double) {
         guard settling else { return (cluster.frame, 1) }
         let before = model.previous?.clusters.first { $0.id == cluster.id }
-        guard model.layout.clusters.contains(where: { $0.id == cluster.id }) else { return (cluster.frame, 1 - progress) }
-        guard let before else { return (cluster.frame, progress) }
+        guard model.layout.clusters.contains(where: { $0.id == cluster.id }) else { return (cluster.frame, leaving) }
+        guard let before else { return (cluster.frame, arriving) }
         return (Self.mix(before.frame, cluster.frame, progress), 1)
     }
 
