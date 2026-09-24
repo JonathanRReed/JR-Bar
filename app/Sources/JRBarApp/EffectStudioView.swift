@@ -19,6 +19,7 @@ struct EffectStudioView: View {
         }
         .frame(minWidth: 900, minHeight: 540)
         .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.ledPreviewsHeld, store.covered)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("Room", selection: $store.mode) {

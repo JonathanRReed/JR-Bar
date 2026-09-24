@@ -7,6 +7,7 @@ import SwiftUI
 final class EffectStudioWindowController: NSObject, NSWindowDelegate {
     private let store: EffectStudioStore
     private var window: NSWindow?
+    private var occlusionObserver: NSObjectProtocol?
 
     init(store: EffectStudioStore) {
         self.store = store
@@ -22,6 +23,15 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         NSRunningApplication.current.activate()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        noteOcclusion(of: window)
+    }
+
+    /// Occlusion covers every way the studio goes out of sight while open —
+    /// behind another window, minimised, on another Space — and the
+    /// ordering out at close. The store holds its previews and its clock
+    /// until some of the window shows again. Internal for the test.
+    func noteOcclusion(of window: NSWindow) {
+        store.covered = !window.occlusionState.contains(.visible)
     }
 
     var isVisible: Bool { window?.isVisible ?? false }
@@ -53,6 +63,14 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         let toolbar = NSToolbar(identifier: "effects-toolbar")
         toolbar.displayMode = .iconAndLabel
         window.toolbar = toolbar
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window, queue: .main) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let window else { return }
+                    self.noteOcclusion(of: window)
+                }
+            }
         return window
     }
 
