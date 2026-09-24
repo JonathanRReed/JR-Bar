@@ -4,6 +4,56 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.9 (unreleased)
 
+### Quality pass (2026-09-24)
+
+- The Overview's Graph is a living map of the fleet. Providers are
+  brand-coloured hubs down the middle, projects are clusters grouped by
+  repository, sessions are glass capsules with a line like "Working ·
+  42m · 40k · $0.22", and workers branch off the session that started
+  them. Working turns an arc, waiting on you breathes amber, failed is
+  red, done fades a green check over its first hour, and sparks run
+  along the lines of working sessions. Pan, pinch or ⌘-scroll to zoom,
+  ⌘= / ⌘− / ⌘0, a zoom-to-fit button; hover lights a node's neighbours
+  with a card, click inspects, double-click opens, arrow keys walk the
+  map and Return opens. A state change never moves a node. It animates
+  at 30 fps only while something works or waits and the window is
+  visible, and it never answers an agent.
+- The Aquarium is redrawn end to end. Every species has its own
+  silhouette and proportions, countershaded, lit from the surface, with
+  see-through fins that ripple, glossy eyes that carry the mood, tails
+  that beat with speed and a face that comes round in a wall turn; the
+  hats, accessories and all six pets match. The tank is layered depth
+  fading into haze, a sun with soft shafts, a moving net of light on the
+  sand, a warm rippled bed with contact shadows, slender kelp that frames
+  instead of hiding, and every decor piece, visitor and event lit as one
+  set. A full tank of 12 fish draws in about 2.5 ms a frame (3.0 before);
+  the light layers redraw at 12–20 fps and the still layers every two
+  seconds.
+- Settings, the Utilities and Toys pages and every card share one
+  system: a page header, five sidebar groups, one spacing scale, glyph
+  tiles, status pills, inset panels, keycaps for shortcuts, one
+  disclosure style, and switches in a trailing column.
+- The notch island's notices glow in their own colour and come into
+  focus as they slide down; volume and brightness are one continuous
+  bar; the expanded card leads with the track (glowing album art, drag
+  bars for progress and volume); the Shelf leads with weather, calendar
+  with Join, reminders and timer chips. The buddy gains a beanie, bow,
+  daisy and nightcap; confetti streamers curl and glint; the Fold card
+  opens on a live drawing of the lid.
+- Dock previews have rimmed, shadowed thumbnails on one baseline, a
+  provider ring on a window whose agent waits, and quiet header discs
+  that take their colour under the pointer. The ⌥⇥ switcher names the
+  window with its app icon and badge; the Item Bar shows an app's icon
+  instead of a question mark; the rebuilt timeline runs down a line with
+  a glyph per tool.
+- Windows share one set of cards, wells, empty states and a status
+  capsule. The panel's header opens with a state mark and ask cards show
+  the command in a code box; the Usage Center draws smooth stacked areas
+  and continuous gauges; History has a 14-day activity chart you can
+  hover and click to filter; the Overview inspector has a provider tile,
+  state pill and the ask in an amber box.
+- What's New leads with the Graph and the Aquarium.
+
 ### Overnight pass (2026-09-24)
 
 - ⌘⇧K opens again. The palette panel asked AppKit for two Space

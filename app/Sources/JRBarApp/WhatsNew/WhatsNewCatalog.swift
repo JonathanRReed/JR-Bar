@@ -36,7 +36,7 @@ enum WhatsNewCatalog {
     static let releaseID = "2026-09-24"
 
     /// The header's one line.
-    static let headline = "Faster, quieter, and ⌘⇧K works now."
+    static let headline = "A map of your agents, a new Aquarium, and ⌘⇧K works."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
@@ -48,6 +48,16 @@ enum WhatsNewCatalog {
             detail: "The command palette opens from any app, and its key keeps working after you run a verb.",
             tryIt: .menuBar(.commandBar), opens: "Opens the command palette"),
         WhatsNewEntry(
+            id: "graph", symbol: "point.3.connected.trianglepath.dotted",
+            title: "The Overview draws a map",
+            detail: "Every agent, its workers and whatever waits on you, as a living graph you can pan and zoom.",
+            tryIt: .window(.overview), opens: "Opens the Overview; the Graph is in its sidebar"),
+        WhatsNewEntry(
+            id: "aquarium", symbol: "fish",
+            title: "A brand-new Aquarium",
+            detail: "Every fish, pet and piece of the tank is redrawn, lit from the surface with real depth.",
+            tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Aquarium card is"),
+        WhatsNewEntry(
             id: "open", symbol: "arrow.up.forward.app",
             title: "Open lands on the session",
             detail: "A click aims for the session's own conversation, and Claude in Ghostty raises its pane.",
@@ -57,11 +67,6 @@ enum WhatsNewCatalog {
             title: "Approve never waits",
             detail: "Answers go ahead of long usage scans, and a held ask shows its 45-second window as a ring.",
             tryIt: .panel(toggle: false), opens: "Opens the panel, where asks wait for your click"),
-        WhatsNewEntry(
-            id: "focus", symbol: "moon.circle",
-            title: "Follow Focus works",
-            detail: "Turn on a Focus and JR-Bar quiets the way your Follow Focus setting says.",
-            tryIt: .settings(page: "notifications"), opens: "Opens Settings › Notifications & Focus"),
         WhatsNewEntry(
             id: "usage", symbol: "chart.bar.xaxis",
             title: "Usage in a second",
@@ -76,11 +81,6 @@ enum WhatsNewCatalog {
             title: "Lyrics are opt-in",
             detail: "Synced lyrics come from LRCLIB on the internet, so they wait for your click now.",
             tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Notch card's lyrics switch is"),
-        WhatsNewEntry(
-            id: "shelf", symbol: "tray.full",
-            title: "The Shelf and the switcher",
-            detail: "A Remind Me reminder links back to its session, and the ⌥⇥ switcher opens faster.",
-            tryIt: .shelf, opens: "Opens the Shelf under the notch", keys: "⌥⇥"),
     ]
 }
 
