@@ -203,9 +203,12 @@ public enum ScreenBarGeometry {
     /// there.
     public static func preferredScreen() -> NSScreen? {
         let screens = NSScreen.screens
+        // The built-in check only matters when no screen has a notch.
+        let anyNotch = screens.contains { $0.safeAreaInsets.top > 0 }
         let candidates = screens.map { screen in
-            ScreenCandidate(id: displayID(of: screen), notched: screen.safeAreaInsets.top > 0,
-                            builtIn: CGDisplayIsBuiltin(displayID(of: screen)) != 0)
+            let id = displayID(of: screen)
+            return ScreenCandidate(id: id, notched: screen.safeAreaInsets.top > 0,
+                                   builtIn: !anyNotch && CGDisplayIsBuiltin(id) != 0)
         }
         return preferredIndex(in: candidates, pick: displayPick, seat: pointerSeat).map { screens[$0] }
     }
