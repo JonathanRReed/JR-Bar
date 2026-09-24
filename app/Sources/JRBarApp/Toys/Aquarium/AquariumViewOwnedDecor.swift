@@ -899,62 +899,115 @@ extension AquariumView {
     }
 
     /// The idle game's collectables (docs/TOYS.md): a full-grown fish
-    /// sheds a pearl now and then; it rests on the sand under where
-    /// the fish was, softly pulsing until tapped or the snail reaches
-    /// it. Each drop's hitbox goes into `motion.dropBoxes` — the tap
-    /// gesture collects through `toy.collectDrop`, which is the only
-    /// mutation; the drawing itself is inert.
+    /// sheds a pearl now and then. It falls from where the fish was
+    /// when the tank first saw it — 1.4 s, easing out with a little
+    /// side wobble — and rests on the sand at that spot for good,
+    /// softly pulsing until tapped or the snail reaches it. A drop the
+    /// tank finds already old (a relaunch) just rests. Each drop's
+    /// hitbox goes into `motion.dropBoxes` — the tap gesture collects
+    /// through `toy.collectDrop`, which is the only mutation; the
+    /// drawing itself is inert.
     func drawDrops(canvas: inout GraphicsContext, size: CGSize, t: Double,
                    layouts: [String: Layout]) {
         guard let game else { return }
         let m = motion
         m.dropBoxes.removeAll(keepingCapacity: true)
-        for drop in game.drops {
-            // Anchor near the minting fish's x if it's still in the
-            // tank; otherwise a stable per-drop spot along the bed.
-            let unitX: Double
-            if let l = layouts[drop.fishID] {
-                unitX = l.x / size.width
-            } else {
-                let h = AquariumModel.stableHash("drop-\(drop.id)")
-                unitX = 0.12 + 0.76 * Double(h & 0xFFFF) / 0xFFFF
-            }
-            let x = min(size.width - 16, max(16, unitX * size.width))
-            let y = sandTop(atX: x, in: size) - 5
-            let pulse = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(t * 2.2 + Double(drop.at.truncatingRemainder(dividingBy: 6)))
-            let r = 5.0 + pulse * 1.0
-            contactShadow(canvas: &canvas, x: x, y: y + r * 0.9, halfW: r * 0.9, alpha: 0.30)
-            // A warm halo under the pearl so it reads as a pick-up.
-            var halo = canvas
-            halo.blendMode = .plusLighter
-            halo.fill(Path(ellipseIn: CGRect(x: x - r * 2.6, y: y - r * 2.6,
-                                             width: r * 5.2, height: r * 5.2)),
-                      with: .radialGradient(
-                        Gradient(colors: [Color(red: 1, green: 0.94, blue: 0.76).opacity(0.24 + 0.14 * pulse),
-                                          .clear]),
-                        center: CGPoint(x: x, y: y), startRadius: 0, endRadius: r * 2.6))
-            let pearl = Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
-            canvas.fill(pearl, with: .radialGradient(
-                Gradient(stops: [
-                    .init(color: .white, location: 0),
-                    .init(color: Color(red: 0.97, green: 0.93, blue: 0.86), location: 0.45),
-                    .init(color: Color(red: 0.86, green: 0.80, blue: 0.84), location: 0.8),
-                    .init(color: Color(red: 0.62, green: 0.56, blue: 0.54), location: 1),
-                ]),
-                center: CGPoint(x: x - r * 0.3, y: y - r * 0.35),
-                startRadius: 0, endRadius: r * 1.2))
-            // Nacre: a faint rose-and-sea sheen across the lower half.
-            var nacre = canvas
-            nacre.clip(to: pearl)
-            nacre.fill(Path(ellipseIn: CGRect(x: x - r * 0.9, y: y, width: r * 1.8, height: r)),
-                       with: .linearGradient(
-                           Gradient(colors: [Color(red: 1.0, green: 0.78, blue: 0.86).opacity(0.25),
-                                             Color(red: 0.70, green: 0.90, blue: 1.0).opacity(0.25)]),
-                           startPoint: CGPoint(x: x - r, y: y), endPoint: CGPoint(x: x + r, y: y)))
-            canvas.fill(Path(ellipseIn: CGRect(x: x - r * 0.55, y: y - r * 0.62, width: r * 0.5, height: r * 0.34)),
-                        with: .color(.white.opacity(0.9)))
-            m.dropBoxes.append((drop.id, CGRect(x: x - 16, y: y - 16, width: 32, height: 32)))
+        if m.dropSpots.count > game.drops.count {
+            let live = Set(game.drops.map(\.id))
+            m.dropSpots = m.dropSpots.filter { live.contains($0.key) }
         }
+        for drop in game.drops {
+            let at = dropPoint(drop, size: size, t: t, layouts: layouts)
+            let pulse = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(t * 2.2 + Double(drop.at.truncatingRemainder(dividingBy: 6)))
+            drawPearl(canvas: &canvas, at: at.point, pulse: pulse, resting: at.fall >= 1)
+            m.dropBoxes.append((drop.id, CGRect(x: at.point.x - 16, y: at.point.y - 16,
+                                                width: 32, height: 32)))
+        }
+    }
+
+    /// How long a fresh drop takes to reach the sand.
+    static let dropFallSeconds = 1.4
+
+    /// Where a drop rests on the sand: pinned the first time the tank
+    /// sees it, never re-read from its fish.
+    func dropRest(_ drop: PearlDrop, size: CGSize, layouts: [String: Layout],
+                  t: Double) -> CGPoint {
+        let spot = dropSpot(drop, size: size, layouts: layouts, t: t)
+        let x = min(size.width - 16, max(16, spot.x * size.width))
+        return CGPoint(x: x, y: sandTop(atX: x, in: size) - 5)
+    }
+
+    /// The drop this frame: where it is and how far through its fall
+    /// (1 resting).
+    func dropPoint(_ drop: PearlDrop, size: CGSize, t: Double,
+                   layouts: [String: Layout]) -> (point: CGPoint, fall: Double) {
+        let spot = dropSpot(drop, size: size, layouts: layouts, t: t)
+        let rest = dropRest(drop, size: size, layouts: layouts, t: t)
+        guard let fromY = spot.fromY else { return (rest, 1) }
+        let p = clamp01((t - spot.seenAt) / Self.dropFallSeconds)
+        guard p < 1 else { return (rest, 1) }
+        let eased = 1 - (1 - p) * (1 - p) * (1 - p)
+        let startY = min(rest.y, fromY * size.height)
+        let y = startY + (rest.y - startY) * eased
+        let wobble = sin(p * .pi * 3) * 5 * (1 - p)
+        return (CGPoint(x: rest.x + wobble, y: y), p)
+    }
+
+    /// The pinned spot, taken the first frame a drop id shows up: its
+    /// fish's x and y if the fish is in the tank, else a steady hashed
+    /// spot along the bed. Only a fresh drop falls.
+    private func dropSpot(_ drop: PearlDrop, size: CGSize, layouts: [String: Layout],
+                          t: Double) -> (x: Double, fromY: Double?, seenAt: Double) {
+        if let spot = motion.dropSpots[drop.id] { return spot }
+        let fresh = t - drop.at < 25 && !reduceMotion
+        let spot: (x: Double, fromY: Double?, seenAt: Double)
+        if let l = layouts[drop.fishID], size.width > 0, size.height > 0 {
+            spot = (l.x / size.width, fresh ? l.y / size.height : nil, t)
+        } else {
+            let h = AquariumModel.stableHash("drop-\(drop.id)")
+            spot = (0.12 + 0.76 * Double(h & 0xFFFF) / 0xFFFF, nil, t)
+        }
+        motion.dropSpots[drop.id] = spot
+        return spot
+    }
+
+    /// One pearl at `p`: a warm halo so it reads as a pick-up, the
+    /// nacre and a highlight, and a contact shadow once it rests.
+    private func drawPearl(canvas: inout GraphicsContext, at p: CGPoint, pulse: Double,
+                           resting: Bool) {
+        let x = p.x, y = p.y
+        let r = 5.0 + pulse * 1.0
+        if resting {
+            contactShadow(canvas: &canvas, x: x, y: y + r * 0.9, halfW: r * 0.9, alpha: 0.30)
+        }
+        var halo = canvas
+        halo.blendMode = .plusLighter
+        halo.fill(Path(ellipseIn: CGRect(x: x - r * 2.6, y: y - r * 2.6,
+                                         width: r * 5.2, height: r * 5.2)),
+                  with: .radialGradient(
+                    Gradient(colors: [Color(red: 1, green: 0.94, blue: 0.76).opacity(0.24 + 0.14 * pulse),
+                                      .clear]),
+                    center: CGPoint(x: x, y: y), startRadius: 0, endRadius: r * 2.6))
+        let pearl = Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+        canvas.fill(pearl, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: .white, location: 0),
+                .init(color: Color(red: 0.97, green: 0.93, blue: 0.86), location: 0.45),
+                .init(color: Color(red: 0.86, green: 0.80, blue: 0.84), location: 0.8),
+                .init(color: Color(red: 0.62, green: 0.56, blue: 0.54), location: 1),
+            ]),
+            center: CGPoint(x: x - r * 0.3, y: y - r * 0.35),
+            startRadius: 0, endRadius: r * 1.2))
+        // Nacre: a faint rose-and-sea sheen across the lower half.
+        var nacre = canvas
+        nacre.clip(to: pearl)
+        nacre.fill(Path(ellipseIn: CGRect(x: x - r * 0.9, y: y, width: r * 1.8, height: r)),
+                   with: .linearGradient(
+                       Gradient(colors: [Color(red: 1.0, green: 0.78, blue: 0.86).opacity(0.25),
+                                         Color(red: 0.70, green: 0.90, blue: 1.0).opacity(0.25)]),
+                       startPoint: CGPoint(x: x - r, y: y), endPoint: CGPoint(x: x + r, y: y)))
+        canvas.fill(Path(ellipseIn: CGRect(x: x - r * 0.55, y: y - r * 0.62, width: r * 0.5, height: r * 0.34)),
+                    with: .color(.white.opacity(0.9)))
     }
 
     /// The tank's silent "bloop": an eaten pellet, a collected drop or

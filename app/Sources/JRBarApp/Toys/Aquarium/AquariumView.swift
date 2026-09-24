@@ -588,6 +588,10 @@ struct AquariumView: View {
         /// Which fish are at their station this frame — the cue pass
         /// only draws a fish's work where it is actually doing it.
         var stationed: [String: TankStation] = [:]
+        /// Where each pearl drop was first seen, in unit space, and when:
+        /// it falls from there to the sand and rests at that x for good,
+        /// however its fish swims on. `fromY` nil rests at once.
+        var dropSpots: [String: (x: Double, fromY: Double?, seenAt: Double)] = [:]
     }
 
     /// A game event a draw pass produced — recorded, not applied.

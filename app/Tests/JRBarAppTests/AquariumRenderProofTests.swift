@@ -298,6 +298,51 @@ struct AquariumRenderProofTests {
         #expect(written == shots.count + 10)
     }
 
+    // MARK: Pearls that stay put
+
+    /// Draws one drops pass at `time` and returns the first drop's box.
+    private static func dropBox(_ tank: AquariumView, layouts: [String: AquariumView.Layout],
+                                at time: Double) -> CGRect? {
+        let renderer = ImageRenderer(content: Canvas { canvas, size in
+            tank.drawDrops(canvas: &canvas, size: size, t: time, layouts: layouts)
+        }.frame(width: 900, height: 520))
+        renderer.scale = 1
+        _ = renderer.cgImage
+        return tank.motion.dropBoxes.first?.rect
+    }
+
+    @Test("a pearl falls from its fish and its resting spot doesn't move when the fish swims away")
+    func dropRestsWhereItFell() throws {
+        var fixture = Self.fixture(themeID: "classic", substrateID: "classic",
+                                   backdropID: "classic", night: 0, visitor: nil)
+        let t = Date().timeIntervalSince1970
+        fixture.game?.drops = [PearlDrop(id: "d1", fishID: "f-dressed", at: t, value: 1)]
+        let tank = AquariumView(fixture: fixture)
+        let first = try #require(Self.dropBox(tank, layouts: ["f-dressed": .init(x: 300, y: 200)], at: t))
+        let landed = try #require(Self.dropBox(tank, layouts: ["f-dressed": .init(x: 700, y: 150)],
+                                               at: t + 2))
+        let later = try #require(Self.dropBox(tank, layouts: [:], at: t + 30))
+        #expect(abs(first.midX - 300) < 1, "it starts under its fish")
+        #expect(first.midY < landed.midY - 50, "a fresh drop falls to the sand")
+        #expect(abs(landed.midX - 300) < 1, "it rests where it fell, not under the fish's new spot")
+        #expect(landed.midX == later.midX, "its fish leaving doesn't move it either")
+        #expect(landed.midY == later.midY)
+    }
+
+    @Test("a drop the tank finds already old rests at once")
+    func oldDropRests() throws {
+        var fixture = Self.fixture(themeID: "classic", substrateID: "classic",
+                                   backdropID: "classic", night: 0, visitor: nil)
+        let t = Date().timeIntervalSince1970
+        fixture.game?.drops = [PearlDrop(id: "d1", fishID: "f-dressed", at: t - 600, value: 1)]
+        let tank = AquariumView(fixture: fixture)
+        let first = try #require(Self.dropBox(tank, layouts: ["f-dressed": .init(x: 300, y: 200)], at: t))
+        let next = try #require(Self.dropBox(tank, layouts: ["f-dressed": .init(x: 300, y: 200)],
+                                             at: t + 0.5))
+        #expect(first == next)
+        #expect(first.midY > 400, "on the sand, not up with its fish")
+    }
+
     /// A patch of the classic tank with every tap event caught mid-way,
     /// each drawn by the pass the live canvas uses.
     private static func tapEvents() -> some View {
