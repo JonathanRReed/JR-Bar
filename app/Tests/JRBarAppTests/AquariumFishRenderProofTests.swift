@@ -280,4 +280,68 @@ struct AquariumFishRenderProofTests {
         }
         try Self.write(marks, "fish-marks", scale: 3)
     }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write fish proof PNGs"))
+    func tankCast() throws {
+        // The real tank's fish pass, posed by hand: a dressed working
+        // fish, one asking at the glass under its buoy with the hover
+        // tag up, a golden one, a hungry one holding a pearl, a sinking
+        // one, a crowned resident and a worker's fry.
+        let now = Date()
+        func fish(_ id: String, _ provider: String, _ species: FishSpecies, _ state: FishState,
+                  label: String) -> Fish {
+            Fish(id: id, label: label, providerID: provider, state: state, lane: 0.2, speed: 0.1,
+                 direction: 1, stateSince: now, enteredAt: .distantPast, species: species)
+        }
+        let golden = (0..<500).map { "gold-\($0)" }
+            .first { AquariumBehavior.isGolden(seed: AquariumModel.stableHash($0)) } ?? "gold-0"
+        var asking = fish("ask", "codex", .shark, .surfacing, label: "needs-approval")
+        asking.plan = FishPlan(state: .surfacing, action: .attentiveHover, overlay: .attentionBuoy,
+                               parallelMarkers: 0, evidence: "ask")
+        var hungry = fish("hungry", "gemini", .angelfish, .idling, label: "long-think")
+        hungry.plan = FishPlan(state: .idling, action: .idleRest, overlay: .pearl,
+                               parallelMarkers: 0, evidence: "done")
+        var resident = fish("r-nemo", "antigravity", .puffer, .idling, label: "Nemo")
+        resident.isResident = true
+        var fry = fish("fry", "claude", .clownfish, .swimming, label: "worker")
+        fry.isFry = true
+        fry.anchorID = "dressed"
+        let cast = [fish("dressed", "claude", .clownfish, .swimming, label: "review-patch"), asking,
+                    fish(golden, "opencode", .betta, .swimming, label: "golden"), hungry,
+                    fish("sunk", "devin", .tang, .sinking, label: "failed-run"), resident, fry]
+        let game = AquariumGame(
+            pets: ["dressed": FishCare(stage: 2, feedings: 9),
+                   "hungry": FishCare(stage: 1, starvingAt: 1),
+                   "r-nemo": FishCare(stage: 2, feedings: 30),
+                   golden: FishCare(stage: 2)],
+            hats: ["dressed": ShopItem.hatParty.rawValue],
+            streakDays: 7,
+            accessories: ["dressed": ShopItem.sunglasses.rawValue])
+        let tank = AquariumView(fixture: AquariumView.Fixture(fish: cast, game: game, night: 0))
+        let view = Self.sheet(width: 1000, height: 320) { c, size in
+            let spots: [(Double, Double, Double)] = [(90, 150, 1), (240, 120, -1), (390, 160, 1),
+                                                     (540, 150, -1), (690, 190, 1), (840, 150, -1),
+                                                     (150, 250, 1)]
+            var layouts: [String: AquariumView.Layout] = [:]
+            for (f, spot) in zip(cast, spots) {
+                var l = AquariumView.Layout()
+                l.x = spot.0
+                l.y = spot.1
+                l.facing = spot.2
+                l.scale = 1
+                l.wag = f.state == .swimming ? 1.25 : 0.4
+                if f.state == .sinking { l.pitch = 0.5 }
+                if f.state == .surfacing { l.tapRing = 0.35 }
+                layouts[f.id] = l
+                let parent = f.isFry ? layouts["dressed"].map { (cast[0], $0) } : nil
+                tank.drawFish(canvas: &c, size: size, t: 10, now: now, fish: f, layout: l,
+                              parent: parent, showLabels: f.id != "ask")
+            }
+            if let l = layouts["ask"] {
+                tank.drawNameplate(canvas: &c, size: size, fish: asking, layout: l)
+            }
+        }
+        try Self.write(view, "fish-tank-cast")
+    }
 }

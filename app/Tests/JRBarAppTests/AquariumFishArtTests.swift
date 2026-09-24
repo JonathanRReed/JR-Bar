@@ -41,9 +41,9 @@ struct AquariumFishArtTests {
     @Test("a still fish draws its cached paths untouched")
     func stillPoseIsFree() {
         let art = CartoonFish.art(for: .clownfish)
-        let still = CartoonFish.Pose(art: art, swim: .still)
-        #expect(!still.moving)
-        #expect(still.body(art.body) == art.body)
+        let resting = CartoonFish.Pose(art: art, swim: .still)
+        #expect(!resting.moving)
+        #expect(resting.body(art.body) == art.body)
         let swimming = CartoonFish.Pose(art: art, swim: CartoonFish.Swim(phase: 1, amplitude: 0.25))
         #expect(swimming.moving)
         #expect(swimming.body(art.body) != art.body)

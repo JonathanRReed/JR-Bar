@@ -192,7 +192,11 @@ extension AquariumView {
     /// labels are off.
     func drawNameplate(canvas: inout GraphicsContext, size: CGSize,
                                fish: Fish, layout l: Layout) {
-        let above = drawnSize(of: fish, layout: l).above
+        let drawn = drawnSize(of: fish, layout: l)
+        // A fish flying an overlay mark keeps it in view: the tag
+        // rides above the mark instead of over it.
+        let mark = fish.plan?.overlay != nil && !fish.isFry
+            ? max(3.4, drawn.length * 0.10) * 2 + 6 : 0
         let tag = canvas
         let resolved: GraphicsContext.ResolvedText
         let textSize: CGSize
@@ -200,7 +204,7 @@ extension AquariumView {
         let dot = 6.0
         let width = textSize.width + dot + 22
         let cx = min(max(l.x, width / 2 + 14), size.width - width / 2 - 14)
-        let cy = max(l.y - above - 14, 16)
+        let cy = max(l.y - max(drawn.above, drawn.below) - 14 - mark, 16)
         let rect = CGRect(x: cx - width / 2, y: cy - textSize.height / 2 - 4,
                           width: width, height: textSize.height + 8)
         let pill = Path(roundedRect: rect, cornerRadius: rect.height / 2)
