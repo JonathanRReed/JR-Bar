@@ -68,6 +68,8 @@ final class MenuBarReveal {
     /// pointer, or a real clock.
     var row: @MainActor () -> NSRect? = { MenuBarReveal.currentMenuBarRow() }
     var mouseLocation: @MainActor () -> NSPoint = { NSEvent.mouseLocation }
+    /// The dwell's clock — a test steers it.
+    var now: @MainActor () -> Date = { Date() }
     /// The rehide clock; returns a cancel for the armed fire. Tests
     /// inject a manual clock.
     var scheduleRehide: @MainActor (TimeInterval, @escaping @MainActor () -> Void) -> () -> Void = { seconds, fire in
@@ -151,9 +153,11 @@ final class MenuBarReveal {
             MainActor.assumeIsolated { self?.refreshRowCache() }
         }
         // One tap, one mask: every additional global monitor is another
-        // event stream the TCC service gets pinged for.
+        // event stream the TCC service gets pinged for. Mouse-ups are
+        // discrete like the downs — they end a ⌘-drag when the click
+        // bridge's tap is down — so they bring back no flood.
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .scrollWheel],
+            matching: [.leftMouseDown, .leftMouseUp, .scrollWheel],
             handler: { [weak self] event in self?.noteGlobalEvent(event) })
         watchFocus()
         watchPresence()
@@ -333,6 +337,16 @@ final class MenuBarReveal {
     /// never pays a main-actor hop.
     nonisolated private func noteGlobalEvent(_ event: NSEvent) {
         let point = NSEvent.mouseLocation
+        let flags = event.modifierFlags
+        if event.type == .leftMouseUp {
+            Task { @MainActor [weak self] in self?.onPointerUp(point, flags) }
+            return
+        }
+        // A ⌘-press is a drag's start: reported, and never a reveal click.
+        let command = event.type == .leftMouseDown && flags.contains(.command)
+        if command {
+            Task { @MainActor [weak self] in self?.onCommandDown(point, flags) }
+        }
         gate.lock.lock()
         let inside = gate.row.contains(point)
         gate.lock.unlock()
@@ -347,6 +361,7 @@ final class MenuBarReveal {
         }
         switch event.type {
         case .leftMouseDown:
+            guard !command else { return }
             Task { @MainActor [weak self] in self?.pointerDown(at: point) }
         case .scrollWheel:
             Task { @MainActor [weak self] in self?.scrolled() }
@@ -369,6 +384,14 @@ final class MenuBarReveal {
         let inZone = ((revealZone() ?? row() ?? .zero).contains(point)
             && !itemFrames().contains(where: { $0.contains(point) }))
             || hotFrames().contains(where: { $0.contains(point) })
+        if suppressed() {
+            // A drag in flight or a held button: presence is tracked, so
+            // the pointer still resting where the drop landed is not an
+            // entry once it lifts; a fresh entry waits the full dwell.
+            hoverInside = inZone
+            hoverDwellDeadline = nil
+            return
+        }
         let entered = inZone && !hoverInside
         hoverInside = inZone
         guard inZone else {
@@ -380,9 +403,9 @@ final class MenuBarReveal {
             // zone must be dwelt in before the reveal answers. The
             // deadline is read on this and later polls, so no extra
             // timer; a zero dwell (tests) fires on entry as before.
-            hoverDwellDeadline = Date().addingTimeInterval(hoverDwell)
+            hoverDwellDeadline = now().addingTimeInterval(hoverDwell)
         }
-        guard let deadline = hoverDwellDeadline, Date() >= deadline else { return }
+        guard let deadline = hoverDwellDeadline, now() >= deadline else { return }
         hoverDwellDeadline = nil
         pointerEnteredRow()
     }
@@ -514,7 +537,7 @@ final class MenuBarReveal {
         cancelPendingRehide = nil
         // A cancelled reveal owes no hide — the covers already stand.
         guard revealed else { return }
-        if pointerOnRevealSurface() || itemMenuOpen() {
+        if pointerOnRevealSurface() || itemMenuOpen() || suppressed() {
             armClock(0.5)
             return
         }

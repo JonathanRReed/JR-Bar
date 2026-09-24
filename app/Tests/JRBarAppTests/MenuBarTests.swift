@@ -772,6 +772,57 @@ struct MenuBarTests {
     }
 
     @MainActor
+    @Test("hover with the drag's suppression never reveals, and a fresh entry after it waits the full dwell")
+    func hoverSuppressed() {
+        let h = RevealHarness()
+        let steer = DragSteer()
+        h.reveal.now = { steer.now }
+        h.reveal.hoverDwell = 0.18
+        h.reveal.suppressed = { steer.suppressed }
+        let inZone = NSPoint(x: 400, y: 965)
+        let offRow = NSPoint(x: 400, y: 400)
+        // Mid-drag, the pointer rests in the blank stretch for a while.
+        h.point = inZone
+        h.reveal.pollHover()
+        steer.now += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0, "a drag in flight is never a hover")
+        // The drop landed there and the drag let go: still no entry.
+        steer.suppressed = false
+        h.reveal.pollHover()
+        steer.now += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0, "the pointer resting where the drop landed is not an entry")
+        // A fresh entry waits the full dwell.
+        h.point = offRow
+        h.reveal.pollHover()
+        h.point = inZone
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        steer.now += 0.1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0, "not before the dwell")
+        steer.now += 0.1
+        h.reveal.pollHover()
+        #expect(h.reveals == 1)
+    }
+
+    @MainActor
+    @Test("the rehide clock re-arms while a drag holds the bar, and folds once it lets go")
+    func rehideWaitsForDrag() {
+        let h = RevealHarness()
+        let steer = DragSteer()
+        h.reveal.suppressed = { steer.suppressed }
+        h.reveal.triggerReveal()
+        h.point = NSPoint(x: 400, y: 400)
+        h.fireClock()
+        #expect(h.hides == 0, "an inline reveal never folds mid-drag")
+        steer.suppressed = false
+        h.fireClock()
+        #expect(h.hides == 1)
+    }
+
+    @MainActor
     @Test("under the focus-change rehide a reveal holds on no clock and folds when another app comes forward")
     func focusChangeRehide() {
         let h = RevealHarness()
