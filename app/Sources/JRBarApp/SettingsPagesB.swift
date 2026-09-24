@@ -316,8 +316,10 @@ struct FleetPreviewRow: View {
 
 /// Pairs of light colours that read as one for some viewer — typical
 /// vision or a simulated dichromacy — each with a one-click nudge that
-/// moves the second colour apart by lightness, hue kept. Silent when
-/// every pair stays apart.
+/// moves the second colour apart by lightness, hue kept. The pairs sit
+/// under one closed "Colour vision: N pairs close — Review" line, so a
+/// palette that ships with a close pair is a note, not a wall of
+/// warnings. Silent when every pair stays apart.
 struct ColorVisionNote: View {
     struct Entry: Equatable {
         let id: String
@@ -343,6 +345,8 @@ struct ColorVisionNote: View {
 
     /// `check_palette`'s reply for `checkKey`, while the monitor has it.
     @ViewState private var checked: (key: String, pairs: [PaletteCheck.Pair])?
+    /// The pairs are behind one line until asked for.
+    @ViewState private var expanded = false
 
     private var collisions: [ColorVision.Collision] {
         ColorVision.collisions(colors.map { (id: $0.id, hex: $0.hex) })
@@ -353,32 +357,58 @@ struct ColorVisionNote: View {
         "\(store.core.isLive)|" + (colors + others).map { "\($0.id)=\($0.hex)" }.joined(separator: ",")
     }
 
+    /// One close pair as the note lists it, with its nudge when there is one.
+    struct NoteRow: Identifiable {
+        let id: String
+        let text: String
+        let nudge: (entry: Entry, color: String, help: String)?
+    }
+
+    /// The monitor's pairs while it has answered for this palette, else
+    /// the local check's.
+    private var noteRows: [NoteRow] {
+        if let checked, checked.key == checkKey {
+            return PaletteCheck.rows(checked.pairs, own: colors, others: others).map { row in
+                NoteRow(id: row.id, text: row.text, nudge: row.nudge.map { nudge in
+                    (nudge.entry, nudge.color,
+                     "Sets \(nudge.entry.name) to \(nudge.color): lighter or darker, same hue, until it stands apart from every other light")
+                })
+            }
+        }
+        let entries = Dictionary(uniqueKeysWithValues: colors.map { ($0.id, $0) })
+        return collisions.compactMap { collision in
+            guard let first = entries[collision.first], let second = entries[collision.second] else { return nil }
+            let nudge = ColorVision.nudge(second.hex, awayFrom: first.hex).map { nudged in
+                (second, nudged, "Sets \(second.name) to \(nudged): the same hue, lighter or darker until every vision tells them apart")
+            }
+            return NoteRow(id: collision.id, text: "\(first.name) and \(second.name) look alike with \(collision.vision.name).",
+                           nudge: nudge)
+        }
+    }
+
+    /// "Colour vision: 2 pairs close — Review".
+    static func summary(_ count: Int) -> String {
+        "Colour vision: \(count) \(count == 1 ? "pair" : "pairs") close — Review"
+    }
+
     var body: some View {
+        let rows = noteRows
         Group {
-            if let checked, checked.key == checkKey {
-                ForEach(PaletteCheck.rows(checked.pairs, own: colors, others: others), id: \.id) { row in
-                    pairRow(row.text) {
-                        if let nudge = row.nudge {
-                            Button("Nudge \(nudge.entry.name) apart") { store.set(nudge.entry.path, .string(nudge.color)) }
-                                .controlSize(.small)
-                                .disabled(!store.isProvided(nudge.entry.path))
-                                .help("Sets \(nudge.entry.name) to \(nudge.color): lighter or darker, same hue, until it stands apart from every other light")
-                        }
-                    }
-                }
-            } else {
-                let entries = Dictionary(uniqueKeysWithValues: colors.map { ($0.id, $0) })
-                ForEach(collisions) { collision in
-                    if let first = entries[collision.first], let second = entries[collision.second] {
-                        pairRow("\(first.name) and \(second.name) look alike with \(collision.vision.name).") {
-                            if let nudged = ColorVision.nudge(second.hex, awayFrom: first.hex) {
-                                Button("Nudge \(second.name) apart") { store.set(second.path, .string(nudged)) }
+            if !rows.isEmpty {
+                DisclosureGroup(isExpanded: $expanded) {
+                    ForEach(rows) { row in
+                        pairRow(row.text) {
+                            if let nudge = row.nudge {
+                                Button("Nudge \(nudge.entry.name) apart") { store.set(nudge.entry.path, .string(nudge.color)) }
                                     .controlSize(.small)
-                                    .disabled(!store.isProvided(second.path))
-                                    .help("Sets \(second.name) to \(nudged): the same hue, lighter or darker until every vision tells them apart")
+                                    .disabled(!store.isProvided(nudge.entry.path))
+                                    .help(nudge.help)
                             }
                         }
                     }
+                } label: {
+                    Label(Self.summary(rows.count), systemImage: "eye.trianglebadge.exclamationmark")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
             }
         }
@@ -393,7 +423,6 @@ struct ColorVisionNote: View {
 
     private func pairRow<Trailing: View>(_ text: String, @ViewBuilder trailing: () -> Trailing) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "eye.trianglebadge.exclamationmark").foregroundStyle(.orange)
             Text(text)
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

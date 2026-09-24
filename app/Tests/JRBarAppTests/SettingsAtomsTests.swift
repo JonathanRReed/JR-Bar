@@ -68,3 +68,13 @@ import Testing
         #expect(empty.found.isEmpty && empty.missing.isEmpty)
     }
 }
+
+/// Settings › Lighting: close colour pairs sit under one line that says
+/// how many there are.
+@MainActor
+@Suite struct ColorVisionNoteSummaryTests {
+    @Test func theLineCountsThePairs() {
+        #expect(ColorVisionNote.summary(1) == "Colour vision: 1 pair close — Review")
+        #expect(ColorVisionNote.summary(4) == "Colour vision: 4 pairs close — Review")
+    }
+}
