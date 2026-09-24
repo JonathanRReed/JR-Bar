@@ -834,13 +834,13 @@ struct DataHoarderCaptureControls: View {
     let open: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             ForEach(model.captureSourceOptions) { source in
-                HStack(spacing: 8) {
-                    Toggle("Capture new activity — \(source.name)",
-                           isOn: captureBinding(source.id))
-                        .toggleStyle(.checkbox)
-                        .help(captureHelp(for: source))
+                VStack(alignment: .leading, spacing: 0) {
+                    Toggle(isOn: captureBinding(source.id)) {
+                        SettingLabel(title: "Capture new activity — \(source.name)")
+                    }
+                    .help(captureHelp(for: source))
                     if model.captureSettings.captureSources[source.id] == true {
                         Button("Also import existing files…") {
                             open()
@@ -850,23 +850,25 @@ struct DataHoarderCaptureControls: View {
                     }
                 }
             }
-            Toggle("Store full prompts and responses", isOn: $model.captureSettings.fullContent)
-                .toggleStyle(.checkbox)
-            Text("Off keeps each line's structure — types, timestamps, tool names, token counts — but stores prompt and response text as “[redacted]”. On stores transcripts verbatim; already-archived copies are unchanged either way.")
-                .font(.caption).foregroundStyle(.secondary)
-            Picker("When a source starts", selection: backfillBinding) {
+            Toggle(isOn: $model.captureSettings.fullContent) {
+                SettingLabel(title: "Store full prompts and responses",
+                             subtitle: "Off keeps each line's structure — types, timestamps, tool names, token counts — but stores prompt and response text as “[redacted]”. On stores transcripts verbatim; already-archived copies are unchanged either way.")
+            }
+            Picker(selection: backfillBinding) {
                 Text("Follow new activity only").tag(0)
                 Text("Also read the last 7 days").tag(7)
                 Text("Also read the last 30 days").tag(30)
                 Text("Also read the last 90 days").tag(90)
+            } label: {
+                SettingLabel(title: "When a source starts")
             }
-            .pickerStyle(.menu).fixedSize()
+            .pickerStyle(.menu)
             .help("Read once, on a source's first scan: files modified in the window are archived from their start; older files wait for Also import existing files.")
-            Toggle("Pause capture", isOn: $model.captureSettings.paused)
-                .toggleStyle(.checkbox)
-            if model.captureRunning {
-                Text("Capture is running — new lines land as segments within a few seconds.")
-                    .font(.caption).foregroundStyle(.secondary)
+            Toggle(isOn: $model.captureSettings.paused) {
+                SettingLabel(title: "Pause capture",
+                             subtitle: model.captureRunning
+                                 ? "Capture is running — new lines land as segments within a few seconds."
+                                 : nil)
             }
         }
     }
