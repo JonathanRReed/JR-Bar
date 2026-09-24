@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "reviewedOn": "2026-09-24",
+  "source": "scripts/verify_providers_live.py, last run 2026-09-10 on the owner's Mac (docs/NATIVE-PROVIDERS.md)",
+  "providers": [
+    {
+      "provider": "claude",
+      "binary": "claude",
+      "recommended": "2.1.263",
+      "ranges": [{"range": "=2.1.263", "status": "supported"}]
+    },
+    {
+      "provider": "codex",
+      "binary": "codex",
+      "recommended": "0.153.4",
+      "ranges": [{"range": "=0.153.4", "status": "supported"}]
+    },
+    {
+      "provider": "pi",
+      "binary": "pi",
+      "recommended": "0.73.1",
+      "ranges": [{"range": "=0.73.1", "status": "supported"}]
+    },
+    {
+      "provider": "gemini",
+      "binary": "gemini",
+      "recommended": "0.46.0",
+      "ranges": [{"range": "=0.46.0", "status": "supported"}]
+    },
+    {"provider": "grok", "binary": "grok", "recommended": null, "ranges": []},
+    {"provider": "devin", "binary": "devin", "recommended": null, "ranges": []},
+    {"provider": "opencode", "binary": "opencode", "recommended": null, "ranges": []},
+    {"provider": "openclaw", "binary": "openclaw", "recommended": null, "ranges": []},
+    {"provider": "antigravity", "binary": "agy", "recommended": null, "ranges": []},
+    {"provider": "cursor", "binary": "cursor-agent", "recommended": null, "ranges": []},
+    {"provider": "hermes", "binary": "hermes", "recommended": null, "ranges": []},
+    {"provider": "kiro", "binary": "kiro", "recommended": null, "ranges": []}
+  ]
+}

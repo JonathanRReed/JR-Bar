@@ -81,6 +81,7 @@ include = ["jrbar*"]
 "jrbar.resources" = [
     "integration_compatibility.json",
     "provider_fixture_ownership.json",
+    "provider_hook_compatibility.json",
     "sd_eject_guard.c",
     "sdled.wasm",
 ]
