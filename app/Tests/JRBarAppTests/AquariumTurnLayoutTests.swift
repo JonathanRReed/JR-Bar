@@ -42,8 +42,10 @@ struct AquariumTurnLayoutTests {
     /// Frame to frame: no step bigger than the motion's own speed allows
     /// (`speed` points a second, or when nil, half again the larger of the
     /// neighbouring steps — a pop is a spike above both), the pitch and the
-    /// side-on share never jump, and the facing changes only head-on.
-    private func expectSmooth(_ frames: [AquariumView.Layout], speed: Double?, _ what: String) {
+    /// side-on share never jump, and the facing changes only head-on. A
+    /// quick turn for food (0.55 s) comes round up to `yawStep` a frame.
+    private func expectSmooth(_ frames: [AquariumView.Layout], speed: Double?, _ what: String,
+                              yawStep: Double = 0.25) {
         let steps = zip(frames, frames.dropFirst()).map { (a: $0, b: $1) }
         let moved: [Double] = steps.map { hypot($0.b.x - $0.a.x, $0.b.y - $0.a.y) }
         for (i, step) in steps.enumerated() {
@@ -59,7 +61,7 @@ struct AquariumTurnLayoutTests {
             }
             #expect(dx <= allowed && dy <= allowed, "\(what): frame \(i) moved \(dx), \(dy) (allowed \(allowed))")
             #expect(abs(b.pitch - a.pitch) <= 0.2, "\(what): frame \(i) pitch jumped \(b.pitch - a.pitch)")
-            #expect(abs(b.yawCos - a.yawCos) <= 0.25, "\(what): frame \(i) turned \(b.yawCos - a.yawCos) at once")
+            #expect(abs(b.yawCos - a.yawCos) <= yawStep, "\(what): frame \(i) turned \(b.yawCos - a.yawCos) at once")
             if a.facing != b.facing {
                 #expect(abs(a.yawCos) <= AquariumTurn.frontCut && abs(b.yawCos) <= AquariumTurn.frontCut,
                         "\(what): frame \(i) flipped side-on (\(a.yawCos) → \(b.yawCos))")
@@ -310,6 +312,84 @@ struct AquariumTurnLayoutTests {
             let flips = zip(run, run.dropFirst()).filter { $0.facing != $1.facing }.count
             #expect(flips <= 8, "\(fish.id) reversed \(flips) times in two minutes")
             #expect(flips >= 1, "\(fish.id) still crosses the tank")
+        }
+    }
+
+    @Test("a finished run's meal: every eater keeps its pellet, swims over without a pop and eats at its mouth")
+    func completionMealChase() {
+        var leaver = makeFish("meal-leaver", since: t0 - 100)
+        let eaters: [Fish] = (0..<4).map { i in
+            Fish(id: "meal-eater-\(i)", label: "eater", providerID: "claude", state: .swimming,
+                 lane: 0.2 + 0.15 * Double(i), speed: 0.08 + 0.02 * Double(i), direction: 1,
+                 stateSince: Date(timeIntervalSince1970: t0 - 100), enteredAt: .distantPast,
+                 species: i % 2 == 0 ? .clownfish : .shark)
+        }
+        var roster = [leaver] + eaters
+        let tank = makeTank(roster)
+        var t = t0
+        tank.stepSwim(roster, in: size, t: t, now: Date(timeIntervalSince1970: t))
+        var lb = tank.motion.bodies[leaver.id]!
+        lb.x = 0.5
+        lb.y = 0.35
+        tank.motion.bodies[leaver.id] = lb
+        // Spread about, two of them facing away from where the food lands.
+        for (i, eater) in eaters.enumerated() {
+            var b = tank.motion.bodies[eater.id]!
+            b.x = [0.25, 0.72, 0.4, 0.62][i]
+            b.y = [0.55, 0.5, 0.7, 0.66][i]
+            b.dir = [-1.0, 1, 1, -1][i]
+            tank.motion.bodies[eater.id] = b
+        }
+        for _ in 0..<3 {
+            t += dt
+            tank.stepSwim(roster, in: size, t: t, now: Date(timeIntervalSince1970: t))
+        }
+        leaver.state = .leaving
+        leaver.stateSince = Date(timeIntervalSince1970: t)
+        roster = [leaver] + eaters
+        var plans: [[String?]] = []
+        var runs: [String: [AquariumView.Layout]] = [:]
+        var eaten = 0
+        var gone: [Int: Double] = [:]
+        for _ in 0..<(30 * 9) {
+            t += dt
+            let now = Date(timeIntervalSince1970: t)
+            let age = t - leaver.stateSince.timeIntervalSince1970
+            tank.stepSwim(roster, in: size, t: t, now: now)
+            var layouts: [String: AquariumView.Layout] = [:]
+            for fish in roster where !fish.isRetired(at: now) {
+                layouts[fish.id] = tank.layout(of: fish, in: size, at: t, now: now)
+            }
+            let meals = tank.completionMeals(in: size, now: now, roster: roster)
+            tank.applyPursuits(meals, to: &layouts, now: now)
+            for fish in roster { if let l = layouts[fish.id] { tank.motion.swim.record(fish, layout: l, t: t) } }
+            for eater in eaters { runs[eater.id, default: []].append(layouts[eater.id]!) }
+            guard let meal = meals.first else { continue }
+            let assigned = meal.pellets.map(\.eater)
+            if plans.last != assigned { plans.append(assigned) }
+            for (i, pellet) in meal.pellets.enumerated() {
+                guard let id = pellet.eater, gone[i] == nil,
+                      tank.motion.swim.meals[leaver.id]?.eatenAt[i] != nil else { continue }
+                // Eaten this frame: the drawn mouth is at the food.
+                gone[i] = pellet.gone
+                eaten += 1
+                let fish = eaters.first { $0.id == id }!
+                let l = layouts[id]!
+                let length = tank.drawnSize(of: fish, layout: l).length
+                let mouth = l.along(0.42, length: length)
+                let food = pellet.position(at: age)
+                let off = hypot(l.x + mouth.x - food.x, l.y + mouth.y - food.y)
+                #expect(off < 0.5 * length, "\(id) ate from \(off) pt away")
+                #expect(pellet.gone <= age + 1e-9 && pellet.gone > age - dt - 1e-9)
+            }
+        }
+        #expect(plans.count == 1, "the eaters never swapped: \(plans)")
+        #expect(eaten >= 2, "the eaters got there (\(eaten) eaten)")
+        for eater in eaters {
+            let b = tank.motion.bodies[eater.id]!
+            let run = runs[eater.id] ?? []
+            expectSmooth(run, speed: b.speed * b.energy * size.width * 2 + 8, eater.id, yawStep: 0.34)
+            expectSteadyFront(run, eater.id)
         }
     }
 }

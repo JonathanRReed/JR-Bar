@@ -391,6 +391,96 @@ struct AquariumTurnRenderProofTests {
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write the turn proof PNGs"))
+    func completionMeal() throws {
+        // A run finishes: its pellets drop, and the nearest fish — facing
+        // away — each turn, swim over and eat their own pellet, which
+        // blinks out as the mouth reaches it. Half-size tank frames; the
+        // rings and threads mark each pellet and the fish coming for it.
+        var leaver = Self.makeFish("meal-leaver", .clownfish, lane: 0.3)
+        let eaters = [Self.makeFish("meal-a", .angelfish, lane: 0.25, direction: -1),
+                      Self.makeFish("meal-b", .shark, lane: 0.45),
+                      Self.makeFish("meal-c", .tang, lane: 0.6, direction: -1)]
+        var roster = [leaver] + eaters
+        let view = Self.grown(roster)
+        var t = Self.t0
+        _ = Self.step(view, roster, t: t)
+        var lb = view.motion.bodies[leaver.id]!
+        lb.x = 0.5
+        lb.y = 0.35
+        view.motion.bodies[leaver.id] = lb
+        for (i, eater) in eaters.enumerated() {
+            var b = view.motion.bodies[eater.id]!
+            b.x = [0.22, 0.78, 0.36][i]
+            b.y = [0.5, 0.52, 0.66][i]
+            b.dir = [-1.0, 1, -1][i]
+            view.motion.bodies[eater.id] = b
+        }
+        for _ in 0..<3 { t += Self.dt; _ = Self.step(view, roster, t: t) }
+        leaver.state = .leaving
+        leaver.stateSince = Date(timeIntervalSince1970: t)
+        roster = [leaver] + eaters
+        let moments = [0.4, 1.2, 2.2, 3.2, 4.2, 5.2, 6.2, 7.2]
+        var panels: [(age: Double, t: Double, layouts: [String: AquariumView.Layout],
+                      meals: [AquariumView.Meal])] = []
+        var age = 0.0
+        while age < moments[moments.count - 1] + Self.dt {
+            t += Self.dt
+            age = t - leaver.stateSince.timeIntervalSince1970
+            let now = Date(timeIntervalSince1970: t)
+            view.stepSwim(roster, in: Self.tank, t: t, now: now)
+            var layouts: [String: AquariumView.Layout] = [:]
+            for fish in roster { layouts[fish.id] = view.layout(of: fish, in: Self.tank, at: t, now: now) }
+            let meals = view.completionMeals(in: Self.tank, now: now, roster: roster)
+            view.applyPursuits(meals, to: &layouts, now: now)
+            for fish in roster { view.motion.swim.record(fish, layout: layouts[fish.id]!, t: t) }
+            if let next = moments.first(where: { abs($0 - age) < Self.dt / 2 }) {
+                panels.append((next, t, layouts, meals))
+            }
+        }
+        let scale = 0.5
+        let panelW = Self.tank.width * scale, panelH = Self.tank.height * scale
+        let cols = 4
+        let rows = (panels.count + cols - 1) / cols
+        let sheet = Self.sheet(width: panelW * Double(cols), height: (panelH + 20) * Double(rows)) { c, _ in
+            for (i, panel) in panels.enumerated() {
+                let ox = panelW * Double(i % cols), oy = (panelH + 20) * Double(i / cols)
+                Self.label(&c, String(format: "%.1f s after the run finished", panel.age),
+                           at: CGPoint(x: ox + panelW / 2, y: oy + 10), size: 10)
+                var g = c
+                g.translateBy(x: ox, y: oy + 20)
+                g.scaleBy(x: scale, y: scale)
+                g.clip(to: Path(CGRect(origin: .zero, size: Self.tank)))
+                var frame = Path()
+                frame.addRect(CGRect(origin: .zero, size: Self.tank))
+                g.stroke(frame, with: .color(.white.opacity(0.25)), lineWidth: 2)
+                for fish in roster {
+                    guard let l = panel.layouts[fish.id] else { continue }
+                    view.drawFish(canvas: &g, size: Self.tank, t: panel.t,
+                                  now: Date(timeIntervalSince1970: panel.t), fish: fish, layout: l,
+                                  parent: nil, showLabels: false)
+                }
+                view.drawMeals(canvas: &g, meals: panel.meals, now: Date(timeIntervalSince1970: panel.t))
+                // Proof marks: a ring round each pellet still there, and a
+                // thread from it to the fish that is coming for it.
+                for pellet in panel.meals.first?.pellets ?? [] where panel.age > 0.35 && panel.age < pellet.gone {
+                    let at = pellet.position(at: panel.age)
+                    g.stroke(Path(ellipseIn: CGRect(x: at.x - 12, y: at.y - 12, width: 24, height: 24)),
+                             with: .color(.yellow.opacity(0.85)), lineWidth: 2)
+                    if let id = pellet.eater, let l = panel.layouts[id] {
+                        var thread = Path()
+                        thread.move(to: CGPoint(x: l.x, y: l.y))
+                        thread.addLine(to: at)
+                        g.stroke(thread, with: .color(.yellow.opacity(0.4)),
+                                 style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                    }
+                }
+            }
+        }
+        try Self.write(sheet, "fish-turn-meal")
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the turn proof PNGs"))
     func states() throws {
         let cols = 14, cellW = 104.0, cellH = 130.0
         var rows: [(title: String, view: AquariumView, shots: [Shot], parents: [(Fish, AquariumView.Layout)?])] = []

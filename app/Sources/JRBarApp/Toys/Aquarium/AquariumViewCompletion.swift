@@ -7,9 +7,10 @@ extension AquariumView {
     // MARK: Completion FX
 
     /// One dropped pellet's course: where it appeared, where it sinks
-    /// to rest, and which fish comes to eat it. Everything derives
-    /// from the leaver's seed & `stateSince`, so the same meal replays
-    /// identically every frame.
+    /// to rest, and which fish comes to eat it. The course derives from
+    /// the leaver's seed & `stateSince`; who eats it is planned once and
+    /// remembered (`TankSwimMemory.Meal`), so the same meal replays the
+    /// same way every frame.
     struct Pellet {
         var origin: CGPoint
         var rest: CGPoint
@@ -18,11 +19,23 @@ extension AquariumView {
         /// The eating fish's id, if a live adult was close enough to
         /// claim it.
         var eater: String?
-        /// Seconds the eater needs to reach the pellet once it darts.
+        /// Seconds a fish with no steering body yet (a fixture's) takes
+        /// to be pulled over to it; a swimming fish gets there on its own.
         var dart: Double
+        /// How far ahead of the eater's middle its mouth is, points.
+        var mouth: Double
         /// Age (s since the leaver turned) at which the pellet is gone —
         /// eaten, or faded on the sand when nobody came.
         var gone: Double
+
+        /// Where the pellet is `age` seconds into the leave: it appears
+        /// where the fish finished and sinks to the sand.
+        func position(at age: Double) -> CGPoint {
+            let c = min(1, max(0, (age - 0.35) / 1.5))
+            let sink = c * c * (3 - 2 * c)
+            return CGPoint(x: origin.x + (rest.x - origin.x) * sink,
+                           y: origin.y + (rest.y - origin.y) * sink)
+        }
     }
 
     /// The meal a finished fish leaves behind: the spot it was at when
@@ -34,8 +47,10 @@ extension AquariumView {
     }
 
     /// Plan each leaving fish's meal (docs/TOYS.md: a completion drops
-    /// food, nearby fish come eat it). Pure functions of the roster &
-    /// the leavers' seeds — nothing here is stateful.
+    /// food, nearby fish come eat it). The pellets are pure functions of
+    /// the leaver's seed; which fish comes for each is decided the first
+    /// frame the meal is seen and held from then on, and a pellet is
+    /// gone when its eater's mouth reaches it.
     func completionMeals(in size: CGSize, now: Date, roster: [Fish]) -> [Meal] {
         let margin = 36.0
         var meals: [Meal] = []
@@ -47,7 +62,6 @@ extension AquariumView {
             // The meal spawns where the fish was when it turned for
             // the edge — its anchor, or the patrol sweep when no body
             // has stepped yet.
-            let t0 = leaver.stateSince.timeIntervalSince1970
             let spawn = anchor(of: leaver, in: size)
             // The live adults who could come for the food.
             let eaters = roster.filter {
@@ -55,82 +69,108 @@ extension AquariumView {
                     && ($0.state == .swimming || $0.state == .idling)
                     && !$0.isRetired(at: now)
             }
-            var claimed: Set<String> = []
-            var pellets: [Pellet] = []
-            for seed in AquariumModel.pelletSeeds(for: leaver) {
+            var pellets: [Pellet] = AquariumModel.pelletSeeds(for: leaver).map { seed in
                 let dx = (Double(seed & 0xFF) / 0xFF - 0.5) * 64
                 let restX = min(max(spawn.x + dx, margin), size.width - margin)
                 let restY = min(spawn.y + 34 + Double((seed >> 8) & 0xFF) / 0xFF * 26,
                                 sandTop(atX: restX, in: size) - 6)
-                var pellet = Pellet(
-                    origin: spawn,
-                    rest: CGPoint(x: restX, y: restY),
-                    r: 2.4 + Double((seed >> 16) & 0xFF) / 0xFF * 1.4,
-                    wobble: Double((seed >> 24) & 0xFF) / 0xFF * .pi * 2,
-                    eater: nil, dart: 0,
-                    gone: 9 + Double((seed >> 32) & 0xFF) / 0xFF * 2)
-                // The nearest unclaimed live fish comes for it.
-                var best: Fish?
-                var bestD2 = Double.greatestFiniteMagnitude
-                for e in eaters where !claimed.contains(e.id) {
-                    // The eater's real spot: its steering body, else
-                    // the sweep stand-in.
-                    let ep = motion.bodies[e.id].map {
-                        CGPoint(x: $0.x * size.width, y: $0.y * size.height)
-                    } ?? CGPoint(x: patrol(of: e, in: size, at: t0, margin: margin).x,
-                                 y: laneY(for: e, in: size))
-                    let d2 = (ep.x - restX) * (ep.x - restX)
-                        + (ep.y - restY) * (ep.y - restY)
-                    if d2 < bestD2 { bestD2 = d2; best = e }
+                return Pellet(origin: spawn, rest: CGPoint(x: restX, y: restY),
+                              r: 2.4 + Double((seed >> 16) & 0xFF) / 0xFF * 1.4,
+                              wobble: Double((seed >> 24) & 0xFF) / 0xFF * .pi * 2,
+                              eater: nil, dart: 0, mouth: 0,
+                              gone: 9 + Double((seed >> 32) & 0xFF) / 0xFF * 2)
+            }
+            let plan = mealPlan(for: leaver, pellets: pellets, eaters: eaters, in: size)
+            for i in pellets.indices {
+                // An eater that has since left the water leaves its
+                // pellet to fade on the sand.
+                guard let id = plan.eaters[i], let eater = eaters.first(where: { $0.id == id })
+                else { continue }
+                pellets[i].eater = id
+                pellets[i].dart = plan.darts[i]
+                pellets[i].mouth = 0.42 * drawnSize(of: eater, layout: steeringLayout(of: eater)).length
+                if let eaten = plan.eatenAt[i] {
+                    pellets[i].gone = eaten
+                } else if motion.bodies[id] == nil {
+                    pellets[i].gone = 0.85 + plan.darts[i]
                 }
-                if let best {
-                    claimed.insert(best.id)
-                    pellet.eater = best.id
-                    pellet.dart = dartTime(for: best, distance: sqrt(bestD2), in: size)
-                    pellet.gone = 0.85 + pellet.dart
-                }
-                pellets.append(pellet)
             }
             meals.append(Meal(leaver: leaver, spawn: spawn, pellets: pellets))
         }
         return meals
     }
 
-    /// How long `eater` takes to reach a pellet `distance` points off:
-    /// its own dart speed, plus the quick turn it may need first — the
-    /// fish swims there through its own steering now, so the meal waits
-    /// for it. A fixture fish (no body) keeps the old brisk dart.
-    private func dartTime(for eater: Fish, distance: Double, in size: CGSize) -> Double {
-        let tuning = swimTuning
-        let tempo = AquariumSettings.clamped(tuning.swimSpeed, to: AquariumSettings.swimSpeedRange)
-        let turn = AquariumTurn.duration(for: .food, pace: tuning.swimPace) / tempo
-        guard let body = motion.bodies[eater.id] else {
-            return min(2.4, max(0.5, distance / 140)) + turn
+    /// Who comes for each of `leaver`'s pellets: the nearest unclaimed
+    /// live fish, measured once, the first frame the meal is seen — so
+    /// as the eaters swim over nobody swaps pellets and no dart shrinks.
+    private func mealPlan(for leaver: Fish, pellets: [Pellet], eaters: [Fish],
+                          in size: CGSize) -> TankSwimMemory.Meal {
+        let memory = motion.swim
+        if let plan = memory.meals[leaver.id], plan.since == leaver.stateSince,
+           plan.eaters.count == pellets.count {
+            return plan
         }
-        let widths = body.speed * body.energy * tuning.swimPace.cruiseScale * tempo * 1.9
-        let pointsPerSecond = max(20, widths * max(1, size.width))
-        // Up to speed, across, and easing into the pellet.
-        return min(5, max(0.6, distance / pointsPerSecond + turn + 0.5))
+        let t0 = leaver.stateSince.timeIntervalSince1970
+        var plan = TankSwimMemory.Meal(since: leaver.stateSince, eaters: [], darts: [], eatenAt: [])
+        var claimed: Set<String> = []
+        for pellet in pellets {
+            var best: Fish?
+            var bestD2 = Double.greatestFiniteMagnitude
+            for e in eaters where !claimed.contains(e.id) {
+                // The eater's real spot: its steering body, else the
+                // sweep stand-in.
+                let ep = motion.bodies[e.id].map {
+                    CGPoint(x: $0.x * size.width, y: $0.y * size.height)
+                } ?? CGPoint(x: patrol(of: e, in: size, at: t0, margin: 36).x,
+                             y: laneY(for: e, in: size))
+                let d2 = (ep.x - pellet.rest.x) * (ep.x - pellet.rest.x)
+                    + (ep.y - pellet.rest.y) * (ep.y - pellet.rest.y)
+                if d2 < bestD2 { bestD2 = d2; best = e }
+            }
+            if let best { claimed.insert(best.id) }
+            plan.eaters.append(best?.id)
+            plan.darts.append(best == nil ? 0 : dartTime(distance: sqrt(bestD2)))
+            plan.eatenAt.append(nil)
+        }
+        memory.meals[leaver.id] = plan
+        return plan
     }
 
-    /// Ease the eaters' last few points onto their pellets: the fish
-    /// swims over on its own — turning round for it if it lies behind —
-    /// and this only settles the mouth on the food while it eats, then
-    /// lets go. It never flips a fish; the turn does that.
+    /// How long a fish with no steering body takes to be pulled
+    /// `distance` points over to its pellet: a brisk dart, plus the
+    /// quick turn it may need first.
+    private func dartTime(distance: Double) -> Double {
+        let tuning = swimTuning
+        let tempo = AquariumSettings.clamped(tuning.swimSpeed, to: AquariumSettings.swimSpeedRange)
+        let turn = AquariumTurn.duration(for: .food, pace: tuning.swimPace, tempo: tempo)
+        return min(2.4, max(0.5, distance / 140)) + turn
+    }
+
+    /// Mark `leaver`'s pellet `index` eaten `age` seconds into the leave:
+    /// it blinks out as the mouth closes on it.
+    func mealEaten(_ leaver: Fish, pellet index: Int, age: Double) {
+        guard var plan = motion.swim.meals[leaver.id], plan.since == leaver.stateSince,
+              plan.eatenAt.indices.contains(index), plan.eatenAt[index] == nil else { return }
+        plan.eatenAt[index] = age
+        motion.swim.meals[leaver.id] = plan
+    }
+
+    /// A fish with no steering body yet (a fixture's) can't swim to its
+    /// pellet, so it is pulled over: the pull swells as it darts, holds
+    /// while it mouths the food, then releases it back onto its patrol.
+    /// A swimming fish is left alone — it swims there through its own
+    /// turn, and the pellet goes when its mouth arrives.
     func applyPursuits(_ meals: [Meal], to layouts: inout [String: Layout], now: Date) {
         for meal in meals {
             let age = now.timeIntervalSince(meal.leaver.stateSince)
             for pellet in meal.pellets {
-                guard let eater = pellet.eater, var l = layouts[eater] else { continue }
-                // The pull comes in over the end of the dart, holds while
-                // the fish mouths the food and releases a beat after.
-                let arrive = 0.7 + pellet.dart * 0.6
-                let pull = smooth(clamp01((age - arrive) / (pellet.dart * 0.4)))
+                guard let eater = pellet.eater, motion.bodies[eater] == nil,
+                      var l = layouts[eater] else { continue }
+                let pull = smooth(clamp01((age - 0.7) / pellet.dart))
                     - smooth(clamp01((age - 0.7 - pellet.dart - 0.45) / 1.0))
                 guard pull > 0.001 else { continue }
                 // Mouth on the food: the pellet sits just off the nose.
-                let nose = l.along(0.42, length: Self.fishBaseLength * l.scale)
-                let tx = pellet.rest.x - nose.x
+                let tx = pellet.rest.x - l.yawCos * pellet.mouth
                 let ty = pellet.rest.y - 6
                 l.x += (tx - l.x) * pull
                 l.y += (ty - l.y) * pull * 0.85
@@ -166,12 +206,11 @@ extension AquariumView {
             for pellet in meal.pellets {
                 guard age > 0.35 else { continue }
                 let appear = smooth(clamp01((age - 0.35) / 0.4))
-                let sink = smooth(clamp01((age - 0.35) / 1.5))
                 let a = appear * (1 - smooth(clamp01((age - pellet.gone) / 0.3)))
                 guard a > 0.01 else { continue }
-                let x = pellet.origin.x + (pellet.rest.x - pellet.origin.x) * sink
-                    + (reduceMotion ? 0 : sin(age * 2.4 + pellet.wobble) * 3)
-                let y = pellet.origin.y + (pellet.rest.y - pellet.origin.y) * sink
+                let at = pellet.position(at: age)
+                let x = at.x + (reduceMotion ? 0 : sin(age * 2.4 + pellet.wobble) * 3)
+                let y = at.y
                 let r = pellet.r * (0.5 + 0.5 * appear)
                 CreaturePaint.pellet(&canvas, at: CGPoint(x: x, y: y), r: r, alpha: a)
             }

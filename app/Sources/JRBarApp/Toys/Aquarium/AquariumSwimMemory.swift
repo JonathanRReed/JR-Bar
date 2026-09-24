@@ -45,8 +45,24 @@ final class TankSwimMemory {
         var droll: Double
     }
 
+    /// A finished run's meal as it was planned the first frame it was
+    /// seen: which fish comes for each pellet — decided once, so an eater
+    /// never changes its mind halfway over — and when each was eaten.
+    struct Meal {
+        /// The leave this meal belongs to (the leaver's `stateSince`).
+        var since: Date
+        var eaters: [String?]
+        /// A fish with no steering body yet (a fixture's) is pulled over
+        /// on this clock instead of swimming: seconds to reach its pellet.
+        var darts: [Double]
+        /// Seconds into the leave each pellet was eaten, once it was.
+        var eatenAt: [Double?]
+    }
+
     var drawn: [String: Drawn] = [:]
     var handoffs: [String: Handoff] = [:]
+    /// Keyed by the leaver's id.
+    var meals: [String: Meal] = [:]
     /// The swim settings as this frame read them.
     var settings: AquariumSettings?
 
@@ -61,5 +77,6 @@ final class TankSwimMemory {
     func prune(keeping live: Set<String>) {
         if drawn.count > live.count { drawn = drawn.filter { live.contains($0.key) } }
         if handoffs.count > live.count { handoffs = handoffs.filter { live.contains($0.key) } }
+        if meals.count > live.count { meals = meals.filter { live.contains($0.key) } }
     }
 }

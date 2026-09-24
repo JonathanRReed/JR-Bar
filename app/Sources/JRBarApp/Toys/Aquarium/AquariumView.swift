@@ -696,16 +696,15 @@ struct AquariumView: View {
         m.claims.removeAll(keepingCapacity: true)
         var foodByFish: [String: (x: Double, y: Double)] = [:]
         // A finished fish's meal: each eater swims for its pellet through
-        // its own turn while the dart is on (`applyPursuits` only eases
-        // the last few points).
-        for meal in completionMeals(in: size, now: now, roster: roster) {
+        // its own turn, and eats it when its mouth gets there (below).
+        let meals = completionMeals(in: size, now: now, roster: roster)
+        for meal in meals {
             let age = now.timeIntervalSince(meal.leaver.stateSince)
             for pellet in meal.pellets {
-                guard let eater = pellet.eater, age > 0.35, age < pellet.gone else { continue }
-                let sink = smooth(clamp01((age - 0.35) / 1.5))
-                let px = pellet.origin.x + (pellet.rest.x - pellet.origin.x) * sink
-                let py = pellet.origin.y + (pellet.rest.y - pellet.origin.y) * sink
-                foodByFish[eater] = (px / max(1, size.width), py / max(1, size.height))
+                guard let eater = pellet.eater, m.bodies[eater] != nil,
+                      age > 0.35, age < pellet.gone else { continue }
+                let at = pellet.position(at: age)
+                foodByFish[eater] = (at.x / max(1, size.width), at.y / max(1, size.height))
             }
         }
         for pellet in m.pellets {
@@ -826,6 +825,28 @@ struct AquariumView: View {
             m.bodies[fish.id] = body
         }
 
+        // A fish whose mouth reached its meal's pellet eats it: the
+        // pellet blinks out, the mouth smiles, the body squash-stretches.
+        for meal in meals {
+            let age = now.timeIntervalSince(meal.leaver.stateSince)
+            for (i, pellet) in meal.pellets.enumerated() {
+                guard let eater = pellet.eater, let b = m.bodies[eater],
+                      age > 0.35, age < pellet.gone else { continue }
+                let at = pellet.position(at: age)
+                let cx = b.x * size.width, cy = b.y * size.height
+                let pose = AquariumTurn.pose(of: b)
+                let nose = CGPoint(x: cx + pose.c * pellet.mouth * cos(b.pitch),
+                                   y: cy + abs(pose.c) * pellet.mouth * sin(b.pitch))
+                let bite = max(5, pellet.mouth * 0.45)
+                if hypot(nose.x - at.x, nose.y - at.y) < bite
+                    || hypot(cx - at.x, cy - at.y) < pellet.mouth * 0.7 {
+                    mealEaten(meal.leaver, pellet: i, age: age)
+                    m.smileUntil[eater] = now.addingTimeInterval(3.5)
+                    m.bounceUntil[eater] = now.addingTimeInterval(0.7)
+                }
+            }
+        }
+
         // A fish that reached its pellet eats it: the game hears the
         // feeding after the pass (the pending-events drain), the mouth
         // smiles, the body squash-stretches.
@@ -909,7 +930,7 @@ struct AquariumView: View {
 
     /// The layout a swimming fish's size is measured under: its lane's
     /// depth scale, before any rise or bounce.
-    private func steeringLayout(of fish: Fish) -> Layout {
+    func steeringLayout(of fish: Fish) -> Layout {
         var l = Layout()
         l.scale = 1.08 - fish.lane * 0.4
         return l
