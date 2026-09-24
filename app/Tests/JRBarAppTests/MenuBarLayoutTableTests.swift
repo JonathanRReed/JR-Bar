@@ -110,7 +110,7 @@ struct MenuBarLayoutTableTests {
         #expect(order.map(\.id) == ["com.openai.chat", "io.tailscale.ipn.macsys", "x.app"])
     }
 
-    @Test("a hidden app right of our slot and a shown app left of it are flagged, each with its section fix")
+    @Test("under the slot seat a hidden app right of our slot and a shown app left of it are flagged, each with its fix")
     func mismatches() throws {
         let table = try #require(MenuBarLayoutTable.parse(Data(Self.fixture.utf8)))
         let sections: [String: MenuBarItemSection] = [
@@ -119,10 +119,16 @@ struct MenuBarLayoutTableTests {
             "com.bjango.istatmenus": .shown,             // right of us — as it should be
         ]
         let found = MenuBarLayoutTable.mismatches(table: table, sections: sections, apps: Self.apps,
-                                                  ours: Self.ours)
+                                                  ours: Self.ours, seat: .slot)
         // Slack is left of us with no pick at all: shown, flagged.
         #expect(found.map(\.app) == ["com.tinyspeck.slackmacgap", "io.tailscale.ipn.macsys"])
         #expect(found.map(\.fix) == [.hidden, .shown])
         #expect(MenuBarLayoutTableRows.words(found[1], name: "Tailscale").contains("hidden but sits right"))
+        // Under the gap seat the icon stands flush left of the drawn run,
+        // not on our slot: the slot's sides say nothing about the icon's,
+        // so nothing is flagged — never "Hide it" for an app shown right
+        // of the icon.
+        #expect(MenuBarLayoutTable.mismatches(table: table, sections: sections, apps: Self.apps,
+                                              ours: Self.ours, seat: .gap).isEmpty)
     }
 }

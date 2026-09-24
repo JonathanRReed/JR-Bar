@@ -107,7 +107,7 @@ struct MenuBarLayoutTableRows: View {
 
     private var status: String {
         guard granted else {
-            return "Pick macOS's own record of your bar's order once, and JR-Bar reads it: ⌘-drags confirm without Accessibility, the Item Bar follows macOS's order, and a mismatch shows here. Never written."
+            return "Pick macOS's own record of your bar's order once, and JR-Bar reads it: a ⌘-drag still confirms when Accessibility is slow to answer, the Item Bar follows macOS's order, and on the slot seat a mismatch shows here. Never written."
         }
         if let failure = utility.layoutTableReader.failure { return failure }
         guard let table = utility.layoutTable else { return "Reading…" }

@@ -162,10 +162,16 @@ enum MenuBarLayoutTable {
     /// (an inline reveal brings them back right of the icon), or shown
     /// left of it. Only apps the agent takes whole — `sections` is the
     /// per-app map, absent keys read shown — and only apps the table
-    /// names beside ours.
+    /// names beside ours. Only under the `.slot` seat, where the icon
+    /// stands on our slot and its sides are macOS's order: under `.gap`
+    /// the icon stands flush left of the drawn run, wherever our slot
+    /// is (macOS puts it at the leftmost visible place), so a side of
+    /// the slot is no side of the icon and every flag would be wrong.
     nonisolated static func mismatches(table: Table, sections: [String: MenuBarItemSection],
-                                       apps: Set<String>, ours: String) -> [Mismatch] {
-        apps.sorted().compactMap { app in
+                                       apps: Set<String>, ours: String,
+                                       seat: MenuBarMirrorSeat) -> [Mismatch] {
+        guard seat == .slot else { return [] }
+        return apps.sorted().compactMap { app in
             guard app != ours, let side = side(of: app, ours: ours, table: table, known: apps) else { return nil }
             let section = sections[app] ?? .shown
             switch (section, side) {
@@ -291,9 +297,17 @@ final class MenuBarLayoutTableReader {
     }
 
     /// The open panel, pointed at the table: the person picks the one
-    /// file and JR-Bar keeps a read-only bookmark to it. nil when the
+    /// file and JR-Bar keeps a read-only bookmark to it. With Full Disk
+    /// Access already granted the file reads as it is, so the click
+    /// keeps a plain bookmark to it and no panel opens. nil when the
     /// panel was cancelled or the pick could not be kept.
     static func requestGrant() -> Data? {
+        let table = MenuBarLayoutTable.defaultURL
+        if (try? Data(contentsOf: table)) != nil,
+           let plain = try? table.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+            log.notice("layout table: read through Full Disk Access — no panel")
+            return plain
+        }
         let panel = NSOpenPanel()
         panel.message = "Select com.apple.MenuBar.plist so JR-Bar can read your menu bar's order. JR-Bar only reads it."
         panel.prompt = "Grant Access"

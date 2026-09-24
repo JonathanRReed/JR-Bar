@@ -51,11 +51,13 @@ extension MenuBarUtility {
         return MenuBarLayoutTable.ranks(apps: apps, table: table)
     }
 
-    /// Apps whose section and place disagree, for the card.
+    /// Apps whose section and place disagree, for the card — only under
+    /// the `.slot` seat, where the icon's sides are macOS's order.
     var layoutTableMismatches: [MenuBarLayoutTable.Mismatch] {
         guard let table = layoutTable, let ours = Bundle.main.bundleIdentifier else { return [] }
         return MenuBarLayoutTable.mismatches(table: table, sections: curatedSettings().concealedApps,
-                                             apps: layoutTableApps(), ours: ours)
+                                             apps: layoutTableApps(), ours: ours,
+                                             seat: settings().curation.mirrorSeat)
     }
 
     /// The one-click fix: the section the app's place says — a pick,
