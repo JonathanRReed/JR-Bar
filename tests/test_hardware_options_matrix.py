@@ -550,6 +550,117 @@ def test_the_eject_guard_reports_what_launchd_really_has__and_2_more(tmp_path: P
     assert status.volume_uuid == "B293BB91-193C-3A17-88DC-35CD9BA19B2F"
 
 
+# --- the Devices page's commands ---------------------------------------------------
+
+
+def test_check_sync_holds_both_devices_before_it_writes__and_3_more(rig: Rig) -> None:
+    # --- scenario: refused_when_the_pair_is_not_ready
+    """Check sync needs a linked Pro and Dot with the Dot extending the
+    strip; anything else is refused with the reason, and nothing is held."""
+    from jrbar.core_server import CommandError
+    from jrbar.linked_check import start_check
+
+    controller = rig.controller
+    rig.plan()
+    for path, value in (("devices_linked", False), ("dot_role", "asks")):
+        before = controller.settings
+        rig.set(path, value)
+        with pytest.raises(CommandError) as refused:
+            start_check(controller, {})
+        assert refused.value.code == "not_ready"
+        assert controller._core_held_preview_devices() == frozenset()
+        controller.settings = before
+
+    # --- scenario: both_holds_exist_before_either_device_is_written
+    """A live command queued on the write worker used to land between the
+    writes and the holds, paint over the flash and move the strip's
+    recorded start. The holds come first now."""
+    held_at_write: list[frozenset] = []
+    for device_controller in (rig.pro_controller, rig.dot_controller):
+        original = device_controller.sync_program
+
+        def watching(program, state, *, _original=original, **kwargs):
+            held_at_write.append(controller._core_held_preview_devices())
+            return _original(program, state, **kwargs)
+
+        device_controller.sync_program = watching
+    reply = start_check(controller, {"seconds": 30})
+    both = frozenset({rig.pro.device_id, rig.dot.device_id})
+    assert held_at_write and all(held == both for held in held_at_write)
+    assert controller._core_held_preview_devices() == both
+    assert set(reply["devices"]) == set(both)
+    assert controller._core_linked.check_until is not None
+    assert controller._core_linked.dot_write.reason == "check"
+    assert "FFFFFF" in rig.pro_controller.last_program.upper()
+
+    # --- scenario: a_second_press_says_a_check_is_running
+    with pytest.raises(CommandError) as busy:
+        start_check(controller, {})
+    assert busy.value.code == "busy" and "already running" in busy.value.message
+
+    # --- scenario: a_reanchor_during_the_check_writes_the_held_dot
+    """The Dot is held by the check, so the ordinary write path would
+    refuse the closed loop's re-anchor; the check writes it itself."""
+    from jrbar.linked_check import reanchor_check
+
+    before = controller._core_linked.dot_write
+    reanchor_check(controller, "reanchor")
+    after = controller._core_linked.dot_write
+    assert after is not before and after.reason == "check"
+
+
+def test_a_check_sync_the_strip_refuses_holds_nothing(rig: Rig) -> None:
+    """A strip write that fails takes back both holds it registered, so the
+    live program returns at the next refresh instead of in a minute."""
+    from jrbar.core_server import CommandError
+    from jrbar.linked_check import start_check
+
+    controller = rig.controller
+    rig.plan()
+
+    def refuse(*_args, **_kwargs):
+        raise OSError("card pulled")
+
+    rig.pro_controller.sync_program = refuse
+    with pytest.raises(CommandError) as refused:
+        start_check(controller, {})
+    assert refused.value.code == "refused"
+    assert controller._core_held_preview_devices() == frozenset()
+    assert controller._core_linked.check_until is None
+
+
+def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_1_more(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # --- scenario: status_names_the_sidepulse_plugged_in_now
+    from jrbar import eject_guard_commands, sd_eject_guard_launch
+    from jrbar.core_server import CommandError
+
+    monkeypatch.setattr(
+        sd_eject_guard_launch,
+        "sd_eject_guard_status",
+        lambda: sd_eject_guard_launch.SdEjectGuardStatus(installed=True, runs=0),
+    )
+    monkeypatch.setattr(sd_eject_guard_launch, "mounted_volume_uuid", lambda root: "B293BB91-193C-3A17-88DC-35CD9BA19B2F")
+    document = eject_guard_commands.status(rig.controller, {})
+    assert document["installed"] is True and document["protects"] is False
+    assert document["mounted_volume_uuid"] == "B293BB91-193C-3A17-88DC-35CD9BA19B2F"
+    assert document["mounted_name"] == rig.pro.name
+    assert document["protects_mounted"] is False
+
+    # --- scenario: protect_with_no_sidepulse_mounted_is_refused
+    """Only a mounted SidePulse can be protected; with none the command
+    says so and installs nothing."""
+    installs: list[object] = []
+    monkeypatch.setattr(sd_eject_guard_launch, "protect_mounted_sidepulse", lambda root: installs.append(root))
+    rig.controller.discover_device_candidates = lambda: []
+    with pytest.raises(CommandError) as missing:
+        eject_guard_commands.protect(rig.controller, {})
+    assert missing.value.code == "not_found"
+    assert installs == []
+    assert eject_guard_commands.status(rig.controller, {})["mounted_volume_uuid"] is None
+
+
 # --- foreign writes ---------------------------------------------------------------
 
 

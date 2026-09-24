@@ -50,21 +50,39 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     strip = next((device for device in devices if device.device_id == strip_id), None)
     if dot is None or strip is None or led_count_for_target(strip.target) == 2:
         raise CommandError("not_ready", "Plug in both the SidePulse and the Dot to check sync.")
+    link = runtime._core_linked
+    if link.check_until is not None and time.monotonic() < link.check_until:
+        raise CommandError("busy", "A sync check is already running.")
     held = runtime._core_held_preview_devices()
     if strip.device_id in held or dot.device_id in held:
-        raise CommandError("busy", "a calibration preview holds a device")
+        raise CommandError("busy", "A calibration preview is holding one of the devices.")
 
     strip_controller = runtime.agent_controller_for_device(strip)
     program = apply_brightness(CHECK_SYNC_PROGRAM, strip_controller.brightness)
+    until = time.monotonic() + seconds
+    # Both holds are registered BEFORE either write, as a calibration
+    # preview's is: a live command already queued on the write worker used
+    # to land in the gap, paint over the flash and move the strip's recorded
+    # start, and the strip then stayed on the live program for the whole
+    # hold. A write that fails withdraws them.
+    runtime._core_previews["hardware"] = core_runtime._Preview(
+        program, until, time.time(), (strip.device_id,), held=True
+    )
+    runtime._core_previews["dot"] = core_runtime._Preview(
+        CHECK_SYNC_PROGRAM, until, time.time(), (dot.device_id,), held=True
+    )
     try:
         write = strip_controller.sync_program(program, LedDisplayState.IDLE, force=True)
+        if write.error is not None or not write.changed:
+            raise CommandError("refused", f"the SidePulse refused the check: {write.error}")
+    except CommandError:
+        _withdraw(runtime)
+        raise
     except Exception as exc:
+        _withdraw(runtime)
         raise CommandError("refused", f"the SidePulse refused the check: {exc}") from exc
-    if write.error is not None or not write.changed:
-        raise CommandError("refused", f"the SidePulse refused the check: {write.error}")
     started = write.applied_at or time.monotonic()
     anchor = core_runtime.mono_to_epoch(started) or time.time()
-    link = runtime._core_linked
     link.note_epoch(
         LinkedEpoch(
             anchor=float(started),
@@ -77,10 +95,12 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     )
     runtime._core_linked_pro_program = (write.nominal_program or program, write.state)
     runtime._core_hardware_anchor[strip.device_id] = anchor
-    dot_write = _write_dot(runtime, dot, reason="check")
-    until = time.monotonic() + seconds
     link.check_until = until
-    link.check_started_epoch = anchor
+    try:
+        dot_write = _write_dot(runtime, dot, reason="check")
+    except Exception as exc:
+        _withdraw(runtime)
+        raise CommandError("refused", f"the Dot refused the check: {exc}") from exc
     runtime._core_previews["hardware"] = core_runtime._Preview(
         write.program, until, anchor, (strip.device_id,), held=True
     )
@@ -90,6 +110,13 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     legacy.log_status_bar(f"linked sync: check started for {int(seconds)} s")
     runtime._core_publish_lights()
     return {"until": time.time() + seconds, "devices": [strip.device_id, dot.device_id]}
+
+
+def _withdraw(runtime: Any) -> None:
+    """Take back the holds a check that never started registered."""
+    runtime._core_previews.pop("hardware", None)
+    runtime._core_previews.pop("dot", None)
+    runtime._core_linked.check_until = None
 
 
 def _write_dot(runtime: Any, dot: Any, *, reason: str):
