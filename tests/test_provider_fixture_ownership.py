@@ -105,7 +105,7 @@ def test_t3_manifest_requires_a_valid_reviewed_on_date() -> None:
     t3code = load_integration_compatibility_manifest().entry("t3code")
 
     assert t3code is not None
-    assert t3code.reviewed_on == "2026-09-06"
+    assert t3code.reviewed_on == "2026-09-24"
 
 
 def _copy_fixture_tree(destination: Path) -> None:
