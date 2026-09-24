@@ -497,15 +497,21 @@ def test_mark_history_seen_waits_behind_the_list_history_sent_before_it(sock_dir
     from, so every row came back seen. The mark now queues behind it."""
     watermark = {"last_seen": "old"}
     threads: dict[str, str] = {}
+    # The reader thread handles one socket's frames in order, so once the
+    # ping behind the mark has run, the mark has been handled too: run
+    # inline (the bug) or queued behind the read.
+    mark_handled = threading.Event()
 
     def dispatch(name: str, args: dict) -> object:
         threads[name] = threading.current_thread().name
         if name == "list_history":
-            time.sleep(0.05)
+            assert mark_handled.wait(5.0)
             return {"measured_from": watermark["last_seen"]}
         if name == "mark_history_seen":
             watermark["last_seen"] = "new"
             return {"last_seen": "new"}
+        if name == "ping":
+            mark_handled.set()
         return {}
 
     instance = CoreServer(
@@ -520,11 +526,12 @@ def test_mark_history_seen_waits_behind_the_list_history_sent_before_it(sock_dir
         client.sendall(
             encode_frame({"t": "command", "v": 1, "id": "list", "name": "list_history", "args": {}})
             + encode_frame({"t": "command", "v": 1, "id": "mark", "name": "mark_history_seen", "args": {}})
+            + encode_frame({"t": "command", "v": 1, "id": "ping", "name": "ping", "args": {}})
         )
-        replies = _read_frames(client, 2)
-        assert [reply["id"] for reply in replies] == ["list", "mark"]
-        assert replies[0]["result"] == {"measured_from": "old"}
-        assert replies[1]["result"] == {"last_seen": "new"}
+        replies = _read_frames(client, 3)
+        assert [reply["id"] for reply in replies] == ["ping", "list", "mark"]
+        assert replies[1]["result"] == {"measured_from": "old"}
+        assert replies[2]["result"] == {"last_seen": "new"}
         assert threads["mark_history_seen"] == "JRBarCoreSlowLane"
         client.close()
     finally:
