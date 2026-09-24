@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import os
 import Quartz
 import QuickLookThumbnailing
@@ -149,6 +150,17 @@ final class ShelfTrayModel {
     /// files, not tiles.
     var items: [Entry] { entries.flatMap(\.items) }
 
+    // MARK: The notch's shelf settings
+
+    /// Read through closures the notch wires once (`NotchToy`), so the
+    /// glass card and the island's card — one tray between them — both
+    /// follow the Notch card's rows. The defaults are today's shelf.
+    @ObservationIgnored var newestFirst: @MainActor () -> Bool = { false }
+    @ObservationIgnored var dragOutPolicy: @MainActor () -> ShelfDragOut = { .copy }
+    @ObservationIgnored var removeAfterDragOut: @MainActor () -> Bool = { false }
+    /// The shelf itself; off, the card is one page and takes no drops.
+    @ObservationIgnored var shelfEnabled: @MainActor () -> Bool = { true }
+
     init() {
         load()
     }
@@ -199,7 +211,7 @@ final class ShelfTrayModel {
                 items: fresh,
                 folder: ShelfEntry.Stack.commonFolder(of: fresh))
             let at = target.flatMap { t in known.firstIndex(where: { $0.id == t.id }) }
-                ?? known.count
+                ?? landingIndex(in: known)
             known.insert(.stack(stack), at: at)
             finish(&known)
             return
@@ -267,9 +279,15 @@ final class ShelfTrayModel {
         }
 
         let at = target.flatMap { t in known.firstIndex(where: { $0.id == t.id }) }
-            ?? known.count
+            ?? landingIndex(in: known)
         known.insert(.item(item), at: at)
         finish(&known)
+    }
+
+    /// Where a new chip with no aimed drop lands: the end, or the front
+    /// with "Newest first" (boring.notch's reverse order).
+    private func landingIndex(in known: [ShelfEntry]) -> Int {
+        newestFirst() ? 0 : known.count
     }
 
     /// Bound, revalidate, persist — the add paths' shared tail.
@@ -283,11 +301,13 @@ final class ShelfTrayModel {
             var over = total - Self.maxItems
             var names: [String] = []
             var droppedItems = 0
-            while over > 0, let first = known.first {
-                let count = first.items.count
+            // The oldest chips sit at the far end from where new ones land.
+            let fromFront = !newestFirst()
+            while over > 0, let oldest = fromFront ? known.first : known.last {
+                let count = oldest.items.count
                 droppedItems += count
-                names.append(first.displayName)
-                known.removeFirst()
+                names.append(oldest.displayName)
+                if fromFront { known.removeFirst() } else { known.removeLast() }
                 over -= count
             }
             evictionNotice = droppedItems == 1
@@ -312,7 +332,110 @@ final class ShelfTrayModel {
             icons.removeValue(forKey: item.path)
             pendingThumbs.remove(item.path)
         }
+        selectedIDs.remove(entry.id)
         evictionNotice = nil
+        persist()
+    }
+
+    /// Clear Shelf: every reference goes; the files stay where they are.
+    func removeAll() {
+        entries.removeAll()
+        icons.removeAll()
+        pendingThumbs.removeAll()
+        selectedIDs.removeAll()
+        selectionAnchor = nil
+        evictionNotice = nil
+        persist()
+    }
+
+    // MARK: Selection
+
+    /// The chips picked with ⌘- and ⇧-click; a verb on one of them acts
+    /// on them all.
+    private(set) var selectedIDs: Set<String> = []
+    /// Where a ⇧-click range starts: the last chip ⌘-clicked or ⇧-clicked.
+    @ObservationIgnored private var selectionAnchor: String?
+
+    /// ⌘-click: this chip joins or leaves the selection.
+    func toggleSelection(_ entry: ShelfEntry) {
+        if selectedIDs.contains(entry.id) {
+            selectedIDs.remove(entry.id)
+        } else {
+            selectedIDs.insert(entry.id)
+        }
+        selectionAnchor = entry.id
+    }
+
+    /// ⇧-click: every chip from the anchor to this one, in strip order,
+    /// joins the selection.
+    func extendSelection(to entry: ShelfEntry) {
+        guard let end = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let start = selectionAnchor.flatMap { anchor in entries.firstIndex { $0.id == anchor } } ?? end
+        for index in min(start, end)...max(start, end) {
+            selectedIDs.insert(entries[index].id)
+        }
+        selectionAnchor = entry.id
+    }
+
+    func clearSelection() {
+        guard !selectedIDs.isEmpty else { return }
+        selectedIDs.removeAll()
+        selectionAnchor = nil
+    }
+
+    /// What a verb on `entry` acts on: the whole selection when `entry`
+    /// is part of one, else `entry` alone — in strip order.
+    func targets(for entry: ShelfEntry) -> [ShelfEntry] {
+        guard selectedIDs.contains(entry.id), selectedIDs.count > 1 else { return [entry] }
+        return entries.filter { selectedIDs.contains($0.id) }
+    }
+
+    /// The files of `entries` that still resolve, each once.
+    func presentURLs(of entries: [ShelfEntry]) -> [URL] {
+        revalidate()
+        let ids = Set(entries.map(\.id))
+        var seen = Set<String>()
+        return self.entries.filter { ids.contains($0.id) }
+            .flatMap(\.items)
+            .filter { !$0.missing && seen.insert($0.path).inserted }
+            .map(\.url)
+    }
+
+    // MARK: Drag out
+
+    /// A drag out of the shelf ended. With "Remove after dragging out"
+    /// on, a drop that landed outside JR-Bar takes the dragged chip off
+    /// the shelf — only that chip, and never for a drag that was
+    /// refused, cancelled or only rearranged the strip.
+    func finishDragOut(_ entry: ShelfEntry, operation: NSDragOperation, outside: Bool) {
+        guard ShelfDragOutRule.removes(operation: operation, outside: outside,
+                                       removeAfter: removeAfterDragOut()),
+              entries.contains(where: { $0.id == entry.id }) else { return }
+        remove(entry)
+    }
+
+    /// A line under the strip for what a verb just did — "Copied the
+    /// text of 2 files". It fades on its own like the eviction line.
+    var actionNotice: String?
+
+    /// A file the shelf itself moved (Move to…): its chip follows it,
+    /// in a stack or loose, rather than turning up missing.
+    func relocate(from old: String, to new: String) {
+        guard old != new else { return }
+        let moved = Entry(path: new, missing: false)
+        entries = entries.map { entry in
+            switch entry {
+            case .item(let item):
+                return item.path == old ? .item(moved) : entry
+            case .stack(var stack):
+                guard stack.items.contains(where: { $0.path == old }) else { return entry }
+                stack.items = stack.items.map { $0.path == old ? moved : $0 }
+                stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
+                return .stack(stack)
+            }
+        }
+        selectedIDs.remove(old)
+        icons.removeValue(forKey: old)
         persist()
     }
 

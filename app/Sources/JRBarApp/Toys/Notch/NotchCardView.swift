@@ -21,6 +21,8 @@ final class NotchCardModel {
                 // The rows that had a drag over them are gone with the
                 // card; a stale entry would read as a drag still here.
                 dropHover.removeAll()
+                // A selection is for this open; the next starts clear.
+                tray.clearSelection()
                 // Only a real fold starts the next open on Now — a
                 // repeat "not pinned" while the card is already away
                 // must not undo a shelf summon waiting to grow.
@@ -150,7 +152,8 @@ final class NotchCardModel {
     /// What waits on the shelf page, for its tab: files, running or
     /// done timers, and a fresh copy to paste.
     var shelfWaiting: Int {
-        tray.items.count + timers.entries.count + (tray.pasteOffered ? 1 : 0)
+        let files = tray.shelfEnabled() ? tray.items.count + (tray.pasteOffered ? 1 : 0) : 0
+        return files + timers.entries.count
     }
 
     /// Who has the microphone, whether a camera is rolling — read as the
@@ -256,6 +259,9 @@ final class NotchCardModel {
     /// A drop anywhere on the card but a session row: into the tray,
     /// and the card turns to the shelf page to show where it landed.
     func shelve(_ urls: [URL]) {
+        // The shelf switched off takes no files; a drop on a session row
+        // still hands them to that agent.
+        guard tray.shelfEnabled() else { return }
         tray.add(urls)
         show(.shelf)
     }
@@ -409,6 +415,7 @@ struct NotchCardView: View {
         .frame(width: width)
         .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText],
                 isTargeted: dropHover("card")) { providers in
+            guard model.tray.shelfEnabled() else { return false }
             ShelfTrayDrop.urls(from: providers) { urls in
                 model.shelve(urls)
             }
@@ -663,13 +670,15 @@ struct NotchCardView: View {
     /// Control Center strip.
     @ViewBuilder
     private var shelfPage: some View {
-        revealRow(2, ShelfTrayRow(tray: model.tray, style: style,
-                                  handTargets: model.handTargets,
-                                  onHand: { entry, session in
-                                      model.handToAgent(entry, session: session)
-                                  },
-                                  dropHover: { dropHover($0) },
-                                  onDropLanded: { model.onDropLanded?() }))
+        if model.tray.shelfEnabled() {
+            revealRow(2, ShelfTrayRow(tray: model.tray, style: style,
+                                      handTargets: model.handTargets,
+                                      onHand: { entry, session in
+                                          model.handToAgent(entry, session: session)
+                                      },
+                                      dropHover: { dropHover($0) },
+                                      onDropLanded: { model.onDropLanded?() }))
+        }
         if !model.timers.entries.isEmpty {
             revealRow(3, ShelfTimersRow(timers: model.timers, style: style))
         }
@@ -1610,6 +1619,18 @@ private struct ShelfTrayRow: View {
                         tray.clearEvictionNotice()
                     }
             }
+            if let notice = tray.actionNotice {
+                Text(notice)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(style.faintColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(6))
+                        if tray.actionNotice == notice { tray.actionNotice = nil }
+                    }
+            }
         }
     }
 
@@ -1640,12 +1661,23 @@ private struct ShelfTrayRow: View {
             switch entry {
             case .item(let item):
                 itemFace(item, entry: entry)
+                    // ⌘-click picks, ⇧-click picks a run — Finder's grammar.
+                    .simultaneousGesture(TapGesture().modifiers(.command).onEnded { tray.toggleSelection(entry) })
+                    .simultaneousGesture(TapGesture().modifiers(.shift).onEnded { tray.extendSelection(to: entry) })
             case .stack(let stack):
                 ShelfStackChip(tray: tray, stack: stack, style: style) {
                     tray.dissolve(entry)
                 }
             }
         }
+        .overlay {
+            if tray.selectedIDs.contains(entry.id) {
+                RoundedRectangle(cornerRadius: Self.tileRadius, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
+        .accessibilityAddTraits(tray.selectedIDs.contains(entry.id) ? .isSelected : [])
         .contextMenu {
             if !entry.missing {
                 // The job done all day: a screenshot or a file handed
@@ -1666,6 +1698,9 @@ private struct ShelfTrayRow: View {
                 Button("Reveal in Finder") { tray.reveal(entry) }
                 Button("Send via AirDrop") { _ = tray.sendViaAirDrop(entry) }
                 shareMenu(for: entry)
+                Divider()
+                ShelfActionMenuItems(tray: tray, targets: tray.targets(for: entry))
+                Divider()
             }
             switch entry {
             case .item:
@@ -1679,10 +1714,20 @@ private struct ShelfTrayRow: View {
                 Button("Split into Items") { tray.dissolve(entry) }
             }
             Button("Remove from Tray", role: .destructive) { tray.remove(entry) }
+            if tray.entries.count > 1 {
+                Button("Clear Shelf", role: .destructive) { tray.removeAll() }
+            }
         }
-        .onDrag {
-            tray.provider(for: entry) ?? NSItemProvider()
-        }
+        // A copy unless ⌘ is held (`shelfDragOut`); a picked chip drags
+        // the whole selection.
+        .background(ShelfDragSource(
+            urls: { tray.presentURLs(of: tray.targets(for: entry)) },
+            policy: { tray.dragOutPolicy() },
+            ended: { operation, outside in
+                for dragged in tray.targets(for: entry) {
+                    tray.finishDragOut(dragged, operation: operation, outside: outside)
+                }
+            }))
         .onDrop(of: [.fileURL], isTargeted: dropHover?("tile:\(entry.id)")) { providers in
             // No provider carrying a file means nothing to land —
             // an unconditional yes would animate acceptance anyway.
@@ -1773,8 +1818,8 @@ private struct ShelfTrayRow: View {
 }
 
 /// A stack's chip: a fan of its first three icons, the name and the
-/// count. A plain click opens the grid popover; ⌘-click dissolves
-/// the stack where it stands.
+/// count. A plain click opens the grid popover; ⌘- and ⇧-click pick it,
+/// and ⌥-click dissolves the stack where it stands.
 private struct ShelfStackChip: View {
     let tray: ShelfTrayModel
     let stack: ShelfTrayModel.ShelfEntry.Stack
@@ -1817,7 +1862,14 @@ private struct ShelfStackChip: View {
         .foregroundStyle(stack.items.allSatisfy(\.missing)
                          ? style.faintColor : style.subColor)
         .onTapGesture {
-            if NSEvent.modifierFlags.contains(.command) {
+            // ⌘ and ⇧ pick, as on a loose chip; ⌥-click splits the stack
+            // where it stands; a plain click opens its grid.
+            let flags = NSEvent.modifierFlags
+            if flags.contains(.command) {
+                tray.toggleSelection(.stack(stack))
+            } else if flags.contains(.shift) {
+                tray.extendSelection(to: .stack(stack))
+            } else if flags.contains(.option) {
                 dissolve()
             } else {
                 open = true
@@ -1854,9 +1906,15 @@ private struct ShelfStackChip: View {
                                 in: RoundedRectangle(cornerRadius: 6,
                                                      style: .continuous))
                     .opacity(item.missing ? 0.38 : 1)
-                    .onDrag {
-                        NSItemProvider(object: item.url as NSURL)
-                    }
+                    .background(ShelfDragSource(
+                        urls: { FileManager.default.fileExists(atPath: item.path) ? [item.url] : [] },
+                        policy: { tray.dragOutPolicy() },
+                        ended: { operation, outside in
+                            if ShelfDragOutRule.removes(operation: operation, outside: outside,
+                                                        removeAfter: tray.removeAfterDragOut()) {
+                                tray.removeItem(item, from: stack.id)
+                            }
+                        }))
                     .onTapGesture(count: 2) {
                         if !item.missing {
                             tray.quickLook(.item(item))

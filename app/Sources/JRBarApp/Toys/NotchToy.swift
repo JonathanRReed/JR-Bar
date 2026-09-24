@@ -231,6 +231,12 @@ final class NotchToy: Toy {
         }
         cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
         cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
+        // The shelf's own rows: one tray serves both card surfaces, so
+        // the settings ride the tray itself.
+        cardModel.tray.newestFirst = { [weak self] in self?.settings.shelfNewestFirst ?? false }
+        cardModel.tray.dragOutPolicy = { [weak self] in self?.settings.shelfDragOut ?? .copy }
+        cardModel.tray.removeAfterDragOut = { [weak self] in self?.settings.shelfRemoveAfterDragOut ?? false }
+        cardModel.tray.shelfEnabled = { [weak self] in self?.settings.shelfEnabled ?? true }
         cardModel.sessionCwd = { [weak self] id in self?.core.state?.session(withID: id)?.cwd }
         // A meeting about to start says so; one running is a quiet
         // stretch, and its end may replay what it held.
