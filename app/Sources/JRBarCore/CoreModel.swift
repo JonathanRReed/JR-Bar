@@ -671,6 +671,19 @@ public final class CoreModel {
         ], as: EffectPreview.self)
     }
 
+    /// `render_effect` drawn in `color` (`#RRGGBB`) instead of the working
+    /// cyan: how the effect looks on one provider, in its own colour.
+    public func renderEffect(_ effectID: String, parameters: [String: JSONValue], ledCount: Int = 8,
+                             color: String?) async throws -> EffectPreview {
+        guard let color else { return try await renderEffect(effectID, parameters: parameters, ledCount: ledCount) }
+        return try await request("render_effect", args: [
+            "effect_id": .string(effectID),
+            "parameters": .object(parameters),
+            "led_count": .number(Double(ledCount)),
+            "color": .string(color),
+        ], as: EffectPreview.self)
+    }
+
     /// `set_assignment {effect_id, scope, target_id, parameters}`: the
     /// Effect Studio assignment for that scope and target. Unlike
     /// `apply_effect` this command persists tuned `parameters` to the

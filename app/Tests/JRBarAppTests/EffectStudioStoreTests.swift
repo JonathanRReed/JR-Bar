@@ -195,3 +195,71 @@ import Testing
         #expect(store.covered, "a window that was never ordered in shows nothing")
     }
 }
+
+/// Knobs that re-render: a slider change asks the daemon for a new
+/// program and the preview shows it, and a provider's draft previews in
+/// that provider's own colour. The daemon is stood in for by a renderer
+/// that draws the values it is given, so the store's plumbing is what is
+/// under test (`tests/test_effect_parameters_live.py` holds the daemon to
+/// the knobs themselves).
+@MainActor
+@Suite struct EffectStudioRenderTests {
+    /// Waits, bounded, for the store's debounced render to land.
+    static func settle(_ condition: @MainActor () -> Bool) async -> Bool {
+        for _ in 0..<200 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    static func comet() -> EffectDefinition {
+        let head = EffectParameter(name: "head_width", type: .integer, defaultValue: .number(1), minimum: 1, maximum: 4)
+        return EffectStudioLibraryTests.makeEffect("comet", parameters: [head],
+                                                   program: "roll-right 1320ms linear\nrepeat", ledCount: 8)
+    }
+
+    @Test func aSliderChangeRerendersToADifferentProgram() async {
+        let store = EffectStudioStoreTests.makeStore()
+        var asked: [(String, [String: JSONValue], String?)] = []
+        store.renderer = { id, values, leds, color in
+            asked.append((id, values, color))
+            let width = values["head_width"]?.doubleValue ?? 0
+            return EffectPreview(program: "head \(Int(width)) on \(leds)\nrepeat", ledCount: leds)
+        }
+        let effect = Self.comet()
+        let before = store.previewProgram(for: effect)
+        let head = effect.parameters[0]
+        store.setValue(.number(3), for: head, of: effect)
+        let rendered = await Self.settle { store.previewProgram(for: effect) != before }
+        #expect(rendered, "the preview never took the new render")
+        #expect(store.previewProgram(for: effect) == "head 3 on 8\nrepeat")
+        #expect(asked.last?.0 == "comet")
+        #expect(asked.last?.1["head_width"] == .number(3))
+        #expect(asked.last?.2 == nil, "the inspector previews in the working cyan")
+        // Back to the default: the catalog's own program, no new request.
+        let count = asked.count
+        store.setValue(.number(1), for: head, of: effect)
+        try? await Task.sleep(for: .milliseconds(250))
+        #expect(store.previewProgram(for: effect) == before)
+        #expect(asked.count == count)
+    }
+
+    @Test func aProviderDraftPreviewsInTheProvidersColour() async {
+        let store = EffectStudioStoreTests.makeStore()
+        var colors: [String?] = []
+        store.renderer = { _, _, leds, color in
+            colors.append(color)
+            return EffectPreview(program: "\(color ?? "cyan") 1s pulse\nrepeat", ledCount: leds)
+        }
+        let effect = Self.comet()
+        store.beginAssigning(effect, scope: .provider, target: "opencode")
+        let purple = await Self.settle { store.draftPreviewProgram(for: effect).hasPrefix("#AF52DE") }
+        #expect(purple, "OpenCode's draft should preview in its own purple, not the working cyan")
+        #expect(store.draftColor == "#AF52DE")
+        #expect(colors.contains("#AF52DE"))
+        store.draftScope = .semantic
+        #expect(store.draftColor == nil)
+        store.windowDidClose()
+    }
+}

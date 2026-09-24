@@ -182,3 +182,27 @@ def test_the_lid_document_names_what_each_transition_plays() -> None:
     assert iris["program"].startswith(ACCENT) and "7:" in iris["program"]
     assert "7:" not in iris["dot_program"]
     assert iris["setting"]["shape"] == lid_presets.LID_SHAPE_IRIS_CLOSE_ACTIVE
+
+
+def test_the_app_can_list_lid_looks_finishes_and_a_providers_light() -> None:
+    """The three read-only documents Effect Studio and Settings draw from."""
+    from types import SimpleNamespace
+
+    from jrbar import core_runtime
+
+    settings = AgentMonitorSettings()
+    settings = settings.with_colors(settings.colors.with_done_celebration_style("land"))
+    host = SimpleNamespace(
+        settings=settings,
+        last_snapshot=None,
+        agent_render_colors=lambda: settings.colors,
+    )
+    lids = core_runtime._cmd_list_lid_presets(host, {})
+    assert [entry["kind"] for entry in lids["kinds"]] == ["open", "closed", "open_active", "closed_active"]
+    finishes = core_runtime._cmd_list_finish_looks(host, {})
+    assert finishes["current"] == "land"
+    assert [look["style"] for look in finishes["looks"]] == ["bloom", "land", "ripple"]
+    assert all(look["program"] and look["dot_program"] for look in finishes["looks"])
+    light = core_runtime._cmd_preview_provider_motion(host, {"provider": "opencode", "led_count": 2})
+    assert light["motion"] == "pendulum" and light["led_count"] == 2
+    assert "repeat" in light["program"]

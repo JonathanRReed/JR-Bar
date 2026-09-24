@@ -1886,6 +1886,56 @@ def _cmd_play_lid_preset(self, args):
     return {"kind": kind, "name": name, "seconds": seconds}
 
 
+@command("list_finish_looks", main_thread=False)
+def _cmd_list_finish_looks(self, args):
+    """The done celebration's looks for Effect Studio's Moments, drawn for
+    the Pro and the Dot in the done colour, and the one in use."""
+    from . import celebrations
+    from .led_status import _done_celebration_program
+
+    colors = self.settings.colors
+    done = colors.mode_color("done")
+    labels = {"bloom": "Bloom", "land": "Land", "ripple": "Ripple"}
+    looks = []
+    for style in celebrations.DONE_CELEBRATION_STYLES:
+        drawn = {
+            led_count: celebrations.done_celebration_program(style, done, led_count=led_count)
+            or _done_celebration_program(done, led_count)
+            for led_count in (8, 2)
+        }
+        looks.append(
+            {"style": style, "label": labels.get(style, style), "program": drawn[8], "dot_program": drawn[2]}
+        )
+    return {
+        "current": colors.done_celebration_style,
+        "enabled": colors.done_celebration_enabled,
+        "looks": looks,
+    }
+
+
+@command("preview_provider_motion", main_thread=False)
+def _cmd_preview_provider_motion(self, args):
+    """What one provider's agent working alone plays right now: the same
+    composition the Pro is sent, from the live settings -- its chosen motion
+    at its own tempo, or the Relay for Automatic."""
+    from .presentation_policy import solo_working_program
+
+    provider = str(args.get("provider") or "").strip()
+    if not provider:
+        raise CommandError("invalid_args", "provider is required")
+    try:
+        led_count = max(2, min(8, int(args.get("led_count") or 8)))
+    except (TypeError, ValueError) as error:
+        raise CommandError("invalid_args", "led_count must be a number") from error
+    colors = self.agent_render_colors()
+    return {
+        "provider": provider,
+        "led_count": led_count,
+        "motion": colors.agent_animation(provider),
+        "program": solo_working_program(provider, colors, led_count=led_count),
+    }
+
+
 @command("clear_assignment")
 def _cmd_clear_assignment(self, args):
     from . import core_effects

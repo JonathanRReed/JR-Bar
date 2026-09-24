@@ -980,6 +980,10 @@ the main thread). Unknown args are ignored.
 | `list_assignments` | | `{assignments[{effect_id, scope, target_id, parameters}], active_scene, generation}` from the effect assignment store; `parameters` come from the daemon's sidecar (`effect-assignment-parameters.json`). `generation` is derived from the assignments and the active scene (`core_effects.assignments_generation`). |
 | `set_assignment` | effect_id, scope, target_id?, parameters? | Validates through `effect_studio.plan_assignment` (global takes no target, `asking`/`failure` keep `alert`, scenes and semantic families are checked), saves the assignment document and the parameters sidecar, refreshes. Semantic targets outside the four the event router can deliver (`asking`, `failure`, `completion`, `notification`) are refused `unroutable_semantic` — `working`, `idle`, `recovery`, `environment`, `transition` and `quota` are persistent states, not deliverable effects. A `provider_animation`-catalog effect assigned at `provider` scope also writes `colors.provider_animation[target]`, the persistent motion the live renderers read, and the reply gains `motion_warning` when that settings write fails. Replies the assignment document plus `assignment`. |
 | `clear_assignment` | scope, target_id? | Removes that assignment (and its parameters sidecar entry, and the `colors.provider_animation` entry when the removed row was a provider-scope motion); the document plus `removed`. |
+| `list_lid_presets` | | Effect Studio › Moments › Lid (2026-09-24): `{kinds[{kind, label, path, current, shipped, shipped_program, presets[{name, duration_seconds, shape, program, dot_program, setting}]}]}` for the four lid transitions (`open`, `closed`, `open_active`, `closed_active`). `program`/`dot_program` are the look drawn for the Pro's eight LEDs and the Dot's two -- the Iris looks (`shape` `iris_open`, `iris_close`, `iris_open_active`, `iris_close_active`) are drawn per device, the active ones in the working agent's colour. `current` names the look the transition plays (null for a custom program; `shipped` says it is still the look it came with). To pick one, `set_setting` the transition's `path` to its `setting` object. |
+| `play_lid_preset` | kind, name | Plays that lid look on the connected strip and Dot exactly as a lid change would (`play_lid_animation`, each device drawn for its LED count), then hands the light back. `{kind, name, seconds}`; `invalid_args` for an unknown look. Hardware: the app asks for its preview consent first. |
+| `list_finish_looks` | | The done celebration's looks: `{current, enabled, looks[{style, label, program, dot_program}]}` -- `bloom` (the shipped twinkle-then-bloom), `land`, `ripple` -- drawn in the done colour. `current` is `colors.done_celebration_style`. |
+| `preview_provider_motion` | provider, led_count? (2…8) | What one agent of that provider working alone plays right now -- the composition the Pro is sent, from the live settings, brightness aside: its chosen motion at its own tempo, or the Relay for Automatic. `{provider, led_count, motion, program}`. The Lighting page's provider swatches play it. |
 | `import_effect_pack` | path, update? | `EffectPackStore.install` of a data-only JSON v2 pack (`invalid_pack` on anything the validator refuses, `conflict` when that pack id is installed), the registry rebuilt with every installed pack; replies the catalog plus `imported {id, name, effects}`. `update: true` replaces the installed pack with that id instead (`refused` with `not_installed` when there is none, `already_current` when nothing changed). |
 | `remove_effect_pack` | pack_id | `EffectPackStore.remove` of one installed pack (`not_installed`/`refused`/`remove_failed` as appropriate), the registry rebuilt; replies the catalog plus `removed {id}`. |
 | `export_effect_pack` | ids[], path, name? | Writes a data-only JSON v2 pack of those effects (pack effects keep their data, builtins become their motion plus parameter defaults, fallbacks kept only when exported too) through `write_private_export`; `{path, effects, bytes, id}`. |
@@ -1468,6 +1472,26 @@ path, validated by the real settings loader:
 | `meeting_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `off` | What a calendar meeting does. |
 | `away_quiet_mode` | `off` \| `sounds` \| a quiet-mode word | `off` | What an empty desk does (a locked screen or five idle minutes, as the app reports them): `asks_only` keeps the Dot beacon and every ask lit while the rest goes quiet, `dark` turns the desk off like Lolgato. The report expires after 180 s, so the quiet cannot outlive the evidence. |
 | `escalation_tier_by_provider` | object: provider id → `light`/`menu_bar`/`chime`/`takeover` | `{}` | A ceiling per provider under `escalation_tier`, judged on the oldest open ask's provider: Claude's asks may climb to the chime while another provider's never go past the light. It only ever lowers the stage (the global tier arms the finale). |
+
+## LED motion settings (2026-09-24)
+
+The live light for one working agent is now drawn by the same renderer as
+its Settings thumbnail and its Effect Studio preview
+(`motion_shapes.render_motion`). These keys shape it:
+
+| path | type | default | meaning |
+| --- | --- | --- | --- |
+| `colors.provider_animation_parameters` | object: provider id → {parameter: value} | `{}` | The Effect Studio values a provider's motion was assigned with (`set_assignment` at provider scope writes them; clearing the assignment, or choosing Automatic, removes them). `duration_seconds` gives that provider its own tempo instead of `colors.cycle_speed_seconds`. A file written before this key existed seeds every provider that already had a motion with the tempo its lone-agent light played (breathe 5.5 s, blink 1.6 s, anything else 2.2 s). An owned collection: a provider removed here stays removed. |
+| `colors.tint_by_tool` | bool | `false` | The head of a Chase, Comet or Glint takes the colour of the working tool's family (shell, edit, read, web and MCP, task, plan); the tail keeps the provider colour. Only a change of family can change the light, at most once every 3 s; asks and failures never take it. |
+| `colors.done_celebration_style` | `bloom` \| `land` \| `ripple` | `bloom` | How a finish is celebrated while `colors.done_celebration_enabled` is on. Anything else reads as `bloom`. |
+| `devices.N.led_direction` | `forward` \| `reversed` | `forward` | Which way round the strip is mounted. Reversed mirrors every agent light drawn for that device (LED `i` becomes `n-1-i`, rolls turn the other way). |
+| `devices.N.dot_travel_style` | `wipe` \| `crossfade` | `wipe` | How a travelling motion plays on a two-LED device: LED 0 rises, LED 1 rises, LED 0 falls, LED 1 falls; or the older soft crossfade. |
+| `lid_*_animation.shape` | a lid shape or null | null | A lid look drawn per device (the Iris looks); `program` then holds its eight-LED form. |
+
+`colors.provider_animation` also takes `ripple` and `pendulum`. OpenCode
+plays `pendulum` at 2.4 s when it has no motion of its own; choosing
+Automatic for it is stored as `"auto"`, the one provider-animation value
+that is ever written as a word.
 
 ## Versioning
 

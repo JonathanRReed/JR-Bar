@@ -64,6 +64,9 @@ final class EffectStudioStore {
     private(set) var draftParameters: [String: JSONValue] = [:]
 
     @ObservationIgnored private var renderTask: Task<Void, Never>?
+    /// How a preview is rendered: the daemon's `render_effect` unless a
+    /// test hands in its own (effect id, values, LED count, colour).
+    @ObservationIgnored var renderer: ((String, [String: JSONValue], Int, String?) async throws -> EffectPreview)?
     /// Insertion order for `renders`, so the cache can drop its oldest.
     @ObservationIgnored private var renderOrder: [String] = []
     @ObservationIgnored private var ticker: Timer?
@@ -299,9 +302,9 @@ final class EffectStudioStore {
         edits[effect.id] = nil
     }
 
-    private static func renderKey(_ effect: EffectDefinition, _ values: [String: JSONValue]) -> String {
+    private static func renderKey(_ effect: EffectDefinition, _ values: [String: JSONValue], color: String? = nil) -> String {
         let data = (try? JSONEncoder().encode(values)) ?? Data()
-        return effect.id + "|" + String(decoding: data, as: UTF8.self)
+        return effect.id + "|" + (color ?? "") + "|" + String(decoding: data, as: UTF8.self)
     }
 
     /// The effect the preview actually plays. Under Reduce Motion the
@@ -327,9 +330,27 @@ final class EffectStudioStore {
     }
 
     /// The assign sheet previews what the (scope, target) pair plays —
-    /// the hydrated draft values, not the inspector's tuning.
+    /// the hydrated draft values, not the inspector's tuning — and, for a
+    /// provider, in that provider's own colour, so OpenCode's purple
+    /// previews as purple rather than as the working cyan.
     func draftPreviewProgram(for effect: EffectDefinition) -> String {
-        previewProgram(for: effect, values: draftParameters)
+        let shown = Self.displayedEffect(for: effect, catalog: catalog, reduceMotion: reduceMotion)
+        if shown.id == effect.id, let color = draftColor,
+           let render = renders[Self.renderKey(effect, draftParameters, color: color)] {
+            return render.program
+        }
+        return previewProgram(for: effect, values: draftParameters)
+    }
+
+    /// The colour the assign sheet previews in: the target provider's own
+    /// colour (as Settings has it) for a provider-scope draft, else none —
+    /// the catalog's working cyan.
+    var draftColor: String? {
+        guard draftScope == .provider else { return nil }
+        let provider = draftTarget.trimmingCharacters(in: .whitespaces)
+        guard !provider.isEmpty else { return nil }
+        let document = SettingsDocument(core.settings?.document ?? .object([:]))
+        return document.agentColorHex(provider) ?? ProviderStyle.style(for: provider).accentHex
     }
 
     /// The LED count the on-screen strip renders at: the connected
@@ -362,17 +383,25 @@ final class EffectStudioStore {
     /// tuning session grows the cache for the window's whole lifetime.
     private static let renderCacheLimit = 48
 
-    private func scheduleRender(_ effect: EffectDefinition, values: [String: JSONValue]) {
+    private func scheduleRender(_ effect: EffectDefinition, values: [String: JSONValue], color: String? = nil) {
         renderTask?.cancel()
-        let key = Self.renderKey(effect, values)
-        guard renders[key] == nil, values != effect.defaultParameters else { return }
+        let key = Self.renderKey(effect, values, color: color)
+        // The catalog already carries each effect at its defaults in the
+        // working cyan; anything else is the daemon's to draw.
+        guard renders[key] == nil, values != effect.defaultParameters || color != nil else { return }
         renderTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled, let self else { return }
             self.rendering = true
             defer { self.rendering = false }
             do {
-                let preview = try await self.core.renderEffect(effect.id, parameters: values, ledCount: previewLedCount)
+                let ledCount = previewLedCount
+                let preview: EffectPreview
+                if let renderer = self.renderer {
+                    preview = try await renderer(effect.id, values, ledCount, color)
+                } else {
+                    preview = try await self.core.renderEffect(effect.id, parameters: values, ledCount: ledCount, color: color)
+                }
                 self.renders[key] = preview
                 self.renderOrder.removeAll { $0 == key }
                 self.renderOrder.append(key)
@@ -599,7 +628,7 @@ final class EffectStudioStore {
         let target = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
         draftParameters = assignments?.draftParameters(for: effect, scope: draftScope, targetID: target)
             ?? effect.defaultParameters
-        scheduleRender(effect, values: draftParameters)
+        scheduleRender(effect, values: draftParameters, color: draftColor)
     }
 
     /// The assignment already stored at the draft's (scope, target), if

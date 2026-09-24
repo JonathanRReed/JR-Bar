@@ -50,12 +50,13 @@ struct LightingPage: View {
             SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
             SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
                           path: "colors.done_celebration_enabled", default: true)
-            SettingRow("Celebration preview", subtitle: "The ripple, bloom and hold the strip plays.") {
-                LEDStripPreview(program: LightingPreviewPrograms.celebration(colorHex: celebrationColor), style: .dots, dotSize: 9, spacing: 6)
+            SettingRow("Celebration preview", subtitle: "The finish the strip plays, once, when a session is done.") {
+                FinishLookPreview(core: store.core, sketch: LightingPreviewPrograms.celebration(colorHex: celebrationColor))
                     .frame(width: 168)
                     .opacity((store.document.bool("colors.done_celebration_enabled") ?? true) ? 1 : 0.35)
                     .accessibilityLabel("Done celebration preview")
             }
+            LightingMotionRows(store: store)
         }
 
         SettingGroup("State colours", note: "What each state looks like, whoever is running. Ask and Error are deliberately separate — set them to the same colour and the lights still pull them apart.") {
@@ -812,9 +813,9 @@ struct ProviderSwatch: View {
             VStack(alignment: .leading, spacing: 4) {
                 SwatchTitle(name: style.name,
                             hex: store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
-                LEDStripPreview(program: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
-                                style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6,
-                                phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
+                ProviderMotionPreview(core: store.core, provider: provider,
+                                      sketch: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
+                                      phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
                     .frame(maxWidth: 110)
                     .accessibilityLabel("\(style.name) working animation preview")
             }

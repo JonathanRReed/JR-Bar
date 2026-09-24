@@ -338,6 +338,16 @@ PROVIDER_ANIMATIONS = [
     ]),
 ]
 
+# 2026-09-24 (lane led-motions): the two new provider motions.
+PROVIDER_ANIMATIONS += [
+    ("ripple", "Ripple", "A stone in water: the middle crests first and rings run outward, dimmer at every step, then the strip rests. Shared strips ride it as a unison swell.", "transition", "medium", [
+        _duration(1.0), _num("fade", 0.22, "How much dimmer each ring is than the one inside it.", 0.0, 0.5),
+    ]),
+    ("pendulum", "Pendulum", "A weight on a string: the light swings end to end, lingering at each end and passing quickly through the middle. Shared strips ride it as a narrow travelling flare.", "mechanical", "medium", [
+        _duration(1.2), _num("glow", 1.6, "How wide the swinging light's glow is, in LEDs.", 1.0, 3.0),
+    ]),
+]
+
 ALL_SURFACES = ["status_bar", "screen_bar", "sidepulse_pro", "sidepulse_dot", "glance_light", "settings_preview"]
 
 BUILTIN_EFFECTS = [
@@ -381,6 +391,64 @@ SAMPLE_PACK = {
 _PACK_METADATA_KEYS = {"id", "label", "description", "meaning", "surfaces", "safety", "energy", "reduce_motion_fallback"}
 _PACK_CODE_KEYS = {"callback", "code", "command", "entrypoint", "executable", "handler", "hook", "import", "module", "plugin", "script"}
 _MOTION_IDS = {row[0] for row in PROVIDER_ANIMATIONS}
+
+
+# The daemon's lid looks (`lid_presets.lid_presets_document`), a few of
+# them: enough for Effect Studio's Lid moments to draw and pick.
+MOCK_LID_LOOKS = {
+    "open": [
+        ("Hello", 1.7, "#12E3B0 300ms pulse\n#0FA07C 300ms cosine\n#12E3B0 800ms pulse\noff 300ms ease-out", None),
+        ("Iris", 1.1, "off 90ms cosine\n0:#00FF66 180ms ease 240ms; 1:#00F699 180ms ease 160ms; 2:#00EECC 180ms ease 80ms; "
+                      "3:#00E5FF 180ms ease; 4:#00E5FF 180ms ease; 5:#00EECC 180ms ease 80ms; 6:#00F699 180ms ease 160ms; "
+                      "7:#00FF66 180ms ease 240ms\n#00FF66 220ms ease\noff 320ms ease-out", "iris_open"),
+    ],
+    "closed": [
+        ("Cool Down", 1.4, "#00E5FF 350ms pulse\n#0044AA 450ms cosine\noff 600ms cosine", None),
+        ("Iris", 1.5, "#00E5FF 200ms cosine\n0:#000000 75ms ease; 1:#000000 75ms ease 75ms; 2:#000000 75ms ease 150ms; "
+                      "3:#000000 75ms ease 225ms; 4:#000000 75ms ease 225ms; 5:#000000 75ms ease 150ms; "
+                      "6:#000000 75ms ease 75ms; 7:#000000 75ms ease\n#000000 1s", "iris_close"),
+    ],
+    "open_active": [
+        ("Back On It", 1.5, "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse\noff 300ms ease-out", None),
+    ],
+    "closed_active": [
+        ("Still Cooking", 1.5, "#FF9F0A 300ms pulse\n#FF9F0A 250ms cosine\n#5A3A00 350ms cosine\n#1A1200 600ms cosine", None),
+    ],
+}
+MOCK_LID_KINDS = (
+    ("open", "Lid opens", "lid_open_animation"),
+    ("closed", "Lid closes", "lid_closed_animation"),
+    ("open_active", "Lid opens while agents run", "lid_open_active_animation"),
+    ("closed_active", "Lid closes while agents run", "lid_closed_active_animation"),
+)
+MOCK_FINISH_LOOKS = [
+    {"style": "bloom", "label": "Bloom",
+     "program": "off 90ms cosine\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
+     "dot_program": "off 90ms cosine\n#00FF66 280ms cosine\noff 900ms cosine"},
+    {"style": "land", "label": "Land",
+     "program": "off 90ms cosine\n0:#00FF66 300ms pulse; 3:#00FF66 300ms pulse 400ms; 7:#00FF66 300ms pulse 800ms\noff 900ms cosine",
+     "dot_program": "off 90ms cosine\n0:#00FF66 300ms pulse; 1:#00FF66 300ms pulse 400ms\noff 900ms cosine"},
+    {"style": "ripple", "label": "Ripple",
+     "program": "off 90ms cosine\n3:#00FF66 600ms pulse; 4:#00FF66 600ms pulse; 0:#00FF66 600ms pulse 300ms; 7:#00FF66 600ms pulse 300ms\noff 900ms cosine",
+     "dot_program": "off 90ms cosine\n#00FF66 600ms pulse\noff 900ms cosine"},
+]
+
+
+def mock_lid_presets(document: dict) -> dict:
+    kinds = []
+    for kind, label, path in MOCK_LID_KINDS:
+        stored = document.get(path) or {}
+        presets = []
+        current = None
+        for name, seconds, program, shape in MOCK_LID_LOOKS[kind]:
+            presets.append({"name": name, "duration_seconds": seconds, "shape": shape, "program": program,
+                            "dot_program": program, "setting": {"program": program, "duration_seconds": seconds, "shape": shape}})
+            if (shape and stored.get("shape") == shape) or (not shape and not stored.get("shape")
+                                                            and (stored.get("program") or "").strip() == program):
+                current = name
+        kinds.append({"kind": kind, "label": label, "path": path, "current": current,
+                      "shipped": current is None, "presets": presets})
+    return {"kinds": kinds}
 
 
 def _is_hex(value) -> bool:
@@ -969,6 +1037,7 @@ def default_settings_document() -> dict:
             "id": device_id, "name": name, "path": path, "led_display": "agent", "brightness": 255,
             "auto_brightness_enabled": False, "red_gain": 1.0, "green_gain": 1.0, "blue_gain": 1.0,
             "resting_glow": 0.0, "blend_mode": None, "provider_pin": None, "signal_policy": None,
+            "led_direction": "forward", "dot_travel_style": "wipe",
         }
 
     return {
@@ -1017,6 +1086,9 @@ def default_settings_document() -> dict:
             "round_robin_urgency_alert": True,
             "session_colors": {},
             "speed_overrides": {},
+            "provider_animation_parameters": {},
+            "tint_by_tool": False,
+            "done_celebration_style": "bloom",
         },
         "completion_notification_enabled": False,
         "completion_sweep_enabled": True,
@@ -1061,20 +1133,24 @@ def default_settings_document() -> dict:
         "keep_display_awake": False,
         "led_display": "agent",
         "lid_closed_active_animation": {
+            "shape": None,
             "duration_seconds": 1.5,
             "program": "#FF9F0A 300ms pulse\n#FF9F0A 250ms cosine\n#5A3A00 350ms cosine\n#1A1200 600ms cosine",
         },
         "lid_closed_animation": {
+            "shape": None,
             "duration_seconds": 0.9,
             "program": "off 90ms cosine\n0:#FF7A00 180ms ease; 7:#FF7A00 180ms ease; 1:#FF7A00 180ms ease 80ms; "
                        "6:#FF7A00 180ms ease 80ms\n2:#FF4A00 180ms ease; 5:#FF4A00 180ms ease; "
                        "3:#FF3000 180ms ease 80ms; 4:#FF3000 180ms ease 80ms\noff 360ms ease-out",
         },
         "lid_open_active_animation": {
+            "shape": None,
             "duration_seconds": 1.2,
             "program": "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse",
         },
         "lid_open_animation": {
+            "shape": None,
             "duration_seconds": 1.0,
             "program": "off 90ms cosine\n3:#00E5FF 180ms ease; 4:#00E5FF 180ms ease; 2:#00E5FF 180ms ease 80ms; "
                        "5:#00E5FF 180ms ease 80ms\n1:#00FFB0 180ms ease; 6:#00FFB0 180ms ease; "
@@ -2763,6 +2839,29 @@ class World:
         elif name == "list_effects":
             with self.lock:
                 result = self.effect_catalog()
+        elif name == "list_lid_presets":
+            result = mock_lid_presets(self.document)
+        elif name == "play_lid_preset":
+            kinds = {entry["kind"]: entry for entry in mock_lid_presets(self.document)["kinds"]}
+            kind = kinds.get(str(args.get("kind", "")))
+            look = next((p for p in (kind or {}).get("presets", []) if p["name"] == args.get("name")), None)
+            if look is None:
+                return self._error(cid, "invalid_args", "no such lid look")
+            result = {"kind": kind["kind"], "name": look["name"], "seconds": look["duration_seconds"]}
+        elif name == "list_finish_looks":
+            colors = self.document.get("colors", {})
+            result = {"current": colors.get("done_celebration_style", "bloom"),
+                      "enabled": colors.get("done_celebration_enabled", True), "looks": MOCK_FINISH_LOOKS}
+        elif name == "preview_provider_motion":
+            provider = str(args.get("provider") or "")
+            if not provider:
+                return self._error(cid, "invalid_args", "provider is required")
+            led_count = int(args.get("led_count", 8) or 8)
+            color = self.document.get("colors", {}).get("agent_colors", {}).get(provider, EFFECT_BASE_COLOR)
+            motion = self.document.get("colors", {}).get("provider_animation", {}).get(provider, "auto")
+            effect = self.find_effect(motion if motion != "auto" else "chase")
+            program = render_effect_program(effect, {}, led_count, color) if effect else color
+            result = {"provider": provider, "led_count": led_count, "motion": motion, "program": program}
         elif name == "render_effect":
             effect = self.find_effect(str(args.get("effect_id", "")))
             if effect is None:

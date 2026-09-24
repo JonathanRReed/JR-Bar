@@ -544,6 +544,37 @@ def _chosen_motion_lines(
     return None
 
 
+def solo_working_program(provider: str, color_settings, *, led_count: int = 8) -> str:
+    """What one ``provider`` agent working alone plays, as the Pro would be
+    sent it (brightness aside): its chosen motion, or the Relay for
+    Automatic. The Settings swatches preview this instead of a sketch."""
+    from .colors import readable_identity_hex
+
+    preferences = AccessibilityDisplayPreferences()
+    resolved = resolve_glance(
+        GlanceInputs(
+            actionable_episode_key=None,
+            fresh_failure=None,
+            fresh_completion=None,
+            active=True,
+            unresolved_failure=False,
+            capacity=None,
+        ),
+        presentation_time=0.0,
+        relay_epoch=0.0,
+        preferences=preferences,
+    )
+    return compose_presentation_program(
+        resolved,
+        presentation_time=0.0,
+        led_count=led_count,
+        color=readable_identity_hex(color_settings.agent_color(provider)),
+        preferences=preferences,
+        provider=provider,
+        color_settings=color_settings,
+    ).dsl
+
+
 def enforce_temporal_safety(
     program: PresentationProgram,
     *,
