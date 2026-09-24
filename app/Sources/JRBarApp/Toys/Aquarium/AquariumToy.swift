@@ -354,7 +354,11 @@ final class AquariumToy: Toy {
             .workTick(seconds: AquariumRules.tickInterval, working: working),
             now: now)
         effects += game.apply(.tick, now: now)
-        effects += game.apply(.prune(liveIDs: Set(sessions.map(\.id))), now: now)
+        // No session list (the core not up yet, or reconnecting) says
+        // nothing about who is live, so nothing is pruned on it.
+        if core.state != nil {
+            effects += game.apply(.prune(liveIDs: Set(sessions.map(\.id))), now: now)
+        }
         note(effects, now: now)
         if let toast, now.timeIntervalSince(toast.at) > 6 {
             self.toast = nil
@@ -731,7 +735,9 @@ final class AquariumToy: Toy {
     /// The care records stay trimmed while the tank is closed too: the
     /// session list keeps minting records with the window shut, and the
     /// tick's prune only runs while it's open. At most once a minute, on
-    /// a copy, written back (and saved) only when something went.
+    /// a copy, written back (and saved) only when something went. It
+    /// waits for the core's first session list: before that, every live
+    /// session looks gone, and the trim would take its growth and hats.
     private func pruneIfDue(liveIDs: Set<String>, now: Date) {
         guard now.timeIntervalSince(lastPruneAt) >= Self.pruneInterval else { return }
         lastPruneAt = now
@@ -752,6 +758,7 @@ final class AquariumToy: Toy {
     /// under budget, banked credits): the document's fleet facts, folded
     /// into the game on every change — the session list and the usage
     /// ride the same document. Read-only; the tank only notices. A
+        guard core.state != nil else { return }
     /// milestone saves at once; the log's quiet moves ride the next save.
     private func noteFleet(now: Date) {
         guard let state = core.state else { return }
