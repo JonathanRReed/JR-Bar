@@ -48,6 +48,19 @@ struct UtilitySurfacesRenderProofTests {
         }
     }
 
+    /// The panel sizes itself from its content: a compact list takes a
+    /// row's width, not the screen's, and a strip of three stills fits
+    /// under the panel's cap.
+    @Test("the preview panel fits its content, compact or carded")
+    func panelFits() {
+        for content in [Fixtures.compactContent(), Fixtures.terminalContent()] {
+            let panel = DockPreviewPanel(content: content)
+            let size = panel.fittingSize()
+            #expect(size.width >= 340 && size.width <= 720, "width \(size.width)")
+            #expect(size.height > 120 && size.height < 560, "height \(size.height)")
+        }
+    }
+
     // MARK: Proof shots
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
