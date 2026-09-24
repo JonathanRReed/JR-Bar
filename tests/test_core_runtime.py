@@ -3744,7 +3744,9 @@ def test_the_sync_tick_reanchors_at_most_once_in_twenty_seconds(headless, tmp_pa
 
     assert all(later - earlier >= 20.0 for earlier, later in pairwise(asked))
     link_doc = controller._core_build_lights()["dot_link"]
-    assert link_doc["sync_writes_hour"] == len(asked)
+    # Asked for, but the stub never writes them: the hour's count is of
+    # re-anchors written.
+    assert link_doc["sync_writes_hour"] == 0
     assert link_doc["clock_rate"] is not None and link_doc["tolerance_ms"] == 40.0
 
 
