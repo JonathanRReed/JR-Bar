@@ -297,10 +297,18 @@ struct MenuBarPreview: View {
         let image = StatusIconRenderer.shared.image(for: spec)
         let size = StatusIconRenderer.size(for: spec)
         HStack(spacing: 5) {
-            Image(nsImage: image)
-                .renderingMode(image.isTemplate ? .template : .original)
-                .foregroundStyle(image.isTemplate && !style.isMeters && style != .agents ? Color(nsColor: NSColor(hex: "#00E5FF") ?? .labelColor) : .primary)
-                .frame(width: size.width, height: size.height)
+            if style == .hidden {
+                // Nothing stands in the bar; a struck eye says so instead
+                // of an empty strip that reads as a preview still loading.
+                Image(systemName: "eye.slash")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            } else {
+                Image(nsImage: image)
+                    .renderingMode(image.isTemplate ? .template : .original)
+                    .foregroundStyle(image.isTemplate && !style.isMeters && style != .agents ? Color(nsColor: NSColor(hex: "#00E5FF") ?? .labelColor) : .primary)
+                    .frame(width: size.width, height: size.height)
+            }
             if style == .glyphLabel, let label {
                 Text(label).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
             }

@@ -232,6 +232,9 @@ extension ToyCard {
         case "fold": return Color(nsColor: .systemOrange)
         case "aquarium": return Color(nsColor: .systemCyan)
         case "notch-buddy": return Color(nsColor: .systemGreen)
+        // Confetti shares the Toys page's party popper, so it takes red
+        // rather than the page's magenta and never twins the header.
+        case "confetti": return Color(nsColor: .systemRed)
         default: return page
         }
     }

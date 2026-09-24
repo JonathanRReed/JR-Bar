@@ -323,7 +323,8 @@ struct SettingsRenderProofTests {
         withExtendedLifetime(fixture) {}
     }
 
-    /// The whole window — sidebar, toolbar-less split and the Toys page.
+    /// The whole window at the size it first opens — sidebar,
+    /// toolbar-less split and a page.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the window PNGs"))
     func window() throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
@@ -332,7 +333,7 @@ struct SettingsRenderProofTests {
             fixture.settings.page = page
             for dark in [false, true] where Self.wanted("window-\(page.rawValue)") {
                 let view = SettingsRootView(store: fixture.settings)
-                let rep = try Self.snapshot(view, size: CGSize(width: 780, height: 620), dark: dark)
+                let rep = try Self.snapshot(view, size: SettingsWindowController.defaultSize, dark: dark)
                 try Self.write(rep, named: "window-\(page.rawValue)-\(dark ? "dark" : "light")")
             }
         }
@@ -342,7 +343,7 @@ struct SettingsRenderProofTests {
         if let hit = fixture.settings.searchResults.first { fixture.settings.reveal(hit) }
         for dark in [false, true] where Self.wanted("window-search") {
             let view = SettingsRootView(store: fixture.settings)
-            let rep = try Self.snapshot(view, size: CGSize(width: 780, height: 620), dark: dark)
+            let rep = try Self.snapshot(view, size: SettingsWindowController.defaultSize, dark: dark)
             try Self.write(rep, named: "window-search-\(dark ? "dark" : "light")")
         }
         withExtendedLifetime(fixture) {}

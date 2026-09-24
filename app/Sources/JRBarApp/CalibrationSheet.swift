@@ -27,6 +27,11 @@ struct CalibrationSheet: View {
     private var device: SettingsStore.DeviceEntry? { store.deviceEntries.first { $0.id == deviceID } }
     private var isScreenBar: Bool { deviceID == "virtual:status-bar" || device?.kind == "screen_bar" }
     private var deviceName: String { device?.name ?? (isScreenBar ? "Screen Bar" : deviceID) }
+    /// The header tile's glyph: the band, the Dot or the strip.
+    private var deviceSymbol: String {
+        if isScreenBar { return "rectangle.topthird.inset.filled" }
+        return device?.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill"
+    }
 
     /// A connected strip to match a Dot against -- the whole point of the
     /// companion preview is "the Dot tends to be brighter", so the option
@@ -37,9 +42,7 @@ struct CalibrationSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.l) {
             HStack(alignment: .center, spacing: SettingsMetrics.m) {
-                SettingsIconTile(symbol: isScreenBar ? "rectangle.topthird.inset.filled"
-                                    : device?.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
-                                 tint: SettingsStore.Page.devices.tint, size: 40)
+                SettingsIconTile(symbol: deviceSymbol, tint: SettingsStore.Page.devices.tint, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Calibrate \(deviceName)").font(.title3.weight(.semibold))
                     Text("The device is showing the patch below. Hold it beside the screen and match it by eye.")

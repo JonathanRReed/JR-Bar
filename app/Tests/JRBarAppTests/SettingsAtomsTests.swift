@@ -100,10 +100,11 @@ import Testing
 
     @Test func eachCardWearsItsOwnHueAndAnUnknownOneThePages() {
         let page = Color.pink
-        let ids = ["menuBar", "notch", "dock", "agents", "data-hoarder", "fold", "aquarium", "notch-buddy"]
+        let ids = ["menuBar", "notch", "dock", "agents", "data-hoarder", "fold", "aquarium", "notch-buddy",
+                   "confetti"]
         let tints = ids.map { ToyCard.tint(for: $0, page: page).description }
         #expect(Set(tints).count == ids.count, "no two named cards share a hue")
-        #expect(ToyCard.tint(for: "confetti", page: page) == page)
+        #expect(ToyCard.tint(for: "a-toy-yet-to-come", page: page) == page)
     }
 
     @Test func aChordReadsAsTheKeysAPersonPresses() {
@@ -122,8 +123,9 @@ import Testing
             .frame(width: width)
             return NSHostingView(rootView: row).fittingSize.height
         }
-        #expect(height(width: 400) == 20, "five 60 pt chips fit one 400 pt line")
-        let lines: CGFloat = 20 * 3 + 6 * 2
-        #expect(height(width: 140) == lines, "two to a 140 pt line: three lines")
+        let wide = height(width: 400)
+        let narrow = height(width: 140)
+        #expect(wide == 20, "five 60 pt chips fit one 400 pt line")
+        #expect(narrow == 20 * 3 + 6 * 2, "two to a 140 pt line: three lines")
     }
 }

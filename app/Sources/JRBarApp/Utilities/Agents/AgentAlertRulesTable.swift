@@ -45,7 +45,11 @@ struct AgentAlertRulesTable: View {
                 Text("Failures")
                 Text("Sounds")
                 Text("Escalates to")
-                Text("")
+                // The reset column takes the slack, so the rules and
+                // their hairlines span the panel and each reset sits on
+                // its trailing edge, as in the stacked rows.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: 0)
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -60,6 +64,7 @@ struct AgentAlertRulesTable: View {
                     sounds(provider, labelled: false)
                     escalation(provider, labelled: false)
                     reset(provider)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 .font(.callout)
             }

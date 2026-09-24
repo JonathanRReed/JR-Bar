@@ -301,11 +301,11 @@ struct Keycaps: View {
                     .background {
                         RoundedRectangle(cornerRadius: 4.5, style: .continuous)
                             .fill(Color.primary.opacity(0.08))
-                            .overlay(alignment: .bottom) {
-                                // The cap's lower lip: a key, not a label.
+                            .overlay {
                                 RoundedRectangle(cornerRadius: 4.5, style: .continuous)
                                     .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
                             }
+                            // The cap's lower lip: a key, not a label.
                             .shadow(color: .black.opacity(0.12), radius: 0, y: 0.5)
                     }
             }

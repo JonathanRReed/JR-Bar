@@ -1395,14 +1395,11 @@ struct StreamDeckCard: View {
     }
 
     var body: some View {
-        SettingGroup("Stream Deck", note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.") {
+        SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.") {
             SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
                           path: "serve_enabled")
             SettingRow("Endpoint") {
-                HStack(spacing: 6) {
-                    Circle().fill(statusColor).frame(width: 7, height: 7)
-                    Text(statusText).foregroundStyle(.secondary)
-                }
+                StatusPill(statusText, tint: statusColor)
             }
             SettingRow("Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.") {
                 HStack(spacing: 8) {
@@ -1415,6 +1412,9 @@ struct StreamDeckCard: View {
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             }
+        } header: {
+            SettingsGroupHeader(title: "Stream Deck", symbol: "square.grid.3x2.fill",
+                                tint: Color(nsColor: .systemBlue))
         }
         .task(id: enabled && store.core.isLive) { await refreshServeState() }
     }
@@ -1576,6 +1576,7 @@ struct DoctorSheet: View {
                         HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
                             Image(systemName: check["ok"]?.boolValue == true ? "checkmark.circle.fill" : "xmark.octagon.fill")
                                 .foregroundStyle(check["ok"]?.boolValue == true ? Color.green : .red)
+                                .frame(width: 16)
                             Text(check["name"]?.stringValue ?? "check")
                             Spacer()
                             Text(check["detail"]?.stringValue ?? "")
