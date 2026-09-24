@@ -362,6 +362,10 @@ private struct ConfettiControlsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            ConfettiSwatch(settings: toy.settings)
+                .frame(height: 64)
+                .padding(.vertical, 4)
+
             LabeledContent {
                 Button("Test burst") { [weak toy] in
                     toy?.testBurst(providerColor: ConfettiView.toysTint)
@@ -423,7 +427,6 @@ private struct ConfettiControlsView: View {
                     SettingLabel(title: "A held burst", subtitle: "What happens once the room clears. Anything held over half an hour is let go.")
                 }
                 .pickerStyle(.menu)
-                .fixedSize()
             }
 
             Toggle(isOn: toy.bind(\.sound)) {
@@ -455,7 +458,6 @@ private struct ConfettiControlsView: View {
                 SettingLabel(title: "Palette", subtitle: "Whose colours the burst wears.")
             }
             .pickerStyle(.menu)
-            .fixedSize()
 
             Picker(selection: toy.bind(\.shapes)) {
                 Text("Mixed").tag(ConfettiShapes.mixed)
@@ -465,7 +467,6 @@ private struct ConfettiControlsView: View {
                 SettingLabel(title: "Shapes", subtitle: "The full mix, or one note played loud.")
             }
             .pickerStyle(.menu)
-            .fixedSize()
 
             LabeledContent {
                 HStack(spacing: 10) {
@@ -678,6 +679,63 @@ enum ConfettiPhysics {
     }
 }
 
+/// The card's swatch: a still handful of the burst the settings would
+/// throw — its palette on its shapes, scattered on a night tile — so a
+/// pick shows what it means without firing anything. Deterministic, one
+/// Canvas, no clock.
+struct ConfettiSwatch: View {
+    let settings: ConfettiSettings
+
+    /// Where each piece lies, as fractions of the tile, with its turn.
+    private static let scatter: [(x: Double, y: Double, turn: Double, size: Double)] = (0..<52).map { i in
+        func hash(_ n: Double) -> Double {
+            let h = sin(n * 12.9898 + 78.233) * 43758.5453
+            return h - h.rounded(.down)
+        }
+        let n = Double(i)
+        return (x: 0.03 + 0.94 * hash(n), y: 0.14 + 0.72 * hash(n + 40),
+                turn: hash(n + 80) * .pi * 2, size: 6 + 4.5 * hash(n + 120))
+    }
+
+    var body: some View {
+        let palette = ConfettiView.paletteColors(settings.palette, provider: ConfettiView.toysTint)
+        let backs = palette.map(ConfettiView.deeper)
+        Canvas { context, size in
+            for (i, spot) in Self.scatter.enumerated() {
+                let shape = Self.shape(i, for: settings.shapes)
+                let slot = i % palette.count
+                var c = context
+                c.translateBy(x: spot.x * size.width, y: spot.y * size.height)
+                c.rotate(by: .radians(spot.turn))
+                c.scaleBy(x: spot.size, y: spot.size * (i % 3 == 0 ? 0.55 : 1))
+                c.opacity = 0.95
+                ConfettiView.paint(shape, in: &c, color: i % 3 == 0 ? backs[slot] : palette[slot],
+                                   rim: palette[slot].mix(with: .white, by: 0.55), size: spot.size)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(LinearGradient(colors: [Color(red: 0.10, green: 0.11, blue: 0.20),
+                                          Color(red: 0.16, green: 0.12, blue: 0.24)],
+                                 startPoint: .topLeading, endPoint: .bottomTrailing)))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .accessibilityHidden(true)
+    }
+
+    /// The shapes setting's mix, dealt out in a fixed order.
+    private static func shape(_ i: Int, for shapes: ConfettiShapes) -> ConfettiView.Shape {
+        switch shapes {
+        case .streamers: return .streamer
+        case .flecks: return i % 2 == 0 ? .diamond : .pacDot
+        case .mixed:
+            let deal: [ConfettiView.Shape] = [.rect, .dot, .rect, .streamer, .rect, .dot, .diamond,
+                                              .rect, .streamer, .dot, .rect, .pacDot]
+            return deal[i % deal.count]
+        }
+    }
+}
+
 /// What the burst is: a cannon pop at the notch — pieces launch in an
 /// up-and-out cone with a few fired sideways, drag & gravity take over,
 /// and the survivors tumble & flutter down. Where they end up is the
@@ -708,6 +766,14 @@ struct ConfettiView: View {
     let paletteChoice: ConfettiPalette
     /// The resolved colours — `Piece.shade` indexes in.
     let palette: [Color]
+    /// Each slot's paper, resolved once at fire time so a frame never
+    /// mixes a colour: the face a touch lit, the back a deeper and
+    /// richer shade of the same hue (not a grey one), the glint a face
+    /// catching the light square-on, and the rim along the edge.
+    private let faces: [Color]
+    private let backs: [Color]
+    private let glints: [Color]
+    private let rims: [Color]
     let pieces: [Piece]
     /// Real seconds the burst needs: the slowest piece's travel in this
     /// mode on this geometry, stretched by `timeScale`, plus a 0.4 s tail.
@@ -753,7 +819,12 @@ struct ConfettiView: View {
         self.screenHeight = screenHeight
         self.bandBottom = bandBottom
         self.paletteChoice = settings.palette
-        self.palette = Self.paletteColors(settings.palette, provider: color)
+        let palette = Self.paletteColors(settings.palette, provider: color)
+        self.palette = palette
+        self.faces = palette.map { $0.mix(with: .white, by: 0.12) }
+        self.backs = palette.map(Self.deeper)
+        self.glints = palette.map { $0.mix(with: .white, by: 0.5) }
+        self.rims = palette.map { $0.mix(with: .white, by: 0.55) }
         self.pieces = Self.makePieces(density: min(2.0, max(0.5, settings.density)),
                                       shapes: settings.shapes)
         self.life = Self.travelTime(pieces: pieces, mode: settings.landing,
@@ -795,10 +866,24 @@ struct ConfettiView: View {
     private static func steps(around color: Color) -> [Color] {
         [color,
          color.mix(with: .white, by: 0.4),
-         color.mix(with: .black, by: 0.25),
+         deeper(color),
          .white,
-         Color(red: 0.96, green: 0.76, blue: 0.28),  // warm gold fleck
+         Color(red: 0.98, green: 0.78, blue: 0.3),   // warm gold fleck
          color.mix(with: .white, by: 0.62)]         // pale — glyph flecks
+    }
+
+    /// The same hue, darker and a little richer — the shaded side of a
+    /// coloured paper. Mixing in black would grey it toward mud.
+    static func deeper(_ color: Color) -> Color {
+        guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else {
+            return color.mix(with: .black, by: 0.25)
+        }
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        rgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        // White has no hue to deepen: it turns a cool pearl grey instead.
+        guard saturation > 0.05 else { return Color(white: 0.78) }
+        return Color(hue: Double(hue), saturation: Double(min(1, saturation * 1.15 + 0.05)),
+                     brightness: Double(brightness * 0.7), opacity: Double(alpha))
     }
 
     /// The colour the pop & the Reduce Motion bloom wear.
@@ -978,17 +1063,19 @@ struct ConfettiView: View {
                 streak.move(to: CGPoint(x: x - piece.vx / d * len,
                                         y: y + piece.vy / d * len))
                 streak.addLine(to: CGPoint(x: x, y: y))
-                canvas.stroke(streak,
-                              with: .color(palette[piece.shade].opacity(0.4 * f * endFade)),
-                              style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
+                var trailing = canvas
+                trailing.opacity = 0.4 * f * endFade
+                trailing.stroke(streak, with: .color(palette[piece.shade]),
+                                style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
             }
 
-            // Paper reads two-tone: a light face up front, a darker back
-            // when the twirl flips it. Pieces with no twirl (dots, glyph
-            // flecks) always show their face.
-            let base = palette[piece.shade]
+            // Paper reads two-tone: a lit face up front, a deeper back
+            // when the twirl flips it, and a glint the moment it faces
+            // you square-on — the shimmer a real burst has. Pieces with
+            // no twirl (dots, glyph flecks) always show their face.
             let flipped = piece.twirl != 0 && cos(twirlAngle) < 0
-            let face = flipped ? base.mix(with: .black, by: 0.30) : base.mix(with: .white, by: 0.14)
+            let face = flipped ? backs[piece.shade]
+                : (piece.twirl != 0 && osc > 0.94 ? glints[piece.shade] : faces[piece.shade])
 
             // Over the top strip a Rest piece casts a whisper of a
             // shadow on the band — feathered out a few points below it,
@@ -996,10 +1083,11 @@ struct ConfettiView: View {
             if landing == .rest, y < bandBottom + 10 {
                 let near = min(1, max(0, (bandBottom + 10 - y) / 10))
                 var s = canvas
+                s.opacity = 0.16 * near * fade
                 s.translateBy(x: x, y: y + 1.2)
                 s.rotate(by: .radians(tumble))
-                s.scaleBy(x: scaleX, y: scaleY)
-                s.fill(path(for: piece), with: .color(.black.opacity(0.16 * near * fade)))
+                s.scaleBy(x: scaleX * piece.size, y: scaleY * piece.size)
+                Self.paint(piece.shape, in: &s, color: .black, rim: nil, size: piece.size)
             }
 
             var c = canvas
@@ -1014,40 +1102,67 @@ struct ConfettiView: View {
                 c.scaleBy(x: 1 + stretch, y: 1 - stretch * 0.4)
                 c.rotate(by: .radians(-dir))
             }
-            c.scaleBy(x: scaleX, y: scaleY)
-            let shape = path(for: piece)
-            c.fill(shape, with: .color(face.opacity(0.95 * fade)))
-            // A thin lighter rim — the paper's edge catching light.
-            c.stroke(shape, with: .color(base.mix(with: .white, by: 0.55).opacity(0.45 * fade)),
-                     lineWidth: 0.6)
+            c.scaleBy(x: scaleX * piece.size, y: scaleY * piece.size)
+            c.opacity = 0.95 * fade
+            Self.paint(piece.shape, in: &c, color: face, rim: rims[piece.shade], size: piece.size)
         }
     }
 
     /// When the burst started; set on appear so `t = 0` is the pop.
     @ViewState private var origin = Date()
 
-    private func path(for piece: Piece) -> Path {
-        let s = piece.size
-        switch piece.shape {
-        case .rect:
-            return Path(CGRect(x: -s / 2, y: -s * 0.3, width: s, height: s * 0.6))
-        case .dot:
-            return Path(ellipseIn: CGRect(x: -s * 0.28, y: -s * 0.28, width: s * 0.56, height: s * 0.56))
+    /// Every shape at size 1, built once — a frame scales the context,
+    /// never rebuilds a path.
+    private static let unitRect = Path(CGRect(x: -0.5, y: -0.3, width: 1, height: 0.6))
+    private static let unitDot = Path(ellipseIn: CGRect(x: -0.28, y: -0.28, width: 0.56, height: 0.56))
+    /// A curled ribbon: a wave a length and a bit long, stroked, so a
+    /// streamer reads as paper with a curl in it rather than a stick.
+    private static let unitStreamer: Path = {
+        var p = Path()
+        let steps = 24
+        for i in 0...steps {
+            let u = Double(i) / Double(steps)
+            let point = CGPoint(x: -2.4 + 4.8 * u, y: 0.36 * sin(u * .pi * 2.4))
+            if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
+        }
+        return p
+    }()
+    /// A rounded square; the in-plane spin does the diamond.
+    private static let unitDiamond = Path(roundedRect: CGRect(x: -0.5, y: -0.5, width: 1, height: 1),
+                                          cornerRadius: 0.22)
+    /// A circle with a wedge bite — the cheapest glyph there is.
+    private static let unitPacDot: Path = {
+        var p = Path()
+        p.move(to: .zero)
+        p.addArc(center: .zero, radius: 0.55, startAngle: .degrees(40), endAngle: .degrees(320),
+                 clockwise: false)
+        p.closeSubpath()
+        return p
+    }()
+
+    /// One piece into a context already scaled to its size: the ribbon
+    /// stroked, every other shape filled with a hairline rim — the
+    /// paper's edge catching the light.
+    static func paint(_ shape: Shape, in context: inout GraphicsContext, color: Color,
+                      rim: Color?, size: Double) {
+        switch shape {
         case .streamer:
-            return Path(roundedRect: CGRect(x: -s * 2.4, y: -s * 0.14, width: s * 4.8, height: s * 0.28),
-                        cornerRadius: s * 0.14)
-        case .diamond:
-            // A rounded square; the in-plane spin does the diamond.
-            return Path(roundedRect: CGRect(x: -s / 2, y: -s / 2, width: s, height: s),
-                        cornerRadius: s * 0.22)
-        case .pacDot:
-            // A circle with a wedge bite — the cheapest glyph there is.
-            var p = Path()
-            p.move(to: .zero)
-            p.addArc(center: .zero, radius: s * 0.55,
-                     startAngle: .degrees(40), endAngle: .degrees(320), clockwise: false)
-            p.closeSubpath()
-            return p
+            context.stroke(unitStreamer, with: .color(color),
+                           style: StrokeStyle(lineWidth: 0.3, lineCap: .round, lineJoin: .round))
+        case .rect, .dot, .diamond, .pacDot:
+            let path: Path
+            switch shape {
+            case .rect: path = unitRect
+            case .dot: path = unitDot
+            case .diamond: path = unitDiamond
+            default: path = unitPacDot
+            }
+            context.fill(path, with: .color(color))
+            if let rim {
+                var edge = context
+                edge.opacity *= 0.45
+                edge.stroke(path, with: .color(rim), lineWidth: 0.6 / max(1, size))
+            }
         }
     }
 
