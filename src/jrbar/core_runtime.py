@@ -4924,7 +4924,20 @@ def build_headless_controller_class() -> type:
             correction = bool(getattr(self.settings, "linked_dot_clock_correction", True))
             rate = link.rate_for_write(device.device_id, correction=correction, commit=force)
             trim = trim_setting(self.settings)
-            token = ("linked", plan.role, plan.program, round(epoch.anchor, 6), rate, trim)
+            # The Dot's own transfer (its calibration gains and resting glow)
+            # changes the bytes without changing the plan, so it is part of
+            # the identity: a calibration applied to a linked Dot used to be
+            # deduped away until something else rewrote it.
+            token = (
+                "linked",
+                plan.role,
+                plan.program,
+                round(epoch.anchor, 6),
+                rate,
+                trim,
+                tuple(getattr(controller, "channel_gains", ()) or ()),
+                float(getattr(controller, "resting_glow", 0.0) or 0.0),
+            )
             write = controller.sync_program(
                 plan.program,
                 state,
@@ -7033,6 +7046,9 @@ def build_headless_controller_class() -> type:
                 dot_link=self._core_dot_link(dot_connected, strip_connected, dot_role),
                 auto_dim=auto_dim,
             )
+            receipts = self._core_device_receipts(devices)
+            if receipts:
+                document["device_receipts"] = receipts
             # The skew and its measurement instant travel together: a reader
             # shown only the number could not tell a fresh 11 ms from one
             # measured before the strip was last unplugged.
@@ -7052,6 +7068,28 @@ def build_headless_controller_class() -> type:
             except Exception:
                 legacy.log_status_bar(f"core: cue naming failed: {traceback.format_exc(limit=3)}")
             return document
+
+        def _core_device_receipts(self, devices) -> dict[str, Any]:
+            """``lights.device_receipts``: per device, what its card should
+            say that no setting explains. Today one thing: another writer
+            (upstream's app, a shell ``echo``, a second JR-Bar) changed the
+            device's program behind our back, found by a fresh read at the
+            reassert cadence. Twice in ten minutes and JR-Bar stops
+            rewriting it, so the two never fight over the flash."""
+            receipts: dict[str, Any] = {}
+            window = 600.0
+            now = time.monotonic()
+            for device in devices:
+                controller = self.agent_led_controllers_by_device.get(device.device_id)
+                seen = [at for at in getattr(controller, "foreign_writes", None) or () if now - at < window]
+                if not seen:
+                    continue
+                receipts[device.device_id] = {
+                    "foreign_write_at": mono_to_epoch(max(seen)),
+                    "foreign_writes": len(seen),
+                    "paused": bool(getattr(controller, "foreign_write_paused", False)),
+                }
+            return receipts
 
         def _core_dot_link(self, dot_connected: bool, strip_connected: bool, dot_role: str) -> dict[str, Any]:
             """The ``lights.dot_link`` row: one honest word for what the
