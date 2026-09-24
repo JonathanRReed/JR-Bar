@@ -56,14 +56,33 @@ extension AquariumView {
         c.translateBy(x: x, y: baseY + sunk)
         c.scaleBy(x: 0.62, y: 0.62)
         Self.paintChest(&c, width: 40, height: 26, open: 0.10, t: 0, reduceMotion: true)
-        // The sand drifted over its foot, lit along the crest.
-        let mound = Path(ellipseIn: CGRect(x: x - 22, y: baseY - 2 + dug * 0.6, width: 44, height: 13))
-        canvas.fill(mound, with: .linearGradient(
-            Gradient(colors: [TankPaint.color(sand.lit), TankPaint.color(sand.body)]),
-            startPoint: CGPoint(x: 0, y: baseY - 2), endPoint: CGPoint(x: 0, y: baseY + 11)))
+        // The sand drifted over its foot: a low heap sloping away into
+        // the bed, lit along its crest and melting into the sand at its
+        // edges, so it reads as buried, not set on a plate.
+        let heapTop = baseY - 2 + dug * 0.6
+        let heapFoot = baseY + 8
+        var crestLine = Path()
+        crestLine.move(to: CGPoint(x: x - 27, y: heapFoot))
+        crestLine.addCurve(to: CGPoint(x: x, y: heapTop),
+                           control1: CGPoint(x: x - 16, y: heapFoot - 2), control2: CGPoint(x: x - 15, y: heapTop))
+        crestLine.addCurve(to: CGPoint(x: x + 27, y: heapFoot),
+                           control1: CGPoint(x: x + 15, y: heapTop), control2: CGPoint(x: x + 16, y: heapFoot - 2))
+        var heap = crestLine
+        heap.closeSubpath()
+        let packed = TankPaint.mix(sand.lit, sand.body, 0.25)
+        canvas.fill(heap, with: .linearGradient(
+            Gradient(stops: [
+                .init(color: TankPaint.color(sand.lit), location: 0),
+                .init(color: TankPaint.color(packed), location: 0.65),
+                .init(color: TankPaint.color(packed, 0), location: 1),
+            ]),
+            startPoint: CGPoint(x: 0, y: heapTop), endPoint: CGPoint(x: 0, y: heapFoot)))
         var lip = canvas
-        lip.clip(to: mound)
-        lip.stroke(mound.offsetBy(dx: 0, dy: 1.2), with: .color(TankPaint.color(sand.crest, 0.5)), lineWidth: 1.2)
+        lip.clip(to: heap)
+        lip.stroke(crestLine.offsetBy(dx: 0, dy: 0.8), with: .linearGradient(
+            Gradient(colors: [TankPaint.color(sand.crest, 0), TankPaint.color(sand.crest, 0.6),
+                              TankPaint.color(sand.crest, 0)]),
+            startPoint: CGPoint(x: x - 27, y: 0), endPoint: CGPoint(x: x + 27, y: 0)), lineWidth: 1.2)
         // The gold at the crack breathes, and a sparkle climbs off it
         // every ~3.5 s — seeded off the treasure's own id so two
         // treasures never sync.
