@@ -365,7 +365,7 @@ struct MenuBarIconMirrorTests {
     func seedMigration() throws {
         let suite = "jrbar.tests.statusItemSeat.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defer { Self.discardSuite(suite, defaults) }
         let key = StatusItemController.preferredPositionKey
         let agents = "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-agents"
         // What the retired seat walk left behind, and another item's record.
@@ -383,5 +383,17 @@ struct MenuBarIconMirrorTests {
         defaults.set(512.0, forKey: key)
         StatusItemController.seedPreferredPosition(defaults: defaults, wifi: { 300 })
         #expect(defaults.double(forKey: key) == 512)
+    }
+
+    /// Drops a test suite without a trace. Removing the domain alone
+    /// leaves an empty `<suite>.plist` in ~/Library/Preferences once
+    /// cfprefsd flushes, one more file per run; so flush first, then
+    /// delete the file.
+    private static func discardSuite(_ suite: String, _ defaults: UserDefaults) {
+        defaults.removePersistentDomain(forName: suite)
+        CFPreferencesAppSynchronize(suite as CFString)
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suite).plist")
+        try? FileManager.default.removeItem(at: plist)
     }
 }
