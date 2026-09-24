@@ -11,12 +11,14 @@ import JRBarCore
 /// budgets are Standard p90 ≤ 3.5 ms and Big ≤ 5 ms a frame on the dev
 /// Mac. Offline raster only approximates the live path (the card quotes
 /// the live one, measured), and a busy Mac reads slow — so it runs only
-/// with `JRBAR_RENDER_PROOF=1`, never in the everyday suite.
+/// with `JRBAR_PERF_PROOF=1`, on its own: never in the everyday suite,
+/// and not alongside the render proofs, whose drawing would crowd its
+/// timings over budget.
 @Suite("Confetti perf proof")
 @MainActor
 struct ConfettiPerfProofTests {
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
-                   "set JRBAR_RENDER_PROOF=1 to time the confetti frames"),
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_PERF_PROOF"] == "1",
+                   "set JRBAR_PERF_PROOF=1 to time the confetti frames"),
           arguments: [(ConfettiIntensity.standard, 3.5), (.big, 5.0)])
     func frameCost(_ intensity: ConfettiIntensity, budget: Double) throws {
         let look = ConfettiRenderProofTests.claude
