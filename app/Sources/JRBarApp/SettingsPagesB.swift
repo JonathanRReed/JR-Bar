@@ -45,7 +45,6 @@ struct LightingPage: View {
                     SettingLabel(title: "Blend mode", subtitle: blendDetail)
                 }
                 .pickerStyle(.menu)
-                .fixedSize()
             }
             FleetPreviewRow(store: store, sketch: fleetProgram)
             SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
@@ -601,7 +600,6 @@ struct AutoDimSection: View {
                 Provided(store, AutoDimSettings.ambientLuxFloorPath.description, AutoDimSettings.ambientLuxCeilingPath.description) {
                     SettingRow("Marks from room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.") {
                         Button("Use current light") { useRoomLight() }
-                            .controlSize(.small)
                             .disabled(roomMarks == nil)
                             .help(roomMarks.map { "Writes “Dark below” \(Int($0.floor)) lux and “Bright above” \(Int($0.ceiling)) lux" }
                                   ?? "Needs a live ambient reading; the monitor is not reporting one")
@@ -811,18 +809,14 @@ struct ProviderSwatch: View {
             ColorPicker("", selection: store.color(path, default: style.accentHex), supportsOpacity: false)
                 .labelsHidden()
                 .disabled(!store.isProvided(path))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(style.name)
-                HStack(spacing: 6) {
-                    LEDStripPreview(program: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
-                                    style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6,
-                                    phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
-                        .frame(width: 66)
-                        .accessibilityLabel("\(style.name) working animation preview")
-                    Text(store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tertiary)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                SwatchTitle(name: style.name,
+                            hex: store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
+                LEDStripPreview(program: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
+                                style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6,
+                                phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
+                    .frame(maxWidth: 110)
+                    .accessibilityLabel("\(style.name) working animation preview")
             }
         }
         .help("How \(style.name) looks while working: \(LightingPage.blendModes.first { $0.value == blend }?.label ?? blend), one cycle every \(SettingsStore.seconds(cycle))")
@@ -860,20 +854,40 @@ struct ModeSwatch: View {
             ColorPicker("", selection: store.color(path, default: fallback), supportsOpacity: false)
                 .labelsHidden()
                 .disabled(!store.isProvided(path))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(label.name)
-                HStack(spacing: 6) {
-                    LEDStripPreview(program: LightingPreviewPrograms.state(mode, colorHex: hex),
-                                    style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6)
-                        .frame(width: 66)
-                        .accessibilityLabel("\(label.name) preview")
-                    Text(store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : fallback))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tertiary)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                SwatchTitle(name: label.name,
+                            hex: store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : fallback))
+                LEDStripPreview(program: LightingPreviewPrograms.state(mode, colorHex: hex),
+                                style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6)
+                    .frame(maxWidth: 110)
+                    .accessibilityLabel("\(label.name) preview")
             }
         }
         .help(label.detail)
+    }
+}
+
+/// A swatch's name with its hex beside it, on one line — the code in
+/// small monospaced type, and dropped (to the tooltip) before the name
+/// is ever cut short.
+struct SwatchTitle: View {
+    let name: String
+    let hex: String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(name)
+                    .fixedSize()
+                Text(hex.uppercased())
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
+            }
+            Text(name)
+                .lineLimit(1)
+                .help(hex.uppercased())
+        }
     }
 }
 
@@ -1102,7 +1116,6 @@ struct EscalationCeilingRow: View {
             SettingLabel(title: ProviderStyle.style(for: provider).name, subtitle: note(current))
         }
         .pickerStyle(.menu)
-        .fixedSize()
         .settingRowStyle()
     }
 
@@ -1262,7 +1275,6 @@ struct RemotePage: View {
             Provided(store, "serve_enabled") {
                 SettingRow("Bearer token") {
                     Button("Copy token") { store.copyServeToken() }
-                        .controlSize(.small)
                         .disabled(!(store.document.bool("serve_enabled") ?? false) || !store.core.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
@@ -1285,7 +1297,6 @@ struct RemotePage: View {
                             let url = URL(fileURLWithPath: path.expandingTildeInPath)
                             NSWorkspace.shared.activateFileViewerSelecting([url])
                         }
-                        .controlSize(.small)
                     }
                 }
             }
@@ -1384,14 +1395,11 @@ struct StreamDeckCard: View {
     }
 
     var body: some View {
-        SettingGroup("Stream Deck", note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.") {
+        SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.") {
             SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
                           path: "serve_enabled")
             SettingRow("Endpoint") {
-                HStack(spacing: 6) {
-                    Circle().fill(statusColor).frame(width: 7, height: 7)
-                    Text(statusText).foregroundStyle(.secondary)
-                }
+                StatusPill(statusText, tint: statusColor)
             }
             SettingRow("Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.") {
                 HStack(spacing: 8) {
@@ -1400,11 +1408,13 @@ struct StreamDeckCard: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                     Button("Copy token") { store.copyServeToken() }
-                        .controlSize(.small)
                         .disabled(!enabled || !store.core.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             }
+        } header: {
+            SettingsGroupHeader(title: "Stream Deck", symbol: "square.grid.3x2.fill",
+                                tint: Color(nsColor: .systemBlue))
         }
         .task(id: enabled && store.core.isLive) { await refreshServeState() }
     }
@@ -1469,7 +1479,6 @@ struct AdvancedPage: View {
                 ForEach(SettingsStore.Page.allCases.filter { $0 != .advanced && $0.catalogue != nil }) { page in
                     LabeledContent(page.title) {
                         Button("Reset…") { store.resetTarget = page }
-                            .controlSize(.small)
                             .disabled(!store.core.isLive)
                     }
                 }
@@ -1542,40 +1551,59 @@ struct DoctorSheet: View {
     let dismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "stethoscope").font(.title2).foregroundStyle(.secondary)
-                Text("Doctor").font(.title3.weight(.semibold))
+        let checks = report["checks"]?.arrayValue ?? []
+        let failing = checks.filter { $0["ok"]?.boolValue != true }.count
+        VStack(alignment: .leading, spacing: SettingsMetrics.m + 2) {
+            HStack(spacing: SettingsMetrics.m) {
+                SettingsIconTile(symbol: "stethoscope", tint: SettingsStore.Page.advanced.tint, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Doctor").font(.title3.weight(.semibold))
+                    Text("What the monitor checked just now.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if report["ok"]?.boolValue == true {
-                    Label("All good", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    StatusPill("All good", tint: .green)
+                } else if failing > 0 {
+                    StatusPill(failing == 1 ? "1 check failed" : "\(failing) checks failed", tint: .red)
                 }
             }
-            if let checks = report["checks"]?.arrayValue, !checks.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(checks.enumerated()), id: \.offset) { _, check in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if !checks.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(checks.enumerated()), id: \.offset) { index, check in
+                        if index > 0 { Divider() }
+                        HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
                             Image(systemName: check["ok"]?.boolValue == true ? "checkmark.circle.fill" : "xmark.octagon.fill")
                                 .foregroundStyle(check["ok"]?.boolValue == true ? Color.green : .red)
+                                .frame(width: 16)
                             Text(check["name"]?.stringValue ?? "check")
                             Spacer()
-                            Text(check["detail"]?.stringValue ?? "").foregroundStyle(.secondary)
+                            Text(check["detail"]?.stringValue ?? "")
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
+                        .padding(.vertical, 7)
                     }
                 }
-                .padding(10)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, SettingsMetrics.m)
+                .padding(.vertical, 2)
+                .background(InsetPanel())
             }
+            Text("Report")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
             ScrollView {
                 Text(Self.render(report))
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .padding(SettingsMetrics.s + 2)
             }
-            .frame(height: 180)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.quaternary))
+            .frame(height: 160)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.quaternary))
             HStack {
                 Spacer()
                 Button("Done", action: dismiss).keyboardShortcut(.defaultAction)

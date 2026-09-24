@@ -47,16 +47,20 @@ struct CalibrationProfilesSection: View {
     private func row(_ slot: String) -> some View {
         let isSaved = saved.contains(slot)
         let applied = isSaved && LightProfiles.isApplied(slot: slot, in: store.document)
-        return HStack(spacing: 12) {
-            Image(systemName: Self.symbol(slot))
-                .foregroundStyle(isSaved ? Color.accentColor : Color.secondary)
-                .frame(width: 18)
+        return HStack(spacing: SettingsMetrics.m) {
+            SettingsIconTile(symbol: Self.symbol(slot),
+                             tint: isSaved ? Self.tint(slot) : Color(nsColor: .systemGray),
+                             size: 26)
+                .opacity(isSaved ? 1 : 0.55)
             SettingLabel(title: slot, subtitle: subtitle(slot, isSaved: isSaved, applied: applied))
-            Spacer(minLength: 8)
-            if isSaved {
+            Spacer(minLength: SettingsMetrics.s)
+            if applied {
+                StatusPill("In use", tint: .green)
+            } else if isSaved {
                 Button("Apply") { apply(slot) }
-                    .disabled(applied || !store.core.isLive)
-                    .help(applied ? "The devices already look like \(slot)" : "Restore \(slot)'s brightness and gains on every device it covers")
+                    .controlSize(.small)
+                    .disabled(!store.core.isLive)
+                    .help("Restore \(slot)'s brightness and gains on every device it covers")
             }
             Menu {
                 Button(isSaved ? "Replace with the current look…" : "Save the current look") {
@@ -70,10 +74,10 @@ struct CalibrationProfilesSection: View {
                 Text(isSaved ? "Edit" : "Save")
             }
             .menuStyle(.button)
+            .controlSize(.small)
             .fixedSize()
             .disabled(!store.core.isLive)
         }
-        .controlSize(.small)
     }
 
     private func subtitle(_ slot: String, isSaved: Bool, applied: Bool) -> String {
@@ -85,10 +89,20 @@ struct CalibrationProfilesSection: View {
 
     static func symbol(_ slot: String) -> String {
         switch slot {
-        case "Day": return "sun.max"
-        case "Night": return "moon"
+        case "Day": return "sun.max.fill"
+        case "Night": return "moon.fill"
         case "Travel": return "airplane"
         default: return "slider.horizontal.3"
+        }
+    }
+
+    /// Each slot's own hue: a warm day, an indigo night, a sky for travel.
+    static func tint(_ slot: String) -> Color {
+        switch slot {
+        case "Day": return Color(nsColor: .systemOrange)
+        case "Night": return Color(nsColor: .systemIndigo)
+        case "Travel": return Color(nsColor: .systemTeal)
+        default: return Color(nsColor: .systemGray)
         }
     }
 
@@ -141,7 +155,6 @@ struct FocusProfileRow: View {
                 SettingLabel(title: name)
             }
             .pickerStyle(.menu)
-            .fixedSize()
         }
     }
 }

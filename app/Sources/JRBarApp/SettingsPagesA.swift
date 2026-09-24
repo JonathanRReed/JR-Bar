@@ -16,7 +16,6 @@ struct GeneralPage: View {
             .settingRowStyle()
             SettingRow("Setup", subtitle: "The first-run walkthrough — agents, permissions, menu bar.") {
                 Button("Run Setup Again…") { SetupWindowController.show() }
-                    .controlSize(.small)
             }
         }
 
@@ -63,7 +62,6 @@ struct GeneralPage: View {
                     SettingLabel(title: "Update channel", subtitle: "Stable or beta builds.")
                 }
                 .pickerStyle(.menu)
-                .fixedSize()
             }
         }
         .onAppear { store.refreshUpdater() }
@@ -135,27 +133,35 @@ struct MenuBarStylePicker: View {
         }
     }
 
+    private static let columns = Array(repeating: GridItem(.flexible(), spacing: SettingsMetrics.s),
+                                       count: 3)
+
     var body: some View {
-        Group {
-            VStack(alignment: .leading, spacing: 6) {
-                SettingLabel(title: "Menu bar icon", subtitle: "What the status item shows.")
-                VStack(spacing: 0) {
-                    ForEach(Array(StatusIconStyle.allCases.enumerated()), id: \.element) { index, style in
-                        if index > 0 { Divider().opacity(0.5) }
-                        MenuBarStyleRow(style: style,
-                                        selected: current == style,
-                                        meters: meters,
-                                        overflow: overflow,
-                                        sessions: sessions,
-                                        label: labelText) {
-                            store.menuBarIconStyle = style.rawValue
-                        }
+        VStack(alignment: .leading, spacing: SettingsMetrics.s + 2) {
+            SettingLabel(title: "Menu bar icon", subtitle: "What the status item shows.")
+            LazyVGrid(columns: Self.columns, spacing: SettingsMetrics.s) {
+                ForEach(StatusIconStyle.allCases, id: \.self) { style in
+                    MenuBarStyleTile(style: style,
+                                     selected: current == style,
+                                     meters: meters,
+                                     overflow: overflow,
+                                     sessions: sessions,
+                                     label: labelText) {
+                        store.menuBarIconStyle = style.rawValue
                     }
                 }
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
             }
+            // The chosen style's own sentence, under the gallery.
+            Label {
+                Text(current.subtitle)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "info.circle")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
         }
+        .padding(.vertical, 2)
     }
 
     private var labelText: String? {
@@ -167,8 +173,9 @@ struct MenuBarStylePicker: View {
     }
 }
 
-/// One row of the picker: a radio mark, the preview on its own dark strip,
-/// and the style's name and sentence.
+/// One row of Setup's icon picker: a radio mark, the preview on its own
+/// strip, and the style's name and sentence. Settings shows the same
+/// styles as a gallery of `MenuBarStyleTile`s.
 struct MenuBarStyleRow: View {
     let style: StatusIconStyle
     let selected: Bool
@@ -210,6 +217,54 @@ struct MenuBarStyleRow: View {
     }
 }
 
+/// One style in the General page's gallery: the status item drawn on
+/// its strip of menu bar, the style's name under it, and the accent
+/// ring on the one in use. The chosen style's sentence sits under the
+/// grid, so nine tiles fit where nine rows of prose used to.
+struct MenuBarStyleTile: View {
+    let style: StatusIconStyle
+    let selected: Bool
+    let meters: [StatusMeter]
+    let overflow: Int
+    let sessions: [SessionDot]
+    let label: String?
+    let action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: SettingsMetrics.panelRadius, style: .continuous)
+        Button(action: action) {
+            VStack(spacing: 7) {
+                MenuBarPreview(style: style, meters: meters, overflow: overflow, sessions: sessions,
+                               label: label, width: nil)
+                HStack(spacing: 4) {
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    Text(style.title)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            }
+            .padding(SettingsMetrics.s)
+            .frame(maxWidth: .infinity)
+            .background(shape.fill(selected ? Color.accentColor.opacity(0.1)
+                                            : Color.primary.opacity(hovering ? 0.06 : 0.03)))
+            .overlay(shape.strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08),
+                                        lineWidth: selected ? 1.5 : 0.5))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(style.subtitle)
+        .accessibilityLabel("\(style.title). \(style.subtitle)")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
 /// The status item as it would look, drawn by the same renderer the menu
 /// bar uses, on a strip that reads as a menu bar in either appearance.
 struct MenuBarPreview: View {
@@ -218,6 +273,8 @@ struct MenuBarPreview: View {
     let overflow: Int
     let sessions: [SessionDot]
     let label: String?
+    /// The strip's width; nil fills the space it is given (the gallery).
+    var width: CGFloat? = MenuBarPreview.width
     @Environment(\.colorScheme) private var scheme
 
     /// Wide enough for the roomiest preview (the label style's "1 ask · 2
@@ -240,17 +297,26 @@ struct MenuBarPreview: View {
         let image = StatusIconRenderer.shared.image(for: spec)
         let size = StatusIconRenderer.size(for: spec)
         HStack(spacing: 5) {
-            Image(nsImage: image)
-                .renderingMode(image.isTemplate ? .template : .original)
-                .foregroundStyle(image.isTemplate && !style.isMeters && style != .agents ? Color(nsColor: NSColor(hex: "#00E5FF") ?? .labelColor) : .primary)
-                .frame(width: size.width, height: size.height)
+            if style == .hidden {
+                // Nothing stands in the bar; a struck eye says so instead
+                // of an empty strip that reads as a preview still loading.
+                Image(systemName: "eye.slash")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            } else {
+                Image(nsImage: image)
+                    .renderingMode(image.isTemplate ? .template : .original)
+                    .foregroundStyle(image.isTemplate && !style.isMeters && style != .agents ? Color(nsColor: NSColor(hex: "#00E5FF") ?? .labelColor) : .primary)
+                    .frame(width: size.width, height: size.height)
+            }
             if style == .glyphLabel, let label {
                 Text(label).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
             }
         }
         .padding(.horizontal, 7)
         // One width for every chip, so the names beside them line up.
-        .frame(width: Self.width, height: 26)
+        .frame(width: width, height: 26)
+        .frame(maxWidth: width == nil ? .infinity : nil)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.07)))
     }
 }
@@ -474,7 +540,6 @@ struct UsagePage: View {
             SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
                 ("tokens", "Tokens"), ("cost", "Cost"),
             ], default: "tokens", segmented: true)
-                .fixedSize()
             SettingIntPicker(store, "Graph range", path: "usage_graph_days", options: [
                 (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
             ], default: 7)
@@ -596,12 +661,11 @@ struct DevicesPage: View {
         SettingGroup(note: "The gap is the span treated as the notch, between the two risers; the wing is each stroke's reach beyond it. Automatic measures the notch and Alcove; manual values are points and always win.") {
             ScreenBarCard(store: store)
         } header: {
-            HStack(spacing: 8) {
-                Text("Screen Bar")
-                if let bar = store.stateDevice("screen-bar") {
-                    Text(bar.enabled == true ? "Shown" : "Hidden").foregroundStyle(.secondary).font(.callout)
-                }
-            }
+            let bar = store.stateDevice("screen-bar")
+            SettingsGroupHeader(title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
+                                tint: Color(nsColor: .systemTeal),
+                                pill: bar.map { $0.enabled == true ? "Shown" : "Hidden" },
+                                pillTint: bar?.enabled == true ? .green : .secondary)
         }
     }
 }
@@ -636,7 +700,6 @@ struct DeviceCard: View {
                     SettingLabel(title: "Pin to", subtitle: "Shows only that provider's sessions; rests dark otherwise.")
                 }
                 .pickerStyle(.menu)
-                .fixedSize()
             }
             Provided(store, "\(device.prefix).signal_policy") {
                 Toggle(isOn: Binding(
@@ -656,7 +719,6 @@ struct DeviceCard: View {
                     SettingLabel(title: "Blend", subtitle: blendSubtitle)
                 }
                 .pickerStyle(.menu)
-                .fixedSize()
             }
             SettingRow("Colour calibration", subtitle: calibrationSummary) {
                 Button("Calibrate…") { store.calibrating = device.id }
@@ -666,17 +728,12 @@ struct DeviceCard: View {
                 DotRoleControls(store: store, inDeviceCard: true)
             }
         } header: {
-            HStack(spacing: 8) {
-                Image(systemName: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill")
-                Text(device.name)
-                if let state {
-                    Text(state.isPresent ? "Connected" : (state.error ?? "Not connected"))
-                        .foregroundStyle(state.isPresent ? Color.secondary : .orange)
-                        .font(.callout)
-                }
-                Spacer()
-                Text(device.kind == "dot" ? "2 LEDs" : "8 LEDs").font(.callout).foregroundStyle(.tertiary)
-            }
+            SettingsGroupHeader(title: device.name,
+                                symbol: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
+                                tint: SettingsStore.Page.devices.tint,
+                                pill: state.map { $0.isPresent ? "Connected" : ($0.error ?? "Not connected") },
+                                pillTint: state?.isPresent == true ? .green : .orange,
+                                trailing: device.kind == "dot" ? "2 LEDs" : "8 LEDs")
         }
     }
 
@@ -889,18 +946,16 @@ struct CreatorMicroCard: View {
             .disabled(!live || !settings.enabled)
             .settingRowStyle()
             LabeledContent {
-                HStack(spacing: 6) {
-                    Circle().fill(statusColor).frame(width: 7, height: 7)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(statusText).foregroundStyle(.secondary).lineLimit(2)
-                        // The toggle's own answer, where the click happened.
-                        if let note = store.deckNote {
-                            Text(note.text)
-                                .font(.caption)
-                                .foregroundStyle(note.isError ? Color.red : Color.secondary)
-                                .lineLimit(2)
-                                .transition(.opacity)
-                        }
+                VStack(alignment: .trailing, spacing: 3) {
+                    StatusPill(statusText, tint: statusColor)
+                    // The toggle's own answer, where the click happened.
+                    if let note = store.deckNote {
+                        Text(note.text)
+                            .font(.caption)
+                            .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.trailing)
+                            .transition(.opacity)
                     }
                 }
             } label: {
@@ -959,12 +1014,11 @@ struct CreatorMicroCard: View {
                 Button("Control Center…") { store.onOpenControlCenter?() }
             }
         } header: {
-            HStack(spacing: 8) {
-                Text("Creator Micro 2")
-                if device?.approved == false, device?.connected == true {
-                    Text("Approve it in the Control Center").foregroundStyle(.secondary).font(.callout)
-                }
-            }
+            SettingsGroupHeader(title: "Creator Micro 2", symbol: "keyboard.fill",
+                                tint: Color(nsColor: .systemIndigo),
+                                pill: device?.approved == false && device?.connected == true
+                                    ? "Approve it in the Control Center" : nil,
+                                pillTint: .orange)
         }
     }
 }
@@ -1001,7 +1055,6 @@ struct ScreenBarCard: View {
                     hideOverVideo: hideOverVideo).detail)
             }
             .pickerStyle(.menu)
-            .fixedSize()
         }
         SettingToggle(store, "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right.", path: "screen_bar_notch_wings", default: true)
         SettingPicker(store, "Notch shape", subtitle: notchShapeSubtitle,

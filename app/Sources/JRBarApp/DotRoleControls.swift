@@ -101,9 +101,21 @@ struct DotRoleReadoutRow: View {
                         .frame(width: 56)
                         .accessibilityLabel("What the Dot is playing")
                 } else {
+                    // A Dot with nothing lit: the housing and two dark LEDs.
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color.black.opacity(0.5))
+                        .fill(Color.black.opacity(0.82))
+                        .overlay {
+                            HStack(spacing: 6) {
+                                ForEach(0..<2, id: \.self) { _ in
+                                    Circle()
+                                        .fill(Color.white.opacity(0.07))
+                                        .overlay(Circle().strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5))
+                                        .frame(width: 11, height: 11)
+                                }
+                            }
+                        }
                         .frame(width: 56, height: 26)
+                        .accessibilityLabel("The Dot is dark")
                 }
             }
         } label: {

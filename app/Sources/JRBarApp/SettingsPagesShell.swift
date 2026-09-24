@@ -84,7 +84,6 @@ struct SoundsPage: View {
                     try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                     NSWorkspace.shared.activateFileViewerSelecting([folder])
                 }
-                .controlSize(.small)
             }
         }
     }
@@ -103,7 +102,6 @@ struct DiagnosticsCopyGroup: View {
             SettingRow("Copy diagnostics",
                        subtitle: "Version, build and commit beside the monitor's, the Doctor's checks, every permission and the last \(DiagnosticsReport.logLines) log lines — home folder, tokens, addresses and webhook paths taken out.") {
                 Button(store.diagnosticsCopying ? "Copying…" : "Copy") { store.copyDiagnostics() }
-                    .controlSize(.small)
                     .disabled(store.diagnosticsCopying)
             }
         }
@@ -121,11 +119,9 @@ struct SettingsTransferGroup: View {
         SettingGroup("Transfer", note: "Import writes only what you tick; the monitor checks every setting as it lands.") {
             SettingRow("Export settings", subtitle: "The monitor's settings, devices, Utilities, Toys, shortcuts and sounds, as one JSON file.") {
                 Button("Export…") { store.exportSettings() }
-                    .controlSize(.small)
             }
             SettingRow("Import settings", subtitle: "Open an export and choose which parts to take.") {
                 Button(store.importing ? "Importing…" : "Import…") { store.chooseImport() }
-                    .controlSize(.small)
                     .disabled(store.importing)
             }
         }
@@ -173,34 +169,45 @@ struct SettingsImportSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Import settings").font(.title3.weight(.semibold))
-                Text(origin).foregroundStyle(.secondary)
-                if let schema = bundle.schema, schema > knownSchema {
-                    Text("Its monitor settings are a newer shape; keys this JR-Bar does not know are skipped.")
-                        .font(.callout).foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: SettingsMetrics.m + 2) {
+            HStack(alignment: .center, spacing: SettingsMetrics.m) {
+                SettingsIconTile(symbol: "tray.and.arrow.down.fill",
+                                 tint: SettingsStore.Page.advanced.tint, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Import settings").font(.title3.weight(.semibold))
+                    Text(origin).font(.callout).foregroundStyle(.secondary)
                 }
+            }
+            if let schema = bundle.schema, schema > knownSchema {
+                CardNote("Its monitor settings are a newer shape; keys this JR-Bar does not know are skipped.",
+                         symbol: "exclamationmark.triangle.fill", tint: .orange)
             }
             if bundle.categories.isEmpty {
                 Text("The file holds nothing to import.").foregroundStyle(.secondary)
-            }
-            ForEach(bundle.categories) { category in
-                Toggle(isOn: Binding(get: { chosen.contains(category) && !needsMonitor(category) },
-                                     set: { if $0 { chosen.insert(category) } else { chosen.remove(category) } })) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(category.title)
-                            Text(bundle.summary(of: category)).foregroundStyle(.tertiary)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(bundle.categories.enumerated()), id: \.element) { index, category in
+                        if index > 0 { Divider() }
+                        Toggle(isOn: Binding(get: { chosen.contains(category) && !needsMonitor(category) },
+                                             set: { if $0 { chosen.insert(category) } else { chosen.remove(category) } })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(category.title)
+                                    Text(bundle.summary(of: category)).foregroundStyle(.tertiary)
+                                }
+                                Text(needsMonitor(category) ? "Needs the monitor running." : category.detail)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
-                        Text(needsMonitor(category) ? "Needs the monitor running." : category.detail)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        .toggleStyle(.checkbox)
+                        .disabled(needsMonitor(category))
+                        .padding(.vertical, SettingsMetrics.s)
                     }
                 }
-                .toggleStyle(.checkbox)
-                .disabled(needsMonitor(category))
+                .padding(.horizontal, SettingsMetrics.m)
+                .background(InsetPanel())
             }
             HStack {
                 Spacer()
@@ -301,10 +308,8 @@ private struct CommandLineGroup: View {
                 switch state {
                 case .notInstalled, .stale:
                     Button("Install") { run { try CommandLineTool.install(link: link, bundled: $0) } }
-                        .controlSize(.small)
                 case .installed:
                     Button("Remove") { run { _ in try CommandLineTool.uninstall(link: link, bundled: bundled) } }
-                        .controlSize(.small)
                 case .unavailable, .occupied:
                     EmptyView()
                 }
@@ -342,7 +347,7 @@ private struct QuickTogglesGroup: View {
             ForEach(SystemToggle.allCases, id: \.rawValue) { toggle in
                 let id = AppShortcutCatalog.toggleID(toggle)
                 LabeledContent {
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
                         ShortcutRecorderField(id: id, chord: store.actionShortcut(id), center: center,
                                               onChange: { store.setShortcut($0, for: id) },
                                               onTakeOver: { store.setShortcut(nil, for: $0) })
@@ -352,11 +357,12 @@ private struct QuickTogglesGroup: View {
                             .help("Show this chip on the notch card")
                     }
                 } label: {
-                    Label {
-                        Text(toggle.longTitle)
-                    } icon: {
+                    HStack(spacing: SettingsMetrics.s) {
                         Image(systemName: toggle.symbol)
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(toggle.longTitle)
                     }
                 }
                 .settingRowStyle()

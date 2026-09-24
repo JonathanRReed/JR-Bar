@@ -37,6 +37,21 @@ enum ShortcutRecorderLogic {
         return .record(chord)
     }
 
+    /// A chord's display string as the keys a person presses: each
+    /// modifier glyph its own cap, then the key's name as one —
+    /// "⌃⌥J" is ⌃ · ⌥ · J, "⌥⇧⌘F12" is ⌥ · ⇧ · ⌘ · F12.
+    nonisolated static func keycaps(_ display: String) -> [String] {
+        let modifiers: Set<Character> = ["⌃", "⌥", "⇧", "⌘"]
+        var caps: [String] = []
+        var rest = Substring(display)
+        while let first = rest.first, modifiers.contains(first) {
+            caps.append(String(first))
+            rest = rest.dropFirst()
+        }
+        if !rest.isEmpty { caps.append(String(rest)) }
+        return caps
+    }
+
     /// The modifiers held so far, drawn the way the finished chord will
     /// be — "⌃⌥…" while the person is still reaching for the key.
     nonisolated static func heldGlyphs(_ flags: NSEvent.ModifierFlags) -> String {
@@ -80,15 +95,15 @@ struct ShortcutRecorderField: View {
             HStack(spacing: 6) {
                 Button(action: toggleRecording) {
                     label
-                        .frame(minWidth: 96)
-                        .padding(.horizontal, 8)
+                        .frame(minWidth: 96, minHeight: 20)
+                        .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(recording ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05)))
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(recording ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(recording ? Color.accentColor : Color.primary.opacity(0.12),
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .strokeBorder(recording ? Color.accentColor : Color.primary.opacity(0.1),
                                               lineWidth: recording ? 1.5 : 0.5))
                         .contentShape(Rectangle())
                 }
@@ -146,9 +161,7 @@ struct ShortcutRecorderField: View {
                 .font(.callout)
                 .foregroundStyle(Color.accentColor)
         } else if let chord {
-            Text(chord.displayString)
-                .font(.system(.callout, design: .rounded).weight(.medium))
-                .monospacedDigit()
+            Keycaps(display: chord.displayString)
         } else {
             Text("Record Shortcut")
                 .font(.callout)
@@ -246,14 +259,13 @@ struct ShortcutRow: View {
 
     var body: some View {
         LabeledContent {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 ShortcutRecorderField(id: id, chord: chord, center: center,
                                       onChange: onChange, onTakeOver: onTakeOver)
                 if let isOn {
                     Toggle("", isOn: isOn)
                         .labelsHidden()
                         .toggleStyle(.switch)
-                        .controlSize(.small)
                         .disabled(chord == nil)
                         .accessibilityLabel("\(title) enabled")
                 }
@@ -263,12 +275,42 @@ struct ShortcutRow: View {
                 Text(title)
                 if let line = statusLine {
                     Text(line)
-                        .font(.callout)
+                        .font(.subheadline)
                         .foregroundStyle(isProblem ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         .settingRowStyle()
+    }
+}
+
+/// A chord drawn as the keys themselves — one small cap per modifier and
+/// one for the key — the way Raycast and the menus' own hints read.
+struct Keycaps: View {
+    let display: String
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(ShortcutRecorderLogic.keycaps(display).enumerated()), id: \.offset) { _, cap in
+                Text(cap)
+                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .frame(minWidth: 18, minHeight: 18)
+                    .padding(.horizontal, cap.count > 1 ? 4 : 0)
+                    .background {
+                        RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                            .fill(Color.primary.opacity(0.08))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
+                            }
+                            // The cap's lower lip: a key, not a label.
+                            .shadow(color: .black.opacity(0.12), radius: 0, y: 0.5)
+                    }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(display)
     }
 }

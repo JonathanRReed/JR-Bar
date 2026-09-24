@@ -21,26 +21,23 @@ struct AgentUtilityControls: View {
     let utility: AgentUtility
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             AgentAlertRulesTable(utility: utility)
 
-            Divider()
-                .padding(.vertical, 4)
-
+            CardSectionHeader("While you watch")
             Toggle(isOn: utility.bind(\.quietWhenPaneFrontmost)) {
                 SettingLabel(title: "Quiet while you watch",
                              subtitle: "An ask whose terminal pane is already in front gets no pulse, chime or sound — the banner still lands for the record.")
             }
 
             if utility.onOpenOverview != nil {
-                HStack {
-                    SettingLabel(title: "Sessions",
-                                 subtitle: "Every session and its verbs are in the panel and the Overview.")
-                    Spacer(minLength: 10)
+                LabeledContent {
                     Button("Open the Overview") { utility.openFullOverview() }
                         .controlSize(.small)
+                } label: {
+                    SettingLabel(title: "Sessions",
+                                 subtitle: "Every session and its verbs are in the panel and the Overview.")
                 }
-                .padding(.top, 2)
             }
         }
     }

@@ -27,6 +27,11 @@ struct CalibrationSheet: View {
     private var device: SettingsStore.DeviceEntry? { store.deviceEntries.first { $0.id == deviceID } }
     private var isScreenBar: Bool { deviceID == "virtual:status-bar" || device?.kind == "screen_bar" }
     private var deviceName: String { device?.name ?? (isScreenBar ? "Screen Bar" : deviceID) }
+    /// The header tile's glyph: the band, the Dot or the strip.
+    private var deviceSymbol: String {
+        if isScreenBar { return "rectangle.topthird.inset.filled" }
+        return device?.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill"
+    }
 
     /// A connected strip to match a Dot against -- the whole point of the
     /// companion preview is "the Dot tends to be brighter", so the option
@@ -35,18 +40,24 @@ struct CalibrationSheet: View {
     private var canMatchStrip: Bool { device?.kind == "dot" && stripPresent && !isScreenBar }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Calibrate \(deviceName)").font(.title3.weight(.semibold))
-                Text("The device is showing the patch below. Hold it beside the screen and match it by eye.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: SettingsMetrics.l) {
+            HStack(alignment: .center, spacing: SettingsMetrics.m) {
+                SettingsIconTile(symbol: deviceSymbol, tint: SettingsStore.Page.devices.tint, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Calibrate \(deviceName)").font(.title3.weight(.semibold))
+                    Text("The device is showing the patch below. Hold it beside the screen and match it by eye.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            VStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+            VStack(spacing: SettingsMetrics.s + 2) {
+                RoundedRectangle(cornerRadius: SettingsMetrics.panelRadius, style: .continuous)
                     .fill(patchColor)
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
-                    .frame(height: 56)
+                    .overlay(RoundedRectangle(cornerRadius: SettingsMetrics.panelRadius, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
+                    .frame(height: 72)
+                    .accessibilityLabel("The \(model.patch.label) patch")
                 Picker("Patch", selection: $model.patch) {
                     ForEach(CalibrationModel.Patch.allCases, id: \.self) { patch in
                         Text(patch.label).tag(patch)
@@ -58,10 +69,13 @@ struct CalibrationSheet: View {
 
             if model.patch == .white {
                 if whiteMatched {
-                    Text("Matched").font(.callout).foregroundStyle(.secondary)
+                    Label("Matched", systemImage: "checkmark.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.green)
                 } else {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: SettingsMetrics.s) {
                         Text("Does the light look white?")
+                            .fontWeight(.medium)
                         HStack(spacing: 6) {
                             // fixedSize: these are the corrections, not
                             // decoration -- a truncated "Too mage…" is a
@@ -76,10 +90,12 @@ struct CalibrationSheet: View {
                                 .fixedSize()
                         }
                     }
+                    .padding(SettingsMetrics.m)
+                    .background(InsetPanel())
                 }
             }
 
-            DisclosureGroup("Fine-tune by eye", isExpanded: $fineTuneExpanded) {
+            DisclosureGroup(isExpanded: $fineTuneExpanded) {
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
                     gainRow("Red", value: $model.red, tint: .red)
                     gainRow("Green", value: $model.green, tint: .green)
@@ -107,7 +123,13 @@ struct CalibrationSheet: View {
                                      subtitle: "Lights the strip with the same patch at its own settings so you can bring the Dot down to meet it.")
                     }
                 }
+            } label: {
+                SettingLabel(title: "Fine-tune by eye",
+                             subtitle: "Each channel's gain, the resting glow and the brightness.")
             }
+            .disclosureGroupStyle(SettingsDisclosureStyle())
+
+            Divider()
 
             HStack {
                 Toggle("Compare with before", isOn: $comparing).toggleStyle(.button)
@@ -163,10 +185,11 @@ struct CalibrationSheet: View {
     private func gainRow(_ title: String, value: Binding<Double>, tint: Color) -> some View {
         GridRow {
             HStack(spacing: 6) {
-                Circle().fill(tint).frame(width: 8, height: 8)
+                Circle().fill(tint.gradient).frame(width: 9, height: 9)
                 Text(title)
             }
             Slider(value: value, in: CalibrationModel.gainRange)
+                .tint(tint)
             ValueText(text: String(format: "%.2f", value.wrappedValue), width: 48)
         }
     }
