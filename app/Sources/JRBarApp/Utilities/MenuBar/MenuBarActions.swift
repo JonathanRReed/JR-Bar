@@ -7,8 +7,7 @@ import OSLog
 /// every piece here routes through it. Nothing in the actions files
 /// writes `MenuBarSettings` or touches the hider directly.
 ///
-/// How `MenuBarUtility` answers (its extension at the bottom of
-/// MenuBarUtility.swift):
+/// How `MenuBarUtility` answers (MenuBarUtilityDelegate.swift):
 ///   * `menuBarItems` → the live `listedItems`
 ///   * `menuBarSections` → each listed item's effective section, so a
 ///     concealed item reads hidden
@@ -58,7 +57,7 @@ protocol MenuBarActionsDelegate: AnyObject {
 
     // The palette's reach past the item list. Defaults below keep a
     // delegate that predates them compiling; `MenuBarUtility` answers
-    // each for real at the bottom of this file.
+    // each for real in MenuBarUtilityDelegate.swift.
 
     /// Whether the utility runs — switched on and not handed to
     /// Bartender, Ice or Hidden Bar. The parked ⌘⇧K still opens the
