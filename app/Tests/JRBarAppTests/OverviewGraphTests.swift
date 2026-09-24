@@ -129,6 +129,8 @@ import JRBarCore
         #expect(again.nodes == once.nodes)
         #expect(again.hubs == once.hubs)
         #expect(again.order == once.order)
+        #expect(again.placesMatch(once), "so the Graph shows it at once, without a settle")
+        #expect(!Layout.make(nodes + [Self.node("e")]).placesMatch(once))
     }
 
     @Test("a worker whose session is off the graph stands alone, and a parent loop ends")

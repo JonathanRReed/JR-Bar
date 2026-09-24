@@ -352,6 +352,14 @@ struct OverviewGraphLayout: Equatable {
         }
     }
 
+    /// Whether everything sits where it sat in `other` — a state change
+    /// alters a cluster's counts but moves nothing, and needs no settle.
+    func placesMatch(_ other: OverviewGraphLayout) -> Bool {
+        nodes == other.nodes
+            && hubs.map(\.id) == other.hubs.map(\.id) && hubs.map(\.center) == other.hubs.map(\.center)
+            && clusters.map(\.id) == other.clusters.map(\.id) && clusters.map(\.frame) == other.clusters.map(\.frame)
+    }
+
     // MARK: Reading the map
 
     /// What sits under a point on the map: a node before a hub, a hub

@@ -411,7 +411,7 @@ struct OverviewGraphCanvas: View {
     /// one that only changes a state shows at once.
     private func settle(to new: Shown, from old: Shown) {
         let from = shown ?? old
-        guard new.layout != from.layout, !reduceMotion else {
+        guard !new.layout.placesMatch(from.layout), !reduceMotion else {
             shown = new
             previous = nil
             return
