@@ -332,6 +332,12 @@ Vocabulary:
   `opencode_go_not_subscribed`), it reports `unsupported` with its token
   totals and no windows. A "show meters" control hides instead of drawing
   dead, and the Usage Center says why in words.
+- `usage.providers[].reset_credits` (additive, 2026-09-24) is how many unused
+  limit-reset credits the provider reports for this account, or null when no
+  source stated a count: Codex's own `account/rateLimits/read`
+  (`rateLimitResetCredits.availableCount`), the CLIProxyAPI hub's credit list
+  for a hub account, or a Grok billing answer that carries its coupons. A
+  count to show; nothing in JR-Bar redeems a credit.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
   names it): `exhausts_at` (epoch, or null when nothing is burning),

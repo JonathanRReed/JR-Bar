@@ -125,6 +125,9 @@ def render_lines(document: dict[str, Any], *, now: float) -> list[str]:
         if not windows:
             lines.append(f"{name:<{width}}{_why_empty(provider)}")
             continue
+        credits = provider.get("reset_credits")
+        if isinstance(credits, int) and not isinstance(credits, bool) and credits > 0:
+            suffix.append("1 reset credit" if credits == 1 else f"{credits} reset credits")
         for window in windows:
             parts = [f"{window.get('name') or window.get('id') or '?'} {_left(window)}"]
             reset = reset_words(window.get("resets_at"), now)

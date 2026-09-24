@@ -1269,6 +1269,9 @@ def usage_document(
                 # None on a stale or unanswered feed, so the wire never
                 # invents one.
                 "incident": getattr(snapshot, "incident", None),
+                # Unused limit-reset credits the provider reports (a Codex
+                # reset credit): a count only; nothing here redeems one.
+                "reset_credits": getattr(snapshot, "reset_credits", None),
                 "reason": getattr(snapshot, "reason_code", None),
                 "action": getattr(snapshot, "action_label", None),
                 "observed_at": epoch(getattr(snapshot, "observed_at", None)),

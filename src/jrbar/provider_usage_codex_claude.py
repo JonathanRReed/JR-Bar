@@ -491,6 +491,10 @@ def collect_codex(
             account_plan=account_plan,
             source_id=source_id,
         )
+        credits = live.get("reset_credits") if isinstance(live, dict) else None
+        if isinstance(credits, int) and not isinstance(credits, bool):
+            # A count only: JR-Bar never redeems a reset credit.
+            snapshot = replace(snapshot, reset_credits=credits)
         return _codex_reading_freshness(
             snapshot, observed_evidence_at, observed_at=observed_at
         )

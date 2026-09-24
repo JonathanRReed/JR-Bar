@@ -1155,6 +1155,10 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// here is current by construction. An outage on the vendor's side,
     /// never a quota verdict.
     public var incident: String?
+    /// Unused limit-reset credits the provider reports (a Codex reset
+    /// credit): a count to show, never something the app redeems. Nil
+    /// when no source stated one.
+    public var resetCredits: Int? = nil
 
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
@@ -1200,6 +1204,8 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         observedAt = try? c.decodeIfPresent(Double.self, forKey: .observedAt)
         constrained = try? c.decodeIfPresent(CoreConstrainedLane.self, forKey: .constrained)
         incident = try? c.decodeIfPresent(String.self, forKey: .incident)
+        let credits = try? c.decodeIfPresent(Int.self, forKey: .resetCredits)
+        resetCredits = credits.map { max(0, $0) }
     }
 
     /// Stable identity across multi-account rows of the same provider;
@@ -1215,6 +1221,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         case estimatedCostUSD = "estimated_cost_usd"
         case creditsRemaining = "credits_remaining"
         case observedAt = "observed_at"
+        case resetCredits = "reset_credits"
     }
 
     /// `not_signed_in`, `signed_out`, `unauthenticated`, `no_auth`: the CLI

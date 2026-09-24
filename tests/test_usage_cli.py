@@ -178,3 +178,13 @@ def test_the_router_reaches_it(monkeypatch) -> None:
     monkeypatch.setattr(usage_cli, "main", lambda argv: seen.append(argv) or 0)
     assert cli_entry.jrbar_main(["usage", "--brief"]) == 0
     assert seen == [["--brief"]]
+
+
+def test_reset_credits_are_counted_in_words() -> None:
+    usage = {"refreshed_at": NOW, "providers": [
+        {"id": "codex", "state": "ready", "quota_source": True, "reset_credits": 2,
+         "windows": [{"id": "weekly", "name": "7d", "used_pct": 30.0, "resets_at": NOW + 3600}]},
+    ]}
+    code, out, _ = run(usage=usage)
+    assert code == 0
+    assert out.strip() == "Codex  7d 70% left · resets 1h00m · 2 reset credits"

@@ -1304,7 +1304,7 @@ def scenario_usage(name: str, now: float) -> list[dict]:
              "windows": [window("five-hour", "5h", 12.0, 4 * 3600, source="cliproxy"),
                          window("weekly", "7d", 35.0, 6 * 86400, source="cliproxy")]},
             {"id": "codex", "instance": "cliproxy:9b1e0a77c2d5", "quota_source": True, "state": "ready",
-             "fidelity": "official", "observed_at": now - 30,
+             "fidelity": "official", "observed_at": now - 30, "reset_credits": 1,
              "account": {"plan": "Pro", "label": "ChatGPT", "fidelity": "official"},
              "windows": [window("weekly", "7d", 30.0, 5 * 86400, source="cliproxy")]},
         ]

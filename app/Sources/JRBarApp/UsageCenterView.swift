@@ -363,6 +363,9 @@ struct ProviderUsageCard: View {
         if let credits = provider.creditsRemaining, credits >= 0 {
             parts.append("\(UsageFormat.grouped(credits)) credits left")
         }
+        if let resets = UsageSourceNotes.resetCreditsText(provider.resetCredits) {
+            parts.append(resets)
+        }
         if let observedAt = provider.observedAt,
            let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: observedAt), now: store.now) {
             parts.append("read \(age) ago")

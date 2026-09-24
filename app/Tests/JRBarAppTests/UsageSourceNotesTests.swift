@@ -62,4 +62,16 @@ struct UsageSourceNotesTests {
         let old = try JSONDecoder().decode(CoreUsageWindow.self, from: Data(#"{"id":"weekly","name":"7d"}"#.utf8))
         #expect(old.source == nil)
     }
+
+    @Test func resetCreditsAreACountNeverAButton() throws {
+        #expect(UsageSourceNotes.resetCreditsText(nil) == nil)
+        #expect(UsageSourceNotes.resetCreditsText(0) == nil)
+        #expect(UsageSourceNotes.resetCreditsText(1) == "1 reset credit")
+        #expect(UsageSourceNotes.resetCreditsText(3) == "3 reset credits")
+        let json = #"{"id":"codex","windows":[],"reset_credits":2}"#
+        let provider = try JSONDecoder().decode(CoreProviderUsage.self, from: Data(json.utf8))
+        #expect(provider.resetCredits == 2)
+        let older = try JSONDecoder().decode(CoreProviderUsage.self, from: Data(#"{"id":"codex"}"#.utf8))
+        #expect(older.resetCredits == nil)
+    }
 }

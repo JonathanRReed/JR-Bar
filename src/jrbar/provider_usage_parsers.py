@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -491,6 +492,19 @@ def parse_grok_usage(payload: object, *, observed_at: float) -> ProviderUsageSna
         source_id="grok-billing",
     )
     raw_plan = config.get("planName", config.get("tier", payload.get("plan")))
+    # SuperGrok's usage-limit reset coupons usually live on a separate
+    # grok.com billing call JR-Bar does not make; a count is read only when
+    # this payload itself carries one.
+    coupons = payload.get("remainingResets", config.get("remainingResets"))
+    reset_credits = (
+        len(coupons) if isinstance(coupons, list) and len(coupons) <= 10_000
+        else coupons if isinstance(coupons, int) and not isinstance(coupons, bool) and 0 <= coupons <= 10_000
+        else None
+    )
+    return replace(_grok_snapshot(payload, lane, raw_plan, observed_at), reset_credits=reset_credits)
+
+
+def _grok_snapshot(payload: dict, lane: UsageLane, raw_plan: object, observed_at: float) -> ProviderUsageSnapshot:
     return _snapshot(
         "grok",
         observed_at=observed_at,

@@ -309,6 +309,7 @@ def _account_snapshot(client: HubClient, account: HubAccount, now: float) -> Pro
         credits = _reset_credit_count(client, account, now)
         if credits is not None:
             _RESET_CREDITS[account.instance] = credits
+            snapshot = replace(snapshot, reset_credits=credits)
     else:
         snapshot = _hub_lanes(
             parse_claude_usage(windows=windows_from_payload(document), observed_at=now, account_label=account.email)

@@ -63,6 +63,13 @@ enum UsageSourceNotes {
         isHubInstance(instance) ? "CLIProxyAPI" : instance
     }
 
+    /// "1 reset credit" / "3 reset credits": unused limit resets the
+    /// provider reports, shown as a count. The app never redeems one.
+    static func resetCreditsText(_ count: Int?) -> String? {
+        guard let count, count > 0 else { return nil }
+        return count == 1 ? "1 reset credit" : "\(count) reset credits"
+    }
+
     /// One detail window in words: "Monthly 7% used, resets in 6d 4h".
     static func detailText(_ window: CoreUsageWindow, now: Date, fix: String?) -> String {
         let reading = window.isUnknown ? "no reading" : "\(window.percentText) used"

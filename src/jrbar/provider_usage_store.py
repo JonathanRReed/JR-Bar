@@ -56,6 +56,7 @@ def _snapshot_document(snapshot: ProviderUsageSnapshot) -> dict[str, object]:
         "credits_remaining": snapshot.credits_remaining,
         "incident": snapshot.incident,
         "source_instance_id": snapshot.source_instance_id,
+        "reset_credits": snapshot.reset_credits,
     }
 
 
@@ -133,9 +134,17 @@ def _snapshot(value: object) -> ProviderUsageSnapshot | None:
             credits_remaining=value.get("credits_remaining"),
             incident=value.get("incident"),
             source_instance_id=value.get("source_instance_id", DEFAULT_SOURCE_INSTANCE_ID),
+            reset_credits=_reset_credits(value.get("reset_credits")),
         )
     except (TypeError, ValueError):
         return None
+
+
+def _reset_credits(value: object) -> int | None:
+    """An older file has no count, and a bad one is dropped, never fatal."""
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10_000:
+        return value
+    return None
 
 
 def load_provider_usage_state(

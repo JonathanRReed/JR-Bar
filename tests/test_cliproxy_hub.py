@@ -158,6 +158,7 @@ def test_accounts_are_listed_and_read_without_ever_touching_a_reset(hub: FakeHub
     assert codex.provider_id == "codex" and codex.account_plan == "pro"
     assert [(lane.lane_id, lane.bindable) for lane in codex.lanes] == [("weekly", True)]
     assert reset_credits(instance_for("a3")) == 1
+    assert codex.reset_credits == 1
     # The proxy fills in its own token; the key is only ever the management one.
     assert set(hub.keys) == {f"Bearer {KEY}"}
     assert all(call["header"]["Authorization"] == "Bearer $TOKEN$" for call in hub.calls)
