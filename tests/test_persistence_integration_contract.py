@@ -91,9 +91,8 @@ def test_percent_and_reset_state_use_the_shared_writer__and_2_more() -> None:
 
 
 
-def test_termination_force_submits_before_one_drain_and_quit_keeps_its_routes() -> None:
+def test_termination_force_submits_before_one_drain() -> None:
     terminate = _function(STATUS_BAR, "applicationWillTerminate_")
-    quit_action = _function(STATUS_BAR, "quit_")
 
     termination_calls = _calls(terminate)
     assert "_flush_capacity_history_store" in termination_calls
@@ -105,8 +104,3 @@ def test_termination_force_submits_before_one_drain_and_quit_keeps_its_routes() 
     assert qualified_termination_calls.index(
         persistence_submit
     ) < qualified_termination_calls.index(persistence_close)
-
-    quit_calls = _calls(quit_action)
-    assert "applicationWillTerminate_" in quit_calls
-    assert "terminate_" in quit_calls
-    assert "close" not in quit_calls

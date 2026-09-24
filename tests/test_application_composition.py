@@ -215,3 +215,46 @@ print(json.dumps({"ok": True}))
         assert "main" not in names, f"{path.name} still has a foreground main"
         assert "run_status_bar" not in names, f"{path.name} still runs the menu-bar app"
         assert '__name__ == "__main__"' not in path.read_text(encoding="utf-8")
+
+
+def test_the_composed_daemon_class_still_routes_operator_history_to_the_store() -> None:
+    """Deleting the legacy methods the daemon class shadows must not cut the
+    ones it still reaches through a captured original: the ambient runtime
+    wraps observe_operator_history_events, and that wrapper has to land on
+    the legacy observer that queues the rows for the history store."""
+    script = """
+import json
+
+from jrbar import core_runtime
+from jrbar.application_composition import compose_status_bar_application
+
+compose_status_bar_application()
+controller_class = core_runtime.build_headless_controller_class()
+controller = controller_class.alloc().init()
+queued = []
+controller._enqueue_operator_history_events = queued.append
+controller.observe_operator_history_events((), None)
+assert queued == [()], queued
+print(json.dumps({"ok": True}))
+"""
+    with tempfile.TemporaryDirectory() as tempdir:
+        env = os.environ.copy()
+        env["SIDEPULSE_TESTING"] = "1"
+        env["HOME"] = tempdir
+        env["PYTHONPATH"] = str(ROOT / "src")
+        # A `python -c` child under PYTEST_CURRENT_TEST is the provider
+        # module's import probe, which swaps the real controller for
+        # stand-ins; this child needs the real composition.
+        env.pop("PYTEST_CURRENT_TEST", None)
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    assert completed.returncode == 0, completed.stderr
+    assert '"ok": true' in completed.stdout

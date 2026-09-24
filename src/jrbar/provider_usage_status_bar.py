@@ -40,7 +40,6 @@ else:
         toggle_provider_menu_visibility,
     )
     from .provider_usage_event_store import (
-        load_reset_delivery_state,
         save_reset_delivery_state,
     )
     from .provider_usage_feedback_actions import (
@@ -725,30 +724,6 @@ else:
                 open_center=False,
                 log=_legacy.log_status_bar,
             )
-
-        def applicationDidFinishLaunching_(self, notification):
-            if getattr(self, "_runtime_started", False) or getattr(self, "_runtime_termination_started", False):
-                return None
-            result = _BaseStatusBarController.applicationDidFinishLaunching_(
-                self,
-                notification,
-            )
-            from .optional_integration_runtime import (
-                start_optional_integration_runtime,
-            )
-
-            self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
-            self._jrbar_reset_delivery_state = load_reset_delivery_state()
-            self._deliver_pending_reset_events()
-            # Seed the edge baseline from the persisted store: a reset
-            # that passes while the app is down (or restarting) is still
-            # an edge against the last persisted reading. An empty
-            # launch baseline made the first publish blind.
-            from .provider_usage_store import load_provider_usage_state
-
-            self._jrbar_provider_usage_edge_baseline = load_provider_usage_state()
-            self._request_provider_usage(force=True)
-            return result
 
         @_legacy.objc.IBAction
         def refresh_(self, sender):

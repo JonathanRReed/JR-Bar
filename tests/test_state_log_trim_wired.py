@@ -93,13 +93,14 @@ def test_a_single_enormous_line_still_leaves_a_log__and_1_more(tmp_path: Path) -
 
 
 def test_the_sweep_is_actually_called_at_launch() -> None:
-    """It was imported into status_bar and never invoked. Reachable now."""
-    from jrbar import status_bar
+    """It was imported into status_bar and never invoked. Reachable now, from
+    the only launch there is: the daemon's."""
+    from jrbar import core_runtime
 
     # inspect.getsource cannot read a PyObjC selector, so read the module.
-    source = Path(status_bar.__file__).read_text(encoding="utf-8")
-    launch = source.split("def applicationDidFinishLaunching_", 1)[1]
-    body = launch.split("\n    def ", 1)[0]
+    source = Path(core_runtime.__file__).read_text(encoding="utf-8")
+    launch = source.split("def _core_launch(self)", 1)[1]
+    body = launch.split("\n        def ", 1)[0]
     assert "trim_oversized_state_logs" in body, (
         "the state-log sweep is unreachable again"
     )

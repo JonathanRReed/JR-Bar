@@ -565,16 +565,12 @@ def test_sd_guard_requires_an_explicit_volume_uuid_before_registration__and_2_mo
     assert 'grep -E "serial|' not in source
     assert "retains file names, sizes, ages, and filtered operational log lines" in source
 
-    # --- scenario: status_bar_shortcut_quit_and_openers_use_trusted_system_paths
+    # --- scenario: status_bar_openers_use_trusted_system_paths
     try:
         from jrbar import status_bar
     except (ImportError, SystemExit) as exc:
         pytest.skip(str(exc))
 
-    controller = SimpleNamespace(
-        closed_lid_awake=SimpleNamespace(release=lambda: None),
-        keep_awake=SimpleNamespace(release=lambda: None),
-    )
     commands: list[list[str]] = []
 
     def popen(command, **_kwargs):
@@ -593,15 +589,10 @@ def test_sd_guard_requires_an_explicit_volume_uuid_before_registration__and_2_mo
         patch.object(status_bar.subprocess, "Popen", side_effect=popen),
         patch.object(status_bar.subprocess, "run", side_effect=run),
         patch.object(status_bar.threading, "Thread", side_effect=immediate_thread),
-        patch.object(status_bar.os, "getppid", return_value=1),
     ):
-        status_bar.StatusBarController.quit_.callable(controller, None)
         status_bar.open_terminal_command("echo safe")
 
-    assert [command[0] for command in commands] == [
-        "/bin/launchctl",
-        "/usr/bin/osascript",
-    ]
+    assert [command[0] for command in commands] == ["/usr/bin/osascript"]
 
 
 

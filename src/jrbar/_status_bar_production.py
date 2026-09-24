@@ -1092,29 +1092,6 @@ else:
             self._last_event_refresh_at = time.monotonic()
             self.refresh_(None)
 
-        def applicationDidFinishLaunching_(self, notification):
-            if (
-                getattr(self, "_runtime_started", False)
-                or getattr(self, "_runtime_termination_started", False)
-            ):
-                return None
-            started = time.perf_counter()
-            outcome = "ok"
-            try:
-                return _LegacyStatusBarController.applicationDidFinishLaunching_(
-                    self,
-                    notification,
-                )
-            except BaseException:
-                outcome = "error"
-                raise
-            finally:
-                self._performance().record(
-                    "warm_launch",
-                    (time.perf_counter() - started) * 1000.0,
-                    outcome=outcome,
-                )
-
         def menuWillOpen_(self, menu):
             started = time.perf_counter()
             outcome = "ok"

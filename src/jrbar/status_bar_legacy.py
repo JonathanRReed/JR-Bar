@@ -658,7 +658,6 @@ from .signal_coordinator import (
     FiniteSignalCoordinator,
 )
 from .status_bar_launch import (
-    LAUNCH_AGENT_LABEL,
     TerminalLaunchPlan,
     resolve_terminal_launch,
     terminal_launch_arguments,
@@ -2681,89 +2680,6 @@ class StatusBarController(NSObject):
         )
         self.set_settings_message("Notifications are unavailable in this runtime.")
 
-    def applicationDidFinishLaunching_(self, _notification):
-        if self._runtime_started or self._runtime_termination_started:
-            return None
-        self._notification_client_for_use().set_delegate(self)
-        self.start_notification_authorization_refresh()
-        NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-        # An accessory app never shows a main menu, but AppKit still
-        # routes Cmd-C/V/W/Z through one -- without it, every shortcut
-        # in every window this app owns was dead.
-        from .main_menu import install_main_menu
-
-        install_main_menu()
-        self.global_action_lifecycle.launch()
-        self.load_operator_local_state()
-        self.trim_oversized_state_logs()
-        log_status_bar("launching status item")
-        self.start_event_server()
-        self.start_cloud_ingest_server()
-        self.replay_debug_logs()
-
-        self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
-            NSVariableStatusItemLength
-        )
-        button = self.status_item.button()
-        button.setTitle_(" Idle")
-        button.setImage_(image_for_symbol(STATE_IDLE.symbol, STATE_IDLE.label))
-        button.setToolTip_(f"{PRODUCT_DISPLAY_NAME} Agent Monitor: Idle")
-        log_status_bar("status item created")
-
-        self._runtime_started = True
-        self._install_dnd_environment_observers()
-        self._refresh_dnd_environment("start")
-        # CPU-bound worker threads (the Screen Bar sampler above all)
-        # hold the GIL for the interpreter's default 5ms switch interval,
-        # so every main-thread Python step can wait a full slice behind
-        # them -- measured as UNIFORM slowness across menu construction
-        # (~300ms for a dozen plain NSMenuItems). 1ms caps that wait;
-        # background renders trade a little throughput for a UI thread
-        # that stops losing whole frames.
-        sys.setswitchinterval(0.001)
-        self.refresh_installed_agent_inventory()
-        self._install_accessibility_display_observer()
-        self.reconcile_lid_observation()
-        self.refresh_(None)
-        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            STATUS_BAR_REFRESH_SECONDS,
-            self,
-            "refresh:",
-            None,
-            True,
-        )
-        if not hasattr(self.virtual_status_device, "presentation_scheduler_inputs"):
-            self.lid_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                LID_POLL_SECONDS,
-                self,
-                "pollLid:",
-                None,
-                True,
-            )
-        # A killed agent should read as ended within seconds, not at the
-        # next heartbeat. The sweep is one ps fork plus a stat per live
-        # session, run off the main thread.
-        self.liveness_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            LIVENESS_POLL_SECONDS,
-            self,
-            "pollLiveness:",
-            None,
-            True,
-        )
-        # Remote peers: own minute timer; the fetch checks the setting.
-        self.start_remote_peer_timer()
-        if self.settings.remote_peers.enabled:
-            self.start_remote_peer_refresh()
-        # Rotate oversized hook/event logs off the main thread.
-        threading.Thread(
-            target=lambda: trim_oversized_logs(default_state_dir()),
-            daemon=True,
-        ).start()
-        self.show_setup_window_if_needed()
-        if SCREEN_BAR_FEATURE_ENABLED and self.settings.virtual_status_device_enabled:
-            self.virtual_status_device.show()
-        else:
-            self.virtual_status_device.hide()
 
     @objc.IBAction
     def failureSignalExpired_(self, _timer):
@@ -6781,11 +6697,6 @@ class StatusBarController(NSObject):
 
 
     @objc.IBAction
-    def openSettings_(self, _sender):
-        self.show_settings_window()
-
-
-    @objc.IBAction
     def openWhyPanel_(self, _sender):
         self.show_why_panel()
 
@@ -7286,35 +7197,6 @@ class StatusBarController(NSObject):
     def resetLidOpenAnimation_(self, _sender):
         self.reset_lid_animation(LID_ANIMATION_OPEN)
 
-
-    @objc.IBAction
-    def quit_(self, _sender):
-        self.closed_lid_awake.release()
-        self.keep_awake.release()
-        # Under launchd (parent pid 1) the job has KeepAlive, so a plain
-        # terminate would be resurrected instantly; boot the job out
-        # instead -- launchd stops us and stays stopped until the next
-        # login or explicit start. Anywhere else (dev --foreground run),
-        # a normal terminate is correct.
-        if os.getppid() == 1:
-            # bootout kills by signal, so applicationWillTerminate_ never
-            # runs on THIS path -- state flush, ledger publish and server
-            # teardown were silently skipped on every production quit.
-            try:
-                self.applicationWillTerminate_(None)
-            except Exception:
-                pass
-            subprocess.Popen(
-                [
-                    str(trusted_system_tool("launchctl")),
-                    "bootout",
-                    f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        else:
-            NSApp.terminate_(self)
 
     def _record_persistence_receipt(self, receipt: PersistenceReceipt) -> None:
         if (
@@ -10865,9 +10747,6 @@ class StatusBarController(NSObject):
         )
         self.virtual_status_device.reposition()
 
-    def show_setup_window_if_needed(self) -> None:
-        if should_show_setup_window(self.settings):
-            self.show_setup_window()
 
     def show_setup_window(self) -> None:
         if self.setup_window is None:
@@ -11419,32 +11298,6 @@ class StatusBarController(NSObject):
 
         threading.Thread(target=_work, daemon=True).start()
 
-    @objc.IBAction
-    def hooksUpdated_(self, payload):
-        self.hooks_update_in_flight = False
-        provider = str(payload.get("provider") or "")
-        install = bool(payload.get("install"))
-        if not payload.get("ok"):
-            self.set_settings_message(
-                f"{provider.title()} hooks failed: {payload.get('error')}"
-            )
-            self.refresh_settings_window()
-            # The Welcome window's Install button must not just sit
-            # there after a failure -- refresh its row status too.
-            self.refresh_setup_window()
-            return
-        action = "installed" if install else "removed"
-        if not payload.get("changed"):
-            action = "already installed" if install else "already removed"
-        self.set_settings_message(f"{provider.title()} hooks {action}.")
-        # The user just changed the exact fact the intake probe caches.
-        # Waiting out its TTL would leave "Not set up" on screen for half
-        # a minute after they connected an agent.
-        self.refresh_intake_report(force=True)
-        self.reload_monitor()
-        self.refresh_settings_window()
-        self.refresh_setup_window()
-        self.refresh_(None)
 
     def set_transcript_monitoring(self, provider: str, enabled: bool) -> None:
         try:
@@ -16786,10 +16639,6 @@ def set_checkbox_state(button, enabled: bool) -> None:
 
 def checkbox_is_on(button) -> bool:
     return button is not None and button.state() == NSOnState
-
-
-def should_show_setup_window(settings) -> bool:
-    return not getattr(settings, "setup_screen_completed", False)
 
 
 def open_terminal_setup_command(command: str, *, filename: str = "install-sleep-helper.command") -> Path:

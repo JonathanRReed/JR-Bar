@@ -13,7 +13,7 @@ import threading
 import time
 import types
 import unittest
-from contextlib import ExitStack, redirect_stderr
+from contextlib import redirect_stderr
 from dataclasses import replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2466,15 +2466,6 @@ for (const event of [
             "configure_alcove",
         ):
             self.assertIn(key, target.setup_buttons)
-
-        # --- scenario: first_launch_setup_window_only_shows_until_completed
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        self.assertTrue(status_bar.should_show_setup_window(AgentMonitorSettings()))
-        self.assertFalse(status_bar.should_show_setup_window(AgentMonitorSettings(setup_screen_completed=True)))
 
         # --- scenario: setup_terminal_installer_opens_command_file
         try:
@@ -17839,51 +17830,6 @@ class ReminderObservationRuntimeTests(unittest.TestCase):
             1,
         )
 
-        # --- scenario: disabled_launch_has_no_legacy_reminder_timer_or_eventkit_access
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.settings = self.controller.settings.with_reminder_alerts_enabled(False)
-        timer_api = MagicMock()
-        status_item = MagicMock()
-        status_api = MagicMock()
-        status_api.systemStatusBar.return_value.statusItemWithLength_.return_value = status_item
-
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(self.status_bar, "NSApp"))
-            stack.enter_context(patch.object(self.status_bar, "NSStatusBar", status_api))
-            stack.enter_context(patch.object(self.status_bar, "NSTimer", timer_api))
-            stack.enter_context(patch.object(self.status_bar.threading, "Thread"))
-            fetch_due = stack.enter_context(patch.object(self.status_bar.reminders_watch, "fetch_due"))
-            request_access = stack.enter_context(patch.object(self.status_bar.reminders_watch, "request_access"))
-            authorization_status = stack.enter_context(
-                patch.object(self.status_bar.reminders_watch, "authorization_status")
-            )
-            for name in (
-                "load_operator_local_state",
-                "start_event_server",
-                "replay_debug_logs",
-                "refresh_",
-                "show_setup_window_if_needed",
-                "reconcile_lid_observation",
-            ):
-                stack.enter_context(patch.object(self.controller, name))
-            stack.enter_context(patch.object(self.controller.virtual_status_device, "show"))
-            stack.enter_context(patch.object(self.controller.virtual_status_device, "hide"))
-
-            self.controller.applicationDidFinishLaunching_(None)
-
-        selectors = tuple(
-            invocation.args[2]
-            for invocation in (
-                timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.call_args_list
-            )
-        )
-        self.assertNotIn("pollReminders:", selectors)
-        self.assertFalse(hasattr(self.controller, "reminders_watch_timer"))
-        self.assertFalse(hasattr(self.controller, "pollReminders_"))
-        fetch_due.assert_not_called()
-        request_access.assert_not_called()
-        authorization_status.assert_not_called()
-
         # --- scenario: reminder_sleep_and_termination_withdraw_timer_cue_and_late_result
         self.setUp()  # fresh isolated controller per scenario
         self.controller.settings = self.controller.settings.with_reminder_alerts_enabled(True)
@@ -18258,50 +18204,6 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
         withdraws and blocks late callbacks; a burst keeps one running
         and one latest pending; a late recheck while disabled creates no
         work; a lead change obsoletes in-flight results."""
-        # --- scenario: disabled_launch_has_no_legacy_calendar_timer_or_event_lookup
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(False)
-        self.controller._runtime_started = False
-        timer_api = MagicMock()
-        status_item = MagicMock()
-        status_api = MagicMock()
-        status_api.systemStatusBar.return_value.statusItemWithLength_.return_value = status_item
-
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(self.status_bar, "NSApp"))
-            stack.enter_context(patch.object(self.status_bar, "NSStatusBar", status_api))
-            stack.enter_context(patch.object(self.status_bar, "NSTimer", timer_api))
-            stack.enter_context(patch.object(self.status_bar.threading, "Thread"))
-            next_event_start = stack.enter_context(patch.object(self.status_bar.calendar_watch, "next_event_start"))
-            for name in (
-                "load_operator_local_state",
-                "start_event_server",
-                "replay_debug_logs",
-                "refresh_",
-                "show_setup_window_if_needed",
-                "reconcile_lid_observation",
-            ):
-                stack.enter_context(patch.object(self.controller, name))
-            stack.enter_context(patch.object(self.controller.virtual_status_device, "show"))
-            stack.enter_context(patch.object(self.controller.virtual_status_device, "hide"))
-
-            self.controller.applicationDidFinishLaunching_(None)
-
-        selectors = tuple(
-            invocation.args[2]
-            for invocation in (
-                timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.call_args_list
-            )
-        )
-        self.assertNotIn("pollCalendar:", selectors)
-        self.assertFalse(hasattr(self.controller, "calendar_watch_timer"))
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.CALENDAR_OBSERVATION,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        self.assertEqual(self.controller._os_poll_worker.snapshot().submitted, 1)
-        next_event_start.assert_not_called()
-
         # --- scenario: termination_withdraws_calendar_and_blocks_late_callback
         self.setUp()  # fresh isolated controller per scenario
         self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(True)
@@ -19846,55 +19748,6 @@ class LidObservationRuntimeTests(unittest.TestCase):
             ),
         )
 
-        # --- scenario: launch_uses_shared_lid_registry_without_legacy_nstimer
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = False
-        timer_api = MagicMock()
-        status_item = MagicMock()
-        status_api = MagicMock()
-        status_api.systemStatusBar.return_value.statusItemWithLength_.return_value = status_item
-        patched_methods = (
-            "load_operator_local_state",
-            "start_event_server",
-            "replay_debug_logs",
-            "refresh_",
-            "reconcile_lid_observation",
-            "show_setup_window_if_needed",
-        )
-
-        with ExitStack() as stack:
-            method_mocks = {}
-            stack.enter_context(patch.object(self.status_bar, "NSApp"))
-            stack.enter_context(patch.object(self.status_bar, "NSStatusBar", status_api))
-            stack.enter_context(patch.object(self.status_bar, "NSTimer", timer_api))
-            thread_type = stack.enter_context(patch.object(self.status_bar.threading, "Thread"))
-            stack.enter_context(patch.object(self.controller.virtual_status_device, "show"))
-            stack.enter_context(patch.object(self.controller.virtual_status_device, "hide"))
-            for name in patched_methods:
-                method_mocks[name] = stack.enter_context(patch.object(self.controller, name))
-            self.controller.applicationDidFinishLaunching_(None)
-
-        selectors = tuple(
-            invocation.args[2]
-            for invocation in (
-                timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.call_args_list
-            )
-        )
-        self.assertNotIn("pollLid:", selectors)
-        self.assertNotIn("pollDevices:", selectors)
-        self.assertNotIn("pollScreenBrightness:", selectors)
-        self.assertFalse(hasattr(self.controller, "pollScreenBrightness_"))
-        self.assertEqual(
-            tuple(snapshot.domain for snapshot in self.controller._runtime_worker_registry.snapshot()),
-            (
-                self.status_bar.RuntimeWorkerDomain.OS_POLL,
-                self.status_bar.RuntimeWorkerDomain.HARDWARE_WRITE,
-            ),
-        )
-        method_mocks["reconcile_lid_observation"].assert_called_once_with()
-        self.assertEqual(thread_type.call_count, 3)
-        self.assertEqual(thread_type.return_value.start.call_count, 3)
-
 
 class DeviceRuntimeSchedulingTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -19910,45 +19763,6 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         and a closed devices pane schedule no work; runtime reads only
         worker-published inventory; the adapter refuses >16 devices;
         targets are distinct mounted per-device paths."""
-        # --- scenario: legacy_virtual_device_never_restores_device_poll_timer
-        self.setUp()  # fresh isolated controller per scenario
-        timer_api = MagicMock()
-        status_item = MagicMock()
-        status_api = MagicMock()
-        status_api.systemStatusBar.return_value.statusItemWithLength_.return_value = status_item
-        self.controller.virtual_status_device = SimpleNamespace(
-            show=MagicMock(),
-            hide=MagicMock(),
-        )
-
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(self.status_bar, "NSApp"))
-            stack.enter_context(patch.object(self.status_bar, "NSStatusBar", status_api))
-            stack.enter_context(patch.object(self.status_bar, "NSTimer", timer_api))
-            stack.enter_context(patch.object(self.status_bar.threading, "Thread"))
-            poll_devices_once = stack.enter_context(patch.object(self.controller, "poll_devices_once"))
-            for name in (
-                "load_operator_local_state",
-                "start_event_server",
-                "replay_debug_logs",
-                "refresh_",
-                "show_setup_window_if_needed",
-            ):
-                stack.enter_context(patch.object(self.controller, name))
-
-            self.controller.applicationDidFinishLaunching_(None)
-            self.controller.reconcile_device_runtime()
-
-        selectors = tuple(
-            invocation.args[2]
-            for invocation in (
-                timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.call_args_list
-            )
-        )
-        self.assertNotIn("pollDevices:", selectors)
-        self.assertFalse(hasattr(self.controller, "device_poll_timer"))
-        poll_devices_once.assert_not_called()
-
         # --- scenario: disabled_leds_and_closed_devices_pane_schedule_no_inventory_or_hardware_work
         self.setUp()  # fresh isolated controller per scenario
         self.controller.leds_enabled = False
@@ -21956,9 +21770,13 @@ class Task10AccessibilityObservationTests(unittest.TestCase):
     def setUp(self) -> None:
         isolate_controller(self)
 
-    def test_launch_registers_once_and_termination_removes_before_surface_release(
+    def test_observers_register_once_and_termination_removes_before_surface_release(
         self,
     ) -> None:
+        """The daemon's launch installs the DND environment and accessibility
+        observers (core_runtime _core_launch); each installer registers once
+        however often it runs, and termination removes them before the
+        surface is released."""
         lifecycle = []
 
         class Center:
@@ -21988,28 +21806,10 @@ class Task10AccessibilityObservationTests(unittest.TestCase):
             accessibilityDisplayShouldDifferentiateWithoutColor=lambda: False,
         )
         workspace_api = SimpleNamespace(sharedWorkspace=lambda: workspace)
-        status_item = MagicMock()
-        status_api = MagicMock()
-        status_api.systemStatusBar.return_value.statusItemWithLength_.return_value = status_item
-
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(self.status_bar, "NSApp"))
-            stack.enter_context(patch.object(self.status_bar, "NSStatusBar", status_api))
-            stack.enter_context(patch.object(self.status_bar, "NSWorkspace", workspace_api))
-            stack.enter_context(patch.object(self.status_bar.threading, "Thread"))
-            for name in (
-                "load_operator_local_state",
-                "start_event_server",
-                "replay_debug_logs",
-                "refresh_",
-                "reconcile_lid_observation",
-                "show_setup_window_if_needed",
-            ):
-                stack.enter_context(patch.object(self.controller, name))
-            stack.enter_context(patch.object(self.controller.virtual_status_device, "show"))
-            stack.enter_context(patch.object(self.controller.virtual_status_device, "hide"))
-            self.controller.applicationDidFinishLaunching_(None)
-            self.controller.applicationDidFinishLaunching_(None)
+        with patch.object(self.status_bar, "NSWorkspace", workspace_api):
+            for _ in range(2):
+                self.controller._install_dnd_environment_observers()
+                self.controller._install_accessibility_display_observer()
 
         expected_observers = {
             (

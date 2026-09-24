@@ -677,10 +677,15 @@ class IntakeRefreshTests(unittest.TestCase):
             "set_settings_message",
         ):
             setattr(self.controller, name, lambda *_args, **_kwargs: None)
+        # The daemon's hooksUpdated_ is the one the install thread lands on.
+        from jrbar import core_runtime
+
+        hooks_updated = core_runtime.build_headless_controller_class().hooksUpdated_.callable
         with patch.object(self.status_bar, "probe_providers", side_effect=_probe):
             self.controller.refresh_intake_report()
-            self.controller.hooksUpdated_(
-                {"ok": True, "changed": True, "provider": "claude", "install": True}
+            hooks_updated(
+                self.controller,
+                {"ok": True, "changed": True, "provider": "claude", "install": True},
             )
             self.assertTrue(reprobed.wait(1.0))
         self.assertEqual(len(calls), 2)
