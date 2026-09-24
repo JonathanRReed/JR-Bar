@@ -232,6 +232,62 @@ quit — the Dock Replace save-and-restore pattern.
   without it), `ScreenBarAudioMonitor` (route), `CoreState.focus`
   (daemon-side, needs the Focus toggle + FDA), `core.sessions` (agents).
 
+## Dock (vs DockDoor, AltTab)
+
+Rest on a Dock icon and that app's windows appear over it; ⌥⇥ raises the
+window switcher. The feature table is `docs/TOY-PARITY.md` "Dock"; this
+section covers the preview's air and where it sits.
+
+### Spacing, distance and the name label (2026-09-24)
+
+- **Spacing** is one scale, stored as `DockEnhanceSettings.previewSpacing`
+  (0.5…1.6). The card's segmented control offers **Tight** (0.6, the
+  default), **Standard** (1.0) and **Roomy** (1.4), shows **Custom** for
+  anything between, and "Fine spacing" under More preview options sets
+  it in 0.05 steps. `DockPreviewMetrics.scaled(s)` turns the scale into
+  every inset the panel draws: glass edge to content, the air between
+  sections, the card plate's reach, card to card, still to caption, the
+  ask and list rows' padding, the header icon and the verb discs. Each is
+  its Standard value times the scale, held at a floor (the plate never
+  under 4 pt, so the waiting ring's 3 pt reach stays on it; verb discs
+  never under 20 pt). Below 0.8 the hairline between sections goes and
+  the air alone separates them. The corners are derived, so they stay
+  concentric: plate = still corner + pad, glass = plate + inset (24 at
+  Standard, where it was 20). Standard is otherwise the look before the
+  knob: Safari's three-card panel is 496×194 at Standard and 472×165 at
+  Tight.
+- **Distance from the Dock** (`dockGap`, 0…40 pt, default 4) is the air
+  between the icon's edge and the glass. The frame math never lets it
+  under 2 pt, so the road from the icon to the cards (`inCorridor`)
+  always has somewhere to run.
+- **Cover the Dock's name label** (`coverDockLabel`, default on). The
+  Dock draws its name bubble inside its own full-screen window. On, the
+  panel rides at the status-bar level, over that window, with no band
+  kept for the bubble — DockDoor's "above app labels" — and with the Dock
+  magnifying it also clears the swollen icon's reach
+  (`largesize − tile`, 128 when `largesize` was never set). Off, the
+  panel sits one level under the Dock and keeps today's band (34 pt on a
+  bottom Dock; the name's width, up to 240 pt, beside a side Dock).
+- One `DockPlacement` serves the show, the re-anchor, the refit and the
+  gesture toast; three call sites used to repeat one expression.
+- The card's live sample (`DockPreviewSample`) draws a desk, a Dock of
+  55 pt tiles and Safari's preview placed by that same frame math, with
+  the name bubble where the Dock would show it. It draws built-in stills
+  (`DockPreviewSamples`, which the render proofs use too), never a
+  capture, so opening Settings never lights the recording dot.
+- The ⌥⇥ switcher follows the same scale (`DockSwitcherMetrics`): the
+  pane, row and strip insets and the card gap scale with it, the zoom
+  pane narrows to 80 % at the tight end, and the glass corner is the
+  card corner plus the strip inset less two (24 at Standard).
+- **Cards take each window's shape** (off): a card's width follows its
+  window's aspect, held between 0.6 and 1.9 of the height, and the still
+  fills it from the top-leading corner — no letterbox beside a portrait
+  window.
+- The switcher's own knobs: **Window order** (most recent first, or
+  grouped by app), **Apps with no windows** (off: a card per running app
+  with none, at the strip's end) and **Card faces** (stills, or icons that
+  never capture).
+
 ## Agent Overview
 
 The utility that replaces "a dozen terminal tabs you can't see": one card
