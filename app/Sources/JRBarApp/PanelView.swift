@@ -321,10 +321,10 @@ struct PanelHeader: View {
     }
 }
 
-/// The header's state as a mark before its word, in the tint the rows
-/// give the same state — amber for an ask, red for a failure, the accent
-/// while work runs, green once it is done — so the panel's first glance
-/// and its rows agree. Idle is grey.
+/// The header's state as a mark before its word: amber for an ask, red
+/// for a failure, green once it is done — the rows' own words — and a
+/// fixed calm blue while work runs, never the accent, which a red accent
+/// would turn into a failure (the unseen dot's reasoning). Idle is grey.
 struct PanelStateMark: View {
     let state: AgentAggregateState
 
@@ -341,7 +341,7 @@ struct PanelStateMark: View {
     private var tint: Color {
         switch state {
         case .idle: return .secondary
-        case .working: return SessionActivity.working.tint
+        case .working: return Color(nsColor: .systemBlue)
         case .needsInput: return SessionActivity.waiting.tint
         case .completed: return SessionActivity.done.tint
         case .failed: return SessionActivity.failed.tint

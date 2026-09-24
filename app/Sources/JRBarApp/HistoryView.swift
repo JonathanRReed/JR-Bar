@@ -250,10 +250,12 @@ struct HistoryFilterBar: View {
     }
 }
 
-/// The last two weeks of History as one smooth line: how busy each day
-/// was across the rows the chips let through, today a dot at its end and
-/// a red mark under a day with a failure. Hover a day for its count;
-/// click it to show only that day, and again to show every day.
+/// Up to the last two weeks of History as one smooth line: how busy
+/// each day was across the rows the chips let through, today a dot at
+/// its end and a red mark under a day with a failure. It starts no
+/// earlier than the oldest row History loaded, so a day it never read
+/// never passes for a quiet one. Hover a day for its count; click it to
+/// show only that day, and again to show every day.
 struct HistoryRhythm: View {
     @Bindable var store: HistoryStore
     @ViewState private var hovered: Date?
@@ -268,11 +270,16 @@ struct HistoryRhythm: View {
 
     static let span = 14
 
-    /// Rows per local day for the `span` days ending today, oldest first:
-    /// empty days count as zero, so a quiet weekend stays on the floor.
-    static func days(_ rows: [CoreHistoryRow], now: Date, span: Int = HistoryRhythm.span,
+    /// Rows per local day from the day of `loadedFrom` (the oldest row
+    /// loaded) to today — at most `span` days, at least two — oldest
+    /// first. Empty days inside that range count as zero, so a quiet
+    /// weekend stays on the floor.
+    static func days(_ rows: [CoreHistoryRow], loadedFrom: Date?, now: Date, span: Int = HistoryRhythm.span,
                      calendar: Calendar = .current) -> [Day] {
         let today = calendar.startOfDay(for: now)
+        let oldest = calendar.startOfDay(for: loadedFrom ?? now)
+        let reach = calendar.dateComponents([.day], from: oldest, to: today).day ?? 0
+        let back = min(span - 1, max(1, reach))
         var counts: [Date: (rows: Int, failed: Int)] = [:]
         for row in rows {
             let day = calendar.startOfDay(for: row.date)
@@ -281,8 +288,8 @@ struct HistoryRhythm: View {
             if row.kind == "failed" { count.failed += 1 }
             counts[day] = count
         }
-        return (0..<span).reversed().compactMap { back in
-            guard let day = calendar.date(byAdding: .day, value: -back, to: today) else { return nil }
+        return (0...back).reversed().compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
             let count = counts[day] ?? (0, 0)
             return Day(date: day, rows: count.rows, failed: count.failed)
         }
@@ -294,7 +301,7 @@ struct HistoryRhythm: View {
         var filter = store.filter
         filter.day = nil
         filter.text = ""
-        return Self.days(filter.apply(store.rows), now: store.now)
+        return Self.days(filter.apply(store.rows), loadedFrom: store.rows.map(\.date).min(), now: store.now)
     }
 
     private static let dayTitle: DateFormatter = {
@@ -354,9 +361,9 @@ struct HistoryRhythm: View {
         .padding(.vertical, 2)
         .background(RoundedRectangle(cornerRadius: WindowMetrics.controlRadius, style: .continuous)
             .fill(Color.primary.opacity(0.03)))
-        .help(hoverText(days) ?? "The last two weeks — click a day to show only that day")
+        .help(hoverText(days) ?? "The last \(days.count) days — click a day to show only that day")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Activity over the last two weeks")
+        .accessibilityLabel("Activity over the last \(days.count) days")
         .accessibilityValue(summary(days))
     }
 
