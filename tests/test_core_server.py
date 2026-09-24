@@ -12,6 +12,7 @@ import pytest
 
 from jrbar.core_server import (
     MAX_FRAME_BYTES,
+    SLOW_LANE_RECEIVED_AT,
     CommandError,
     CommandRouter,
     CoreServer,
@@ -509,6 +510,7 @@ def test_mark_history_seen_waits_behind_the_list_history_sent_before_it(sock_dir
             return {"measured_from": watermark["last_seen"]}
         if name == "mark_history_seen":
             watermark["last_seen"] = "new"
+            watermark["received_at"] = args.get(SLOW_LANE_RECEIVED_AT)
             return {"last_seen": "new"}
         if name == "ping":
             mark_handled.set()
@@ -523,6 +525,7 @@ def test_mark_history_seen_waits_behind_the_list_history_sent_before_it(sock_dir
     try:
         client = _connect(instance)
         _read_frames(client, 1)
+        sent_at = time.time()
         client.sendall(
             encode_frame({"t": "command", "v": 1, "id": "list", "name": "list_history", "args": {}})
             + encode_frame({"t": "command", "v": 1, "id": "mark", "name": "mark_history_seen", "args": {}})
@@ -533,6 +536,9 @@ def test_mark_history_seen_waits_behind_the_list_history_sent_before_it(sock_dir
         assert replies[1]["result"] == {"measured_from": "old"}
         assert replies[2]["result"] == {"last_seen": "new"}
         assert threads["mark_history_seen"] == "JRBarCoreSlowLane"
+        # Stamped when it arrived, so the watermark is the look, not the
+        # moment the read ahead of it finished.
+        assert sent_at <= watermark["received_at"] <= time.time()
         client.close()
     finally:
         instance.stop()

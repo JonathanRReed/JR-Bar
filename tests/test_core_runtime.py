@@ -2846,6 +2846,28 @@ def test_mark_history_seen_advances_the_watermark(headless) -> None:
     assert after["last_seen"] == reply["last_seen"]
 
 
+def test_mark_history_seen_stamps_the_look_when_it_arrived(headless) -> None:
+    """The mark waits on the slow lane behind a scan; the core server
+    stamps when it arrived, and that is the look the watermark records."""
+    from jrbar.core_server import SLOW_LANE_RECEIVED_AT
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.mark_activity_seen_now(1_000.0)
+    arrived = time.time() - 90.0
+
+    reply = controller._core_dispatch("mark_history_seen", {SLOW_LANE_RECEIVED_AT: arrived})
+    assert reply["last_seen"] == arrived
+
+    # A stamp from the future, or one that is not a number, is not trusted:
+    # the look is stamped now instead, so the watermark still moves.
+    previous = reply["last_seen"]
+    for bogus in (time.time() + 3_600.0, float("nan"), "soon", True):
+        reply = controller._core_dispatch("mark_history_seen", {SLOW_LANE_RECEIVED_AT: bogus})
+        assert previous < reply["last_seen"] <= time.time()
+        previous = reply["last_seen"]
+
+
 def test_serve_token_answers_the_loopback_bearer(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     controller = headless
     controller.applicationDidFinishLaunching_(None)

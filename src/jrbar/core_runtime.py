@@ -58,7 +58,7 @@ from .core_projection import (
     why_detail,
     why_for_glance,
 )
-from .core_server import CommandError, CoreServer, default_core_socket_path
+from .core_server import SLOW_LANE_RECEIVED_AT, CommandError, CoreServer, default_core_socket_path
 from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import (
     PendingHookDrainer,
@@ -3221,9 +3221,15 @@ def _cmd_mark_history_seen(self, args):
 
     Same stamp the menu writes when the dropdown opens -- ``unseen`` rows
     and the "while you were away" banner measure from the last look, not
-    from a restart.
+    from a restart. It waits on the slow lane behind the History read sent
+    before it, so the look is stamped when the command arrived: a scan
+    ahead of it must not mark what came in meanwhile as seen.
     """
-    self.mark_activity_seen_now()
+    received = args.get(SLOW_LANE_RECEIVED_AT)
+    # NaN and infinity fail the range check; a stamp from the future is
+    # never trusted over the clock.
+    at = float(received) if type(received) in (int, float) and 0 < received <= time.time() else None
+    self.mark_activity_seen_now(at)
     return {"last_seen": self.ensure_activity_ledger().last_seen_epoch}
 
 

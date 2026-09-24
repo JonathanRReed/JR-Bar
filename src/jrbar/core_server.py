@@ -105,6 +105,11 @@ SLOW_LANE_COMMANDS: Final = frozenset(
         "doctor",
     }
 )
+# Stamped into a slow-lane command's args when it is queued (epoch
+# seconds), so a command that records "now" -- mark_history_seen's
+# watermark -- can record when it was sent, not when a scan ahead of it
+# finished.
+SLOW_LANE_RECEIVED_AT: Final = "_received_at"
 # Slow-lane commands waiting for the worker, across every client. The app
 # keeps a few in flight; past this a new one is refused ``busy`` at once
 # rather than answered minutes late.
@@ -751,7 +756,7 @@ class CoreServer:
             return
         self.stats["commands"] += 1
         if name in self._slow_commands:
-            self._queue_slow(client, command_id, name, args)
+            self._queue_slow(client, command_id, name, {**args, SLOW_LANE_RECEIVED_AT: time.time()})
             return
         reply = self.run_command(command_id, name, args)
         client.send(encode_frame(reply))
