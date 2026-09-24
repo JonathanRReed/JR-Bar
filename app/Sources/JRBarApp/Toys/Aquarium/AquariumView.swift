@@ -142,6 +142,11 @@ struct AquariumView: View {
     @ViewState var residentLog: (id: String, log: AquariumResidentLog)?
     /// The shop popover's open flag.
     @ViewState var showShop = false
+    /// Light or Dark, as the window wears it — a flip starts the ease.
+    @Environment(\.colorScheme) private var colorScheme
+    /// When the view last saw Light and Dark flip; nil once the ease
+    /// has landed.
+    @ViewState private var nightFlipAt: Double?
 
     var body: some View {
         // Read the observable surface in `body` so the card's tracked
@@ -159,13 +164,15 @@ struct AquariumView: View {
         let density = settings.scenery.fraction
         let paused = ambient ? !ambientVisible
             : (toy?.windowOccluded ?? fixture?.paused ?? false)
+        let stillTick = stillPassTick(settings)
         ZStack {
             // The far tank: water, the back wall, the far bank and the
             // back row of bought pieces — everything behind the plants.
             // A slow two-second tick lets the day/night wash keep
-            // breathing; `.drawingGroup` rasterizes the result, so each
+            // breathing (quicker while a Light & Dark flip eases in —
+            // `stillPassTick`); `.drawingGroup` rasterizes the result, so each
             // live frame costs one texture composite, not the paths.
-            TimelineView(.animation(minimumInterval: 2, paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: stillTick, paused: paused)) { context in
                 Canvas { canvas, size in
                     let t = context.date.timeIntervalSince1970
                     drawWater(canvas: &canvas, size: size, t: t)
@@ -198,7 +205,7 @@ struct AquariumView: View {
             // The near bed: the lit sand and every piece on it that
             // doesn't sway, on the same slow tick (which also keeps the
             // caption's decor culling in step with retiring fish).
-            TimelineView(.animation(minimumInterval: 2, paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: stillTick, paused: paused)) { context in
                 Canvas { canvas, size in
                     let t = context.date.timeIntervalSince1970
                     drawSand(canvas: &canvas, size: size, t: t)
@@ -534,6 +541,26 @@ struct AquariumView: View {
             store.wantsAquariumShop = false
             showShop = true
         }
+        // Follow Light & Dark: a flip quickens the still passes until
+        // the ease has landed, then they settle back to their slow tick.
+        .onChange(of: colorScheme) {
+            nightFlipAt = Date().timeIntervalSince1970
+        }
+        .task(id: nightFlipAt) {
+            guard nightFlipAt != nil else { return }
+            try? await Task.sleep(for: .seconds(AquariumNightEase.seconds + 0.5))
+            if !Task.isCancelled { nightFlipAt = nil }
+        }
+    }
+
+    /// The still passes' tick: two seconds, or quick while a Follow
+    /// Light & Dark flip eases in, so the water, the back wall and the
+    /// sand dim with the fish instead of stepping once at the end.
+    func stillPassTick(_ settings: AquariumSettings) -> Double {
+        guard settings.dayNight == .appearance, !reduceMotion, fixture?.night == nil else {
+            return AquariumNightEase.restingTick
+        }
+        return AquariumNightEase.stillTick(flipAt: nightFlipAt, at: Date().timeIntervalSince1970)
     }
 
     /// The tank's own coordinate space — the canvas's points, which the

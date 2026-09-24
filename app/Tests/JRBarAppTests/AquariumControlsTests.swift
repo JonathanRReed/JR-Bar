@@ -114,4 +114,19 @@ struct AquariumControlsTests {
         #expect(AquariumNightEase.value(toward: 1, at: 103.5, still: false) == 1)
         #expect(AquariumNightEase.value(toward: 0, at: 104, still: true) == 0, "Reduce Motion lands at once")
     }
+
+    @Test("a Light & Dark flip quickens the water's still passes until the ease lands")
+    func nightEaseTicks() {
+        AquariumNightEase.reset()
+        defer { AquariumNightEase.reset() }
+        _ = AquariumNightEase.value(toward: 0, at: 100, still: false)
+        #expect(!AquariumNightEase.isEasing(at: 100))
+        #expect(AquariumNightEase.stillTick(flipAt: nil, at: 100) == AquariumNightEase.restingTick)
+        _ = AquariumNightEase.value(toward: 1, at: 101, still: false)
+        #expect(AquariumNightEase.isEasing(at: 102))
+        #expect(AquariumNightEase.stillTick(flipAt: 101, at: 101) == AquariumNightEase.easingTick)
+        #expect(AquariumNightEase.easingTick <= 1.0 / 10, "the water eases, not steps")
+        #expect(!AquariumNightEase.isEasing(at: 101 + AquariumNightEase.seconds))
+        #expect(AquariumNightEase.stillTick(flipAt: 101, at: 110) == AquariumNightEase.restingTick)
+    }
 }

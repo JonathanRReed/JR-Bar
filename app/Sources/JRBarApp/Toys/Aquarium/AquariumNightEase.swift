@@ -1,12 +1,18 @@
 import AppKit
 
 /// Day & night › Follow Light & Dark: the tank's night is macOS's Dark
-/// mode. A flip doesn't snap — the wash eases over two seconds, the
-/// still passes' own tick, so the water dims the way a room does.
+/// mode. A flip doesn't snap — the wash eases over two seconds, and the
+/// still passes (the water, the back wall, the sand), which otherwise
+/// redraw every two seconds, tick at `easingTick` until it lands, so
+/// the whole tank dims together the way a room does.
 @MainActor
 enum AquariumNightEase {
     /// Seconds a Light↔Dark flip takes to reach the water.
     static let seconds = 2.0
+    /// The still passes' tick while a flip eases in.
+    static let easingTick = 1.0 / 15.0
+    /// The still passes' usual tick.
+    static let restingTick = 2.0
 
     /// The ease in flight: where it started, where it's going, when.
     private static var ease: (from: Double, to: Double, at: Double)?
@@ -42,6 +48,21 @@ enum AquariumNightEase {
         let p = min(1, max(0, (t - e.at) / seconds))
         let s = p * p * (3 - 2 * p)
         return e.from + (e.to - e.from) * s
+    }
+
+    /// Whether a flip is still on its way to the water at `t`.
+    static func isEasing(at t: Double) -> Bool {
+        guard let e = ease, e.from != e.to else { return false }
+        return t >= e.at && t - e.at < seconds
+    }
+
+    /// The still passes' tick: quick from a flip (`flipAt`, when the
+    /// view saw the appearance change) until the ease has landed, then
+    /// the resting two seconds. A little margin covers the ease
+    /// starting a frame after the flip.
+    static func stillTick(flipAt: Double?, at t: Double) -> Double {
+        guard let flipAt, t - flipAt < seconds + 0.5 || isEasing(at: t) else { return restingTick }
+        return easingTick
     }
 
     /// Forgets the ease — for tests.
