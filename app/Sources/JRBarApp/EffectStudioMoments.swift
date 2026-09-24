@@ -589,6 +589,8 @@ struct FinishMomentsSection: View {
     @Bindable var store: EffectStudioStore
     /// What to show before the monitor answers (a render proof's data).
     var seed: FinishLookList? = nil
+    /// Where the looks come from; nil asks the monitor (`list_finish_looks`).
+    var loader: (@MainActor () async -> FinishLookList?)? = nil
     @ViewState private var loaded: FinishLookList?
 
     private var list: FinishLookList? { loaded ?? seed }
@@ -599,13 +601,17 @@ struct FinishMomentsSection: View {
         "ripple": "One wide ring runs out from the middle, dimming as it goes.",
     ]
 
+    /// Changes when the monitor connects and whenever settings change, so
+    /// the section loads once live and follows a pick made anywhere.
+    private var loadKey: String { "\(store.isLive)-\(store.core.settings?.generation ?? 0)" }
+
     var body: some View {
-        if let list {
-            VStack(alignment: .leading, spacing: 8) {
-                MomentsSectionHeader(title: "Finish",
-                                     detail: list.enabled
-                                        ? "How the lights celebrate a session that finishes. It plays once and goes dark."
-                                        : "How the lights celebrate a finish, once Settings › Lighting › Celebrate completions is on.")
+        // The load hangs off a stack that is always there. On the empty
+        // branch of an `if` (or on a `Group` with nothing in it) SwiftUI
+        // never starts the task, so the section never appeared.
+        VStack(alignment: .leading, spacing: 8) {
+            if let list {
+                MomentsSectionHeader(title: "Finish", detail: Self.detail(enabled: list.enabled))
                 VStack(spacing: 0) {
                     ForEach(list.looks) { look in
                         finishRow(look, picked: look.style == list.current)
@@ -615,10 +621,14 @@ struct FinishMomentsSection: View {
                 .windowCard(padding: 0)
                 .opacity(list.enabled ? 1 : 0.55)
             }
-        } else {
-            EmptyView()
-                .task(id: "\(store.isLive)-\(store.core.settings?.generation ?? 0)") { await load() }
         }
+        .task(id: loadKey) { await load() }
+    }
+
+    static func detail(enabled: Bool) -> String {
+        enabled
+            ? "How the lights celebrate a session that finishes. It plays once and goes dark."
+            : "How the lights celebrate a finish, once Settings › Lighting › Celebrate completions is on."
     }
 
     private func finishRow(_ look: FinishLookList.Look, picked: Bool) -> some View {
@@ -650,6 +660,10 @@ struct FinishMomentsSection: View {
     }
 
     private func load() async {
+        if let loader {
+            loaded = await loader()
+            return
+        }
         guard store.isLive else { return }
         loaded = try? await store.core.request("list_finish_looks", as: FinishLookList.self)
     }

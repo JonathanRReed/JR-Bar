@@ -263,3 +263,22 @@ def test_an_upgraded_look_keeps_a_longer_length() -> None:
     assert lid_presets.upgraded_program(old_hello, 2.0) == (today[2], 2.0)
     assert lid_presets.upgraded_program(old_hello, 1.4) == (today[2], today[1])
     assert lid_presets.upgraded_program("#FFFFFF 1s", 0.4) == ("#FFFFFF 1s", 0.4)
+
+
+def test_the_apps_moments_fixtures_are_the_daemons_documents() -> None:
+    """The Swift tests decode ``list_lid_presets`` and ``list_finish_looks``
+    from fixtures; they must be what the daemon answers today, so a change
+    here is re-exported (``scripts/export_motion_fixtures.py``) before the
+    app can drift from it."""
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("export_motion_fixtures", root / "scripts" / "export_motion_fixtures.py")
+    assert spec is not None and spec.loader is not None
+    exporter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(exporter)
+    for name, document in exporter.moments_documents().items():
+        stored = json.loads((exporter.MOMENTS_FIXTURES / f"{name}.json").read_text())
+        assert stored == json.loads(json.dumps(document)), f"{name}.json is stale: re-run the exporter"

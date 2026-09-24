@@ -8,7 +8,9 @@ thumbnails and Effect Studio share) plus the firmware's own colours at the
 sampler's reference times. The Swift side draws them
 (``LEDMotionRenderProofTests``) and checks its sampler against these
 samples, so the pictures are the daemon's bytes and the two engines stay
-honest. The Iris lid looks and the Land and Ripple finishes ride along.
+honest. The Iris lid looks and the Land and Ripple finishes ride along,
+and so do the ``list_lid_presets`` and ``list_finish_looks`` documents the
+Moments room decodes (``JRBarCoreTests/Fixtures``).
 
 Run it with the repo venv after changing a motion:
 
@@ -153,6 +155,29 @@ def write_catalog_fixture(target: Path = CATALOG_FIXTURE) -> None:
     target.write_text(json.dumps(document, indent=1) + "\n")
 
 
+#: What Effect Studio's Moments room decodes: the daemon's lid looks and finish
+#: looks for a fresh settings file (``LidTransitionList``, ``FinishLookList``).
+MOMENTS_FIXTURES = REPO / "app" / "Tests" / "JRBarCoreTests" / "Fixtures"
+
+
+def moments_documents() -> dict[str, dict]:
+    from types import SimpleNamespace
+
+    from jrbar import core_runtime
+    from jrbar.settings import AgentMonitorSettings
+
+    settings = AgentMonitorSettings()
+    return {
+        "list_lid_presets": lid_presets.lid_presets_document(settings),
+        "list_finish_looks": core_runtime._cmd_list_finish_looks(SimpleNamespace(settings=settings), {}),
+    }
+
+
+def write_moments_fixtures(folder: Path = MOMENTS_FIXTURES) -> None:
+    for name, document in moments_documents().items():
+        (folder / f"{name}.json").write_text(json.dumps(document, indent=1) + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -163,6 +188,8 @@ def main() -> int:
     if not arguments.no_catalog:
         write_catalog_fixture()
         print(f"wrote {CATALOG_FIXTURE}")
+        write_moments_fixtures()
+        print(f"wrote the Moments documents to {MOMENTS_FIXTURES}")
     out: Path = arguments.out
     out.mkdir(parents=True, exist_ok=True)
     written = set()
