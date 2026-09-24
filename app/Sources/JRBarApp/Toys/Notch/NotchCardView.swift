@@ -539,10 +539,15 @@ struct NotchCardView: View {
                         .accessibilityLabel(model.mirrorSummoned ? "Close the mirror" : "Open the mirror")
                     }
                     if model.focus.clickSession != nil {
+                        // A quiet chip, not the accent: on a red-accent
+                        // Mac an accent "Open" read as a warning.
                         Button { model.onOpenSession?() } label: {
                             Text("Open")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.accentColor)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(style.titleColor)
+                                .padding(.horizontal, 7)
+                                .frame(minHeight: 18)
+                                .background(Capsule(style: .continuous).fill(style.chipFill))
                                 .frame(minWidth: Self.hitSide - 4, minHeight: 20)
                                 .notchHitArea(horizontal: 2, vertical: 4)
                         }
