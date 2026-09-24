@@ -1,3 +1,4 @@
+import Charts
 import JRBarCore
 import SwiftUI
 
@@ -38,48 +39,37 @@ struct HistoryView: View {
             if let error = store.error, !store.rows.isEmpty {
                 // A failed refresh keeps the stale rows and says so in one
                 // line, rather than only in the empty state nobody sees.
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                    Text(error).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                    Spacer()
+                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error) {
                     Button("Retry") { store.reload() }
                         .buttonStyle(.link)
-                        .font(.system(size: 11))
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 5)
-                .accessibilityElement(children: .combine)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
             }
             if let notice = store.notice {
                 // Resume's or Open's outcome, in the monitor's words.
-                HStack(spacing: 8) {
-                    Image(systemName: notice.isError ? "exclamationmark.triangle" : "arrow.uturn.forward.circle")
-                        .foregroundStyle(notice.isError ? Color.orange : Color.accentColor)
-                    Text(notice.text).font(.system(size: 11)).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.tail)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 5)
-                .accessibilityElement(children: .combine)
-                .transition(.opacity)
+                WindowNoticeRow(symbol: notice.isError ? "exclamationmark.triangle.fill" : "arrow.uturn.forward.circle.fill",
+                                tint: notice.isError ? .orange : .accentColor, text: notice.text)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
             }
             Divider()
             if store.rows.isEmpty {
                 HistoryEmptyState(store: store)
             } else if store.filtered.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 26)).foregroundStyle(.quaternary)
-                    Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-                    Button("Clear search") { store.clearFilter() }.buttonStyle(.link).font(.system(size: 12))
+                VStack(spacing: 0) {
+                    WindowEmptyState(symbol: "magnifyingglass", title: "Nothing matches",
+                                     text: "No row fits this search and these filters.",
+                                     actionTitle: "Clear search", action: { store.clearFilter() })
+                        .frame(maxHeight: 260)
                     if store.offersHoarder {
                         HoarderOfferLine { store.offerHoarder() }
-                            .padding(.top, 10)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
+                SnapshotScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         ForEach(store.days) { day in
                             Section {
@@ -150,67 +140,72 @@ struct HoarderOfferLine: View {
     }
 }
 
+/// "While you were away": what happened since the last visit, as a
+/// card across the top, with a way straight to the newest thing still
+/// live.
 struct AwayBanner: View {
     let summary: AwaySummary
     @Bindable var store: HistoryStore
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: "moon.stars.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(Color.accentColor)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color.accentColor.opacity(0.14)))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(summary.text).font(.system(size: 13, weight: .medium))
+                Text(summary.text).font(.system(size: 13, weight: .semibold))
+                    .lineLimit(2)
                 Text("Since \(HistoryStore.clock(summary.since)) · newer than your last visit here")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
             }
-            Spacer()
+            Spacer(minLength: 8)
             if let first = summary.rows.first(where: { $0.kind == "asked" && store.isLiveSession($0.session) })
                 ?? summary.rows.first(where: { store.isLiveSession($0.session) }) {
                 Button("Open latest") { store.open(first) }
-                    .buttonStyle(.bordered)
                     .controlSize(.small)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color.accentColor.opacity(0.08))
-        .overlay(alignment: .bottom) { Divider() }
+        .windowWell(padding: 12, tint: .accentColor)
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .accessibilityElement(children: .combine)
     }
 }
 
 struct HistoryFilterBar: View {
     @Bindable var store: HistoryStore
+    /// The rhythm's day under the pointer: while there is one, the caption
+    /// beside the strip reads it instead of the counts.
+    @ViewState private var hoveredDay: HistoryRhythm.Day?
+
+    private var today: Date { Calendar.current.startOfDay(for: store.now) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.tertiary).font(.system(size: 12))
-                    TextField(store.canSearchTranscripts ? "Search sessions, details, transcripts…" : "Search sessions, details…",
-                              text: $store.filter.text)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12))
-                    if !store.filter.text.isEmpty {
-                        Button { store.filter.text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
-                            .buttonStyle(.plain)
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                WindowSearchField(prompt: store.canSearchTranscripts ? "Search sessions, details, transcripts…" : "Search sessions, details…",
+                                  text: $store.filter.text)
+                    .frame(maxWidth: 300)
+                Spacer(minLength: 8)
+                if let hoveredDay {
+                    caption(hoveredDay.title, hoveredDay.detail)
+                } else if let loadedAt = store.loadedAt {
+                    caption("\(store.filtered.count) of \(store.rows.count)", freshness(loadedAt))
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.primary.opacity(0.06)))
-                .frame(maxWidth: 280)
-                Spacer()
-                if let loadedAt = store.loadedAt {
-                    Text(store.loading ? "Refreshing…" : "\(store.filtered.count) of \(store.rows.count) · \(PanelStore.elapsed(since: loadedAt, now: store.now) ?? "0s") ago")
-                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+                if HistoryRhythm.draws(store.rows, today: today) {
+                    HistoryRhythm(store: store, today: today, hovered: $hoveredDay)
+                        .frame(width: 190, height: 34)
                 }
             }
-            ScrollView(.horizontal, showsIndicators: false) {
+            SnapshotScrollView(axes: .horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 if let day = store.filter.day {
-                    // A day the Overview's heatmap sent here: one chip,
-                    // and clicking it lets every day back in.
+                    // A day the Overview's heatmap or the rhythm sent here:
+                    // one chip, and clicking it lets every day back in.
                     FilterChip(selected: true, accent: .accentColor) {
                         HStack(spacing: 4) {
                             Image(systemName: "calendar").font(.system(size: 9, weight: .bold))
@@ -249,9 +244,214 @@ struct HistoryFilterBar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
+    }
+
+    /// Two right-aligned lines beside the rhythm: the counts and their
+    /// age, or the hovered day and what happened in it.
+    private func caption(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text(detail)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+        .monospacedDigit()
+    }
+
+    /// "updated 12s ago", or "Refreshing…" while a load is out.
+    private func freshness(_ loadedAt: Date) -> String {
+        if store.loading { return "Refreshing…" }
+        let age = PanelStore.elapsed(since: loadedAt, now: store.now) ?? "0s"
+        return "updated \(age) ago"
+    }
+}
+
+/// Up to the last two weeks of History as one smooth line: how busy
+/// each day was across the rows the chips let through, today a dot at
+/// its end and a red dot on a day with a failure. It starts no earlier
+/// than the oldest row History loaded, so a day it never read never
+/// passes for a quiet one, and it waits for three days of rows before it
+/// draws at all: a line through two points says nothing the day headers
+/// do not. Hover a day to read it beside the strip; click it to show
+/// only that day, and again to show every day.
+struct HistoryRhythm: View {
+    @Bindable var store: HistoryStore
+    /// The start of today. The strip moves with the date, never with the
+    /// window's one-second clock.
+    let today: Date
+    /// The day under the pointer, read out beside the strip.
+    @Binding var hovered: Day?
+
+    /// One day of the strip.
+    struct Day: Identifiable, Equatable {
+        let date: Date
+        let rows: Int
+        let failed: Int
+        var id: Date { date }
+
+        private static let titleFormat: DateFormatter = {
+            let formatter = DateFormatter()
+            formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
+            return formatter
+        }()
+
+        /// "Tue 22 Sep".
+        var title: String { Self.titleFormat.string(from: date) }
+
+        /// "12 rows · 1 failed".
+        var detail: String {
+            let count = "\(rows) row\(rows == 1 ? "" : "s")"
+            return failed > 0 ? "\(count) · \(failed) failed" : count
+        }
+    }
+
+    static let span = 14
+    /// The fewest days the strip draws.
+    static let minimumDays = 3
+
+    /// Rows per local day from the day of `loadedFrom` (the oldest row
+    /// loaded) to today — at most `span` days — oldest first. Empty days
+    /// inside that range count as zero, so a quiet weekend stays on the
+    /// floor.
+    static func days(_ rows: [CoreHistoryRow], loadedFrom: Date?, now: Date, span: Int = HistoryRhythm.span,
+                     calendar: Calendar = .current) -> [Day] {
+        let today = calendar.startOfDay(for: now)
+        let back = min(span - 1, reach(from: loadedFrom, to: today, calendar: calendar))
+        var counts: [Date: (rows: Int, failed: Int)] = [:]
+        for row in rows {
+            let day = calendar.startOfDay(for: row.date)
+            var count = counts[day] ?? (0, 0)
+            count.rows += 1
+            if row.kind == "failed" { count.failed += 1 }
+            counts[day] = count
+        }
+        return (0...back).reversed().compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            let count = counts[day] ?? (0, 0)
+            return Day(date: day, rows: count.rows, failed: count.failed)
+        }
+    }
+
+    /// Whole days from the oldest loaded row's day to today.
+    private static func reach(from oldest: Date?, to today: Date, calendar: Calendar) -> Int {
+        guard let oldest else { return 0 }
+        let first = calendar.startOfDay(for: oldest)
+        return max(0, calendar.dateComponents([.day], from: first, to: today).day ?? 0)
+    }
+
+    /// True once the loaded rows reach back the strip's fewest days.
+    static func draws(_ rows: [CoreHistoryRow], today: Date, calendar: Calendar = .current) -> Bool {
+        reach(from: rows.map(\.date).min(), to: calendar.startOfDay(for: today), calendar: calendar) >= minimumDays - 1
+    }
+
+    /// The rows the chips let through, whatever day is picked: the strip
+    /// is the map the day filter is chosen from.
+    private var days: [Day] {
+        var filter = store.filter
+        filter.day = nil
+        filter.text = ""
+        return Self.days(filter.apply(store.rows), loadedFrom: store.rows.map(\.date).min(), now: today)
+    }
+
+    /// The day whose point is nearest `date`: the points sit at each
+    /// day's start, so the pointer snaps to the closer of two.
+    static func nearestDay(_ date: Date) -> Date {
+        Calendar.current.startOfDay(for: date.addingTimeInterval(12 * 3600))
+    }
+
+    /// First day to today, edge to edge.
+    static func span(_ days: [Day]) -> ClosedRange<Date> {
+        let first = days.first?.date ?? Date()
+        return first...max(first, days.last?.date ?? first)
+    }
+
+    /// The day under `location` in the chart's overlay.
+    private static func day(at location: CGPoint, in days: [Day], proxy: ChartProxy, geometry: GeometryProxy) -> Day? {
+        guard let plot = proxy.plotFrame.map({ geometry[$0] }),
+              let date: Date = proxy.value(atX: location.x - plot.origin.x) else { return nil }
+        let nearest = nearestDay(date)
+        return days.first { $0.date == nearest }
+    }
+
+    /// A failure's mark on the line: a red dot ringed in the window's
+    /// colour so it sits on the line rather than in it.
+    private static var failureDot: some View {
+        Circle()
+            .fill(Color.red)
+            .frame(width: 5, height: 5)
+            .padding(1.25)
+            .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
+    }
+
+    var body: some View {
+        let days = self.days
+        let peak = Double(max(1, days.map(\.rows).max() ?? 1))
+        Chart {
+            ForEach(days) { day in
+                AreaMark(x: .value("Day", day.date), y: .value("Rows", day.rows))
+                    .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.30), Color.accentColor.opacity(0.02)],
+                                                    startPoint: .top, endPoint: .bottom))
+                    .interpolationMethod(.monotone)
+                LineMark(x: .value("Day", day.date), y: .value("Rows", day.rows))
+                    .foregroundStyle(Color.accentColor)
+                    .lineStyle(StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+                    .interpolationMethod(.monotone)
+            }
+            if let picked = store.filter.day ?? hovered?.date {
+                RuleMark(x: .value("Day", picked))
+                    .foregroundStyle(Color.primary.opacity(store.filter.day == nil ? 0.2 : 0.45))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+            }
+            if let last = days.last {
+                PointMark(x: .value("Day", last.date), y: .value("Rows", last.rows))
+                    .symbolSize(18)
+                    .foregroundStyle(Color.accentColor)
+            }
+            ForEach(days.filter { $0.failed > 0 }) { day in
+                PointMark(x: .value("Day", day.date), y: .value("Rows", day.rows))
+                    .symbol { Self.failureDot }
+            }
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartYScale(domain: 0...(peak * 1.25), range: .plotDimension(startPadding: 4, endPadding: 4))
+        .chartXScale(domain: Self.span(days), range: .plotDimension(padding: 6))
+        .chartLegend(.hidden)
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        var day: Day?
+                        if case .active(let location) = phase {
+                            day = Self.day(at: location, in: days, proxy: proxy, geometry: geometry)
+                        }
+                        if hovered != day { hovered = day }
+                    }
+                    .onTapGesture { location in
+                        guard let day = Self.day(at: location, in: days, proxy: proxy, geometry: geometry) else { return }
+                        let picked = store.filter.day.map { Calendar.current.isDate($0, inSameDayAs: day.date) } ?? false
+                        store.filter.day = picked ? nil : day.date
+                    }
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: WindowMetrics.controlRadius, style: .continuous)
+            .fill(Color.primary.opacity(0.03)))
+        .help("Click a day to show only that day")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Activity over the last \(days.count) days")
+        .accessibilityValue(summary(days))
+    }
+
+    private func summary(_ days: [Day]) -> String {
+        let total = days.reduce(0) { $0 + $1.rows }
+        let busiest = days.max { $0.rows < $1.rows }
+        return "\(total) rows" + (busiest.map { $0.rows > 0 ? ", busiest \($0.title)" : "" } ?? "")
     }
 }
 
@@ -285,15 +485,23 @@ struct DayHeader: View {
     let count: Int
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).tracking(0.2)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title).font(.system(size: 12, weight: .semibold))
+            Text("\(count)")
+                .font(.system(size: 10.5, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color.primary.opacity(0.07)))
             Spacer()
-            Text("\(count)").font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 5)
-        .background(.bar)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -451,7 +659,7 @@ struct HistoryRowView: View {
                 }
                 Spacer(minLength: 8)
                 Text(HistoryStore.duration(row.duration) ?? "")
-                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                    .font(.system(size: 11.5, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
                     .frame(width: 58, alignment: .trailing)
                     .help(row.duration.map { "Took \(Int($0.rounded())) s" } ?? "")
                 if resumable, hovering || selected {
@@ -542,19 +750,17 @@ struct EventLogView: View {
             chips
             Divider()
             if store.replay.events.isEmpty {
-                OverviewEmptyState(
-                    symbol: "clock.arrow.circlepath",
+                WindowEmptyState(
+                    symbol: store.isLive ? "list.bullet.rectangle" : "antenna.radiowaves.left.and.right.slash",
                     title: store.isLive ? (store.replay.loading ? "Reading the journal…" : "No events yet") : "Monitor not connected",
                     text: store.isLive
                         ? "The journal holds the events the monitor published since it started."
-                        : "The event journal lives in the monitor. It appears when the socket is live.")
+                        : "The event journal lives in the monitor. It appears when the socket is live.",
+                    tint: store.isLive ? .secondary : .orange)
             } else if store.events.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 26)).foregroundStyle(.quaternary)
-                    Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-                    Button("Clear filter") { store.eventFilter = EventLogFilter() }.buttonStyle(.link).font(.system(size: 12))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                WindowEmptyState(symbol: "magnifyingglass", title: "Nothing matches",
+                                 text: "No event in the journal fits this search and these categories.",
+                                 actionTitle: "Clear filter", action: { store.eventFilter = EventLogFilter() })
             } else {
                 List(store.events) { event in
                     EventLogRow(event: event, store: store)
@@ -577,8 +783,8 @@ struct EventLogView: View {
 
     private var banner: some View {
         HStack(spacing: 10) {
-            Label("Events", systemImage: "clock.arrow.circlepath")
-                .font(.system(size: 10, weight: .bold))
+            Label("Read only", systemImage: "lock.fill")
+                .font(.system(size: 10, weight: .semibold))
                 .padding(.horizontal, 7).padding(.vertical, 3)
                 .background(Color.secondary.opacity(0.14), in: .capsule)
                 .foregroundStyle(.secondary)
@@ -598,22 +804,15 @@ struct EventLogView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 
     private var chips: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary).font(.system(size: 12))
-                TextField("Search events…", text: $store.eventFilter.text)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.primary.opacity(0.06)))
-            .frame(maxWidth: 220)
-            ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 10) {
+            WindowSearchField(prompt: "Search events…", text: $store.eventFilter.text)
+                .frame(maxWidth: 240)
+            SnapshotScrollView(axes: .horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(store.eventCategories) { category in
                         FilterChip(selected: store.eventFilter.categories.contains(category),
@@ -632,7 +831,7 @@ struct EventLogView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+        .padding(.bottom, 10)
     }
 }
 
@@ -728,18 +927,16 @@ struct HistoryEmptyState: View {
     @Bindable var store: HistoryStore
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: store.isLive ? "clock.arrow.circlepath" : "antenna.radiowaves.left.and.right.slash")
-                .font(.system(size: 26, weight: .light)).foregroundStyle(.tertiary)
-            Text(store.isLive ? (store.loading ? "Loading history…" : "Nothing yet") : "Monitor not connected")
-                .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-            if let error = store.error {
-                Text(error).font(.system(size: 11)).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 360)
-            } else if store.isLive {
-                Text("Sessions that finish, fail or ask for you show up here")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
-            }
+        if !store.isLive {
+            WindowEmptyState(symbol: "antenna.radiowaves.left.and.right.slash", title: "Monitor not connected",
+                             text: store.error ?? "History lives in the monitor. The rows come back as soon as the socket is live.",
+                             tint: .orange)
+        } else if store.loading {
+            WindowEmptyState(symbol: "clock.arrow.circlepath", title: "Loading history…",
+                             text: "Reading what finished, failed and asked for you.")
+        } else {
+            WindowEmptyState(symbol: "clock.arrow.circlepath", title: "Nothing yet",
+                             text: store.error ?? "Sessions that finish, fail or ask for you show up here.")
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

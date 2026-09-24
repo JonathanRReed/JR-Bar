@@ -10,18 +10,17 @@ struct UsageCenterView: View {
     var body: some View {
         Group {
             if !store.isLive {
-                UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                                text: "Usage comes from the monitor. The cards fill in as soon as the socket is live.")
+                WindowEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
+                                 text: "Usage comes from the monitor. The cards fill in as soon as the socket is live.",
+                                 tint: .orange)
             } else if store.providers.isEmpty {
-                VStack(spacing: 10) {
-                    UsageEmptyState(symbol: "chart.bar", title: "No usage yet",
-                                    text: "No provider has reported a quota window. Metering is turned on from Settings › Usage.")
-                    Button("Open Usage settings…") { store.openUsageSettings() }
-                }
+                WindowEmptyState(symbol: "chart.xyaxis.line", title: "No usage yet",
+                                 text: "No provider has reported a quota window. Metering is turned on from Settings › Usage.",
+                                 actionTitle: "Open Usage settings…", action: { store.openUsageSettings() })
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 14) {
+                    SnapshotScrollView {
+                        LazyVStack(spacing: 16) {
                             statusLine
                             if store.providers.count > 1 {
                                 CombinedUsageCard(providers: store.providers, store: store)
@@ -31,7 +30,7 @@ struct UsageCenterView: View {
                                     .id(provider.identity)
                             }
                         }
-                        .padding(18)
+                        .padding(WindowMetrics.margin)
                     }
                     // The panel's per-provider drill: scroll the card into
                     // view and flash it. `focusPulses` is the trigger so a
@@ -95,13 +94,7 @@ struct UsageCenterView: View {
         }
         .overlay(alignment: .bottom) {
             if let error = store.lastError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 12)
-                    .transition(.opacity)
+                WindowStatusCapsule(text: error, isError: true)
             }
         }
         .animation(.easeInOut(duration: 0.15), value: store.lastError == nil)
@@ -109,40 +102,20 @@ struct UsageCenterView: View {
 
     private var statusLine: some View {
         HStack(spacing: 6) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 9, weight: .semibold))
             if let at = store.refreshedAt, let elapsed = PanelStore.elapsed(since: at, now: store.now) {
                 Text("Updated \(elapsed) ago")
             } else {
                 Text("Waiting for the first usage read")
             }
-            Text("·").foregroundStyle(.quaternary)
-            Text("Costs are estimates from list prices, not invoices.")
             Spacer()
+            Text("Costs are estimates from list prices, not invoices")
         }
         .font(.caption)
         .foregroundStyle(.tertiary)
         .monospacedDigit()
-        .padding(.horizontal, 2)
-    }
-}
-
-struct UsageEmptyState: View {
-    let symbol: String
-    let title: String
-    let text: String
-
-    var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(.secondary)
-            Text(title).font(.title3.weight(.semibold))
-            Text(text)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 380)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
+        .padding(.horizontal, 4)
     }
 }
 
@@ -194,30 +167,17 @@ struct ProviderUsageCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let row = store.row(for: provider.identity) {
-                Divider()
+                Divider().opacity(0.6)
                 connectionSection(row)
             }
             if !provider.isSignedOut {
-                Divider()
+                Divider().opacity(0.6)
                 historySection
             }
         }
-        .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(flashing ? style.accent.opacity(0.7) : Color.primary.opacity(0.07), lineWidth: flashing ? 1.5 : 0.5)
-        }
-        .background {
-            // The quota_reset / focus flourish: a brief wash of the accent
-            // that fades out.
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(style.accent.opacity(flashing ? 0.10 : 0))
-                .blur(radius: flashing ? 0 : 8)
-        }
+        // The quota_reset / focus flourish: a brief wash of the accent
+        // that fades out.
+        .windowCard(padding: 18, highlight: flashing ? style.accent : nil)
         .overlay(alignment: .topTrailing) {
             if celebrating {
                 Label("Window reset", systemImage: "arrow.counterclockwise.circle.fill")
@@ -496,7 +456,7 @@ struct ProviderUsageCard: View {
                         Text("\(Int((burner.share * 100).rounded()))% · \(UsageFormat.tokens(burner.tokens))")
                             .font(.caption2)
                             .monospacedDigit()
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.secondary)
                     }
                     .help("\(burner.label): \(UsageFormat.tokens(burner.tokens)) tokens since the \(window.longName) window opened — \(Int((burner.share * 100).rounded()))% of what this Mac's \(style.name) sessions spent in it")
                 }
@@ -540,14 +500,9 @@ struct ProviderUsageCard: View {
     private var historySection: some View {
         let title = store.metric == .tokens ? "Tokens" : "Estimated cost"
         let unit = store.range == .week && !(history?.hours.isEmpty ?? true) ? "by hour" : "by day"
-        HStack(alignment: .firstTextBaseline) {
-            Text("\(title) \(unit)").font(.subheadline.weight(.semibold))
-            Spacer()
+        WindowSectionTitle(title: "\(title) \(unit)", symbol: "chart.xyaxis.line") {
             if let history, !history.isEmpty {
                 Text(totalsLine(history))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
             }
         }
         let scanning = store.isScanning(provider)
@@ -567,7 +522,7 @@ struct ProviderUsageCard: View {
             NoLocalRecordsHint(style: style, provider: provider)
         } else if let history, !history.isEmpty {
             UsageChart(history: history, range: store.range, metric: store.metric, accent: style.accent)
-                .frame(height: 150)
+                .frame(height: 170)
             if scanning { ScanningNote() }
             costRow(history)
             if !history.models.isEmpty {
@@ -725,42 +680,34 @@ struct CombinedUsageCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("All providers").font(.subheadline.weight(.semibold))
-                Text("\(providers.count)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                Spacer()
+        VStack(alignment: .leading, spacing: 12) {
+            WindowSectionTitle(title: "All providers", symbol: "square.stack.3d.up") {
                 if let worst = Self.worstLane(in: providers) {
                     let style = ProviderStyle.style(for: worst.provider.id, document: store.document)
-                    Text("\(style.name) \(worst.window.shortName) \(worst.window.percentText)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(UsageColors.level(worst.window.usedPct, accent: style.accent))
-                        .monospacedDigit()
-                        .help("The tightest window any provider reports — \(worst.window.longName)")
+                    HStack(spacing: 4) {
+                        Text("Tightest")
+                        Text("\(style.name) \(worst.window.shortName) \(worst.window.percentText)")
+                            .fontWeight(.semibold)
+                            .foregroundStyle(UsageColors.level(worst.window.usedPct, accent: style.accent))
+                    }
+                    .help("The tightest window any provider reports — \(worst.window.longName)")
                 }
             }
-            ForEach(providers) { provider in
-                row(provider)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(providers) { provider in
+                    row(provider)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             if let totals = totalsLine {
-                Divider()
+                Divider().opacity(0.6)
                 Text(totals)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
         }
-        .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
-        }
+        .windowCard()
         .accessibilityElement(children: .contain)
     }
 
@@ -777,15 +724,19 @@ struct CombinedUsageCard: View {
         return parts.joined(separator: " · ") + " across providers"
     }
 
+    /// One provider: its tile and name, then each window as its short
+    /// name, a slim continuous bar and the percent, and the leading
+    /// window's reset.
     private func row(_ provider: CoreProviderUsage) -> some View {
         let style = ProviderStyle.style(for: provider.id, document: store.document)
         let leading = UsageCenterStore.primaryWindow(of: provider)
         return HStack(spacing: 10) {
-            ProviderTile(style: style, size: 18)
+            ProviderTile(style: style, size: 20)
             Text(style.name)
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .frame(width: 104, alignment: .leading)
             if provider.isSignedOut {
                 Text("not signed in")
                     .font(.caption)
@@ -799,26 +750,68 @@ struct CombinedUsageCard: View {
                     .lineLimit(1)
                 Spacer(minLength: 4)
             } else {
+                // Windows keep their columns across rows: the daemon lists
+                // them in the same order for every provider.
+                HStack(spacing: 14) {
+                    ForEach(provider.windows.prefix(3)) { window in
+                        CombinedWindowGauge(window: window, accent: style.accent)
+                    }
+                }
                 Spacer(minLength: 4)
-                ForEach(provider.windows) { window in
-                    Text("\(window.shortName) \(window.percentText)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(UsageColors.level(window.usedPct, accent: style.accent))
-                        .help("\(window.longName) window: \(window.spokenPercent)")
-                }
-                if let leading, let reset = PanelStore.countdown(to: leading.resetsAt, now: store.now) {
-                    Text(reset)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
+                Text(leading.flatMap { PanelStore.countdown(to: $0.resetsAt, now: store.now) } ?? "")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .frame(width: 84, alignment: .trailing)
             }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: WindowMetrics.controlRadius, style: .continuous)
+            .fill(Color.primary.opacity(0.0001)))
         .contentShape(Rectangle())
         .onTapGesture { store.focus(provider: provider.id) }
         .help("Scroll to \(style.name)'s card")
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// One window in the combined card: "5h", a slim continuous bar in the
+/// level colour and the percent — the panel's quota bar in miniature.
+struct CombinedWindowGauge: View {
+    let window: CoreUsageWindow
+    let accent: Color
+
+    static let barWidth: CGFloat = 40
+
+    private var color: Color { UsageColors.level(window.usedPct, accent: accent) }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(window.shortName)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 40, alignment: .trailing)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.08))
+                if let used = window.usedPct {
+                    Capsule()
+                        .fill(LinearGradient(colors: [color.opacity(0.7), color], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(3, Self.barWidth * CGFloat(min(100, max(0, used)) / 100)))
+                }
+            }
+            .frame(width: Self.barWidth, height: 4)
+            Text(window.percentText)
+                .font(.caption.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(window.usedPct == nil ? Color.secondary : color)
+                .frame(width: 34, alignment: .trailing)
+        }
+        .help("\(window.longName) window: \(window.spokenPercent)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(window.longName) \(window.spokenPercent)")
     }
 }
 
@@ -945,10 +938,20 @@ struct QuotaRing: View {
     let now: Date
     let reduced: Bool
 
-    /// Nil when the window has no reading: the ring is drawn as an open
-    /// track with a dashed edge, never as an arc of zero.
+    /// Nil when the window has no reading: the ring is drawn as a hairline
+    /// round a dash, never as an arc of zero.
     private var fraction: Double? { window.usedPct.map { min(1, max(0, $0 / 100)) } }
     private var color: Color { UsageColors.level(window.usedPct, accent: accent) }
+    /// The arc deepens from its start to its tip. The shading begins a
+    /// little before twelve o'clock so the start's round cap takes the
+    /// start's colour; a nearly full ring is one colour, since its tip
+    /// would wrap round into that shading.
+    private func arcShading(_ fraction: Double) -> AnyShapeStyle {
+        guard fraction < 0.94 else { return AnyShapeStyle(color) }
+        return AnyShapeStyle(AngularGradient(colors: [color.opacity(0.7), color], center: .center,
+                                             startAngle: .degrees(-8), endAngle: .degrees(max(4, 360 * fraction))))
+    }
+
     /// Where the window lands at reset at this pace, as a fraction of the
     /// ring — past 1 when it would run out first.
     private var projected: Double? { forecast.projectedAtReset(now: now.timeIntervalSince1970).map { $0 / 100 } }
@@ -956,7 +959,9 @@ struct QuotaRing: View {
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                Circle().stroke(Color.primary.opacity(0.08), lineWidth: 7)
+                if fraction != nil {
+                    Circle().stroke(Color.primary.opacity(0.07), lineWidth: 7)
+                }
                 if let fraction, let projected, projected > fraction + 0.005 {
                     // The ghost arc: where this window stands at the reset
                     // if the pace holds — amber when it would not make it.
@@ -970,13 +975,14 @@ struct QuotaRing: View {
                 if let fraction {
                     Circle()
                         .trim(from: 0, to: fraction)
-                        .stroke(color, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                        .stroke(arcShading(fraction), style: StrokeStyle(lineWidth: 7, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                         .animation(reduced ? .easeOut(duration: 0.15) : .spring(response: 0.6, dampingFraction: 0.8), value: fraction)
                 } else {
-                    // A dashed ring: unmistakably not an empty one.
+                    // A hairline where the track would be: unmistakably not
+                    // an empty ring, and no reading dressed as one.
                     Circle()
-                        .stroke(Color.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 7, dash: [3, 5]))
+                        .stroke(Color.secondary.opacity(0.45), lineWidth: 1)
                 }
                 Text(window.percentText)
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -1043,6 +1049,10 @@ struct UsageChart: View {
     private var hourly: Bool { range == .week && !history.hours.isEmpty }
     private var unit: Calendar.Component { hourly ? .hour : .day }
 
+    /// The series, bottom of the stack first: cache reads under the
+    /// words the model read and wrote, so the accent rides on top.
+    static let tokenKinds = ["Cache reads", "Input", "Output"]
+
     private var points: [UsagePoint] {
         if hourly {
             return history.hours.flatMap { hour -> [UsagePoint] in
@@ -1056,23 +1066,40 @@ struct UsageChart: View {
         }
     }
 
+    /// One point per bucket for the line along the top of the stack.
+    private var totals: [UsagePoint] {
+        let sums = Dictionary(grouping: points, by: \.date).mapValues { $0.reduce(0) { $0 + $1.value } }
+        return sums.map { UsagePoint(date: $0.key, kind: "Total", value: $0.value) }.sorted { $0.date < $1.date }
+    }
+
     private func rows(date: Date, input: Int, output: Int, cache: Int, cost: Double) -> [UsagePoint] {
         switch metric {
         case .tokens:
             return [
+                UsagePoint(date: date, kind: "Cache reads", value: Double(cache)),
                 UsagePoint(date: date, kind: "Input", value: Double(input)),
                 UsagePoint(date: date, kind: "Output", value: Double(output)),
-                UsagePoint(date: date, kind: "Cache reads", value: Double(cache)),
             ]
         case .cost:
             return [UsagePoint(date: date, kind: "Cost", value: cost)]
         }
     }
 
-    private var scale: KeyValuePairs<String, Color> {
+    private var domain: [String] { metric == .tokens ? Self.tokenKinds : ["Cost"] }
+
+    /// Each series fades toward the floor: the accent for what the model
+    /// read and wrote, a grey wash for the cache it re-read.
+    private var fills: [LinearGradient] {
+        let fade = { (top: Color, bottom: Color) in
+            LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom)
+        }
         switch metric {
-        case .tokens: return ["Input": accent, "Output": accent.opacity(0.55), "Cache reads": Color.secondary.opacity(0.3)]
-        case .cost: return ["Cost": accent]
+        case .tokens:
+            return [fade(Color.secondary.opacity(0.22), Color.secondary.opacity(0.06)),
+                    fade(accent.opacity(0.55), accent.opacity(0.22)),
+                    fade(accent.opacity(0.95), accent.opacity(0.55))]
+        case .cost:
+            return [fade(accent.opacity(0.45), accent.opacity(0.03))]
         }
     }
 
@@ -1091,7 +1118,8 @@ struct UsageChart: View {
     }()
 
     /// The bucket the selection landed on, matched at the chart's own
-    /// granularity (an hour's bar and a day's bar both exist for Tuesday).
+    /// granularity (an hour's point and a day's point both exist for
+    /// Tuesday).
     private func bucket(at date: Date) -> (input: Int, output: Int, cache: Int, cost: Double)? {
         let calendar = Calendar.current
         if hourly {
@@ -1104,6 +1132,17 @@ struct UsageChart: View {
         }.map { ($0.tokensIn, $0.tokensOut, $0.cacheRead, $0.costUsd) }
     }
 
+    /// The selected bucket's total, where the rule meets the line.
+    private func total(at date: Date) -> Double? {
+        guard let bucket = bucket(at: date) else { return nil }
+        return metric == .tokens ? Double(bucket.input + bucket.output + bucket.cache) : bucket.cost
+    }
+
+    /// The selection snapped to the bucket it falls in.
+    private func snapped(_ date: Date) -> Date {
+        Calendar.current.dateInterval(of: unit, for: date)?.start ?? date
+    }
+
     @ViewBuilder
     private func annotation(for date: Date) -> some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -1111,9 +1150,10 @@ struct UsageChart: View {
                 .font(.caption.weight(.semibold))
             if let bucket = bucket(at: date) {
                 if metric == .tokens {
-                    line("Input", UsageFormat.tokens(bucket.input))
-                    line("Output", UsageFormat.tokens(bucket.output))
-                    line("Cache reads", UsageFormat.tokens(bucket.cache))
+                    line("Input", UsageFormat.tokens(bucket.input), swatch: accent)
+                    line("Output", UsageFormat.tokens(bucket.output), swatch: accent.opacity(0.6))
+                    line("Cache reads", UsageFormat.tokens(bucket.cache), swatch: Color.secondary.opacity(0.5))
+                    Divider().padding(.vertical, 1)
                     line("Total", UsageFormat.tokens(bucket.input + bucket.output + bucket.cache), bold: true)
                 } else {
                     line("Cost", UsageFormat.cost(bucket.cost, currency: history.pricing?.currency ?? "USD"), bold: true)
@@ -1122,13 +1162,19 @@ struct UsageChart: View {
         }
         .font(.caption2)
         .monospacedDigit()
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minWidth: 150)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
     }
 
-    private func line(_ name: String, _ value: String, bold: Bool = false) -> some View {
-        HStack {
+    private func line(_ name: String, _ value: String, swatch: Color? = nil, bold: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            if let swatch {
+                Circle().fill(swatch).frame(width: 6, height: 6)
+            }
             Text(name).foregroundStyle(.secondary)
             Spacer(minLength: 14)
             Text(value).fontWeight(bold ? .semibold : .regular)
@@ -1138,46 +1184,69 @@ struct UsageChart: View {
     var body: some View {
         Chart {
             ForEach(points) { point in
-                BarMark(
-                    x: .value("Time", point.date, unit: hourly ? .hour : .day),
-                    y: .value(metric == .tokens ? "Tokens" : "Cost", point.value)
+                AreaMark(
+                    x: .value("Time", point.date, unit: unit),
+                    y: .value(metric == .tokens ? "Tokens" : "Cost", point.value),
+                    stacking: .standard
                 )
                 .foregroundStyle(by: .value("Kind", point.kind))
-                .cornerRadius(hourly ? 1 : 2)
+                .interpolationMethod(.monotone)
             }
-            // Hover a bucket: a rule at the bucket's start and a card with
-            // its figures. No selection, no overlay. The rule is drawn,
-            // never animated — nothing to gate on Reduce Motion.
+            ForEach(totals) { point in
+                LineMark(
+                    x: .value("Time", point.date, unit: unit),
+                    y: .value("Total", point.value)
+                )
+                .foregroundStyle(accent)
+                .lineStyle(StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+                .interpolationMethod(.monotone)
+            }
+            // Hover a bucket: a rule at the bucket's start, a dot where it
+            // meets the line and a card with its figures. No selection, no
+            // overlay. Drawn, never animated — nothing to gate on Reduce
+            // Motion.
             if let selected {
-                RuleMark(x: .value("Selected", selected, unit: unit))
-                    .foregroundStyle(.secondary.opacity(0.4))
-                    .lineStyle(StrokeStyle(lineWidth: 1))
+                let bucket = snapped(selected)
+                RuleMark(x: .value("Selected", bucket, unit: unit))
+                    .foregroundStyle(Color.primary.opacity(0.25))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .annotation(position: .top, overflowResolution: .init(x: .fit, y: .disabled)) {
-                        annotation(for: selected)
+                        annotation(for: bucket)
                     }
+                if let total = total(at: bucket) {
+                    PointMark(x: .value("Selected", bucket, unit: unit), y: .value("Total", total))
+                        .symbolSize(38)
+                        .foregroundStyle(accent)
+                }
             }
         }
         .chartXSelection(value: $selected)
-        .chartForegroundStyleScale(scale)
-        .chartLegend(position: .top, alignment: .leading, spacing: 6)
+        .chartForegroundStyleScale(domain: domain, range: fills)
+        .chartLegend(metric == .tokens ? .visible : .hidden)
+        .chartLegend(position: .top, alignment: .leading, spacing: 8)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: hourly ? 7 : 6)) { value in
+            AxisMarks(values: .automatic(desiredCount: hourly ? 7 : 6)) { _ in
                 AxisGridLine().foregroundStyle(Color.primary.opacity(0.05))
                 AxisValueLabel(format: hourly ? .dateTime.weekday(.abbreviated) : (range == .year ? .dateTime.month(.abbreviated) : .dateTime.month(.abbreviated).day()))
                     .font(.caption2)
+                    .foregroundStyle(Color.secondary)
             }
         }
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                AxisGridLine().foregroundStyle(Color.primary.opacity(0.06))
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3])).foregroundStyle(Color.primary.opacity(0.12))
                 AxisValueLabel {
                     if let number = value.as(Double.self) {
                         Text(metric == .tokens ? UsageFormat.tokens(Int(number)) : UsageFormat.cost(number, currency: history.pricing?.currency ?? "USD"))
                             .font(.caption2)
                             .monospacedDigit()
+                            .foregroundStyle(Color.secondary)
                     }
                 }
             }
+        }
+        .chartPlotStyle { plot in
+            plot.clipped()
         }
         .accessibilityLabel("\(metric == .tokens ? "Tokens" : "Cost") over the last \(range.days) days")
     }
@@ -1403,14 +1472,14 @@ struct NoLocalRecordsHint: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .windowWell()
         .accessibilityElement(children: .combine)
     }
 }
 
-/// Grey bars while `usage_history` is in flight.
+/// A soft grey swell where the graph will be while `usage_history` is
+/// in flight, breathing unless Reduce Motion is on.
 struct UsageSkeleton: View {
     /// True when the daemon told us its scan is still running: the caption
     /// says so rather than implying the request is merely slow.
@@ -1418,22 +1487,30 @@ struct UsageSkeleton: View {
     @ViewState private var breathing = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let heights: [CGFloat] = [0.35, 0.6, 0.45, 0.8, 0.55, 0.7, 0.4, 0.65, 0.5, 0.75, 0.3, 0.6]
+    /// The swell's shape: a day-like rise and fall, drawn once.
+    private static let shape: [Double] = [0.22, 0.3, 0.52, 0.46, 0.7, 0.58, 0.82, 0.64, 0.42, 0.55, 0.36, 0.3]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .bottom, spacing: 6) {
-                ForEach(Array(heights.enumerated()), id: \.offset) { _, height in
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(Color.primary.opacity(0.07))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 110 * height)
+            Canvas { context, size in
+                let step = size.width / CGFloat(Self.shape.count - 1)
+                let points = Self.shape.enumerated().map { index, value in
+                    CGPoint(x: CGFloat(index) * step, y: size.height * CGFloat(1 - value))
                 }
+                var area = SmoothLine.path(through: points)
+                area.addLine(to: CGPoint(x: size.width, y: size.height))
+                area.addLine(to: CGPoint(x: 0, y: size.height))
+                area.closeSubpath()
+                context.fill(area, with: .linearGradient(Gradient(colors: [Color.primary.opacity(0.08), Color.primary.opacity(0.02)]),
+                                                         startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
             }
-            .frame(height: 110)
-            Text(scanning ? "Reading transcripts — the monitor is still scanning." : "Loading history…")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            .frame(height: 120)
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 12, height: 12)
+                Text(scanning ? "Reading transcripts — the monitor is still scanning." : "Loading history…")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .opacity(breathing ? 0.55 : 1)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: breathing)

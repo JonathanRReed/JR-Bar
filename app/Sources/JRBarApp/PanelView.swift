@@ -272,28 +272,31 @@ struct PanelHeader: View {
     @Bindable var store: PanelStore
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(store.headerWord)
-                .font(.system(size: 15, weight: .semibold))
-                .lineLimit(1)
-                .contentTransition(.opacity)
-                .id("word-\(store.headerWord)")
-                .transition(.opacity)
-            if store.coreCrashed {
-                Text(store.coreCrashDetail)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.red)
+        HStack(alignment: .center, spacing: 9) {
+            PanelStateMark(state: store.coreCrashed ? .failed : store.aggregate)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(store.headerWord)
+                    .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
-                Button("Restart") { store.restartCore() }
-                    .buttonStyle(PillButtonStyle(prominent: false))
-                    .help("Launch the monitor again")
-            } else {
-                Text(store.headerCounts)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .contentTransition(.numericText())
+                    .contentTransition(.opacity)
+                    .id("word-\(store.headerWord)")
+                    .transition(.opacity)
+                if store.coreCrashed {
+                    Text(store.coreCrashDetail)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.red)
+                        .lineLimit(1)
+                    Button("Restart") { store.restartCore() }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                        .help("Launch the monitor again")
+                } else {
+                    Text(store.headerCounts)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .contentTransition(.numericText())
+                }
             }
             Spacer(minLength: 8)
             if let quietLabel = store.quietLabel {
@@ -315,6 +318,48 @@ struct PanelHeader: View {
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.headerWord)
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.headerCounts)
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.coreCrashed)
+    }
+}
+
+/// The header's state as a mark before its word: amber for an ask, red
+/// for a failure, green once it is done — the rows' own words — and a
+/// fixed calm blue while work runs, never the accent, which a red accent
+/// would turn into a failure (the unseen dot's reasoning). Idle is grey.
+struct PanelStateMark: View {
+    let state: AgentAggregateState
+
+    private var symbol: String {
+        switch state {
+        case .idle: return "zzz"
+        case .working: return "bolt.fill"
+        case .needsInput: return "hand.raised.fill"
+        case .completed: return "checkmark"
+        case .failed: return "xmark"
+        }
+    }
+
+    private var tint: Color {
+        switch state {
+        case .idle: return .secondary
+        case .working: return Color(nsColor: .systemBlue)
+        case .needsInput: return SessionActivity.waiting.tint
+        case .completed: return SessionActivity.done.tint
+        case .failed: return SessionActivity.failed.tint
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Circle().fill(tint.opacity(0.16))
+            Circle().strokeBorder(tint.opacity(0.22), lineWidth: 0.5)
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(tint)
+                .id(symbol)
+                .transition(.opacity)
+        }
+        .frame(width: 22, height: 22)
+        .accessibilityHidden(true)
     }
 }
 
@@ -363,7 +408,7 @@ struct SessionsSection: View {
             if store.visibleRows.isEmpty {
                 SessionsEmptyState(store: store)
             } else {
-                ScrollView(.vertical) {
+                SnapshotScrollView {
                     VStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
                         ForEach(store.visibleAskRows) { row in
                             AskRow(row: row, store: store)
@@ -534,7 +579,16 @@ struct SessionsEmptyState: View {
 
     private var symbol: String {
         if finding { return "magnifyingglass" }
-        return live ? "moon.stars" : "antenna.radiowaves.left.and.right.slash"
+        if live { return store.hiddenCount > 0 ? "checkmark" : "moon.stars" }
+        return "antenna.radiowaves.left.and.right.slash"
+    }
+
+    /// Green when everything you ran is done and seen, amber when the
+    /// monitor is not there, grey otherwise.
+    private var tint: Color {
+        if finding { return .secondary }
+        if !live { return .orange }
+        return store.hiddenCount > 0 && store.staleDetail == nil ? SessionActivity.done.tint : .secondary
     }
 
     private var headline: String {
@@ -568,21 +622,21 @@ struct SessionsEmptyState: View {
     var body: some View {
         HStack(alignment: .center, spacing: 11) {
             ZStack {
-                Circle().fill(.primary.opacity(0.05))
-                Circle().strokeBorder(.primary.opacity(0.07), lineWidth: 0.5)
+                Circle().fill(RadialGradient(colors: [tint.opacity(0.18), tint.opacity(0.05)],
+                                             center: .center, startRadius: 2, endRadius: 17))
+                Circle().strokeBorder(tint.opacity(0.18), lineWidth: 0.5)
                 Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .light))
-                    .foregroundStyle(live ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange.opacity(0.75)))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(tint)
             }
-            .frame(width: 30, height: 30)
+            .frame(width: 32, height: 32)
             VStack(alignment: .leading, spacing: 2) {
                 Text(headline)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
                 Text(detail)
                     .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -839,6 +893,29 @@ struct SessionContextMenu: View {
     }
 }
 
+/// The ask card's plate: an amber wash that is warmest along its top
+/// edge, and an amber hairline. Stronger while the card is the
+/// selection; greyed out while the family is snoozed.
+struct AskCardPlate: View {
+    let selected: Bool
+    var quiet = false
+
+    static let radius: CGFloat = 10
+
+    private var tint: Color { quiet ? .secondary : SessionActivity.waiting.tint }
+    private var top: Color { tint.opacity(selected ? 0.20 : 0.13) }
+    private var bottom: Color { tint.opacity(selected ? 0.12 : 0.06) }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+        shape
+            .fill(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom))
+            .overlay(shape.strokeBorder(LinearGradient(colors: [tint.opacity(0.38), tint.opacity(0.16)],
+                                                       startPoint: .top, endPoint: .bottom),
+                                        lineWidth: 0.75))
+    }
+}
+
 struct AskRow: View {
     let row: SessionRow
     @Bindable var store: PanelStore
@@ -851,6 +928,8 @@ struct AskRow: View {
         )
     }
 
+    @Environment(\.renderSnapshot) private var snapshot
+
     /// The whole card goes quiet while the family mailbox is snoozed —
     /// dim, still, and stamped "snoozed until", never dressed as a fresh ask.
     private var snoozed: Bool { row.isSnoozed(now: store.now) }
@@ -859,7 +938,7 @@ struct AskRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 9) {
                 ProviderTile(style: row.style)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     titleLine
                     question
                 }
@@ -876,16 +955,9 @@ struct AskRow: View {
         .opacity(snoozed ? 0.55 : 1)
         .padding(.horizontal, 8)
         .frame(height: CGFloat(PanelLayout.askRowHeight))
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.orange.opacity(store.selectedID == row.id ? 0.14 : 0.08))
-        )
+        .background(AskCardPlate(selected: store.selectedID == row.id, quiet: snoozed))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.22), lineWidth: 0.5)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: AskCardPlate.radius, style: .continuous)
                 .inset(by: 1)
                 .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
                 .opacity(store.selectionByKeyboard && store.selectedID == row.id ? 1 : 0)
@@ -944,18 +1016,19 @@ struct AskRow: View {
     /// The question, and under it what would run — a line each when
     /// there is a preview, so the card keeps its height.
     private var question: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(row.ask?.summary ?? "Needs your answer")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(row.ask?.previewLine == nil ? 2 : 1)
             if let preview = row.ask?.previewLine {
-                AskPreviewLine(text: preview, size: 11,
-                               tint: row.ask?.isDestructive == true ? Color.red.opacity(0.85) : .secondary)
+                AskPreviewLine(text: preview, size: 10.5,
+                               tint: row.ask?.isDestructive == true ? Color.red.opacity(0.9) : Color.primary.opacity(0.75),
+                               well: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 30, alignment: .topLeading)
+        .frame(height: 32, alignment: .topLeading)
     }
 
     /// When the hook's hold on this ask lapses: the verbs are drawn again
@@ -963,10 +1036,11 @@ struct AskRow: View {
     /// leave with the hold.
     private var holdEnd: Date? { row.ask.flatMap { AskHold.end($0, at: store.now) } }
 
-    /// The card's verbs, re-drawn once more at the hold's end.
+    /// The card's verbs, re-drawn once more at the hold's end. A render
+    /// proof's still is taken at the store's clock, not the timeline's.
     private var verbRow: some View {
         TimelineView(.explicit(holdEnd.map { [$0] } ?? [])) { context in
-            verbs(now: max(store.now, context.date))
+            verbs(now: snapshot ? store.now : max(store.now, context.date))
         }
     }
 
@@ -1113,22 +1187,57 @@ struct AskRowChoices: View {
     }
 }
 
+/// The panel's buttons: a quiet capsule, or — for the one verb that
+/// answers yes — a filled amber one with a little depth. Both brighten
+/// under the pointer and fade while they cannot be clicked.
 struct PillButtonStyle: ButtonStyle {
     let prominent: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .medium))
+        PillButtonBody(label: configuration.label, prominent: prominent, pressed: configuration.isPressed)
+    }
+}
+
+/// A pill button as drawn: the view owns the hover, so each button
+/// keeps its own.
+private struct PillButtonBody: View {
+    let label: ButtonStyleConfiguration.Label
+    let prominent: Bool
+    let pressed: Bool
+    @ViewState private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        label
+            .font(.system(size: 12, weight: prominent ? .semibold : .medium))
             .lineLimit(1)
             .foregroundStyle(prominent ? Color.white : Color.primary)
             .padding(.horizontal, 11)
             .padding(.vertical, 3.5)
-            .background(
-                Capsule().fill(prominent ? Color.orange.opacity(configuration.isPressed ? 0.75 : 0.95)
-                                         : Color.primary.opacity(configuration.isPressed ? 0.16 : 0.08))
-            )
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(prominent ? 0 : 0.10), lineWidth: 0.5))
+            .background { plate }
             .contentShape(Capsule())
+            .opacity(isEnabled ? 1 : 0.45)
+            .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder
+    private var plate: some View {
+        if prominent {
+            let amber = SessionActivity.waiting.tint
+            let top = amber.opacity(pressed ? 0.8 : 1)
+            let bottom = amber.opacity(pressed ? 0.7 : 0.88)
+            Capsule()
+                .fill(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom))
+                .brightness(hovering && isEnabled && !pressed ? 0.05 : 0)
+                .overlay(Capsule().strokeBorder(LinearGradient(colors: [Color.white.opacity(0.35), Color.white.opacity(0.05)],
+                                                               startPoint: .top, endPoint: .bottom),
+                                                lineWidth: 0.5))
+                .shadow(color: amber.opacity(isEnabled ? 0.3 : 0), radius: 3, y: 1)
+        } else {
+            Capsule()
+                .fill(Color.primary.opacity(pressed ? 0.16 : (hovering && isEnabled ? 0.12 : 0.08)))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+        }
     }
 }
 
@@ -1150,7 +1259,7 @@ struct UsageSection: View {
                     .padding(.horizontal, 14)
                     .frame(height: CGFloat(PanelLayout.emptyUsageHeight), alignment: .top)
             } else {
-                ScrollView(.vertical) {
+                SnapshotScrollView {
                     VStack(spacing: CGFloat(PanelLayout.usageRowSpacing)) {
                         // `identity` (id|instance), not `id`: two accounts
                         // of one provider are two rows here.
@@ -1383,35 +1492,54 @@ struct UsageTagText: View {
     }
 }
 
-/// Seven days of tokens as seven bars, oldest at the left. No axes, no
-/// labels, no numbers: it is there to say "busy Tuesday, quiet weekend"
-/// in the corner of a 50 pt row, and the Usage Center has the real graph.
+/// The last days of tokens as one smooth line over a soft fill, today a
+/// dot at its end. No axes, no labels, no numbers: it is there to say
+/// "busy Tuesday, quiet weekend" in the corner of a 50 pt row, and the
+/// Usage Center has the real graph. A day with nothing in it rests on
+/// the floor, so a quiet weekend never reads as a day not counted.
 struct UsageSparklineView: View {
     /// Tokens per day, oldest first (`UsageSparkline.tokensPerDay`).
     let values: [Double]
     let accent: Color
 
-    static let barWidth: CGFloat = 3.5
-    static let gap: CGFloat = 1.5
-    static let height: CGFloat = 11
+    static let width: CGFloat = 40
+    static let height: CGFloat = 12
 
     private var normalised: [Double] { UsageSparkline.normalised(values) }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: Self.gap) {
-            ForEach(Array(normalised.enumerated()), id: \.offset) { index, value in
-                // A day with nothing in it keeps its place as a hairline at
-                // the baseline, dimmer than any real bar, so a quiet
-                // weekend never reads as a day that was not counted.
-                RoundedRectangle(cornerRadius: 0.8, style: .continuous)
-                    .fill(accent.opacity(value <= 0.001 ? 0.18 : (index == normalised.count - 1 ? 0.85 : 0.42)))
-                    .frame(width: Self.barWidth, height: max(1, Self.height * CGFloat(value)))
-            }
+        let values = normalised
+        Canvas { context, size in
+            let points = Self.points(values, in: size)
+            guard points.count > 1, let today = points.last else { return }
+            let line = SmoothLine.path(through: points)
+            var fill = line
+            fill.addLine(to: CGPoint(x: today.x, y: size.height))
+            fill.addLine(to: CGPoint(x: points[0].x, y: size.height))
+            fill.closeSubpath()
+            context.fill(fill, with: .linearGradient(Gradient(colors: [accent.opacity(0.32), accent.opacity(0.02)]),
+                                                     startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+            context.stroke(line, with: .color(accent.opacity(0.85)),
+                           style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+            context.fill(Path(ellipseIn: CGRect(x: today.x - 1.6, y: today.y - 1.6, width: 3.2, height: 3.2)),
+                         with: .color(accent))
         }
-        .frame(height: Self.height, alignment: .bottom)
-        .help(Self.summary(values))
+        .frame(width: Self.width, height: Self.height)
+        .help(Self.summary(self.values))
         .accessibilityLabel("Last 7 days of tokens")
-        .accessibilityValue(Self.summary(values))
+        .accessibilityValue(Self.summary(self.values))
+    }
+
+    /// One point per day across the width, the line's weight and today's
+    /// dot kept inside the frame.
+    static func points(_ values: [Double], in size: CGSize) -> [CGPoint] {
+        guard values.count > 1 else { return [] }
+        let inset: CGFloat = 1.8
+        let step = (size.width - inset * 2) / CGFloat(values.count - 1)
+        return values.enumerated().map { index, value in
+            CGPoint(x: inset + CGFloat(index) * step,
+                    y: size.height - inset - (size.height - inset * 2) * CGFloat(min(1, max(0, value))))
+        }
     }
 
     /// "7 days · 41.2M tokens · today 6.1M".
@@ -1444,7 +1572,7 @@ struct QuotaBar: View {
                     Capsule().fill(.primary.opacity(0.08))
                     if let used = window.usedPct {
                         Capsule()
-                            .fill(fill)
+                            .fill(LinearGradient(colors: [fill.opacity(0.7), fill], startPoint: .leading, endPoint: .trailing))
                             .frame(width: max(3, proxy.size.width * CGFloat(min(100, max(0, used)) / 100)))
                             .animation(PanelMotion.contents(reduced: reduced, armed: armed), value: window.usedPct)
                     } else {

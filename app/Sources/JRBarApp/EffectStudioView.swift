@@ -37,14 +37,7 @@ struct EffectStudioView: View {
         }
         .overlay(alignment: .bottom) {
             if let text = store.lastError ?? store.status {
-                Label(text, systemImage: store.lastError == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(store.lastError == nil ? Color.primary : Color.red)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 12)
-                    .transition(.opacity)
+                WindowStatusCapsule(text: text, isError: store.lastError != nil)
             }
         }
         .animation(.easeInOut(duration: 0.15), value: (store.lastError ?? store.status) == nil)
@@ -90,12 +83,13 @@ struct EffectStudioView: View {
     private var effectsRoom: some View {
         Group {
             if !store.isLive {
-                UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                                text: "The effect registry, packs and assignments live in the monitor. The studio fills in once the socket is live.")
+                WindowEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
+                                 text: "The effect registry, packs and assignments live in the monitor. The studio fills in once the socket is live.",
+                                 tint: .orange)
             } else if store.catalog == nil {
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     ProgressView().controlSize(.regular)
-                    Text("Loading effects…").font(.callout).foregroundStyle(.secondary)
+                    Text("Loading effects…").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -159,15 +153,7 @@ struct EffectLibraryPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search effects", text: $store.search)
-                    .textFieldStyle(.plain)
-                if !store.search.isEmpty {
-                    Button { store.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Clear search")
-                }
+            WindowSearchField(prompt: "Search effects", text: $store.search) {
                 Menu {
                     Picker("Show", selection: $store.filter) {
                         ForEach(EffectStudioStore.LibraryFilter.allCases) { Text($0.label).tag($0) }
@@ -177,18 +163,18 @@ struct EffectLibraryPane: View {
                         .symbolVariant(store.filter == .all ? .none : .fill)
                         .foregroundStyle(store.filter == .all ? .secondary : Color.accentColor)
                 }
+                .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Filter the library")
                 .accessibilityLabel("Filter: \(store.filter.label)")
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.06)))
             .padding(10)
             Divider()
             if store.groups.isEmpty {
                 emptyState
+            } else if snapshot {
+                snapshotList
             } else {
                 List(selection: $store.selectedID) {
                     ForEach(store.groups, id: \.title) { group in
@@ -217,22 +203,46 @@ struct EffectLibraryPane: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
     }
 
+    @Environment(\.renderSnapshot) private var snapshot
+
+    /// The library's rows laid out flat for a render proof's still, which
+    /// draws no `List`.
+    private var snapshotList: some View {
+        SnapshotScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(store.groups, id: \.title) { group in
+                    Text(group.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 10)
+                    ForEach(group.effects) { effect in
+                        EffectLibraryRow(effect: effect, store: store, uses: store.usage(of: effect),
+                                         selected: store.selectedID == effect.id)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 3)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(store.selectedID == effect.id ? Color.accentColor.opacity(0.18) : .clear))
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+        }
+    }
+
     /// Which "nothing to show" applies: an empty catalog, a filter with
     /// no hits, or a search with no matches.
     @ViewBuilder
     private var emptyState: some View {
         if store.catalog?.effects.isEmpty ?? true {
-            VStack(spacing: 6) {
-                Text("No effects installed").font(.callout.weight(.medium))
-                Text("The registry is empty — import a pack from the toolbar to add some.")
-                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            WindowEmptyState(symbol: "sparkles", title: "No effects installed",
+                             text: "The registry is empty — import a pack from the toolbar to add some.")
         } else {
             VStack(spacing: 6) {
-                Text(store.search.isEmpty ? "Nothing in this filter" : "Nothing matches")
-                    .font(.callout).foregroundStyle(.secondary)
+                WindowEmptyState(symbol: "magnifyingglass", title: store.search.isEmpty ? "Nothing in this filter" : "Nothing matches",
+                                 text: store.search.isEmpty ? "No effect is in this part of the library." : "No effect's name or meaning fits the search.")
+                    .frame(maxHeight: 240)
                 if !store.search.isEmpty {
                     Button("Clear search") { store.search = "" }.buttonStyle(.link).font(.caption)
                 }
@@ -264,7 +274,7 @@ struct EffectLibraryRow: View {
                 .frame(width: 54)
                 .padding(.vertical, 5)
                 .padding(.horizontal, 5)
-                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.black.opacity(0.82)))
+                .background(LEDStage(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(effect.label).lineLimit(1)
@@ -349,8 +359,8 @@ struct EffectInspectorPane: View {
 
     var body: some View {
         if let effect = store.selected {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+            SnapshotScrollView {
+                VStack(alignment: .leading, spacing: 18) {
                     header(effect)
                     preview(effect)
                     facts(effect)
@@ -360,12 +370,12 @@ struct EffectInspectorPane: View {
                     parameters(effect)
                     usedBy(effect)
                 }
-                .padding(18)
+                .padding(WindowMetrics.margin)
             }
             .id(effect.id)
         } else {
-            UsageEmptyState(symbol: "sparkles.rectangle.stack", title: "Pick an effect",
-                            text: "Choose a look from the library to preview it, tune its parameters and assign it.")
+            WindowEmptyState(symbol: "sparkles.rectangle.stack", title: "Pick an effect",
+                             text: "Choose a look from the library to preview it, tune its parameters and assign it.")
         }
     }
 
@@ -480,15 +490,14 @@ struct EffectInspectorPane: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill((effect.safety == .critical ? Color.red : Color.orange).opacity(0.08)))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .windowWell(padding: 12, tint: effect.safety == .critical ? .red : .orange)
     }
 
     @ViewBuilder
     private func parameters(_ effect: EffectDefinition) -> some View {
         HStack {
-            Text("Parameters").font(.headline)
-            Spacer()
+            WindowSectionTitle("Parameters", symbol: "slider.horizontal.3")
             if store.hasEdits(effect) {
                 Button("Reset to defaults") { store.resetParameters(effect) }.controlSize(.small)
             }
@@ -511,8 +520,7 @@ struct EffectInspectorPane: View {
                     if parameter.id != effect.parameters.last?.id { Divider().padding(.leading, 12) }
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5))
+            .windowWell(padding: 0)
         }
     }
 
@@ -521,7 +529,7 @@ struct EffectInspectorPane: View {
         let uses = store.usage(of: effect)
         if !uses.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Used by").font(.headline)
+                WindowSectionTitle("Used by", symbol: "arrow.triangle.branch")
                 ForEach(uses) { assignment in
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.turn.down.right").foregroundStyle(.tertiary)
@@ -847,16 +855,8 @@ struct EffectAssignmentsPane: View {
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
             } else {
-                VStack(spacing: 6) {
-                    Image(systemName: "list.bullet.rectangle").font(.system(size: 26, weight: .light)).foregroundStyle(.secondary)
-                    Text("No assignments").font(.callout.weight(.medium))
-                    Text("Everything follows the monitor's defaults. Pick an effect and choose Assign… to give a state, scene, provider or device its own look.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                WindowEmptyState(symbol: "list.bullet.rectangle", title: "No assignments",
+                                 text: "Everything follows the monitor's defaults. Pick an effect and choose Assign… to give a state, scene, provider or device its own look.")
             }
             Divider()
             HStack {

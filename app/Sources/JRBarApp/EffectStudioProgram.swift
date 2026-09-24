@@ -290,7 +290,7 @@ struct LEDSStudioView: View {
     private var editor: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text("LEDS.LED program").font(.headline)
+                Text("LEDS.LED program").font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Button {
                     model.composing = true
@@ -436,9 +436,7 @@ struct LEDSStudioView: View {
                     LEDStripPreview(program: program, ledCount: 8, style: .band, dotSize: 8)
                 }
                 playButtons
-                Divider()
                 studioProgram
-                Divider()
                 startup
             }
             .padding(16)
@@ -481,7 +479,7 @@ struct LEDSStudioView: View {
 
     private var studioProgram: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Studio program").font(.headline)
+            Text("Studio program").font(.system(size: 13, weight: .semibold))
             Text(model.isSavedProgram
                  ? "This is the Studio program. A device set to Display › Studio program plays it."
                  : model.savedProgram.isEmpty
@@ -499,11 +497,13 @@ struct LEDSStudioView: View {
             }
             .controlSize(.small)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .windowWell(padding: 12)
     }
 
     private var startup: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Startup program").font(.headline)
+            Text("Startup program").font(.system(size: 13, weight: .semibold))
             Text("INIT.LED is what a SidePulse plays when it powers up, before anything talks to it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -519,6 +519,8 @@ struct LEDSStudioView: View {
                 .controlSize(.small)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .windowWell(padding: 12)
     }
 }
 

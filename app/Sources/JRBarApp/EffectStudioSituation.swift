@@ -260,6 +260,8 @@ struct EffectSituationPanel: View {
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .windowWell(padding: 8)
     }
 
     /// "Plays Aurora — Provider · Codex decides."

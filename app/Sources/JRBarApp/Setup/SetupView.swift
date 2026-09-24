@@ -200,9 +200,7 @@ struct SetupScreenBarPrimer: View {
                 Text("Hover the band to see who's asking — click it to jump to that session.")
             }
         }
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .windowWell(padding: 14)
     }
 
     /// One row: the marks in a fixed-width column, the sentence beside them.
@@ -241,7 +239,7 @@ struct SetupAgentsStep: View {
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             } else {
-                ScrollView {
+                SnapshotScrollView {
                     VStack(spacing: 0) {
                         ForEach(store.agentRows) { agent in
                             SetupAgentRow(store: store, agent: agent)
@@ -325,7 +323,7 @@ struct SetupPermissionsStep: View {
     @Bindable var store: SetupStore
 
     var body: some View {
-        ScrollView {
+        SnapshotScrollView {
             VStack(spacing: 0) {
                 ForEach(Array(SetupPermission.allCases.enumerated()), id: \.element) { index, permission in
                     if index > 0 { Divider().opacity(0.5) }
@@ -391,7 +389,7 @@ struct SetupAppearanceStep: View {
     @Bindable var store: SetupStore
 
     var body: some View {
-        ScrollView {
+        SnapshotScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 SettingLabel(title: "Menu bar icon",
                              subtitle: "What the status item shows at a glance.")
@@ -424,34 +422,52 @@ struct SetupAppearanceStep: View {
 
 // MARK: - Done
 
-/// What's set and what still needs the user; the buttons live in the
-/// footer's usual place (Open Toys beside Finish).
+/// What's set and what still needs the user, as a list in a well: a
+/// tile per row, green where it is done, and the word for what is left;
+/// the buttons live in the footer's usual place (Open Toys beside
+/// Finish).
 struct SetupDoneStep: View {
     @Bindable var store: SetupStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(store.summaryRows) { row in
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: row.symbol)
-                        .font(.system(size: 14))
-                        .foregroundStyle(row.ok ? Color.green : Color.secondary)
-                        .frame(width: 22, alignment: .center)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(row.text)
-                        Text(row.detail)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(spacing: 0) {
+                ForEach(Array(store.summaryRows.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 { Divider().padding(.leading, 54) }
+                    HStack(alignment: .center, spacing: 12) {
+                        Image(systemName: row.symbol)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(row.ok ? Color.green : Color.orange)
+                            .frame(width: 30, height: 30)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill((row.ok ? Color.green : Color.orange).opacity(0.14)))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.text).font(.system(size: 13, weight: .medium))
+                            Text(row.detail)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: row.ok ? "checkmark.circle.fill" : "circle.dashed")
+                            .font(.system(size: 15))
+                            .foregroundStyle(row.ok ? Color.green : Color.secondary)
+                            .accessibilityLabel(row.ok ? "Done" : "Still to do")
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
                 }
             }
+            .windowWell(padding: 0)
             Spacer(minLength: 0)
-            Text("The menu-bar icon opens the panel; asks land there with Approve and Deny.")
+            Label("The menu-bar icon opens the panel; asks land there with Approve and Deny.",
+                  systemImage: "menubar.arrow.up.rectangle")
                 .font(.callout)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24)
+        .padding(.bottom, 14)
     }
 }
