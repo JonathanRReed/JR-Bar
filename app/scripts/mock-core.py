@@ -1259,7 +1259,7 @@ def scenario_usage(name: str, now: float) -> list[dict]:
             # drive the lights, the monthly figure is detail.
             {"id": "opencode", "instance": "default", "quota_source": True, "state": "ready",
              "fidelity": "official", "observed_at": now - 40,
-             "account": {"plan": "Go", "label": "OpenCode Go", "fidelity": "official"},
+             "account": {"plan": "Go", "label": None, "fidelity": "official"},
              "windows": [window("go-rolling", "5h", 42.5, 3 * 3600 + 1200, source="opencode-go-api"),
                          window("go-weekly", "7d", 18.0, 4 * 86400, source="opencode-go-api"),
                          window("go-monthly", "Monthly", 7.3, 6 * 86400 + 4 * 3600, bindable=False,

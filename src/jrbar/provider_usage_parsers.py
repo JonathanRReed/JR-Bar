@@ -762,7 +762,9 @@ def parse_opencode_go_usage(
         "opencode",
         observed_at=observed_at,
         lanes=tuple(lanes),
-        account_label="OpenCode Go",
+        # The endpoint names no account, and the card already says
+        # OpenCode: the plan alone reads "Go · Official".
+        account_label=None,
         account_plan="Go",
         input_tokens=input_tokens,
         output_tokens=output_tokens,
