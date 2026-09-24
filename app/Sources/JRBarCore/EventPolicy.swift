@@ -162,6 +162,18 @@ public enum EventPolicy {
                                           body: event.label ?? "The window is nearly spent; expect throttling.", session: nil)
             return delivery
 
+        case "quota_pace":
+            // A window the daemon projects to run out before it resets, once
+            // per window: its own banner never reached anyone headless.
+            guard notify, settings?.bool("quota_alerts_enabled") ?? false else { return .nothing }
+            let lane = event.label.flatMap { $0.isEmpty ? nil : $0 }
+            let facts = event.detail ?? "At this pace it runs out before the window resets."
+            let body = lane.map { "\($0): \(facts)" } ?? facts
+            var delivery = EventDelivery(sound: sound(quotaSound))
+            delivery.notification = .init(identifier: "quota:\(provider ?? event.id)", title: "\(providerName) is running low",
+                                          body: body, session: nil)
+            return delivery
+
         case "quota_reset":
             guard notify, settings?.bool("quota_alerts_enabled") ?? false else { return .nothing }
             return EventDelivery(notification: .init(identifier: "quota:\(provider ?? event.id)", title: "\(providerName) quota reset",

@@ -106,13 +106,20 @@ def deliver_reset_channels(
                 event_label = getattr(event, "label", None)
                 if not event_label:
                     event_label = f"{event.window_id} reset"
-                controller._notification_client_for_use().deliver(
+                posted = controller._notification_client_for_use().deliver(
                     "quota.reset." + event.event_id.replace(":", "-"),
                     PRODUCT_DISPLAY_NAME,
                     f"{label} {event_label}, fresh window",
                     {},
                 )
-                outcome, reason = ResetChannelOutcome.DELIVERED, "posted"
+                # The daemon's client posts nothing (the app banners the
+                # quota_reset wire event itself); a receipt that said
+                # "posted" for it claimed a banner nobody saw.
+                outcome, reason = (
+                    (ResetChannelOutcome.DELIVERED, "posted")
+                    if posted
+                    else (ResetChannelOutcome.FAILED, "not_delivered")
+                )
             else:
                 if quiet:
                     outcome, reason = ResetChannelOutcome.SUPPRESSED, "quiet_active"
@@ -232,22 +239,72 @@ def alert_connection_loss(
             pass
 
 
+def _clock_words(epoch: float, now: float) -> str:
+    """``3:40 PM`` today, ``Tue 6:00 PM`` on another day."""
+    local = time.localtime(epoch)
+    same_day = time.localtime(now)[:3] == local[:3]
+    return time.strftime("%-I:%M %p" if same_day else "%a %-I:%M %p", local)
+
+
+def _pace_event_fields(state, key: str, provider_id: str, label: str, *, now: float) -> dict:
+    """The ``quota_pace`` event for one alert: the lane, how much is left,
+    when it runs out at this rate and when it resets, in History's words."""
+    from .usage_pace import PACE_OUT, lane_pace
+
+    fields: dict = {"provider": provider_id, "label": label}
+    for snapshot in getattr(state, "snapshots", ()):
+        if snapshot.provider_id != provider_id:
+            continue
+        for lane in getattr(snapshot, "lanes", ()):
+            if f"{provider_id}:{lane.lane_id}:{int(lane.reset_at or 0)}" != key:
+                continue
+            reading = lane_pace(
+                remaining_percent=lane.remaining_percent,
+                reset_at=lane.reset_at,
+                lane_id=lane.lane_id,
+                now=now,
+            )
+            fields["lane"] = lane.lane_id
+            fields["remaining_percent"] = lane.remaining_percent
+            fields["resets_at"] = lane.reset_at
+            resets = f"resets {_clock_words(lane.reset_at, now)}" if lane.reset_at else None
+            if reading is not None and reading.verdict == PACE_OUT:
+                parts = ["used up", resets]
+            else:
+                runs_out = reading.exhaustion_epoch if reading is not None else None
+                fields["runs_out_at"] = runs_out
+                parts = [
+                    f"{round(lane.remaining_percent)}% left",
+                    f"runs out around {_clock_words(runs_out, now)}" if runs_out else None,
+                    resets,
+                ]
+            fields["detail"] = " · ".join(part for part in parts if part)
+            return fields
+    return fields
+
+
 def alert_new_critical_pace(
-    controller, previous_state, state, *, log, signal_kind
+    controller, previous_state, state, *, log, signal_kind, now: float | None = None
 ) -> None:
     """One content-free notification per window when a lane JUST became
     projected to run dry before its reset. Extracted verbatim from the
     facade for ratchet headroom (2026-08-26); gated by the (now real)
-    quota_alerts_enabled switch plus the courtesy budget."""
+    quota_alerts_enabled switch plus the courtesy budget.
+
+    The daemon's notification client posts nothing, so the alert also goes
+    to the app as a ``quota_pace`` event -- the lane, what is left, when it
+    runs out and when it resets -- which the app's EventPolicy banners and
+    History keeps."""
     from .provider_usage_platform import provider_descriptor
     from .usage_pace import critical_pace_transitions
 
+    moment = time.time() if now is None else now
     try:
         seen = tuple(getattr(controller, "_jrbar_seen_pace_alerts", ()))
         alerts = critical_pace_transitions(
             previous_state.snapshots,
             state.snapshots,
-            now=time.time(),
+            now=moment,
             seen_keys=frozenset(seen),
         )
         if not alerts:
@@ -270,7 +327,8 @@ def alert_new_critical_pace(
             time.monotonic() + 4.0,
         )
         client = controller._notification_client_for_use()
-        for key, provider_id, _label in alerts[:3]:
+        publish = getattr(controller, "_core_publish_event", None)
+        for key, provider_id, lane_label in alerts[:3]:
             label = provider_descriptor(provider_id).label
             safe = "".join(
                 ch for ch in label if ch.isalnum() or ch == " "
@@ -282,6 +340,8 @@ def alert_new_critical_pace(
                 f"{article} {safe} limit is running low",
                 {},
             )
+            if callable(publish):
+                publish("quota_pace", **_pace_event_fields(state, key, provider_id, lane_label, now=moment))
     except Exception as exc:
         try:
             log(f"pace alert: {exc}")

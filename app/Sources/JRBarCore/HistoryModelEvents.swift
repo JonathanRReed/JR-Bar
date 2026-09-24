@@ -139,6 +139,7 @@ public enum LightLog {
         case "escalation_stage": verb = "escalated to stage \(event.stage ?? 0)"
         case "quota_crossed": verb = "crossed a quota threshold"
         case "quota_reset": verb = "quota reset"
+        case "quota_pace": verb = "is running low"
         default: verb = event.kind.replacingOccurrences(of: "_", with: " ")
         }
         let head = [who, verb].compactMap { $0 }.joined(separator: " ")

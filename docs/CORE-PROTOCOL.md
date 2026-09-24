@@ -727,7 +727,14 @@ a fresh document behind it, ask again); `quota_reset` (`provider`,
 refilled, `weekly` / `five-hour` / a product-scoped id ending in
 `-weekly`; published on every detected reset regardless of the
 celebration preferences, so the Usage Center can pulse the card and the
-Confetti toy can fire on the weekly one); `peer_arrived` / `peer_departed`
+Confetti toy can fire on the weekly one); `quota_pace` (`provider`,
+`lane`, `label` the lane's name, `remaining_percent`, `runs_out_at` and
+`resets_at` as epochs, and `detail` in words, "30% left · runs out around
+3:40 PM · resets 5:30 PM"; once per reset window, when a lane is newly
+projected to run out before it resets, only while `quota_alerts_enabled`
+is on and the courtesy and quiet gates let it through: the daemon's own
+banner posts nothing headless, so the app's `EventPolicy` banners this
+and History lists it); `peer_arrived` / `peer_departed`
 (`label` is the machine name; the reachable-set diff after the first
 applied refresh, never on daemon start).
 `power` goes out once per power-log entry worth a line: `power` is the
