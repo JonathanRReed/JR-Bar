@@ -6,224 +6,316 @@ import SwiftUI
 extension AquariumView {
     // MARK: Backdrop
 
-    /// The back wall an owned backdrop item papers over the tank
-    /// (docs/TOYS.md shop): "classic" leaves the open water, reefwall
-    /// hangs a dim rock face with coral nubs behind the dunes, rocky
-    /// stacks boulders along the back. Drawn on the still bed, dimmed
-    /// into the water so it reads as metres away.
+    /// The distance behind the bed (docs/TOYS.md shop), layered like a
+    /// painted set so the tank has depth: a far ridge barely darker
+    /// than the water, then the backdrop's own tier — "classic" a
+    /// distant reef of low coral heads, reefwall a coral wall that
+    /// rises at both ends and dips in the middle so it frames the fish,
+    /// rocky a stand of spires — and, for the walls, a nearer outcrop
+    /// at each end. Each tier is one silhouette in the water's own
+    /// colour, lit along its crown from the surface and fading into the
+    /// haze at its foot, so far things are bluer and softer than near
+    /// ones. Drawn on the far still pass.
     func drawBackdrop(canvas: inout GraphicsContext, size: CGSize) {
-        // The wall's plates and boulders step across by a share of the
-        // tank's height, so a canvas caught mid-layout with no height
-        // would never finish a course, and a very short, wide one would
-        // cut thousands of invisible slabs. A tank that short has no
-        // wall, and no course steps less than 4 pt.
+        // A canvas caught mid-layout with no height would lay its
+        // silhouettes out of nothing; a tank that short has no wall.
         guard size.height >= 8, size.width > 0 else { return }
-        // Rock & sponge tones pulled toward the water's floor colour
-        // so the wall recedes with the theme instead of floating on it.
-        func tinted(_ r: Double, _ g: Double, _ b: Double,
-                    _ toward: Double, _ alpha: Double) -> Color {
-            let base = NSColor(Color(red: r, green: g, blue: b))
-            return Color(nsColor: base.blended(withFraction: toward,
-                                               of: floorNS) ?? base)
-                .opacity(alpha)
-        }
-        // The wall's rumpled crest, ~40% up the tank — above the
-        // seeded kelp line so the wall reads behind everything.
-        func wallTop(atX x: Double) -> Double {
-            let u = x / max(1, size.width)
-            return size.height * 0.58
-                + size.height * 0.035 * sin(u * .pi * 5.2 + Self.dunePhase2)
-                + size.height * 0.014 * sin(u * .pi * 13.7 + Self.dunePhase1)
-        }
+        let far = ridge(in: size, base: 0.665, swell: 0.05, seed: 11)
+        paintTier(far, canvas: &canvas, size: size, depth: 0, top: size.height * 0.60)
         switch backdropKey {
         case "reefwall":
-            var wall = Path()
-            wall.move(to: CGPoint(x: 0, y: wallTop(atX: 0)))
-            var x = 0.0
-            while x <= size.width {
-                wall.addLine(to: CGPoint(x: x, y: wallTop(atX: x)))
-                x += 10
-            }
-            wall.addLine(to: CGPoint(x: size.width, y: size.height))
-            wall.addLine(to: CGPoint(x: 0, y: size.height))
-            wall.closeSubpath()
-            canvas.fill(wall, with: .linearGradient(
-                Gradient(stops: [
-                    .init(color: tinted(0.30, 0.36, 0.40, 0.35, 0.9), location: 0),
-                    .init(color: tinted(0.18, 0.23, 0.27, 0.45, 1), location: 0.45),
-                    .init(color: tinted(0.06, 0.08, 0.11, 0.6, 1), location: 1),
-                ]),
-                startPoint: CGPoint(x: 0, y: size.height * 0.56),
-                endPoint: CGPoint(x: 0, y: size.height)))
-            // The crest's fade into the water above it.
-            canvas.stroke(wall, with: .color(tinted(0.45, 0.52, 0.55, 0.3, 0.25)),
-                          lineWidth: 1.2)
-            // Rock plates: seeded courses of uneven, hand-cut slabs —
-            // lit along their top lips, dark in the crevices between —
-            // a reef wall, not a hill.
-            var inner = canvas
-            inner.clip(to: wall)
-            for row in 0..<4 {
-                var px = -24.0
-                var i = 0
-                let rowTop = size.height * (0.58 + Double(row) * 0.10)
-                while px < size.width + 24 {
-                    var h = AquariumModel.stableHash("plate-\(row)-\(i)")
-                    h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
-                    var rng = TankPaint.Seeded(h)
-                    let pw = size.height * rng.next(0.09, 0.19)
-                    let ph = size.height * rng.next(0.09, 0.14)
-                    let py = rowTop + rng.next(0, 1) * size.height * 0.04
-                    let tone = rng.next(0.18, 0.30)
-                    // A jittered six-point slab, smoothed.
-                    let corners = [
-                        CGPoint(x: px + rng.next(0, 0.12) * pw, y: py + rng.next(0, 0.2) * ph),
-                        CGPoint(x: px + pw * rng.next(0.4, 0.6), y: py - rng.next(0, 0.12) * ph),
-                        CGPoint(x: px + pw - rng.next(0, 0.12) * pw, y: py + rng.next(0, 0.2) * ph),
-                        CGPoint(x: px + pw + rng.next(-0.05, 0.05) * pw, y: py + ph * rng.next(0.8, 1.0)),
-                        CGPoint(x: px + pw * rng.next(0.4, 0.6), y: py + ph * rng.next(0.95, 1.1)),
-                        CGPoint(x: px - rng.next(-0.05, 0.05) * pw, y: py + ph * rng.next(0.8, 1.0)),
-                    ]
-                    var slab = Path()
-                    slab.move(to: CGPoint(x: (corners[5].x + corners[0].x) / 2, y: (corners[5].y + corners[0].y) / 2))
-                    for k in 0..<corners.count {
-                        let a = corners[k], b = corners[(k + 1) % corners.count]
-                        slab.addQuadCurve(to: CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2), control: a)
-                    }
-                    slab.closeSubpath()
-                    inner.fill(slab, with: .linearGradient(
-                        Gradient(colors: [tinted(tone + 0.16, tone + 0.20, tone + 0.22, 0.42, 0.95),
-                                          tinted(tone * 0.55, tone * 0.62, tone * 0.70, 0.5, 1)]),
-                        startPoint: CGPoint(x: px, y: py), endPoint: CGPoint(x: px, y: py + ph)))
-                    TankPaint.speckle(&inner, slab, seed: h, count: 10, size: size.height * 0.004,
-                                      dark: tinted(0.02, 0.03, 0.05, 0.5, 0.35),
-                                      light: tinted(0.7, 0.75, 0.78, 0.5, 0.18))
-                    var lip = inner
-                    lip.clip(to: slab)
-                    lip.stroke(slab.offsetBy(dx: 0, dy: 1.2),
-                               with: .color(tinted(0.70, 0.78, 0.80, 0.45, 0.22)), lineWidth: 1.4)
-                    inner.stroke(slab, with: .color(tinted(0.01, 0.02, 0.04, 0.5, 0.7)),
-                                 style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
-                    px += max(4, pw * rng.next(0.86, 1.05))
-                    i += 1
-                }
-            }
-            // Dressing: tube sponges, sea fans in silhouette, brain
-            // mounds and coral nubs on the face — muted by the water.
-            for i in 0..<18 {
-                var h = AquariumModel.stableHash("reefdress-\(i)")
-                h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
-                var rng = TankPaint.Seeded(h)
-                let rx = size.width * Double(h & 0xFFFF) / 0xFFFF
-                let ry = wallTop(atX: rx) + size.height * 0.03
-                    + Double((h >> 16) & 0xFFFF) / 0xFFFF * size.height * 0.28
-                let unit = size.height * 0.02
-                switch (h >> 32) % 4 {
-                case 0:
-                    // Tube sponges: two or three stalks with dark mouths.
-                    let tubes = 2 + Int(rng.next(0, 1.99))
-                    let hue = (h >> 36) & 1 == 0
-                    for k in 0..<tubes {
-                        let tx = rx + (Double(k) - Double(tubes - 1) / 2) * unit * 0.9
-                        let th = unit * rng.next(1.6, 2.8)
-                        let tube = Path(roundedRect: CGRect(x: tx - unit * 0.35, y: ry - th, width: unit * 0.7, height: th),
-                                        cornerRadius: unit * 0.3)
-                        inner.fill(tube, with: .linearGradient(
-                            Gradient(colors: hue ? [tinted(0.40, 0.70, 0.66, 0.35, 0.95), tinted(0.14, 0.34, 0.34, 0.45, 0.95)]
-                                                 : [tinted(0.62, 0.48, 0.78, 0.35, 0.95), tinted(0.28, 0.18, 0.40, 0.45, 0.95)]),
-                            startPoint: CGPoint(x: tx - unit * 0.35, y: 0), endPoint: CGPoint(x: tx + unit * 0.35, y: 0)))
-                        inner.fill(Path(ellipseIn: CGRect(x: tx - unit * 0.28, y: ry - th - unit * 0.1,
-                                                          width: unit * 0.56, height: unit * 0.26)),
-                                   with: .color(tinted(0.02, 0.03, 0.05, 0.4, 0.85)))
-                    }
-                case 1:
-                    // A sea fan: a flat lace of branches.
-                    var fan = Path()
-                    for k in 0..<7 {
-                        let a = -.pi / 2 + (Double(k) / 6 - 0.5) * 1.5
-                        let reach = unit * rng.next(2.2, 3.4)
-                        fan.move(to: CGPoint(x: rx, y: ry))
-                        fan.addQuadCurve(to: CGPoint(x: rx + cos(a) * reach, y: ry + sin(a) * reach),
-                                         control: CGPoint(x: rx + cos(a) * reach * 0.4, y: ry + sin(a) * reach * 0.7))
-                    }
-                    inner.stroke(fan, with: .color(tinted(0.80, 0.42, 0.52, 0.4, 0.55)),
-                                 style: StrokeStyle(lineWidth: max(0.8, unit * 0.12), lineCap: .round))
-                case 2:
-                    // A brain mound with a lit crown.
-                    let mound = Path(ellipseIn: CGRect(x: rx - unit, y: ry - unit * 0.9, width: unit * 2, height: unit * 1.3))
-                    inner.fill(mound, with: .radialGradient(
-                        Gradient(colors: [tinted(0.80, 0.66, 0.42, 0.35, 0.9), tinted(0.36, 0.26, 0.14, 0.45, 0.9)]),
-                        center: CGPoint(x: rx - unit * 0.3, y: ry - unit * 0.7), startRadius: 0, endRadius: unit * 1.3))
-                    var folds = Path()
-                    for k in 0..<3 {
-                        let fy = ry - unit * (0.7 - Double(k) * 0.28)
-                        folds.move(to: CGPoint(x: rx - unit * 0.8, y: fy))
-                        folds.addQuadCurve(to: CGPoint(x: rx + unit * 0.8, y: fy), control: CGPoint(x: rx, y: fy - unit * 0.25))
-                    }
-                    var fc = inner
-                    fc.clip(to: mound)
-                    fc.stroke(folds, with: .color(tinted(0.25, 0.16, 0.08, 0.45, 0.6)), lineWidth: max(0.6, unit * 0.08))
-                default:
-                    // A coral nub: a warm cluster of dots.
-                    var nubs = Path()
-                    for k in 0..<4 {
-                        let nr = unit * rng.next(0.25, 0.45)
-                        nubs.addEllipse(in: CGRect(x: rx + rng.next(-0.6, 0.6) * unit - nr,
-                                                   y: ry - Double(k) * unit * 0.25 - nr, width: nr * 2, height: nr * 2))
-                    }
-                    inner.fill(nubs, with: .color(tinted(0.86, 0.50, 0.50, 0.3, 0.8)))
-                }
-            }
-            // The wall recedes: a veil of the water's own colour at
-            // that depth over its face — metres of blue between us.
-            let haze = waterStops.first(where: { $0.location >= 0.52 })?.color ?? floorColor
-            inner.fill(wall, with: .linearGradient(
-                Gradient(colors: [haze.opacity(0.42), haze.opacity(0.18)]),
-                startPoint: CGPoint(x: 0, y: size.height * 0.56), endPoint: CGPoint(x: 0, y: size.height)))
+            let wall = reefTier(in: size, rise: 0.15, floor: 0.70, seed: 23, count: 22)
+            paintTier(wall, canvas: &canvas, size: size, depth: 0.45, top: size.height * 0.50)
+            let near = reefTier(in: size, rise: 0.24, floor: 0.80, seed: 41, count: 10, edgesOnly: true)
+            paintTier(near, canvas: &canvas, size: size, depth: 0.8, top: size.height * 0.50)
         case "rocky":
-            // Stacked boulders: a tall back course under the crest,
-            // a nearer course overlapping its feet — dark joints
-            // between stones, dimming with depth like the wall.
-            for row in 0..<2 {
-                var bx = -30.0
-                var i = 0
-                let baseY = size.height * (row == 0 ? 0.92 : 0.99)
-                while bx < size.width + 30 {
-                    var h = AquariumModel.stableHash("boulder-\(row)-\(i)")
-                    h ^= h >> 33; h &*= 0xff51afd7ed558ccd; h ^= h >> 33
-                    let bw = size.height * (0.16 + Double(h & 0xFF) / 0xFF * 0.12)
-                    let bh = bw * (0.55 + Double((h >> 8) & 0xFF) / 0xFF * 0.28)
-                    let by = baseY + Double((h >> 16) & 0x3F) / 0x3F * size.height * 0.03
-                    let tone = row == 0 ? 0.30 : 0.22
-                    var boulder = Path()
-                    boulder.move(to: CGPoint(x: bx, y: by))
-                    boulder.addCurve(to: CGPoint(x: bx + bw, y: by),
-                                     control1: CGPoint(x: bx, y: by - bh * 1.5),
-                                     control2: CGPoint(x: bx + bw, y: by - bh * 1.5))
-                    boulder.closeSubpath()
-                    canvas.fill(boulder, with: .linearGradient(
-                        Gradient(colors: [tinted(tone + 0.12, tone + 0.13,
-                                                 tone + 0.16, 0.4, 0.95),
-                                          tinted(tone * 0.3, tone * 0.3,
-                                                 tone * 0.35, 0.5, 1)]),
-                        startPoint: CGPoint(x: bx + bw / 2, y: by - bh),
-                        endPoint: CGPoint(x: bx + bw / 2, y: by)))
-                    TankPaint.speckle(&canvas, boulder, seed: h, count: 24, size: size.height * 0.005,
-                                      dark: tinted(0.02, 0.03, 0.05, 0.5, 0.35),
-                                      light: tinted(0.75, 0.78, 0.80, 0.5, 0.16))
-                    var rim = canvas
-                    rim.clip(to: boulder)
-                    rim.stroke(boulder.offsetBy(dx: 1.5, dy: 2), with: .color(tinted(0.72, 0.76, 0.80, 0.45, 0.22)),
-                               lineWidth: 2.2)
-                    canvas.stroke(boulder,
-                                  with: .color(tinted(0.02, 0.03, 0.04, 0.5, 0.6)),
-                                  lineWidth: 1.2)
-                    bx += max(4, bw * (0.80 + Double((h >> 20) & 0xF) / 0xF * 0.3))
-                    i += 1
+            let tips = spireTips(in: size, rise: 0.20, floor: 0.72, seed: 61, spires: 9)
+            let spires = rockTier(tips, in: size, floor: 0.72, seed: 61, rubble: true)
+            paintTier(spires, canvas: &canvas, size: size, depth: 0.45, top: size.height * 0.46)
+            paintFacets(tips, clip: spires, canvas: &canvas, size: size, depth: 0.45, floor: 0.72)
+            let nearTips = spireTips(in: size, rise: 0.26, floor: 0.82, seed: 71, spires: 5, edgesOnly: true)
+            let near = rockTier(nearTips, in: size, floor: 0.82, seed: 71, rubble: false)
+            paintTier(near, canvas: &canvas, size: size, depth: 0.8, top: size.height * 0.46)
+            paintFacets(nearTips, clip: near, canvas: &canvas, size: size, depth: 0.8, floor: 0.82)
+        default:
+            // Open water: a far reef of low coral heads, a fan or a
+            // branch standing up here and there, a long way off.
+            let reef = moundProfile(in: size, base: 0.765, seed: 83)
+                .union(reefDressing(in: size, top: { _ in size.height * 0.75 }, unitScale: 0.8,
+                                    count: 9, seed: 89))
+            paintTier(reef, canvas: &canvas, size: size, depth: 0.3, top: size.height * 0.66)
+        }
+        // The horizon's haze, where the far bed and the water meet: a
+        // luminous band, not a darkening.
+        let haze = TankPaint.mix(waterRGB(at: 0.5), water.light, isDarkTheme ? 0.02 : 0.10)
+        let horizon = size.height * 0.84
+        canvas.fill(Path(CGRect(x: 0, y: size.height * 0.55, width: size.width, height: size.height * 0.45)),
+                    with: .linearGradient(
+                        Gradient(stops: [
+                            .init(color: TankPaint.color(haze, 0), location: 0),
+                            .init(color: TankPaint.color(haze, 0.26), location: 0.62),
+                            .init(color: TankPaint.color(haze, 0.38), location: 1),
+                        ]),
+                        startPoint: CGPoint(x: 0, y: size.height * 0.55),
+                        endPoint: CGPoint(x: 0, y: horizon)))
+    }
+
+    /// A tier's colour: a shade deeper than the water behind it, deeper
+    /// still the nearer the tier — or, in water already near black, a
+    /// breath lighter, the way a far reef shows against the dark.
+    private func tierBody(depth: Double) -> TankPaint.RGB {
+        let behind = waterRGB(at: 0.72)
+        if isDarkTheme { return TankPaint.mix(behind, water.light, 0.05 + 0.04 * depth) }
+        return TankPaint.mix(behind, waterRGB(at: 1), 0.28 + 0.40 * depth)
+    }
+
+    /// A tier's paint: its body with a crown lit from the surface, a
+    /// thin rim of light wherever an upper edge meets the water — drawn
+    /// as the body offset down over a lit copy, so a tier built from
+    /// many shapes shows no seams — and the haze thickening toward its
+    /// foot.
+    private func paintTier(_ shape: Path, canvas: inout GraphicsContext, size: CGSize,
+                           depth: Double, top: Double) {
+        let base = size.height * 0.9
+        let body = tierBody(depth: depth)
+        let crown = TankPaint.mix(body, water.light, 0.05 + 0.06 * depth)
+        let rim = TankPaint.mix(body, water.light, 0.08 + 0.16 * depth)
+        canvas.fill(shape, with: .color(TankPaint.color(rim)))
+        var inner = canvas
+        inner.clip(to: shape)
+        inner.fill(shape.offsetBy(dx: 0.8, dy: 1.4 + depth), with: .linearGradient(
+            Gradient(colors: [TankPaint.color(crown), TankPaint.color(body)]),
+            startPoint: CGPoint(x: 0, y: top), endPoint: CGPoint(x: 0, y: base)))
+        let fog = TankPaint.mix(waterRGB(at: 0.55), water.light, isDarkTheme ? 0 : 0.06)
+        inner.fill(Path(CGRect(x: 0, y: top - 20, width: size.width, height: base - top + 20)),
+                   with: .linearGradient(
+                       Gradient(stops: [
+                           .init(color: TankPaint.color(fog, 0.08 * (1 - depth)), location: 0),
+                           .init(color: TankPaint.color(fog, 0.28 + 0.24 * (1 - depth)), location: 1),
+                       ]),
+                       startPoint: CGPoint(x: 0, y: top), endPoint: CGPoint(x: 0, y: base)))
+    }
+
+    /// The far ridge: long low swells across the whole tank.
+    private func ridge(in size: CGSize, base: Double, swell: Double, seed: UInt64) -> Path {
+        var rng = TankPaint.Seeded(seed)
+        let p1 = rng.next(0, .pi * 2), p2 = rng.next(0, .pi * 2)
+        return closedProfile(in: size) { u in
+            size.height * (base + swell * sin(u * .pi * 1.7 + p1)
+                           + swell * 0.45 * sin(u * .pi * 4.3 + p2)
+                           + swell * 0.18 * sin(u * .pi * 11 + p1 * 2))
+        }
+    }
+
+    /// A reef's crown line: coral heads bulging along a wall that rises
+    /// toward both ends (`edgesOnly` keeps just the ends, a nearer
+    /// outcrop at each side).
+    private func reefTop(atX x: Double, in size: CGSize, rise: Double, floor: Double,
+                         seed: UInt64, edgesOnly: Bool = false) -> Double {
+        let u = x / max(1, size.width)
+        let edge = abs(u - 0.5) * 2
+        let lift = edgesOnly ? max(0, (edge - 0.55) / 0.45) : edge * edge
+        var rng = TankPaint.Seeded(seed)
+        var bumps = 0.0
+        for k in 0..<5 {
+            let f = rng.next(3, 9) * Double(k + 1)
+            bumps += sin(u * .pi * f + rng.next(0, .pi * 2)) / Double(k + 2)
+        }
+        let heads = abs(sin(u * .pi * rng.next(14, 22) + rng.next(0, 6))) * 0.012
+        let top = floor - rise * lift - 0.018 * bumps - heads
+        return size.height * (edgesOnly && lift <= 0 ? 1.1 : top)
+    }
+
+    /// A reef tier: the wall with its crown dressed, one silhouette.
+    private func reefTier(in size: CGSize, rise: Double, floor: Double, seed: UInt64,
+                          count: Int, edgesOnly: Bool = false) -> Path {
+        let wall = closedProfile(in: size) {
+            reefTop(atX: $0 * size.width, in: size, rise: rise, floor: floor, seed: seed, edgesOnly: edgesOnly)
+        }
+        let dressing = reefDressing(in: size, top: {
+            reefTop(atX: $0, in: size, rise: rise, floor: floor, seed: seed, edgesOnly: edgesOnly)
+        }, unitScale: edgesOnly ? 1.3 : 1, count: count, seed: seed &+ 7)
+        return wall.union(dressing)
+    }
+
+    /// The reef's dressing along a crown line: branching coral, sea
+    /// fans, table coral and tube sponges — shapes at a distance, not
+    /// colours, painted with the tier they stand on.
+    private func reefDressing(in size: CGSize, top: (Double) -> Double, unitScale: Double,
+                              count: Int, seed: UInt64) -> Path {
+        let unit = size.height * 0.018 * unitScale
+        var shapes = Path()
+        var strokes = Path()
+        for i in 0..<count {
+            var rng = TankPaint.Seeded(seed &+ UInt64(i) &* 0x9E37_79B9)
+            let x = size.width * rng.next(0, 1)
+            let y = top(x) + unit * 0.4
+            guard y < size.height * 0.86 else { continue }
+            switch Int(rng.next(0, 4)) {
+            case 0:
+                // A branching coral: forks from a short trunk.
+                func branch(_ from: CGPoint, _ angle: Double, _ len: Double, _ depth: Int) {
+                    let to = CGPoint(x: from.x + cos(angle) * len, y: from.y + sin(angle) * len)
+                    strokes.move(to: from)
+                    strokes.addQuadCurve(to: to, control: CGPoint(x: (from.x + to.x) / 2 + len * 0.12,
+                                                                  y: (from.y + to.y) / 2))
+                    guard depth > 0 else { return }
+                    branch(to, angle - rng.next(0.3, 0.6), len * 0.72, depth - 1)
+                    branch(to, angle + rng.next(0.3, 0.6), len * 0.72, depth - 1)
+                }
+                branch(CGPoint(x: x, y: y), -.pi / 2 + rng.next(-0.2, 0.2), unit * rng.next(1.2, 1.8), 3)
+            case 1:
+                // A sea fan: a flat lace on a stalk.
+                let r = unit * rng.next(2.0, 3.2)
+                var fan = Path()
+                fan.move(to: CGPoint(x: x, y: y))
+                fan.addCurve(to: CGPoint(x: x + r * 0.9, y: y - r * 1.6),
+                             control1: CGPoint(x: x + r * 0.6, y: y - r * 0.2),
+                             control2: CGPoint(x: x + r * 1.2, y: y - r * 1.1))
+                fan.addQuadCurve(to: CGPoint(x: x - r * 0.9, y: y - r * 1.5),
+                                 control: CGPoint(x: x, y: y - r * 2.2))
+                fan.addCurve(to: CGPoint(x: x, y: y),
+                             control1: CGPoint(x: x - r * 1.2, y: y - r * 1.0),
+                             control2: CGPoint(x: x - r * 0.5, y: y - r * 0.2))
+                fan.closeSubpath()
+                shapes = shapes.union(fan)
+            case 2:
+                // Table coral: a flat plate on a short foot.
+                let r = unit * rng.next(1.8, 2.8)
+                let foot = Path(roundedRect: CGRect(x: x - unit * 0.25, y: y - r * 0.6,
+                                                    width: unit * 0.5, height: r * 0.6),
+                                cornerRadius: unit * 0.2)
+                let plate = Path(ellipseIn: CGRect(x: x - r, y: y - r * 0.8, width: r * 2, height: r * 0.36))
+                shapes = shapes.union(foot.union(plate))
+            default:
+                // Tube sponges: two or three stalks.
+                let tubes = 2 + Int(rng.next(0, 1.99))
+                for k in 0..<tubes {
+                    let tx = x + (Double(k) - Double(tubes - 1) / 2) * unit * 0.8
+                    let th = unit * rng.next(1.4, 2.6)
+                    shapes = shapes.union(Path(roundedRect: CGRect(x: tx - unit * 0.3, y: y - th,
+                                                                   width: unit * 0.6, height: th),
+                                               cornerRadius: unit * 0.28))
                 }
             }
-        default:
-            break
         }
+        let branches = strokes.strokedPath(StrokeStyle(lineWidth: max(1, unit * 0.34),
+                                                       lineCap: .round, lineJoin: .round))
+        return shapes.union(branches)
+    }
+
+    /// A rock tier's crown: seeded spires of different heights, rising
+    /// toward the ends of the tank.
+    private func spireTips(in size: CGSize, rise: Double, floor: Double, seed: UInt64,
+                           spires: Int, edgesOnly: Bool = false) -> [CGPoint] {
+        var rng = TankPaint.Seeded(seed)
+        var tips: [CGPoint] = []
+        for k in 0..<spires {
+            let u = edgesOnly
+                ? (k.isMultiple(of: 2) ? rng.next(-0.04, 0.16) : rng.next(0.84, 1.04))
+                : (Double(k) + rng.next(0.1, 0.9)) / Double(spires)
+            let edge = abs(u - 0.5) * 2
+            let height = rise * (edgesOnly ? 1 : 0.35 + 0.65 * edge * edge) * rng.next(0.55, 1.1)
+            tips.append(CGPoint(x: u * size.width, y: size.height * (floor - height)))
+        }
+        return tips.sorted { $0.x < $1.x }
+    }
+
+    /// The spires as one silhouette, with low rubble between them.
+    private func rockTier(_ tips: [CGPoint], in size: CGSize, floor: Double, seed: UInt64,
+                          rubble: Bool) -> Path {
+        var tier = Path()
+        for tip in tips {
+            tier = tier.union(spire(tip, floor: size.height * floor, seed: seed))
+        }
+        if rubble {
+            tier = tier.union(closedProfile(in: size) { u in
+                size.height * (floor - 0.035 + 0.012 * sin(u * .pi * 9 + Double(seed)))
+            })
+        }
+        return tier
+    }
+
+    /// One spire: a leaning, stepped pinnacle from its tip to the floor.
+    private func spire(_ tip: CGPoint, floor: Double, seed: UInt64) -> Path {
+        var rng = TankPaint.Seeded(seed ^ UInt64(max(0, tip.x * 10)))
+        let height = max(8, floor - tip.y)
+        let half = height * rng.next(0.28, 0.42)
+        var p = Path()
+        p.move(to: CGPoint(x: tip.x - half * 1.3, y: floor + 4))
+        p.addLine(to: CGPoint(x: tip.x - half * rng.next(0.7, 0.9), y: tip.y + height * rng.next(0.45, 0.6)))
+        p.addLine(to: CGPoint(x: tip.x - half * rng.next(0.35, 0.5), y: tip.y + height * rng.next(0.18, 0.3)))
+        p.addLine(to: CGPoint(x: tip.x - half * 0.12, y: tip.y))
+        p.addLine(to: CGPoint(x: tip.x + half * 0.2, y: tip.y + height * 0.04))
+        p.addLine(to: CGPoint(x: tip.x + half * rng.next(0.45, 0.6), y: tip.y + height * rng.next(0.25, 0.4)))
+        p.addLine(to: CGPoint(x: tip.x + half * rng.next(0.8, 1.0), y: tip.y + height * rng.next(0.55, 0.7)))
+        p.addLine(to: CGPoint(x: tip.x + half * 1.3, y: floor + 4))
+        p.closeSubpath()
+        return p
+    }
+
+    /// The lit faces: each spire's left flank catches the surface
+    /// light, so the stand reads as rock with facets, not a cut-out.
+    private func paintFacets(_ tips: [CGPoint], clip: Path, canvas: inout GraphicsContext,
+                             size: CGSize, depth: Double, floor: Double) {
+        var faces = Path()
+        for tip in tips {
+            let height = max(8, size.height * floor - tip.y)
+            var face = Path()
+            face.move(to: CGPoint(x: tip.x - height * 0.05, y: tip.y + 1))
+            face.addLine(to: CGPoint(x: tip.x - height * 0.30, y: tip.y + height * 0.55))
+            face.addLine(to: CGPoint(x: tip.x - height * 0.10, y: tip.y + height * 0.95))
+            face.addLine(to: CGPoint(x: tip.x + height * 0.02, y: tip.y + height * 0.35))
+            face.closeSubpath()
+            faces.addPath(face)
+        }
+        var lit = canvas
+        lit.clip(to: clip)
+        let top = tips.map(\.y).min() ?? size.height * 0.5
+        lit.fill(faces, with: .linearGradient(
+            Gradient(colors: [TankPaint.color(water.light, 0.08 + 0.06 * depth),
+                              TankPaint.color(water.light, 0)]),
+            startPoint: CGPoint(x: 0, y: top),
+            endPoint: CGPoint(x: 0, y: size.height * floor)))
+    }
+
+    /// The far reef's low heads: overlapping domes along one line,
+    /// joined into one outline.
+    private func moundProfile(in size: CGSize, base: Double, seed: UInt64) -> Path {
+        var rng = TankPaint.Seeded(seed)
+        var domes: [(x: Double, r: Double, lift: Double)] = []
+        var x = -20.0
+        while x < size.width + 20 {
+            let big = rng.next(0, 1) < 0.3
+            let r = size.height * (big ? rng.next(0.05, 0.09) : rng.next(0.015, 0.04))
+            domes.append((x, r, big ? rng.next(0.35, 0.6) : rng.next(0.6, 1.0)))
+            x += r * rng.next(1.4, 3.4)
+        }
+        return closedProfile(in: size) { u in
+            let px = u * size.width
+            var top = size.height * (base + 0.008 * sin(u * .pi * 5))
+            for dome in domes where abs(px - dome.x) < dome.r {
+                let dx = (px - dome.x) / dome.r
+                top = min(top, size.height * base - dome.r * dome.lift * (1 - dx * dx).squareRoot())
+            }
+            return top
+        }
+    }
+
+    /// A closed silhouette from a crown line (`top(u)`, u 0…1 across)
+    /// down past the floor.
+    private func closedProfile(in size: CGSize, top: (Double) -> Double) -> Path {
+        var p = Path()
+        let step = max(3, size.width / 240)
+        p.move(to: CGPoint(x: -4, y: size.height + 4))
+        var x = -4.0
+        while x <= size.width + 4 {
+            p.addLine(to: CGPoint(x: x, y: top(x / max(1, size.width))))
+            x += step
+        }
+        p.addLine(to: CGPoint(x: size.width + 4, y: top(1)))
+        p.addLine(to: CGPoint(x: size.width + 4, y: size.height + 4))
+        p.closeSubpath()
+        return p
     }
 }

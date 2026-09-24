@@ -200,6 +200,114 @@ enum TankPaint {
                                      center: p, startRadius: 0, endRadius: radius))
     }
 
+    // MARK: The water around a thing
+
+    /// A colour as plain numbers, so the water's palette can be sampled
+    /// and mixed per piece without a trip through NSColor.
+    typealias RGB = SIMD3<Double>
+
+    static func color(_ c: RGB, _ alpha: Double = 1) -> Color {
+        Color(red: c.x, green: c.y, blue: c.z).opacity(alpha)
+    }
+
+    static func mix(_ a: RGB, _ b: RGB, _ t: Double) -> RGB { a + (b - a) * t }
+
+    /// What lies between a piece and the glass: how much of the water's
+    /// own colour veils it, the light that reaches its crown from the
+    /// surface, and how deep into the night the tank is.
+    struct Atmosphere {
+        /// 0 against the glass … 1 lost in the water.
+        var haze: Double
+        var hazeColor: RGB
+        /// The surface light's colour.
+        var light: RGB
+        /// 0 by day … 1 deepest night: the crown light dims and the
+        /// veil darkens toward the night water.
+        var night: Double
+    }
+
+    /// Seats a piece in the water, so every piece in the shop reads as
+    /// one illustrated set: `draw` paints the piece in its own layer,
+    /// then — only where it painted — the surface light falls on its
+    /// crown with a lace of caustics, its foot darkens where the sand
+    /// hides the light, and the water between it and the glass veils
+    /// the whole. `rect` bounds the piece in the context's units;
+    /// `unit` is points per unit, so the lace keeps a screen size.
+    static func seat(_ c: inout GraphicsContext, in rect: CGRect, unit: Double = 1,
+                     atmosphere a: Atmosphere, seed: UInt64, caustics: Bool = true,
+                     draw: (inout GraphicsContext) -> Void) {
+        c.drawLayer { layer in
+            draw(&layer)
+            layer.blendMode = .sourceAtop
+            let box = Path(rect.insetBy(dx: -2 / unit, dy: -2 / unit))
+            let day = 1 - a.night * 0.75
+            layer.fill(box, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: color(a.light, 0.30 * day), location: 0),
+                    .init(color: color(a.light, 0.08 * day), location: 0.32),
+                    .init(color: color(a.light, 0), location: 0.55),
+                ]),
+                startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
+            if caustics, day > 0.3 {
+                layer.stroke(causticLace(in: rect, unit: unit, seed: seed),
+                             with: .linearGradient(
+                                 Gradient(stops: [
+                                     .init(color: color(a.light, 0.34 * day), location: 0),
+                                     .init(color: color(a.light, 0.10 * day), location: 0.45),
+                                     .init(color: color(a.light, 0), location: 0.75),
+                                 ]),
+                                 startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                                 endPoint: CGPoint(x: rect.midX, y: rect.maxY)),
+                             style: StrokeStyle(lineWidth: 1.3 / unit, lineCap: .round, lineJoin: .round))
+            }
+            layer.fill(box, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: .black.opacity(0), location: 0.55),
+                    .init(color: .black.opacity(0.30), location: 1),
+                ]),
+                startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
+            if a.haze > 0.005 {
+                layer.fill(box, with: .color(color(a.hazeColor, min(0.92, a.haze))))
+            }
+        }
+    }
+
+    /// Caustics: the net of light the surface ripples focus onto
+    /// whatever is below — two families of wandering lines whose
+    /// crossings close into cells. Seeded, so a baked piece keeps its
+    /// lace; the sand's live net moves `phase`.
+    static func causticLace(in rect: CGRect, unit: Double = 1, seed: UInt64,
+                            phase: Double = 0, squash: Double = 1) -> Path {
+        var rng = Seeded(seed)
+        var p = Path()
+        let cell = 11 / unit
+        let rows = max(1, Int((rect.height / (cell * squash)).rounded(.up)))
+        let step = max(2 / unit, cell * 0.35)
+        for family in 0..<2 {
+            let tilt = family == 0 ? 0.35 : -0.35
+            for row in 0...rows {
+                let y0 = rect.minY + (Double(row) + rng.next(-0.3, 0.3)) * cell * squash
+                let f1 = rng.next(0.45, 0.75) / cell
+                let f2 = rng.next(0.9, 1.4) / cell
+                let p1 = rng.next(0, .pi * 2) + phase * (family == 0 ? 1 : -1.3)
+                let p2 = rng.next(0, .pi * 2) - phase * 0.7
+                var x = rect.minX - cell
+                var first = true
+                while x <= rect.maxX + cell {
+                    let y = y0 + (x - rect.midX) * tilt * 0.12 * squash
+                        + cell * squash * (0.34 * sin(x * f1 + p1) + 0.18 * sin(x * f2 + p2))
+                    if first { p.move(to: CGPoint(x: x, y: y)); first = false } else {
+                        p.addLine(to: CGPoint(x: x, y: y))
+                    }
+                    x += step
+                }
+            }
+        }
+        return p
+    }
+
     /// How far decor sinks into the water's colour: a little by
     /// night, more in the dark themes, so a lit castle never reads as a
     /// sticker on the abyss. Light sources (windows, lamps, glows) are

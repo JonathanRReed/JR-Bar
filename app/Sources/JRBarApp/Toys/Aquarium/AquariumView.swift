@@ -112,7 +112,7 @@ struct AquariumView: View {
     /// The selected resident's logbook, fetched when it's tapped.
     @ViewState var residentLog: (id: String, log: AquariumResidentLog)?
     /// The shop popover's open flag.
-    @ViewState private var showShop = false
+    @ViewState var showShop = false
 
     var body: some View {
         // Read the observable surface in `body` so the card's tracked
@@ -123,32 +123,54 @@ struct AquariumView: View {
         let paused = ambient ? !ambientVisible
             : (toy?.windowOccluded ?? fixture?.paused ?? false)
         ZStack {
-            // The still tank: water, sand and every decor piece that
-            // doesn't sway. A slow two-second tick lets the day/night
-            // wash keep breathing (and keeps the caption's decor
-            // culling in step with retiring fish); `.drawingGroup`
-            // rasterizes the result, so each live frame costs one
-            // texture composite instead of ~240 path builds.
+            // The far tank: water, the back wall, the far bank and the
+            // back row of bought pieces — everything behind the plants.
+            // A slow two-second tick lets the day/night wash keep
+            // breathing; `.drawingGroup` rasterizes the result, so each
+            // live frame costs one texture composite, not the paths.
             TimelineView(.animation(minimumInterval: 2, paused: paused)) { context in
                 Canvas { canvas, size in
-                    drawWater(canvas: &canvas, size: size,
-                              t: context.date.timeIntervalSince1970)
+                    let t = context.date.timeIntervalSince1970
+                    drawWater(canvas: &canvas, size: size, t: t)
                     drawBackdrop(canvas: &canvas, size: size)
-                    drawSand(canvas: &canvas, size: size)
+                    drawFarSand(canvas: &canvas, size: size)
+                    drawNight(canvas: &canvas, size: size, t: t)
+                    // Owned back-row pieces root on the far dune —
+                    // still, so they bake in with the distance.
+                    drawOwnedBackDecor(canvas: &canvas, size: size, t: t)
+                }
+            }
+            .drawingGroup(opaque: false, colorMode: .nonLinear)
+            // The plants: kelp and grass rooted on the near crest,
+            // swaying between the far tank and the near still pieces,
+            // so a stand grows up behind the castle and in front of the
+            // wreck. Its own live canvas, the only thing in it.
+            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 30.0,
+                                    paused: paused)) { context in
+                let empty = fish.isEmpty || fish.allSatisfy { $0.isRetired(at: context.date) }
+                Canvas { canvas, size in
+                    let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
+                    drawPlants(canvas: &canvas, size: size, t: context.date.timeIntervalSince1970,
+                               density: density, front: false, keepClear: caption?.rect)
+                }
+            }
+            // The near bed: the lit sand and every piece on it that
+            // doesn't sway, on the same slow tick (which also keeps the
+            // caption's decor culling in step with retiring fish).
+            TimelineView(.animation(minimumInterval: 2, paused: paused)) { context in
+                Canvas { canvas, size in
+                    let t = context.date.timeIntervalSince1970
+                    drawSand(canvas: &canvas, size: size, t: t)
                     let empty = fish.isEmpty
                         || fish.allSatisfy { $0.isRetired(at: context.date) }
                     let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
-                    drawStaticDecor(canvas: &canvas, size: size, density: density,
+                    drawStaticDecor(canvas: &canvas, size: size, t: t, density: density,
                                     keepClear: caption?.rect)
-                    // Owned back-row pieces root on the far dune —
-                    // still, so they bake into the bed.
-                    drawOwnedBackDecor(canvas: &canvas, size: size,
-                                       t: context.date.timeIntervalSince1970)
                     // The shop's still pieces and the front row's
                     // unmoving ones bake in too; only what sways, glows
                     // or streams stays on the live pass.
-                    drawShopDecorStill(canvas: &canvas, size: size)
-                    drawOwnedFrontStill(canvas: &canvas, size: size)
+                    drawShopDecorStill(canvas: &canvas, size: size, t: t)
+                    drawOwnedFrontStill(canvas: &canvas, size: size, t: t)
                 }
             }
             .drawingGroup(opaque: false, colorMode: .nonLinear)
@@ -311,6 +333,8 @@ struct AquariumView: View {
                         }
                         drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
                                       front: true, keepClear: caption?.rect)
+                        drawPlants(canvas: &canvas, size: size, t: t, density: density,
+                                   front: true, keepClear: caption?.rect)
                         drawPlankton(canvas: &canvas, size: size, t: t,
                                      density: density, front: true)
                         // The surface draws over everything: a surfacing
@@ -336,135 +360,6 @@ struct AquariumView: View {
                         }
                     }
                 }
-            }
-
-            // W14's inspector: the selected fish's session facts — the
-            // plan's own evidence line, so the strip and the marker
-            // can't disagree about why it looks the way it does.
-            if let selectedID,
-               let selected = fish.first(where: { $0.id == selectedID }) {
-                VStack {
-                    Spacer()
-                    inspectorStrip(selected)
-                }
-                .transition(.opacity)
-                .task(id: selected.isResident ? selected.id : nil) {
-                    guard selected.isResident, let toy else { return }
-                    let log = await toy.residentLog(for: selected.id)
-                    residentLog = (selected.id, log)
-                }
-            }
-
-            // The idle game's chrome (docs/TOYS.md): a pearl count &
-            // streak up top, feed & shop buttons, the "while you were
-            // away" card on reopen, and a small toast for game moments.
-            if toy != nil, !ambient {
-                VStack(spacing: 0) {
-                    HStack(spacing: 8) {
-                        if let game = toy?.game {
-                            hudChip {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "circle.fill")
-                                        .font(.system(size: 7))
-                                        .foregroundStyle(Color(red: 0.95, green: 0.90, blue: 0.75))
-                                        .symbolEffect(.bounce, options: .nonRepeating,
-                                                      value: game.pearls)
-                                    Text("\(game.pearls)")
-                                        .contentTransition(.numericText())
-                                }
-                            }
-                            .help("Pearls — earned while sessions work, spent in the shop.")
-                            if game.streakDays > 1 {
-                                hudChip {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "flame.fill")
-                                            .font(.system(size: 8))
-                                            .foregroundStyle(.orange)
-                                            .symbolEffect(.bounce, options: .nonRepeating,
-                                                          value: game.streakDays)
-                                        Text("\(game.streakDays)d")
-                                    }
-                                }
-                                .help("Days in a row with a completed session.")
-                            }
-                        }
-                        Spacer()
-                        Button {
-                            feed(at: CGPoint(x: motion.size.width * 0.5,
-                                             y: motion.size.height * 0.30))
-                        } label: {
-                            Image(systemName: "menucard.fill")
-                                .font(.system(size: 10))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Drop a pinch of food — or just tap the water.")
-                        Button {
-                            showShop = true
-                        } label: {
-                            Image(systemName: "bag.fill")
-                                .font(.system(size: 10))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Tank shop — decor, pets, themes, hats.")
-                        .popover(isPresented: $showShop, arrowEdge: .top) {
-                            shopPanel(fish: fish)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.top, 8)
-                    if let away = toy?.awayNotice {
-                        awayBanner(away)
-                            .padding(.top, 6)
-                    }
-                    if let n = toy?.notice {
-                        // The reward card — kin to the away-summary
-                        // banner: material capsule, gold accent, title
-                        // + payout. Slides in from the top edge and
-                        // fades out as `notice` clears.
-                        HStack(spacing: 7) {
-                            Image(systemName: n.symbol)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color(red: 1.0, green: 0.80,
-                                                       blue: 0.30))
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(n.title)
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.95))
-                                if let reward = n.reward {
-                                    Text(reward)
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundStyle(.white.opacity(0.6))
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .padding(.trailing, 10)
-                        .padding(.top, 4)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .task(id: n.id) {
-                            try? await Task.sleep(for: .seconds(4))
-                            guard !Task.isCancelled else { return }
-                            toy?.dismissNotice(id: n.id)
-                        }
-                        .allowsHitTesting(false)
-                    }
-                    Spacer()
-                    if let toast = toy?.toast {
-                        Text(toast.text)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .padding(.bottom, 52)
-                            .onTapGesture { toy?.dismissToast() }
-                    }
-                }
-                .animation(.easeInOut(duration: 0.35), value: toy?.notice?.id)
             }
         }
         .onContinuousHover(coordinateSpace: .local) { phase in
@@ -545,7 +440,39 @@ struct AquariumView: View {
         .background {
             if ambient { WindowVisibilityReader { ambientVisible = $0 } }
         }
+        // The water runs to the window's edges, under the title bar;
+        // the chrome keeps to the safe area below it.
+        .ignoresSafeArea()
+        .overlay {
+            ZStack {
+                // W14's inspector: the selected fish's session facts —
+                // the plan's own evidence line, so the strip and the
+                // marker can't disagree about why it looks the way it
+                // does.
+                if let selectedID,
+                   let selected = fish.first(where: { $0.id == selectedID }) {
+                    VStack {
+                        Spacer()
+                        inspectorStrip(selected)
+                    }
+                    .transition(.opacity)
+                    .task(id: selected.isResident ? selected.id : nil) {
+                        guard selected.isResident, let toy else { return }
+                        let log = await toy.residentLog(for: selected.id)
+                        residentLog = (selected.id, log)
+                    }
+                }
+                if toy != nil, !ambient {
+                    gameChrome(fish: fish)
+                }
+            }
+        }
+        .coordinateSpace(.named(Self.tankSpace))
     }
+
+    /// The tank's own coordinate space — the canvas's points, which the
+    /// chrome measures itself in so a pearl can fly home to its chip.
+    static let tankSpace = "aquarium-tank"
 
     /// Where the pointer is and which fish it is over. A plain
     /// reference held in `ViewState`: the hover changes every frame
@@ -621,6 +548,9 @@ struct AquariumView: View {
         var tricks: [String: (kind: TrickKind, until: Date)] = [:]
         /// Tap count feeding the seeded 1-in-3 trick roll.
         var trickSeq = 0
+        /// Where the pearl counter sits in the tank's points, measured
+        /// by the chip itself — where a collected pearl flies home to.
+        var pearlChip: CGPoint?
         /// The visitor currently parading across the back layer, and
         /// when it started — `visitorShown` was answered at the start.
         var activeVisitor: (kind: AquariumVisitor, startedAt: Date)?
@@ -662,7 +592,7 @@ struct AquariumView: View {
     /// A tap on open water drops a pinch of food: three pellets around
     /// the point, sinking toward the bed. The game hears only about
     /// the ones a fish actually eats.
-    private func feed(at point: CGPoint) {
+    func feed(at point: CGPoint) {
         let size = motion.size
         guard size.width > 0, size.height > 0 else { return }
         let m = motion

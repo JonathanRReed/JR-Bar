@@ -6,168 +6,183 @@ import SwiftUI
 extension AquariumView {
     // MARK: Water
 
-    /// The column of water itself: a many-stop gradient from the bright
-    /// green-teal surface down to a deep indigo floor — more stops in
-    /// the deep half now, so the column keeps a blue-green cast all the
-    /// way down instead of collapsing to flat navy — a warm glow
-    /// where the light comes in, and a faint cool counter-glow low on
-    /// the right so the far side never goes dead flat. Drawn in the
-    /// still pass; the only animated parts are the two slow washes.
-    /// The water column's gradient per theme (docs/TOYS.md shop):
-    /// the shop's theme items recolour the tank — a stop list per
-    /// theme id, "classic" the default the game starts with.
+    /// One theme's water (docs/TOYS.md shop): the column's colour from
+    /// the surface (0) down to the floor (1), the colour of the light
+    /// that comes through the surface, and how strongly it falls in
+    /// shafts — the abyss has no sun at all.
+    struct TankWater {
+        var stops: [(location: Double, rgb: TankPaint.RGB)]
+        var light: TankPaint.RGB
+        var shafts: Double
+    }
+
+    /// Every theme's water, "classic" the one the game starts with.
+    /// The deep stops keep a blue-green cast all the way down, so the
+    /// far water reads as distance, not as a flat navy wall.
+    private static let waters: [String: TankWater] = {
+        func column(_ rgbs: [(Double, Double, Double)]) -> [(location: Double, rgb: TankPaint.RGB)] {
+            let locations = [0, 0.12, 0.30, 0.52, 0.72, 0.88, 1.0]
+            return zip(locations, rgbs).map { ($0, TankPaint.RGB($1.0, $1.1, $1.2)) }
+        }
+        return [
+            "classic": TankWater(stops: column([
+                (0.50, 0.84, 0.78), (0.29, 0.69, 0.70), (0.13, 0.51, 0.63), (0.06, 0.33, 0.54),
+                (0.04, 0.22, 0.45), (0.03, 0.15, 0.37), (0.02, 0.09, 0.27)]),
+                light: TankPaint.RGB(1.0, 0.97, 0.84), shafts: 1),
+            "reef": TankWater(stops: column([
+                (0.40, 0.78, 0.84), (0.22, 0.62, 0.76), (0.10, 0.45, 0.68), (0.05, 0.30, 0.57),
+                (0.03, 0.19, 0.47), (0.02, 0.12, 0.37), (0.015, 0.07, 0.27)]),
+                light: TankPaint.RGB(1.0, 0.98, 0.88), shafts: 1),
+            "lagoon": TankWater(stops: column([
+                (0.60, 0.93, 0.82), (0.40, 0.84, 0.76), (0.22, 0.66, 0.70), (0.11, 0.46, 0.60),
+                (0.06, 0.30, 0.49), (0.04, 0.19, 0.38), (0.03, 0.11, 0.28)]),
+                light: TankPaint.RGB(1.0, 0.99, 0.86), shafts: 1.15),
+            "twilight": TankWater(stops: column([
+                (0.44, 0.54, 0.80), (0.30, 0.42, 0.70), (0.17, 0.30, 0.58), (0.10, 0.19, 0.46),
+                (0.06, 0.12, 0.36), (0.04, 0.08, 0.28), (0.025, 0.05, 0.20)]),
+                light: TankPaint.RGB(0.88, 0.86, 1.0), shafts: 0.6),
+            "midnight": TankWater(stops: column([
+                (0.11, 0.18, 0.33), (0.08, 0.14, 0.29), (0.055, 0.10, 0.24), (0.035, 0.07, 0.20),
+                (0.025, 0.05, 0.16), (0.018, 0.035, 0.13), (0.012, 0.025, 0.10)]),
+                light: TankPaint.RGB(0.70, 0.80, 1.0), shafts: 0.35),
+            "dawn": TankWater(stops: column([
+                (0.88, 0.64, 0.66), (0.70, 0.57, 0.69), (0.44, 0.50, 0.68), (0.23, 0.38, 0.60),
+                (0.12, 0.26, 0.49), (0.06, 0.16, 0.38), (0.035, 0.09, 0.28)]),
+                light: TankPaint.RGB(1.0, 0.84, 0.72), shafts: 0.8),
+            "kelp": TankWater(stops: column([
+                (0.56, 0.77, 0.45), (0.37, 0.64, 0.42), (0.21, 0.50, 0.39), (0.11, 0.36, 0.35),
+                (0.06, 0.24, 0.29), (0.035, 0.15, 0.22), (0.02, 0.09, 0.16)]),
+                light: TankPaint.RGB(1.0, 0.97, 0.74), shafts: 1),
+            "abyss": TankWater(stops: column([
+                (0.05, 0.08, 0.17), (0.035, 0.06, 0.14), (0.025, 0.045, 0.11), (0.018, 0.03, 0.08),
+                (0.012, 0.02, 0.06), (0.008, 0.015, 0.045), (0.005, 0.01, 0.03)]),
+                light: TankPaint.RGB(0.55, 0.75, 1.0), shafts: 0),
+            "sunset": TankWater(stops: column([
+                (0.94, 0.58, 0.32), (0.82, 0.44, 0.39), (0.57, 0.31, 0.49), (0.33, 0.21, 0.51),
+                (0.19, 0.13, 0.45), (0.10, 0.08, 0.35), (0.055, 0.045, 0.26)]),
+                light: TankPaint.RGB(1.0, 0.76, 0.50), shafts: 0.9),
+            "blackwater": TankWater(stops: column([
+                (0.55, 0.44, 0.27), (0.44, 0.35, 0.21), (0.33, 0.25, 0.16), (0.23, 0.17, 0.11),
+                (0.15, 0.11, 0.075), (0.095, 0.07, 0.05), (0.055, 0.04, 0.03)]),
+                light: TankPaint.RGB(1.0, 0.84, 0.54), shafts: 0.45),
+        ]
+    }()
+
+    /// The water for a theme key — "classic" when the key is unknown.
+    static func water(forTheme themeKey: String) -> TankWater {
+        waters[themeKey] ?? waters["classic"]!
+    }
+
+    var water: TankWater { Self.water(forTheme: themeKey) }
+
+    /// The water column's gradient per theme — the shop's theme items
+    /// recolour the tank.
     var waterStops: [Gradient.Stop] { Self.waterStops(forTheme: themeKey) }
 
     /// The water column's stops for a theme key — also the shop's
     /// swatch for that theme.
     static func waterStops(forTheme themeKey: String) -> [Gradient.Stop] {
-        switch themeKey {
-        case "reef":
-            return [
-                .init(color: Color(red: 0.36, green: 0.72, blue: 0.78), location: 0),
-                .init(color: Color(red: 0.20, green: 0.58, blue: 0.72), location: 0.12),
-                .init(color: Color(red: 0.10, green: 0.42, blue: 0.64), location: 0.30),
-                .init(color: Color(red: 0.05, green: 0.28, blue: 0.54), location: 0.52),
-                .init(color: Color(red: 0.03, green: 0.17, blue: 0.44), location: 0.72),
-                .init(color: Color(red: 0.02, green: 0.10, blue: 0.34), location: 0.88),
-                .init(color: Color(red: 0.015, green: 0.05, blue: 0.24), location: 1),
-            ]
-        case "lagoon":
-            return [
-                .init(color: Color(red: 0.55, green: 0.90, blue: 0.78), location: 0),
-                .init(color: Color(red: 0.36, green: 0.80, blue: 0.72), location: 0.12),
-                .init(color: Color(red: 0.20, green: 0.62, blue: 0.66), location: 0.30),
-                .init(color: Color(red: 0.10, green: 0.42, blue: 0.56), location: 0.52),
-                .init(color: Color(red: 0.05, green: 0.26, blue: 0.45), location: 0.72),
-                .init(color: Color(red: 0.03, green: 0.15, blue: 0.34), location: 0.88),
-                .init(color: Color(red: 0.02, green: 0.08, blue: 0.25), location: 1),
-            ]
-        case "twilight":
-            return [
-                .init(color: Color(red: 0.42, green: 0.52, blue: 0.78), location: 0),
-                .init(color: Color(red: 0.28, green: 0.40, blue: 0.68), location: 0.12),
-                .init(color: Color(red: 0.16, green: 0.28, blue: 0.56), location: 0.30),
-                .init(color: Color(red: 0.09, green: 0.17, blue: 0.44), location: 0.52),
-                .init(color: Color(red: 0.05, green: 0.10, blue: 0.34), location: 0.72),
-                .init(color: Color(red: 0.03, green: 0.06, blue: 0.26), location: 0.88),
-                .init(color: Color(red: 0.02, green: 0.03, blue: 0.18), location: 1),
-            ]
-        case "midnight":
-            return [
-                .init(color: Color(red: 0.10, green: 0.16, blue: 0.30), location: 0),
-                .init(color: Color(red: 0.07, green: 0.12, blue: 0.27), location: 0.12),
-                .init(color: Color(red: 0.05, green: 0.09, blue: 0.23), location: 0.30),
-                .init(color: Color(red: 0.03, green: 0.06, blue: 0.19), location: 0.52),
-                .init(color: Color(red: 0.02, green: 0.04, blue: 0.15), location: 0.72),
-                .init(color: Color(red: 0.015, green: 0.03, blue: 0.12), location: 0.88),
-                .init(color: Color(red: 0.01, green: 0.02, blue: 0.09), location: 1),
-            ]
-        case "dawn":
-            return [
-                .init(color: Color(red: 0.86, green: 0.62, blue: 0.66), location: 0),
-                .init(color: Color(red: 0.68, green: 0.55, blue: 0.68), location: 0.12),
-                .init(color: Color(red: 0.42, green: 0.48, blue: 0.66), location: 0.30),
-                .init(color: Color(red: 0.22, green: 0.36, blue: 0.58), location: 0.52),
-                .init(color: Color(red: 0.11, green: 0.24, blue: 0.47), location: 0.72),
-                .init(color: Color(red: 0.05, green: 0.14, blue: 0.36), location: 0.88),
-                .init(color: Color(red: 0.03, green: 0.08, blue: 0.26), location: 1),
-            ]
-        case "kelp":
-            return [
-                .init(color: Color(red: 0.52, green: 0.74, blue: 0.42), location: 0),
-                .init(color: Color(red: 0.34, green: 0.62, blue: 0.40), location: 0.12),
-                .init(color: Color(red: 0.19, green: 0.48, blue: 0.38), location: 0.30),
-                .init(color: Color(red: 0.10, green: 0.34, blue: 0.34), location: 0.52),
-                .init(color: Color(red: 0.05, green: 0.22, blue: 0.28), location: 0.72),
-                .init(color: Color(red: 0.03, green: 0.13, blue: 0.21), location: 0.88),
-                .init(color: Color(red: 0.02, green: 0.08, blue: 0.15), location: 1),
-            ]
-        case "abyss":
-            return [
-                .init(color: Color(red: 0.05, green: 0.08, blue: 0.17), location: 0),
-                .init(color: Color(red: 0.035, green: 0.06, blue: 0.14), location: 0.12),
-                .init(color: Color(red: 0.025, green: 0.045, blue: 0.11), location: 0.30),
-                .init(color: Color(red: 0.018, green: 0.03, blue: 0.08), location: 0.52),
-                .init(color: Color(red: 0.012, green: 0.02, blue: 0.06), location: 0.72),
-                .init(color: Color(red: 0.008, green: 0.015, blue: 0.045), location: 0.88),
-                .init(color: Color(red: 0.005, green: 0.01, blue: 0.03), location: 1),
-            ]
-        case "sunset":
-            return [
-                .init(color: Color(red: 0.92, green: 0.55, blue: 0.30), location: 0),
-                .init(color: Color(red: 0.80, green: 0.42, blue: 0.38), location: 0.12),
-                .init(color: Color(red: 0.55, green: 0.30, blue: 0.48), location: 0.30),
-                .init(color: Color(red: 0.32, green: 0.20, blue: 0.50), location: 0.52),
-                .init(color: Color(red: 0.18, green: 0.12, blue: 0.44), location: 0.72),
-                .init(color: Color(red: 0.09, green: 0.07, blue: 0.34), location: 0.88),
-                .init(color: Color(red: 0.05, green: 0.04, blue: 0.25), location: 1),
-            ]
-        case "blackwater":
-            return [
-                .init(color: Color(red: 0.52, green: 0.42, blue: 0.26), location: 0),
-                .init(color: Color(red: 0.42, green: 0.33, blue: 0.20), location: 0.12),
-                .init(color: Color(red: 0.32, green: 0.24, blue: 0.15), location: 0.30),
-                .init(color: Color(red: 0.22, green: 0.16, blue: 0.10), location: 0.52),
-                .init(color: Color(red: 0.14, green: 0.10, blue: 0.07), location: 0.72),
-                .init(color: Color(red: 0.09, green: 0.06, blue: 0.05), location: 0.88),
-                .init(color: Color(red: 0.05, green: 0.04, blue: 0.03), location: 1),
-            ]
-        default:
-            return [
-                .init(color: Color(red: 0.46, green: 0.79, blue: 0.72), location: 0),
-                .init(color: Color(red: 0.27, green: 0.65, blue: 0.65), location: 0.12),
-                .init(color: Color(red: 0.13, green: 0.49, blue: 0.60), location: 0.30),
-                .init(color: Color(red: 0.06, green: 0.31, blue: 0.51), location: 0.52),
-                .init(color: Color(red: 0.035, green: 0.19, blue: 0.41), location: 0.72),
-                .init(color: Color(red: 0.02, green: 0.11, blue: 0.31), location: 0.88),
-                .init(color: Color(red: 0.015, green: 0.06, blue: 0.22), location: 1),
-            ]
+        water(forTheme: themeKey).stops.map {
+            Gradient.Stop(color: TankPaint.color($0.rgb), location: $0.location)
         }
     }
 
+    /// The water's colour at a height (0 the surface … 1 the floor) —
+    /// what a thing at that depth fades into, and what the far water
+    /// behind it looks like.
+    func waterRGB(at unitY: Double) -> TankPaint.RGB {
+        let stops = water.stops
+        let y = min(1, max(0, unitY))
+        var lower = stops[0]
+        for stop in stops {
+            if stop.location >= y {
+                let span = max(0.0001, stop.location - lower.location)
+                return TankPaint.mix(lower.rgb, stop.rgb, (y - lower.location) / span)
+            }
+            lower = stop
+        }
+        return stops[stops.count - 1].rgb
+    }
+
+    /// Where the light comes from: the sun sits above the surface a
+    /// little left of centre, so every lit crown, shaft and shadow in
+    /// the tank agrees on one direction.
+    func sunPoint(in size: CGSize) -> CGPoint {
+        CGPoint(x: size.width * 0.34, y: -size.height * 0.10)
+    }
+
+    /// The veil for a thing standing at `depth` (0 the back of the bed
+    /// … 1 the glass): the water's colour low in the column, pulled
+    /// toward the night water as the night deepens.
+    func atmosphere(depth: Double, t: Double) -> TankPaint.Atmosphere {
+        let night = isDarkTheme ? max(0.55, nightFactor(t: t)) : nightFactor(t: t)
+        let far = 1 - min(1, max(0, depth))
+        let deep = waterRGB(at: 0.62)
+        let haze = TankPaint.mix(deep, Self.nightWater, night * 0.55)
+        return TankPaint.Atmosphere(haze: 0.08 + 0.46 * far * far + night * 0.30,
+                                    hazeColor: haze, light: water.light, night: night)
+    }
+
+    /// The deep blue the whole tank sinks toward after dark.
+    static let nightWater = TankPaint.RGB(0.015, 0.035, 0.11)
+
+    /// The column of water itself: the theme's gradient, the sky's
+    /// light pooled under the surface over the sun's side, a moon by
+    /// night, and a cool counter-glow low on the far side so the deep
+    /// never goes dead flat. Drawn in the still pass; the only moving
+    /// light is the shafts and caustics of the light pass.
     func drawWater(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        canvas.fill(
-            Path(CGRect(origin: .zero, size: size)),
-            with: .linearGradient(
-                Gradient(stops: waterStops),
-                startPoint: CGPoint(x: size.width / 2, y: 0),
-                endPoint: CGPoint(x: size.width / 2, y: size.height)))
-        // The dark themes' moonlight: the same warm glow dimmed &
-        // cooled, and a deeper night wash below.
-        let dark = isDarkTheme
+        let rect = Path(CGRect(origin: .zero, size: size))
+        canvas.fill(rect, with: .linearGradient(
+            Gradient(stops: waterStops),
+            startPoint: CGPoint(x: size.width / 2, y: 0),
+            endPoint: CGPoint(x: size.width / 2, y: size.height)))
+        let w = water
+        let night = nightFactor(t: t)
+        let day = (1 - night * 0.85) * (isDarkTheme ? 0.45 : 1)
+        let reach = max(size.width, size.height)
         var glow = canvas
         glow.blendMode = .plusLighter
-        glow.fill(Path(CGRect(origin: .zero, size: size)),
-                  with: .radialGradient(
-                      Gradient(colors: [(dark
-                                         ? Color(red: 0.72, green: 0.80, blue: 0.98)
-                                         : Color(red: 0.95, green: 0.88, blue: 0.66))
-                                        .opacity(dark ? 0.13 : 0.22), .clear]),
-                      center: CGPoint(x: size.width * 0.36, y: -size.height * 0.10),
-                      startRadius: 0, endRadius: size.width * 0.62))
-        glow.fill(Path(CGRect(origin: .zero, size: size)),
-                  with: .radialGradient(
-                      Gradient(colors: [Color(red: 0.20, green: 0.50, blue: 0.62)
-                                        .opacity(dark ? 0.06 : 0.10), .clear]),
-                      center: CGPoint(x: size.width * 0.88, y: size.height * 0.55),
-                      startRadius: 0, endRadius: size.width * 0.5))
-        // The day/night wash (docs/TOYS.md): the clock the settings
-        // picked — the four-minute breathe or the real one. Reduce
-        // Motion holds it at a soft dusk.
-        let night = nightFactor(t: t)
-        canvas.fill(Path(CGRect(origin: .zero, size: size)),
-                    with: .color(Color(red: 0.02, green: 0.05, blue: 0.22)
-                                 .opacity(dark ? 0.10 + 0.06 * night : 0.10 * night)))
-        canvas.fill(Path(CGRect(origin: .zero, size: size)),
-                    with: .linearGradient(
-                        Gradient(stops: [
-                            .init(color: Color(red: 0.99, green: 0.82, blue: 0.45)
-                                    .opacity(0.05 * (1 - night)), location: 0),
-                            .init(color: .clear, location: 0.5),
-                        ]),
-                        startPoint: .zero,
-                        endPoint: CGPoint(x: 0, y: size.height)))
+        let sun = sunPoint(in: size)
+        glow.fill(rect, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: TankPaint.color(w.light, 0.34 * day), location: 0),
+                .init(color: TankPaint.color(w.light, 0.12 * day), location: 0.28),
+                .init(color: TankPaint.color(w.light, 0.03 * day), location: 0.6),
+                .init(color: .clear, location: 1),
+            ]),
+            center: sun, startRadius: 0, endRadius: reach * 0.78))
+        // The moon: a small cool bloom where the sun was.
+        if night > 0.05 {
+            let moon = TankPaint.RGB(0.72, 0.82, 1.0)
+            glow.fill(rect, with: .radialGradient(
+                Gradient(stops: [
+                    .init(color: TankPaint.color(moon, 0.16 * night), location: 0),
+                    .init(color: TankPaint.color(moon, 0.04 * night), location: 0.4),
+                    .init(color: .clear, location: 1),
+                ]),
+                center: sun, startRadius: 0, endRadius: reach * 0.5))
+        }
+        let cool = waterRGB(at: 0.3)
+        glow.fill(rect, with: .radialGradient(
+            Gradient(colors: [TankPaint.color(cool, 0.10 * day), .clear]),
+            center: CGPoint(x: size.width * 0.90, y: size.height * 0.58),
+            startRadius: 0, endRadius: size.width * 0.45))
         drawFleetMood(canvas: &canvas, size: size, t: t)
+    }
+
+    /// The night over the far half of the tank — the water, the back
+    /// wall and the far bed sink toward the night blue together. The
+    /// near pieces carry their own night in their veil, and the fish
+    /// stay the brightest thing in the water.
+    func drawNight(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let night = nightFactor(t: t)
+        let strength = isDarkTheme ? 0.18 + 0.18 * night : 0.72 * night
+        guard strength > 0.01 else { return }
+        var n = canvas
+        n.blendMode = .multiply
+        let tint = TankPaint.mix(TankPaint.RGB(1, 1, 1), TankPaint.RGB(0.16, 0.24, 0.50), strength)
+        n.fill(Path(CGRect(origin: .zero, size: size)), with: .color(TankPaint.color(tint)))
     }
 
     /// The water reading the fleet, very subtly (docs/TOYS.md) — no
@@ -213,100 +228,177 @@ extension AquariumView {
         }
     }
 
-    /// Soft light shafts leaning down from the surface. Each ray is its
-    /// own layer: a gradient across the beam gives the soft edges and a
-    /// masking gradient fades it with depth, so there are no hard
-    /// polygon sides. They breathe & sway a couple of degrees; Reduce
-    /// Motion holds them still. This draws in the additive pass, so a
-    /// ray that reaches the floor lights the sand it lands on.
-    func drawGodRays(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        // The abyss has no sun; blackwater's tannin murk swallows all
-        // but a few shafts; night dims whatever the theme allows.
-        guard themeKey != "abyss" else { return }
-        let count = themeKey == "blackwater" ? 2 : 5
-        let daylight = 1 - nightFactor(t: t) * 0.55
-        let rayColor = Color(red: 0.86, green: 0.97, blue: 0.93)
-        for i in 0..<count {
-            let h = AquariumModel.stableHash("ray-\(i)")
-            let jitter = Double(h & 0xFF) / 0xFF
-            let phase = Double((h >> 8) & 0xFF) / 0xFF * .pi * 2
-            let speed = 0.030 + Double((h >> 16) & 0xFF) / 0xFF * 0.035
-            let anchorX = size.width * (0.08 + 0.21 * Double(i) + jitter * 0.07)
-            let halfW = 18 + Double((h >> 24) & 0xFF) / 0xFF * 34
-            let lean = 0.20 + jitter * 0.18
-            let sway = reduceMotion ? 0 : sin(t * speed + phase) * 0.030
-            let breathe = (reduceMotion ? 0.45 : 0.36 + 0.32 * sin(t * 0.06 + phase * 1.7))
-                * daylight
-            // Off-centre bright core so the beam isn't a flat band.
-            let core = 0.4 + Double((h >> 32) & 0xFF) / 0xFF * 0.2
+    /// One light shaft: its lean off straight down, how wide it is,
+    /// its brightness and its slow clocks. Seeded once.
+    private struct Shaft {
+        var angle, halfWidth, strength, swayRate, breatheRate, phase: Double
+    }
 
+    /// Seven shafts fanning out of the sun, wide and narrow mixed.
+    private static let shafts: [Shaft] = (0..<7).map { i in
+        var rng = TankPaint.Seeded(AquariumModel.stableHash("shaft-\(i)"))
+        let spread = (Double(i) - 3) / 3
+        return Shaft(angle: spread * 0.34 + rng.next(-0.04, 0.04),
+                     halfWidth: rng.next(0.012, 0.042),
+                     strength: rng.next(0.55, 1.0),
+                     swayRate: rng.next(0.030, 0.065),
+                     breatheRate: rng.next(0.05, 0.11),
+                     phase: rng.next(0, .pi * 2))
+    }
+
+    /// Soft light shafts fanning down from the sun through the surface.
+    /// Each shaft is one long soft ellipse — a radial gradient squeezed
+    /// across the beam — so its edges and its fade with depth come from
+    /// a single fill, no layers. They sway a degree or two and breathe;
+    /// Reduce Motion holds them still. This draws in the additive pass,
+    /// so a shaft that reaches the floor lights the sand it lands on.
+    func drawGodRays(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let w = water
+        let blackwater = themeKey == "blackwater"
+        guard w.shafts > 0 else { return }
+        let night = nightFactor(t: t)
+        let light = TankPaint.mix(w.light, TankPaint.RGB(0.70, 0.80, 1.0), night)
+        let level = w.shafts * (1 - night * 0.72)
+        let apex = CGPoint(x: size.width * 0.34, y: -size.height * 0.62)
+        let length = size.height * 1.05
+        for (i, shaft) in Self.shafts.enumerated() where !blackwater || i % 3 == 1 {
+            let sway = reduceMotion ? 0 : sin(t * shaft.swayRate + shaft.phase) * 0.022
+            let breathe = reduceMotion ? 0.75
+                : 0.62 + 0.38 * sin(t * shaft.breatheRate + shaft.phase * 1.7)
+            let alpha = 0.16 * shaft.strength * breathe * level
+            // Where the shaft crosses the surface: its brightest point
+            // sits a little under it.
+            let angle = shaft.angle + sway
+            let toSurface = -apex.y / max(0.2, cos(angle))
             var r = canvas
-            r.blendMode = .plusLighter
-            r.drawLayer { layer in
-                layer.translateBy(x: anchorX, y: -14)
-                layer.rotate(by: .radians(lean + sway))
-                let length = size.height * 1.35
-                let beam = CGRect(x: -halfW, y: 0, width: halfW * 2, height: length)
-                layer.fill(Path(beam), with: .linearGradient(
-                    Gradient(stops: [
-                        .init(color: rayColor.opacity(0), location: 0),
-                        .init(color: rayColor.opacity(0.035 * breathe), location: core - 0.28),
-                        .init(color: rayColor.opacity(0.10 * breathe), location: core),
-                        .init(color: rayColor.opacity(0.035 * breathe), location: core + 0.28),
-                        .init(color: rayColor.opacity(0), location: 1),
-                    ]),
-                    startPoint: CGPoint(x: -halfW, y: 0),
-                    endPoint: CGPoint(x: halfW, y: 0)))
-                // Fade with depth — destinationIn keeps the soft edges.
-                layer.blendMode = .destinationIn
-                layer.fill(Path(beam), with: .linearGradient(
-                    Gradient(stops: [
-                        .init(color: .white, location: 0),
-                        .init(color: .white, location: 0.45),
-                        .init(color: .white.opacity(0), location: 0.95),
-                    ]),
-                    startPoint: .zero, endPoint: CGPoint(x: 0, y: length)))
-            }
+            r.translateBy(x: apex.x, y: apex.y)
+            r.rotate(by: .radians(-angle))
+            r.translateBy(x: 0, y: toSurface + size.height * 0.08)
+            r.scaleBy(x: shaft.halfWidth * size.width / length, y: 1)
+            r.fill(Path(ellipseIn: CGRect(x: -length, y: -length, width: length * 2, height: length * 2)),
+                   with: .radialGradient(
+                       Gradient(stops: [
+                           .init(color: TankPaint.color(light, alpha), location: 0),
+                           .init(color: TankPaint.color(light, alpha * 0.55), location: 0.35),
+                           .init(color: TankPaint.color(light, alpha * 0.15), location: 0.7),
+                           .init(color: .clear, location: 1),
+                       ]),
+                       center: .zero, startRadius: 0, endRadius: length))
         }
     }
 
-    /// Caustic dapples: a few soft pools of warm light riding the dune
-    /// crest, wandering back and forth and breathing on slow, seeded
-    /// phases — sunlight focused through the surface ripples onto the
-    /// bed. Drawn in the additive pass so they read as light, and
-    /// seeded through the same murmur-style scramble the speckles use
-    /// so FNV-1a's low bits can't park them in a row.
+    /// Where the shafts land on the bed, 0…1 across the tank — the
+    /// sand's caustics burn brightest there.
+    private func shaftLandings(in size: CGSize) -> [Double] {
+        let apex = CGPoint(x: size.width * 0.34, y: -size.height * 0.62)
+        let floor = size.height * 0.88 - apex.y
+        return Self.shafts.map { (apex.x + tan($0.angle) * floor) / max(1, size.width) }
+    }
+
+    /// One corner of the sand's caustic lattice: where it sits on the
+    /// bed (u across, v from the far bank to the glass) and its own
+    /// slow wobble.
+    private struct CausticCorner {
+        var u, v, phase, rate: Double
+    }
+
+    /// The lattice's corners, seeded once: 46 columns by 9 rows,
+    /// jittered hard so no two cells match.
+    private static let causticColumns = 46
+    private static let causticRows = 9
+    private static let causticCorners: [CausticCorner] = {
+        var rng = TankPaint.Seeded(0xCA05_71C5)
+        var corners: [CausticCorner] = []
+        for row in 0...causticRows {
+            for col in 0...causticColumns {
+                let stagger = row.isMultiple(of: 2) ? 0 : 0.5
+                corners.append(CausticCorner(
+                    u: (Double(col) + stagger + rng.next(-0.42, 0.42)) / Double(causticColumns) - 0.02,
+                    v: min(1, max(0, (Double(row) + rng.next(-0.32, 0.32)) / Double(causticRows))),
+                    phase: rng.next(0, .pi * 2), rate: rng.next(0.5, 1.1)))
+            }
+        }
+        return corners
+    }()
+
+    /// Caustics on the bed: the net of light the rippling surface
+    /// focuses onto the sand. The whole bed is lit in a layer, then
+    /// each cell of a wobbling lattice is cut back out — rounded, a
+    /// little smaller than its corners — so what stays lit is the net
+    /// between the cells, fine and flat far off, broader toward the
+    /// glass. The net burns brightest where the shafts land. Reduce
+    /// Motion holds it still.
     func drawSandCaustics(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        // White aragonite bounces the light back — its pools burn
+        let w = water
+        guard w.shafts > 0, size.width > 1, size.height > 1 else { return }
+        let night = nightFactor(t: t)
+        let level = w.shafts * (1 - night * 0.8)
+        guard level > 0.05 else { return }
+        // White aragonite bounces the light back — its net burns
         // brighter; dark gravel drinks it.
-        let boost = substrateKey == "white" ? 1.7
-            : substrateKey == "black" ? 0.6 : 1.0
-        for i in 0..<4 {
-            var h = AquariumModel.stableHash("caustic-\(i)")
-            h ^= h >> 33
-            h &*= 0xff51afd7ed558ccd
-            h ^= h >> 33
-            let x0 = Double(h & 0xFFFF) / 0xFFFF
-            let phase = Double((h >> 16) & 0xFF) / 0xFF * .pi * 2
-            // Ping-pong wander: sin keeps the pool sliding without the
-            // wrap-around jump a `frac` drift would take at the wall.
-            let wander = reduceMotion ? 0.5
-                : 0.5 + 0.5 * sin(t * (0.05 + Double((h >> 24) & 0xFF) / 0xFF * 0.05) + phase)
-            let cx = size.width * (0.08 + 0.84 * (x0 * 0.45 + wander * 0.55))
-            let cy = sandTop(atX: cx, in: size) + 5 + Double((h >> 32) & 0xF)
-            let rx = 46 + Double((h >> 40) & 0xFF) / 0xFF * 58
-            let ry = rx * (0.15 + Double((h >> 48) & 0xF) / 0xF * 0.09)
-            let breathe = reduceMotion ? 0.55
-                : 0.55 + 0.45 * sin(t * 0.23 + phase * 1.9)
-            var s = canvas
-            s.translateBy(x: cx, y: cy)
-            s.scaleBy(x: rx, y: ry)
-            s.fill(Path(ellipseIn: CGRect(x: -1, y: -1, width: 2, height: 2)),
-                   with: .radialGradient(
-                       Gradient(colors: [
-                           Color(red: 1.0, green: 0.94, blue: 0.74).opacity(0.10 * breathe * boost),
-                           .clear]),
-                       center: .zero, startRadius: 0, endRadius: 1))
+        let boost = substrateKey == "white" ? 1.4 : substrateKey == "black" ? 0.55 : 1.0
+        let tt = reduceMotion ? 0 : t
+        let bed = sandPath(in: size) { sandTop(atX: $0, in: size) }
+        let far = sandTop(atX: size.width / 2, in: size) - 14
+        let depth = size.height + 6 - far
+        let columns = Self.causticColumns + 1
+        let points: [CGPoint] = Self.causticCorners.map { corner in
+            // Rows crowd together far off: the bed seen at a slant.
+            let v = corner.v * corner.v * 0.85 + corner.v * 0.15
+            let cell = size.width / Double(Self.causticColumns)
+            let wobble = 0.22 * cell * (0.4 + 0.6 * v)
+            let x = corner.u * size.width + sin(tt * corner.rate + corner.phase) * wobble
+            let y = far + v * depth + cos(tt * corner.rate * 0.8 + corner.phase) * wobble * (0.15 + 0.35 * v)
+            return CGPoint(x: x, y: y)
+        }
+        var holes = Path()
+        for row in 0..<Self.causticRows {
+            for col in 0..<Self.causticColumns {
+                let a = points[row * columns + col], b = points[row * columns + col + 1]
+                let c = points[(row + 1) * columns + col + 1], d = points[(row + 1) * columns + col]
+                let cx = (a.x + b.x + c.x + d.x) / 4, cy = (a.y + b.y + c.y + d.y) / 4
+                let v = Double(row) / Double(Self.causticRows)
+                let seed = Self.causticCorners[row * columns + col].phase
+                let keep = 0.86 - 0.03 * v + 0.05 * sin(seed * 3.7)
+                func pull(_ p: CGPoint) -> CGPoint {
+                    CGPoint(x: cx + (p.x - cx) * keep, y: cy + (p.y - cy) * keep)
+                }
+                let q = [pull(a), pull(b), pull(c), pull(d)]
+                holes.move(to: CGPoint(x: (q[3].x + q[0].x) / 2, y: (q[3].y + q[0].y) / 2))
+                for k in 0..<4 {
+                    let next = q[(k + 1) % 4]
+                    holes.addQuadCurve(to: CGPoint(x: (q[k].x + next.x) / 2, y: (q[k].y + next.y) / 2),
+                                       control: q[k])
+                }
+                holes.closeSubpath()
+            }
+        }
+        // Where the shafts land the net is bright; between them it dims.
+        var stops: [Gradient.Stop] = [.init(color: .white.opacity(0.35), location: 0)]
+        for x in shaftLandings(in: size).sorted() where x > 0.02 && x < 0.98 {
+            stops.append(.init(color: .white.opacity(0.35), location: x - 0.09))
+            stops.append(.init(color: .white, location: x))
+            stops.append(.init(color: .white.opacity(0.35), location: x + 0.09))
+        }
+        stops.append(.init(color: .white.opacity(0.35), location: 1))
+        stops.sort { $0.location < $1.location }
+        let light = w.light
+        var lit = canvas
+        lit.opacity = min(1, level * boost)
+        lit.drawLayer { layer in
+            layer.clip(to: bed)
+            layer.fill(bed, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: TankPaint.color(light, 0.04), location: 0),
+                    .init(color: TankPaint.color(light, 0.12), location: 0.3),
+                    .init(color: TankPaint.color(light, 0.05), location: 1),
+                ]),
+                startPoint: CGPoint(x: 0, y: far), endPoint: CGPoint(x: 0, y: size.height)))
+            layer.blendMode = .destinationOut
+            layer.fill(holes, with: .color(.black))
+            layer.blendMode = .destinationIn
+            layer.fill(Path(CGRect(origin: .zero, size: size)), with: .linearGradient(
+                Gradient(stops: stops), startPoint: .zero, endPoint: CGPoint(x: size.width, y: 0)))
         }
     }
 
@@ -317,9 +409,11 @@ extension AquariumView {
     func drawWaterSheen(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         let spots: [(cx: Double, cy: Double, r: Double, period: Double,
                      phase: Double, alpha: Double)] = [
-            (0.42, 0.26, 0.34, 190, 0, 0.050),
-            (0.68, 0.58, 0.26, 310, 2.1, 0.034),
+            (0.42, 0.26, 0.34, 190, 0, 0.045),
+            (0.68, 0.58, 0.26, 310, 2.1, 0.030),
         ]
+        let light = water.light
+        let day = 1 - nightFactor(t: t) * 0.8
         for spot in spots {
             let drift = reduceMotion ? 0 : sin(t * .pi * 2 / spot.period + spot.phase)
             var s = canvas
@@ -330,56 +424,89 @@ extension AquariumView {
                                           width: size.width * spot.r * 2,
                                           height: size.width * spot.r * 2)),
                    with: .radialGradient(
-                       Gradient(colors: [
-                           Color(red: 0.75, green: 0.95, blue: 0.88).opacity(spot.alpha),
-                           .clear]),
+                       Gradient(colors: [TankPaint.color(light, spot.alpha * day), .clear]),
                        center: .zero, startRadius: 0,
                        endRadius: size.width * spot.r))
         }
     }
 
-    /// The water's surface: a soft bright band just under the glass,
-    /// three wandering caustic bands (wide, low-contrast strokes), and
-    /// the thin bright meniscus line on top.
+    /// The glints under the surface: short bright slivers where the
+    /// ripples focus the light, seeded once.
+    private static let glints: [(x: Double, y: Double, len: Double, rate: Double, phase: Double)] =
+        (0..<64).map { i in
+            var rng = TankPaint.Seeded(AquariumModel.stableHash("glint-\(i)"))
+            return (rng.next(0, 1), rng.next(0, 1), rng.next(0.4, 1), rng.next(0.5, 1.4),
+                    rng.next(0, .pi * 2))
+        }
+
+    /// The water's surface seen from below: a bright band where the sky
+    /// comes through, the rippled underside of the surface catching the
+    /// light, a row of glints shimmering where the ripples focus it, and
+    /// the thin bright meniscus against the glass. Reduce Motion holds
+    /// the ripples still.
     func drawSurface(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        canvas.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: 36)),
+        let light = water.light
+        let day = (1 - nightFactor(t: t) * 0.7) * (isDarkTheme ? 0.5 : 1)
+        let tt = reduceMotion ? 0 : t
+        let band = min(48, size.height * 0.08)
+        canvas.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: band)),
                     with: .linearGradient(
                         Gradient(stops: [
-                            .init(color: .white.opacity(0.16), location: 0),
-                            .init(color: .white.opacity(0.05), location: 0.5),
+                            .init(color: TankPaint.color(light, 0.22 * day), location: 0),
+                            .init(color: TankPaint.color(light, 0.07 * day), location: 0.35),
                             .init(color: .clear, location: 1),
                         ]),
-                        startPoint: .zero,
-                        endPoint: CGPoint(x: 0, y: 36)))
-        for r in 0..<3 {
-            let y0 = 10 + Double(r) * 9
-            let amp = 2.0 + Double(r) * 0.8
-            let drift = reduceMotion ? 0 : t * (0.34 + Double(r) * 0.13)
-            var wave = Path()
-            wave.move(to: CGPoint(x: 0, y: y0))
-            var x = 0.0
-            while x <= size.width {
-                let y = y0 + sin(x * 0.045 + drift + Double(r) * 2.3) * amp
-                    + sin(x * 0.011 - drift * 0.6) * amp * 0.5
-                wave.addLine(to: CGPoint(x: x, y: y))
-                x += 8
-            }
-            let shimmer = reduceMotion ? 0.6 : 0.60 + 0.40 * sin(t * 0.45 + Double(r) * 2.1)
-            canvas.stroke(wave,
-                          with: .color(.white.opacity((0.065 - Double(r) * 0.016) * shimmer)),
-                          style: StrokeStyle(lineWidth: 7 - Double(r) * 1.8, lineCap: .round))
-        }
-        // The meniscus: a bright hairline with a barely-there wobble,
-        // plus a soft halo a couple of pixels under it.
-        var line = Path()
-        line.move(to: CGPoint(x: 0, y: 1.4))
+                        startPoint: .zero, endPoint: CGPoint(x: 0, y: band)))
+        // The underside: the surface's ripples, lit above and shadowed
+        // below, so the waterline reads as a moving sheet.
+        var underside = Path()
+        underside.move(to: CGPoint(x: 0, y: 0))
         var x = 0.0
-        while x <= size.width {
-            line.addLine(to: CGPoint(x: x, y: 1.4
-                                     + sin(x * 0.05 + (reduceMotion ? 0 : t * 0.4)) * 0.7))
+        while x <= size.width + 8 {
+            let y = 7 + sin(x * 0.021 + tt * 0.55) * 2.2 + sin(x * 0.057 - tt * 0.8) * 1.2
+            underside.addLine(to: CGPoint(x: x, y: y))
             x += 8
         }
-        canvas.stroke(line, with: .color(.white.opacity(0.18)), lineWidth: 3.4)
-        canvas.stroke(line, with: .color(.white.opacity(0.42)), lineWidth: 1.2)
+        underside.addLine(to: CGPoint(x: size.width + 8, y: 0))
+        underside.closeSubpath()
+        canvas.fill(underside, with: .linearGradient(
+            Gradient(colors: [TankPaint.color(light, 0.20 * day), TankPaint.color(light, 0.06 * day)]),
+            startPoint: .zero, endPoint: CGPoint(x: 0, y: 10)))
+        var lip = Path()
+        x = 0
+        while x <= size.width + 8 {
+            let y = 7 + sin(x * 0.021 + tt * 0.55) * 2.2 + sin(x * 0.057 - tt * 0.8) * 1.2
+            if x == 0 { lip.move(to: CGPoint(x: x, y: y)) } else { lip.addLine(to: CGPoint(x: x, y: y)) }
+            x += 8
+        }
+        canvas.stroke(lip, with: .color(TankPaint.color(light, 0.30 * day)), lineWidth: 1.1)
+        canvas.stroke(lip.offsetBy(dx: 0, dy: 2), with: .color(.black.opacity(0.05 * day)), lineWidth: 2)
+        // Glints: three brightness buckets, one fill each.
+        var buckets = [Path(), Path(), Path()]
+        for g in Self.glints {
+            let shimmer = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(tt * g.rate + g.phase)
+            guard shimmer > 0.25 else { continue }
+            let gx = (g.x * (size.width + 60) + tt * 6 * g.rate).truncatingRemainder(dividingBy: size.width + 60) - 30
+            let gy = 10 + g.y * g.y * band * 0.8
+            let len = (8 + 22 * g.len) * (1 - g.y * 0.5)
+            let hgt = max(0.8, 1.8 * (1 - g.y * 0.6))
+            buckets[min(2, Int(shimmer * 3))].addEllipse(in: CGRect(x: gx - len / 2, y: gy - hgt / 2,
+                                                                    width: len, height: hgt))
+        }
+        var glow = canvas
+        glow.blendMode = .plusLighter
+        for (k, bucket) in buckets.enumerated() {
+            glow.fill(bucket, with: .color(TankPaint.color(light, (0.08 + Double(k) * 0.08) * day)))
+        }
+        // The meniscus: a bright hairline with a soft halo under it.
+        var line = Path()
+        line.move(to: CGPoint(x: 0, y: 1.2))
+        x = 0
+        while x <= size.width {
+            line.addLine(to: CGPoint(x: x, y: 1.2 + sin(x * 0.05 + tt * 0.4) * 0.6))
+            x += 8
+        }
+        canvas.stroke(line, with: .color(.white.opacity(0.16 * max(0.4, day))), lineWidth: 3.4)
+        canvas.stroke(line, with: .color(.white.opacity(0.45 * max(0.4, day))), lineWidth: 1.1)
     }
 }
