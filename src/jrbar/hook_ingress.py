@@ -721,9 +721,9 @@ class HookIngressService:
         A bare close read as delivered to the C shim -- its small frame was
         already in the socket buffer, it read EOF and spooled nothing -- so
         a burst of parallel hooks lost the ones past the slots. With the
-        answer it spools them for the drain, and the Python client spools
-        rather than running its synchronous fallback. The frame is never
-        read. Nothing is written to the rejection log on the accept thread
+        answer it spools them for the drain, and so does the Python client
+        when the answer reaches it before its send fails. The frame is
+        never read. Nothing is written to the rejection log on the accept thread
         a burst is already crowding; the counter still says it happened.
         """
         with self._condition:
