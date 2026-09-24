@@ -62,7 +62,10 @@ public struct NotchBuddySettings { enabled: Bool = false; character: String = "d
                                    presentation: String = "character" /* or "mini" */;
                                    buddyName: String = ""; care: BuddyCare;
                                    freePosition: BuddySpot?; tucked: Bool = false;
-                                   showCaption: Bool = true; scale: Double = 1.0 /* 1…3, floating only */ }
+                                   showCaption: Bool = true; scale: Double = 1.0 /* 1…3, floating only */;
+                                   wearsStripColor: Bool = true; walkabout: Bool = true;
+                                   wearing: String? /* a ShopItem raw value */;
+                                   walkEvery: Double = 12 /* minutes between walks, 3…40 */ }
 public struct BuddySpot { x: Double; y: Double }                    // parked screen point
 public enum BuddyCharacter: String { case dot, cat, ghost, robot, owl, slime,
                                      axolotl, crab, mushroom, ufo }
@@ -450,8 +453,10 @@ comes from `core.sessions`; the daemon is never asked for more.
 
 It is also a small pet. The pill takes taps while the buddy holds it
 (toasts stay click-through): a tap counts as a pet and cycles a trick —
-hop, spin, wave, blush — and while an ask is open the tap opens the
-session doing the asking. The card can name it (blank keeps the
+hop, spin, wave, blush — and while an ask is open a tap on the "!"
+badge over its crown opens the session doing the asking; a pat
+anywhere else stays a pat, so petting can't pull the front app away
+mid-ask. The card can name it (blank keeps the
 character's own name) and feed it ("Give treat" → hearts off the crown,
 a hop, and a `fed` glow for a while); each completed session lands as a
 crumb it "eats" with a "+1". A day without a pat droops it — the
@@ -469,29 +474,67 @@ frame on restore; a drop back on the notch slot, or the menu's "Dock at
 the notch", sends it home. Toasts never fight it: docked, the buddy
 still steps aside for a toast; parked, the toast keeps the notch panel
 to itself. Right-click (or a long press) opens its menu — Pet it, Give
-treat, Rename…, Change character →, Open the asking session while one
-is up, Dock/Float free, Show caption, Tuck away. Tucked is a nap: off
-the screen until the next session event or a card re-enable. Parked, it
-can wear a quiet one-line caption naming what it is watching —
-"Claude · rename-the-fish — working", or "… — waiting on you" — the
-`BuddyFocus` pick: an open ask first, then failed, then the freshest
-working session, a done row only when nothing live remains.
+treat, Rename…, Change character →, About…, Wear → (once the tank's
+shop has sold a buddy piece), Feed the tank (while the tank has fish),
+Open the asking session while one is up, Dock/Float free, Caption on
+hover, Take walks (floating only), Tuck away. Tucked is a nap: off the
+screen until the next session event or a card re-enable. Under the
+pointer, docked or floating, it wears a quiet one-line caption naming
+what it is watching — "Claude · rename-the-fish — working", or "… —
+waiting on you" — the `BuddyFocus` pick: an open ask first, then
+failed, then the freshest working session, a done row only when
+nothing live remains; its name while nothing runs. "Caption on hover"
+(the card and the menu) turns it off in both homes.
 
 The floating pet is sizable: the card's Size slider sets
 `NotchBuddySettings.scale` (1…3, default 1), which the free panel reads
 as a `scaleEffect` on the 18pt figure — vector all the way down, so
-strokes, eyes and the badge stay crisp — with padding, caption (up to
-~11pt) and the capsule's corner radius growing with it. The panel
+strokes, eyes and the badge stay crisp — with its padding and caption
+(up to ~11pt) growing with it; it floats bare, no pill behind it. The
+readout beside the slider names the stop exactly (1.25×, not 1.2×). The panel
 re-measures off the hosting view on every present, so the slider drags
 the pet bigger live and a parked 3× buddy still clamps fully on-screen;
 the docked pill ignores the dial entirely — the notch slot is fixed.
 Docked is the same 18pt figure, not a lesser one: poses, tricks, hearts
 and crumbs all show in the slot. The card's Mini toggle
 (`presentation: "mini"`) swaps the body for the bare status dot wherever
-the buddy sits, and while the daemon publishes a `screen_bar` LED
-program the docked slot is that dot anyway — it is the strip's extra
-LED at the centre seam, sampled on the program's own anchor rather than
-a private clock.
+the buddy sits. While the daemon publishes a `screen_bar` LED program
+the docked buddy wears the band's colour ("Wear the Screen Bar's
+colour", on by default): the seam's brightest still colour, never its
+pulse, so it is a creature dressed like the band rather than a second
+light keeping its time. Asks, failures and hops keep their own amber,
+red and green.
+
+Floating, it takes the odd calm walk — neko's manners, not the goose's
+(`BuddyStroll`). While agents work and nothing asks, now and then it
+hops up onto the top edge of the frontmost window with room (or the
+bottom of the screen), walks along it, turns round on the spot at the
+far end — the edge's end when the edge is short — wanders half the way
+back, and hops home to where you parked it. "Take walks" turns it off;
+"How often it walks" (`walkEvery`, 3–40 minutes, 12 by default, the
+cadence it always had) sets roughly one walk per that many minutes of
+work. It only ever moves its own panel. A press on it holds it still
+under the pointer (the walk picks up on release), its menu holds it
+too, a carry ends the walk, and an ask, a failure, idle agents or a
+window that moved send it straight home from where it stands. Resizing
+or re-parking it mid-walk does the same instead of teleporting it.
+Reduce Motion never walks.
+
+Nothing it does pops. A change of heading on a walk eases over 0.35 s
+(`BuddyTurn`): the eyes cross first, the body follows, the lean passes
+through upright and the body narrows a touch at the midpoint; stepping
+from its patrol into the walk and back blends the two poses over the
+same beat. A mood change (a completion hop, an ask, a slump, waking)
+hands the old pose over to the new one over 0.24 s (`BuddyHandoff`), so
+the patrol's three-point swing never jumps; the new mood's own entrance
+still plays. The carried dangle follows the cursor on a short lag, so a
+change of direction swings it through upright, and the drop eases out
+whatever lean it had. Dragged out of the notch it takes over in place:
+no blink, and at 2× it grows from the docked size over 0.3 s instead of
+doubling in a frame. "Tuck away" ducks it out over a quarter second —
+up under the notch when docked, down to its feet when floating — and it
+pops back up when it wakes. Reduce Motion takes every one of these in a
+single step.
 
 The skeleton is a soft body, two pupils under lids, a mouth and a ground
 shadow — at 18pt the silhouette does the work, so the craft lives in the
@@ -696,7 +739,12 @@ marketing words. Examples:
   `BuddyPlacement` owns the drag threshold, dangle tilt, screen clamp
   and dock-snap (`JRBarCoreTests/BuddyPresenceTests.swift`); the free
   spot's persist, tuck/wake, menu contents and drag bookkeeping live in
-  `JRBarAppTests/BuddyRoamingTests.swift`.
+  `JRBarAppTests/BuddyRoamingTests.swift`. The walk's path, cadence and
+  per-frame motion (no more than a step a frame across a leg change or a
+  re-plan) are `JRBarAppTests/BuddyStrollTests.swift`; the eased turn,
+  the mood handoff and the dangle's lag are
+  `JRBarAppTests/BuddyTurnTests.swift` (≤ 2° of lean and ≤ 0.2 of eye
+  travel per 1/60 s frame through a reversal).
 - Fold math: `deltaRadians(angle:reference:)` clamps, jitter filter
   accepts/rejects, pause predicate on each safety input (pure functions
   in `JRBarCore/FoldMath.swift`, tests in `FoldMathTests.swift`).
