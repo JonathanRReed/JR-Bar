@@ -3,13 +3,15 @@ import JRBarCore
 import Observation
 import SwiftUI
 
-/// Confetti (docs/TOYS.md): when one of the user's triggers lands, a
-/// confetti cannon pops at the notch/Screen Bar centre and rains pieces
-/// in that provider's colours down a transparent, click-through overlay,
-/// then the window closes. The default trigger is the one the toy has
-/// always had — a provider's *weekly* quota reset (a `quota_reset` event
-/// whose `lane` is `"weekly"` or ends `-weekly`); the rest are opt-in.
-/// Off by default; Reduce Motion gets a soft radial bloom instead.
+/// Confetti (docs/TOYS.md): when one of the user's triggers lands, the
+/// notch pops and a burst in that provider's colours sprays out of its
+/// lower lip (or the icon, the corners, or rain) across a transparent,
+/// click-through overlay, flutters down, lands on the window tops (in
+/// Rest), and the window closes the moment the last piece is gone. The
+/// default trigger is the one the toy has always had — a provider's
+/// *weekly* quota reset (a `quota_reset` event whose `lane` is
+/// `"weekly"` or ends `-weekly`); the rest are opt-in. Off by default;
+/// Reduce Motion gets one soft glow at the lip instead.
 ///
 /// It minds the room: while JR-Bar is quiet, a Focus is on or a call has
 /// the mic or camera (`ToysStore.hushReason`, the call fact through

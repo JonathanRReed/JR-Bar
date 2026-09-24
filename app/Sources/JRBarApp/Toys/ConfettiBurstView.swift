@@ -269,8 +269,8 @@ struct ConfettiView: View {
             return
         }
         let lip = ConfettiEmitter.lip(of: stage)
-        glow(&canvas, center: CGPoint(x: lip.midX, y: lip.minY), width: lip.width + 120 * rise,
-             height: 22 + 26 * rise, opacity: 0.7 * fade)
+        glow(&canvas, center: CGPoint(x: lip.midX, y: lip.minY), width: lip.width + 140 * rise,
+             height: 26 + 34 * rise, opacity: 0.9 * fade)
     }
 
     /// A soft elliptical light, bright at its centre.
