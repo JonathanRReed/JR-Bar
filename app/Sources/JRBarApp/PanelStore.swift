@@ -1216,12 +1216,6 @@ final class PanelStore {
 
     // MARK: Actions
 
-    /// Asks whose `answer_ask` is still on the wire, keyed by ask id:
-    /// while one is in flight (the daemon raises a terminal and types,
-    /// which can take a few seconds) the card's buttons are disabled so a
-    /// second click cannot post a second answer.
-    private(set) var pendingAnswers: Set<String> = []
-
     /// A half-typed reply, keyed by the ask's request id. Persisted so
     /// closing the panel — or the app — mid-draft doesn't lose the text;
     /// clearing it takes a confirmed send, not just an edit.
@@ -1272,108 +1266,33 @@ final class PanelStore {
         draftsDefaults.set(data, forKey: Self.replyDraftsKey)
     }
 
-    func isAnswerPending(_ ask: CoreAsk) -> Bool {
-        pendingAnswers.contains(ask.id) || askDesk.isPending(ask.session)
-    }
+    /// While an answer for the ask's session is on the wire — from here or
+    /// any other surface — the card's buttons are disabled, so a second
+    /// click cannot post a second answer.
+    func isAnswerPending(_ ask: CoreAsk) -> Bool { askDesk.isPending(ask.session) }
 
-    func approve(_ ask: CoreAsk) { answer(ask, approve: true) }
-    func deny(_ ask: CoreAsk) { answer(ask, approve: false) }
-
-    /// `answer_ask`, awaited: the toast reports the daemon's verdict, not a
-    /// guess — a refused answer leaves the ask open and says why — and
-    /// how it went: through the agent's permission hook, or typed into
-    /// the terminal (the reply's `mechanism`).
-    private func answer(_ ask: CoreAsk, approve: Bool) {
-        guard let session = ask.session, !session.isEmpty else {
-            show(toast: "This ask has no session left to answer")
-            return
-        }
-        if approve, AskVerbs.chooses(ask) {
-            // A held question: a bare yes answers nothing — its options do.
-            show(toast: "Pick one of its options")
-            return
-        }
-        guard ask.canAnswer || (!approve && AskVerbs.denies(ask)) else {
-            // The daemon marked it unanswerable from here (no live target,
-            // a kind it cannot type into): the only honest path is the
-            // session's own window. A held question still declines
-            // through its hook, whatever hosts the session.
-            show(toast: "This one has to be answered in the session's window")
-            return
-        }
-        guard !isAnswerPending(ask) else { return }
-        if CoreSession.isRemoteID(session) {
-            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
-            return
-        }
-        pendingAnswers.insert(ask.id)
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.pendingAnswers.remove(ask.id) }
-            do {
-                // `request` pins the card to its episode: a session that
-                // moved on to a different ask refuses `stale_request`
-                // instead of approving whatever is live now.
-                let reply = try await self.core.answerAskNow(session: session, approve: approve,
-                                                             request: ask.request)
-                if reply.ok {
-                    self.show(toast: AskAnswerLine.sent(approve ? .approve : .deny, reply: reply))
-                } else {
-                    self.answerRefused(reply.error)
-                }
-            } catch {
-                self.show(toast: "No answer from the monitor — the ask is still open")
-            }
-        }
-    }
+    /// Approve and Deny through the shared desk: the toast reports the
+    /// daemon's verdict, not a guess — a refused answer leaves the ask
+    /// open and says why — and how it went: through the agent's
+    /// permission hook, or typed into the terminal. `request` pins the
+    /// answer to the card's episode, so a session that moved on refuses
+    /// `stale_request` rather than approving whatever is live now.
+    func approve(_ ask: CoreAsk) { send(ask, .approve) }
+    func deny(_ ask: CoreAsk) { send(ask, .deny) }
 
     /// The free-text reply a `replyable` ask asks for, sent as
     /// `reply_text` on the same `answer_ask` command. A daemon that cannot
-    /// take text for this ask (a remote row, a provider without an input
-    /// kind) refuses, and the refusal is the toast.
+    /// take text for this ask refuses, and the refusal is the toast. The
+    /// draft clears only once the send is confirmed.
     func reply(_ ask: CoreAsk, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard let session = ask.session, !session.isEmpty else {
-            show(toast: "This ask has no session left to answer")
-            return
-        }
-        guard !pendingAnswers.contains(ask.id) else { return }
-        if CoreSession.isRemoteID(session) {
-            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
-            return
-        }
-        pendingAnswers.insert(ask.id)
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.pendingAnswers.remove(ask.id) }
-            do {
-                let reply = try await self.core.answerAskNow(session: session, approve: true, replyText: trimmed,
-                                                             request: ask.request)
-                if reply.ok {
-                    // Sent and confirmed — the draft's job is done. A
-                    // refusal keeps the text so it isn't lost.
-                    self.setReplyDraft("", for: ask)
-                    self.show(toast: AskAnswerLine.replied(reply))
-                } else {
-                    self.answerRefused(reply.error)
-                }
-            } catch {
-                self.show(toast: "No answer from the monitor — the ask is still open")
-            }
-        }
+        send(ask, .reply(trimmed)) { [weak self] in self?.setReplyDraft("", for: ask) }
     }
 
     /// Always allow, from its own button only: the agent remembers the
-    /// allow rule it offered (`CoreAsk.canAlwaysAllow`). Through the
-    /// shared desk, so every surface's copy of the ask dims with it.
-    func alwaysAllow(_ ask: CoreAsk) {
-        guard AskVerbs.alwaysAllows(ask) else {
-            show(toast: "This one has no rule to remember — approve it once instead")
-            return
-        }
-        send(ask, .always)
-    }
+    /// allow rule it offered (`CoreAsk.canAlwaysAllow`).
+    func alwaysAllow(_ ask: CoreAsk) { send(ask, .always) }
 
     /// A click on one of a held question's options: the answer itself
     /// for a single-pick question, one more pick otherwise.
@@ -1398,34 +1317,35 @@ final class PanelStore {
         send(ask, .choose(answers))
     }
 
-    /// One of the desk's verdicts, awaited; its line is the toast.
-    private func send(_ ask: CoreAsk, _ verdict: AskVerdict) {
-        guard !pendingAnswers.contains(ask.id) else { return }
+    /// Every verdict the panel sends goes through the shared desk, so the
+    /// notch, the Dock and a banner see the same answer in flight. A
+    /// refusal the desk can name before sending is the toast at once;
+    /// otherwise the outcome's line is, and `landed` runs only when the
+    /// daemon took the answer.
+    private func send(_ ask: CoreAsk, _ verdict: AskVerdict, landed: (@MainActor () -> Void)? = nil) {
+        if let line = askDesk.refusal(ask, verdict) {
+            show(toast: line)
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
             let outcome = await self.askDesk.answer(ask, verdict)
-            self.show(toast: outcome.line)
+            if outcome.ok { landed?() }
+            self.showAnswer(outcome)
         }
     }
 
-    /// A refused `answer_ask`: the daemon's own message, and for the one
-    /// refusal the user can fix a button into System Settings. The daemon
-    /// names its `jrbar-core` helper in the refusal; here that row reads
-    /// "JR-Bar's helper", the name the Accessibility pane shows.
-    private func answerRefused(_ error: CoreReplyError?) {
-        let message = error?.message ?? error?.code ?? "refused"
-        if error?.code == "stale_request" {
-            // The card answered a request the provider already replaced:
-            // nothing was typed — the current ask is still live.
-            show(toast: "That request changed while the card was open — nothing was sent")
-        } else if error?.code == "accessibility_required" {
-            show(toast: "Answering needs Accessibility access for JR-Bar's helper", actionTitle: "Open Settings") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                    NSWorkspace.shared.open(url)
-                }
+    /// The desk's line, and for the one refusal the user can fix a button
+    /// into System Settings' Accessibility pane.
+    private func showAnswer(_ outcome: AskAnswerDesk.Outcome) {
+        guard outcome.code == "accessibility_required" else {
+            show(toast: outcome.line)
+            return
+        }
+        show(toast: outcome.line, actionTitle: "Open Settings") {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
             }
-        } else {
-            show(toast: "Couldn't answer: \(message)")
         }
     }
 

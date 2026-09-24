@@ -58,6 +58,28 @@ struct ReplyDraftTests {
         #expect(store.replyDraft(for: a) == "")
     }
 
+    @Test("a reply goes through the shared desk; only a confirmed send clears the draft")
+    func replyClearsOnConfirm() async {
+        let store = PanelStore(core: CoreModel(), draftsDefaults: freshDefaults(), screenBarShown: false)
+        let a = ask()
+        let sent = AskSurfacesTests.Log()
+        store.askDesk.send = { _, verdict, request in
+            sent.calls.append("\(verdict)|\(request ?? "")")
+            return CoreReply(id: "1", ok: false, error: CoreReplyError(code: "unsupported", message: "no input kind"))
+        }
+        store.setReplyDraft("  only this repo ", for: a)
+        store.reply(a, text: store.replyDraft(for: a))
+        await AskSurfacesTests.waitFor { store.toast != nil }
+        #expect(sent.calls == ["\(AskVerdict.reply("only this repo"))|req-1"])
+        #expect(store.replyDraft(for: a) == "  only this repo ", "a refused reply keeps its text")
+
+        store.askDesk.send = { _, _, _ in CoreReply(id: "2", ok: true) }
+        store.reply(a, text: store.replyDraft(for: a))
+        await AskSurfacesTests.waitFor { store.replyDraft(for: a).isEmpty }
+        #expect(store.replyDraft(for: a) == "")
+        #expect(store.toast == "Reply sent · typed into the terminal")
+    }
+
     @Test("the store stays bounded — the oldest draft drops first")
     func draftsBounded() {
         let defaults = freshDefaults()

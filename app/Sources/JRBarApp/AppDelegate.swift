@@ -693,18 +693,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
         events.onOpenRefused = { [weak self] text in self?.showFeedback(text) }
-        // Approve/Deny on a banner are awaited, so a refused answer is
-        // heard: the bridge turns it into a follow-up banner that opens
-        // the session on click.
-        events.notifications.onAnswerAskNow = { [weak core] session, approve in
-            guard let core else { return "the core is not connected" }
-            do {
-                let reply = try await core.answerAskNow(session: session, approve: approve)
-                return reply.ok ? nil : (reply.error?.message ?? reply.error?.code ?? "the core refused")
-            } catch {
-                return "the core is not answering"
-            }
-        }
+        // Approve/Deny on a banner go through the panel's desk, pinned to
+        // the banner's own ask; a refusal becomes a follow-up banner that
+        // opens the session on click.
+        events.askDesk = store.askDesk
 
         // File feeds: the fallback until the daemon is connected.
         feed.onProgram = { [weak self] text, source, anchor in

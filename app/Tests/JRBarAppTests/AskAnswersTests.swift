@@ -255,6 +255,49 @@ struct AskAnswersTests {
         #expect(!outcome.ok && outcome.line == NotchAskRefusal.unreachable)
     }
 
+    @Test("a reply is its own verdict: words, for an ask that wants them, sent once and pinned")
+    func deskReply() async {
+        let sent = Sent()
+        let desk = desk(sent) { Self.reply(mechanism: "synthetic_text") }
+        let wants = CoreAsk(session: Self.session, summary: "Which branch?", answerable: true, replyable: true,
+                            request: "r1")
+        #expect(AskVerbs.allows(.reply("main"), on: wants))
+        #expect(!AskVerbs.allows(.reply("  \n"), on: wants), "a blank reply says nothing")
+        #expect(!AskVerbs.allows(.reply("main"), on: Self.held(always: true)), "a permission ask takes a verdict")
+        #expect(desk.refusal(wants, .reply(" ")) == "Type a reply first")
+        #expect(AskVerdict.reply("main").decision == "approve" && AskVerdict.reply("main").answers == nil)
+        let outcome = await desk.answer(wants, .reply("main"))
+        #expect(outcome.ok)
+        #expect(outcome.line == "Reply sent · typed into the terminal")
+        #expect(sent.calls.count == 1)
+        #expect(sent.calls.first?.verdict == .reply("main") && sent.calls.first?.request == "r1")
+    }
+
+    @Test("a refusal before sending says what the clicked button needed")
+    func deskRefusalWords() {
+        let desk = desk(Sent()) { Self.reply(mechanism: nil) }
+        #expect(desk.refusal(Self.held(choices: [Self.single]), .approve) == "Pick one of its options")
+        #expect(desk.refusal(Self.held(always: false), .always)
+                == "This one has no rule to remember — approve it once instead")
+        #expect(desk.refusal(Self.held(choices: [Self.single, Self.multi]),
+                             .choose(["Which database?": .string("Postgres")]))
+                == "Pick an answer for every question first")
+        #expect(desk.refusal(CoreAsk(session: Self.session, summary: "Bash", answerable: false), .approve)
+                == "Answer this one in the session's window")
+        #expect(desk.refusal(CoreAsk(summary: "Bash"), .deny) == AskAnswerDesk.noSession)
+        #expect(desk.refusal(Self.held(always: true), .always) == nil)
+    }
+
+    @Test("a daemon refusal carries its code, so a surface can offer the fix")
+    func deskRefusalCode() async {
+        let desk = desk(Sent()) {
+            CoreReply(id: "c", ok: false, error: CoreReplyError(code: "accessibility_required", message: "helper"))
+        }
+        let outcome = await desk.answer(Self.held(always: true), .approve)
+        #expect(!outcome.ok && outcome.code == "accessibility_required")
+        #expect(outcome.line == NotchAskRefusal.line(for: CoreReplyError(code: "accessibility_required")))
+    }
+
     // MARK: The row's copy
 
     @Test("the preview line is dropped when it only repeats the summary")

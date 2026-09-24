@@ -25,6 +25,17 @@ final class EventCoordinator {
     /// `EventPolicy` decided before anything plays; wired by the delegate,
     /// a pass-through until then.
     var deliveryRules: @MainActor (EventDelivery, CoreEvent) -> EventDelivery = { delivery, _ in delivery }
+    /// The panel's answer desk, wired by the delegate: a banner's Approve
+    /// and Deny go through it like every other surface's. Unset, a banner
+    /// answers nothing.
+    var askDesk: AskAnswerDesk?
+    /// How long an ask banner waits for the state that carries its ask —
+    /// the daemon publishes `ask_opened` just ahead of that state — before
+    /// it is posted without knowing the ask's verbs.
+    static let askBannerWait: Duration = .seconds(1)
+    /// Ask banners waiting on that state, by identifier; a withdrawal
+    /// while one waits means it is never posted.
+    private var waitingAskBanners: [String: UUID] = [:]
     /// Where a banner click's refused open is said — the panel is closed
     /// when a banner is clicked, so the delegate points it at the HUD.
     /// Unset, the refusal is only logged.
@@ -59,7 +70,10 @@ final class EventCoordinator {
         sounds.onMissing = { [weak core] name in core?.appendLocalLog(level: "warn", "no system sound named \(name)") }
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
         notifications.onOpenSession = { [weak self] session in self?.openFromBanner(session) }
-        notifications.onAnswerAsk = { [weak core] session, approve in core?.answerAsk(session: session, approve: approve) }
+        notifications.onAnswerAskNow = { [weak self] session, request, approve in
+            guard let self else { return SessionOpener.notAnswering }
+            return await self.answerFromBanner(session: session, request: request, approve: approve)
+        }
         // One announcer at the top of the screen: the Mac's own news is
         // offered to the island first and takes the pill only when the
         // island can't; a headphone the ear already names is not said
@@ -93,6 +107,49 @@ final class EventCoordinator {
             guard let refusal = await SessionOpener.open(session), let self else { return }
             self.core.appendLocalLog("open_session refused: \(refusal)")
             self.onOpenRefused?(refusal)
+        }
+    }
+
+    /// A banner's Approve or Deny: only for the ask the banner was posted
+    /// for, still live, and only through the shared desk — its gate, its
+    /// request pin, its one pending set. nil once the answer landed.
+    func answerFromBanner(session: String, request: String?, approve: Bool) async -> String? {
+        guard let askDesk else { return SessionOpener.notAnswering }
+        guard let ask = NotificationBridge.liveAsk(session: session, request: request, in: core.openAsks) else {
+            return NotificationBridge.replacedLine
+        }
+        let outcome = await askDesk.answer(ask, approve ? .approve : .deny)
+        return outcome.ok ? nil : outcome.line
+    }
+
+    /// An ask's banner offers Approve and Deny only while Approve would
+    /// land — `AskVerbs.approves` on the live ask. A held question, an ask
+    /// that wants a typed reply, or one the daemon cannot answer from here
+    /// gets a plain banner, whose click opens the session.
+    nonisolated static func bannerCategory(for ask: CoreAsk?) -> EventDelivery.Notification.Category {
+        ask.map(AskVerbs.approves) == true ? .ask : .plain
+    }
+
+    /// Posts an ask banner once the state carrying its ask has landed (or
+    /// `askBannerWait` has passed), in the category that ask's verbs
+    /// allow and pinned to its request.
+    private func deliverAskBanner(_ notification: EventDelivery.Notification, session: String, request: String?) {
+        let token = UUID()
+        waitingAskBanners[notification.identifier] = token
+        Task { [weak self] in
+            var ask = self.flatMap { NotificationBridge.liveAsk(session: session, request: request, in: $0.core.openAsks) }
+            let step = Duration.milliseconds(50)
+            var waited = Duration.zero
+            while ask == nil, waited < Self.askBannerWait {
+                try? await Task.sleep(for: step)
+                waited += step
+                ask = self.flatMap { NotificationBridge.liveAsk(session: session, request: request, in: $0.core.openAsks) }
+            }
+            guard let self, self.waitingAskBanners[notification.identifier] == token else { return }
+            self.waitingAskBanners[notification.identifier] = nil
+            var banner = notification
+            banner.category = Self.bannerCategory(for: ask)
+            self.notifications.deliver(banner, request: ask?.request ?? request)
         }
     }
 
@@ -152,8 +209,17 @@ final class EventCoordinator {
 
     func apply(_ delivery: EventDelivery, for event: CoreEvent) {
         if let sound = delivery.sound { sounds.play(sound, repeats: delivery.soundRepeats) }
-        if let identifier = delivery.withdrawNotification { notifications.withdraw(identifier: identifier) }
-        if let notification = delivery.notification { notifications.deliver(notification) }
+        if let identifier = delivery.withdrawNotification {
+            waitingAskBanners[identifier] = nil
+            notifications.withdraw(identifier: identifier)
+        }
+        if let notification = delivery.notification {
+            if notification.category == .ask, let session = notification.session {
+                deliverAskBanner(notification, session: session, request: event.request)
+            } else {
+                notifications.deliver(notification)
+            }
+        }
         if let toast = delivery.toast {
             let symbol = event.kind == "device_disconnected" ? "cable.connector.slash" : (event.kind.hasPrefix("peer") ? "person.2.wave.2" : "cable.connector")
             hud.show(toast, symbol: symbol)

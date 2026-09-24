@@ -129,17 +129,6 @@ public final class CoreModel {
 
     public func openSession(_ id: String) { post("open_session", args: ["session": .string(id)]) }
 
-    public func answerAsk(session: String, approve: Bool, onlyIfFrontmost: Bool = false,
-                          request: String? = nil) {
-        var args: [String: JSONValue] = [
-            "session": .string(session),
-            "decision": .string(approve ? "approve" : "deny"),
-            "only_if_frontmost": .bool(onlyIfFrontmost),
-        ]
-        if let request { args["request"] = .string(request) }
-        post("answer_ask", args: args)
-    }
-
     /// `answer_ask` awaited: the reply carries the daemon's verdict —
     /// `ok: false` with `error.message` naming the refusal
     /// (`not_frontmost`, `accessibility_required`, `unsupported`, …).

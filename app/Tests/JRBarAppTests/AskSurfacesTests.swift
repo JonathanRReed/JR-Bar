@@ -490,6 +490,45 @@ struct AskSurfacesTests {
         #expect(!unknown.isPulsing, "cannot be told: the app's rule stands")
     }
 
+    // MARK: Banners
+
+    @Test("a banner answers only the ask it was posted for, and through the desk")
+    func bannerAnswersThroughDesk() async {
+        let core = CoreModel()
+        let session = "claude:session:b"
+        core.apply(.state(CoreState(
+            sessions: [CoreSession(id: session, provider: "claude", mode: "waiting")],
+            asks: [CoreAsk(session: session, summary: "Run", answerable: true, request: "r2")])))
+        let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
+        let log = Log()
+        coordinator.askDesk = AskAnswerDesk(send: { _, verdict, request in
+            log.calls.append("\(verdict)|\(request ?? "")")
+            return CoreReply(id: "1", ok: true)
+        })
+        let replaced = await coordinator.answerFromBanner(session: session, request: "r1", approve: true)
+        #expect(replaced == NotificationBridge.replacedLine)
+        #expect(log.calls.isEmpty, "the banner's ask was replaced: nothing is sent")
+        let landed = await coordinator.answerFromBanner(session: session, request: "r2", approve: false)
+        #expect(landed == nil)
+        #expect(log.calls == ["\(AskVerdict.deny)|r2"], "pinned to the live request")
+        let gone = await coordinator.answerFromBanner(session: "claude:session:none", request: nil, approve: true)
+        #expect(gone == NotificationBridge.replacedLine)
+    }
+
+    @Test("an ask banner offers Approve and Deny only where Approve would land")
+    func bannerCategory() {
+        #expect(EventCoordinator.bannerCategory(for: CoreAsk(session: "s", summary: "Run", answerable: true)) == .ask)
+        #expect(EventCoordinator.bannerCategory(for: held(choices: [Self.single])) == .plain, "a held question")
+        #expect(EventCoordinator.bannerCategory(
+            for: CoreAsk(session: "s", summary: "?", answerable: true, replyable: true)) == .plain, "wants words")
+        #expect(EventCoordinator.bannerCategory(for: CoreAsk(session: "s", summary: "Run", answerable: false)) == .plain)
+        #expect(EventCoordinator.bannerCategory(for: nil) == .plain, "an ask never seen")
+        let asks = [CoreAsk(session: "s", summary: "Run", request: "r1")]
+        #expect(NotificationBridge.liveAsk(session: "s", request: "r1", in: asks) != nil)
+        #expect(NotificationBridge.liveAsk(session: "s", request: "r0", in: asks) == nil)
+        #expect(NotificationBridge.liveAsk(session: "s", request: nil, in: asks) != nil, "an unpinned banner")
+    }
+
     @Test("the daemon going away shrinks a takeover card back to its capsule")
     func resetReleasesTakeover() {
         var toysState = ToysState()
