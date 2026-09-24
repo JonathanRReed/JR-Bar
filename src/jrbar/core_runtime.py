@@ -4922,6 +4922,7 @@ def build_headless_controller_class() -> type:
                     return controller.sync_program(plan.program, state, force=True)
                 return controller.sync_program(plan.program, state)
             correction = bool(getattr(self.settings, "linked_dot_clock_correction", True))
+            drifted = link.current_error(link.now())
             rate = link.rate_for_write(device.device_id, correction=correction, commit=force)
             trim = trim_setting(self.settings)
             # The Dot's own transfer (its calibration gains and resting glow)
@@ -4962,9 +4963,12 @@ def build_headless_controller_class() -> type:
                     sample=sample,
                 )
                 if reason in ("reanchor", "blind"):
+                    # One line per Dot-only re-anchor, for the log classifier:
+                    # at most one every 20 s, and never a strip write.
+                    error_words = "unmeasured" if drifted is None else f"{drifted:.0f} ms"
                     legacy.log_status_bar(
-                        f"linked sync: re-anchor ({reason}, rate {rate:.4f}x, "
-                        f"rotation {getattr(write.timed, 'rotation', '?')})"
+                        f"linked sync: re-anchor (error {error_words}, rate {rate:.4f}x, "
+                        f"{reason}, {getattr(write.timed, 'rotation', '?')})"
                     )
             return write
 
