@@ -31,6 +31,12 @@ enum ShelfActions {
         var type: UTType { self == .png ? .png : .jpeg }
         var fileExtension: String { self == .png ? "png" : "jpg" }
         var title: String { self == .png ? "PNG" : "JPEG" }
+
+        /// Whether `url` is already this format, by its name: a PNG is
+        /// never offered or made into a PNG.
+        func holds(_ url: URL) -> Bool {
+            UTType(filenameExtension: url.pathExtension)?.conforms(to: type) == true
+        }
     }
 
     // MARK: Names
@@ -174,9 +180,13 @@ enum ShelfActions {
     }
 
     /// The image re-encoded as PNG or JPEG beside the original, under a
-    /// free name ("photo.png", "photo 2.png"); the original stays.
+    /// free name ("photo.png", "photo 2.png"); the original stays. An
+    /// image already in that format is left alone.
     nonisolated static func convert(_ url: URL, to format: ImageFormat,
                                     fileManager: FileManager = .default) throws -> URL {
+        guard !format.holds(url) else {
+            throw ActionError.failed("\(url.lastPathComponent) is already a \(format.title)")
+        }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw ActionError.failed("\(url.lastPathComponent) isn't an image ImageIO can read")
@@ -201,16 +211,47 @@ enum ShelfActions {
 
     // MARK: Copy to, move to
 
-    /// Copy or move each file into `folder` under a free name; returns
-    /// the (old, new) pairs that landed.
+    /// What a Copy to… or Move to… did: the (old, new) pairs that landed,
+    /// and why the first file that didn't failed. Files before a failure
+    /// have already gone, so their pairs are kept, never lost with it.
+    struct Transfer: Sendable {
+        var landed: [(from: URL, to: URL)] = []
+        var failure: String?
+    }
+
+    /// Copy or move each file into `folder` under a free name, stopping
+    /// at the first that fails.
     nonisolated static func transfer(_ urls: [URL], to folder: URL, move: Bool,
-                                     fileManager: FileManager = .default) throws -> [(URL, URL)] {
-        try urls.map { url in
+                                     fileManager: FileManager = .default) -> Transfer {
+        var result = Transfer()
+        for url in urls {
             let ext = url.pathExtension.isEmpty ? nil : url.pathExtension
-            let landed = try place(url, in: folder, base: url.deletingPathExtension().lastPathComponent,
-                                   ext: ext, copy: !move, fileManager: fileManager)
-            return (url, landed)
+            do {
+                let landed = try place(url, in: folder, base: url.deletingPathExtension().lastPathComponent,
+                                       ext: ext, copy: !move, fileManager: fileManager)
+                result.landed.append((url, landed))
+            } catch {
+                result.failure = error.localizedDescription
+                break
+            }
         }
+        return result
+    }
+
+    /// Convert each image not already in `format`; returns what was made
+    /// and the last failure, if any.
+    nonisolated static func convert(_ urls: [URL], to format: ImageFormat,
+                                    fileManager: FileManager = .default) -> (made: [URL], failure: String?) {
+        var made: [URL] = []
+        var failure: String?
+        for url in urls where isImage(url) && !format.holds(url) {
+            do {
+                made.append(try convert(url, to: format, fileManager: fileManager))
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+        return (made, failure)
     }
 
     /// The folder picker for Copy to… and Move to….
@@ -265,40 +306,57 @@ extension ShelfTrayModel {
         }
     }
 
-    /// Convert: each image re-encoded beside itself and shelved.
+    /// Convert: each image not already in `format` re-encoded beside
+    /// itself, off the main thread, then shelved.
     func convert(_ entries: [ShelfEntry], to format: ShelfActions.ImageFormat) {
-        let urls = presentURLs(of: entries).filter(ShelfActions.isImage)
+        let urls = presentURLs(of: entries).filter { ShelfActions.isImage($0) && !format.holds($0) }
         guard !urls.isEmpty else { return }
-        var made: [URL] = []
-        var failure: String?
-        for url in urls {
-            do {
-                made.append(try ShelfActions.convert(url, to: format))
-            } catch {
-                failure = error.localizedDescription
-            }
+        _ = Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                ShelfActions.convert(urls, to: format)
+            }.value
+            self?.finishConvert(made: result.made, failure: result.failure, format: format)
         }
+    }
+
+    /// Convert's result, back on the main thread: the new files join the
+    /// shelf and the line says what happened.
+    func finishConvert(made: [URL], failure: String?, format: ShelfActions.ImageFormat) {
         if !made.isEmpty { add(made) }
         actionNotice = failure.map { "Couldn't convert: \($0)" }
             ?? (made.count == 1 ? "Saved \(made[0].lastPathComponent)" : "Saved \(made.count) \(format.title) files")
     }
 
-    /// Copy to… or Move to…: a folder picked, the files carried there. A
-    /// moved file's chip follows it to its new home.
+    /// Copy to… or Move to…: a folder picked, the files carried there off
+    /// the main thread, so a big copy to another disk never freezes the
+    /// notch or the panel. A moved file's chip follows it to its new home.
     func transfer(_ entries: [ShelfEntry], move: Bool) {
         let urls = presentURLs(of: entries)
         guard !urls.isEmpty,
               let folder = ShelfActions.chooseFolder(prompt: move ? "Move Here" : "Copy Here") else { return }
-        do {
-            let landed = try ShelfActions.transfer(urls, to: folder, move: move)
-            if move {
-                for (old, new) in landed { relocate(from: old.path, to: new.path) }
-            }
-            let what = landed.count == 1 ? landed[0].1.lastPathComponent : "\(landed.count) files"
-            actionNotice = "\(move ? "Moved" : "Copied") \(what) to \(folder.lastPathComponent)"
-        } catch {
-            actionNotice = "Couldn't \(move ? "move" : "copy"): \(error.localizedDescription)"
+        _ = Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                ShelfActions.transfer(urls, to: folder, move: move)
+            }.value
+            self?.finishTransfer(result, to: folder, move: move)
         }
+    }
+
+    /// Copy to… or Move to…'s result, back on the main thread. Every file
+    /// that landed before a failure keeps its chip — a moved one follows
+    /// its file — and then the line names the failure.
+    func finishTransfer(_ result: ShelfActions.Transfer, to folder: URL, move: Bool) {
+        if move {
+            for pair in result.landed { relocate(from: pair.from.path, to: pair.to.path) }
+        }
+        let verb = move ? "Moved" : "Copied"
+        if let failure = result.failure {
+            let done = result.landed.isEmpty ? "" : "\(verb) \(result.landed.count), then couldn't \(move ? "move" : "copy") the next: "
+            actionNotice = done.isEmpty ? "Couldn't \(move ? "move" : "copy"): \(failure)" : done + failure
+            return
+        }
+        let what = result.landed.count == 1 ? result.landed[0].to.lastPathComponent : "\(result.landed.count) files"
+        actionNotice = "\(verb) \(what) to \(folder.lastPathComponent)"
     }
 }
 
@@ -310,12 +368,14 @@ enum ShelfActionMenu {
     }
 
     /// Compress and the two folder verbs always; Copy Text when a file
-    /// has text to read; the conversions for images.
+    /// has text to read; a conversion only when some picked image is not
+    /// already in that format.
     nonisolated static func verbs(for urls: [URL]) -> [Verb] {
         var verbs: [Verb] = [.compress]
         if urls.contains(where: ShelfActions.hasText) { verbs.append(.copyText) }
-        if urls.contains(where: ShelfActions.isImage) {
-            verbs += ShelfActions.ImageFormat.allCases.map { .convert($0) }
+        let images = urls.filter(ShelfActions.isImage)
+        for format in ShelfActions.ImageFormat.allCases where images.contains(where: { !format.holds($0) }) {
+            verbs.append(.convert(format))
         }
         return verbs + [.copyTo, .moveTo]
     }

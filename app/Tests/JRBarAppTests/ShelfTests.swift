@@ -653,6 +653,54 @@ extension ShelfTests {
         #expect(!ShelfActionMenu.verbs(for: [folder.appendingPathComponent("a.zip")]).contains(.copyText))
     }
 
+    @Test func convertOffersAndMakesOnlyAnotherFormat() throws {
+        let folder = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let png = folder.appendingPathComponent("shot.png")
+        let jpg = folder.appendingPathComponent("photo.jpg")
+        // A PNG alone offers JPEG only; a PNG beside a JPEG offers both.
+        let pngVerbs = ShelfActionMenu.verbs(for: [png])
+        #expect(pngVerbs.contains(.convert(.jpeg)))
+        #expect(!pngVerbs.contains(.convert(.png)), "a PNG is never offered as a PNG")
+        #expect(ShelfActionMenu.verbs(for: [jpg]).contains(.convert(.png)))
+        #expect(!ShelfActionMenu.verbs(for: [jpg]).contains(.convert(.jpeg)))
+        #expect(ShelfActionMenu.verbs(for: [png, jpg]).contains(.convert(.png)))
+        #expect(ShelfActionMenu.verbs(for: [png, jpg]).contains(.convert(.jpeg)))
+        // Convert to PNG over a PNG writes nothing beside it.
+        try Self.drawText("PNG", to: png)
+        let result = ShelfActions.convert([png], to: .png)
+        #expect(result.made.isEmpty && result.failure == nil)
+        #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("shot 2.png").path))
+        #expect(throws: ShelfActions.ActionError.self) { try ShelfActions.convert(png, to: .png) }
+    }
+
+    @Test func aMoveThatFailsPartWayKeepsTheChipsThatMoved() throws {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        let from = try scratchFolder()
+        let to = try scratchFolder()
+        defer {
+            try? FileManager.default.removeItem(at: from)
+            try? FileManager.default.removeItem(at: to)
+        }
+        let first = from.appendingPathComponent("first.txt")
+        try "one".write(to: first, atomically: true, encoding: .utf8)
+        // The second is gone before the move reaches it.
+        let second = from.appendingPathComponent("second.txt")
+        let result = ShelfActions.transfer([first, second], to: to, move: true)
+        #expect(result.landed.count == 1)
+        #expect(result.failure != nil)
+        #expect(FileManager.default.fileExists(atPath: to.appendingPathComponent("first.txt").path))
+
+        tray.add([first])
+        tray.finishTransfer(result, to: to, move: true)
+        #expect(tray.items.map(\.path) == [to.appendingPathComponent("first.txt").path],
+                "the moved chip follows its file")
+        #expect(tray.items.allSatisfy { !$0.missing })
+        #expect(tray.actionNotice?.hasPrefix("Moved 1, then couldn't move the next") == true,
+                "\(tray.actionNotice ?? "")")
+    }
+
     @Test func theShelfSwitchedOffTakesNoFiles() {
         let tray = freshTray()
         defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
