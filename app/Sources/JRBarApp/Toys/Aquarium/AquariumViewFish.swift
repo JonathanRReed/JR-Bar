@@ -206,8 +206,9 @@ extension AquariumView {
         case .surfacing:
             // Rises from where it was to just under the surface over
             // about a second, nose up on the way, then bobs there at
-            // the glass — closer to the viewer, pulsing a soft glow
-            // ring off its nose like a tap on the pane.
+            // the glass — closer to the viewer, turned half toward you
+            // so both eyes are on you, pulsing a soft glow ring off its
+            // nose like a tap on the pane.
             let age = now.timeIntervalSince(fish.stateSince)
             let rise = smooth(clamp01(age / 1.15))
             l.riseFrom = home.y
@@ -217,7 +218,7 @@ extension AquariumView {
             l.facing = body.map { cos($0.heading) >= 0 ? 1.0 : -1.0 } ?? (p.u >= 0 ? 1 : -1)
             l.pitch = (body.map { steeringReadout($0).pitch } ?? turnPitch)
                 - (1 - rise) * 0.75
-            l.thin = body.map { steeringReadout($0).thin } ?? thin
+            l.thin = min(body.map { steeringReadout($0).thin } ?? thin, 1 - 0.42 * rise)
             l.turn = body.map { steeringReadout($0).turn } ?? p.turn
             l.wag = 0.45 + (1 - rise) * 0.7
             let ring = reduceMotion ? 0.55

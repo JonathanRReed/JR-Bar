@@ -331,7 +331,12 @@ struct AquariumFishRenderProofTests {
                 l.scale = 1
                 l.wag = f.state == .swimming ? 1.25 : 0.4
                 if f.state == .sinking { l.pitch = 0.5 }
-                if f.state == .surfacing { l.tapRing = 0.35 }
+                if f.state == .surfacing {
+                    // Up at the glass: turned half toward you, ring pulsing.
+                    l.tapRing = 0.35
+                    l.thin = 0.58
+                    l.scale = 1.15
+                }
                 layouts[f.id] = l
                 let parent = f.isFry ? layouts["dressed"].map { (cast[0], $0) } : nil
                 tank.drawFish(canvas: &c, size: size, t: 10, now: now, fish: f, layout: l,
