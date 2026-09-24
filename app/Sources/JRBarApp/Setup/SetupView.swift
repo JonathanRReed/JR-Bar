@@ -79,11 +79,16 @@ struct SetupProgress: View {
     let step: Int
     let count: Int
 
+    /// The walkthrough's marks — the current pip, the mark's tile — in
+    /// the calm blue What's New and the unseen dot wear, not the accent:
+    /// on a Mac whose accent is red, a red first step read as an error.
+    static let tint = Color(nsColor: .systemBlue)
+
     var body: some View {
         HStack(spacing: 5) {
             ForEach(0..<count, id: \.self) { index in
                 Capsule(style: .continuous)
-                    .fill(index == step ? Color.accentColor
+                    .fill(index == step ? Self.tint
                           : Color.primary.opacity(index < step ? 0.35 : 0.14))
                     .frame(width: index == step ? 16 : 6, height: 6)
             }
@@ -107,11 +112,16 @@ struct SetupWelcomeStep: View {
                     .resizable()
                     .scaledToFit()
                     .frame(width: 30, height: 30)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(SetupProgress.tint)
                     .padding(12)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.12))
+                            .fill(LinearGradient(colors: [SetupProgress.tint.opacity(0.22), SetupProgress.tint.opacity(0.08)],
+                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(SetupProgress.tint.opacity(0.18), lineWidth: 0.5)
                     )
                     .accessibilityHidden(true)
                 Text("Your agents, your menu bar, your notch — one app.")
