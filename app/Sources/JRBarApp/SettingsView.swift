@@ -81,11 +81,14 @@ struct SettingsSearchResults: View {
                 .foregroundStyle(.secondary)
         } else {
             ForEach(results) { entry in
+                // A row inside a card wears that card's own tile.
+                let toy = entry.card.flatMap(store.cardToy)
                 Button {
                     store.reveal(entry)
                 } label: {
                     HStack(spacing: 8) {
-                        SidebarIcon(symbol: entry.page.symbol, tint: entry.page.tint)
+                        SidebarIcon(symbol: toy?.symbol ?? entry.page.symbol,
+                                    tint: toy.map { ToyCard.tint(for: $0.id, page: entry.page.tint) } ?? entry.page.tint)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(entry.title)
                                 .lineLimit(1)
@@ -112,6 +115,22 @@ struct SidebarIcon: View {
 
     var body: some View {
         SettingsIconTile(symbol: symbol, tint: tint, size: SettingsMetrics.sidebarTile)
+    }
+}
+
+extension SettingsStore {
+    /// The toy or utility a search hit's card id names, so the hit can
+    /// wear that card's tile.
+    func cardToy(_ id: String) -> (any Toy)? {
+        var cards: [any Toy] = []
+        if let utilities {
+            cards += [utilities.menuBar, utilities.dock, utilities.agents, utilities.dataHoarder] as [any Toy]
+        }
+        if let toys {
+            if let notch = toys.notch { cards.append(notch) }
+            cards += toys.toys
+        }
+        return cards.first { $0.id == id }
     }
 }
 
