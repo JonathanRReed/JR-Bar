@@ -43,7 +43,7 @@ struct DockUtilityControls: View {
     @ViewState private var showExclusions = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             notices
 
             LabeledContent {
@@ -57,16 +57,17 @@ struct DockUtilityControls: View {
                     .fixedSize()
             } label: {
                 SettingLabel(title: "Render with",
-                             subtitle: "Hand the previews to an installed counterpart — DockDoor (free) or ActiveDock (paid). Our previews park while the pick stands; the switcher is its own pick below.")
+                             subtitle: "Hand the previews to DockDoor (free) or ActiveDock (paid); ours park while the pick stands. The switcher has its own pick below.")
             }
             if let note = utility.providerNote {
                 providerNote(note, symbol: "arrow.triangle.2.circlepath",
                              open: utility.externalURL == nil ? nil : { utility.openExternal() })
             }
 
+            CardSectionHeader("Previews")
             Toggle(isOn: hoverPreviews) {
                 SettingLabel(title: "Hover previews",
-                             subtitle: "Apple's Dock stays. Rest on an icon and that app's windows appear beside the Dock — click a card to raise it, ⌥-click to keep the preview up. Off keeps the switcher below on its own.")
+                             subtitle: "Apple's Dock stays. Rest on an icon and its windows appear beside the Dock — click a card to raise it, ⌥-click to keep the preview up.")
             }
             LabeledContent {
                 Picker(selection: previewTrigger) {
@@ -79,7 +80,7 @@ struct DockUtilityControls: View {
                     .fixedSize()
             } label: {
                 SettingLabel(title: "Open previews on",
-                             subtitle: "A rest on the icon, a rest while holding Option, or a middle click — for anyone who finds hover panels noisy while aiming at the Dock.")
+                             subtitle: "A rest on the icon, a rest with Option held, or a middle click — for anyone who finds hover panels noisy.")
             }
             .disabled(!ownPreviews)
             LabeledContent {
@@ -95,12 +96,11 @@ struct DockUtilityControls: View {
             .disabled(utility.enhance.preferences.previewTrigger == .middleClick)
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
-                             subtitle: "A capture of each window, kept for half a minute; the card you point at re-takes one older than a few seconds. Needs Screen Recording, and each fresh capture flashes macOS's recording dot. Off shows icon + title cards.")
+                             subtitle: "A capture of each window, kept for half a minute. Needs Screen Recording, and a fresh capture flashes macOS's recording dot; off shows icon and title cards.")
             }
 
             DisclosureGroup(isExpanded: $showPreviewOptions) {
                 previewOptions
-                    .padding(.top, 4)
             } label: {
                 SettingLabel(title: "More preview options",
                              subtitle: "Card size and captures, which windows list, the icon gestures, ⌥` and the auto-hiding Dock.")
@@ -108,15 +108,12 @@ struct DockUtilityControls: View {
 
             DisclosureGroup(isExpanded: $showExclusions) {
                 exclusionList
-                    .padding(.top, 4)
             } label: {
                 SettingLabel(title: "Never preview",
                              subtitle: Self.exclusionSummary(exclusions.wrappedValue.map(appName(for:))))
             }
 
-            Divider()
-                .padding(.vertical, 4)
-
+            CardSectionHeader("Switching")
             LabeledContent {
                 Picker(selection: utility.switcherProviderBinding) {
                     ForEach(DockSwitcherProvider.allCases, id: \.self) { provider in
@@ -128,7 +125,7 @@ struct DockUtilityControls: View {
                     .fixedSize()
             } label: {
                 SettingLabel(title: "Switcher",
-                             subtitle: "Who answers ⌥⇥ and ⌘⇥ — its own pick, so DockDoor can draw the previews while JR-Bar keeps the switcher.")
+                             subtitle: "Who answers ⌥⇥ and ⌘⇥ — so DockDoor can draw the previews while JR-Bar keeps the switcher.")
             }
             if let note = utility.switcherNote {
                 providerNote(note, symbol: "exclamationmark.arrow.triangle.2.circlepath",
@@ -136,12 +133,12 @@ struct DockUtilityControls: View {
             }
             Toggle(isOn: switcher) {
                 SettingLabel(title: "⌥⇥ window switcher",
-                             subtitle: "Option-Tab raises every app's windows in recency order — a window whose agent waits on you comes first. Tab walks, releasing Option commits, esc cancels; type to search windows and the sessions in them (! for waiting agents), ` narrows to one app.")
+                             subtitle: "Option-Tab raises every app's windows in recency order, a window whose agent waits on you first. Type to search windows and their sessions — ! for waiting agents, ` for one app.")
             }
             .disabled(!ownSwitcher)
             Toggle(isOn: appSwitcher) {
                 SettingLabel(title: "⌘⇥ app switcher",
-                             subtitle: "Replaces the system's Command-Tab with a centred app strip — Tab walks, releasing Command commits. Off leaves the OS chord alone.")
+                             subtitle: "Replaces Command-Tab with a centred app strip. Off leaves the system's chord alone.")
             }
             .disabled(!ownSwitcher)
             Toggle(isOn: switcherThisDisplay) {
@@ -151,13 +148,11 @@ struct DockUtilityControls: View {
             .disabled(!ownSwitcher)
             let learned = utility.settings().enhance.learnedPicks.count
             if learned > 0 {
-                HStack(spacing: 8) {
-                    Text(learned == 1 ? "Type-ahead remembers 1 pick — a short query lands where it did last time."
-                                      : "Type-ahead remembers \(learned) picks — a short query lands where it did last time.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
+                HStack(spacing: SettingsMetrics.s) {
+                    CardNote(learned == 1 ? "Type-ahead remembers 1 pick — a short query lands where it did last time."
+                                          : "Type-ahead remembers \(learned) picks — a short query lands where it did last time.",
+                             symbol: "sparkle.magnifyingglass")
+                    Spacer(minLength: SettingsMetrics.s)
                     Button("Forget") { utility.update { $0.enhance.learnedPicks = [] } }
                         .controlSize(.small)
                 }
@@ -182,14 +177,9 @@ struct DockUtilityControls: View {
             }
         }
         if let note = utility.recoveredHoldNote {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.uturn.backward.circle")
-                    .foregroundStyle(.secondary)
-                Text(note)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
+            HStack(spacing: SettingsMetrics.s) {
+                CardNote(note, symbol: "arrow.uturn.backward.circle")
+                Spacer(minLength: SettingsMetrics.s)
                 Button {
                     utility.dismissRecoveredHoldNote()
                 } label: {
@@ -199,14 +189,14 @@ struct DockUtilityControls: View {
                 .buttonStyle(.plain)
                 .help("Dismiss")
             }
-            .padding(.bottom, 4)
+            .padding(.bottom, SettingsMetrics.xs)
         }
     }
 
     /// The rows past the everyday ones: what a card looks like and
     /// captures, which windows list, and the icon and keyboard gestures.
     private var previewOptions: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Toggle(isOn: liveCard) {
                 SettingLabel(title: "Live card under the pointer",
                              subtitle: "The card you point at plays live instead of showing a still — macOS's recording dot stays on while it does.")
@@ -266,11 +256,10 @@ struct DockUtilityControls: View {
     /// The apps that never open a preview, each with its way back, and
     /// the menu that adds one — running apps first, installed ones under.
     private var exclusionList: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(exclusions.wrappedValue, id: \.self) { bundleID in
                 HStack(spacing: 6) {
                     Text(appName(for: bundleID))
-                        .font(.callout)
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     Button {
@@ -325,15 +314,10 @@ struct DockUtilityControls: View {
     /// A counterpart's line under its picker, with Open when there's an
     /// app to open.
     private func providerNote(_ note: String, symbol: String, open: (() -> Void)?) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .foregroundStyle(.secondary)
-            Text(note)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: SettingsMetrics.s) {
+            CardNote(note, symbol: symbol)
             if let open {
-                Spacer()
+                Spacer(minLength: SettingsMetrics.s)
                 Button("Open", action: open)
                     .controlSize(.small)
             }
@@ -341,18 +325,13 @@ struct DockUtilityControls: View {
     }
 
     private func permissionNote(_ text: String, open: @escaping () -> Void) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text(text)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
+        HStack(spacing: SettingsMetrics.s) {
+            CardNote(text, symbol: "exclamationmark.triangle.fill", tint: .orange)
+            Spacer(minLength: SettingsMetrics.s)
             Button("Open Settings", action: open)
                 .controlSize(.small)
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, SettingsMetrics.xs)
     }
 
     /// Whether JR-Bar answers ⌥⇥ and ⌘⇥ — the switcher rows only act then.

@@ -92,7 +92,7 @@ extension NotchToy {
     /// The lyrics row's subtitle names the third party it asks, and says
     /// so while a switch left on from before still waits for its yes.
     var lyricsSubtitle: String {
-        let base = "The current line and the next under the track, swept in time. "
+        let base = "The current and next line under the track, in time. "
             + "Looks the song up on LRCLIB (title, artist, album, length — nothing else) "
             + "and remembers the answer. Off, nothing is sent."
         let settings = settings
@@ -101,14 +101,17 @@ extension NotchToy {
     }
 }
 
-/// The card's disclosure body. Every toggle writes `store.state.notch`
-/// (which persists itself) except the provider picker, which goes
-/// through `setProvider` so the swap can park our island and open theirs.
+/// The card's disclosure body, in named runs — the island, its
+/// capsules, media, glances, the shelf, the sensors — with each switch's
+/// dependent rows on an inset panel under it. Every toggle writes
+/// `store.state.notch` (which persists itself) except the provider
+/// picker, which goes through `setProvider` so the swap can park our
+/// island and open theirs.
 struct NotchControlsView: View {
     let toy: NotchToy
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Picker(selection: toy.providerBinding) {
                 Text("JR-Bar").tag(NotchProvider.jrbar)
                 Text("Alcove").tag(NotchProvider.alcove)
@@ -118,7 +121,7 @@ struct NotchControlsView: View {
                              subtitle: "Let Alcove or Boring Notch draw the island instead.")
             }
             .pickerStyle(.menu)
-            .fixedSize()
+            .padding(.vertical, SettingsMetrics.rowPadding)
 
             providerNote
             providerControls
@@ -132,159 +135,12 @@ struct NotchControlsView: View {
     private var providerControls: some View {
         switch toy.settings.provider {
         case .jrbar:
-            Toggle(isOn: toy.bind(\.islandEnabled)) {
-                SettingLabel(title: "Show the island",
-                             subtitle: toy.earsDrawn
-                                ? "The housing under the notch — hover or click it for the card. The Screen Bar's ears are drawing the HUD beside it, so the island itself stays bare."
-                                : "The housing under the notch: working agents in the left shoulder, asks or the track in the right. Hover or click it for the card.")
-            }
-            Toggle(isOn: toy.bind(\.simulateNotch)) {
-                SettingLabel(title: "Simulate notch",
-                             subtitle: "On a display with no hardware notch, the island hugs the top as a synthetic housing instead of floating as a pill.")
-            }
-            Toggle(isOn: toy.bind(\.expandOnHover)) {
-                SettingLabel(title: "Card on hover",
-                             subtitle: "A pointer resting on the notch or an ear grows the card — a third of a second arriving down from the menu bar, a touch quicker straight onto the island. Off, only a click or a pull opens it.")
-            }
-            Toggle(isOn: toy.bind(\.hapticTick)) {
-                SettingLabel(title: "Haptic tick",
-                             subtitle: "A soft trackpad tap as the island grows open. Nothing happens on a Mac without haptics.")
-            }
-            Toggle(isOn: toy.bind(\.pullGestures)) {
-                SettingLabel(title: "Pull & swipe gestures",
-                             subtitle: "Pull the island down (or spread two fingers) to open it; push up or squeeze to fold it. ⌘-drag sideways on the notch sets a timer.")
-            }
-            Toggle(isOn: toy.bind(\.showUsage)) {
-                SettingLabel(title: "Usage meters",
-                             subtitle: "Per-provider quota bars inside the card.")
-            }
-            Toggle(isOn: toy.bind(\.capsuleNotifications)) {
-                SettingLabel(title: "Event capsules",
-                             subtitle: "The island briefly morphs into a notice when an ask opens, a run ends or a quota resets.")
-            }
-            if toy.settings.capsuleNotifications {
-                Toggle(isOn: toy.bind(\.capsuleKinds.ask)) {
-                    SettingLabel(title: "Asks", subtitle: "A session opens a question.")
-                }
-                Toggle(isOn: toy.bind(\.capsuleKinds.completed)) {
-                    SettingLabel(title: "Completions", subtitle: "An agent finishes a run.")
-                }
-                Toggle(isOn: toy.bind(\.capsuleKinds.failed)) {
-                    SettingLabel(title: "Failures", subtitle: "A session stops on an error.")
-                }
-                Toggle(isOn: toy.bind(\.capsuleKinds.quotaReset)) {
-                    SettingLabel(title: "Quota resets", subtitle: "A provider's usage window refills.")
-                }
-                Toggle(isOn: toy.bind(\.capsuleKinds.charging)) {
-                    SettingLabel(title: "Power", subtitle: "Plugging in, switching to battery, fully charged.")
-                }
-                Toggle(isOn: toy.bind(\.holdNewsWhileQuiet)) {
-                    SettingLabel(title: "Hold news while quiet",
-                                 subtitle: "During a Focus or a quiet mode, finished runs and quota resets wait and come back as one summary when it ends. Asks and failures still show.")
-                }
-            }
-            Toggle(isOn: Binding(
-                get: { toy.sensorIndicatorsEnabled },
-                set: { toy.sensorIndicatorsEnabled = $0 })) {
-                SettingLabel(title: "Mic & camera indicators",
-                             subtitle: toy.sensorsDrawable
-                                ? "The right shoulder carries a green dot while a camera is rolling, an orange one while a microphone is live — the same dots macOS puts beside Control Center. Read-only: JR-Bar listens for the system saying they started; it never opens the mic or camera itself."
-                                : "The Screen Bar's ears are drawing the notch's shoulders, so the island has no room for the dots.")
-            }
-            Toggle(isOn: toy.bind(\.mediaEnabled)) {
-                SettingLabel(title: "Now Playing",
-                             subtitle: toy.earsDrawn
-                                ? "The card carries the track and transport buttons. (The island's own strip is off while the Screen Bar's ears draw.)"
-                                : "The right shoulder carries the track when nothing needs a hand; the card gains transport buttons.")
-            }
-            if toy.settings.mediaEnabled {
-                Toggle(isOn: toy.bind(\.audioVisualizer)) {
-                    SettingLabel(title: "Audio visualizer (reacts to what's playing)",
-                                 subtitle: "Six live bands on the media row, tapped from the playing app's own audio — asks for the system-audio permission once. Off or denied keeps the decorative animation.")
-                }
-                Toggle(isOn: toy.lyricsBinding) {
-                    SettingLabel(title: "Synced lyrics", subtitle: toy.lyricsSubtitle)
-                }
-            }
-            Toggle(isOn: toy.bind(\.mediaHUD)) {
-                SettingLabel(title: "Volume & brightness capsules",
-                             subtitle: "The level keys grow the level out of the notch as one continuous fill, with the device the sound is going to — the Alcove HUD. The key still does its job; we only draw it. While it shows, scroll over it to fine-tune the volume or brightness.")
-            }
-            if toy.settings.mediaHUD {
-                Stepper(value: toy.bind(\.hudDuration),
-                        in: NotchSettings.hudDurationRange, step: 0.5) {
-                    SettingLabel(title: "Show for \(toy.settings.hudDuration.formatted(.number.precision(.fractionLength(0...1)))) s",
-                                 subtitle: "How long a level and a system notice hold at the notch.")
-                }
-                .padding(.leading, 28)
-                Toggle(isOn: toy.bind(\.replaceSystemHUD)) {
-                    SettingLabel(title: "Replace the system volume & brightness overlay",
-                                 subtitle: "The volume and brightness keys get our capsule instead of Apple's — needs the Accessibility permission. Changes made from Control Center still show Apple's overlay; JR-Bar never touches OSDUIHelper.")
-                }
-            }
-            Toggle(isOn: toy.bind(\.timerLights)) {
-                SettingLabel(title: "Timers flash the lights",
-                             subtitle: "A timer coming due breathes the SidePulse strips orange three times, then the live light returns. Only with a strip connected, and never while the Mac is quiet.")
-            }
-            Toggle(isOn: toy.bind(\.shelfShakeToSummon)) {
-                SettingLabel(title: "Shake to summon the shelf",
-                             subtitle: "While dragging files, shake the pointer and the card opens under the notch as a drop target.")
-            }
-            if let settings = toy.store?.settings {
-                // The same switch as General's, where a shelf person
-                // looks for it: beside the other way to summon the shelf.
-                Toggle(isOn: Binding(get: { settings.shelfHotkeyEnabled },
-                                     set: { settings.shelfHotkeyEnabled = $0 })) {
-                    SettingLabel(title: "Shelf hotkey",
-                                 subtitle: settings.shelfHotkeyRegistrationFailed
-                                    ? "⌃⌥D is taken by another app."
-                                    : "⌃⌥D opens or folds the card from any app. Anything you copied waits there as a Paste chip.")
-                }
-            }
-            Toggle(isOn: toy.bind(\.alerts)) {
-                SettingLabel(title: "System alerts",
-                             subtitle: "A Focus mode, a Bluetooth device joining or leaving, Caps Lock and displays speak in the island, one at a time with the agents' news. Headphones the Screen Bar's ear already names stay quiet here.")
-            }
-            Toggle(isOn: toy.bind(\.soundEffects)) {
-                SettingLabel(title: "Capsule tick",
-                             subtitle: "A quiet sound when a capsule shows.")
-            }
-            Toggle(isOn: toy.bind(\.weather)) {
-                SettingLabel(title: "Weather",
-                             subtitle: "Conditions, today's high and low and rain in the next two hours — keyless Open-Meteo for the city below.")
-            }
-            if toy.settings.weather {
-                TextField("City, e.g. London", text: toy.bind(\.weatherCity))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.callout)
-                    .padding(.leading, 28)
-                Toggle(isOn: toy.bind(\.weatherUseIPLocation)) {
-                    SettingLabel(title: "Locate by IP when no city is set",
-                                 subtitle: "Sends your IP address to ipapi.co for a city-level guess. Off, an empty city just means no weather row.")
-                }
-                .padding(.leading, 28)
-            }
-            Toggle(isOn: toy.calendarBinding) {
-                SettingLabel(title: "Calendar",
-                             subtitle: Self.accessNote(SetupModel.calendarStatus(), app: "Calendar",
-                                                       granted: "The next three events in the card, the first with Join."))
-            }
-            if toy.settings.calendar {
-                Toggle(isOn: toy.bind(\.meetingAlerts)) {
-                    SettingLabel(title: "Meeting heads-up",
-                                 subtitle: "Two minutes before an event with a join link, the island says so with Join (and the Mirror, when it is on). While the meeting runs, finished runs wait like in a Focus. Reads the calendar in the background, on this Mac only.")
-                }
-                .padding(.leading, 28)
-            }
-            Toggle(isOn: toy.remindersBinding) {
-                SettingLabel(title: "Reminders",
-                             subtitle: Self.accessNote(SetupModel.reminderStatus(), app: "Reminders",
-                                                       granted: "What's due by tomorrow, with a check-off circle that writes back."))
-            }
-            Toggle(isOn: toy.bind(\.mirror)) {
-                SettingLabel(title: "Mirror",
-                             subtitle: "A quick look through the camera — boring.notch's Mirror, on demand: ⌥-click the notch, or the camera button in the card. It is never a standing row; the lens closes when the card folds away. The camera's consent is asked the first time it opens.")
-            }
+            islandRows
+            capsuleRows
+            mediaRows
+            glanceRows
+            shelfRows
+            sensorRows
         case .alcove:
             if let settings = toy.store?.settings {
                 SettingToggle(settings, "Follow Alcove's capsule",
@@ -301,6 +157,210 @@ struct NotchControlsView: View {
         case .boringNotch:
             EmptyView()
         }
+    }
+
+    @ViewBuilder
+    private var islandRows: some View {
+        CardSectionHeader("Island")
+        Toggle(isOn: toy.bind(\.islandEnabled)) {
+            SettingLabel(title: "Show the island",
+                         subtitle: toy.earsDrawn
+                            ? "The housing under the notch. The Screen Bar's ears draw the HUD beside it, so the island itself stays bare."
+                            : "The housing under the notch — working agents on the left, asks or the track on the right. Hover or click it for the card.")
+        }
+        Toggle(isOn: toy.bind(\.simulateNotch)) {
+            SettingLabel(title: "Simulate notch",
+                         subtitle: "On a display without a notch, the island hugs the top edge instead of floating as a pill.")
+        }
+        Toggle(isOn: toy.bind(\.expandOnHover)) {
+            SettingLabel(title: "Card on hover",
+                         subtitle: "Rest the pointer on the notch or an ear and the card grows. Off, only a click or a pull opens it.")
+        }
+        Toggle(isOn: toy.bind(\.hapticTick)) {
+            SettingLabel(title: "Haptic tick",
+                         subtitle: "A soft trackpad tap as the island opens, on a Mac with haptics.")
+        }
+        Toggle(isOn: toy.bind(\.pullGestures)) {
+            SettingLabel(title: "Pull & swipe gestures",
+                         subtitle: "Pull down or spread two fingers to open; push up or squeeze to fold. ⌘-drag sideways on the notch sets a timer.")
+        }
+        Toggle(isOn: toy.bind(\.showUsage)) {
+            SettingLabel(title: "Usage meters",
+                         subtitle: "Per-provider quota bars inside the card.")
+        }
+    }
+
+    @ViewBuilder
+    private var capsuleRows: some View {
+        CardSectionHeader("Capsules")
+        Toggle(isOn: toy.bind(\.capsuleNotifications)) {
+            SettingLabel(title: "Event capsules",
+                         subtitle: "The island briefly becomes a notice when an ask opens, a run ends or a quota resets.")
+        }
+        if toy.settings.capsuleNotifications {
+            CardSubrows {
+                FlowLayout {
+                    Toggle("Asks", isOn: toy.bind(\.capsuleKinds.ask))
+                        .help("A session opens a question.")
+                    Toggle("Completions", isOn: toy.bind(\.capsuleKinds.completed))
+                        .help("An agent finishes a run.")
+                    Toggle("Failures", isOn: toy.bind(\.capsuleKinds.failed))
+                        .help("A session stops on an error.")
+                    Toggle("Quota resets", isOn: toy.bind(\.capsuleKinds.quotaReset))
+                        .help("A provider's usage window refills.")
+                    Toggle("Power", isOn: toy.bind(\.capsuleKinds.charging))
+                        .help("Plugging in, switching to battery, fully charged.")
+                }
+                .toggleStyle(ChipToggleStyle())
+                .padding(.vertical, SettingsMetrics.s)
+                Toggle(isOn: toy.bind(\.holdNewsWhileQuiet)) {
+                    SettingLabel(title: "Hold news while quiet",
+                                 subtitle: "In a Focus or a quiet mode, finished runs and quota resets wait and arrive as one summary when it ends. Asks and failures still show.")
+                }
+            }
+        }
+        Toggle(isOn: toy.bind(\.alerts)) {
+            SettingLabel(title: "System alerts",
+                         subtitle: "Focus changes, Bluetooth devices, Caps Lock and displays, spoken in the island one at a time. Headphones the Screen Bar's ear already names stay quiet here.")
+        }
+        Toggle(isOn: toy.bind(\.mediaHUD)) {
+            SettingLabel(title: "Volume & brightness capsules",
+                         subtitle: "The level keys grow one continuous fill out of the notch, naming where the sound goes. The key still does its job; scroll over the capsule to fine-tune.")
+        }
+        if toy.settings.mediaHUD {
+            CardSubrows {
+                LabeledContent {
+                    HStack(spacing: SettingsMetrics.s) {
+                        ValueText(text: hudDuration, width: 40)
+                        Stepper("Hold for", value: toy.bind(\.hudDuration),
+                                in: NotchSettings.hudDurationRange, step: 0.5)
+                            .labelsHidden()
+                    }
+                } label: {
+                    SettingLabel(title: "Hold for",
+                                 subtitle: "How long a level or a system notice stays at the notch.")
+                }
+                Toggle(isOn: toy.bind(\.replaceSystemHUD)) {
+                    SettingLabel(title: "Replace the system volume & brightness overlay",
+                                 subtitle: "The keys get our capsule instead of Apple's; needs Accessibility. Changes from Control Center still show Apple's, and JR-Bar never touches OSDUIHelper.")
+                }
+            }
+        }
+        Toggle(isOn: toy.bind(\.soundEffects)) {
+            SettingLabel(title: "Capsule tick",
+                         subtitle: "A quiet sound when a capsule shows.")
+        }
+    }
+
+    @ViewBuilder
+    private var mediaRows: some View {
+        CardSectionHeader("Media")
+        Toggle(isOn: toy.bind(\.mediaEnabled)) {
+            SettingLabel(title: "Now Playing",
+                         subtitle: toy.earsDrawn
+                            ? "Transport buttons in the card. The island's own strip rests while the Screen Bar's ears draw."
+                            : "The track in the right shoulder when nothing needs a hand, and transport buttons in the card.")
+        }
+        if toy.settings.mediaEnabled {
+            CardSubrows {
+                Toggle(isOn: toy.bind(\.audioVisualizer)) {
+                    SettingLabel(title: "Audio visualizer (reacts to what's playing)",
+                                 subtitle: "Six live bands from the playing app's own audio. Asks for system-audio access once; off or denied keeps the decorative motion.")
+                }
+                Toggle(isOn: toy.lyricsBinding) {
+                    SettingLabel(title: "Synced lyrics", subtitle: toy.lyricsSubtitle)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var glanceRows: some View {
+        CardSectionHeader("Glances")
+        Toggle(isOn: toy.bind(\.weather)) {
+            SettingLabel(title: "Weather",
+                         subtitle: "Conditions, today's high and low and rain in the next two hours, from keyless Open-Meteo for the city below.")
+        }
+        if toy.settings.weather {
+            CardSubrows {
+                LabeledContent {
+                    TextField("City", text: toy.bind(\.weatherCity), prompt: Text("e.g. London"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 180)
+                } label: {
+                    SettingLabel(title: "City")
+                }
+                Toggle(isOn: toy.bind(\.weatherUseIPLocation)) {
+                    SettingLabel(title: "Locate by IP when no city is set",
+                                 subtitle: "Sends your IP address to ipapi.co for a city-level guess. Off, an empty city just means no weather row.")
+                }
+            }
+        }
+        Toggle(isOn: toy.calendarBinding) {
+            SettingLabel(title: "Calendar",
+                         subtitle: Self.accessNote(SetupModel.calendarStatus(), app: "Calendar",
+                                                   granted: "The next three events in the card, the first with Join."))
+        }
+        if toy.settings.calendar {
+            CardSubrows {
+                Toggle(isOn: toy.bind(\.meetingAlerts)) {
+                    SettingLabel(title: "Meeting heads-up",
+                                 subtitle: "Two minutes before an event with a join link, the island offers Join (and the Mirror, when it is on); finished runs wait while it runs. Reads the calendar on this Mac only.")
+                }
+            }
+        }
+        Toggle(isOn: toy.remindersBinding) {
+            SettingLabel(title: "Reminders",
+                         subtitle: Self.accessNote(SetupModel.reminderStatus(), app: "Reminders",
+                                                   granted: "What's due by tomorrow, with a check-off circle that writes back."))
+        }
+    }
+
+    @ViewBuilder
+    private var shelfRows: some View {
+        CardSectionHeader("Shelf & timers")
+        Toggle(isOn: toy.bind(\.shelfShakeToSummon)) {
+            SettingLabel(title: "Shake to summon the shelf",
+                         subtitle: "Shake the pointer while dragging files and the card opens under the notch as a drop target.")
+        }
+        if let settings = toy.store?.settings {
+            // The same switch as General's, where a shelf person
+            // looks for it: beside the other way to summon the shelf.
+            Toggle(isOn: Binding(get: { settings.shelfHotkeyEnabled },
+                                 set: { settings.shelfHotkeyEnabled = $0 })) {
+                SettingLabel(title: "Shelf hotkey",
+                             subtitle: settings.shelfHotkeyRegistrationFailed
+                                ? "⌃⌥D is taken by another app."
+                                : "⌃⌥D opens or folds the card from any app; anything you copied waits there as a Paste chip.")
+            }
+        }
+        Toggle(isOn: toy.bind(\.timerLights)) {
+            SettingLabel(title: "Timers flash the lights",
+                         subtitle: "A timer coming due breathes the SidePulse strips orange three times — only with a strip connected, and never while the Mac is quiet.")
+        }
+    }
+
+    @ViewBuilder
+    private var sensorRows: some View {
+        CardSectionHeader("Camera & microphone")
+        Toggle(isOn: Binding(
+            get: { toy.sensorIndicatorsEnabled },
+            set: { toy.sensorIndicatorsEnabled = $0 })) {
+            SettingLabel(title: "Mic & camera indicators",
+                         subtitle: toy.sensorsDrawable
+                            ? "A green dot in the right shoulder while a camera rolls, an orange one while a microphone is live — macOS's own dots. Read-only: JR-Bar listens for the system saying they started and never opens either itself."
+                            : "The Screen Bar's ears are drawing the notch's shoulders, so the island has no room for the dots.")
+        }
+        Toggle(isOn: toy.bind(\.mirror)) {
+            SettingLabel(title: "Mirror",
+                         subtitle: "A quick look through the camera: ⌥-click the notch, or the camera button in the card. Never a standing row — the lens closes when the card folds, and macOS asks for the camera the first time.")
+        }
+    }
+
+    /// "2 s", "1.5 s": the level capsule's hold.
+    private var hudDuration: String {
+        "\(toy.settings.hudDuration.formatted(.number.precision(.fractionLength(0...1)))) s"
     }
 
     /// A glance switch's subtitle: what it shows once access exists, or
@@ -333,15 +393,17 @@ struct NotchControlsView: View {
     }
 
     private func externalNote(installed: Bool, name: String, link: URL) -> some View {
-        HStack(spacing: 8) {
-            Text(installed ? "\(name) is installed" : "\(name) isn't installed")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        HStack(spacing: SettingsMetrics.s) {
+            CardNote(installed ? "\(name) is installed and draws the island." : "\(name) isn't installed.",
+                     symbol: installed ? "checkmark.circle.fill" : "arrow.down.circle",
+                     tint: installed ? .green : .secondary)
+            Spacer(minLength: SettingsMetrics.s)
             if installed {
                 Button("Open \(name)") { toy.openExternal() }
+                    .controlSize(.small)
             } else {
                 Link("Get \(name)", destination: link)
-                    .font(.callout)
+                    .font(.subheadline)
             }
         }
     }

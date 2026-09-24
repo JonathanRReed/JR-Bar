@@ -12,16 +12,16 @@ struct AgentAlertRulesTable: View {
     let utility: AgentUtility
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: SettingsMetrics.s) {
             SettingLabel(title: "Alert rules",
                          subtitle: "How loud each agent may be — \"Codex can be loud, Grok quiet\". A blank rule follows Settings › Notifications.")
+                .padding(.top, SettingsMetrics.xs)
             let providers = utility.alertProviders
             if providers.isEmpty {
-                Text("No agents yet — providers appear here once their hooks are installed or a session reports in.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                CardNote("No agents yet — providers appear here once their hooks are installed or a session reports in.",
+                         symbol: "person.crop.circle.badge.questionmark")
             } else {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                Grid(alignment: .leading, horizontalSpacing: SettingsMetrics.m, verticalSpacing: SettingsMetrics.s) {
                     GridRow {
                         Text("Agent")
                         Text("Asks")
@@ -31,12 +31,17 @@ struct AgentAlertRulesTable: View {
                         Text("Escalates to")
                         Text("")
                     }
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                     ForEach(providers, id: \.self) { provider in
+                        Divider()
+                            .gridCellUnsizedAxes(.horizontal)
                         row(provider)
                     }
                 }
+                .padding(.horizontal, SettingsMetrics.m)
+                .padding(.vertical, SettingsMetrics.s + 2)
+                .background(InsetPanel())
             }
         }
     }

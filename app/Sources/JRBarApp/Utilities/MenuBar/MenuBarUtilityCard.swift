@@ -25,11 +25,11 @@ struct DockUtilityCard: View {
     }
 }
 
-/// The card's disclosure body: what is hidden right now and how to
-/// change it, the reveal gestures, then everything else behind an
-/// Advanced disclosure. Every row writes `UtilitiesStore.state.menuBar`
-/// through the utility's `bind`/`setSection`, which persists and
-/// re-applies.
+/// The card's disclosure body: who renders, what is hidden right now
+/// and how to change it, the reveal gestures, then Extras, Overrides
+/// and Advanced behind disclosures. Every row writes
+/// `UtilitiesStore.state.menuBar` through the utility's
+/// `bind`/`setSection`, which persists and re-applies.
 struct MenuBarUtilityControls: View {
     let utility: MenuBarUtility
     @ViewState private var showAdvanced = false
@@ -37,7 +37,7 @@ struct MenuBarUtilityControls: View {
     @ViewState private var showExtras = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Picker(selection: utility.providerBinding) {
                 Text("JR-Bar").tag(MenuBarProvider.jrbar)
                 Text("Bartender").tag(MenuBarProvider.bartender)
@@ -45,35 +45,30 @@ struct MenuBarUtilityControls: View {
                 Text("Hidden Bar").tag(MenuBarProvider.hiddenBar)
             } label: {
                 SettingLabel(title: "Render with",
-                             subtitle: "Hand the hiding to an installed counterpart — Bartender (paid), Ice or Hidden Bar (free). Ours parks while the pick stands.")
+                             subtitle: "Hand the hiding to Bartender (paid), Ice or Hidden Bar (free). Ours parks while the pick stands.")
             }
             .pickerStyle(.menu)
-            .fixedSize()
+            .padding(.vertical, SettingsMetrics.rowPadding)
 
             if let note = utility.providerNote {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(.secondary)
-                    Text(note)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: SettingsMetrics.s) {
+                    CardNote(note, symbol: "arrow.triangle.2.circlepath")
                     if utility.externalURL != nil {
-                        Spacer()
+                        Spacer(minLength: SettingsMetrics.s)
                         Button("Open") { utility.openExternal() }
                             .controlSize(.small)
                     }
                 }
             }
 
-            SettingLabel(title: "How it works",
-                         subtitle: utility.concealing
-                            ? "Drag an app to Hidden or Always below and macOS hides it. The JR-Bar icon stands at the right end of the gap it leaves, with a ‹ that brings hidden items back. Hidden apps keep running and remain accessible in the Item Bar."
-                            : "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon, or drag its tile below, to hide or show it.")
+            CardNote(utility.concealing
+                        ? "Drag an app to Hidden or Always below and macOS hides it. The JR-Bar icon stands at the right end of the gap, with a ‹ that brings hidden items back; hidden apps keep running and stay reachable in the Item Bar."
+                        : "Everything left of the JR-Bar icon is tucked away. ⌘-drag an item across the icon, or drag its tile below, to hide or show it.")
+                .padding(.vertical, SettingsMetrics.xs)
             if utility.concealerAvailable, utility.notarized == false {
                 Toggle(isOn: utility.bind(\.concealUnnotarized)) {
                     SettingLabel(title: "Hide the way macOS hides",
-                                 subtitle: "This copy of JR-Bar is not notarized. Native hiding may also hide JR-Bar's own icon. Enable this only if you accept that limitation.")
+                                 subtitle: "This copy of JR-Bar is not notarized, so native hiding may hide JR-Bar's own icon too. Turn this on only if you accept that.")
                 }
             }
 
@@ -89,14 +84,11 @@ struct MenuBarUtilityControls: View {
                 SettingLabel(title: "Right now", subtitle: utility.engineLine)
             }
             if utility.engineHealth.isAlert {
-                Label("Hiding stopped — the Item Bar still reaches every app, and JR-Bar retries on the next change.",
-                      systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                CardNote("Hiding stopped — the Item Bar still reaches every app, and JR-Bar retries on the next change.",
+                         symbol: "exclamationmark.triangle.fill", tint: .orange)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: SettingsMetrics.s) {
                 Menu("Hide all") {
                     Button("For 5 minutes") { utility.hideAllListed(for: 5 * 60) }
                     Button("For an hour") { utility.hideAllListed(for: 60 * 60) }
@@ -128,24 +120,17 @@ struct MenuBarUtilityControls: View {
                               : "Make it stick: every app becomes Shown and your hidden picks are cleared")
                 }
             }
-            .padding(.top, 2)
+            .padding(.vertical, SettingsMetrics.xs)
             if let note = utility.overlayNote {
-                Text(note)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CardNote(note, symbol: "clock")
             }
 
             if !utility.profileSubjects.isEmpty {
                 MenuBarLayoutEditorView(utility: utility, placement: placement(of:))
-                    .padding(.top, 2)
+                    .padding(.top, SettingsMetrics.xs)
             }
 
-            Divider()
-                .padding(.vertical, 4)
-
-            SettingLabel(title: "Bring them back",
-                         subtitle: "What counts as a reveal. The run tucks itself away again on its own.")
+            CardSectionHeader("Bring them back")
             Toggle(isOn: utility.bind(\.revealOnHover)) {
                 SettingLabel(title: "Hover the blank stretch",
                              subtitle: "Rest the pointer on the empty bar left of the icon.")
@@ -156,7 +141,7 @@ struct MenuBarUtilityControls: View {
             }
             Toggle(isOn: utility.bind(\.revealOnScroll)) {
                 SettingLabel(title: "Scroll over the bar",
-                             subtitle: "A swipe or scroll wheel on the menu bar.")
+                             subtitle: "A swipe or a scroll wheel anywhere on the menu bar.")
             }
             Picker(selection: utility.bind(\.rehideMode)) {
                 Text("After a delay").tag(MenuBarSettings.RehideMode.timed)
@@ -166,6 +151,7 @@ struct MenuBarUtilityControls: View {
                              subtitle: "On a clock once the pointer leaves the bar, or only when a click lands outside it.")
             }
             .pickerStyle(.menu)
+            .padding(.vertical, SettingsMetrics.rowPadding)
             if utility.settings().rehideMode == .timed {
                 LabeledContent {
                     HStack(spacing: 10) {
@@ -175,7 +161,7 @@ struct MenuBarUtilityControls: View {
                     }
                 } label: {
                     SettingLabel(title: "Tuck away after",
-                                 subtitle: "How long a reveal lasts once the pointer leaves the bar.")
+                                 subtitle: "How long a reveal lasts once the pointer leaves.")
                 }
             }
             Picker(selection: utility.bind(\.revealStyle)) {
@@ -183,12 +169,13 @@ struct MenuBarUtilityControls: View {
                 Text("On the bar — Ice, Hidden Bar").tag(MenuBarSettings.RevealStyle.inline)
             } label: {
                 SettingLabel(title: "Reveal style",
-                             subtitle: "The Item Bar panel leaves the row untouched; inline reflows the hidden items onto the menu bar itself.")
+                             subtitle: "The Item Bar leaves the row untouched; inline reflows the hidden items onto the bar itself.")
             }
             .pickerStyle(.menu)
+            .padding(.vertical, SettingsMetrics.rowPadding)
             Toggle(isOn: utility.bind(\.hideShownWhileRevealing)) {
                 SettingLabel(title: "Hide shown items while revealing",
-                             subtitle: "Bartender's swap: while a reveal is out, the normally-visible items are covered too — the bar shows only the hidden run.")
+                             subtitle: "Bartender's swap: while a reveal is out, the bar shows only the hidden run.")
             }
             Toggle(isOn: utility.bind(\.showForUpdates)) {
                 SettingLabel(title: "Show for updates",
@@ -203,135 +190,111 @@ struct MenuBarUtilityControls: View {
             }
 
             if !utility.accessibilityGranted {
-                Divider()
-                    .padding(.vertical, 4)
-                HStack(spacing: 8) {
-                    Text("Accessibility lets Menu Bar see where every item sits and click tiles through. Without it the boundary still works, but the list and the tiles go blind.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
+                HStack(spacing: SettingsMetrics.s) {
+                    CardNote("Accessibility lets Menu Bar see where every item sits and click tiles through. Without it the boundary still works, but the list and the tiles go blind.",
+                             symbol: "exclamationmark.triangle.fill", tint: .orange)
+                    Spacer(minLength: SettingsMetrics.s)
                     Button("Open Settings") { utility.openAccessibilitySettings() }
                         .controlSize(.small)
                 }
+                .padding(.top, SettingsMetrics.s)
             }
             if utility.clickBridgeFailed {
-                Divider()
-                    .padding(.vertical, 4)
-                Text("The system-item click bridge could not start — macOS refused its event tap (Accessibility is required). Clicks on the clock, battery and Wi-Fi stay native while items are concealed.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CardNote("The system-item click bridge could not start — macOS refused its event tap (Accessibility is required). Clicks on the clock, battery and Wi-Fi stay native while items are concealed.",
+                         symbol: "exclamationmark.triangle.fill", tint: .orange)
+                    .padding(.top, SettingsMetrics.s)
             }
 
-            Divider()
-                .padding(.vertical, 4)
-
+            CardSectionHeader("More")
             DisclosureGroup(isExpanded: $showExtras) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle(isOn: utility.bind(\.hideUnderNotch)) {
-                        SettingLabel(title: "Keep items out of the notch",
-                                     subtitle: "An item that lands in the notch band is invisible anyway — it moves to the hidden run where the Item Bar can still reach it.")
-                    }
-                    .disabled(utility.concealing)
-                    Toggle(isOn: utility.bind(\.hideOnMenuOverlap)) {
-                        SettingLabel(title: "Hide items under app menus",
-                                     subtitle: "On a crowded bar the front app's menus draw over items — those hide instead of sitting unreachable.")
-                    }
-                    .disabled(utility.concealing)
-                    if utility.concealing {
-                        // Both feed only the positional cover plan —
-                        // under the assessment engine macOS's own
-                        // overflow does this work. Disabled, not
-                        // rewritten: the stored values stay for the
-                        // day the spacer engine stands back in.
-                        Text("Handled by macOS's own overflow while the system concealer is in use")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Toggle(isOn: utility.bind(\.barUnderlay)) {
-                        SettingLabel(title: "Tint the whole bar",
-                                     subtitle: "The cover's material and tint drawn under the full menu bar row, on every display.")
-                    }
-                    Toggle(isOn: utility.bind(\.agentStatusItem)) {
-                        SettingLabel(title: "Agent status item",
-                                     subtitle: utility.concealing
-                                        ? "A dot and what your agents are doing, drawn beside the JR-Bar icon as part of its face; click opens the Overview. The icon's Agents and Orbit styles carry the same state."
-                                        : "A dot in the bar showing what your agents are doing; click opens the Overview.")
-                    }
-                    Toggle(isOn: utility.bind(\.combinedSystemItem)) {
-                        SettingLabel(title: "One system item",
-                                     subtitle: utility.concealing
-                                        ? "Battery, Wi-Fi and Focus drawn beside the JR-Bar icon as part of its face. Its popover adds your agents, connected Bluetooth devices, what's playing and the volume. Control Center's own items hide only once that face is on screen, and come back the moment it isn't."
-                                        : "Battery, Wi-Fi, sound and Focus in a single item. Its popover adds your agents, connected Bluetooth devices and what's playing — the matching Control Center items hide only while it is on screen.")
-                    }
-                    Divider()
-                        .padding(.vertical, 4)
-                    spacerEditor
-                    Divider()
-                        .padding(.vertical, 4)
-                    deskProfileEditor
-                    displayProfileEditor
+                Toggle(isOn: utility.bind(\.hideUnderNotch)) {
+                    SettingLabel(title: "Keep items out of the notch",
+                                 subtitle: "An item that lands in the notch band is invisible anyway — it moves to the hidden run, where the Item Bar still reaches it.")
                 }
-                .padding(.top, 4)
+                .disabled(utility.concealing)
+                Toggle(isOn: utility.bind(\.hideOnMenuOverlap)) {
+                    SettingLabel(title: "Hide items under app menus",
+                                 subtitle: "On a crowded bar the front app's menus draw over items — those hide instead of sitting unreachable.")
+                }
+                .disabled(utility.concealing)
+                if utility.concealing {
+                    // Both feed only the positional cover plan —
+                    // under the assessment engine macOS's own
+                    // overflow does this work. Disabled, not
+                    // rewritten: the stored values stay for the
+                    // day the spacer engine stands back in.
+                    CardNote("Handled by macOS's own overflow while the system concealer is in use.")
+                }
+                Toggle(isOn: utility.bind(\.barUnderlay)) {
+                    SettingLabel(title: "Tint the whole bar",
+                                 subtitle: "The cover's material and tint drawn under the full menu bar row, on every display.")
+                }
+                Toggle(isOn: utility.bind(\.agentStatusItem)) {
+                    SettingLabel(title: "Agent status item",
+                                 subtitle: utility.concealing
+                                    ? "A dot and what your agents are doing, drawn beside the JR-Bar icon as part of its face; click opens the Overview. The icon's Agents and Orbit styles carry the same state."
+                                    : "A dot in the bar showing what your agents are doing; click opens the Overview.")
+                }
+                Toggle(isOn: utility.bind(\.combinedSystemItem)) {
+                    SettingLabel(title: "One system item",
+                                 subtitle: utility.concealing
+                                    ? "Battery, Wi-Fi and Focus drawn beside the JR-Bar icon as part of its face; its popover adds your agents, Bluetooth devices, what's playing and the volume. Control Center's own items hide only while that face is on screen."
+                                    : "Battery, Wi-Fi, sound and Focus in a single item; its popover adds your agents, Bluetooth devices and what's playing. The matching Control Center items hide only while it is on screen.")
+                }
+                spacerEditor
+                    .cardHeading()
+                deskProfileEditor
+                displayProfileEditor
             } label: {
                 SettingLabel(title: "Extras",
                              subtitle: "Spacer items, the bar underlay, the agent item, profiles per desk and per display, and what the notch and menus cover.")
             }
 
             DisclosureGroup(isExpanded: $showOverrides) {
-                VStack(alignment: .leading, spacing: 4) {
-                    SettingLabel(title: utility.concealing ? "Item visibility" : "Cover in place",
-                                 subtitle: utility.concealing
-                                    ? "Apps use Shown, Hidden, or Always. Apple extras use Auto or covers in place."
-                                    : "Cover and Always mask an item where it sits. Auto follows its position in the menu bar.")
-                    ForEach(hideable, id: \.id) { item in
-                        overrideRow(item)
-                    }
-                    appearanceControls
+                SettingLabel(title: utility.concealing ? "Item visibility" : "Cover in place",
+                             subtitle: utility.concealing
+                                ? "Apps use Shown, Hidden or Always. Apple's extras use Auto or a cover in place."
+                                : "Cover and Always mask an item where it sits. Auto follows its position in the menu bar.")
+                    .padding(.vertical, SettingsMetrics.xs)
+                ForEach(hideable, id: \.id) { item in
+                    overrideRow(item)
                 }
-                .padding(.top, 4)
+                appearanceControls
+                    .cardHeading()
             } label: {
                 SettingLabel(title: "Overrides",
-                             subtitle: "Hide an item without moving it.")
+                             subtitle: "Hide an item without moving it, and the look of its cover.")
             }
 
             DisclosureGroup(isExpanded: $showAdvanced) {
-                VStack(alignment: .leading, spacing: 4) {
-                    LabeledContent {
-                        Picker(selection: utility.bind(\.itemSpacing)) {
-                            Text("System").tag(0)
-                            Text("Roomy").tag(14)
-                            Text("Compact").tag(8)
-                            Text("Tight").tag(4)
-                        } label: { EmptyView() }
-                            .labelsHidden()
-                            .fixedSize()
-                    } label: {
-                        SettingLabel(title: "Item spacing",
-                                     subtitle: "A tighter gap between every app's items, system-wide. Items pick it up as they relaunch.")
-                    }
-                    LabeledContent {
-                        HStack(spacing: 10) {
-                            Slider(value: utility.itemSpacingBinding,
-                                   in: MenuBarSettings.itemSpacingRange, step: 1)
-                                .frame(width: 160)
-                            ValueText(text: utility.settings().itemSpacing > 0
-                                      ? "\(utility.settings().itemSpacing) pt" : "System")
-                        }
-                    } label: {
-                        SettingLabel(title: "Custom spacing",
-                                     subtitle: "An exact gap in points — the presets above all live on this dial.")
-                    }
-                    engineControls
-                    Divider()
-                        .padding(.vertical, 4)
-                    MenuBarProfilesControls(utility: utility)
-                    Divider()
-                        .padding(.vertical, 4)
-                    MenuBarAutomationControls(utility: utility)
+                LabeledContent {
+                    Picker(selection: utility.bind(\.itemSpacing)) {
+                        Text("System").tag(0)
+                        Text("Roomy").tag(14)
+                        Text("Compact").tag(8)
+                        Text("Tight").tag(4)
+                    } label: { EmptyView() }
+                        .labelsHidden()
+                        .fixedSize()
+                } label: {
+                    SettingLabel(title: "Item spacing",
+                                 subtitle: "A tighter gap between every app's items, system-wide. Items pick it up as they relaunch.")
                 }
-                .padding(.top, 4)
+                LabeledContent {
+                    HStack(spacing: 10) {
+                        Slider(value: utility.itemSpacingBinding,
+                               in: MenuBarSettings.itemSpacingRange, step: 1)
+                            .frame(width: 160)
+                        ValueText(text: utility.settings().itemSpacing > 0
+                                  ? "\(utility.settings().itemSpacing) pt" : "System")
+                    }
+                } label: {
+                    SettingLabel(title: "Custom spacing",
+                                 subtitle: "An exact gap in points — the presets above all live on this dial.")
+                }
+                engineControls
+                MenuBarProfilesControls(utility: utility)
+                MenuBarAutomationControls(utility: utility)
             } label: {
                 SettingLabel(title: "Advanced",
                              subtitle: "Item spacing, profiles, the ⌘⇧K command bar, hotkeys and rules.")
@@ -345,14 +308,10 @@ struct MenuBarUtilityControls: View {
     @ViewBuilder
     private var rivalsGuard: some View {
         ForEach(utility.runningRivals, id: \.name) { rival in
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                Text("\(rival.name) is also managing the menu bar. Two managers fight — its hiding can undo what JR-Bar hides.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
+            HStack(spacing: SettingsMetrics.s) {
+                CardNote("\(rival.name) is also managing the menu bar. Two managers fight — its hiding can undo what JR-Bar hides.",
+                         symbol: "exclamationmark.triangle.fill", tint: .orange)
+                Spacer(minLength: SettingsMetrics.s)
                 if rival.handoff != nil {
                     Button("Hand over") { utility.handOver(to: rival) }
                         .controlSize(.small)
@@ -369,12 +328,12 @@ struct MenuBarUtilityControls: View {
     private var showForUpdatesNote: String {
         let watched = utility.settings().curation.updateWatch.count
         let scope = watched == 0
-            ? "Every hidden item counts; mark the ones that matter with Show When It Changes in a tile's menu and only those interrupt."
+            ? "Every hidden item counts until you mark some with Show When It Changes in a tile's menu."
             : "Only the \(watched == 1 ? "item" : "\(watched) items") marked Show When It Changes interrupt."
         if utility.concealing {
-            return "A hidden item whose text changes stands alone on the bar for a moment. macOS hides a concealed app's text too, so this mostly hears Apple's own extras; a changed glyph gets a dot in the Item Bar instead. " + scope
+            return "A hidden item whose text changes stands alone on the bar for a moment — mostly Apple's own extras, since macOS hides a concealed app's text too; a changed glyph gets a dot in the Item Bar. " + scope
         }
-        return "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment so the change is seen. " + scope
+        return "A hidden item that updates itself — a clock's minute, a VPN's \"Connected\" — reveals the run for a moment. " + scope
     }
 
     /// Every listed item the utility could hide, in bar order.
@@ -456,8 +415,6 @@ struct MenuBarUtilityControls: View {
                                 : "Guessed from the notch — it learns from the overflow as items move.")
             }
         }
-        Divider()
-            .padding(.vertical, 4)
     }
 
     /// The spacer/label item rows plus the add button.
@@ -466,10 +423,8 @@ struct MenuBarUtilityControls: View {
         SettingLabel(title: "Spacer items",
                      subtitle: "Fixed-width or labelled items of ours that sit anywhere in the bar — ⌘-drag them like any other. Clicking one reveals the hidden run.")
         if utility.concealing {
-            Text("Parked while macOS hides items for JR-Bar: it draws none of JR-Bar's extra items and orders the bar itself, so a spacer could neither show nor sit between apps. Your rows are kept for when the spacer engine stands in.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            CardNote("Parked while macOS hides items for JR-Bar: it draws none of JR-Bar's extra items and orders the bar itself. Your rows are kept for when the spacer engine stands in.",
+                     symbol: "parkingsign.circle")
         }
         ForEach(Array(utility.settings().spacers.enumerated()), id: \.element.id) { index, spacer in
             HStack(spacing: 8) {
@@ -669,6 +624,7 @@ private struct MenuBarProfilesControls: View {
     var body: some View {
         SettingLabel(title: "Profiles",
                      subtitle: "A look plus what it changes about your bar. Apps you hide on your bar stay hidden in every profile that doesn't say otherwise.")
+            .cardHeading()
 
         LabeledContent {
             Picker(selection: Binding(
@@ -795,6 +751,7 @@ private struct MenuBarWhileRulesControls: View {
         let rules = utility.settings().curation.stateRules
         SettingLabel(title: "While…",
                      subtitle: "A level that holds a layout, a light scene or quiet agents for as long as it lasts — and puts everything back when it ends. Your own picks are never rewritten.")
+            .cardHeading()
         ForEach(rules) { rule in
             HStack(spacing: 8) {
                 Toggle(isOn: Binding(
@@ -1017,6 +974,7 @@ private struct MenuBarAutomationControls: View {
     var body: some View {
         SettingLabel(title: "Automate",
                      subtitle: "The command bar, global hotkeys, and rules that fire on their own.")
+            .cardHeading()
 
         LabeledContent {
             Button(commandBarTitle) { utility.openCommandBar() }
@@ -1073,6 +1031,7 @@ private struct MenuBarAutomationControls: View {
         let rules = utility.settings().triggerRules
         SettingLabel(title: "Rules",
                      subtitle: "When something happens, the bar reacts — lock, unlock, an app, a time, the charger, a display, the lid, and what your agents are doing.")
+            .cardHeading()
         ForEach(rules) { rule in
             HStack(spacing: 8) {
                 Toggle(isOn: Binding(
