@@ -843,6 +843,36 @@ Keys the app catalogued first and the daemon serves since 2026-09-10:
   most 16, default `[10, 25, 50, 100]`). All default off/empty-consented;
   an enabled odometer with no valid step stays dark.
 
+Usage-source keys (additive, 2026-09-24; each decoded tolerantly by
+`usage_source_settings.py`, so a bad field falls back to its default and
+never costs the rest of the file):
+
+- `usage_hooks`: `{enabled: false, rules: [{id, enabled, event (one of the
+  seven, or "*"), provider (or null), threshold_remaining (or null),
+  executable, arguments[], timeout_seconds (0.1–300, default 15), argv
+  ("json" or "legacy")}]}`. `set_setting` writes it whole or by dot path
+  (`usage_hooks.enabled`). A settings file with no `usage_hooks` but a v1
+  `usage_event_hook_path` loads as one enabled rule with id `legacy` and
+  `argv: "legacy"`; the legacy window's path field still writes that rule.
+  A rule the runner refuses stays in the document; `usage_hooks_status`
+  says why.
+- `claude_statusline_source` (default false) lets Claude Code's statusLine
+  readings stand in for OAuth; `statusline_text_enabled` (default true)
+  keeps `statusline.txt` written while the source is on.
+- `cliproxy_hub`: `{enabled: false, url: "http://127.0.0.1:8317",
+  min_interval_seconds: 300}`. A non-loopback URL is kept but refused at
+  collection time; the interval is clamped to 300–3600. The management key
+  is never here: it is the Keychain's (`providers credential set cliproxy
+  management`).
+- `provider_extra_homes`: `{claude: [absolute folders], codex: [...]}`,
+  extra account homes scanned beside `CLAUDE_CONFIG_DIR` / `CODEX_HOME`
+  and the defaults; homes that resolve to one folder count once.
+- `pricing_overrides`: `{model: {input, output, cache_read?,
+  cache_write?}}` in USD per million tokens; a model needs an input and an
+  output price. An override wins over `resources/model_pricing.json`.
+- `keep_awake_yield_low_power_mode` (default true): a keep-awake lease is
+  suspended with reason `low_power` while macOS Low Power Mode is on.
+
 ```json
 {"t":"settings","v":1,"generation":17,"schema":3,"document":{…}}
 ```

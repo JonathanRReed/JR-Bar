@@ -52,6 +52,30 @@ subprocess and no dependency on `claude` being installed — at the cost
 of owning that write-back. Their delegated path is reported unreliable
 in steipete/CodexBar#1287.
 
+### The 2026-09-24 pass (hooks v2, reset confirmation, fixture contract)
+
+Snapshot studied: MIT, commit `e34fe618` (CHANGELOG top 0.66.0). Reimplemented
+in Python and Swift, no code copied:
+
+- **External event hooks v2** (`docs/configuration.md`, `HookRunner.swift`,
+  `HookRateLimiter.swift`): rules instead of one path, commands run without a
+  shell, an environment allowlist plus the event's own variables, JSON on
+  stdin with sorted keys, seven events, a 600 s limiter on the chatty ones, and
+  hard limits that fail closed. Ours is `usage_event_hooks.py` and
+  `jrbar usage-hooks`; the legacy single path keeps its argv.
+- **Reset confirmation** (`CodexWeeklyResetConfirmation.swift`, #3248,
+  #3851): a jump waits for a confirming read 60 s to 30 min later with a
+  matching boundary, and a rolling unused window is not a reset. Ours is
+  `provider_usage_qol.confirm_reset_events`, shared by the celebration, the
+  wire event and the hooks.
+- **Provider quota fixture contract** (`ProviderQuotaFixtureContractTests`):
+  one invariant suite over every provider fixture
+  (`tests/test_provider_usage_fixture_contract.py`).
+- **"Count each source once"** for Pi (#3246) and claude-swap homes without
+  double counting (#2954): `local_token_history.py`, `provider_homes.py`.
+- The **plugin manifest and approval model** (`docs/plugins.md`) informs the
+  provider-pack design, which is deferred.
+
 ## T3 Code
 
 Snapshot studied for P3.35: MIT, © 2026 T3 Tools Inc., commit
@@ -63,6 +87,54 @@ Studied for agent and session lifecycle reporting, stable creation-order
 presentation, local read and visit receipts, and keyboard traversal
 semantics. The P3.35 stack follows the same high-level rule that activity
 may change selection priority without reordering the underlying identity map.
+
+### The 2026-09-24 pass
+
+Snapshot studied: MIT, commit `cb1a3f34` (tag
+`v0.0.43-nightly.20260924.2200`). Reimplemented, no code copied:
+
+- **OpenCode Go usage** (`openCodeUsageLimits.ts`, #12115): the
+  `opencode.ai/zen/go/v1/usage` endpoint, the Go key in `auth.json`, and a 403
+  meaning "a Zen key without a Go subscription", not an error
+  (`collect_opencode`).
+- **The CLIProxyAPI hub** (`apps/server/src/usage/cliproxyApi.ts`, #10395):
+  `auth-files` plus `api-call` with `Bearer $TOKEN$`, so the proxy fills in its
+  own token (`cliproxy_hub.py`). We never call its reset or consume routes.
+- **Harness compatibility ranges** (`model-manifest.json`, #13130): the
+  `{provider, recommended, ranges}` shape of
+  `resources/provider_hook_compatibility.json`.
+- **Account homes** (#11485): `CODEX_HOME` and `CLAUDE_CONFIG_DIR` per
+  account, homes sharing a folder counted once.
+- **Docs layout** (`docs/README.md` over `docs/user/*`, an `AGENTS.md` with the
+  doc rules).
+
+## CLIProxyAPI
+
+Snapshot studied 2026-09-24: MIT, © Luis Pater, commit `c404af96` (v7.3.16).
+
+<https://github.com/router-for-me/CLIProxyAPI>
+
+Read for its management API (`internal/api/server_management.go`): the
+`auth-files`, `api-call` and 7.3's `quota/providers` and `quota/fetch` routes
+the hub uses, and the declarative quota-probe mapping
+(`plugin_quota.go`, `sdk/pluginapi/types.go`) that shaped the
+deferred provider-pack format. Its request-log naming change (`e6fcfa3`,
+an 8-hex counter and `_N` suffixes) is covered by a Data Hoarder test. No
+code copied.
+
+## ccusage
+
+Snapshot studied 2026-09-24: MIT, © ryoppippi, commit `03f421fa` (v20.0.25).
+
+<https://github.com/ryoppippi/ccusage>
+
+Read as format documentation, no code copied: the Pi, Grok, Gemini CLI and
+OpenClaw adapters (`rust/adapters/*`) describe the session files
+`local_token_history.py` reads; its Claude Code statusline guide pointed at
+the `rate_limits` block `claude_statusline_source.py` keeps; and its LiteLLM
+pricing snapshot is the model for `scripts/update_model_pricing.py`, which
+reads LiteLLM's MIT `model_prices_and_context_window.json` by hand, never at
+runtime.
 
 ## SidePulse upstream
 

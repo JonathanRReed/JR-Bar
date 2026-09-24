@@ -170,6 +170,9 @@ build can't write the metadata Shortcuts lists them from. Settings ›
 Shortcuts lists the links and binds a global key to any action or
 toggle. No link answers an ask.
 
+The user guides, from usage hooks and Claude Code's status line to the
+xbar and Raycast examples, are indexed in [docs/README.md](docs/README.md).
+
 To remove it: `sudo ./scripts/uninstall-macos.sh` takes out the hooks,
 the helpers, the `jrbar` link and the app, wherever they were installed
 (`~/Applications` or `/Applications`; `~/.local/bin` or `/usr/local/bin`),
@@ -241,7 +244,8 @@ make package                            # the signed bundle, PKG and Sparkle arc
 Releasing is [docs/PRODUCTION-RELEASE.md](docs/PRODUCTION-RELEASE.md); the
 feature status is [docs/FEATURE-MATRIX.md](docs/FEATURE-MATRIX.md); what is
 next is [docs/ROADMAP.md](docs/ROADMAP.md). CI runs the same three checks on
-a hosted macOS 26 runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
+a hosted macOS 26 runner. See [CONTRIBUTING.md](CONTRIBUTING.md), and
+[AGENTS.md](AGENTS.md) if a coding agent is doing the work.
 
 ## Migrating from SidePulse
 
