@@ -645,7 +645,9 @@ private struct MenuBarProfilesControls: View {
 
         LabeledContent {
             HStack(spacing: 6) {
-                TextField("Name", text: $nameDraft)
+                TextField("Name", text: $nameDraft, prompt: Text("Name"))
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 120)
                 Button("Save") {
@@ -777,109 +779,117 @@ private struct MenuBarWhileRulesControls: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
 
-        HStack(spacing: 6) {
-            Toggle("Not", isOn: $negated)
-                .toggleStyle(.checkbox)
-                .controlSize(.small)
-                .help("Hold while the level is not true — e.g. while not on the office Wi-Fi")
-            Picker(selection: $conditionKind) {
-                Text("Microphone is live").tag("mic")
-                Text("A Focus is on").tag("focus")
-                Text("Screen is locked").tag("locked")
-                Text("On battery").tag("battery")
-                Text("Battery at or below…").tag("battLow")
-                Text("On Wi-Fi…").tag("wifi")
-                Text("App is in front…").tag("front")
-                Text("App is running…").tag("running")
-                Text("Between hours…").tag("time")
-                Text("Lid is closed").tag("lid")
-                Text("External display attached").tag("display")
-                Divider()
-                Text("Agents are working").tag("working")
-                Text("An agent needs you").tag("asking")
-                Text("Agents are idle").tag("idle")
-                Text("Usage headroom at or below…").tag("quota")
-                Text("SidePulse is connected").tag("sidePulse")
-            } label: { EmptyView() }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            if conditionKind == "front" || conditionKind == "running" {
-                Picker(selection: $bundleID) {
-                    Text("Choose an app").tag("")
-                    ForEach(Self.runningApps(), id: \.id) { app in
-                        Text(app.name).tag(app.id)
+        VStack(alignment: .leading, spacing: SettingsMetrics.s) {
+            HStack(spacing: 6) {
+                RuleWord("While")
+                Toggle("Not", isOn: $negated)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                    .help("Hold while the level is not true — e.g. while not on the office Wi-Fi")
+                Picker(selection: $conditionKind) {
+                    Text("Microphone is live").tag("mic")
+                    Text("A Focus is on").tag("focus")
+                    Text("Screen is locked").tag("locked")
+                    Text("On battery").tag("battery")
+                    Text("Battery at or below…").tag("battLow")
+                    Text("On Wi-Fi…").tag("wifi")
+                    Text("App is in front…").tag("front")
+                    Text("App is running…").tag("running")
+                    Text("Between hours…").tag("time")
+                    Text("Lid is closed").tag("lid")
+                    Text("External display attached").tag("display")
+                    Divider()
+                    Text("Agents are working").tag("working")
+                    Text("An agent needs you").tag("asking")
+                    Text("Agents are idle").tag("idle")
+                    Text("Usage headroom at or below…").tag("quota")
+                    Text("SidePulse is connected").tag("sidePulse")
+                } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                if conditionKind == "front" || conditionKind == "running" {
+                    Picker(selection: $bundleID) {
+                        Text("Choose an app").tag("")
+                        ForEach(Self.runningApps(), id: \.id) { app in
+                            Text(app.name).tag(app.id)
+                        }
+                    } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+                if conditionKind == "wifi" {
+                    TextField("network name", text: $ssid)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 110)
+                    if let current = MenuBarSystemTriggerSource.currentSSID() {
+                        Button("Use “\(current)”") { ssid = current }
+                            .controlSize(.small)
+                    }
+                }
+                if conditionKind == "battLow" || conditionKind == "quota" {
+                    TextField("%", value: $percent, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 40)
+                }
+                if conditionKind == "time" {
+                    TextField("from", value: $startHour, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 34)
+                    Text("to").font(.callout)
+                    TextField("to", value: $endHour, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 34)
+                }
+            }
+
+            HStack(spacing: 6) {
+                RuleWord("Hold")
+                Picker(selection: $barEffect) {
+                    Text("Tuck everything away").tag("quiet")
+                    Text("Show everything").tag("show")
+                    Text("Leave the bar").tag("none")
+                } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                Picker(selection: $profileName) {
+                    Text("No profile").tag("")
+                    Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneName)
+                    ForEach(utility.settings().profiles) { profile in
+                        Text(profile.name).tag(profile.name)
                     }
                 } label: { EmptyView() }
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .fixedSize()
+                .help("A profile laid over your bar while the rule holds")
             }
-            if conditionKind == "wifi" {
-                TextField("network name", text: $ssid)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 110)
-                if let current = MenuBarSystemTriggerSource.currentSSID() {
-                    Button("Use “\(current)”") { ssid = current }
-                        .controlSize(.small)
-                }
-            }
-            if conditionKind == "battLow" || conditionKind == "quota" {
-                TextField("%", value: $percent, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 40)
-            }
-            if conditionKind == "time" {
-                TextField("from", value: $startHour, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 34)
-                Text("to").font(.callout)
-                TextField("to", value: $endHour, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 34)
+            HStack(spacing: 6) {
+                Picker(selection: $scene) {
+                    Text("Lights as they are").tag("")
+                    ForEach(EffectScene.allCases) { scene in
+                        Text("\(scene.label) scene").tag(scene.rawValue)
+                    }
+                } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .help("The LED scene while the rule holds — yours comes back after")
+                Toggle("Quiet agents", isOn: $quietAgents)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                    .help("The daemon's quiet hours while the rule holds, ended after")
+                Button("Add") { addRule() }
+                    .controlSize(.small)
+                    .disabled(!draftValid)
             }
         }
-
-        HStack(spacing: 6) {
-            Picker(selection: $barEffect) {
-                Text("Tuck everything away").tag("quiet")
-                Text("Show everything").tag("show")
-                Text("Leave the bar").tag("none")
-            } label: { EmptyView() }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            Picker(selection: $profileName) {
-                Text("No profile").tag("")
-                Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneName)
-                ForEach(utility.settings().profiles) { profile in
-                    Text(profile.name).tag(profile.name)
-                }
-            } label: { EmptyView() }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            .help("A profile laid over your bar while the rule holds")
-        }
-        HStack(spacing: 6) {
-            Picker(selection: $scene) {
-                Text("Lights as they are").tag("")
-                ForEach(EffectScene.allCases) { scene in
-                    Text("\(scene.label) scene").tag(scene.rawValue)
-                }
-            } label: { EmptyView() }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            .help("The LED scene while the rule holds — yours comes back after")
-            Toggle("Quiet agents", isOn: $quietAgents)
-                .toggleStyle(.checkbox)
-                .controlSize(.small)
-                .help("The daemon's quiet hours while the rule holds, ended after")
-            Button("Add") { addRule() }
-                .controlSize(.small)
-                .disabled(!draftValid)
-        }
+        .padding(SettingsMetrics.s + 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(InsetPanel())
+        .padding(.top, SettingsMetrics.xs)
     }
 
     /// Running regular apps, by name — the picker instead of a bundle id.
@@ -993,9 +1003,7 @@ private struct MenuBarAutomationControls: View {
                     Text(hotkeyTitle(binding.action))
                         .font(.callout)
                     Spacer(minLength: 8)
-                    Text(binding.displayString)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    Keycaps(display: binding.displayString)
                 }
             }
         }
@@ -1050,102 +1058,110 @@ private struct MenuBarAutomationControls: View {
             }
         }
 
-        HStack(spacing: 6) {
-            Picker(selection: $triggerKind) {
-                Text("Screen locks").tag("lock")
-                Text("Screen unlocks").tag("unlock")
-                Text("App activates").tag("app")
-                Text("Time of day").tag("time")
-                Text("Charger in").tag("acOn")
-                Text("Charger out").tag("acOff")
-                Text("Battery falls to…").tag("battLow")
-                Text("Battery rises past…").tag("battHigh")
-                Text("Wi-Fi joins").tag("wifiJoin")
-                Text("Wi-Fi changes").tag("wifiAny")
-                Text("Wi-Fi drops").tag("wifiLeft")
-                Text("Mic goes live").tag("micOn")
-                Text("Mic goes quiet").tag("micOff")
-                Text("Focus turns on").tag("focusOn")
-                Text("Focus turns off").tag("focusOff")
-                Divider()
-                Text("App launches").tag("appLaunch")
-                Text("App quits").tag("appQuit")
-                Text("Display connects").tag("displayOn")
-                Text("Display disconnects").tag("displayOff")
-                Text("Lid closes").tag("lidClosed")
-                Text("Lid opens").tag("lidOpened")
-                Divider()
-                Text("Agents start working").tag("agentsWork")
-                Text("An agent needs you").tag("agentAsk")
-                Text("Agents finish").tag("agentsDone")
-                Text("Usage headroom falls to…").tag("quotaLow")
-                Text("SidePulse connects").tag("sidePulseOn")
-                Text("SidePulse disconnects").tag("sidePulseOff")
-            } label: { EmptyView() }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            if Self.appTriggerKinds.contains(triggerKind) {
-                TextField("bundle id", text: $triggerBundleID)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 110)
-            }
-            if triggerKind == "wifiJoin" {
-                TextField("network name", text: $triggerSSID)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 110)
-            }
-            if triggerKind == "time" {
-                TextField("HH", value: $triggerHour, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 34)
-                TextField("MM", value: $triggerMinute, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 34)
-            }
-            if triggerKind == "battLow" || triggerKind == "battHigh" || triggerKind == "quotaLow" {
-                TextField("%", value: $triggerPercent, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 40)
-            }
-        }
-
-        HStack(spacing: 6) {
-            Picker(selection: $actionKind) {
-                Text("Apply profile").tag("profile")
-                Text("Hide all").tag("hideAll")
-                Text("Show all").tag("showAll")
-                Text("Reveal for…").tag("reveal")
-                Text("Run script").tag("script")
-            } label: { EmptyView() }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            if actionKind == "profile" {
-                Picker(selection: $actionProfile) {
-                    Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneName)
-                    ForEach(utility.settings().profiles) { p in
-                        Text(p.name).tag(p.name)
-                    }
+        VStack(alignment: .leading, spacing: SettingsMetrics.s) {
+            HStack(spacing: 6) {
+                RuleWord("When")
+                Picker(selection: $triggerKind) {
+                    Text("Screen locks").tag("lock")
+                    Text("Screen unlocks").tag("unlock")
+                    Text("App activates").tag("app")
+                    Text("Time of day").tag("time")
+                    Text("Charger in").tag("acOn")
+                    Text("Charger out").tag("acOff")
+                    Text("Battery falls to…").tag("battLow")
+                    Text("Battery rises past…").tag("battHigh")
+                    Text("Wi-Fi joins").tag("wifiJoin")
+                    Text("Wi-Fi changes").tag("wifiAny")
+                    Text("Wi-Fi drops").tag("wifiLeft")
+                    Text("Mic goes live").tag("micOn")
+                    Text("Mic goes quiet").tag("micOff")
+                    Text("Focus turns on").tag("focusOn")
+                    Text("Focus turns off").tag("focusOff")
+                    Divider()
+                    Text("App launches").tag("appLaunch")
+                    Text("App quits").tag("appQuit")
+                    Text("Display connects").tag("displayOn")
+                    Text("Display disconnects").tag("displayOff")
+                    Text("Lid closes").tag("lidClosed")
+                    Text("Lid opens").tag("lidOpened")
+                    Divider()
+                    Text("Agents start working").tag("agentsWork")
+                    Text("An agent needs you").tag("agentAsk")
+                    Text("Agents finish").tag("agentsDone")
+                    Text("Usage headroom falls to…").tag("quotaLow")
+                    Text("SidePulse connects").tag("sidePulseOn")
+                    Text("SidePulse disconnects").tag("sidePulseOff")
                 } label: { EmptyView() }
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .fixedSize()
+                if Self.appTriggerKinds.contains(triggerKind) {
+                    TextField("bundle id", text: $triggerBundleID)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 110)
+                }
+                if triggerKind == "wifiJoin" {
+                    TextField("network name", text: $triggerSSID)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 110)
+                }
+                if triggerKind == "time" {
+                    TextField("HH", value: $triggerHour, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 34)
+                    TextField("MM", value: $triggerMinute, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 34)
+                }
+                if triggerKind == "battLow" || triggerKind == "battHigh" || triggerKind == "quotaLow" {
+                    TextField("%", value: $triggerPercent, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 40)
+                }
             }
-            if actionKind == "reveal" {
-                TextField("s", value: $actionSeconds, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 40)
+
+            HStack(spacing: 6) {
+                RuleWord("Then")
+                Picker(selection: $actionKind) {
+                    Text("Apply profile").tag("profile")
+                    Text("Hide all").tag("hideAll")
+                    Text("Show all").tag("showAll")
+                    Text("Reveal for…").tag("reveal")
+                    Text("Run script").tag("script")
+                } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                if actionKind == "profile" {
+                    Picker(selection: $actionProfile) {
+                        Text(MenuBarProfiles.noneName).tag(MenuBarProfiles.noneName)
+                        ForEach(utility.settings().profiles) { p in
+                            Text(p.name).tag(p.name)
+                        }
+                    } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+                if actionKind == "reveal" {
+                    TextField("s", value: $actionSeconds, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 40)
+                }
+                if actionKind == "script" {
+                    TextField("command", text: $actionScript)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 160)
+                }
+                Button("Add rule") { addRule() }
+                    .controlSize(.small)
+                    .disabled(!ruleDraftValid)
             }
-            if actionKind == "script" {
-                TextField("command", text: $actionScript)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 160)
-            }
-            Button("Add rule") { addRule() }
-                .controlSize(.small)
-                .disabled(!ruleDraftValid)
         }
+        .padding(SettingsMetrics.s + 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(InsetPanel())
+        .padding(.top, SettingsMetrics.xs)
     }
 
     /// The trigger kinds that name an app by bundle id.
@@ -1230,5 +1246,20 @@ private struct MenuBarAutomationControls: View {
         if !utility.concealing {
             SettingLabel(title: "Order", subtitle: "⌘-drag items to order them.")
         }
+    }
+}
+
+/// The lead word of a rule-builder line — "When", "Then", "While",
+/// "Hold" — so the pickers after it read as a sentence.
+private struct RuleWord: View {
+    let word: String
+
+    init(_ word: String) { self.word = word }
+
+    var body: some View {
+        Text(word)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(minWidth: 40, alignment: .leading)
     }
 }
