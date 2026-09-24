@@ -318,7 +318,7 @@ def test_a_click_sends_the_verdict_to_the_parked_hook__and_4_more() -> None:
     assert second_received == [None]
 
 
-def test_holds_end_on_their_own_without_ever_deciding__and_4_more() -> None:
+def test_holds_end_on_their_own_without_ever_deciding__and_5_more() -> None:
     # --- scenario: a lapsed hold prints nothing
     clock = _Clock()
     broker = _broker(clock, hold_seconds=5.0)
@@ -356,13 +356,65 @@ def test_holds_end_on_their_own_without_ever_deciding__and_4_more() -> None:
     assert broker.wait(slot, alive=lambda: False, check_seconds=0.01) is None
     assert broker.parked("claude", "derived:abc") is None
 
-    # --- scenario: opening the session lets its held prompts go
+    # --- scenario: opening the session lets a prompt waiting behind the hook go
     broker = _broker()
-    _slot, received, thread = _park_and_serve(broker, _facts())
-    status = SimpleNamespace(provider="claude", session_id="claude-session-1")
+    codex = _facts(provider="codex", session_id="codex-session-1", always_rules=())
+    _slot, received, thread = _park_and_serve(broker, codex)
+    status = SimpleNamespace(provider="codex", session_id="codex-session-1")
     assert release_for_open(status, broker) == 1
     thread.join(2.0)
     assert received == [None]
+
+    # --- scenario: opening a Claude session keeps its hold, whose prompt is already on screen
+    broker = _broker()
+    _park_and_serve(broker, _facts())
+    status = SimpleNamespace(provider="claude", session_id="claude-session-1")
+    assert release_for_open(status, broker) == 0
+    parked = broker.parked("claude", "derived:abc")
+    assert parked is not None and parked.can_always_allow and not parked.decided
+    assert broker.release_all() == 1
+
+
+def test_a_hold_that_ends_asks_the_daemon_to_republish__and_2_more() -> None:
+    """The state projection reads the broker only when state is rebuilt, and
+    nothing else changes when a hold ends: cards kept offering Always allow
+    and choices a click then failed on. Every end of a hold calls on_change,
+    outside the lock, so the handler can rebuild the state that reads it."""
+    seen: list = []
+    broker: DecisionBroker
+
+    def on_change() -> None:
+        seen.append(broker.parked("claude", "derived:abc"))
+
+    # --- scenario: a lapsed hold asks for a republish
+    clock = _Clock()
+    broker = _broker(clock, on_change=on_change)
+    slot = broker.park(_facts(), wait_limit_seconds=50.0)
+    clock.now += 60.0
+    assert broker.wait(slot) is None
+    assert seen == [None]
+
+    # --- scenario: a decided hold asks once its wait ends, and reads as decided
+    seen.clear()
+    broker = _broker(on_change=on_change)
+    _slot, received, thread = _park_and_serve(broker, _facts())
+    assert broker.decide("claude", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.SENT
+    thread.join(2.0)
+    assert received and received[0] is not None
+    assert len(seen) == 1 and seen[0].decided
+
+    # --- scenario: a released hold asks too, and a failing handler changes nothing
+    seen.clear()
+    broker = _broker(on_change=lambda: (_ for _ in ()).throw(RuntimeError("publish failed")))
+    _slot, received, thread = _park_and_serve(broker, _facts())
+    broker.set_on_change(on_change)
+    assert broker.release("claude", session_id="claude-session-1") == 1
+    thread.join(2.0)
+    assert received == [None]
+    assert seen == [None]
+    broker.set_on_change(lambda: (_ for _ in ()).throw(RuntimeError("publish failed")))
+    slot = broker.park(_facts(), wait_limit_seconds=50.0)
+    assert broker.wait(slot, alive=lambda: False, check_seconds=0.01) is None
 
 
 def test_what_is_never_parked__and_2_more() -> None:

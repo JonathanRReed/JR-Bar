@@ -672,6 +672,7 @@ class DecisionBroker:
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         watching: Callable[[PermissionFacts, int | None], bool] = _default_watching,
+        on_change: Callable[[], object] | None = None,
     ) -> None:
         if (
             type(hold_seconds) not in (int, float)
@@ -682,6 +683,7 @@ class DecisionBroker:
             or not callable(clock)
             or not callable(wall_clock)
             or not callable(watching)
+            or (on_change is not None and not callable(on_change))
         ):
             raise ValueError("invalid decision broker")
         self._hold = float(hold_seconds)
@@ -693,6 +695,18 @@ class DecisionBroker:
         self._token = 0
         self._slots: dict[int, _Slot] = {}
         self._decided: dict[tuple[str, str], float] = {}
+        self._on_change = on_change
+
+    def set_on_change(self, on_change: Callable[[], object] | None) -> None:
+        """What to call when a hold ends: the daemon republishes its state.
+
+        The state projection reads the broker only when state is rebuilt,
+        and a hold that lapsed, was let go or was decided changed nothing
+        else: cards kept offering Always allow and the choices, and a click
+        answered stale_ask."""
+        if on_change is not None and not callable(on_change):
+            raise ValueError("invalid decision broker change handler")
+        self._on_change = on_change
 
     # -- parking (the ingress side) --
 
@@ -775,7 +789,16 @@ class DecisionBroker:
             if slot.state == "parked":
                 slot.state = "expired"
             self._slots.pop(slot.token, None)
-            return slot.verdict if slot.state == "decided" else None
+            verdict = slot.verdict if slot.state == "decided" else None
+        # Every lapse, release and decision ends here; the handler runs
+        # outside the lock, since it may build the state that reads it.
+        on_change = self._on_change
+        if on_change is not None:
+            try:
+                on_change()
+            except Exception:
+                pass
+        return verdict
 
     def delivered(self, slot: _Slot, ok: bool) -> None:
         """The parked connection's report: the verdict line was written."""
@@ -1266,10 +1289,15 @@ def answer_through_decision_lane(
 
 def release_for_open(status: object, broker: DecisionBroker | None = None) -> int:
     """Opening a session to answer it there lets its held prompts go, so a
-    Codex prompt waiting behind the hook appears at once."""
+    Codex prompt waiting behind the hook appears at once. Only a provider
+    whose prompt waits behind the hook: Claude's own prompt is already on
+    screen, and letting its hold go only took Always allow and the choices
+    off the card for looking at the session."""
     provider = getattr(status, "provider", None)
     session_id = getattr(status, "session_id", None)
     if type(provider) is not str or type(session_id) is not str or not session_id:
+        return 0
+    if provider not in PROMPT_BEHIND_HOOK_PROVIDERS:
         return 0
     lane = broker if broker is not None else default_decision_broker()
     try:

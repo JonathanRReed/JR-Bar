@@ -5468,6 +5468,11 @@ def build_headless_controller_class() -> type:
             )
             server.start()
             self._core = server
+            # A decide-lane hold that lapses, is let go or is decided changes
+            # what every ask card may offer; the broker says so here.
+            from .answer_decisions import default_decision_broker
+
+            default_decision_broker().set_on_change(self._core_publish_state_soon)
             self._core_publish_settings()
 
         def _core_sync_serve_server(self) -> None:
@@ -5552,6 +5557,9 @@ def build_headless_controller_class() -> type:
             server = self._core
             self._core = None
             if server is not None:
+                from .answer_decisions import default_decision_broker
+
+                default_decision_broker().set_on_change(None)
                 server.stop()
 
         def _core_client_change(self, count: int) -> None:
