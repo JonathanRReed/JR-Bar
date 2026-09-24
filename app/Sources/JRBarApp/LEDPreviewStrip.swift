@@ -137,9 +137,7 @@ struct LEDStripPreview: View {
             .padding(.vertical, showsBackground ? dotSize * 0.7 : 0)
             .frame(maxWidth: showsBackground ? .infinity : nil)
             .background {
-                if showsBackground {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Color.black.opacity(0.86))
-                }
+                if showsBackground { LEDStage(cornerRadius: cornerRadius) }
             }
         case .band:
             let stops = colors.enumerated().map { index, rgb in
@@ -153,11 +151,25 @@ struct LEDStripPreview: View {
                 .frame(height: dotSize)
                 .padding(showsBackground ? dotSize * 0.6 : 0)
                 .background {
-                    if showsBackground {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Color.black.opacity(0.86))
-                    }
+                    if showsBackground { LEDStage(cornerRadius: cornerRadius) }
                 }
         }
+    }
+}
+
+/// The dark plate an LED preview plays on, in either appearance: near
+/// black, a touch lighter at the top edge like a lit room over a strip,
+/// with a faint rim so it keeps its shape on a dark window.
+struct LEDStage: View {
+    var cornerRadius: CGFloat = 9
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
+            .fill(LinearGradient(colors: [Color(white: 0.13), Color(white: 0.05)], startPoint: .top, endPoint: .bottom))
+            .overlay(shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(0.14), Color.white.opacity(0.04)],
+                                                       startPoint: .top, endPoint: .bottom),
+                                        lineWidth: 0.75))
     }
 }
 
