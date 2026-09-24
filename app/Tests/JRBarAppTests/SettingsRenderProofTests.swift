@@ -348,4 +348,81 @@ struct SettingsRenderProofTests {
         }
         withExtendedLifetime(fixture) {}
     }
+
+    // MARK: lane led-link
+
+    /// A lights frame for a linked Pro + Dot: the Dot extending the strip,
+    /// held 18 ms from it on a clock 2.66% slow, and a foreign write on the
+    /// SidePulse (the mock's device ids).
+    private static let linkedLightsFrame = """
+    {"t":"lights","v":1,"linked":true,"devices_linked":true,
+     "surfaces":{
+      "hardware":{"program":"0:#00E5FF 400ms cosine; 1:#00E5FF 400ms cosine 100ms\\nrepeat","led_count":8,"why":"working"},
+      "dot":{"program":"0:#00E5FF 1:#00B8CC 400ms cosine\\nrepeat","led_count":2,"why":"working","role":"extend"}},
+     "dot_link":{"state":"linked","role":"extend","error":null,"phase_error_ms":-18.4,
+      "clock_rate":0.9734,"clock_source":"measured","tolerance_ms":40,"sync_writes_hour":3,
+      "rotation":"exact","style":"mirror","rung":"brightest"},
+     "device_receipts":{"sidepulse:pro:B293A1":{"foreign_write_at":1790271000.0,"foreign_writes":1,"paused":false}}}
+    """
+
+    /// The Devices page with a linked Pro + Dot, at the default width and
+    /// the narrowest, in both appearances: the Pro & Dot group's look, trim,
+    /// clock and Check sync; the readout's measured timing; the Dot's card
+    /// with Display, Pin to, Asks only, Blend and Auto-brightness switched
+    /// off and the reason on the card; the receipt and the eject guard on
+    /// the SidePulse's. Then the Continue look, with its side picker.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the linked Devices PNGs"))
+    func linkedDevices() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        fixture.core.apply(try CoreCodec.decode(frame: Data(Self.linkedLightsFrame.utf8)))
+        fixture.settings.page = .devices
+        for width in [CGFloat(560), CGFloat(430)] {
+            for dark in [false, true] where Self.wanted("linked-devices") {
+                let view = SettingsPageContainer(store: fixture.settings, page: .devices)
+                let rep = try Self.snapshot(view, size: CGSize(width: width, height: 6000), dark: dark)
+                try Self.write(rep, named: "linked-devices-\(Int(width))-\(dark ? "dark" : "light")")
+            }
+        }
+        fixture.settings.set("dot_extend_style", .string("continue"))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        for dark in [false, true] where Self.wanted("linked-devices") {
+            let view = SettingsPageContainer(store: fixture.settings, page: .devices)
+            let rep = try Self.snapshot(view, size: CGSize(width: 560, height: 6000), dark: dark)
+            try Self.write(rep, named: "linked-devices-continue-\(dark ? "dark" : "light")")
+        }
+        // The eject guard's words, one row per state it can be in.
+        let readings = [
+            EjectGuardReading(installed: false),
+            EjectGuardReading(installed: true, mountedVolumeUUID: "B293"),
+            EjectGuardReading(installed: true, protects: true, volumeUUID: "7F02", mountedVolumeUUID: "B293"),
+            EjectGuardReading(installed: true, protects: true, protectsMounted: true, running: true,
+                              volumeUUID: "B293", mountedVolumeUUID: "B293"),
+        ]
+        let store = fixture.settings
+        let sheet = Form {
+            // The Clock disclosure's rows, open.
+            SettingGroup("Clock") {
+                SettingToggle(store, "Keep in step",
+                              subtitle: "Times the Dot for its own clock and re-syncs it before it drifts. Off, it only starts on the beat.",
+                              path: "linked_dot_clock_correction", default: true)
+                SettingSlider(store, "Sync tolerance",
+                              subtitle: "How far the Dot may drift before it is re-synced. Wider means fewer Dot rewrites.",
+                              path: "linked_sync_tolerance_ms", in: 20...200, step: 5, default: 40) { "\(Int($0.rounded())) ms" }
+            }
+            SettingGroup("Eject guard") {
+                ForEach(Array(readings.enumerated()), id: \.offset) { _, reading in
+                    SettingRow("Eject guard", subtitle: reading.words) {
+                        Button("Protect this SidePulse") {}.disabled(!reading.canProtect)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        for dark in [false, true] where Self.wanted("linked-devices") {
+            let rep = try Self.snapshot(sheet, size: CGSize(width: 560, height: 1200), dark: dark)
+            try Self.write(rep, named: "linked-eject-guard-\(dark ? "dark" : "light")")
+        }
+        withExtendedLifetime(fixture) {}
+    }
 }

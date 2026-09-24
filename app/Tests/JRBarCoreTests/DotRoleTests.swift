@@ -192,29 +192,90 @@ struct DotRoleTests {
         #expect(noDot.headline == "No Dot in the lights frame")
     }
 
-    @Test("a fresh skew is quoted in the linked readout; a stale or absent one is not")
-    func linkedSkew() {
+    @Test("the extend readout's timing comes from the measured phase error, never a bare claim")
+    func timingLine() {
         let dot = CoreLightSurface(program: "0:#00E5FF 1400ms pulse", ledCount: 2, why: "working", role: "extend")
-        let link = CoreDotLink(state: "linked", role: "extend")
-        let fresh = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
-                                        link: link, linkedSkewMs: 11.0, linkedSkewFresh: true, dot: dot)
-        #expect(fresh.detail?.contains("In step: the Dot restarts 11 ms after the strip.") == true)
-        let stale = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
-                                        link: link, linkedSkewMs: 11.0, linkedSkewFresh: false, dot: dot)
-        #expect(stale.detail?.contains("In step") == false)
-        // A corrected write replaces the quote with the correction.
-        let kept = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
-                                       link: link, linkedSkewMs: 11.0, linkedSkewFresh: true,
-                                       linkedSkewCorrectedMs: 11.0, dot: dot)
-        #expect(kept.detail?.contains("Kept in step: the Dot was 11 ms behind, now corrected.") == true)
-        #expect(kept.detail?.contains("In step") == false)
-        // `linked_skew_at` is what makes a skew fresh: it must be present
-        // and inside the last 30 minutes.
+        func detail(_ configure: (inout CoreDotLink) -> Void, skew: Double? = nil) -> String {
+            var link = CoreDotLink(state: "linked", role: "extend")
+            configure(&link)
+            return DotRoleReadout.make(chosen: .extend, includeCompletions: false, link: link,
+                                       linkedSkewMs: skew, linkedSkewFresh: skew != nil, dot: dot).detail ?? ""
+        }
+        // Nothing measured yet: nothing claimed, whatever the write gap said.
+        let unmeasured = detail({ _ in }, skew: 11)
+        #expect(!unmeasured.contains("In step"))
+        #expect(!unmeasured.contains("ms of the strip"))
+        // Measured and inside the tolerance, with the Dot's clock named.
+        let held = detail({ $0.phaseErrorMs = -18.4; $0.clockRate = 0.9734; $0.clockSource = "measured"; $0.toleranceMs = 40 })
+        #expect(held.contains("Within 18 ms of the strip; the Dot's clock runs 2.7% slow, corrected."))
+        // Past the tolerance: the loop is on it, and says so.
+        let drifting = detail({ $0.phaseErrorMs = 64; $0.clockRate = 0.9734; $0.clockSource = "measured"; $0.toleranceMs = 40 })
+        #expect(drifting.contains("Re-syncing: 64 ms off the strip."))
+        // Fresh reads broken: re-synced blind, and the reader is told why.
+        let blind = detail({ $0.phaseErrorMs = 5; $0.clockSource = "frozen" })
+        #expect(blind.contains("re-synced every minute"))
+        // Correction off: only the start is on the beat.
+        let off = detail({ $0.phaseErrorMs = 0; $0.clockRate = 1; $0.clockSource = "off" })
+        #expect(off.contains("clock correction is off"))
+        // Check sync running.
+        let checking = detail({ $0.phaseErrorMs = 3; $0.checkUntil = Date().timeIntervalSince1970 + 30 })
+        #expect(checking.contains("Checking sync"))
+        // The period lock's fallbacks name what the two LEDs show instead.
+        #expect(detail({ $0.rung = "average" }).contains("average"))
+        #expect(detail({ $0.rung = "static" }).contains("A still colour"))
+        let continuing = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
+                                             link: { var link = CoreDotLink(state: "linked", role: "extend"); link.rung = "continue"; return link }(),
+                                             dot: dot)
+        #expect(continuing.headline == "Continuing the strip")
+        for text in [unmeasured, held, drifting, blind, off, checking] {
+            #expect(!text.contains("In step") && !text.contains("Kept in step"))
+        }
+        // `linked_skew_at` still decides whether an old skew is fresh.
         let now = Date().timeIntervalSince1970
         #expect(CoreLights(linkedSkewMs: 11, linkedSkewAt: now).isLinkedSkewFresh)
         #expect(!CoreLights(linkedSkewMs: 11, linkedSkewAt: now - 31 * 60).isLinkedSkewFresh)
-        #expect(!CoreLights(linkedSkewMs: 11).isLinkedSkewFresh)
-        #expect(!CoreLights(linkedSkewAt: now).isLinkedSkewFresh)
+    }
+
+    @Test("the real lights frame carries the link's timing and the device receipts")
+    func realLightsTiming() throws {
+        guard case .lights(let lights) = try CoreFixtures.message("real_lights.json") else {
+            Issue.record("not lights"); return
+        }
+        let link = try #require(lights.dotLink)
+        #expect(link.phaseErrorMs == 18.4)
+        #expect(link.clockRate == 0.9734)
+        #expect(link.clockSource == "measured")
+        #expect(link.toleranceMs == 40)
+        #expect(link.syncWritesHour == 3)
+        #expect(link.rotation == "exact")
+        #expect(link.style == "mirror" && link.rung == "brightest")
+        let receipt = try #require(lights.deviceReceipts["sidepulse:pro:serial:67"])
+        #expect(receipt.foreignWrites == 1 && !receipt.paused)
+        #expect(DeviceReceiptWords.line(receipt, deviceName: "SidePulse")?.contains("Another app wrote") == true)
+        var paused = receipt
+        paused.paused = true
+        #expect(DeviceReceiptWords.line(paused, deviceName: "SidePulse")?.contains("stopped rewriting") == true)
+        #expect(DeviceReceiptWords.line(nil, deviceName: "SidePulse") == nil)
+        // A daemon that sends none of it still decodes.
+        let bare = try JSONDecoder().decode(CoreDotLink.self, from: Data(#"{"state":"linked"}"#.utf8))
+        #expect(bare.phaseErrorMs == nil && bare.clockRate == nil)
+    }
+
+    @Test("the eject guard reads as what it protects, not whether it is installed")
+    func ejectGuardWords() {
+        let never = EjectGuardReading.parse(.object([
+            "installed": .bool(true), "protects": .bool(false), "protects_mounted": .bool(false),
+            "running": .bool(false), "runs": .number(0), "mounted_volume_uuid": .string("B293BB91-193C-3A17-88DC-35CD9BA19B2F"),
+        ]))
+        #expect(never?.words.contains("never run") == true)
+        #expect(never?.canProtect == true)
+        let guarding = EjectGuardReading(installed: true, protects: true, protectsMounted: true, running: true,
+                                         volumeUUID: "B293", mountedVolumeUUID: "B293")
+        #expect(guarding.words.hasPrefix("Protecting this SidePulse"))
+        #expect(!guarding.canProtect)
+        #expect(EjectGuardReading(installed: false).words.hasPrefix("Not installed"))
+        #expect(!EjectGuardReading(installed: false).canProtect, "nothing mounted, nothing to protect")
+        #expect(EjectGuardReading.parse(.object(["protects": .bool(true)])) == nil)
     }
 
     @Test("dot_link decodes; a daemon that sends none falls back to the setting")
@@ -252,6 +313,10 @@ struct DotRoleTests {
         #expect(devices.contains("linked_dot_scale"))
         #expect(SettingsKey.all.first { $0.path == "dot_role" }?.kind == .string)
         #expect(SettingsKey.all.first { $0.path == "dot_role_include_completions" }?.kind == .bool)
+        for path in ["linked_follow_brightness", "dot_extend_style", "dot_extend_side",
+                     "linked_dot_phase_trim_ms", "linked_dot_clock_correction", "linked_sync_tolerance_ms"] {
+            #expect(devices.contains(path), "\(path) resets with the Devices page")
+        }
     }
 }
 

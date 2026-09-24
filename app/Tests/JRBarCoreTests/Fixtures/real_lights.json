@@ -6,7 +6,29 @@
   "reading": null,
   "source": "off"
  },
+ "device_receipts": {
+  "sidepulse:pro:serial:67": {
+   "foreign_write_at": 1790271000.0,
+   "foreign_writes": 1,
+   "paused": false
+  }
+ },
  "devices_linked": true,
+ "dot_link": {
+  "check_until": null,
+  "clock_rate": 0.9734,
+  "clock_source": "measured",
+  "error": null,
+  "last_sync_at": 1790271249.6,
+  "phase_error_ms": 18.4,
+  "role": "extend",
+  "rotation": "exact",
+  "rung": "brightest",
+  "state": "linked",
+  "style": "mirror",
+  "sync_writes_hour": 3,
+  "tolerance_ms": 40.0
+ },
  "linked": true,
  "linked_skew_ms": 14.2,
  "surfaces": {

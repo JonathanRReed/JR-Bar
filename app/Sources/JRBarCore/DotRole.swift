@@ -39,7 +39,7 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
     public var explanation: String {
         switch self {
         case .extend:
-            return "Plays the strip's animation across both, phase-locked: the eight LEDs are folded into two bands, so a chase still sweeps and a solid colour stays solid."
+            return "Plays the strip's animation on the Dot too, timed to the strip's own start and the Dot's measured clock: a chase still sweeps and a solid colour stays solid."
         case .asks:
             return "Dark until something needs you: amber for a permission request, red for a blocked error. A glance at the Dot alone answers \"do they need me?\"."
         case .call:
@@ -93,18 +93,18 @@ public struct DotRoleReadout: Equatable, Sendable {
     /// `dot` surface of the newest `lights` frame (nil when there is none).
     /// `link` is the daemon's `dot_link` word — when present it is the
     /// authority and `linked` (the `devices_linked` setting) is only the
-    /// fallback for daemons that predate it. `linkedSkewMs` /
-    /// `linkedSkewFresh` carry the measured gap, shown only while the
-    /// measurement is still worth quoting; `linkedSkewCorrectedMs` is the
-    /// shift the last write baked into the Dot's program, quoted instead
-    /// of the raw gap when a correction is in effect. `lidClosed` is the
+    /// fallback for daemons that predate it. The timing line comes from
+    /// the link's own measurement (`phase_error_ms`, the Dot's clock rate):
+    /// the write gap (`linkedSkewMs` and friends) is still accepted from
+    /// older callers but never quoted, because "in step" from one write's
+    /// gap stopped being true within a second. `lidClosed` is the
     /// daemon's lid reading (`state.power.closed_lid.lid_closed`): with it
     /// shut, an `extend` Dot playing the beacon is the daemon's rule for a
     /// lid that hides the strip and the band, not a choice still in flight.
     public static func make(chosen: DotRole, includeCompletions: Bool, linked: Bool = true,
                             link: CoreDotLink? = nil, linkedSkewMs: Double? = nil,
                             linkedSkewFresh: Bool = false, linkedSkewCorrectedMs: Double? = nil,
-                            lidClosed: Bool = false,
+                            lidClosed: Bool = false, now: Date = Date(),
                             dot: CoreLightSurface?) -> DotRoleReadout {
         let active = dot?.role.map(DotRole.parse)
         let rendersItself = dot != nil && dot?.role == nil
@@ -144,14 +144,11 @@ public struct DotRoleReadout: Equatable, Sendable {
         var detail: String?
         switch active {
         case .extend?:
-            headline = "Extending the strip"
-            detail = "Two bands, LEDs 0–3 and 4–7, each showing its band's brightest lit colour."
-            if linkedSkewFresh, let skew = linkedSkewMs {
-                if let corrected = linkedSkewCorrectedMs {
-                    detail = (detail ?? "") + " Kept in step: the Dot was \(Int(corrected.rounded())) ms behind, now corrected."
-                } else {
-                    detail = (detail ?? "") + " In step: the Dot restarts \(Int(skew.rounded())) ms after the strip."
-                }
+            let continuing = link?.rung == "continue"
+            headline = continuing ? "Continuing the strip" : "Extending the strip"
+            detail = Self.lookSentence(rung: link?.rung)
+            if let timing = Self.timingSentence(link: link, now: now) {
+                detail = (detail ?? "") + " " + timing
             }
         case .asks?:
             let state = beaconState(why: dot.why, program: dot.program)
@@ -196,6 +193,53 @@ public struct DotRoleReadout: Equatable, Sendable {
                                      headline: headline, detail: detail, settling: settling)
         readout.lidBeacon = lidBeacon
         return readout
+    }
+
+    /// What the two LEDs show, by the period lock's rung: the strip folded
+    /// into two bands, or the fallbacks that keep the strip's period when
+    /// the fold would flash at two LEDs.
+    static func lookSentence(rung: String?) -> String {
+        switch rung {
+        case "continue":
+            return "The light runs off the end of the strip into the Dot, as if the strip went on."
+        case "average", "soft":
+            return "Two bands, LEDs 0–3 and 4–7, each showing its band's average: the brightest fold would flash on two LEDs."
+        case "static":
+            return "A still colour, the loop's average: this animation flashes when folded onto two LEDs."
+        default:
+            return "Two bands, LEDs 0–3 and 4–7, each showing its band's brightest lit colour."
+        }
+    }
+
+    /// The honest timing line, from the daemon's own measurement: how far
+    /// the Dot is from the strip right now and what its clock is doing.
+    /// nil before the first timed write -- nothing is claimed unmeasured.
+    static func timingSentence(link: CoreDotLink?, now: Date) -> String? {
+        guard let link else { return nil }
+        if let until = link.checkUntil, until > now.timeIntervalSince1970 {
+            return "Checking sync: both flash white every 2 seconds. They should read as one flash."
+        }
+        guard let error = link.phaseErrorMs else { return nil }
+        let off = Int(abs(error).rounded())
+        if link.clockSource == "off" {
+            return "Started on the strip's beat; clock correction is off, so it drifts between writes."
+        }
+        let tolerance = link.toleranceMs ?? 40
+        if abs(error) > tolerance {
+            return "Re-syncing: \(off) ms off the strip."
+        }
+        var sentence = "Within \(off) ms of the strip"
+        if link.clockSource == "frozen" {
+            return sentence + "; its clock can't be read fresh, so it is re-synced every minute."
+        }
+        if let rate = link.clockRate, abs(rate - 1) >= 0.001 {
+            let percent = String(format: "%.1f", abs(rate - 1) * 100)
+            let way = rate < 1 ? "slow" : "fast"
+            sentence += "; the Dot's clock runs \(percent)% \(way), corrected."
+        } else {
+            sentence += "."
+        }
+        return sentence
     }
 
     /// `dot_link.state == "no_dot"`, or no `dot` surface at all.
