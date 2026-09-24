@@ -1812,6 +1812,49 @@ def replay_recent_debug_logs(
     return len(selected)
 
 
+
+def refresh_timing_line(
+    *,
+    start: float,
+    dnd: float,
+    transcript_fallback: float,
+    liveness: float,
+    ingest: float,
+    snapshot: float,
+    pipeline: float,
+    leds: float,
+    led_write_seconds: float,
+    end: float,
+) -> str:
+    """refresh_'s slow-tick line from its monotonic stage stamps.
+
+    ``ingest`` and ``leds`` keep their totals, so older log reading still
+    works, and name their parts: ingest is the Focus/DND read, the
+    transcript fallback, the liveness sweep and T3; leds is computing the
+    frames and handing the device writes over.
+    """
+
+    def ms(seconds: float) -> int:
+        return round(max(0.0, seconds) * 1000)
+
+    led_write = min(max(0.0, led_write_seconds), max(0.0, leds - pipeline))
+    return (
+        "refresh timing: "
+        f"total={ms(end - start)}ms "
+        f"ingest={ms(ingest - start)} "
+        f"ingest.dnd={ms(dnd - start)} "
+        f"ingest.transcript_fallback={ms(transcript_fallback - dnd)} "
+        f"ingest.liveness={ms(liveness - transcript_fallback)} "
+        f"ingest.t3={ms(ingest - liveness)} "
+        f"snapshot={ms(snapshot - ingest)} "
+        f"pipeline={ms(pipeline - snapshot)} "
+        f"leds={ms(leds - pipeline)} "
+        f"leds.compute={ms(leds - pipeline - led_write)} "
+        f"leds.device_write={ms(led_write)} "
+        f"menu={ms(end - leds)}"
+    )
+
+
 class StatusBarController(NSObject):
     performRevealCurrentAsk_ = performRevealCurrentAsk_
 
@@ -3178,14 +3221,18 @@ class StatusBarController(NSObject):
         _t_start = time.monotonic()
         _t_ingest = _t_snapshot = _t_start
         self._refresh_dnd_environment("handle_environment_refresh")
+        # Ingest's own stages, so a slow tick names which one it was.
+        _t_dnd = _t_transcripts = _t_liveness = time.monotonic()
         try:
             self.ingest_transcript_fallback()
+            _t_transcripts = time.monotonic()
             # The worker already sweeps every LIVENESS_POLL_SECONDS; a tick
             # that lands right behind it would fork a second ``ps`` for the
             # same answer.
             last_sweep = self._liveness_worker_sweep_at
             if last_sweep is None or time.monotonic() - last_sweep >= LIVENESS_POLL_SECONDS:
                 self.reap_dead_agent_processes()
+            _t_liveness = time.monotonic()
             try:
                 from .integration_settings import load_integration_settings
                 from .t3_compat import update_t3_snapshot_runtime
@@ -3289,6 +3336,7 @@ class StatusBarController(NSObject):
         )
         self.sync_keep_awake(display_mode)
         _t_pipeline = time.monotonic()
+        self._refresh_led_write_seconds = 0.0
         led_display_kind = self.active_led_display_kind(battery_snapshot)
         # A Quota Runway strip shows the number without anyone opening a
         # menu, so it counts as attention for the refresh cadence.
@@ -3340,13 +3388,18 @@ class StatusBarController(NSObject):
         _t_end = time.monotonic()
         if _t_end - _t_start > 0.12:
             log_status_bar(
-                "refresh timing: "
-                f"total={int((_t_end - _t_start) * 1000)}ms "
-                f"ingest={int((_t_ingest - _t_start) * 1000)} "
-                f"snapshot={int((_t_snapshot - _t_ingest) * 1000)} "
-                f"pipeline={int((_t_pipeline - _t_snapshot) * 1000)} "
-                f"leds={int((_t_leds - _t_pipeline) * 1000)} "
-                f"menu={int((_t_end - _t_leds) * 1000)}"
+                refresh_timing_line(
+                    start=_t_start,
+                    dnd=_t_dnd,
+                    transcript_fallback=_t_transcripts,
+                    liveness=_t_liveness,
+                    ingest=_t_ingest,
+                    snapshot=_t_snapshot,
+                    pipeline=_t_pipeline,
+                    leds=_t_leds,
+                    led_write_seconds=getattr(self, "_refresh_led_write_seconds", 0.0),
+                    end=_t_end,
+                )
             )
 
     # --- The second Mac -------------------------------------------------
@@ -13358,7 +13411,11 @@ class StatusBarController(NSObject):
                     coalesce_identity=policy.coalesce_identity,
                 )
             )
+        # The device write stage of refresh_'s timing line: submitting is
+        # meant to be a queue hand-off, and this says when it is not.
+        _t_write = time.monotonic()
         self._submit_hardware_write_requests(requests, now)
+        self._refresh_led_write_seconds = time.monotonic() - _t_write
 
     def _hardware_write_command(
         self,
