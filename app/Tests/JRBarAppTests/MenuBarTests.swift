@@ -559,6 +559,26 @@ struct MenuBarTests {
     }
 
     @MainActor
+    @Test("the hover poll parks while the displays sleep or the screen is locked, and resumes once both clear")
+    func hoverPollParks() {
+        let h = RevealHarness()
+        h.reveal.startHoverPoll()
+        #expect(h.reveal.hoverPollArmed)
+        h.reveal.park(.displaysAsleep)
+        h.reveal.park(.locked)
+        #expect(!h.reveal.hoverPollArmed)
+        h.reveal.unpark(.displaysAsleep)
+        #expect(!h.reveal.hoverPollArmed, "awake behind the lock screen: still parked")
+        h.reveal.unpark(.locked)
+        #expect(h.reveal.hoverPollArmed)
+        h.reveal.stop()
+        #expect(!h.reveal.hoverPollArmed)
+        h.reveal.park(.sessionInactive)
+        h.reveal.unpark(.sessionInactive)
+        #expect(!h.reveal.hoverPollArmed, "a resume after stop arms nothing")
+    }
+
+    @MainActor
     @Test("with hover reveal off the poll idles and reads no zone, items or hot frames")
     func hoverPollIdlesWhenOff() async {
         let h = RevealHarness()
