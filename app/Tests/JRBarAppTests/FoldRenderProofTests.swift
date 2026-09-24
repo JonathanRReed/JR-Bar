@@ -3,6 +3,7 @@ import CoreVideo
 import Foundation
 import JRBarCore
 import MetalKit
+import SwiftUI
 import Testing
 @testable import JRBarApp
 
@@ -456,6 +457,39 @@ struct FoldRenderProofTests {
         let title = "Duo reopen — the lid is back at 110° as the first frame lands; the glass unfolds from black, one cell per 50 ms"
         let url = dir.appendingPathComponent("fold-duo-reopen-strip.png")
         try Self.writePNG(try Self.makeStrip(cells, title: title), to: url)
+    }
+
+    /// A Settings search that lands on a row the current look hides —
+    /// Frost in the Duo, Goes dark over in the Room — draws it switched
+    /// off, saying which look has it.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the card proofs"))
+    func searchLandsOnALookOnlyRow() throws {
+        for (look, row) in [(FoldLook.duo, "Frost"), (FoldLook.room, "Goes dark over")] {
+            var toys = ToysState()
+            toys.fold.look = look
+            let core = CoreModel()
+            let settings = SettingsStore(core: core)
+            let store = ToysStore(core: core, settings: settings, state: toys,
+                                  cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+            settings.toys = store
+            let fold = try #require(store.fold)
+            let hit = try #require(settings.searchEntries.first { $0.card == "fold" && $0.title == row })
+            settings.reveal(hit)
+            let probe = NSHostingView(rootView: fold.controls.environment(settings).frame(width: 560))
+            probe.layoutSubtreeIfNeeded()
+            let tall = ceil(probe.fittingSize.height) + 90
+            for dark in [false, true] {
+                let view = Form { Section { fold.controls } }
+                    .formStyle(.grouped)
+                    .environment(settings)
+                    .frame(width: 640, height: tall)
+                try ProofRender.write(view, size: CGSize(width: 640, height: tall),
+                                      name: "fold-card-search-\(look.rawValue)-\(dark ? "dark" : "light")",
+                                      dark: dark)
+            }
+            withExtendedLifetime(store) {}
+        }
     }
 
     // MARK: Pictures

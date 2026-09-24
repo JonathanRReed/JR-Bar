@@ -782,15 +782,15 @@ final class FoldToy: Toy {
             }
             FoldLog.log.notice("blackout: reopened, unfolding from black")
             endBlackout(hide: false)
-        }
-        // The tracker's glide IS the easing while the lid moves; the
-        // chase owns the rest — instant while the target grows, a damped
             // The unfold starts from the last angle that still draws all
             // black, so the first frame matches the hold, and the chase
             // unwinds from there to the live lid.
             let reference = heldReference ?? duoReference ?? 110
             chase.reset(to: FoldDuoModel.reopenDelta(
                 reference: reference, perspective: self.settings.perspective))
+        }
+        // The tracker's glide IS the easing while the lid moves; the
+        // chase owns the rest — instant while the target grows, a damped
         // unwind when the gate snaps it to 0 mid-motion, so opening
         // counter-rotates back through the hinge instead of snapping.
         // A late first frame eases in over `FirstFrameCatchUp.duration`.
@@ -1532,8 +1532,17 @@ enum FoldSessionState {
 /// stop our renderer and open theirs.
 private struct FoldControlsView: View {
     let toy: FoldToy
+    @Environment(SettingsStore.self) private var settingsStore: SettingsStore?
 
     private var duo: Bool { toy.settings.look == .duo }
+
+    /// The row a Settings search just landed on in this card. A row the
+    /// other look owns is drawn for it, switched off and saying which
+    /// look has it, so the search never lands on nothing.
+    private var searchedRow: String? {
+        guard let hit = settingsStore?.searchHit, hit.card == "fold" else { return nil }
+        return hit.title
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1581,14 +1590,11 @@ private struct FoldControlsView: View {
             sliderRow(SettingLabel(title: "Blur", subtitle: blurSubtitle),
                       value: toy.bind(\.blur), range: 0...1, readout: percent(toy.settings.blur))
             if duo {
-                sliderRow(SettingLabel(title: "Goes dark over",
-                                       subtitle: "How much of the close the picture takes to go soft and dark. 55% is the iPhone Duo's own: done by half-closed."),
-                          value: toy.bind(\.fadeLength), range: FoldSettings.fadeLengthRange,
-                          readout: percent(toy.settings.fadeLength))
+                fadeLengthRow(owned: true)
+                if searchedRow == "Frost" { frostRow(owned: false) }
             } else {
-                sliderRow(SettingLabel(title: "Frost",
-                                       subtitle: "How milky the cover is — 0 is a black room, higher reads as frosted plastic."),
-                          value: toy.bind(\.frost), range: 0...1, readout: percent(toy.settings.frost))
+                frostRow(owned: true)
+                if searchedRow == "Goes dark over" { fadeLengthRow(owned: false) }
             }
 
             sliderRow(SettingLabel(title: "Hold picture in place",
@@ -1649,6 +1655,28 @@ private struct FoldControlsView: View {
                 .padding(.top, 4)
             }
         }
+    }
+
+    /// The Duo's "Goes dark over"; drawn off in the Room only for a
+    /// search that landed on it.
+    private func fadeLengthRow(owned: Bool) -> some View {
+        let subtitle = owned
+            ? "How much of the close the picture takes to go soft and dark. 55% is the iPhone Duo's own: done by half-closed."
+            : "Only the Duo look goes dark over the close. Set Look to Duo to use it."
+        return sliderRow(SettingLabel(title: "Goes dark over", subtitle: subtitle),
+                         value: toy.bind(\.fadeLength), range: FoldSettings.fadeLengthRange,
+                         readout: percent(toy.settings.fadeLength), live: owned)
+    }
+
+    /// The Room's Frost; drawn off in the Duo only for a search that
+    /// landed on it.
+    private func frostRow(owned: Bool) -> some View {
+        let subtitle = owned
+            ? "How milky the cover is — 0 is a black room, higher reads as frosted plastic."
+            : "Only the Room look has a cover to frost. Set Look to Room to use it."
+        return sliderRow(SettingLabel(title: "Frost", subtitle: subtitle),
+                         value: toy.bind(\.frost), range: 0...1,
+                         readout: percent(toy.settings.frost), live: owned)
     }
 
     private var lookSubtitle: String {
@@ -1720,10 +1748,12 @@ private struct FoldControlsView: View {
             : .system(size: 26, weight: .semibold, design: .rounded)
     }
 
-    /// One slider row: the label, the slider and its readout.
+    /// One slider row: the label, the slider and its readout. A row
+    /// that is not `live` greys its slider and keeps its words readable,
+    /// since they say why.
     private func sliderRow(_ label: SettingLabel, value: Binding<Double>,
                            range: ClosedRange<Double>, step: Double? = nil,
-                           readout: String) -> some View {
+                           readout: String, live: Bool = true) -> some View {
         LabeledContent {
             HStack(spacing: 10) {
                 if let step {
@@ -1735,6 +1765,7 @@ private struct FoldControlsView: View {
                 }
                 ValueText(text: readout)
             }
+            .disabled(!live)
         } label: {
             label
         }
