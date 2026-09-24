@@ -271,8 +271,8 @@ compiler ports reproduce exactly.
   the Settings window touches, by page. Keys are the Python
   `AgentMonitorSettings.to_dict()` names; the five the dataclass lacks
   (`menu_bar_icon_style`, `devices_linked`, `cloud_ingest_token_path`,
-  `quota_alert_thresholds`, `devices[].resting_glow`) are listed in
-  `SettingsKey.appIntroduced`. `CoreModel` gained `setSetting`,
+  `quota_alert_thresholds`, `devices[].resting_glow`) are the app's own
+  keys. `CoreModel` gained `setSetting`,
   `resetSettings`, `installHooks` / `uninstallHooks`, `previewProgram`,
   `applyCalibration`, `doctor`, and a bounded `logTail` of `log` messages.
 
@@ -537,8 +537,7 @@ three layers):
 
   `menu_bar_icon_style` is the app's own key: the daemon answers
   `set_setting` for it with `ok` and then keeps its value (the Python
-  settings dataclass has no field for it, which is why it is in
-  `SettingsKey.appIntroduced`), so the choice is remembered in
+  settings dataclass has no field for it), so the choice is remembered in
   `app-state.json` and the write still goes out for a daemon that learns
   the key later. Unset means `meters`.
 
