@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var monitor: AgentStateMonitor?
     private var core: CoreModel?
     private var store: PanelStore?
+    /// The HUD a closed panel's feedback lands in (`showFeedback`).
+    private let feedbackHUD = PaletteHUD()
     private var panel: PanelController?
     private var settingsStore: SettingsStore?
     private var settingsWindow: SettingsWindowController?
@@ -1117,7 +1119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard let updater, updater.isAvailable else {
             let why = "Software update: \(updater?.availability.description ?? "unavailable")"
             settingsStore?.report(error: why)
-            store?.show(toast: why)
+            showFeedback(why)
             return
         }
         updater.checkForUpdates(sender)
@@ -1735,9 +1737,17 @@ extension AppDelegate {
     /// the summon keys already take, so a link or a shortcut does
     /// exactly what the click would.
     /// A line for the person that did not come from a panel click — a
-    /// link, a shortcut, a banner, the ear: the panel's toast.
-    private func showFeedback(_ text: String) {
-        store?.show(toast: text)
+    /// link, a shortcut, a banner, the ear. The panel's toast while it is
+    /// open or a palette verb is listening for it; with the panel shut
+    /// the toast would go unseen, so the HUD says it on the screen under
+    /// the pointer.
+    private func showFeedback(_ text: String, symbol: String = "exclamationmark.circle.fill") {
+        let route = PanelStore.feedbackRoute(panelOpen: store?.isOpen == true,
+                                             paletteListening: PaletteVerbScope.ticket != nil)
+        switch route {
+        case .toast: store?.show(toast: text)
+        case .hud: feedbackHUD.show(text, symbol: symbol, near: nil)
+        }
     }
 
     private func wireCommandRouter() {
@@ -1768,7 +1778,7 @@ extension AppDelegate {
             let mode = mode ?? store.quietMode
             core.quiet(mode: mode, seconds: seconds)
             let until = Date().addingTimeInterval(TimeInterval(seconds))
-            store.show(toast: "\(PanelStore.quietWord(mode)) until \(PanelStore.clockTime(until))")
+            self.showFeedback("\(PanelStore.quietWord(mode)) until \(PanelStore.clockTime(until))", symbol: "moon.fill")
             return nil
         }
         // Deep work reads the live sessions at its start and its end.
@@ -1777,7 +1787,7 @@ extension AppDelegate {
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
             guard core.isLive else { return "The monitor is not connected." }
             core.quiet(mode: store.quietMode, seconds: 0)
-            store.show(toast: "Quiet ended")
+            self.showFeedback("Quiet ended", symbol: "checkmark.circle.fill")
             return nil
         }
         router.setScreenBar = { [weak self] on in

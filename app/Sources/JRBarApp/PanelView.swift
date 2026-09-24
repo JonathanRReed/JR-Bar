@@ -1904,26 +1904,36 @@ struct ToastView: View {
     let reduced: Bool
     var armed: Bool = true
 
+    /// One line's height of rounding: a capsule on one line, a soft
+    /// card when a toast with a button wraps to two.
+    static let cornerRadius: CGFloat = 12
+
     var body: some View {
         ZStack {
             if let text {
                 HStack(spacing: 8) {
+                    // A toast with a button says why the button is there;
+                    // it wraps to a second line rather than cut the why.
                     Text(text)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        .lineLimit(action == nil ? 1 : 2)
+                        .fixedSize(horizontal: false, vertical: true)
                     if let action {
                         Button(action.title) { action.run() }
                             .buttonStyle(.plain)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Color.accentColor)
                             .lineLimit(1)
+                            .fixedSize()
                     }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(.regularMaterial))
-                .overlay(Capsule().strokeBorder(.primary.opacity(0.10), lineWidth: 0.5))
+                .background(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous).fill(.regularMaterial))
+                .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                    .strokeBorder(.primary.opacity(0.10), lineWidth: 0.5))
+                .padding(.horizontal, 14)
                 .padding(.bottom, 40)
                 .transition(reduced ? .opacity : .opacity.combined(with: .offset(y: 6)))
                 .id(text)

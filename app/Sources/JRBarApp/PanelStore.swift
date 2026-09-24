@@ -1779,6 +1779,20 @@ final class PanelStore {
         present(toast: text, life: 6)
     }
 
+    /// Where a line that did not come from a panel click is said.
+    enum FeedbackRoute: Equatable {
+        /// The panel's toast: the panel is open, or a palette verb's
+        /// ticket will hear the toast and say it in the palette's HUD.
+        case toast
+        /// The glass HUD on the screen under the pointer, since a closed
+        /// panel's toast is seen by nobody.
+        case hud
+    }
+
+    nonisolated static func feedbackRoute(panelOpen: Bool, paletteListening: Bool) -> FeedbackRoute {
+        panelOpen || paletteListening ? .toast : .hud
+    }
+
     private func present(toast text: String, life: TimeInterval) {
         toast = text
         // A palette verb's answer: the ticket it runs under hears it, so
