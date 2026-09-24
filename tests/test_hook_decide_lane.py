@@ -301,17 +301,21 @@ def test_a_session_start_from_the_shim_reaches_the_surface_recorder(shim: Path, 
 
 
 def test_python_decide_client_falls_back_without_a_verdict__and_1_more(tmp_path: Path) -> None:
-    fallback: list = []
-
-    # --- scenario: an unreachable daemon gets the payload through the fallback, no verdict
-    verdict = hook_client.run_decide_hook_client(
-        "claude",
-        tmp_path / "claude.jsonl",
-        json.dumps(PERMISSION),
-        submit=lambda request: (HookIngressDisposition.UNAVAILABLE, None),
-        fallback=lambda *args: fallback.append(args),
-    )
-    assert verdict is None and len(fallback) == 1
+    # --- scenario: an unreachable daemon gets the payload through the fallback, a refusing one through the spool
+    for disposition in (HookIngressDisposition.UNAVAILABLE, HookIngressDisposition.REFUSED_FULL):
+        fallback: list = []
+        spooled: list = []
+        verdict = hook_client.run_decide_hook_client(
+            "claude",
+            tmp_path / "claude.jsonl",
+            json.dumps(PERMISSION),
+            submit=lambda request: (disposition, '{"hookSpecificOutput":{}}'),
+            fallback=lambda *args: fallback.append(args),
+            spool=lambda *args: spooled.append(args),
+        )
+        assert verdict is None
+        refused = disposition is HookIngressDisposition.REFUSED_FULL
+        assert (len(fallback), len(spooled)) == ((0, 1) if refused else (1, 0))
 
     # --- scenario: the verdict is returned only for an accepted frame
     captured: list = []
@@ -328,5 +332,7 @@ def test_python_decide_client_falls_back_without_a_verdict__and_1_more(tmp_path:
         "claude",
         tmp_path / "c.jsonl",
         "{}",
-        submit=lambda request: (HookIngressDisposition.REFUSED_FULL, '{"hookSpecificOutput":{}}'),
+        submit=lambda request: (HookIngressDisposition.REFUSED_INVALID, '{"hookSpecificOutput":{}}'),
+        fallback=lambda *args: pytest.fail("an unreadable frame was processed"),
+        spool=lambda *args: pytest.fail("an unreadable frame was spooled"),
     ) is None

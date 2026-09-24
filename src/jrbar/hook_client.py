@@ -15,11 +15,32 @@ from .hook_ingress_protocol import (
     submit_hook_ingress_for_decision,
 )
 
+# Admission never proven: the payload may not have reached the daemon.
+_UNPROVEN_DISPOSITIONS = frozenset(
+    {HookIngressDisposition.UNAVAILABLE, HookIngressDisposition.SUBMISSION_AMBIGUOUS}
+)
+# A daemon that heard the payload and could not take it: its queue was
+# full, or it was shutting down. It never processes a payload it refused.
+_REFUSED_FOR_LATER = frozenset(
+    {HookIngressDisposition.REFUSED_FULL, HookIngressDisposition.REFUSED_CLOSED}
+)
+
 
 def _synchronous_fallback(provider: str, log_path: Path, payload_text: str) -> None:
     from .hook import process_hook_payload
 
     process_hook_payload(provider, log_path, payload_text)
+
+
+def _spool(provider: str, log_path: Path, payload_text: str) -> None:
+    """Queue a refused payload where the compiled shim queues it; the
+    daemon drains ``<provider>.pending.jsonl`` behind what its queue still
+    holds (hook_pending). A spool that cannot be written falls back to
+    processing it here: late and out of order beats lost."""
+    from .hook_pending import spool_pending_hook
+
+    if not spool_pending_hook(provider, payload_text):
+        _synchronous_fallback(provider, log_path, payload_text)
 
 
 def run_hook_client(
@@ -29,6 +50,7 @@ def run_hook_client(
     *,
     submit: Callable[[HookIngressRequest], HookIngressDisposition] = submit_hook_ingress,
     fallback: Callable[[str, Path, str], object] = _synchronous_fallback,
+    spool: Callable[[str, Path, str], object] = _spool,
 ) -> int:
     try:
         request = HookIngressRequest(provider, str(Path(log_path).expanduser()), payload_text)
@@ -54,11 +76,13 @@ def run_hook_client(
         # same payload through the dedupe-checked path, so the worst case
         # is a suppressed duplicate -- the other direction is a silent
         # drop, which is the failure this file exists to prevent.
-        if disposition in (
-            HookIngressDisposition.UNAVAILABLE,
-            HookIngressDisposition.SUBMISSION_AMBIGUOUS,
-        ):
+        if disposition in _UNPROVEN_DISPOSITIONS:
             fallback(provider, Path(log_path).expanduser(), payload_text)
+        # A refusal is never processed here, where it would land ahead of
+        # everything the full queue still holds: it is spooled, and the
+        # drain replays it behind them once the queue is empty.
+        elif disposition in _REFUSED_FOR_LATER:
+            spool(provider, Path(log_path).expanduser(), payload_text)
     except Exception:
         try:
             fallback(provider, Path(log_path).expanduser(), payload_text)
@@ -76,15 +100,17 @@ def run_decide_hook_client(
         [HookIngressRequest], tuple[HookIngressDisposition, str | None]
     ] = submit_hook_ingress_for_decision,
     fallback: Callable[[str, Path, str], object] = _synchronous_fallback,
+    spool: Callable[[str, Path, str], object] = _spool,
 ) -> str | None:
     """``run_hook_client`` for the decide lane: the verdict line to print,
     or ``None`` for "print nothing" (the agent's own prompt carries on).
 
-    The same admission and the same fallback as every other hook; the only
+    The same admission, fallback and spool as every other hook; the only
     addition is that an accepted frame waits for the daemon's verdict, as
     the compiled shim's ``--decide`` does (hook/jrbar-hook.c). A daemon that
-    is down gets the payload through the synchronous fallback and no
-    verdict: nothing can be decided without it.
+    is down gets the payload through the synchronous fallback, and one that
+    refused it through the spool; neither gets a verdict: nothing can be
+    decided without it.
     """
     try:
         request = HookIngressRequest(
@@ -105,12 +131,15 @@ def run_decide_hook_client(
         disposition, verdict = submit(request)
     except Exception:
         disposition, verdict = HookIngressDisposition.UNAVAILABLE, None
-    if disposition in (
-        HookIngressDisposition.UNAVAILABLE,
-        HookIngressDisposition.SUBMISSION_AMBIGUOUS,
-    ):
+    if disposition in _UNPROVEN_DISPOSITIONS:
         try:
             fallback(provider, Path(log_path).expanduser(), payload_text)
+        except Exception:
+            pass
+        return None
+    if disposition in _REFUSED_FOR_LATER:
+        try:
+            spool(provider, Path(log_path).expanduser(), payload_text)
         except Exception:
             pass
         return None

@@ -1,15 +1,19 @@
 """Drain the shim's ``<provider>.pending.jsonl`` files into the ingress FIFO.
 
-When the daemon is not listening, ``jrbar-hook`` appends each payload as one
-JSON line ``{"provider", "ppid", "ppid_start", "queued_at_ms", "payload"}``
-under the state directory, rotating the file to ``<provider>.overflow.jsonl``
-once it reaches 16 MiB. The daemon drains those files when it starts and
-every ``PENDING_DRAIN_INTERVAL_SECONDS`` after that. A file is renamed before
-it is read so a shim appending at the same moment starts a fresh file
-instead of racing the reader. Every shim appends under an ``flock`` on the
-file its path still names, and the drain takes that lock on the renamed
-file before it reads: an append already under way lands first, and a shim
-that locks later finds the file moved and reopens the pending path.
+When the daemon is not listening, or answers ``refused_full`` or
+``refused_closed``, ``jrbar-hook`` appends each payload as one JSON line
+``{"provider", "ppid", "ppid_start", "queued_at_ms", "payload"}`` under the
+state directory, rotating the file to ``<provider>.overflow.jsonl`` once it
+reaches 16 MiB; the Python hook client appends the same line through
+``spool_pending_hook``. The daemon drains those files when it starts, every
+``PENDING_DRAIN_INTERVAL_SECONDS`` after that, and at once when the ingress
+queue that refused a payload is empty again (``nudge_pending_drains``). A
+file is renamed before it is read so a shim appending at the same moment
+starts a fresh file instead of racing the reader. Every shim appends under
+an ``flock`` on the file its path still names, and the drain takes that
+lock on the renamed file before it reads: an append already under way
+lands first, and a shim that locks later finds the file moved and reopens
+the pending path.
 
 A record queued inside ``PENDING_REPLAY_HORIZON_SECONDS`` replays as a live
 one, stamped when it is drained; one older than that keeps the time the
@@ -52,6 +56,14 @@ MAX_REJECTED_FILE_BYTES: Final = 16 * 1024 * 1024
 PENDING_LOCK_WAIT_SECONDS: Final = 1.0
 # Reopens of the pending path when a shim rotated it under a requeue.
 _APPEND_ATTEMPTS: Final = 8
+# The spool's rotation size, the shim's MAX_SPOOL_BYTES (hook/jrbar-hook.c).
+MAX_SPOOL_BYTES: Final = 16 * 1024 * 1024
+# A nudged drain waits this long first: a shim told refused_full appends
+# within its 250 ms budget, and the drain should find the line there.
+PENDING_NUDGE_SETTLE_SECONDS: Final = 0.3
+
+_drainers_lock = threading.Lock()
+_running_drainers: set[PendingHookDrainer] = set()
 
 
 def pending_hook_files(state_dir: Path | None = None) -> list[Path]:
@@ -256,11 +268,12 @@ def _settle(path: Path) -> None:
         os.close(descriptor)
 
 
-def _append_lines(path: Path, lines: list[str]) -> bool:
+def _append_lines(path: Path, lines: list[str], *, rotate_to: Path | None = None) -> bool:
     """Append whole lines to ``path`` the way the shim appends: under the
     lock, on the file ``path`` still names, so a shim rotating the spool at
     that moment cannot carry them into the overflow generation, which is
-    never replayed."""
+    never replayed. With ``rotate_to`` a file the lines would take past
+    ``MAX_SPOOL_BYTES`` is first renamed there, as the shim rotates it."""
     if not lines:
         return True
     data = "".join(line if line.endswith("\n") else f"{line}\n" for line in lines).encode("utf-8")
@@ -272,8 +285,19 @@ def _append_lines(path: Path, lines: list[str]) -> bool:
         try:
             # A shim rotated the file between the open and the lock: reopen.
             # Past the attempts the lines go in without the lock, not away.
-            if _lock(descriptor, fcntl.LOCK_EX) and not _names(path, descriptor) and attempt + 1 < _APPEND_ATTEMPTS:
+            locked = _lock(descriptor, fcntl.LOCK_EX)
+            last = attempt + 1 >= _APPEND_ATTEMPTS
+            if locked and not _names(path, descriptor) and not last:
                 continue
+            if locked and rotate_to is not None and not last:
+                size = os.fstat(descriptor).st_size
+                if size and size + len(data) > MAX_SPOOL_BYTES:
+                    try:
+                        os.rename(path, rotate_to)
+                    except OSError:
+                        pass  # the line goes past the cap, as the shim's does
+                    else:
+                        continue
             view = memoryview(data)
             while view:
                 view = view[os.write(descriptor, view) :]
@@ -283,6 +307,43 @@ def _append_lines(path: Path, lines: list[str]) -> bool:
         finally:
             os.close(descriptor)
     return False
+
+
+def spool_pending_hook(
+    provider: str,
+    payload_text: str,
+    *,
+    state_dir: Path | None = None,
+    now: Callable[[], float] = time.time,
+) -> bool:
+    """Append one payload to ``<provider>.pending.jsonl`` exactly as the
+    compiled shim does, for the Python hook client. The line carries no
+    ``ppid``: that client registered its agent process itself before it
+    submitted. False when nothing could be written."""
+    base = Path(state_dir) if state_dir is not None else default_state_dir()
+    line = json.dumps(
+        {"provider": provider, "queued_at_ms": int(now() * 1000), "payload": payload_text},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    try:
+        base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return _append_lines(
+        base / f"{provider}{PENDING_SUFFIX}",
+        [line],
+        rotate_to=base / f"{provider}{OVERFLOW_SUFFIX}",
+    )
+
+
+def nudge_pending_drains() -> None:
+    """Drain the spool now rather than at the next interval: the ingress
+    calls this once the queue that refused a payload is empty again."""
+    with _drainers_lock:
+        drainers = tuple(_running_drainers)
+    for drainer in drainers:
+        drainer.nudge()
 
 
 def drain_pending_hooks(
@@ -389,21 +450,33 @@ class PendingHookDrainer:
         self._interval = max(1.0, float(interval_seconds))
         self._log = log or (lambda _line: None)
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
+        self._wake.clear()
         self._thread = threading.Thread(target=self._run, name="JRBarPendingHookDrain", daemon=True)
+        with _drainers_lock:
+            _running_drainers.add(self)
         self._thread.start()
 
     def stop(self, timeout_seconds: float = 1.0) -> None:
+        with _drainers_lock:
+            _running_drainers.discard(self)
         self._stop.set()
+        self._wake.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout_seconds)
         self._thread = None
+
+    def nudge(self) -> None:
+        """Run the next pass now (after ``PENDING_NUDGE_SETTLE_SECONDS``)
+        instead of at the end of the interval."""
+        self._wake.set()
 
     def drain_now(self) -> int:
         count = drain_pending_hooks(self._submit, state_dir=self._state_dir, log=self._log)
@@ -417,8 +490,11 @@ class PendingHookDrainer:
                 self.drain_now()
             except Exception as exc:
                 self._log(f"hook_pending drain failed: {exc}")
-            if self._stop.wait(self._interval):
-                return
+            self._wake.wait(self._interval)
+            if self._wake.is_set():
+                self._wake.clear()
+                if self._stop.wait(PENDING_NUDGE_SETTLE_SECONDS):
+                    return
 
 
 __all__ = [
@@ -427,6 +503,8 @@ __all__ = [
     "PENDING_SUFFIX",
     "PendingHookDrainer",
     "drain_pending_hooks",
+    "nudge_pending_drains",
     "pending_hook_files",
     "request_from_pending_line",
+    "spool_pending_hook",
 ]

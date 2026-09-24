@@ -207,6 +207,7 @@ def test_submit_falls_back_after_connected_submission_loses_ack(
         "{}",
         submit=lambda _request_value: disposition,
         fallback=lambda *_args: fallback.append(object()),
+        spool=lambda *_args: pytest.fail("an unproven admission was spooled"),
     )
 
     assert disposition is HookIngressDisposition.SUBMISSION_AMBIGUOUS
@@ -231,6 +232,7 @@ def test_client_falls_back_when_admission_is_unproven__and_2_more() -> None:
                 '{"hook_event_name":"Stop"}',
                 submit=lambda _request_value: disposition,
                 fallback=lambda provider, path, payload: fallback.append((provider, path, payload)),
+                spool=lambda *_args: pytest.fail("an unproven admission was spooled"),
             )
             == 0
         )
@@ -248,12 +250,17 @@ def test_client_falls_back_when_admission_is_unproven__and_2_more() -> None:
         "x" * (MAX_HOOK_INGRESS_PAYLOAD_BYTES + 1),
         submit=lambda _request_value: pytest.fail("invalid request reached ingress"),
         fallback=lambda *_args: fallback.append(object()),
+        spool=lambda *_args: fallback.append(object()),
     )
 
     assert result == 0
     assert fallback == []
 
-    # --- scenario: client_never_retries_an_explicit_admission_outcome_out_of_order
+    # --- scenario: client_spools_a_refusal_and_never_processes_it_out_of_order
+    """The daemon's FIFO is the order events count in. A refused payload
+    processed here would land ahead of everything the full queue still
+    holds; spooled, the drain replays it behind them. The default spool
+    writes the shim's line and never loads the processing path."""
     for disposition in [
         HookIngressDisposition.ACCEPTED,
         HookIngressDisposition.REFUSED_FULL,
@@ -261,6 +268,7 @@ def test_client_falls_back_when_admission_is_unproven__and_2_more() -> None:
         HookIngressDisposition.REFUSED_INVALID,
     ]:
         fallback: list[object] = []
+        spooled: list[tuple[str, Path, str]] = []
 
         result = hook_client.run_hook_client(
             "claude",
@@ -268,10 +276,43 @@ def test_client_falls_back_when_admission_is_unproven__and_2_more() -> None:
             "{}",
             submit=lambda _request_value: disposition,
             fallback=lambda *_args: fallback.append(object()),
+            spool=lambda provider, path, payload: spooled.append((provider, path, payload)),
         )
 
         assert result == 0
         assert fallback == []
+        refused = disposition in (HookIngressDisposition.REFUSED_FULL, HookIngressDisposition.REFUSED_CLOSED)
+        assert spooled == ([("claude", Path("/tmp/state/claude.jsonl"), "{}")] if refused else [])
+
+    from jrbar import hook as hook_module
+    from jrbar.hook_pending import pending_hook_files
+    from jrbar.state_paths import default_state_dir
+
+    pending = default_state_dir() / "claude.pending.jsonl"
+    pending.unlink(missing_ok=True)
+    processed: list[object] = []
+    original = hook_module.process_hook_payload
+    hook_module.process_hook_payload = lambda *args, **kwargs: processed.append(args)
+    try:
+        assert (
+            hook_client.run_hook_client(
+                "claude",
+                Path("/tmp/state/claude.jsonl"),
+                '{"hook_event_name":"Stop","session_id":"refused"}',
+                submit=lambda _request_value: HookIngressDisposition.REFUSED_FULL,
+            )
+            == 0
+        )
+        assert processed == []
+        assert pending in pending_hook_files()
+        rows = [json.loads(line) for line in pending.read_text().splitlines()]
+        assert [(row["provider"], row["payload"]) for row in rows] == [
+            ("claude", '{"hook_event_name":"Stop","session_id":"refused"}')
+        ]
+        assert "ppid" not in rows[0]
+    finally:
+        hook_module.process_hook_payload = original
+        pending.unlink(missing_ok=True)
 
 
 

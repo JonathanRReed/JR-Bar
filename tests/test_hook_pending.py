@@ -373,3 +373,65 @@ def test_a_fresh_replay_reaches_live_state_after_another_sessions_live_hook(tmp_
     sessions = {status.session_id for status in monitor.snapshot().statuses}
     assert sessions == {"A", "B"}
     assert '"C"' in log.read_text()
+
+
+def test_the_python_client_spools_the_shims_line_and_rotates_at_its_cap(tmp_path, monkeypatch) -> None:
+    """spool_pending_hook writes the line the compiled shim writes, so the
+    drain replays it the same way, and rotates a full spool the same way:
+    the full file becomes the overflow generation and the newest line
+    starts a fresh one."""
+    from jrbar import hook_pending
+
+    assert hook_pending.spool_pending_hook("claude", '{"hook_event_name":"Stop","t":"π"}', state_dir=tmp_path, now=lambda: 1_700_000_000.25)
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    assert oct(pending.stat().st_mode & 0o777) == "0o600"
+    request = request_from_pending_line(pending.read_text().splitlines()[0], log_path_for=lambda p: f"/logs/{p}.jsonl")
+    assert request.payload_text == '{"hook_event_name":"Stop","t":"π"}'
+    assert request.queued_at_epoch == 1_700_000_000.25
+    assert request.ppid is None
+
+    monkeypatch.setattr(hook_pending, "MAX_SPOOL_BYTES", pending.stat().st_size + 10)
+    assert hook_pending.spool_pending_hook("claude", '{"hook_event_name":"Stop","n":2}', state_dir=tmp_path)
+    overflow = tmp_path / "claude.overflow.jsonl"
+    assert overflow.read_text().count("\n") == 1
+    rows = [json.loads(line) for line in pending.read_text().splitlines()]
+    assert [row["payload"] for row in rows] == ['{"hook_event_name":"Stop","n":2}']
+
+
+def test_a_nudge_drains_the_spool_now_instead_of_at_the_interval(tmp_path) -> None:
+    """The ingress nudges every running drainer once the queue that refused
+    a payload is empty again; the drain comes a settle beat later, not 30 s
+    later, and a stopped drainer is no longer nudged."""
+    from jrbar import hook_pending
+    from jrbar.hook_pending import (
+        PENDING_NUDGE_SETTLE_SECONDS,
+        PendingHookDrainer,
+        nudge_pending_drains,
+    )
+
+    passes: list[int] = []
+    passed = threading.Event()
+
+    class CountingDrainer(PendingHookDrainer):
+        def drain_now(self) -> int:
+            count = super().drain_now()
+            passes.append(count)
+            passed.set()
+            return count
+
+    submitted: list[HookIngressRequest] = []
+    drainer = CountingDrainer(submitted.append, state_dir=tmp_path, interval_seconds=3600.0)
+    drainer.start()
+    try:
+        assert passed.wait(5.0)  # the first pass, which finds nothing
+        passed.clear()
+        (tmp_path / f"claude{PENDING_SUFFIX}").write_text(_line() + "\n")
+        started = time.monotonic()
+        nudge_pending_drains()
+        assert passed.wait(5.0)
+        assert time.monotonic() - started >= PENDING_NUDGE_SETTLE_SECONDS * 0.9
+        assert passes == [0, 1]
+        assert len(submitted) == 1
+    finally:
+        drainer.stop()
+    assert drainer not in hook_pending._running_drainers

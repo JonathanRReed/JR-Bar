@@ -526,3 +526,99 @@ def test_waits_reject_invalid_timeouts() -> None:
             service.wait_idle(timeout_seconds=timeout)  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="invalid hook ingress timeout"):
             service.close(timeout_seconds=timeout)  # type: ignore[arg-type]
+
+
+def test_the_queue_holds_128_hooks_and_16_mb_of_payloads__and_1_more() -> None:
+    # --- scenario: the default bound is 128 outstanding and 16 MB of payload
+    """32 filled in ten seconds of parallel agents (2026-09-22) and every
+    refusal past it was lost. The count bound is 128 now, and the payload
+    bytes it holds are bounded too, so 128 large payloads cannot pile up."""
+    from jrbar.hook_ingress import (
+        MAX_HOOK_INGRESS_ACCEPTED,
+        MAX_HOOK_INGRESS_OUTSTANDING_BYTES,
+    )
+
+    assert MAX_HOOK_INGRESS_ACCEPTED == 128
+    assert MAX_HOOK_INGRESS_OUTSTANDING_BYTES == 16 * 1024 * 1024
+    release = threading.Event()
+    started = threading.Event()
+
+    def process(_request_value: HookIngressRequest) -> None:
+        started.set()
+        assert release.wait(5.0)
+
+    service = HookIngressService(process=process, rejection_recorder=lambda _receipt: None)
+    try:
+        dispositions = [service.submit(_request(f"s{index}")) for index in range(129)]
+        assert dispositions[:128] == [HookIngressDisposition.ACCEPTED] * 128
+        assert dispositions[128] is HookIngressDisposition.REFUSED_FULL
+    finally:
+        release.set()
+        assert service.close(timeout_seconds=5.0)
+
+    release.clear()
+    big = "x" * 400
+    service = HookIngressService(
+        process=process,
+        maximum_outstanding_bytes=1000,
+        rejection_recorder=lambda _receipt: None,
+    )
+
+    def large(name: str) -> HookIngressRequest:
+        return HookIngressRequest(
+            "claude",
+            "/tmp/state/claude.jsonl",
+            json.dumps({"hook_event_name": "PreToolUse", "session_id": name, "body": big}),
+        )
+
+    try:
+        assert service.submit(large("one")) is HookIngressDisposition.ACCEPTED
+        assert started.wait(1.0)
+        assert service.submit(large("two")) is HookIngressDisposition.ACCEPTED
+        assert service.submit(large("three")) is HookIngressDisposition.REFUSED_FULL
+        # A small one still fits under the byte bound.
+        assert service.submit(_request("small")) is HookIngressDisposition.ACCEPTED
+    finally:
+        release.set()
+        assert service.close(timeout_seconds=5.0)
+
+
+    # --- scenario: the spool is drained as soon as a queue that refused is empty
+    release.clear()
+    cleared: list[int] = []
+    told = threading.Event()
+    sentinel = threading.Event()
+
+    def process_until_sentinel(request: HookIngressRequest) -> None:
+        if json.loads(request.payload_text)["session_id"] == "sentinel":
+            sentinel.set()
+        else:
+            assert release.wait(5.0)
+
+    def backlog_cleared() -> None:
+        cleared.append(service.snapshot().pending_count)
+        told.set()
+
+    service = HookIngressService(
+        process=process_until_sentinel,
+        maximum_accepted=2,
+        rejection_recorder=lambda _receipt: None,
+        backlog_cleared=backlog_cleared,
+    )
+    try:
+        assert service.submit(_request("first")) is HookIngressDisposition.ACCEPTED
+        assert service.submit(_request("second")) is HookIngressDisposition.ACCEPTED
+        assert service.submit(_request("third")) is HookIngressDisposition.REFUSED_FULL
+        assert cleared == []
+        release.set()
+        assert told.wait(5.0)
+        # Once, with nothing left queued ahead of the spooled payload.
+        assert cleared == [0]
+        # A queue that refused nothing since it was last empty says nothing:
+        # the sentinel runs only after "fourth" has been checked.
+        assert service.submit(_request("fourth")) is HookIngressDisposition.ACCEPTED
+        assert service.submit(_request("sentinel")) is HookIngressDisposition.ACCEPTED
+        assert sentinel.wait(5.0)
+        assert cleared == [0]
+    finally:
+        assert service.close(timeout_seconds=5.0)

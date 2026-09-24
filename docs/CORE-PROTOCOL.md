@@ -1147,8 +1147,9 @@ has read stdin is capped at 250 ms. Measured on this Mac (2026-09-09, 100 invoca
 shell loop): 6.2 ms wall per invocation of which 3.3 ms is the bare
 fork/exec (`/usr/bin/true` in the same loop), so the shim's own work is
 about 3 ms; from Python's `subprocess.run` the median is 5.7 ms; the
-Python hook client took 88 ms. If the socket is absent, or the budget cut
-the frame short, the shim appends
+Python hook client took 88 ms. If the socket is absent, the budget cut
+the frame short, or the daemon answered `refused_full` or `refused_closed`
+(its queue holds 128 hooks and 16 MiB of payload), the shim appends
 `{"provider","ppid","ppid_start","queued_at_ms","payload"}` as one JSON
 line to `$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and
 exits 0; at 16 MiB the file rotates to `<provider>.overflow.jsonl` (one
@@ -1157,7 +1158,8 @@ generation) and a fresh one starts. Every append and rotation holds an
 a file it has renamed to drain, so no line lands in a file after it was
 rotated or read. The daemon drains those files once
 before it opens the ingress socket, so a startup backlog lands ahead of any
-live hook, and every 30 s after that, registering each payload's agent
+live hook, every 30 s after that, and 0.3 s after a queue that refused a
+payload is empty again, registering each payload's agent
 process from `ppid`/`ppid_start` (for a node-hosted CLI such as pi or
 Gemini the nearest `node` ancestor is the agent process); a line whose
 `ppid_start` is -1 still replays but registers no process, since only the
