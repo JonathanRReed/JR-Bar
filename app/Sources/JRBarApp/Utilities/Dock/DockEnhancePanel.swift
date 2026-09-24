@@ -121,7 +121,9 @@ final class DockPreviewActions {
     var onFolderBack: (@MainActor () -> Void)?
 }
 
-/// The Macs' displays as the Move To menu names them.
+/// The Macs' displays as the Move To menu names them, and the screen
+/// geometry the Dock's watcher and switcher share: AX frames and CG
+/// bounds live in Quartz space, y down from the primary display's top.
 @MainActor
 enum DockDisplays {
     struct Display { let id: CGDirectDisplayID; let name: String; let screen: NSScreen }
@@ -140,10 +142,24 @@ enum DockDisplays {
         let displays = all()
         guard displays.count > 1 else { return [] }
         guard let frame else { return displays }
-        let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
-                             ?? NSScreen.screens.first)?.frame.height ?? 0
-        let centre = CGPoint(x: frame.midX, y: primaryHeight - frame.midY)
+        let centre = CGPoint(x: frame.midX, y: primaryHeight() - frame.midY)
         return displays.filter { !$0.screen.frame.contains(centre) }
+    }
+
+    /// The primary screen's height — the one holding the global origin,
+    /// whose top edge Quartz's y counts down from.
+    static func primaryHeight() -> CGFloat {
+        (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first)?
+            .frame.height ?? 0
+    }
+
+    /// The pointer's screen in Quartz space — "only this display" for
+    /// the switcher and the previews.
+    static func pointerDisplayQuartz() -> CGRect? {
+        let pointer = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) else { return nil }
+        let f = screen.frame
+        return CGRect(x: f.minX, y: primaryHeight() - f.maxY, width: f.width, height: f.height)
     }
 }
 

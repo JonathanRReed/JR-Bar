@@ -1361,8 +1361,7 @@ final class DockSwitcherController {
     /// The visible frame (Quartz space) of the screen a window sits on —
     /// by its centre — else the pointer's screen.
     private static func visibleQuartz(around frame: CGRect?) -> CGRect? {
-        let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
-                             ?? NSScreen.screens.first)?.frame.height ?? 0
+        let primaryHeight = DockDisplays.primaryHeight()
         let screen = frame.flatMap { frame -> NSScreen? in
             let centre = CGPoint(x: frame.midX, y: primaryHeight - frame.midY)
             return NSScreen.screens.first { $0.frame.contains(centre) }
@@ -1522,7 +1521,7 @@ final class DockSwitcherController {
         var scoped = DockSwitcherList.annotate(badged, marks: agentMarks(),
                                                bundleID: { apps[$0]?.bundleIdentifier })
         if let scopePID { scoped = scoped.filter { $0.pid == scopePID } }
-        if thisDisplayOnly(), let display = Self.pointerDisplayQuartz() {
+        if thisDisplayOnly(), let display = DockDisplays.pointerDisplayQuartz() {
             scoped = DockSwitcherList.onDisplay(scoped, display: display)
         }
         return scoped
@@ -1566,17 +1565,6 @@ final class DockSwitcherController {
             }
             self.panel?.present(model: self.model)
         })
-    }
-
-    /// The pointer's screen in Quartz space (y down from the primary
-    /// display's top) — the space CG bounds and AX frames share.
-    private static func pointerDisplayQuartz() -> CGRect? {
-        let pointer = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }),
-              let primary = NSScreen.screens.first(where: { $0.frame.origin == .zero })
-                ?? NSScreen.screens.first else { return nil }
-        let f = screen.frame
-        return CGRect(x: f.minX, y: primary.frame.height - f.maxY, width: f.width, height: f.height)
     }
 
     /// The unread counts live on the Dock's tiles — one AX walk maps

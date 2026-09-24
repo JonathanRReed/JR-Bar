@@ -2039,7 +2039,7 @@ final class DockEnhanceController {
     /// the tile's size at the pointer along the dock's run — x for a
     /// bottom Dock, y for a side one.
     private func anchorFrame(for item: DockAXItem, edge: DockEdge, pointer: NSPoint) -> CGRect {
-        let tile = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: Self.mainScreenHeight())
+        let tile = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: DockDisplays.primaryHeight())
         // A keyboard-opened preview: the pointer isn't on the Dock, so
         // nothing is magnified and the tile's own frame is the icon.
         guard magnificationOn, !keyboardPinned else { return tile }
@@ -2060,7 +2060,8 @@ final class DockEnhanceController {
             MainActor.assumeIsolated {
                 guard let self, self.running, !self.presence.parked else { return }
                 self.tick()
-                let axPoint = DockEnhanceMath.axPoint(NSEvent.mouseLocation, mainScreenHeight: Self.mainScreenHeight())
+                let axPoint = DockEnhanceMath.axPoint(NSEvent.mouseLocation,
+                                                      mainScreenHeight: DockDisplays.primaryHeight())
                 let overDock = self.cachedList.map { Self.listReach(of: $0.frame).contains(axPoint) } ?? false
                 let near = Self.nearScreenEdge(axPoint) || overDock
                     || self.tracker.shown != nil || self.pointerInPanel()
@@ -2081,7 +2082,7 @@ final class DockEnhanceController {
             return
         }
         let axPoint = DockEnhanceMath.axPoint(
-            NSEvent.mouseLocation, mainScreenHeight: Self.mainScreenHeight())
+            NSEvent.mouseLocation, mainScreenHeight: DockDisplays.primaryHeight())
         var hovered: DockAXItem?
         if let list = dockList(near: axPoint) {
             if Self.listReach(of: list.frame).contains(axPoint) {
@@ -2210,7 +2211,7 @@ final class DockEnhanceController {
     /// left or right edge of the screen that holds it — where an
     /// auto-hidden Dock lives.
     private static func nearScreenEdge(_ axPoint: CGPoint) -> Bool {
-        let height = mainScreenHeight()
+        let height = DockDisplays.primaryHeight()
         let appKit = CGPoint(x: axPoint.x, y: height - axPoint.y)
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(appKit) }) else { return false }
         let f = screen.frame
@@ -2229,12 +2230,6 @@ final class DockEnhanceController {
         let itemFrame = anchorFrame(for: anchor.item, edge: anchor.edge, pointer: pointer)
         return DockEnhanceMath.inCorridor(item: itemFrame, panel: panel.frame,
                                           edge: anchor.edge, point: pointer, slop: 6)
-    }
-
-    private static func mainScreenHeight() -> CGFloat {
-        // The primary screen is the one holding the global origin.
-        (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first)?
-            .frame.height ?? 0
     }
 
     // MARK: Show / hide
@@ -2271,7 +2266,7 @@ final class DockEnhanceController {
         // from an icon onto the cards.
         if preferences.holdDockOpen { autohideHold.hold() }
 
-        let mainHeight = Self.mainScreenHeight()
+        let mainHeight = DockDisplays.primaryHeight()
         // The screen under the pointer: a sliding Dock's tiles report
         // below the screen, where no screen contains them.
         let pointer = NSEvent.mouseLocation
@@ -2714,16 +2709,8 @@ final class DockEnhanceController {
     /// from it.
     private func listWindows(pid: pid_t) -> [DockPreviewWindow] {
         let windows = AppleDockReader.windows(pid: pid)
-        guard preferences.previewThisDisplay, let display = Self.pointerDisplayQuartz() else { return windows }
+        guard preferences.previewThisDisplay, let display = DockDisplays.pointerDisplayQuartz() else { return windows }
         return DockEnhanceMath.onDisplay(windows, display: display)
-    }
-
-    /// The pointer's screen in Quartz space — where AX frames live.
-    private static func pointerDisplayQuartz() -> CGRect? {
-        let pointer = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) else { return nil }
-        let f = screen.frame
-        return CGRect(x: f.minX, y: mainScreenHeight() - f.maxY, width: f.width, height: f.height)
     }
 
     /// Mark the cards whose windows host an agent session, and collect
@@ -2992,7 +2979,7 @@ final class DockEnhanceController {
         // visibleFrame is AppKit — flip it into the Quartz space the
         // AX writes expect before carving it.
         let quartz = CGRect(x: visible.minX,
-                            y: Self.mainScreenHeight() - visible.maxY,
+                            y: DockDisplays.primaryHeight() - visible.maxY,
                             width: visible.width, height: visible.height)
         if window.minimized { _ = AppleDockReader.setMinimized(window, false) }
         _ = AppleDockReader.setFrame(window, DockEnhanceMath.tileFrame(tile, in: quartz))
@@ -3003,7 +2990,7 @@ final class DockEnhanceController {
     private func move(_ window: DockPreviewWindow, toDisplay id: CGDirectDisplayID) {
         guard let display = DockDisplays.all().first(where: { $0.id == id }) else { return }
         let visible = DockEnhanceMath.appKitRect(display.screen.visibleFrame,
-                                                 mainScreenHeight: Self.mainScreenHeight())
+                                                 mainScreenHeight: DockDisplays.primaryHeight())
         let current = window.frame ?? window.element.flatMap { AppleDockReader.frame(of: $0) }
             ?? CGRect(origin: .zero, size: visible.size)
         if window.minimized { _ = AppleDockReader.setMinimized(window, false) }
@@ -3321,7 +3308,7 @@ final class DockEnhanceController {
     /// the quit; this global monitor path (AppKit point) is the
     /// fallback while the tap's mirrored tiles are stale.
     private func quickQuit(at point: NSPoint, force: Bool) {
-        quickQuit(axPoint: DockEnhanceMath.axPoint(point, mainScreenHeight: Self.mainScreenHeight()),
+        quickQuit(axPoint: DockEnhanceMath.axPoint(point, mainScreenHeight: DockDisplays.primaryHeight()),
                   force: force)
     }
 
@@ -3379,7 +3366,7 @@ final class DockEnhanceController {
     /// that frame fresh wherever the pointer nears a Dock edge — and
     /// only a point over the Dock pays the AX read.
     private func tile(at point: NSPoint) -> DockAXItem? {
-        let axPoint = DockEnhanceMath.axPoint(point, mainScreenHeight: Self.mainScreenHeight())
+        let axPoint = DockEnhanceMath.axPoint(point, mainScreenHeight: DockDisplays.primaryHeight())
         guard accessibilityTrusted else { return nil }
         if let cached = cachedList, !Self.listReach(of: cached.frame).contains(axPoint) { return nil }
         guard let list = dockList(near: axPoint),
@@ -3465,7 +3452,7 @@ final class DockEnhanceController {
     @ObservationIgnored private var toast: DockToastPanel?
 
     private func showToast(_ text: String, over item: DockAXItem, duration: TimeInterval = 1.4) {
-        let mainHeight = Self.mainScreenHeight()
+        let mainHeight = DockDisplays.primaryHeight()
         let tile = DockEnhanceMath.appKitRect(item.frame, mainScreenHeight: mainHeight)
         let pointer = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) })

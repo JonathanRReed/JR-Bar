@@ -31,7 +31,7 @@ final class UtilitiesStore {
         didSet {
             scheduleSave()
             if state.menuBar != oldValue.menuBar { menuBar.applySettings() }
-            if state.dock != oldValue.dock { applyDock() }
+            if state.dock != oldValue.dock { dock.applySettings() }
             if state.agents != oldValue.agents { agents.applySettings() }
             if state.dataHoarderEnabled != oldValue.dataHoarderEnabled {
                 dataHoarder.model.enabled = state.dataHoarderEnabled
@@ -120,13 +120,8 @@ final class UtilitiesStore {
     /// distinguishes start/stop/re-apply itself.
     func applySettings() {
         menuBar.applySettings()
-        applyDock()
-        agents.applySettings()
-    }
-
-    private func applyDock() {
-        if state.dock.enabled { dock.start() } else { dock.stop() }
         dock.applySettings()
+        agents.applySettings()
     }
 
     /// Raise the exact window a live agent session runs in, if one
