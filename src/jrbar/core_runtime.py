@@ -133,7 +133,6 @@ LEGACY_WINDOWS: Final = {
     "agent_browser": "openAgentBrowser_",
     "effect_studio": "openEffectStudio_",
     "usage_center": "openProviderUsageCenter_",
-    "control_center": "openDeckControlCenter_",
     "why": "openWhyPanel_",
 }
 _APP_OWNED_DIAGNOSTICS: Final = frozenset({"alcove_follow_state"})
@@ -5708,6 +5707,27 @@ def build_headless_controller_class() -> type:
             document = {"kind": kind}
             document.update({key: value for key, value in fields.items() if value is not None})
             server.publish_event(document)
+
+        def _core_request_app(self, kind: str, **fields: Any) -> bool:
+            """Ask the connected app for one of its own commands on behalf of
+            a deck key: ``open_window {window}`` or ``reveal_ask``. The app
+            runs it through its command router, as it runs a ``jrbar://``
+            link. False when no app is connected, so the key's receipt says
+            so rather than claiming a window opened."""
+            server = getattr(self, "_core", None)
+            try:
+                connected = server is not None and server.client_count() > 0
+            except Exception:
+                connected = False
+            if not connected:
+                return False
+            self._core_publish_event(kind, **fields)
+            return True
+
+        def _show_provider_usage_feedback(self, message: str) -> None:
+            # The Usage Center that asked shows the reply's message; the
+            # daemon has no window of its own to put it in.
+            legacy.log_status_bar(f"provider action: {message}")
 
         def _core_after_settings_change(self, touched: list[str]) -> None:
             joined = " ".join(touched)

@@ -124,7 +124,7 @@ listed is a helper of the row it sits next to alphabetically.
 | Creator Micro 2 | `creator_micro_*.py` (HID, discovery, keymap, setup, lighting), `deck_*.py` (board, controls, dispatch, actions, session board) |
 | Settings and persistence | `settings.py` → `_settings_legacy.py`, `settings_installation.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
 | Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
-| Legacy AppKit UI (kept for `open_legacy_window`, retired one window at a time) | `status_bar_legacy.py`, `_status_bar_production.py`, `settings_window*.py`, `*_pane.py`, `agent_browser*.py`, `effect_studio_window.py`, `deck_control_center_window.py`, `why_panel.py`, `usage_view.py`, `native_ui.py`, `window_presentation.py` |
+| Legacy AppKit UI (kept for `open_legacy_window`, retired one window at a time) | `status_bar_legacy.py`, `_status_bar_production.py`, `settings_window*.py`, `*_pane.py`, `agent_browser*.py`, `effect_studio_window.py`, `why_panel.py`, `usage_view.py`, `native_ui.py`, `window_presentation.py` |
 
 The one-release `sidepulse` import shim and console alias are gone. Hook
 commands registered before the rename (`python -m sidepulse.hook_client`

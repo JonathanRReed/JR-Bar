@@ -54,11 +54,6 @@ def install_deck_status_bar(base):
             apply_deck_layer(self, payload)
 
         @objc.IBAction
-        def openDeckControlCenter_(self, _sender) -> None:
-            from .deck_control_center import open_control_center
-            open_control_center(self)
-
-        @objc.IBAction
         def toggleDeckSessionMode_(self, sender) -> None:
             from .deck_settings_controller import toggle_deck_option
             toggle_deck_option(self, sender, "session_mode")
