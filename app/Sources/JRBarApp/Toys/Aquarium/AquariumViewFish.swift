@@ -730,20 +730,9 @@ extension AquariumView {
             // Wear rides the head in the same unit space, so the pitch,
             // flip and squash all apply to it — and the turn's head lead
             // carries it round with the face.
-            var worn = art
-            if let headLead = CartoonFish.HeadLead(art: art, thin: side, lead: lead) {
-                worn.hatAnchor.x = headLead.x(art.hatAnchor.x)
-                worn.chin.x = headLead.x(art.chin.x)
-            }
-            if let hat = wear.hat {
-                CartoonFish.drawHat(hat, into: &f, at: worn.hatAnchor, scale: art.hatScale,
-                                    tilt: art.hatTilt, lineWidth: lw)
-            }
-            if let accessory = wear.accessory {
-                CartoonFish.drawAccessory(accessory, into: &f, art: worn,
-                                          trail: reduceMotion ? 0 : sin(clock.phase * 0.5),
-                                          thin: side, lineWidth: lw, lead: lead)
-            }
+            CartoonFish.drawSideWear(hat: wear.hat, accessory: wear.accessory, art: art, into: &f,
+                                     trail: reduceMotion ? 0 : sin(clock.phase * 0.5),
+                                     thin: side, lead: lead, lineWidth: lw)
         }
 
         // An ask comes up for air: a small trail climbs from where the

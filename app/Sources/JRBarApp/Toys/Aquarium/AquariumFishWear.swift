@@ -354,6 +354,28 @@ extension CartoonFish {
         }
     }
 
+    /// What a fish wears in the side view: the hat on its crown and the
+    /// accessory in its slot, carried round with the face by the turn's
+    /// head lead as the eyes are — the one placement the tank draws and
+    /// the render proofs show.
+    static func drawSideWear(hat: ShopItem?, accessory: ShopItem?, art: Art,
+                             into f: inout GraphicsContext, trail: Double = 0, thin: Double = 1,
+                             lead: Double = 0, lineWidth lw: Double = 0.02) {
+        var worn = art
+        if let headLead = HeadLead(art: art, thin: thin, lead: lead) {
+            worn.hatAnchor.x = headLead.x(art.hatAnchor.x)
+            worn.chin.x = headLead.x(art.chin.x)
+        }
+        if let hat {
+            drawHat(hat, into: &f, at: worn.hatAnchor, scale: art.hatScale, tilt: art.hatTilt,
+                    lineWidth: lw)
+        }
+        if let accessory {
+            drawAccessory(accessory, into: &f, art: worn, trail: trail, thin: thin, lineWidth: lw,
+                          lead: lead)
+        }
+    }
+
     // MARK: Head-on
 
     /// What a fish wears in the head-on frame of its turn: a hat sat

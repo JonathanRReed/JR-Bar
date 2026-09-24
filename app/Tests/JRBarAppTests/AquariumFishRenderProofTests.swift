@@ -64,16 +64,10 @@ struct AquariumFishRenderProofTests {
         f.scaleBy(x: facing * swim.thin * length, y: length)
         CartoonFish.draw(into: &f, species: species, palette: palette, swim: swim,
                          mouth: mouth, blink: blink, dead: dead, pointSize: length, variant: variant)
-        let art = CartoonFish.art(for: species)
-        let lw = CartoonFish.outlineWidth(length)
-        if let hat {
-            CartoonFish.drawHat(hat, into: &f, at: art.hatAnchor, scale: art.hatScale,
-                                tilt: art.hatTilt, lineWidth: lw)
-        }
-        if let accessory {
-            CartoonFish.drawAccessory(accessory, into: &f, art: art, trail: 0.4, thin: swim.thin, lineWidth: lw,
-                                      lead: swim.lead)
-        }
+        // The wear the tank draws, head lead and all.
+        CartoonFish.drawSideWear(hat: hat, accessory: accessory, art: CartoonFish.art(for: species),
+                                 into: &f, trail: 0.4, thin: swim.thin, lead: swim.lead,
+                                 lineWidth: CartoonFish.outlineWidth(length))
     }
 
     /// The swim of a turn at `p` (`AquariumTurn.pose`): the side-on
