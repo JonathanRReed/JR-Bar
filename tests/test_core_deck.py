@@ -324,7 +324,7 @@ def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.Mon
     assert (empty.value.code, empty.value.message) == ("not_found", "No session assigned.")
     with pytest.raises(CommandError) as aux:
         controller._core_dispatch("deck_press", {"index": 14})
-    assert (aux.value.code, aux.value.message) == ("not_found", "Configure this control in the Control Center (⌘K).")
+    assert (aux.value.code, aux.value.message) == ("not_found", "Configure this control in the Creator Micro window.")
 
     # A working session: reveal.
     reply = controller._core_dispatch("deck_press", {"index": work_key})

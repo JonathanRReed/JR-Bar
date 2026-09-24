@@ -2937,7 +2937,7 @@ class World:
             if action is None:
                 if index < DECK_SLOTS:
                     return self.deck_error(cid, "not_found", "Reserved: session not observed." if identity else "No session assigned.")
-                return self.deck_error(cid, "not_found", "Configure this control in the Control Center (⌘K).")
+                return self.deck_error(cid, "not_found", "Configure this control in the Creator Micro window.")
             result = {"index": index, "action": action, "identity": identity, "session": sid}
             if action == "reveal_session":
                 s = self.sessions.get(sid) or {"label": "session", "terminal": {}}
