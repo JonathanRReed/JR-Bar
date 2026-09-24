@@ -644,6 +644,12 @@ public enum NotchMotion {
     /// Reduce Motion's whole vocabulary: a quiet crossfade, no travel.
     public static let reduceMotionFade: TimeInterval = 0.15
 
+    /// The curve every panel hung from the notch fades on — the glass
+    /// card, the HUD pill, their settles: a quick start and a long, soft
+    /// landing. A cubic Bézier's control points; `NotchSurfaceMotion`
+    /// hands it to Core Animation.
+    public static let panelCurve: (x1: Float, y1: Float, x2: Float, y2: Float) = (0.2, 0.9, 0.3, 1.0)
+
     /// How a face change moves: the spring morph normally, the quiet
     /// crossfade under Reduce Motion.
     public enum FaceTransition: Equatable, Sendable {

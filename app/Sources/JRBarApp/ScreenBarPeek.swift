@@ -430,10 +430,9 @@ final class ScreenBarPeek {
     /// The panel's frame while it hangs.
     var frame: NSRect? { isShown ? panel?.frame : nil }
 
-    /// The peek eases in and out like the band (0.18 s); Reduce Motion
-    /// keeps the instant swap.
+    /// The peek eases in and out like the band (0.18 s, the context's
+    /// own curve); Reduce Motion keeps the instant swap.
     private static let fadeSeconds: TimeInterval = 0.18
-    private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     func show(pinned: Bool) {
         guard anchor() != nil else { return }
@@ -444,17 +443,7 @@ final class ScreenBarPeek {
         isShown = true
         panel.ignoresMouseEvents = false
         relayout()
-        if Self.reduceMotion {
-            panel.alphaValue = 1
-            panel.orderFrontRegardless()
-        } else {
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = Self.fadeSeconds
-                panel.animator().alphaValue = 1
-            }
-        }
+        NotchSurfaceMotion.present(panel, from: 0, duration: Self.fadeSeconds, reducedDuration: nil, curve: nil)
     }
 
     func hide() {
@@ -466,19 +455,8 @@ final class ScreenBarPeek {
         // click on a glyph lands on a fading panel and must not open the
         // item twice.
         panel.ignoresMouseEvents = true
-        if Self.reduceMotion {
-            panel.orderOut(nil)
-        } else {
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = Self.fadeSeconds
-                panel.animator().alphaValue = 0
-            }, completionHandler: { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, !self.isShown else { return }
-                    self.panel?.orderOut(nil)
-                }
-            })
-        }
+        NotchSurfaceMotion.dismiss(panel, duration: Self.fadeSeconds, reducedDuration: nil, curve: nil,
+                                   stillGone: { [weak self] in self.map { !$0.isShown } ?? false })
     }
 
     /// Fit the panel to its content and hang it under the ear — after a

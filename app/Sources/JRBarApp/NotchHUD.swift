@@ -346,15 +346,7 @@ final class NotchHUDPanel: NSPanel {
         let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
         let wasVisible = isVisible && alphaValue > 0.01
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
-        orderFrontRegardless()
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if !wasVisible, !reduced { setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 6)) }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduced ? 0.1 : 0.22
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
-            animator().alphaValue = 1
-            if !wasVisible, !reduced { animator().setFrameOrigin(origin) }
-        }
+        NotchSurfaceMotion.present(self, settle: wasVisible ? 0 : 6, duration: 0.22, reducedDuration: 0.1)
     }
 
     /// The fallback level capsule — a media key's answer where the
@@ -376,15 +368,8 @@ final class NotchHUDPanel: NSPanel {
         let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
         let wasVisible = isVisible && alphaValue > 0.01
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
-        orderFrontRegardless()
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if !wasVisible, !reduced { setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 6)) }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduced ? 0.1 : (wasVisible ? 0.12 : 0.22)
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
-            animator().alphaValue = 1
-            if !wasVisible, !reduced { animator().setFrameOrigin(origin) }
-        }
+        NotchSurfaceMotion.present(self, settle: wasVisible ? 0 : 6,
+                                   duration: wasVisible ? 0.12 : 0.22, reducedDuration: 0.1)
     }
 
     /// The buddy's own slot: the pet bare under the notch, sized to the
@@ -431,17 +416,7 @@ final class NotchHUDPanel: NSPanel {
             return
         }
         model.toastActive = false
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = reduced ? 0.08 : 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.alphaValue < 0.01 else { return }
-                self.orderOut(nil)
-            }
-        })
+        NotchSurfaceMotion.dismiss(self, duration: 0.2, reducedDuration: 0.08)
     }
 }
 

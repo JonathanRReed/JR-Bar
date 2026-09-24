@@ -523,18 +523,8 @@ final class ScreenBarController {
         visibility.shown = true
         reposition()
         visibility.steppedAside = wantsVideoGuard()
-        let shown: CGFloat = steppedAsideForVideo ? 0 : 1
-        if reduceMotion {
-            panel.alphaValue = shown
-            panel.orderFrontRegardless()
-        } else {
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = Self.fadeSeconds
-                panel.animator().alphaValue = shown
-            }
-        }
+        NotchSurfaceMotion.present(panel, to: steppedAsideForVideo ? 0 : 1, from: 0,
+                                   duration: Self.fadeSeconds, reducedDuration: nil, curve: nil)
         updateNoticeMonitors()
         updateAppMenuWatch()
         settleVisibility()
@@ -550,21 +540,12 @@ final class ScreenBarController {
         updateNoticeMonitors()
         updateAppMenuWatch()
         settleVisibility()
-        if reduceMotion {
-            panel.alphaValue = 1
-            panel.orderOut(nil)
-        } else {
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = Self.fadeSeconds
-                panel.animator().alphaValue = 0
-            }, completionHandler: { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, !self.isShown else { return }
-                    self.panel.orderOut(nil)
-                    self.panel.alphaValue = 1
-                }
-            })
-        }
+        // Ordered out at full alpha, so the next show fades from a clean
+        // start.
+        let band = panel
+        NotchSurfaceMotion.dismiss(band, duration: Self.fadeSeconds, reducedDuration: nil, curve: nil,
+                                   stillGone: { [weak self] in self.map { !$0.isShown } ?? false },
+                                   then: { band.alphaValue = 1 })
         updateClock()
     }
 
@@ -751,15 +732,8 @@ final class ScreenBarController {
         publishStatus()
         settleVisibility()
         onGeometryChange?()
-        let alpha: CGFloat = want ? 0 : 1
-        if reduceMotion {
-            panel.alphaValue = alpha
-        } else {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = Self.fadeSeconds
-                panel.animator().alphaValue = alpha
-            }
-        }
+        NotchSurfaceMotion.fade(panel, to: want ? 0 : 1, duration: Self.fadeSeconds,
+                                reducedDuration: nil, curve: nil)
     }
 
     /// Whether `pid` has an ordinary on-screen window filling `screen`: its
