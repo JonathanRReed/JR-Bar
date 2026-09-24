@@ -138,13 +138,8 @@ extension AquariumView {
             let x = pellet.x * size.width + sway
             let y = pellet.y * size.height
             let r = 2.6
-            canvas.fill(
-                Path(ellipseIn: CGRect(x: x - r, y: y - r * 0.8, width: r * 2, height: r * 1.6)),
-                with: .radialGradient(
-                    Gradient(colors: [Color(red: 0.92, green: 0.72, blue: 0.44).opacity(a),
-                                      Color(red: 0.62, green: 0.40, blue: 0.20).opacity(a),
-                                      Color(red: 0.38, green: 0.22, blue: 0.10).opacity(a)]),
-                    center: CGPoint(x: x - r * 0.3, y: y - r * 0.35), startRadius: 0, endRadius: r * 1.2))
+            // The same glowing bead a finished fish's meal drops.
+            CreaturePaint.pellet(&canvas, at: CGPoint(x: x, y: y), r: r, alpha: a)
             if m.claims[pellet.id] != nil {
                 canvas.stroke(
                     Path(ellipseIn: CGRect(x: x - r - 3, y: y - r - 3,
