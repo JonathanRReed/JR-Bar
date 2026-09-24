@@ -245,4 +245,19 @@ import JRBarCore
         #expect(partial.intensity == .standard && partial.screens == .all)
         #expect(!partial.seasonal && !partial.momentStyles)
     }
+
+    /// A search for Amount or Hang time opens Adjust, so the row it named
+    /// shows; any other hit, or one in another card, leaves it folded.
+    @Test func searchOpensAdjust() throws {
+        let catalog = try #require(ToySearchCatalog.rows["confetti"]).map(\.title)
+        for title in ConfettiAdjustDisclosure.rows {
+            #expect(catalog.contains(title), "\(title) is a search row")
+            let hit = SettingsSearchEntry(.toys, "Confetti", title, card: "confetti")
+            #expect(ConfettiAdjustDisclosure.opens(for: hit, card: "confetti"))
+            #expect(!ConfettiAdjustDisclosure.opens(for: hit, card: "aquarium"))
+        }
+        let origin = SettingsSearchEntry(.toys, "Confetti", "Origin", card: "confetti")
+        #expect(!ConfettiAdjustDisclosure.opens(for: origin, card: "confetti"))
+        #expect(!ConfettiAdjustDisclosure.opens(for: nil, card: "confetti"))
+    }
 }

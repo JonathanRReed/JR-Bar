@@ -85,9 +85,7 @@ private struct ConfettiLookSection: View {
                          subtitle: "On New Year, Valentine's, Lunar New Year, Easter, Halloween and Christmas, that day's colours and shapes. Read off this Mac's calendar.")
         }
 
-        DisclosureRow("Adjust", subtitle: "How many pieces, and how long they hang in the air.") {
-            ConfettiAdjustRows(toy: toy)
-        }
+        ConfettiAdjustDisclosure(toy: toy)
     }
 
     private var originNote: String {
@@ -137,6 +135,35 @@ private struct ConfettiPalettePicker: View {
         case .gold: return "Gold, champagne and white — a milestone look."
         case .pastel: return "Soft pinks, mints and blues."
         case .mono: return "The provider's colour alone, deep to pale."
+        }
+    }
+}
+
+/// Adjust, folded like any `DisclosureRow` — and opened by a Settings
+/// search that lands on Amount or Hang time, so the row it named is
+/// there to see, not folded away inside the card it opened.
+struct ConfettiAdjustDisclosure: View {
+    let toy: ConfettiToy
+    @ViewState private var expanded = false
+
+    /// The rows it holds, by their search titles.
+    static let rows: Set<String> = ["Amount", "Hang time"]
+
+    /// Whether a search result is one of the rows under Adjust.
+    static func opens(for hit: SettingsSearchEntry?, card: String) -> Bool {
+        guard let hit, hit.card == card else { return false }
+        return rows.contains(hit.title)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            ConfettiAdjustRows(toy: toy)
+        } label: {
+            SettingLabel(title: "Adjust", subtitle: "How many pieces, and how long they hang in the air.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: toy.store?.settings.revealRequest, initial: true) {
+            if Self.opens(for: toy.store?.settings.searchHit, card: toy.id) { expanded = true }
         }
     }
 }
