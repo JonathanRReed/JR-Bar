@@ -256,6 +256,7 @@ final class DockUtility {
             self?.settings().enhance.switcherThisDisplay ?? false
         }
         switcher.learnedPicks = { [weak self] in self?.settings().enhance.learnedPicks ?? [] }
+        switcher.spacing = { [weak self] in self?.settings().enhance.previewSpacing ?? 1 }
         // ⌥` needs the watcher — it's the watcher's panel that opens.
         switcher.isFrontAllowed = { [weak self] in
             guard let settings = self?.settings() else { return false }

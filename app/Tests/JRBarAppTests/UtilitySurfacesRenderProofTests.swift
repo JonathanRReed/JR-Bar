@@ -247,8 +247,18 @@ struct UtilitySurfacesRenderProofTests {
         ]
         for (name, model) in shots {
             for dark in [true, false] {
-                try Self.write(DockSwitcherView(model: model), glassRadius: DockSwitcherPanel.cornerRadius,
+                try Self.write(DockSwitcherView(model: model), glassRadius: model.metrics.cornerRadius,
                                name: name, dark: dark, canvas: CGSize(width: 1100, height: 520))
+            }
+        }
+        // The strip at the spacing stops it shares with the preview.
+        for stop in [DockPreviewSpacing.tight, .standard] {
+            let model = Fixtures.switcherModel(stills: true)
+            model.metrics = DockSwitcherMetrics.scaled(stop.scale)
+            for dark in [true, false] {
+                try Self.write(DockSwitcherView(model: model), glassRadius: model.metrics.cornerRadius,
+                               name: "switcher-stills-\(stop.rawValue)", dark: dark,
+                               canvas: CGSize(width: 1100, height: 520))
             }
         }
     }

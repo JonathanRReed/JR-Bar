@@ -497,4 +497,29 @@ struct DockSwitcherTests {
         #expect(DockSwitcherView.ringRadius(inset: 3) == DockSwitcherView.cardRadius - 3)
         #expect(DockSwitcherView.ringRadius(inset: 40) == 0)
     }
+
+    @Test("the strip's air follows the preview's spacing; Standard is the switcher before it")
+    func switcherSpacing() {
+        let standard = DockSwitcherMetrics.scaled(1)
+        #expect(standard.paneInset == 18 && standard.rowInset == 14 && standard.stripInset == 12)
+        #expect(standard.cardGap == 4)
+        #expect(standard.cornerRadius == 24, "the corner the switcher has always worn")
+        #expect(standard.zoomWidth == 360)
+        #expect(DockSwitcherMetrics.standard == standard)
+        let tight = DockSwitcherMetrics.scaled(0.6)
+        #expect(tight.paneInset == 11 && tight.rowInset == 8 && tight.stripInset == 7 && tight.cardGap == 2)
+        #expect(tight.cornerRadius == 19)
+        #expect(tight.zoomWidth == 288, "the pane narrows with the scale, to 80 % at most")
+        #expect(DockSwitcherMetrics.scaled(1.4).zoomWidth == 360, "and never grows past its old width")
+        let floor = DockSwitcherMetrics.scaled(0.5)
+        #expect(floor.paneInset == 10 && floor.rowInset == 8 && floor.stripInset == 6 && floor.cardGap == 2)
+        var previous = DockSwitcherMetrics.scaled(0.5)
+        for step in 11...32 {
+            let current = DockSwitcherMetrics.scaled(Double(step) / 20)
+            #expect(current.paneInset >= previous.paneInset && current.rowInset >= previous.rowInset)
+            #expect(current.stripInset >= previous.stripInset && current.cardGap >= previous.cardGap)
+            #expect(current.zoomWidth >= previous.zoomWidth && current.cornerRadius >= previous.cornerRadius)
+            previous = current
+        }
+    }
 }

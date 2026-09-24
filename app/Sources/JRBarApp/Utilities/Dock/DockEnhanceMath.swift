@@ -750,3 +750,40 @@ struct DockPreviewMetrics: Equatable {
     /// Standard: the look before the spacing knob, glass corner aside.
     static let standard = scaled(1)
 }
+
+/// The ⌥⇥ switcher's air from the same spacing scale as the preview:
+/// the pane's inset, the rows' inset, the strip's inset and the gap
+/// between cards, each its Standard value times the scale held at a
+/// floor, and the zoom pane narrowing with the scale down to 80 %.
+/// The glass corner is derived — the card's corner plus the strip's
+/// inset, less two, the curve the switcher has always worn.
+struct DockSwitcherMetrics: Equatable {
+    /// Glass edge to the zoom pane, top and sides.
+    let paneInset: CGFloat
+    /// The search, hint and armed rows' inset.
+    let rowInset: CGFloat
+    /// Glass edge to the strip of cards.
+    let stripInset: CGFloat
+    /// Card to card along the strip.
+    let cardGap: CGFloat
+    /// The zoom pane's width.
+    let zoomWidth: CGFloat
+
+    /// A card's corner in the strip.
+    static let cardRadius: CGFloat = 14
+    /// The glass's corner, near-concentric with the strip's cards.
+    var cornerRadius: CGFloat { Self.cardRadius + stripInset - 2 }
+
+    static func scaled(_ scale: Double) -> DockSwitcherMetrics {
+        let s = CGFloat(scale.isFinite ? scale : 1)
+        func token(_ base: CGFloat, floor: CGFloat) -> CGFloat { max(floor, (base * s).rounded()) }
+        return DockSwitcherMetrics(paneInset: token(18, floor: 10),
+                                   rowInset: token(14, floor: 8),
+                                   stripInset: token(12, floor: 6),
+                                   cardGap: token(4, floor: 2),
+                                   zoomWidth: (360 * min(max(s, 0.8), 1)).rounded())
+    }
+
+    /// Standard: the switcher before the spacing knob.
+    static let standard = scaled(1)
+}
