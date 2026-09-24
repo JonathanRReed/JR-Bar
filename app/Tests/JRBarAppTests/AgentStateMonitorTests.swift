@@ -21,7 +21,10 @@ struct AgentStateMonitorTests {
         try Data(json.utf8).write(to: folder.appendingPathComponent("latest.json"), options: .atomic)
     }
 
-    private func settle(within seconds: TimeInterval = 5, _ until: () -> Bool) async {
+    /// Polls until `until` holds. The deadline is generous because the
+    /// read runs at utility priority and a full parallel run can starve it
+    /// for seconds; a passing wait returns as soon as the condition does.
+    private func settle(within seconds: TimeInterval = 30, _ until: () -> Bool) async {
         let deadline = Date().addingTimeInterval(seconds)
         while !until(), Date() < deadline {
             try? await Task.sleep(for: .milliseconds(10))
