@@ -724,13 +724,32 @@ final class AquariumToy: Toy {
                                             residents: residents) {
             settings.species(for: $0)
         }
-        fish = AquariumModel.cap(everyone, max: settings.maxFish,
+        fish = AquariumModel.cap(everyone, max: settings.maxFish, now: now,
                                  stages: self.game.pets.mapValues(\.stage))
+        scheduleRecap(everyone, now: now)
         noteCompletions(now: now)
         noteFleet(now: now)
         let base = AquariumWaterMood.base(core.state)
         if base != waterBase { waterBase = base }
     }
+
+    /// A capped tank looks again when a finished fish swims off: its
+    /// place frees up then, not at the next session change, so a quiet
+    /// fish the cap held back comes straight back in.
+    private func scheduleRecap(_ everyone: [Fish], now: Date) {
+        recapTask?.cancel()
+        recapTask = nil
+        guard fish.count < everyone.count,
+              let at = AquariumModel.nextRetirement(everyone, after: now) else { return }
+        let wait = at.timeIntervalSince(now) + 0.1
+        recapTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            self?.refreshFish()
+        }
+    }
+
+    @ObservationIgnored private var recapTask: Task<Void, Never>?
 
     /// The care records stay trimmed while the tank is closed too: the
     /// session list keeps minting records with the window shut, and the
@@ -739,6 +758,7 @@ final class AquariumToy: Toy {
     /// waits for the core's first session list: before that, every live
     /// session looks gone, and the trim would take its growth and hats.
     private func pruneIfDue(liveIDs: Set<String>, now: Date) {
+        guard core.state != nil else { return }
         guard now.timeIntervalSince(lastPruneAt) >= Self.pruneInterval else { return }
         lastPruneAt = now
         guard game.pets.count > AquariumRules.maxPets else { return }
@@ -758,7 +778,6 @@ final class AquariumToy: Toy {
     /// under budget, banked credits): the document's fleet facts, folded
     /// into the game on every change — the session list and the usage
     /// ride the same document. Read-only; the tank only notices. A
-        guard core.state != nil else { return }
     /// milestone saves at once; the log's quiet moves ride the next save.
     private func noteFleet(now: Date) {
         guard let state = core.state else { return }

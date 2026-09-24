@@ -355,10 +355,13 @@ public enum AquariumModel {
     /// Otherwise residents go first (the least raised first, `stages`
     /// by fish id), then idle sessions, then working ones, each oldest
     /// update first. A cut fish takes its fry with it; the rest keep
-    /// their order.
-    public static func cap(_ fish: [Fish], max: Int, stages: [String: Int] = [:]) -> [Fish] {
+    /// their order. A finished fish that has already swum off (retired
+    /// at `now`) stays in the list but takes no place — a row of
+    /// finished sessions never empties the tank.
+    public static func cap(_ fish: [Fish], max: Int, now: Date,
+                           stages: [String: Int] = [:]) -> [Fish] {
         guard max > 0 else { return fish }
-        let adults = fish.filter { !$0.isFry }
+        let adults = fish.filter { !$0.isFry && !$0.isRetired(at: now) }
         guard adults.count > max else { return fish }
         func protected(_ f: Fish) -> Bool {
             f.state == .surfacing || f.state == .sinking || f.state == .leaving
@@ -385,6 +388,15 @@ public enum AquariumModel {
             if f.isFry, let anchor = f.anchorID, cut.contains(anchor) { return false }
             return true
         }
+    }
+
+    /// When `cap` would next answer differently with nothing else
+    /// changing: the moment the first leaving adult finishes swimming
+    /// off and frees its place. Nil when nobody is on the way out.
+    public static func nextRetirement(_ fish: [Fish], after now: Date) -> Date? {
+        fish.filter { !$0.isFry && $0.state == .leaving && !$0.isRetired(at: now) }
+            .map { $0.stateSince.addingTimeInterval(leaveDuration) }
+            .min()
     }
 
     /// A resident → fish: idling midwater on the swim its session's
