@@ -157,36 +157,44 @@ public enum FoldPause {
 /// The card's "Try it" (Foldy's one-click demo): a scripted close and
 /// reopen played through the simulate path — the same tracker, chase
 /// and renderer a real lid drives, so the demo is the fold's own
-/// motion, not an animation of it. Pure, so the script can be pinned.
+/// motion, not an animation of it. It folds from the fold's reference:
+/// where the lid rests when the fold starts from there, or the set
+/// angle. Pure, so the script can be pinned.
 public enum FoldTryIt {
     /// Seconds to swing the lid down, hold it there, and bring it back.
     public static let closeDuration: TimeInterval = 1.3
     public static let holdDuration: TimeInterval = 0.6
     public static let openDuration: TimeInterval = 1.3
     public static var totalDuration: TimeInterval { closeDuration + holdDuration + openDuration }
-    /// How far past the activation angle the demo folds.
-    public static let depth: Double = 38
+    /// How far below the reference the demo folds: deep enough that the
+    /// Duo's picture goes soft and dark from a resting lid.
+    public static let depth: Double = 50
+    /// How far above a set angle the demo starts, so the fold doesn't
+    /// begin on frame one. A resting-angle fold starts right at the
+    /// reference: that fold begins with the first move anyway.
+    public static let setAngleLead: Double = 8
 
     /// Where the demo starts: the lid's own angle when there is one and
-    /// it sits above the fold, else a comfortable open lid — never so
-    /// close to the activation angle that the fold starts on frame one.
-    public static func startAngle(current: Double?, activation: Double) -> Double {
-        let floor = activation + 8
+    /// it sits at or above `reference + lead`, else that floor — or a
+    /// comfortable open lid with no reading at all.
+    public static func startAngle(current: Double?, reference: Double,
+                                  lead: Double = setAngleLead) -> Double {
+        let floor = reference + max(0, lead)
         guard let current, current.isFinite else { return max(110, floor) }
         return max(current, floor)
     }
 
-    /// The deepest the demo goes: `depth` past activation, never into
-    /// the closed-lid pause.
-    public static func bottomAngle(activation: Double) -> Double {
-        max(FoldPause.closedAngle + 5, activation - depth)
+    /// The deepest the demo goes: `depth` below the reference, never
+    /// into the closed-lid pause.
+    public static func bottomAngle(reference: Double) -> Double {
+        max(FoldPause.closedAngle + 5, reference - depth)
     }
 
     /// The simulated angle `elapsed` seconds in, or nil once it's over.
     /// Eased in and out on both legs, the way a hand moves a lid.
-    public static func angle(at elapsed: TimeInterval, start: Double, activation: Double) -> Double? {
+    public static func angle(at elapsed: TimeInterval, start: Double, reference: Double) -> Double? {
         guard elapsed >= 0, elapsed <= totalDuration else { return nil }
-        let bottom = bottomAngle(activation: activation)
+        let bottom = bottomAngle(reference: reference)
         func ease(_ u: Double) -> Double { u * u * (3 - 2 * u) }
         if elapsed < closeDuration {
             return start + (bottom - start) * ease(elapsed / closeDuration)

@@ -574,4 +574,42 @@ struct FoldPortalTests {
         #expect(abs(p.blurStrength - 0.4) < 1e-6)
         #expect(p.delta == 0.5)
     }
+
+    @Test("the Hold slider reaches the Room shader as it reads, not tied to Perspective")
+    func holdMapping() {
+        // 1 is the front-view hold, 0 the picture glued to the glass; the
+        // old switch sent `perspective` when on, so a 40 % Perspective
+        // quietly held the picture only 40 % of the way.
+        let held = FoldPortalModel.params(delta: 0.5, perspective: 0.4, blur: 0.5,
+                                          shade: 0.7, frost: 0, hold: 1,
+                                          usedBuckets: 0, reduceMotion: false)
+        #expect(held.hold == 1)
+        let riding = FoldPortalModel.params(delta: 0.5, perspective: 0.4, blur: 0.5,
+                                            shade: 0.7, frost: 0, hold: 0,
+                                            usedBuckets: 0, reduceMotion: false)
+        #expect(riding.hold == 0)
+        let part = FoldPortalModel.params(delta: 0.5, perspective: 0.9, blur: 0.5,
+                                          shade: 0.7, frost: 0, hold: 0.8,
+                                          usedBuckets: 0, reduceMotion: false)
+        #expect(abs(part.hold - 0.8) < 1e-6, "the hold no longer follows Perspective")
+        let wild = FoldPortalModel.params(delta: 0.5, perspective: 0.6, blur: 0.5,
+                                          shade: 0.7, frost: 0, hold: 3,
+                                          usedBuckets: 0, reduceMotion: false)
+        #expect(wild.hold == 1, "the hold clamps")
+    }
+
+    @Test("the Duo arms on 3° of travel down, so a nudge or a wider tilt never starts the capture")
+    func anchorArmThreshold() {
+        var anchor = MoveAnchor()
+        anchor.feed(105, at: 0)
+        anchor.armThreshold = 3
+        #expect(!anchor.moving(103), "a 2° nudge is not a fold")
+        #expect(!anchor.moving(102.5))
+        #expect(anchor.moving(101.5))
+        #expect(!anchor.moving(108.5), "opening wider never records")
+        #expect(!anchor.moving(140), "nor does tilting the screen right back")
+        anchor.armThreshold = nil
+        #expect(anchor.moving(103), "without it the stillness deadband arms, as before")
+        #expect(anchor.moving(108.5), "and the Room still arms either way off the anchor")
+    }
 }

@@ -44,16 +44,21 @@ public struct ToysState {
     public var confetti: ConfettiSettings
     public var notch: NotchSettings       // also decodes the legacy `alcove` key
 }
-public struct FoldSettings { enabled: Bool = false; anchor: FoldAnchor = .angle;
+public struct FoldSettings { enabled: Bool = false; anchor: FoldAnchor = .movement;
                              activationAngle: Double = 65;
-                             perspective: Double = 0.6; blur: Double = 0.5; shade: Double = 0.7;
+                             perspective: Double = 0.6; blur: Double = 0.6; shade: Double = 0.67;
                              jitterTolerance: Double = 1.5; provider: FoldProvider = .jrbar;
-                             frost: Double = 0; holdPicture: Bool = true;
-                             dwellTimeout: Double = 0; restoreSound: Bool = false }
+                             frost: Double = 0; holdStrength: Double = 1;
+                             dwellTimeout: Double = 0; restoreSound: Bool = false;
+                             look: FoldLook = .duo; fadeLength: Double = 0.55 /* 0.2…1 */ }
+// (`holdPicture` is read once to seed `holdStrength`: on → 1, off → 0; a
+//  file with no `look` moves to Duo and anchor `.movement`, keeping its
+//  blur, shade and activation angle)
 // (the Tilt/Dusk/Fog style picker is retired — `style` is decoded only to
 //  recognize old default sets for migration; nothing reads it)
 public enum FoldProvider: String { case jrbar, bendy, lidPlane }  // who renders the fold
 public enum FoldAnchor: String { case angle, movement }  // fixed angle, or wherever the lid rests
+public enum FoldLook: String { case duo, room }  // the iPhone Duo's held picture, or the portal room
 public enum DayNightMode: String { case realTime, cycle }  // the clock / the four-minute breathe
 public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true; density: Double = 1.0;
                                  speciesOverrides: [String: String] = [:]  /* provider id → species */;
@@ -125,11 +130,22 @@ page can reach it.
 
 ## Fold (native)
 
-Closing the lid looks like the desktop continues *into* the display — a
-portal, not a tilting picture: windows float as cards in a lit space, the
-wallpaper recedes behind them, and the whole thing blurs, fogs and
-dissolves toward the hinge. One style, "Portal" — the iPhone Duo read of
-the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
+Closing the lid folds the desktop. Two looks, picked on the card:
+
+- **Duo** (the default) is the iPhone Duo's fold: the picture stays put in
+  space while the glass swings through it. A seated eye sees the desktop
+  neither move nor shrink; only the glass silhouette drops, the picture
+  goes soft and dark away from the hinge (the hinge stays sharp and
+  bright), and the glass is black by the time the eye loses it edge-on.
+  No sheen, no seam, a pure black void.
+- **Room** is the earlier portal: windows float as cards in a lit space,
+  the wallpaper recedes behind them, and the whole thing blurs, fogs and
+  dissolves toward the hinge, with Frost and the seam light.
+
+Both fold from wherever the lid rests by default (the Duo reacts from the
+first degree), or from a set angle. Clean-room; no Lid Plane (GPL-3) or
+Bendy code; the Duo's numbers come from the public chuspeeism/iphone-duo
+study of Apple's own model (MIT).
 
 - **Sensor** `LidAngleSensor` (`JRBarApp/Toys/Fold/LidAngleSensor.swift`):
   IOKit HID, match usage page `0x20` (Sensor), usage `0x8A` (Orientation),
@@ -150,7 +166,9 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   `AppleClamshellState` once a second and rides it out on each
   `Sample{angle, at, clamshell}` so no per-frame path ever touches IOKit.
   Missing device → `status = .unavailable("No lid-angle sensor on this Mac")`
-  and the Simulate slider still works.
+  and the Simulate slider still works. The Duo's movement fold is the
+  one exception to the 10 Hz idle: while it is armed the poll runs at
+  120 Hz so the edge interpolator gets each edge to ±8 ms.
 - **Motion** `SlewTracker` (`FoldPortal.swift`): a slew-limited
   critically-damped tracker — semi-implicit Euler, velocity hard-capped at
   `maxRate` 150°/s so a slammed lid glides shut in ~300 ms instead of
@@ -163,7 +181,13 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   grows, a slew-limited unwind (3 rad/s — just over the tracker's own
   cap) when it drops, so a real opening is followed exactly and only a
   gate snap ever sees the easing. The same angle always draws the same
-  image.
+  image. The Duo feeds the tracker through `EdgeInterpolator` instead of
+  the raw staircase: the lid is drawn one sensor period (100 ms) in the
+  past, straight between the edges already seen, into a stiffer tracker
+  (ω 40). The latency stays ~150 ms but the ±25 % ten-times-a-second
+  speed pulse is gone (under 5 % at 40–140°/s, `FoldSmoothingTests`). A
+  lid leaving rest back-dates its first segment so motion starts at once;
+  the simulate slider and Try it bypass it, being smooth already.
 - **Gesture** `FoldMath.deltaRadians`: the fold is the real lid travel —
   `(activationAngle − angle)` in radians, clamped at 1.25 rad (~72°),
   the arc the projection is stable over. It is not a normalized
@@ -181,9 +205,18 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   parked angle when it hands the desktop back. Movement mode arms the
   streams on the first move off the anchor and holds the delta at 0
   until the first complete frame — the warm-up keeps the room from
-  opening black; the sensor idles at its own 10 Hz throughout since
-  nothing consumes edge timestamps any more.
-- **Capture** `FoldCapture`: TWO ScreenCaptureKit streams on the
+  opening black. In the Duo the capture arms on 3° of travel down (a
+  nudge, or tilting the screen back wider, never flashes the Screen
+  Recording indicator; the Room still arms either way), the first frame of
+  a gesture eases the delta up from 0 over 150 ms instead of popping to
+  a close that is already 15° in, and the overlay's first 120 ms on
+  screen fade it in. The Duo's travel is not clamped: its geometry goes
+  to black on its own.
+- **Capture** `FoldCapture`: the Duo runs ONE stream (`dual: false`), the
+  whole desktop minus JR-Bar, except JR-Bar's own menu-bar windows (the
+  icon mirror, the Screen Bar, kept through `exceptingWindows`) so the
+  whole bar folds together; no far stream and no window-list poll. The
+  Room runs TWO ScreenCaptureKit streams on the
   built-in display (`CGDisplayIsBuiltin`), 60 fps, BGRA sRGB, no audio,
   no cursor, complete frames only, capped at 2560 px: a near stream
   (`excludingApplications` JR-Bar itself) for the window cards, and a
@@ -204,30 +237,47 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   `x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`.
   Denied → `.needsPermission("Needs Screen Recording")` and nothing else
   runs.
-- **Render** `FoldOverlayWindow` + `FoldRenderer` + `FoldPortalModel`:
+- **Render** `FoldOverlayWindow` + `FoldRenderer`:
   borderless `NSWindow`, `.screenSaver` level, `ignoresMouseEvents =
   true`, `sharingType = .none`, covers the built-in screen only, `MTKView`
-  (`framebufferOnly`, capped at `min(120, screen.maximumFramesPerSecond)`)
-  with the `FoldPortal` pipeline. The model is a room, not a picture:
-  the wallpaper is the far wall, each window a card floating in front of
-  it at a depth from its stacking order — nearer cards translate more
-  with the tilt (`PortalDepth.parallax`), so the contents really do
-  parallax as the lid moves. **Hold picture in place** (default on)
-  counter-rotates the content plane by `delta · Perspective` — a fixed
-  eye sees the desktop stay put while the physical glass tilts over it
-  (the room's own fog/shade/dissolve still read the real delta); off
-  keeps the picture glued to the lid. With the fold the space scales
-  toward the
-  hinge, the matte fog swallows the far end and the near end dissolves —
-  `fade` per card, depth-driven `dissolve` on the wall — which is what
-  makes it read as continuing into the display rather than a warped
-  screenshot. One style; Perspective / Blur / Shade are its knobs —
-  Perspective sweeps the eye from orthographic to close-up, Blur is the
-  fog (Vogel-disc LOD reads off the GPU-mipped textures, radius per
-  depth — distant layers soft first, never ghosted past frames), Shade
-  is the room's darkness (0 = pure dissolve, 1 = near-black void). The
-  overlay is ordered out whenever `delta ≤ 0.002` or no frame has
-  landed, so at rest nothing runs.
+  (`framebufferOnly`, capped at `min(120, screen.maximumFramesPerSecond)`),
+  one pipeline per look in one runtime-compiled library.
+  - **Duo** (`duoFragment`, `FoldDuoModel`): each captured frame lands
+    in an 8-level Gaussian pyramid (`MPSImageGaussianPyramid`; plain
+    mipmaps where MPS can't run). Units are screen heights in the lid's
+    side view, hinge at the origin. The seated eye sits at (2.6, 2.0)·(1.6
+    − Perspective): 2.6 H toward you, 2.0 H up at the default. Each glass
+    pixel, on a lid drawn at θref − Hold·(θref − θ), casts a ray from the
+    eye and shows the point it hits on the resting plane θref: the exact
+    front-view hold, the identity at rest, the hinge row pinned. Below
+    edge-on (37.6° for the default eye) the pixel is black. `motion =
+    smoothstep(δ / (fadeLength·(θref − 5°)))` has zero slope at the
+    start. In the picture's own rows (e = 0 at the hinge row, 1 at the
+    far edge) blur σ = 0.10·Blur·motion·e^1.35 H, read as one pyramid
+    level through a cubic B-spline (≈ 0.82·2^L px, MPS's decimation
+    offset undone; `FoldRendererTests` pins it within 6/255 of a
+    Gaussian, so no ghost copies), and darkening is
+    min(1, 3·Shade·motion·((e − 0.2)/0.8)^1.35): the hinge-side fifth
+    never darkens and the far edge is black once motion ≥ 0.5 at the
+    default Shade. The end fade runs from clear at edge-on + 22° to black
+    at edge-on + 2°. The overlay's alpha ramps over the first 2° of
+    travel. Reduce Motion: no warp, no blur, darkening only.
+  - **Room** (`foldFragment`, `FoldPortalModel`): the model is a room,
+    not a picture: the wallpaper is the far wall, each window a card
+    floating in front of it at a depth from its stacking order, so the
+    contents parallax as the lid moves. With the fold the space scales
+    toward the hinge, the matte fog swallows the far end and the whole
+    composite dissolves over the last ~20°. Perspective sweeps the eye
+    from orthographic to close-up, Blur is the fog (Vogel-disc LOD reads
+    off the GPU-mipped textures), Shade the room's darkness, Frost the
+    milk of the cover.
+  - **Hold picture in place** is a 0–100 % strength (default 100 %) in
+    both looks: 100 % keeps the desktop where a seated eye saw it while
+    the glass tilts over it, 0 % glues it to the lid. (Until 2026-09-24 it
+    was a switch that sent Perspective to a shader that read it
+    backwards, so "on" held the picture less than "off".)
+  - The overlay is ordered out whenever `delta ≤ 0.002` or no frame has
+    landed, so at rest nothing runs.
 - **Safety**: pause (hide overlay, stop capture, keep sensor) when the
   lid reads ≤ 5°, when `AppleClamshellState` on `IOPMrootDomain` says
   closed — the daemon's `closed_lid.holding` is the keep-awake
@@ -236,8 +286,23 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   refreshed on the screen-parameters notification plus a 2 s backstop),
   or on screen sleep; resume 0.5 s after all clear. Never pick an
   external display. Reduce Motion: the fold still follows the lid (it's
-  a function of angle, not an animation) but the blur disc and the
-  velocity boost are skipped.
+  a function of angle, not an animation) but the blur is skipped, and
+  the Duo drops its warp too. **Duo closed hold** (`FoldBlackout`): a
+  close that reaches the shut line with the fold on screen keeps the
+  overlay up as a flat black pass — no texture, capture stopped, the
+  anchor kept — instead of ordering it out onto the sharp desktop. It
+  lets go on a 3 s watchdog (restarted once when the lid reopens), on
+  screen sleep, lock, a session switch or a lost/mirrored built-in
+  screen, or when the lid is back past 15° with a frame captured after
+  the close. The reopen films at once, wherever the lid is, and the fold
+  then unfolds from black: the glass starts at the last angle that still
+  draws all black (edge-on + 2°) and the chase unwinds it to the live lid
+  in under half a second, so a quick reopen never cuts straight to a
+  half-lit desktop. One reference holds for as long as the overlay is up,
+  so the unfold, and the dwell pause's unwind, draw from the lid they
+  started from. The card reads "Holding black across the close" for the
+  whole hold. It sits at the overlay's own level, so never above the
+  lock screen, and uses no private SkyLight spaces.
 - **Swap**: `FoldProvider.bendy` / `.lidPlane`: detect via
   `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)` (Lid Plane's
   bundle id is in its repo `Info.plist`; Bendy's is read from
@@ -245,12 +310,17 @@ the gesture. Clean-room; no Lid Plane (GPL-3) or Bendy code.
   the storefront link). Choosing an external provider stops our renderer,
   launches that app, and the chip reads "Bendy is rendering it". When the
   chosen app isn't installed the picker row says so and links to it.
-- **Controls**: On/Off, Activation
-  angle slider 60–160°, Perspective / Blur / Shade sliders (one style —
-  the portal), Jitter
-  tolerance 0–5°, "Simulate a fold" slider (drives the angle while held),
-  live angle readout ("104°" or "no sensor"), Render with (JR-Bar / Bendy /
-  Lid Plane).
+- **Controls**: On/Off, Look (Duo / Room), Fold from (Set angle /
+  Wherever the lid rests), Starts folding at 60–160° (Set angle only; in
+  the Duo set it near where your lid rests), Release when parked, Jitter
+  0–5°, Perspective / Shade / Blur, Goes dark over 20–100 % (Duo) or
+  Frost (Room; a Settings search that lands on the other look's row draws
+  it switched off, saying which look has it), Hold picture in place
+  0–100 %, Click on return, Hinge
+  voice, "Simulate a fold" slider (drives the angle while held), Try it
+  (a close and reopen 50° below the fold's own reference), live angle
+  readout ("104°" or "no sensor"), Render with (JR-Bar / Bendy / Lid
+  Plane).
 
 ## Aquarium (native)
 
@@ -699,6 +769,16 @@ marketing words. Examples:
   `JRBarAppTests/BuddyRoamingTests.swift`.
 - Fold math: `deltaRadians(angle:reference:)` clamps, jitter filter
   accepts/rejects, pause predicate on each safety input (pure functions
-  in `JRBarCore/FoldMath.swift`, tests in `FoldMathTests.swift`).
+  in `JRBarCore/FoldMath.swift`, tests in `FoldMathTests.swift`). The
+  Duo: `FoldDuoModelTests` (identity at rest, pinned hinge row, the
+  observer round trip at 100/90/75/60°, 79.4 % top-row width at 70°,
+  motion, darkening, end fade, blackout and catch-up),
+  `FoldSmoothingTests` (a simulated 10 Hz lid: ripple, lag, stop,
+  reversal, flicker, plus a pin that the old path fails),
+  `FoldRendererTests` (GPU: identity at rest, sharp hinge against a soft
+  far band, black far edge, the pyramid read against a Gaussian, the
+  blackout) and `FoldRenderProofTests` (the seated eye's Dock and window
+  corner hold within 2 px from 110° to 75°; `JRBAR_RENDER_PROOF=1` writes
+  `fold-duo-strip.png` and `fold-room-strip.png`).
 - Aquarium: session → fish state reducer (`AquariumModel.swift` in
   JRBarCore, pure), tests for ask/failed/completed transitions.

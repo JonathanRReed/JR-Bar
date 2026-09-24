@@ -16,20 +16,22 @@ enum FoldLog {
     static let log = Logger(subsystem: "devin.jrbar", category: "fold")
 }
 
-/// Fold (docs/TOYS.md): the desktop is a portal — a lit room seen
-/// through the screen — and closing the lid reads as the UI continuing
-/// INTO the display, the iPhone Duo animation. The pieces stay small:
-/// `LidAngleSensor` reads the hinge, `FoldArming` decides when the
-/// ScreenCaptureKit streams may exist (inside the arming band, plus a
-/// short cooldown, so the purple indicator only shows while a fold can
-/// be on screen), `FoldCapture` grabs the built-in display twice — the
-/// full desktop and the wallpaper-only far wall — plus the window-card
-/// layout, `SlewTracker` turns the 10 Hz integer sensor into a capped,
+/// Fold (docs/TOYS.md): closing the lid folds the desktop. The Duo look
+/// (the default) is the iPhone Duo's fold: the picture holds still in
+/// space while the glass swings through it, softening and going dark
+/// away from the hinge; the Room look is the older lit room seen
+/// through the screen. The pieces stay small: `LidAngleSensor` reads
+/// the hinge, `FoldArming` decides when the ScreenCaptureKit streams
+/// may exist (from the first real move, or inside the arming band, plus
+/// a short cooldown, so the purple indicator only shows while a fold
+/// can be on screen), `FoldCapture` grabs the built-in display — one
+/// picture for the Duo, the desktop plus the wallpaper-only far wall
+/// and the window cards for the Room — `EdgeInterpolator` and
+/// `SlewTracker` turn the 10 Hz integer sensor into a steady,
 /// overshoot-free glide, `DeltaChase` unwinds the displayed delta when
-/// the gate snaps it to 0 mid-motion, and `FoldRenderer` composites
-/// the frosted cover's room into the click-through `FoldOverlayWindow`.
-/// Render can also be handed to
-/// Bendy or Lid Plane; then all of this stays parked.
+/// the gate snaps it to 0 mid-motion, and `FoldRenderer` draws the look
+/// into the click-through `FoldOverlayWindow`. Render can also be
+/// handed to Bendy or Lid Plane; then all of this stays parked.
 @MainActor
 @Observable
 final class FoldToy: Toy {
@@ -83,6 +85,28 @@ final class FoldToy: Toy {
     /// of lurching between samples. Fed on accepted samples, ticked on
     /// every vsync.
     @ObservationIgnored private var tracker = SlewTracker()
+    /// The Duo's sensor smoothing: the lid drawn one sensor period in
+    /// the past, straight between edges, so a steady close moves at a
+    /// steady speed. Feeds the tracker every tick; the simulate slider
+    /// and Try it bypass it (they are already smooth).
+    @ObservationIgnored private var edges = EdgeInterpolator()
+    /// The movement fold's ease from 0 to the live delta when the first
+    /// captured frame lands late.
+    @ObservationIgnored private var catchUp = FirstFrameCatchUp()
+    /// Set when a capture starts; the first frame clears it.
+    @ObservationIgnored private var awaitingFirstFrame = false
+    /// The Duo's black hold across the closed-lid pause.
+    @ObservationIgnored private var blackout = FoldBlackout()
+    @ObservationIgnored private var blackoutWork: DispatchWorkItem?
+    /// When the overlay last ordered in, for the Duo's order-in fade;
+    /// nil while it is out.
+    @ObservationIgnored private var overlayShownAt: TimeInterval?
+    /// The reference the Duo draws this gesture from: taken as the
+    /// overlay orders in and kept until it orders out, so an unwind that
+    /// outlives its anchor (the dwell re-seat, a reset) still draws from
+    /// the same lid, and a reopen from the black hold unfolds from the
+    /// lid it closed from.
+    @ObservationIgnored private var heldReference: Double?
     /// The displayed-delta follower: instant while the fold deepens, a
     /// slew-limited unwind when the gate snaps the target to 0 —
     /// opening counter-rotates the room back through the hinge instead
@@ -395,10 +419,19 @@ final class FoldToy: Toy {
         let settings = settings
         jitter.tolerance = settings.jitterTolerance
         moveAnchor.tolerance = settings.jitterTolerance
+        // The Duo arms on 3° of real travel, so a nudge never flashes the
+        // Screen Recording indicator, and its tracker runs stiffer: the
+        // edge interpolator already smooths what it chases.
+        moveAnchor.armThreshold = isDuo ? max(3, settings.jitterTolerance) : nil
+        tracker.omega = isDuo ? 40 : 20
+        overlay?.renderer.look = settings.look
         // Every path — off, parked, paused — leaves the vsync link
         // matching the machine; a parked fold runs no timer.
         defer { refreshTick() }
         guard settings.enabled, settings.provider == .jrbar else {
+            endBlackout(hide: true)
+            edges.reset()
+            catchUp.reset()
             paused = false
             resumeWork?.cancel()
             resumeWork = nil
@@ -428,8 +461,12 @@ final class FoldToy: Toy {
         // pause restores the band as the resume quiet starts. A shut
         // lid the pump parks by itself, beat by beat, without waiting
         // for a pass here.
-        sensor.armingAngle = (settings.anchor == .movement || pauseReason != nil)
-            ? -.infinity : settings.activationAngle + 12
+        // The Duo's movement fold is the exception: while it is armed the
+        // poll runs 120 Hz so each edge the interpolator glides between is
+        // timestamped to ±8 ms; parked, it idles at 10 Hz like the rest.
+        sensor.armingAngle = pauseReason != nil ? -.infinity
+            : settings.anchor == .angle ? settings.activationAngle + 12
+            : (isDuo && arming.phase != .idle) ? .infinity : -.infinity
         // The sensor keeps polling while paused — its next reading is the
         // thing that tells us the lid reopened.
         sensor.setPolling(true)
@@ -444,6 +481,7 @@ final class FoldToy: Toy {
             rendererFailed = false
         }
         guard !rendererFailed, canFold else {
+            endBlackout(hide: true)
             arming.reset()
             scheduleCooldown(nil)
             standDown()
@@ -451,6 +489,13 @@ final class FoldToy: Toy {
             return
         }
         if pauseReason != nil {
+            // The Duo holds black across a close instead of flashing the
+            // desktop on its way out; anything else lets go of it.
+            if blackoutAllowed {
+                holdBlackout()
+                return
+            }
+            endBlackout(hide: true)
             // Pausing is immediate; only resuming debounces.
             paused = true
             resumeWork?.cancel()
@@ -461,12 +506,22 @@ final class FoldToy: Toy {
             dwellAnchor = nil
             arming.reset()
             scheduleCooldown(nil)
+            catchUp.reset()
             chase.reset()
             moveAnchor.reset()
             displayedDelta = 0
             standDown()
             noteDiag(stage: "paused")
             return
+        }
+        if blackout.active && !isDuo {
+            // The look changed under the hold: the Room has no blackout.
+            endBlackout(hide: true)
+        } else if blackout.active {
+            // The lid is back above the closed line: the reopen gets its
+            // own watchdog to land a frame and cross the release angle.
+            blackout.note(angle: gateAngle, at: CACurrentMediaTime())
+            scheduleBlackoutWatchdog()
         }
         if paused {
             // All clear: half a second of quiet before the fold comes
@@ -490,10 +545,14 @@ final class FoldToy: Toy {
         // the fold gate's hysteresis at the activation edge. Movement
         // mode arms on the first real move off the anchor instead: the
         // streams come up with the gesture's start, which is the warm-up
-        // that keeps the first painted frame from being black.
+        // that keeps the first painted frame from being black. A reopen
+        // from the black hold films at once, wherever the lid is and
+        // whatever the fold measures from: a fresh frame is what lets it
+        // unfold from black, and after it lets go the cooldown carries
+        // the unwind.
         let outcome: FoldArming.Outcome
-        if settings.anchor == .movement {
-            let moving = gateAngle.map { moveAnchor.moving($0) } ?? false
+        if settings.anchor == .movement || blackout.active {
+            let moving = blackout.active || (gateAngle.map { moveAnchor.moving($0) } ?? false)
             let lidShut = cachedClamshell == true
                 || (gateAngle.map { $0 <= FoldPause.closedAngle } ?? false)
             outcome = arming.updateMovement(
@@ -588,13 +647,13 @@ final class FoldToy: Toy {
         // sides of every unchanged frame.
         let head = "en=\(settings.enabled) prv=\(settings.provider.rawValue) "
             + "paused=\(paused) pause=\(pauseReason ?? "-") "
-        let angles = "raw=\(raw) render=\(render) "
+        let angles = "raw=\(raw) render=\(render) " + duoDiag
         let tail = "target=\(String(format: "%.3f", targetDelta)) "
             + "disp=\(String(format: "%.3f", displayedDelta)) "
             + "arm=\(arming.phase) gate=\(arming.foldGateOpen) "
             + "cap=\(capture == nil ? "nil" : capture!.hasFrame ? "frame" : "wait") "
             + "tex=\(overlay?.renderer.hasTexture ?? false) vis=\(overlay?.isVisible ?? false) "
-            + "link=\(tickLink != nil)"
+            + "link=\(tickLink != nil) black=\(blackout.active)"
         let state = head + angles + tail
         if stage == "tick" {
             guard state != lastDiag else { return }
@@ -607,6 +666,41 @@ final class FoldToy: Toy {
             lastNoticeDiag = key
             FoldLog.log.notice("\(stage, privacy: .public) \(state, privacy: .public)")
         }
+    }
+
+    /// The Duo's numbers for the log: the look, the reference the fold
+    /// measures from, the eased motion and the end fade — `m`, `θref`
+    /// and `endFade` in the hand check. They ride with the angles, so
+    /// they print on every notice line without deduping one on its own.
+    private var duoDiag: String {
+        guard isDuo else { return "look=room " }
+        let p = overlay?.renderer.params
+        let ref = duoReference.map { String(format: "%.1f", $0) } ?? "nil"
+        let m = String(format: "%.2f", p?.motion ?? 0)
+        let end = String(format: "%.2f", p?.endFade ?? 0)
+        return "look=duo θref=\(ref) m=\(m) endFade=\(end) "
+    }
+
+    /// True while the Duo look is the one drawing.
+    private var isDuo: Bool { settings.look == .duo }
+
+    /// The Duo's edge interpolation runs on the real sensor only: the
+    /// simulate slider and Try it are already smooth.
+    private var smoothsEdges: Bool { isDuo && simulatedAngle == nil }
+
+    /// Where the Duo's picture stays put: the resting angle the gesture
+    /// started from, or the set angle.
+    private var duoReference: Double? {
+        settings.anchor == .movement ? moveAnchor.anchor : settings.activationAngle
+    }
+
+    /// The fold's travel in radians. The Room clamps at 1.25 rad, the arc
+    /// its room is stable over; the Duo's geometry goes to black by
+    /// itself, so its travel runs all the way to the deck.
+    private func foldDelta(angle: Double, reference: Double) -> Double {
+        guard isDuo else { return FoldMath.deltaRadians(angle: angle, reference: reference) }
+        guard angle.isFinite, reference.isFinite, angle < reference else { return 0 }
+        return (reference - max(0, angle)) * .pi / 180
     }
 
     /// The delta the fold wants right now — 0 when the gate is closed.
@@ -626,11 +720,10 @@ final class FoldToy: Toy {
             guard capture?.hasFrame == true,
                   let reference = moveAnchor.anchor,
                   let angle = renderAngle ?? gateAngle else { return 0 }
-            return FoldMath.deltaRadians(angle: angle, reference: reference)
+            return foldDelta(angle: angle, reference: reference)
         }
         guard let angle = renderAngle ?? gateAngle else { return 0 }
-        return FoldMath.deltaRadians(
-            angle: angle, reference: settings.activationAngle)
+        return foldDelta(angle: angle, reference: settings.activationAngle)
     }
 
     /// Starts or stops the vsync heartbeat to match the machine: armed
@@ -646,7 +739,8 @@ final class FoldToy: Toy {
         // check the link was born and killed on every parked sensor
         // sample.
         let busy = targetDelta > 0 || displayedDelta > 0.002
-            || !tracker.atRest || !chase.atRest
+            || !tracker.atRest || !chase.atRest || blackout.active
+            || (smoothsEdges && !edges.settled(at: CACurrentMediaTime()))
         if armed && busy {
             if tickLink == nil {
                 // On macOS the link comes from the screen it drives.
@@ -660,7 +754,9 @@ final class FoldToy: Toy {
         } else if let link = tickLink {
             link.invalidate()
             tickLink = nil
-            overlay?.setVisible(false)
+            // The blackout outlives the link: it is a flat clear with no
+            // motion to tick, and it lets go on its own terms.
+            if !blackout.active { hideOverlay() }
         }
     }
 
@@ -673,13 +769,32 @@ final class FoldToy: Toy {
         let now = CACurrentMediaTime()
         let dt = now - lastDeltaTick
         lastDeltaTick = now
+        if smoothsEdges, let drawn = edges.value(at: now) { tracker.feed(drawn) }
         tracker.tick(dt: dt)
         refreshDisplayFactsIfStale()
+        if blackout.active {
+            // The reopen takes over from black once the lid is past the
+            // release angle with a frame captured after the close.
+            guard blackout.releases(angle: gateAngle, freshFrame: capture?.hasFrame == true) else {
+                showBlackout()
+                noteDiag(stage: "tick")
+                return
+            }
+            FoldLog.log.notice("blackout: reopened, unfolding from black")
+            endBlackout(hide: false)
+            // The unfold starts from the last angle that still draws all
+            // black, so the first frame matches the hold, and the chase
+            // unwinds from there to the live lid.
+            let reference = heldReference ?? duoReference ?? 110
+            chase.reset(to: FoldDuoModel.reopenDelta(
+                reference: reference, perspective: self.settings.perspective))
+        }
         // The tracker's glide IS the easing while the lid moves; the
         // chase owns the rest — instant while the target grows, a damped
         // unwind when the gate snaps it to 0 mid-motion, so opening
         // counter-rotates back through the hinge instead of snapping.
-        displayedDelta = chase.tick(target: targetDelta, dt: dt)
+        // A late first frame eases in over `FirstFrameCatchUp.duration`.
+        displayedDelta = chase.tick(target: targetDelta * catchUp.scale(at: now), dt: dt)
         // Bendy's return click: the fold fully unwound after being up.
         if displayedDelta > 0.05 {
             foldWasUp = true
@@ -691,7 +806,7 @@ final class FoldToy: Toy {
             delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
         noteDiag(stage: "tick")
         guard wantVisible else {
-            overlay?.setVisible(false)
+            hideOverlay()
             // A capture that stays frameless for seconds is dead on
             // arrival — a hung SCShareableContent fetch never throws, it
             // just never delivers. Recycle it, seconds apart, instead of
@@ -707,7 +822,8 @@ final class FoldToy: Toy {
             // The link's only job is motion; fully at rest — gate shut,
             // the tracker settled and the unwind landed — it stands
             // down until the next reconcile arms it again.
-            if targetDelta == 0 && tracker.atRest && chase.atRest, let link = tickLink {
+            let glideDone = !smoothsEdges || edges.settled(at: now)
+            if targetDelta == 0 && tracker.atRest && chase.atRest && glideDone, let link = tickLink {
                 link.invalidate()
                 tickLink = nil
             }
@@ -721,24 +837,136 @@ final class FoldToy: Toy {
             guard ensureOverlay() != nil else { return }
         }
         if let overlay {
-            // One style — the portal: Perspective, Blur, Shade and
-            // Frost are the knobs. `apply` writes only the animatable
-            // fields, so the upload's imageSize/texAspect survive the
-            // per-tick pass.
-            FoldPortalModel.apply(to: &overlay.renderer.params,
-                                  delta: displayedDelta,
-                                  perspective: settings.perspective,
-                                  blur: reduceMotion ? 0 : settings.blur,
-                                  shade: settings.shade,
-                                  frost: settings.frost,
-                                  holdPicture: settings.holdPicture,
-                                  usedBuckets: overlay.renderer.usedBucketCount,
-                                  reduceMotion: reduceMotion)
-            // The activation-edge fade is the window's own alpha — a
-            // crossfade under Reduce Motion, a materialize otherwise.
-            overlay.alphaValue = CGFloat(overlay.renderer.params.opacity)
+            overlay.renderer.look = settings.look
+            if !overlay.isVisible { overlayShownAt = now }
+            // `apply` writes only the animatable fields, so the upload's
+            // imageSize/texAspect survive the per-tick pass.
+            if isDuo {
+                // The Duo: the picture held where the resting lid showed
+                // it, the glass drawn at the reference minus the delta —
+                // one reference per gesture, however the anchor moves.
+                heldReference = FoldDuoModel.drawnReference(
+                    held: heldReference, current: duoReference, overlayVisible: overlay.isVisible)
+                // With no reference ever seen, a lid's usual rest.
+                let reference = heldReference ?? 110
+                FoldDuoModel.apply(to: &overlay.renderer.params, reference: reference,
+                                   theta: reference - displayedDelta * 180 / .pi,
+                                   hold: settings.holdStrength, perspective: settings.perspective,
+                                   blur: settings.blur, shade: settings.shade,
+                                   fadeLength: settings.fadeLength, reduceMotion: reduceMotion)
+                // The first degrees fade the overlay in, and so does its
+                // first 120 ms on screen — a late frame never pops.
+                let ramp = FoldDuoModel.orderInRamp(elapsed: now - (overlayShownAt ?? now))
+                overlay.alphaValue = CGFloat(Double(overlay.renderer.params.opacity) * ramp)
+            } else {
+                // The Room: Perspective, Blur, Shade and Frost are the
+                // knobs. A switch back to the Duo takes a fresh reference.
+                heldReference = nil
+                FoldPortalModel.apply(to: &overlay.renderer.params,
+                                      delta: displayedDelta,
+                                      perspective: settings.perspective,
+                                      blur: reduceMotion ? 0 : settings.blur,
+                                      shade: settings.shade,
+                                      frost: settings.frost,
+                                      hold: settings.holdStrength,
+                                      usedBuckets: overlay.renderer.usedBucketCount,
+                                      reduceMotion: reduceMotion)
+                // The activation-edge fade is the window's own alpha — a
+                // crossfade under Reduce Motion, a materialize otherwise.
+                overlay.alphaValue = CGFloat(overlay.renderer.params.opacity)
+            }
             overlay.setVisible(true)
         }
+    }
+
+    /// Orders the overlay out and forgets when it came in.
+    private func hideOverlay() {
+        overlay?.setVisible(false)
+        overlayShownAt = nil
+    }
+
+    // MARK: Blackout
+
+    /// The Duo holds black across a close when the fold was on screen as
+    /// the lid reached the closed line, and nothing says the person has
+    /// stopped looking at this desktop: not asleep, locked or switched
+    /// away, the built-in screen present and not mirrored.
+    private var blackoutAllowed: Bool {
+        guard isDuo, settings.enabled, settings.provider == .jrbar else { return false }
+        let lidShut = cachedClamshell == true
+            || (gateAngle.map { $0 <= FoldPause.closedAngle } ?? false)
+        guard lidShut, !screenAsleep, !screenLocked, !sessionInactive,
+              cachedBuiltinPresent, !cachedMirrored else { return false }
+        return blackout.active || (overlay?.isVisible == true && displayedDelta > 0.002)
+    }
+
+    /// Hold black: capture stopped, the anchor kept (the reopen unfolds
+    /// from the same resting lid), the overlay up as a flat clear.
+    private func holdBlackout() {
+        let now = CACurrentMediaTime()
+        if !blackout.active {
+            FoldLog.log.notice("blackout: holding black across the close")
+            blackout.hold(at: now)
+        }
+        paused = true
+        resumeWork?.cancel()
+        resumeWork = nil
+        dwellWork?.cancel()
+        dwellWork = nil
+        dwellPaused = false
+        dwellAnchor = nil
+        arming.reset()
+        scheduleCooldown(nil)
+        catchUp.reset()
+        chase.reset()
+        displayedDelta = 0
+        stopCapture()
+        showBlackout()
+        scheduleBlackoutWatchdog()
+        noteDiag(stage: "blackout")
+    }
+
+    /// The flat black frame, fully opaque.
+    private func showBlackout() {
+        guard let overlay else { return }
+        FoldDuoModel.applyBlackout(to: &overlay.renderer.params)
+        overlay.alphaValue = 1
+        overlay.setVisible(true)
+    }
+
+    /// Let go of the black hold: ordered out (`hide`), or handed to the
+    /// fold that takes over from black.
+    private func endBlackout(hide: Bool) {
+        guard blackout.active else { return }
+        blackout.end()
+        blackoutWork?.cancel()
+        blackoutWork = nil
+        overlay?.renderer.params.blackout = 0
+        if hide { hideOverlay() }
+    }
+
+    /// The watchdog: a full-screen black window never outlives its
+    /// deadline, whatever else happens.
+    private func scheduleBlackoutWatchdog() {
+        blackoutWork?.cancel()
+        blackoutWork = nil
+        guard blackout.active else { return }
+        let delay = max(0, blackout.deadline - CACurrentMediaTime())
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.blackoutWork = nil
+                guard self.blackout.expired(at: CACurrentMediaTime()) else {
+                    self.scheduleBlackoutWatchdog()
+                    return
+                }
+                FoldLog.log.notice("blackout: watchdog let go")
+                self.endBlackout(hide: true)
+                self.reconcile()
+            }
+        }
+        blackoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func ensureOverlay() -> FoldOverlayWindow? {
@@ -746,6 +974,7 @@ final class FoldToy: Toy {
         guard let screen = FoldOverlayWindow.builtinScreen() else { return nil }
         do {
             let overlay = try FoldOverlayWindow(screen: screen)
+            overlay.renderer.look = settings.look
             overlay.renderer.setCards(lastCards)
             self.overlay = overlay
             reframedVersion = -1
@@ -768,27 +997,41 @@ final class FoldToy: Toy {
             self.capture = nil
             Task { await current.stop() }
         }
+        // The Duo runs one stream and the Room two: a look change swaps
+        // the capture for the right shape.
+        let dual = settings.look == .room
+        if let current = capture as? FoldCapture, current.dual != dual {
+            self.capture = nil
+            Task { await current.stop() }
+        }
         guard capture == nil else { return }
         let capture: any FoldFrameSource = FoldCapturePermission.granted
-            ? FoldCapture() : FoldWallpaperSource()
+            ? FoldCapture(dual: dual) : FoldWallpaperSource()
         self.capture = capture
         captureBeganAt = CACurrentMediaTime()
+        awaitingFirstFrame = true
         capture.onFullFrame = { [weak self] buffer in
-            guard let self else { return }
+            guard let self, let overlay = self.ensureOverlay() else { return }
             // Push once per delivered frame; a draw then costs one
             // triangle, not a texture conversion. The overlay is made
             // here, not at show time: on a static screen SCK may deliver
             // a single frame ever, and dropping it on a nil renderer is
             // how the overlay ordered in with no texture — painted clear,
             // invisible, for the whole fold.
-            if self.ensureOverlay()?.renderer.setFullFrame(buffer) ?? false {
-                self.tickFrame()
+            overlay.renderer.look = self.settings.look
+            guard overlay.renderer.setFullFrame(buffer) else { return }
+            if self.awaitingFirstFrame {
+                self.awaitingFirstFrame = false
+                self.noteFirstFrame()
             }
+            self.tickFrame()
         }
         capture.onFarFrame = { [weak self] buffer in
-            // The wallpaper-only far wall is the nice-to-have half — the
-            // renderer stands the full texture in until it lands.
-            _ = self?.overlay?.renderer.setFarFrame(buffer)
+            // The wallpaper-only far wall is the Room's nice-to-have half —
+            // the renderer stands the full texture in until it lands. The
+            // Duo has no far wall.
+            guard let self, self.settings.look == .room else { return }
+            _ = self.overlay?.renderer.setFarFrame(buffer)
         }
         capture.onCards = { [weak self] cards in
             guard let self else { return }
@@ -840,10 +1083,25 @@ final class FoldToy: Toy {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
+    /// The movement Duo's first frame of a gesture: a quick close is
+    /// already well in, so the displayed delta eases up to it. Not after
+    /// a blackout — that fold unfolds from black, not from the desktop.
+    private func noteFirstFrame() {
+        guard isDuo, settings.anchor == .movement, !blackout.active else { return }
+        catchUp.begin(liveDelta: targetDelta, at: CACurrentMediaTime())
+    }
+
     /// Overlay off, capture stopped. The sensor is the caller's choice —
     /// a pause keeps it, off/external stops it.
     private func standDown() {
-        overlay?.setVisible(false)
+        hideOverlay()
+        stopCapture()
+    }
+
+    /// Capture stopped, the overlay left as it is — the blackout keeps
+    /// its black frame up with nothing being recorded.
+    private func stopCapture() {
+        awaitingFirstFrame = false
         guard let capture else { return }
         self.capture = nil
         Task { await capture.stop() }
@@ -880,7 +1138,7 @@ final class FoldToy: Toy {
             // every sample too: the 400 ms stillness boundary and the
             // first-move arm can't wait for an accepted edge.
             moveAnchor.feed(angle, at: sample.at)
-            if jitter.accept(angle, at: sample.at) { tracker.feed(angle) }
+            if jitter.accept(angle, at: sample.at) { feedTracker(angle, at: sample.at) }
             reconcile()
             return
         }
@@ -896,8 +1154,19 @@ final class FoldToy: Toy {
             if arming.phase != .idle || clamshellChanged { reconcile() }
             return
         }
-        tracker.feed(angle)
+        feedTracker(angle, at: sample.at)
         reconcile()
+    }
+
+    /// An accepted reading into the motion: through the edge
+    /// interpolator in the Duo (the tick feeds the tracker from it),
+    /// straight to the tracker in the Room.
+    private func feedTracker(_ angle: Double, at t: TimeInterval) {
+        if isDuo {
+            edges.feed(angle, at: t)
+        } else {
+            tracker.feed(angle)
+        }
     }
 
     /// One observation pass over every input, re-armed on each change —
@@ -964,8 +1233,12 @@ final class FoldToy: Toy {
     /// Simulate slider takes over from it.
     func tryIt() {
         guard !tryingIt else { return }
-        let activation = settings.activationAngle
-        let start = FoldTryIt.startAngle(current: measuredAngle, activation: activation)
+        // The demo folds from the fold's own reference: where the lid
+        // rests, or the set angle.
+        let resting = settings.anchor == .movement
+        let reference = resting ? (moveAnchor.anchor ?? measuredAngle ?? 110) : settings.activationAngle
+        let start = FoldTryIt.startAngle(current: measuredAngle, reference: reference,
+                                         lead: resting ? 0 : FoldTryIt.setAngleLead)
         let began = CACurrentMediaTime()
         tryingIt = true
         simulateBinding.wrappedValue = start
@@ -973,7 +1246,7 @@ final class FoldToy: Toy {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let elapsed = CACurrentMediaTime() - began
-                if let angle = FoldTryIt.angle(at: elapsed, start: start, activation: activation) {
+                if let angle = FoldTryIt.angle(at: elapsed, start: start, reference: reference) {
                     self.simulateBinding.wrappedValue = angle
                 } else {
                     self.stopTrying()
@@ -1008,9 +1281,12 @@ final class FoldToy: Toy {
         // The tracker's glide belongs to the real lid — a drag that
         // just jumped the angle 40° must not carry over.
         tracker.reset()
+        edges.reset()
+        catchUp.reset()
         moveAnchor.reset()
         if let raw = rawAngle {
             tracker.feed(raw)
+            edges.feed(raw, at: CACurrentMediaTime())
         }
         reconcile()
     }
@@ -1031,6 +1307,8 @@ final class FoldToy: Toy {
         _ = workspaceVersion
         _ = permissionVersion
         guard settings.provider == .jrbar else { return "Handed off" }
+        // The black hold rides out the closed-lid pause, so it speaks first.
+        if blackout.active { return "Holding black across the close" }
         if let reason = pauseReason { return "Paused — \(reason)" }
         guard canFold else { return "Waiting for Screen Recording" }
         if rendererFailed { return "Renderer failed to start" }
@@ -1082,7 +1360,10 @@ final class FoldToy: Toy {
         resumeWork = nil
         arming.reset()
         scheduleCooldown(nil)
+        endBlackout(hide: true)
         tracker.reset()
+        edges.reset()
+        catchUp.reset()
         chase.reset()
         moveAnchor.reset()
         displayedDelta = 0
@@ -1242,19 +1523,39 @@ enum FoldSessionState {
 }
 
 /// The card's disclosure body: the lid at the top, live — its angle,
-/// what the fold is doing, and Try it — then the rows in runs: how it
-/// folds, how the room looks, how it sounds, the simulator, and who
-/// renders it. Every row writes `store.state.fold` (which persists
-/// itself) except the provider picker, which goes through `setProvider`
-/// so the swap can stop our renderer and open theirs. Nothing here
-/// touches the fold's motion.
+/// what the fold is doing, and Try it — then the rows in runs: the look
+/// and where it folds from, how it looks, how it sounds, the simulator,
+/// and who renders it. Rows that only one look uses show for that look
+/// alone (Frost is the Room's, "Goes dark over" the Duo's). Every row
+/// writes `store.state.fold` (which persists itself) except the
+/// provider picker, which goes through `setProvider` so the swap can
+/// stop our renderer and open theirs.
 private struct FoldControlsView: View {
     let toy: FoldToy
+    @Environment(SettingsStore.self) private var settingsStore: SettingsStore?
+
+    private var duo: Bool { toy.settings.look == .duo }
+
+    /// The row a Settings search just landed on in this card. A row the
+    /// other look owns is drawn for it, switched off and saying which
+    /// look has it, so the search never lands on nothing.
+    private var searchedRow: String? {
+        guard let hit = settingsStore?.searchHit, hit.card == "fold" else { return nil }
+        return hit.title
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             hero
             Divider().padding(.vertical, 6)
+
+            Picker(selection: toy.bind(\.look)) {
+                Text("Duo").tag(FoldLook.duo)
+                Text("Room").tag(FoldLook.room)
+            } label: {
+                SettingLabel(title: "Look", subtitle: lookSubtitle)
+            }
+            .pickerStyle(.menu)
 
             Picker(selection: toy.bind(\.anchor)) {
                 Text("Set angle").tag(FoldAnchor.angle)
@@ -1265,7 +1566,7 @@ private struct FoldControlsView: View {
             .pickerStyle(.menu)
 
             sliderRow(SettingLabel(title: "Starts folding at",
-                                   subtitle: "The lid angle where the tilt begins."),
+                                   subtitle: startSubtitle),
                       value: toy.bind(\.activationAngle), range: 60...160,
                       readout: "\(Int(toy.settings.activationAngle.rounded()))°")
                 .disabled(toy.settings.anchor == .movement)
@@ -1282,22 +1583,24 @@ private struct FoldControlsView: View {
 
             Divider().padding(.vertical, 6)
 
-            sliderRow(SettingLabel(title: "Perspective",
-                                   subtitle: "How much the far edge tapers, like a real tilted plane."),
+            sliderRow(SettingLabel(title: "Perspective", subtitle: perspectiveSubtitle),
                       value: toy.bind(\.perspective), range: 0...1, readout: percent(toy.settings.perspective))
-            sliderRow(SettingLabel(title: "Shade",
-                                   subtitle: "How dark the room goes toward the hinge and the far wall."),
+            sliderRow(SettingLabel(title: "Shade", subtitle: shadeSubtitle),
                       value: toy.bind(\.shade), range: 0...1, readout: percent(toy.settings.shade))
-            sliderRow(SettingLabel(title: "Blur",
-                                   subtitle: "How much the room defocuses — deeper layers and the far edge soften first. Never under Reduce Motion."),
+            sliderRow(SettingLabel(title: "Blur", subtitle: blurSubtitle),
                       value: toy.bind(\.blur), range: 0...1, readout: percent(toy.settings.blur))
-            sliderRow(SettingLabel(title: "Frost",
-                                   subtitle: "How milky the cover is — 0 is a black room, higher reads as frosted plastic."),
-                      value: toy.bind(\.frost), range: 0...1, readout: percent(toy.settings.frost))
-
-            Toggle(isOn: toy.bind(\.holdPicture)) {
-                SettingLabel(title: "Hold picture in place", subtitle: "The desktop stays put while the lid tilts over it; off keeps the picture glued to the glass.")
+            if duo {
+                fadeLengthRow(owned: true)
+                if searchedRow == "Frost" { frostRow(owned: false) }
+            } else {
+                frostRow(owned: true)
+                if searchedRow == "Goes dark over" { fadeLengthRow(owned: false) }
             }
+
+            sliderRow(SettingLabel(title: "Hold picture in place",
+                                   subtitle: "How still the desktop stays while the lid tilts over it: 100% keeps it where you saw it, 0% glues it to the glass."),
+                      value: toy.bind(\.holdStrength), range: 0...1,
+                      readout: percent(toy.settings.holdStrength))
 
             Divider().padding(.vertical, 6)
 
@@ -1341,7 +1644,7 @@ private struct FoldControlsView: View {
 
             Toggle(isOn: toy.bind(\.wallpaperFallback)) {
                 SettingLabel(title: "Wallpaper without Screen Recording",
-                             subtitle: "With no permission, the wallpaper alone folds — same motion, no windows in the room.")
+                             subtitle: "With no permission, the wallpaper alone folds — same motion, just no windows.")
             }
 
             if toy.isOn && !FoldCapturePermission.granted {
@@ -1352,6 +1655,53 @@ private struct FoldControlsView: View {
                 .padding(.top, 4)
             }
         }
+    }
+
+    /// The Duo's "Goes dark over"; drawn off in the Room only for a
+    /// search that landed on it.
+    private func fadeLengthRow(owned: Bool) -> some View {
+        let subtitle = owned
+            ? "How much of the close the picture takes to go soft and dark. 55% is the iPhone Duo's own: done by half-closed."
+            : "Only the Duo look goes dark over the close. Set Look to Duo to use it."
+        return sliderRow(SettingLabel(title: "Goes dark over", subtitle: subtitle),
+                         value: toy.bind(\.fadeLength), range: FoldSettings.fadeLengthRange,
+                         readout: percent(toy.settings.fadeLength), live: owned)
+    }
+
+    /// The Room's Frost; drawn off in the Duo only for a search that
+    /// landed on it.
+    private func frostRow(owned: Bool) -> some View {
+        let subtitle = owned
+            ? "How milky the cover is — 0 is a black room, higher reads as frosted plastic."
+            : "Only the Room look has a cover to frost. Set Look to Room to use it."
+        return sliderRow(SettingLabel(title: "Frost", subtitle: subtitle),
+                         value: toy.bind(\.frost), range: 0...1,
+                         readout: percent(toy.settings.frost), live: owned)
+    }
+
+    private var lookSubtitle: String {
+        "Duo holds your desktop still while the glass folds through it, going soft and dark "
+            + "away from the hinge like the iPhone Duo. Room folds it into a lit room of window cards."
+    }
+
+    private var startSubtitle: String {
+        duo ? "The lid angle the picture holds at. Set it near where your lid rests."
+            : "The lid angle where the tilt begins."
+    }
+
+    private var perspectiveSubtitle: String {
+        duo ? "Where your eyes are: lower sits further back and keeps the fold flatter, higher leans in."
+            : "How much the far edge tapers, like a real tilted plane."
+    }
+
+    private var shadeSubtitle: String {
+        duo ? "How dark the picture goes away from the hinge. The hinge side always stays bright."
+            : "How dark the room goes toward the hinge and the far wall."
+    }
+
+    private var blurSubtitle: String {
+        duo ? "How soft the picture goes away from the hinge; the hinge stays sharp. Never under Reduce Motion."
+            : "How much the room defocuses — deeper layers and the far edge soften first. Never under Reduce Motion."
     }
 
     /// The card's head: the lid drawn large on its own tile, live, beside
@@ -1398,10 +1748,12 @@ private struct FoldControlsView: View {
             : .system(size: 26, weight: .semibold, design: .rounded)
     }
 
-    /// One slider row: the label, the slider and its readout.
+    /// One slider row: the label, the slider and its readout. A row
+    /// that is not `live` greys its slider and keeps its words readable,
+    /// since they say why.
     private func sliderRow(_ label: SettingLabel, value: Binding<Double>,
                            range: ClosedRange<Double>, step: Double? = nil,
-                           readout: String) -> some View {
+                           readout: String, live: Bool = true) -> some View {
         LabeledContent {
             HStack(spacing: 10) {
                 if let step {
@@ -1413,6 +1765,7 @@ private struct FoldControlsView: View {
                 }
                 ValueText(text: readout)
             }
+            .disabled(!live)
         } label: {
             label
         }

@@ -115,19 +115,21 @@ Bendy (trybendy.app, $4.99 one-time, 3 Macs): hinge sensor, Silk/Shade/Frost, sl
 | Feature | Bendy | Lid Plane | Mac Duo | JR-Bar Fold | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Reads the hinge sensor | yes | yes | yes | Done | IOKit HID, 10/120 Hz |
-| Duo-style fold (scale toward hinge, progressive blur, dissolve) | yes | blur only | yes (default) | Done | Portal model: wallpaper far wall + per-window depth cards, Vogel blur toward the hinge |
-| Rigid held plane | yes | no | yes (Ghost) | Done | The portal's Perspective knob at the shallow end |
-| Alternate effects (Roll, Shutter, Flex, Iris) | 3 styles | 1 | 5 | Won't | One correct effect beats five |
-| Perspective / blur / shade sliders | yes | no | no | Done | Kept as the Duo knobs |
+| Duo-style fold | yes | blur only | yes (default) | Done | Two looks. **Duo** (default): one held picture (the exact front-view homography from a seated eye), blur and darkening in the picture's own rows away from the hinge, black void, no sheen or seam; Gaussian pyramid, B-spline read. **Room**: wallpaper far wall + per-window depth cards, Vogel blur, dissolve |
+| Rigid held plane | yes | no | yes (Ghost) | Done | The Duo look is exactly this, at a seated eye; the Room's Perspective knob at the shallow end comes close |
+| Alternate effects (Roll, Shutter, Flex, Iris) | 3 styles | 1 | 5 | Won't | The Duo is the one correct effect; the Room stays as the second look for anyone who liked it |
+| Perspective / blur / shade sliders | yes | no | no | Done | Both looks; in the Duo Perspective is the eye's distance, plus "Goes dark over" (the fade length, 55 % = the Duo's half-closed) |
 | Activation angle | yes | yes | yes | Done | |
-| Movement anchor (fold starts wherever the lid rested) | no | no | yes (auto-anchor when still) | Done | `FoldAnchor.movement` + `MoveAnchor`: still ≥400 ms while flat re-seats; arms on first move; delta 0 above the anchor; dwell re-seats |
-| Hold picture in place (viewer compensation) | yes | no | yes (Ghost) | Done | `holdPicture` counter-rotates the content plane by delta·Perspective; off = picture rides the lid |
+| Movement anchor (fold starts wherever the lid rested) | no | no | yes (auto-anchor when still) | Done | The default (every older file moved to it; the set angle is kept for "Set angle"). `FoldAnchor.movement` + `MoveAnchor`: still ≥400 ms while flat re-seats; arms on first move (3° down in the Duo); delta 0 above the anchor; dwell re-seats |
+| Hold picture in place (viewer compensation) | yes | no | yes (Ghost) | Done | `holdStrength` 0–100 % (default 100 %): 100 % keeps the desktop where a seated eye saw it, 0 % glues it to the lid, in both looks. The old switch read backwards (it sent Perspective, so "on" held less than "off"); files migrate on → 100 %, off → 0 % |
+| 10 Hz sensor smoothing | ? | ? | spring / τ 35–45 ms | Done | Duo: `EdgeInterpolator` draws the lid one sensor period late between edges into an ω 40 tracker, the same ~150 ms latency with under 5 % speed ripple (was ±25 %) |
+| Black across a full close, unfold from black | n/a | n/a | n/a (macTilt draws over the lock screen) | Done | Duo `FoldBlackout`: a flat black hold with capture stopped, 3 s watchdog, drops on sleep/lock/session; the reopen unfolds from the last all-black angle to the lid; never above the lock screen, no SkyLight |
 | Retrace (same angle → same image) | ? | ? | yes (opening retraces closing) | Done | `DeltaChase` slew unwind at 3 rad/s outruns the tracker's 150°/s cap — a real opening is followed exactly; palindrome test |
 | Simulate slider (no sensor) | drag | no | Replay | Done | |
 | Pause-at-angle timeout (desktop returns after N s at rest) | no | no | yes (1–5 s) | Done | Off by default; a half-closed lid stops being useless |
 | Return-to-normal click sound | yes (0.3) | no | no | Done | Off by default; `NotchSounds` tick on restore |
-| Screen-capture indicator only while folding | yes (Screen Recording, on-device only) | n/a (minimal capture) | yes (privacy: frames in GPU only) | Done | Streams live only inside `FoldArming`'s band (activation + 12°, 2 s linger) |
-| Capture at 60 fps | yes (Metal tilt) | n/a | yes (one Metal pass/frame) | Done | Both streams at `minimumFrameInterval = 1/60` |
+| Screen-capture indicator only while folding | yes (Screen Recording, on-device only) | n/a (minimal capture) | yes (privacy: frames in GPU only) | Done | Streams live only from the first real move off the resting angle (3° down in the Duo, so opening wider never records) or inside `FoldArming`'s band for a set angle (activation + 12°), with a 2 s linger |
+| Capture at 60 fps | yes (Metal tilt) | n/a | yes (one Metal pass/frame) | Done | `minimumFrameInterval = 1/60`; the Duo runs one stream (no far wall, no window-list poll) and keeps JR-Bar's own menu-bar windows so the whole bar folds |
 | External display / mirrored safety | yes | graceful failure | yes (external left alone) | Done | |
 | Reduce Motion honoured | ? (not documented) | n/a | ? (not documented) | Done | |
 | Menu bar pause / Esc | yes (click or Esc) | n/a | n/a (Replay instead) | Won't | JR-Bar's card toggle is the pause |

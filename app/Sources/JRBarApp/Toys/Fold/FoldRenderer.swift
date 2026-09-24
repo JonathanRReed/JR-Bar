@@ -1,6 +1,8 @@
 import AppKit
 import CoreVideo
+import JRBarCore
 import MetalKit
+import MetalPerformanceShaders
 import OSLog
 
 /// A frame held alive across the GPU fence: CoreVideo buffers are
@@ -39,11 +41,22 @@ private func foldLogThrottled(_ message: String) {
     FoldLog.log.warning("\(message, privacy: .public)")
 }
 
-/// One Metal pipeline that draws the fold as a room seen through a
-/// portal: the screen is a window into a space behind it, hanging off
-/// the hinge, so closing the lid reads as the UI continuing INTO the
-/// display rather than a flat image tilting (docs/TOY-PARITY.md —
-/// "Duo-style fold").
+/// The fold's Metal renderer, with one pipeline per look.
+///
+/// **Duo** (`duoFragment`): the iPhone Duo's fold. One captured frame
+/// lands in a persistent 8-level Gaussian pyramid (MPS, with plain
+/// mipmaps as the fallback); each glass pixel samples the picture point
+/// a seated eye saw behind it on the resting lid (`FoldDuoModel`), reads
+/// the level that carries its blur as a smooth B-spline — no disc, so
+/// no ghost copies — darkens away from the hinge, and fades to black as
+/// the eye loses the glass. The void is pure black; no sheen, no seam.
+/// `blackout` draws the closed-lid hold as the clear alone: no pipeline
+/// and no texture.
+///
+/// **Room** (`foldFragment`): the fold as a room seen through a portal:
+/// the screen is a window into a space behind it, hanging off the
+/// hinge, so closing the lid reads as the UI continuing INTO the
+/// display rather than a flat image tilting.
 ///
 /// The room is a stack of planes parallel to the screen: the wallpaper
 /// is the far wall at `roomDepth`, and each on-screen window is a card
@@ -94,15 +107,56 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         var bucketCount: Float = 0
         var frost: Float = 0.65
         /// The viewer-compensation fraction: 0 the picture rides the
-        /// lid, 1 the content plane counter-rotates the full delta so a
-        /// fixed eye sees it hold its place.
-        var hold: Float = 0
+        /// lid, 1 the content plane takes the full front-view mapping so
+        /// a fixed eye sees it hold its place.
+        var hold: Float = 1
+        // Duo fields, appended so the Room's offsets never move. Angles
+        // in radians, lengths in screen heights.
+        /// The resting lid — the plane whose picture stays put.
+        var thetaRef: Float = 0
+        /// The lid now.
+        var theta: Float = 0
+        /// The seated eye: toward the person, and up from the deck.
+        var eyeF: Float = 2.6
+        var eyeU: Float = 2.0
+        /// The eased 0…1 transition that drives blur and darkening.
+        var motion: Float = 0
+        /// Far-edge blur σ at full motion.
+        var blurMax: Float = 0
+        /// Darkening gain (2 is the Duo's own).
+        var darkGain: Float = 0
+        /// 0…1 to black as the eye loses the glass.
+        var endFade: Float = 0
+        /// 1 draws flat black with nothing sampled — the closed-lid hold.
+        var blackout: Float = 0
+        /// Levels in the Duo's pyramid; set by the upload.
+        var lodCount: Float = 1
+        /// 1 when MPS built the pyramid: its levels sit (2^L − 1)/2 base
+        /// pixels right and down of where they belong, and the read
+        /// shifts them back. 0 for plain mipmaps, which stay centred.
+        var pyramidShift: Float = 0
     }
 
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let pipeline: MTLRenderPipelineState
+    private let duoPipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
+    /// Which look the uploads feed and the encode draws. A change drops
+    /// `hasTexture` until a frame lands in the new look's texture.
+    var look: FoldLook = .room {
+        didSet {
+            guard look != oldValue else { return }
+            hasTexture = false
+            textureGeneration &+= 1
+        }
+    }
+    /// The Duo's picture: the newest frame as an 8-level Gaussian
+    /// pyramid, persistent and reused every frame.
+    private(set) var duoPyramid: MTLTexture?
+    /// MPS's pyramid kernel, or nil where MPS can't run on this device —
+    /// then the pyramid is plain mipmaps.
+    private let gaussianPyramid: MPSImageGaussianPyramid?
     private var textureCache: CVMetalTextureCache?
     /// The newest full capture as a private mipmapped texture. Published
     /// on the main actor after the blit commits, generation-guarded so
@@ -138,6 +192,12 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         descriptor.fragmentFunction = library.makeFunction(name: "foldFragment")
         descriptor.colorAttachments[0].pixelFormat = pixelFormat
         pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        let duoDescriptor = MTLRenderPipelineDescriptor()
+        duoDescriptor.vertexFunction = library.makeFunction(name: "foldVertex")
+        duoDescriptor.fragmentFunction = library.makeFunction(name: "duoFragment")
+        duoDescriptor.colorAttachments[0].pixelFormat = pixelFormat
+        duoPipeline = try device.makeRenderPipelineState(descriptor: duoDescriptor)
+        gaussianPyramid = MPSSupportsMTLDevice(device) ? MPSImageGaussianPyramid(device: device) : nil
         guard let queue = device.makeCommandQueue() else { throw FoldRendererError.noDevice }
         self.queue = queue
         let samplerDesc = MTLSamplerDescriptor()
@@ -236,6 +296,9 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
             foldLogThrottled("setFullFrame: cache wrap failed status=\(status)")
             return false
         }
+        if look == .duo {
+            return setDuoFrame(source, retained: RetainedFrame(buffer: pixelBuffer, texture: wrapped))
+        }
         guard ensureRoomTextures(width: width, height: height),
               let full = fullTexture,
               let command = queue.makeCommandBuffer() else {
@@ -291,10 +354,20 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
             blit.generateMipmaps(for: bucketTextures[bucket])
         }
         blit.endEncoding()
+        publishOnCompletion(command, retained: RetainedFrame(buffer: pixelBuffer, texture: wrapped),
+                            texture: full)
+        command.commit()
+        return true
+    }
+
+    /// Marks the texture drawable once `command` finishes, unless a newer
+    /// upload (or a look change) has overtaken it.
+    private func publishOnCompletion(_ command: MTLCommandBuffer, retained: RetainedFrame,
+                                     texture: MTLTexture) {
         textureGeneration &+= 1
         let generation = textureGeneration
-        let retained = RetainedFrame(buffer: pixelBuffer, texture: wrapped)
-        let ready = SendBox(full)
+        let ready = SendBox(texture)
+        let width = texture.width, height = texture.height
         command.addCompletedHandler { [weak self] _ in
             let keepAlive = retained
             DispatchQueue.main.async { [weak self] in
@@ -307,6 +380,65 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
             }
             withExtendedLifetime(keepAlive) {}
         }
+    }
+
+    /// The Duo's persistent pyramid, recreated only when the capture's
+    /// size changes. Usage includes shaderWrite: MPS writes the levels.
+    private func ensureDuoPyramid(width: Int, height: Int) -> MTLTexture? {
+        if let pyramid = duoPyramid, pyramid.width == width, pyramid.height == height {
+            return pyramid
+        }
+        let fit = Int(log2(Double(max(1, max(width, height))))) + 1
+        let levels = max(1, min(FoldDuoModel.pyramidLevels, fit))
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: levels > 1)
+        desc.mipmapLevelCount = levels
+        desc.usage = [.shaderRead, .shaderWrite]
+        desc.storageMode = .private
+        guard let pyramid = device.makeTexture(descriptor: desc) else { return nil }
+        duoPyramid = pyramid
+        params.imageSize = .init(Float(width), Float(height))
+        params.texAspect = Float(width) / Float(max(1, height))
+        params.lodCount = Float(levels)
+        return pyramid
+    }
+
+    /// The Duo upload: one blit into the pyramid's base, then MPS's
+    /// Gaussian pyramid fills the levels in place — or plain mipmaps
+    /// where MPS can't. No cards, no far wall, one texture.
+    private func setDuoFrame(_ source: MTLTexture, retained: RetainedFrame) -> Bool {
+        let width = source.width, height = source.height
+        guard let pyramid = ensureDuoPyramid(width: width, height: height),
+              let command = queue.makeCommandBuffer(),
+              let blit = command.makeBlitCommandEncoder() else {
+            foldLogThrottled("setDuoFrame: texture/command alloc failed")
+            return false
+        }
+        blit.copy(from: source, sourceSlice: 0, sourceLevel: 0,
+                  sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: width, height: height, depth: 1),
+                  to: pyramid, destinationSlice: 0, destinationLevel: 0,
+                  destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+        let useMPS = gaussianPyramid != nil && pyramid.mipmapLevelCount > 1
+        if !useMPS && pyramid.mipmapLevelCount > 1 { blit.generateMipmaps(for: pyramid) }
+        blit.endEncoding()
+        if useMPS, let kernel = gaussianPyramid {
+            var target: MTLTexture = pyramid
+            let encoded = withUnsafeMutablePointer(to: &target) {
+                kernel.encode(commandBuffer: command, inPlaceTexture: $0, fallbackCopyAllocator: nil)
+            }
+            if !encoded, let mips = command.makeBlitCommandEncoder() {
+                foldLogThrottled("setDuoFrame: MPS pyramid refused, using mipmaps")
+                mips.generateMipmaps(for: pyramid)
+                mips.endEncoding()
+                params.pyramidShift = 0
+                publishOnCompletion(command, retained: retained, texture: pyramid)
+                command.commit()
+                return true
+            }
+        }
+        params.pyramidShift = useMPS ? 1 : 0
+        publishOnCompletion(command, retained: retained, texture: pyramid)
         command.commit()
         return true
     }
@@ -348,7 +480,7 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
     /// lid's rotation about the hinge; the finite eye is normalized so
     /// every depth maps to itself at delta = 0 — activating is
     /// pixel-identical, there is nothing to perceive.
-    private static let shaderSource = """
+    static let shaderSource = """
 #include <metal_stdlib>
 using namespace metal;
 
@@ -372,6 +504,18 @@ struct FoldParams {
     float bucketCount;
     float frost;        // 0 bare dark room .. 1 frosted-PP cover
     float hold;         // 0 picture rides the lid .. 1 holds its place
+    // Duo, appended in the Swift order. Radians and screen heights.
+    float thetaRef;     // the resting lid: the plane whose picture stays
+    float theta;        // the lid now
+    float eyeF;         // the seated eye, toward the person
+    float eyeU;         // and up from the deck
+    float motion;       // eased 0..1 transition for blur and darkening
+    float blurMax;      // far-edge sigma at motion 1, fraction of H
+    float darkGain;     // darkening gain (2 = the Duo's 2x)
+    float endFade;      // 0..1 to black as the eye loses the glass
+    float blackout;     // 1 = flat black
+    float lodCount;     // pyramid levels
+    float pyramidShift; // 1 = undo MPS's decimation offset
 };
 
 struct FoldOut {
@@ -456,11 +600,12 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
     }
 
     float a = clamp(p.delta, 0.0, 1.25);
-    // Hold-in-place: the content plane counter-rotates against the lid
-    // by delta·hold, so a fixed eye sees the picture stay put while the
-    // room's own terms (fog, shade, dissolve, sheen) still read the
-    // real delta. hold == 0 keeps the picture glued to the glass.
-    float aL = a * (1.0 - clamp(p.hold, 0.0, 1.0));
+    // Hold-in-place: `foldLayerUV` at the full delta IS the front-view
+    // mapping (a fixed eye sees the picture stay put), and at 0 it is
+    // the identity (the picture glued to the glass). So the content
+    // plane takes delta·hold: 1 holds, 0 rides the lid, and the room's
+    // own terms (fog, shade, dissolve, sheen) still read the real delta.
+    float aL = a * clamp(p.hold, 0.0, 1.0);
     float h = 1.0 - in.uv.y;
     float sa = sin(a);
     // The sheet itself: frosted polypropylene. `milk` is the plastic's
@@ -556,17 +701,145 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
     color = mix(color, float3(0.0), p.dissolve);
     return float4(color, 1.0);
 }
+
+// ---- Duo -------------------------------------------------------------
+// Side view of the lid in screen heights, hinge at the origin: forward
+// toward the person, up from the deck. The lid at angle th runs along
+// duoLidDir(th) and its screen faces duoLidNormal(th).
+static float2 duoLidDir(float th) { return float2(cos(th), sin(th)); }
+static float2 duoLidNormal(float th) { return float2(sin(th), -cos(th)); }
+
+// A glass pixel (lateral x and height h, in screen heights, on a lid
+// drawn at thE) -> the picture uv a seated eye saw behind it on the
+// resting lid. `valid` is false where the eye is behind either plane.
+static float2 duoHeldUV(float x, float h, float thE, constant FoldParams &p,
+                        thread bool &valid) {
+    float2 E = float2(p.eyeF, p.eyeU);
+    float2 u0 = duoLidDir(p.thetaRef);
+    float2 n0 = duoLidNormal(p.thetaRef);
+    float2 W = h * duoLidDir(thE);
+    float en0 = dot(E, n0);
+    float den = dot(W - E, n0);
+    valid = en0 > 0.0 && dot(E, duoLidNormal(thE)) > 0.0 && den < -1e-4;
+    float t = -en0 / den;
+    float2 hit = E + t * (W - E);
+    return float2(t * x / p.aspect + 0.5, 1.0 - dot(hit, u0));
+}
+
+// One pyramid level read as a cubic B-spline through four bilinear taps.
+// A single bilinear tap of a decimated level draws the blur as a chain
+// of straight ramps; the B-spline draws it as a Gaussian (sigma about
+// 0.82 * 2^L base pixels). `shift` undoes MPS's decimation, which keeps
+// the even samples and so slides level L right and down by
+// (2^L - 1) / 2 base pixels.
+static float3 duoLevel(texture2d<float> pyr, sampler s, float2 uv, float lvl, float shift) {
+    uint l = uint(lvl);
+    float2 size = float2(pyr.get_width(l), pyr.get_height(l));
+    float2 base = float2(pyr.get_width(0), pyr.get_height(0));
+    uv += shift * (exp2(lvl) - 1.0) * 0.5 / base;
+    float2 q = uv * size - 0.5;
+    float2 f = fract(q);
+    float2 i = q - f;
+    float2 f2 = f * f;
+    float2 f3 = f2 * f;
+    float2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    float2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    float2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    float2 w3 = f3 / 6.0;
+    float2 g0 = w0 + w1;
+    float2 g1 = w2 + w3;
+    float2 h0 = (i - 0.5 + w1 / g0) / size;
+    float2 h1 = (i + 1.5 + w3 / g1) / size;
+    float3 a = pyr.sample(s, float2(h0.x, h0.y), level(lvl)).rgb;
+    float3 b = pyr.sample(s, float2(h1.x, h0.y), level(lvl)).rgb;
+    float3 c = pyr.sample(s, float2(h0.x, h1.y), level(lvl)).rgb;
+    float3 d = pyr.sample(s, float2(h1.x, h1.y), level(lvl)).rgb;
+    return g0.y * (g0.x * a + g1.x * b) + g1.y * (g0.x * c + g1.x * d);
+}
+
+fragment float4 duoFragment(FoldOut in [[stage_in]],
+                            texture2d<float> pyramid [[texture(0)]],
+                            constant FoldParams &p [[buffer(0)]],
+                            sampler sampl [[sampler(0)]]) {
+    if (p.blackout > 0.5) { return float4(0.0, 0.0, 0.0, 1.0); }
+    float h = 1.0 - in.uv.y;
+    float x = (in.uv.x - 0.5) * p.aspect;
+    float thE = p.thetaRef - clamp(p.hold, 0.0, 1.0) * (p.thetaRef - p.theta);
+    bool valid;
+    float2 src = duoHeldUV(x, h, thE, p, valid);
+    if (!valid) { return float4(0.0, 0.0, 0.0, 1.0); }
+    float2 tuv = (src - 0.5) * p.cover + 0.5;
+    // Blur and darkening follow the PICTURE's rows, not the glass: e is
+    // 0 at the hinge row and 1 at the far edge.
+    float e = clamp(1.0 - src.y, 0.0, 1.0);
+    float sigma = p.blurMax * p.motion * pow(e, 1.35);
+    // Pyramid level L read as a B-spline carries sigma ~= 0.82 * 2^L
+    // base pixels; between levels the two reads blend. Under a level of
+    // blur the base is read as it is, so a still picture stays exact.
+    float sigmaPx = sigma * p.imageSize.y;
+    float lod = clamp(log2(max(sigmaPx, 1e-4) / 0.82), 0.0, max(0.0, p.lodCount - 1.0));
+    float l0 = floor(lod);
+    float fr = lod - l0;
+    float3 c = l0 < 0.5 ? pyramid.sample(sampl, tuv, level(0.0)).rgb
+                        : duoLevel(pyramid, sampl, tuv, l0, p.pyramidShift);
+    if (fr > 0.001) {
+        float l1 = min(l0 + 1.0, max(0.0, p.lodCount - 1.0));
+        c = mix(c, duoLevel(pyramid, sampl, tuv, l1, p.pyramidShift), fr);
+    }
+    // The picture's border feathers over its own defocus, outward only
+    // while it is sharp, so the resting frame is the desktop exactly.
+    float2 inner = float2(2.5 * sigma / p.aspect, 2.5 * sigma) * p.cover;
+    float2 outer = max(max(fwidth(tuv), float2(0.5 / p.imageSize.y)), inner);
+    float2 cov = smoothstep(-outer, inner, tuv)
+               * (1.0 - smoothstep(1.0 - inner, 1.0 + outer, tuv));
+    // The hinge-side fifth never darkens; past it the gain takes the
+    // far edge to black once the motion is under way.
+    float g = clamp((e - 0.2) / 0.8, 0.0, 1.0);
+    float dark = min(1.0, p.darkGain * p.motion * pow(g, 1.35));
+    c *= cov.x * cov.y * (1.0 - dark) * (1.0 - clamp(p.endFade, 0.0, 1.0));
+    return float4(c, 1.0);
+}
 """
+
+    /// True when the encode has what it needs: nothing for the blackout,
+    /// the pyramid for the Duo, the full texture for the Room.
+    var canDraw: Bool {
+        if params.blackout > 0.5 { return true }
+        return look == .duo ? duoPyramid != nil : fullTexture != nil
+    }
+
+    /// The colour the pass clears to: black for the Duo and the
+    /// blackout, the room's void for the Room.
+    private var clearColor: MTLClearColor {
+        if look == .duo || params.blackout > 0.5 {
+            return MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        }
+        let f = Double(max(0, min(1, params.frost)))
+        return MTLClearColor(
+            red: 0.012 + (0.72 * 0.88 - 0.012) * f,
+            green: 0.02 + (0.75 * 0.88 - 0.02) * f,
+            blue: 0.032 + (0.79 * 0.88 - 0.032) * f, alpha: 1)
+    }
 
     /// The one encode both draw paths share: uniforms from `params`,
     /// aspect/cover fitted to the drawable, one fullscreen triangle.
     /// Bucket slots without a live texture bind the transparent dummy.
+    /// The blackout encodes nothing: the pass's black clear is the frame.
     private func encodeFold(into encoder: MTLRenderCommandEncoder, aspect: CGFloat) {
         var p = params
         p.aspect = Float(aspect)
         let cx = max(1, p.aspect / p.texAspect)
         let cy = max(1, p.texAspect / p.aspect)
         p.cover = .init(cx, cy)
+        if p.blackout > 0.5 { return }
+        if look == .duo {
+            encoder.setRenderPipelineState(duoPipeline)
+            encoder.setFragmentTexture(duoPyramid, index: 0)
+            encoder.setFragmentSamplerState(sampler, index: 0)
+            encoder.setFragmentBytes(&p, length: MemoryLayout<Params>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            return
+        }
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(fullTexture, index: 0)
         for i in 0..<PortalDepth.bucketCount {
@@ -584,7 +857,7 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
     /// GPU before returning, and returns false on any failure.
     @discardableResult
     func render(to target: MTLTexture, size: CGSize) -> Bool {
-        guard fullTexture != nil,
+        guard canDraw,
               let command = queue.makeCommandBuffer() else { return false }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target
@@ -592,12 +865,9 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
         pass.colorAttachments[0].storeAction = .store
         // The shader only paints where the room covers; the clear colour
         // is the same void the fragment mixes in at the edge — the dark
-        // room at frost 0, the milk a shade deeper at frost 1.
-        let f = Double(max(0, min(1, params.frost)))
-        pass.colorAttachments[0].clearColor = MTLClearColor(
-            red: 0.012 + (0.72 * 0.88 - 0.012) * f,
-            green: 0.02 + (0.75 * 0.88 - 0.02) * f,
-            blue: 0.032 + (0.79 * 0.88 - 0.032) * f, alpha: 1)
+        // room at frost 0, the milk a shade deeper at frost 1 — and black
+        // for the Duo and the blackout.
+        pass.colorAttachments[0].clearColor = clearColor
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
         encodeFold(into: encoder, aspect: size.width / max(1, size.height))
         encoder.endEncoding()
@@ -613,14 +883,15 @@ extension FoldRenderer: MTKViewDelegate {
     func draw(in view: MTKView) {
         guard inFlight.wait(timeout: .now()) == .success else { return }
         autoreleasepool {
-            guard fullTexture != nil,
+            view.clearColor = clearColor
+            guard canDraw,
                   let pass = view.currentRenderPassDescriptor,
                   let drawable = view.currentDrawable,
                   let command = queue.makeCommandBuffer(),
                   let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
                 inFlight.signal()
-                if fullTexture == nil {
-                    foldLogThrottled("draw: no full texture — overlay would paint clear")
+                if !canDraw {
+                    foldLogThrottled("draw: no texture for the look — overlay would paint clear")
                 }
                 return
             }

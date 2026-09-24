@@ -64,15 +64,16 @@ public struct ToysState: Codable, Equatable, Sendable {
     }
 }
 
-/// Fold: the desktop folds into the screen as the lid comes down — one
-/// style now, the portal room seen through a frosted-PP cover, with
-/// Perspective/Blur/Shade/Frost as the knobs. The shipped defaults —
-/// 65°, shade 0.7, frost 0 — are the ones that read as the
-/// hold-the-angle illusion rather than a warp: early enough that the
-/// fold starts while the lid is still visibly moving, dim enough that
-/// the fold reads as shadow before it reads as distortion, and a black
-/// room behind it — the frost knob lifts the void to a grey milk, and
-/// at 0.65 the whole fold read as "super grey instead of black".
+/// Fold: the desktop folds into the screen as the lid comes down. Two
+/// looks: Duo (the default), the iPhone Duo's fold — one picture held
+/// still in space while the glass swings through it, softening and
+/// going dark away from the hinge — and Room, the older portal room
+/// seen through a frosted cover. A new file folds from wherever the lid
+/// rests, so the Duo reacts from the first degree; blur 0.6 and shade
+/// 0.67 put the far edge a notch under the Duo's own softness and black
+/// by half-closed. A file from before the looks moves to Duo and the
+/// resting angle, keeping its own blur, shade and stored activation
+/// angle (still used by "Set angle").
 public struct FoldSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     /// Where a fold measures its travel from — the fixed
@@ -89,10 +90,13 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     /// How milky the cover is: 0 is the bare dark portal room, 1 a
     /// fully frosted-polypropylene sheet over the room.
     public var frost: Double
-    /// Bendy's hold-in-place: the content plane counter-rotates against
-    /// the lid so a fixed eye sees the desktop stay put while the glass
-    /// tilts over it. Off keeps the picture glued to the lid.
-    public var holdPicture: Bool
+    /// How still the picture holds while the glass tilts over it, 0…1:
+    /// 1 keeps the desktop where a seated eye saw it (the iPhone Duo's
+    /// "stays put in space"), 0 glues it to the lid, and between drifts
+    /// part way. Replaces the old `holdPicture` switch, which read true
+    /// as "hold" but drove the picture toward the lid; a stored switch
+    /// migrates by what its label meant (on → 1, off → 0).
+    public var holdStrength: Double
     /// Mac Duo's pause-at-angle: a lid parked mid-fold hands the
     /// desktop back after this many seconds until the hinge moves
     /// again. 0 keeps the fold however long the lid sits.
@@ -106,13 +110,22 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     /// The hinge voice: the lid's speed plays a creak or a softer paper
     /// rustle. Off by default.
     public var hingeVoice: HingeVoice = .off
+    /// Which fold draws: the iPhone Duo's held picture, or the room.
+    public var look: FoldLook = .duo
+    /// Duo: how much of the close the picture takes to go soft and dark,
+    /// as a share of the travel from where the fold starts down to the
+    /// closed line. 0.55 is the Duo's own "done by half-closed".
+    public var fadeLength: Double = 0.55
+    /// The range the "Goes dark over" slider and the decoder keep
+    /// `fadeLength` in: never a snap, never slower than the whole close.
+    public static let fadeLengthRange: ClosedRange<Double> = 0.2...1
 
-    public init(enabled: Bool = false, anchor: FoldAnchor = .angle,
+    public init(enabled: Bool = false, anchor: FoldAnchor = .movement,
                 activationAngle: Double = 65,
-                perspective: Double = 0.6, blur: Double = 0.5, shade: Double = 0.7,
+                perspective: Double = 0.6, blur: Double = 0.6, shade: Double = 0.67,
                 jitterTolerance: Double = 1.5, provider: FoldProvider = .jrbar,
-                frost: Double = 0, holdPicture: Bool = true, dwellTimeout: Double = 0,
-                restoreSound: Bool = false) {
+                frost: Double = 0, holdStrength: Double = 1, dwellTimeout: Double = 0,
+                restoreSound: Bool = false, look: FoldLook = .duo, fadeLength: Double = 0.55) {
         self.enabled = enabled
         self.anchor = anchor
         self.activationAngle = activationAngle
@@ -122,9 +135,11 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         self.jitterTolerance = jitterTolerance
         self.provider = provider
         self.frost = frost
-        self.holdPicture = holdPicture
+        self.holdStrength = holdStrength
         self.dwellTimeout = dwellTimeout
         self.restoreSound = restoreSound
+        self.look = look
+        self.fadeLength = fadeLength
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -134,17 +149,26 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         case enabled, anchor, activationAngle, style, perspective, blur, shade, jitterTolerance
         case provider, frost, holdPicture, dwellTimeout, restoreSound
         case wallpaperFallback, hingeVoice
+        // `holdPicture` above is decode-only now: the retired switch,
+        // read once to seed `holdStrength`.
+        case holdStrength
+        case look, fadeLength
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
-        anchor = (try? c.decodeIfPresent(FoldAnchor.self, forKey: .anchor)) ?? .angle
+        anchor = (try? c.decodeIfPresent(FoldAnchor.self, forKey: .anchor)) ?? .movement
         activationAngle = (try? c.decodeIfPresent(Double.self, forKey: .activationAngle)) ?? 65
         let style = (try? c.decodeIfPresent(String.self, forKey: .style)) ?? "fog"
         perspective = (try? c.decodeIfPresent(Double.self, forKey: .perspective)) ?? 0.6
-        blur = (try? c.decodeIfPresent(Double.self, forKey: .blur)) ?? 0.5
-        shade = (try? c.decodeIfPresent(Double.self, forKey: .shade)) ?? 0.7
+        // The legacy-default checks below compare against what an old
+        // build read for a missing key (blur 0.5, shade 0.7), so the
+        // stored values are kept apart from today's defaults.
+        let storedBlur = try? c.decodeIfPresent(Double.self, forKey: .blur)
+        let storedShade = try? c.decodeIfPresent(Double.self, forKey: .shade)
+        blur = storedBlur ?? 0.6
+        shade = storedShade ?? 0.67
         // The hinge sensor wobbles ±1° while the lid sits still; with no
         // deadband that noise feeds the tracker forever and the vsync
         // link never stands down — a parked fold was a 60 fps timer.
@@ -158,7 +182,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         let jitterUntouched = storedJitter == nil || storedJitter == 0
         provider = (try? c.decodeIfPresent(FoldProvider.self, forKey: .provider)) ?? .jrbar
         frost = (try? c.decodeIfPresent(Double.self, forKey: .frost)) ?? 0
-        holdPicture = (try? c.decodeIfPresent(Bool.self, forKey: .holdPicture)) ?? true
+        holdStrength = Self.decodeHold(c)
         dwellTimeout = (try? c.decodeIfPresent(Double.self, forKey: .dwellTimeout)) ?? 0
         restoreSound = (try? c.decodeIfPresent(Bool.self, forKey: .restoreSound)) ?? false
         wallpaperFallback = (try? c.decodeIfPresent(Bool.self, forKey: .wallpaperFallback)) ?? true
@@ -168,13 +192,15 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         // current one; any deliberate change means the file survives.
         // A file old enough to migrate never wrote `frost`, so the knob
         // reads its default there — a moved frost is a deliberate change.
+        let legacyBlur = storedBlur ?? 0.5
+        let legacyShade = storedShade ?? 0.7
         if activationAngle == 110, style == "tilt", perspective == 0.6,
-           blur == 0.5, shade == 0.4, jitterUntouched, frost == 0 {
+           legacyBlur == 0.5, legacyShade == 0.4, jitterUntouched, frost == 0 {
             activationAngle = 65
             shade = 0.7
             jitterTolerance = 1.5
         } else if activationAngle == 82, style == "dusk", perspective == 0.6,
-                  blur == 0.5, shade == 0.4, jitterUntouched, frost == 0 {
+                  legacyBlur == 0.5, legacyShade == 0.4, jitterUntouched, frost == 0 {
             activationAngle = 65
             shade = 0.7
             jitterTolerance = 1.5
@@ -182,6 +208,22 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         // The 0.65 milk shipped as a default for one build; a file that
         // still carries exactly that value never chose it.
         if frost == 0.65 { frost = 0 }
+        look = ((try? c.decodeIfPresent(String.self, forKey: .look)) ?? nil)
+            .flatMap(FoldLook.init(rawValue:)) ?? .duo
+        let storedFade = try? c.decodeIfPresent(Double.self, forKey: .fadeLength)
+        fadeLength = storedFade.map(Self.clampFadeLength) ?? 0.55
+        // A file from before the looks folds from where the lid rests:
+        // the Duo reacts from the first degree, and a fixed 65–70° start
+        // sits below most of the close a seated eye can see. The stored
+        // activation angle stays for anyone who picks "Set angle" again.
+        if !c.contains(.look) { anchor = .movement }
+    }
+
+    /// `fadeLength` kept inside `fadeLengthRange`; a non-number reads
+    /// as the default.
+    public static func clampFadeLength(_ value: Double) -> Double {
+        guard value.isFinite else { return 0.55 }
+        return min(fadeLengthRange.upperBound, max(fadeLengthRange.lowerBound, value))
     }
 
     /// `style` is decode-only — a saved file never writes the retired key,
@@ -197,12 +239,37 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         try c.encode(jitterTolerance, forKey: .jitterTolerance)
         try c.encode(provider, forKey: .provider)
         try c.encode(frost, forKey: .frost)
-        try c.encode(holdPicture, forKey: .holdPicture)
         try c.encode(dwellTimeout, forKey: .dwellTimeout)
         try c.encode(restoreSound, forKey: .restoreSound)
         try c.encode(wallpaperFallback, forKey: .wallpaperFallback)
         try c.encode(hingeVoice, forKey: .hingeVoice)
+        try c.encode(holdStrength, forKey: .holdStrength)
+        try c.encode(look, forKey: .look)
+        try c.encode(fadeLength, forKey: .fadeLength)
     }
+
+    /// The hold, read tolerantly: a stored strength wins (clamped to
+    /// 0…1), else the retired switch by its label's meaning — on holds
+    /// the picture (1), off rides the lid (0) — else a full hold.
+    private static func decodeHold(_ c: KeyedDecodingContainer<CodingKeys>) -> Double {
+        if let stored = try? c.decodeIfPresent(Double.self, forKey: .holdStrength),
+           stored.isFinite {
+            return min(1, max(0, stored))
+        }
+        if let legacy = try? c.decodeIfPresent(Bool.self, forKey: .holdPicture) {
+            return legacy ? 1 : 0
+        }
+        return 1
+    }
+}
+
+/// Fold's two looks (docs/TOYS.md §Fold): `.duo` holds one picture
+/// still in space while the glass swings through it, blurring and
+/// darkening away from the hinge into black, the way the iPhone Duo
+/// folds; `.room` is the earlier portal room of window cards and a
+/// far wall, with Frost and the seam light.
+public enum FoldLook: String, Codable, CaseIterable, Sendable {
+    case duo, room
 }
 
 /// Fold's hinge voice: what the lid's movement sounds like, if anything.
