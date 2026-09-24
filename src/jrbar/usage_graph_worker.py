@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import usage_percent_history, usage_stats
-from .provider_homes import opencode_data_root
+from .provider_homes import home_scan_roots, opencode_data_root, scan_usage_all_homes
 from .providers import default_state_dir
 from .t3_compat import T3ReadOnlyPolicy, _open_read_only, t3_database_path
 from .usage_heatmap import build_usage_heatmap
@@ -363,11 +363,11 @@ def _build_payload(
     mode = settings.usage_display_mode
     provider_ids = tuple(settings.usage_graph_providers)
     period_start = _period_start(days)
-    totals = usage_stats.scan_usage(
-        Path.home() / ".claude" / "projects",
+    # Every Claude and Codex home (CLAUDE_CONFIG_DIR, CODEX_HOME and
+    # provider_extra_homes), each real folder once (provider_homes).
+    totals = scan_usage_all_homes(
         default_state_dir() / "usage-scan-cache.json",
         since_epoch=period_start.timestamp(),
-        codex_root=Path.home() / ".codex" / "sessions",
         provider_ids=provider_ids,
     )
     opencode_records = (
@@ -567,10 +567,14 @@ def _corpus_fingerprint(
     """Every input ``_build_payload`` can read, reduced to stat tuples."""
     providers = set(snapshot.usage_graph_providers)
     fingerprint: dict[str, object] = {}
-    if "claude" in providers:
-        fingerprint["claude"] = _tree_fingerprint(Path.home() / ".claude" / "projects")
-    if "codex" in providers:
-        fingerprint["codex"] = _tree_fingerprint(Path.home() / ".codex" / "sessions")
+    for provider_id, roots in home_scan_roots(
+        [name for name in ("claude", "codex") if name in providers]
+    ).items():
+        # The primary home keeps its old key, so a cache written before
+        # extra homes existed still matches; each extra home adds its own.
+        fingerprint[provider_id] = _tree_fingerprint(roots[0])
+        for index, root in enumerate(roots[1:], start=1):
+            fingerprint[f"{provider_id}:{index}"] = {"root": str(root), **_tree_fingerprint(root)}
     if "opencode" in providers:
         fingerprint["opencode"] = _file_fingerprint(opencode_data_root() / "opencode.db")
     if t3_policy is not None and t3_policy.may_scan_activity_statistics:

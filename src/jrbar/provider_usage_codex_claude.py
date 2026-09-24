@@ -76,19 +76,51 @@ def _default_provider_local_scan(
     )
     if source is None:
         return None
+    from .provider_homes import (
+        _home_cache_path,
+        configured_extra_homes,
+        extra_scan_roots,
+        primary_claude_projects,
+        primary_codex_sessions,
+    )
+
+    # CODEX_HOME / CLAUDE_CONFIG_DIR first, then ~/.codex or ~/.claude.
     root = (
-        Path(home) / ".codex" / "sessions"
+        primary_codex_sessions(home=home)
         if provider_id == "codex"
-        else Path(home) / ".claude" / "projects"
+        else primary_claude_projects(home=home)
     )
     cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
+    since = max(0.0, observed_at - 30 * 24 * 60 * 60)
     try:
         result, totals = usage_stats._scan_provider_usage_with_totals(
             source,
             root,
             cache,
-            since_epoch=max(0.0, observed_at - 30 * 24 * 60 * 60),
+            since_epoch=since,
         )
+        # Token totals count every home of this provider (provider_extra_homes),
+        # each real folder once; the quota evidence stays the primary account's.
+        extras = extra_scan_roots(
+            provider_id,
+            home=home,
+            extras=configured_extra_homes().get(provider_id, ()),
+        )
+        if extras:
+            parts = [totals]
+            for extra in extras:
+                _extra_result, extra_totals = usage_stats._scan_provider_usage_with_totals(
+                    source,
+                    extra,
+                    _home_cache_path(cache, extra),
+                    since_epoch=since,
+                )
+                parts.append(extra_totals)
+            merged = usage_stats._merge_usage_totals(tuple(parts))
+            merged.codex_rate_limit_evidence = totals.codex_rate_limit_evidence
+            merged.codex_rate_limit_observed_at = totals.codex_rate_limit_observed_at
+            totals = merged
+            result = usage_stats._provider_result(source.source_key, totals)
     except Exception:
         return None
     records = tuple(

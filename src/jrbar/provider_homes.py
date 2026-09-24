@@ -208,6 +208,93 @@ def configured_extra_homes(settings: object = None) -> dict[str, tuple[str, ...]
     return normalized_extra_homes(getattr(settings, "provider_extra_homes", None))
 
 
+def _home_cache_path(cache_path: Path | None, root: Path) -> Path | None:
+    """A separate scan cache per extra home, so homes never evict each other."""
+    if cache_path is None:
+        return None
+    import hashlib
+
+    digest = hashlib.sha256(os.path.realpath(root).encode("utf-8")).hexdigest()[:12]
+    return cache_path.with_name(f"{cache_path.name}.home-{digest}")
+
+
+def scan_usage_all_homes(
+    cache_path: Path | None,
+    *,
+    since_epoch: float,
+    provider_ids: tuple[str, ...] | None,
+    env: Mapping[str, str] | None = None,
+    home: Path | str | None = None,
+    extras: Mapping[str, Iterable[str]] | None = None,
+    scan=None,
+):
+    """``usage_stats.scan_usage`` over every Claude and Codex home.
+
+    The primary homes (the environment's, else ``~/.claude`` and
+    ``~/.codex``) are scanned exactly as before; each extra home is
+    scanned on its own cache and its records are added. A home that is the
+    same real folder as another is scanned once. The Codex quota evidence
+    stays the primary account's: another home's rate limits belong to a
+    different account and must not stand in for this one's.
+    """
+    from . import usage_stats
+
+    run = usage_stats.scan_usage if scan is None else scan
+    primary = run(
+        primary_claude_projects(env=env, home=home),
+        cache_path,
+        since_epoch=since_epoch,
+        codex_root=primary_codex_sessions(env=env, home=home),
+        provider_ids=provider_ids,
+    )
+    configured = configured_extra_homes() if extras is None else normalized_extra_homes(extras)
+    parts = [primary]
+    missing = _home(home) / ".jrbar-no-such-home"
+    for provider_id in EXTRA_HOME_PROVIDERS:
+        if provider_ids is not None and provider_id not in provider_ids:
+            continue
+        for root in extra_scan_roots(
+            provider_id, env=env, home=home, extras=configured.get(provider_id, ())
+        ):
+            part_cache = _home_cache_path(cache_path, root)
+            if provider_id == "claude":
+                part = run(root, part_cache, since_epoch=since_epoch, provider_ids=("claude",))
+            else:
+                part = run(missing, part_cache, since_epoch=since_epoch, codex_root=root, provider_ids=("codex",))
+            parts.append(part)
+    if len(parts) == 1:
+        return primary
+    merged = usage_stats._merge_usage_totals(tuple(parts))
+    merged.codex_rate_limit_evidence = primary.codex_rate_limit_evidence
+    merged.codex_rate_limit_observed_at = primary.codex_rate_limit_observed_at
+    return merged
+
+
+def home_scan_roots(
+    provider_ids: Iterable[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    home: Path | str | None = None,
+    extras: Mapping[str, Iterable[str]] | None = None,
+) -> dict[str, tuple[Path, ...]]:
+    """Every transcript folder a scan reads, per provider, primary first:
+    what the usage graph's cache fingerprint has to cover."""
+    configured = configured_extra_homes() if extras is None else normalized_extra_homes(extras)
+    roots: dict[str, tuple[Path, ...]] = {}
+    for provider_id in provider_ids:
+        if provider_id == "claude":
+            primary = primary_claude_projects(env=env, home=home)
+        elif provider_id == "codex":
+            primary = primary_codex_sessions(env=env, home=home)
+        else:
+            continue
+        roots[provider_id] = (
+            primary,
+            *extra_scan_roots(provider_id, env=env, home=home, extras=configured.get(provider_id, ())),
+        )
+    return roots
+
+
 def opencode_data_root(
     *, env: Mapping[str, str] | None = None, home: Path | str | None = None
 ) -> Path:
@@ -229,8 +316,10 @@ __all__ = [
     "codex_session_roots",
     "configured_extra_homes",
     "extra_scan_roots",
+    "home_scan_roots",
     "normalized_extra_homes",
     "opencode_data_root",
     "primary_claude_projects",
     "primary_codex_sessions",
+    "scan_usage_all_homes",
 ]

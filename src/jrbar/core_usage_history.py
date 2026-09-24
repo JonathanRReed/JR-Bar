@@ -273,12 +273,15 @@ def scan_provider_records(provider: str, *, days: int, home: Path | None = None)
         return []
     base = Path(home) if home is not None else Path.home()
     start = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    totals = usage_stats.scan_usage(
-        base / ".claude" / "projects",
+    from .provider_homes import scan_usage_all_homes
+
+    # Every home of this provider (CLAUDE_CONFIG_DIR, CODEX_HOME and
+    # provider_extra_homes), each real folder once.
+    totals = scan_usage_all_homes(
         default_state_dir() / "usage-scan-cache.json",
         since_epoch=start.timestamp(),
-        codex_root=base / ".codex" / "sessions",
         provider_ids=(provider,),
+        home=base,
     )
     return [record for record in totals.records if record and record[0] == provider]
 
