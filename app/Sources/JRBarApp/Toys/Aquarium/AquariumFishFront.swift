@@ -99,6 +99,9 @@ extension CartoonFish {
         drawFrontSpikes(into: &f, art: art, width: w, beat: beat, palette: palette, lw: lw)
 
         let body = frontBody(art, width: w)
+        if art.fins.contains(where: \.solid) {
+            drawFrontSpines(into: &f, art: art, width: w, palette: palette, lw: lw)
+        }
         f.stroke(body, with: .color(palette.outline), style: StrokeStyle(lineWidth: lw * 2, lineJoin: .round))
         f.fill(body, with: .linearGradient(
             Gradient(stops: [
@@ -227,15 +230,38 @@ extension CartoonFish {
         f.stroke(spikes, with: .color(palette.outline.opacity(0.55)), lineWidth: lw * 0.7)
     }
 
+    /// A spiny fish (the puffer) keeps its spines head-on: short solid
+    /// points all round the rim.
+    private static func drawFrontSpines(into f: inout GraphicsContext, art: Art, width w: Double,
+                                        palette: Palette, lw: Double) {
+        let h = art.bounds.height, midY = art.bounds.midY
+        var spines = Path()
+        let count = 14
+        for i in 0..<count {
+            let a = Double(i) / Double(count) * .pi * 2 + 0.2
+            let rx = w * 0.5, ry = h * 0.5
+            let base = CGPoint(x: cos(a) * rx * 0.92, y: midY + sin(a) * ry * 0.92)
+            let tip = CGPoint(x: cos(a) * (rx + h * 0.07), y: midY + sin(a) * (ry + h * 0.07))
+            let side = CGPoint(x: -sin(a) * h * 0.035, y: cos(a) * h * 0.035)
+            spines.move(to: CGPoint(x: base.x + side.x, y: base.y + side.y))
+            spines.addLine(to: tip)
+            spines.addLine(to: CGPoint(x: base.x - side.x, y: base.y - side.y))
+            spines.closeSubpath()
+        }
+        f.stroke(spines, with: .color(palette.outline), style: StrokeStyle(lineWidth: lw * 1.6, lineJoin: .round))
+        f.fill(spines, with: .color(palette.light))
+    }
+
     /// Both pectorals paddling out to the sides, from where the near
-    /// fin roots and as far as it reaches.
+    /// fin roots and as far as it reaches — no further than most of the
+    /// body's height, so a shark's long blades stay fins, not wings.
     private static func drawFrontPectorals(into f: inout GraphicsContext, art: Art, width w: Double,
                                            phase: Double, moving: Bool, palette: Palette, lw: Double) {
         guard let pec = art.fins.first(where: {
             if case .paddle = $0.motion { return $0.layer == .near }
             return false
         }) else { return }
-        let reach = pec.reach * 1.25
+        let reach = min(pec.reach * 1.25, art.bounds.height * 0.62)
         for side in [-1.0, 1.0] {
             var g = f
             let flap = moving ? 0.5 * sin(phase * 1.6 + 1.3 + (side > 0 ? 0 : 0.6)) : 0

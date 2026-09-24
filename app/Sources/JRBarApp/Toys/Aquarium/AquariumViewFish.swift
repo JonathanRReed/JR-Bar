@@ -571,7 +571,7 @@ extension AquariumView {
         // The seahorse stands upright and has no head-on frame; it flicks
         // round through a narrow side view instead.
         let seahorse = fish.species == .seahorse
-        let side = seahorse ? max(0.12, abs(l.yawCos)) : max(0.001, abs(l.yawCos))
+        let side = seahorse ? max(0.12, pow(abs(l.yawCos), 0.6)) : max(0.001, abs(l.yawCos))
         let front = l.front && !fish.isFry && !seahorse
         let lead = reduceMotion || fish.isFry || seahorse ? 0 : l.lead
         let swim = CartoonFish.Swim(phase: clock.phase, amplitude: reduceMotion ? 0 : stroke,
