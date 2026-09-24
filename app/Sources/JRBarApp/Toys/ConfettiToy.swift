@@ -54,8 +54,13 @@ final class ConfettiToy: Toy {
         ConfettiToy.screensWithoutFullscreenApps()
     }
     /// Stands in for the overlay windows when set — the tests count the
-    /// bursts (screens, density) without putting anything on screen.
-    @ObservationIgnored var presentOverride: (@MainActor (_ screens: Int, _ densityScale: Double) -> Void)?
+    /// bursts (screens, density, pieces, colour) without putting
+    /// anything on screen.
+    @ObservationIgnored var presentOverride: (@MainActor (ConfettiPresentation) -> Void)?
+    /// Where the pop plays: Settings › Sounds' rules (volume, alert
+    /// device, the call hold). Made on the first pop; tests hand in one
+    /// that records instead of playing.
+    @ObservationIgnored var sounds: SoundPlayer?
 
     init() {}
 
@@ -198,19 +203,28 @@ final class ConfettiToy: Toy {
         store?.state.confetti.noteFired(decision.key)
         let provider = decision.provider
             ?? event?.session.flatMap { store?.core.state?.session(withID: $0) }?.provider
-        fire(reason: .trigger, provider: provider ?? "")
+        fire(reason: .trigger, provider: provider)
     }
 
-    /// The provider's accent, from the same table (and the same settings
-    /// document) the rest of the app colours by.
-    private func color(for provider: String) -> Color {
+    /// The burst's colour for `provider`, from the same table (and the
+    /// same settings document) the rest of the app colours by — the Toys
+    /// tint when there's no provider or one the app doesn't know.
+    private func tint(for provider: String?) -> Color {
         let document = store?.core.settings.map { SettingsDocument($0.document) }
-        return ProviderStyle.style(for: provider, document: document).accent
+        return ConfettiView.burstTint(provider: provider, document: document)
     }
 
-    /// The card's "Test burst".
-    func testBurst(providerColor: Color) {
-        present(providerColor)
+    /// The card's Try it and the palette's Fire Confetti: a burst now, in
+    /// the colour of the session the Screen Bar is focused on — the same
+    /// one `jrbar://confetti` picks — else the Toys tint.
+    func testBurst() {
+        testBurst(provider: store?.focusedProvider())
+    }
+
+    /// An explicit ask in `provider`'s colour (`jrbar://confetti`'s
+    /// link resolves the provider first). Fires even while the toy is off.
+    func testBurst(provider: String?) {
+        present(tint(for: provider))
     }
 
     // MARK: The room
@@ -306,16 +320,18 @@ final class ConfettiToy: Toy {
         // display, same physics & life rules everywhere, and each closes
         // itself, so the replaces-burst policy stays per screen.
         let targets = screens ?? Self.allScreens()
-        var burstSettings = settings
-        burstSettings.density *= densityScale
         if let presentOverride {
-            presentOverride(targets.count, densityScale)
+            presentOverride(ConfettiPresentation(
+                screens: targets.count, densityScale: densityScale,
+                pieces: ConfettiView.pieceCount(settings: settings, densityScale: densityScale),
+                tint: color))
+            playPop()
             return
         }
         var overlays: [ConfettiWindow] = []
         for screen in targets {
-            let overlay = ConfettiWindow(color: color, settings: burstSettings,
-                                         screen: screen)
+            let overlay = ConfettiWindow(color: color, settings: settings,
+                                         densityScale: densityScale, screen: screen)
             overlays.append(overlay)
             overlay.burst { [weak self, weak overlay] in
                 MainActor.assumeIsolated {
@@ -325,9 +341,17 @@ final class ConfettiToy: Toy {
             }
         }
         windows = overlays
-        // The pop, if it's wanted and JR-Bar isn't being quiet — the
-        // lights' own reading decides, whatever the hush switch says.
-        if settings.sound, !targets.isEmpty, !isQuietNow() { ConfettiSound.play() }
+        if !targets.isEmpty { playPop() }
+    }
+
+    /// The pop, if it's wanted and JR-Bar isn't being quiet — the
+    /// lights' own reading decides, whatever the hush switch says — at
+    /// Settings › Sounds' volume, a touch higher or lower each burst.
+    private func playPop() {
+        guard settings.sound, !isQuietNow() else { return }
+        let player = sounds ?? SoundPlayer()
+        sounds = player
+        ConfettiSound.play(through: player, rate: Double.random(in: 0.94...1.06))
     }
 
     /// JR-Bar's quiet or a Focus, from the daemon's reading — the sound's
@@ -338,4 +362,14 @@ final class ConfettiToy: Toy {
                                     until: focus?.until, now: now) != nil
             || (store?.onCall ?? false)
     }
+}
+
+/// What a burst was, for the tests that stand in for the overlays: how
+/// many screens, the replay's shrink, the pieces one screen throws and
+/// the colour it wears.
+struct ConfettiPresentation {
+    var screens: Int
+    var densityScale: Double
+    var pieces: Int
+    var tint: Color
 }

@@ -158,6 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         self.toysStore = toysStore
         settingsStore.toys = toysStore
+        // Confetti's colour and aim: the focused session's provider (the
+        // same one `jrbar://confetti` resolves) and the icon's face.
+        toysStore.focusedProvider = { [weak self] in self?.focusedConfettiProvider(.focused) }
+        toysStore.iconFrame = { [weak statusItem] in statusItem?.anchorRect }
         // The card's weather row: both card surfaces read the same
         // notch settings — on, ours, and the city text.
         let weatherSettings = { [weak toysStore] in
@@ -1844,14 +1848,8 @@ extension AppDelegate {
         router.fireConfetti = { [weak self] tint in
             // An explicit ask, like the card's Test burst: it fires even
             // while the toy is off — in the linked provider's or session's
-            // colour, else the focused session's.
-            let sessions = self?.core?.state?.sessions ?? []
-            let provider = AppCommand.confettiProvider(
-                tint, focused: self?.store?.screenBarFocus.focusSession,
-                providerOf: { AppCommand.provider(ofSession: $0, in: sessions) })
-            let document = self?.core?.settings.map { SettingsDocument($0.document) }
-            self?.toysStore?.confetti.testBurst(
-                providerColor: ProviderStyle.style(for: provider ?? "", document: document).accent)
+            // colour, else the focused session's, else the Toys tint.
+            self?.toysStore?.confetti.testBurst(provider: self?.focusedConfettiProvider(tint))
         }
         router.menuBar = { [weak self] verb in
             guard let menuBar = self?.utilitiesStore?.menuBar, menuBar.isOn else {
@@ -1901,5 +1899,17 @@ extension AppDelegate {
         }
         guard let document = core.settings?.document else { return }
         AppHotkeys.shared.adoptLegacy(shortcuts: document["global_action_shortcuts"])
+    }
+}
+
+extension AppDelegate {
+    /// The provider a confetti ask names: the link's own, a session's, or
+    /// the session the Screen Bar is focused on — one resolution for the
+    /// link, the card's Try it and the palette.
+    func focusedConfettiProvider(_ tint: AppCommand.ConfettiTint) -> String? {
+        let sessions = core?.state?.sessions ?? []
+        return AppCommand.confettiProvider(
+            tint, focused: store?.screenBarFocus.focusSession,
+            providerOf: { AppCommand.provider(ofSession: $0, in: sessions) })
     }
 }

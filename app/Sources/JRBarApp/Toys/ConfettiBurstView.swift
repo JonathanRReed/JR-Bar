@@ -76,6 +76,7 @@ struct ConfettiView: View {
     }
 
     init(color: Color, flash: Bool, settings: ConfettiSettings = ConfettiSettings(),
+         densityScale: Double = 1,
          viewHeight: Double = 360, screenHeight: Double = 900, bandBottom: Double = 44) {
         self.color = color
         self.flash = flash
@@ -91,7 +92,7 @@ struct ConfettiView: View {
         self.backs = palette.map(Self.deeper)
         self.glints = palette.map { $0.mix(with: .white, by: 0.5) }
         self.rims = palette.map { $0.mix(with: .white, by: 0.55) }
-        self.pieces = Self.makePieces(density: min(2.0, max(0.5, settings.density)),
+        self.pieces = Self.makePieces(density: Self.density(settings: settings, densityScale: densityScale),
                                       shapes: settings.shapes)
         self.life = Self.travelTime(pieces: pieces, mode: settings.landing,
                                     viewHeight: viewHeight, screenHeight: screenHeight)
@@ -449,6 +450,18 @@ struct ConfettiView: View {
 
     private func circle(_ c: CGPoint, _ r: Double) -> CGRect {
         CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
+    }
+
+    /// The piece-count multiplier: the setting inside its 0.5…2 range,
+    /// then a replay's shrink, floored at a quarter — so a held burst
+    /// replays smaller even at the lowest density.
+    static func density(settings: ConfettiSettings, densityScale: Double) -> Double {
+        max(0.25, min(2.0, max(0.5, settings.density)) * densityScale)
+    }
+
+    /// How many pieces one screen's burst throws.
+    static func pieceCount(settings: ConfettiSettings, densityScale: Double = 1) -> Int {
+        max(1, Int((140 * density(settings: settings, densityScale: densityScale)).rounded()))
     }
 
     static func makePieces(density: Double = 1, shapes: ConfettiShapes = .mixed) -> [Piece] {

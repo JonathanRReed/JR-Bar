@@ -15,10 +15,11 @@ struct ConfettiControlsView: View {
 
             LabeledContent {
                 Button("Test burst") { [weak toy] in
-                    toy?.testBurst(providerColor: ConfettiView.toysTint)
+                    toy?.testBurst()
                 }
             } label: {
-                SettingLabel(title: "Try it", subtitle: "Fires a burst now, with the settings below.")
+                SettingLabel(title: "Try it",
+                             subtitle: "Fires a burst now, with the settings below, in the focused session's colour.")
             }
 
             Divider()

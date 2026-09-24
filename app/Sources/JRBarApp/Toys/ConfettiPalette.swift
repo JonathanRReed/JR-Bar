@@ -53,4 +53,16 @@ extension ConfettiView {
         return Color(hue: Double(hue + lean), saturation: Double(min(1, saturation * 1.15 + 0.05)),
                      brightness: Double(brightness * 0.72), opacity: Double(alpha))
     }
+
+    /// The colour a burst for `provider` wears: a colour the person set
+    /// for it in `colors.agent_colors` first, then the app's accent for a
+    /// provider it knows — and the Toys tint for no provider, an empty
+    /// one or one it doesn't know, never the unknown-provider grey.
+    static func burstTint(provider: String?, document: SettingsDocument?) -> Color {
+        guard let id = provider?.lowercased(), !id.isEmpty else { return toysTint }
+        if let hex = document?.agentColorHex(id), let color = NSColor(hex: hex) {
+            return Color(nsColor: color)
+        }
+        return ProviderStyle.table[id]?.accent ?? toysTint
+    }
 }

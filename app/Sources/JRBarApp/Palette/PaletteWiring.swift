@@ -247,7 +247,7 @@ enum PaletteWiring {
         PaletteClosureSource {
             guard let toy = confetti() else { return [] }
             return ConfettiPaletteRows.items(automatic: toy.isOn, verbs: ConfettiPaletteVerbs(
-                fire: { toy.testBurst(providerColor: ConfettiView.toysTint) },
+                fire: { toy.testBurst() },
                 setAutomatic: { toy.isOn = $0 }))
         }
     }

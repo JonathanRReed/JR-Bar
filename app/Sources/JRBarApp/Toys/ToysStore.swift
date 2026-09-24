@@ -193,4 +193,17 @@ final class ToysStore {
         return ToysHush.reason(mode: focus?.mode, source: focus?.source, until: focus?.until,
                                onCall: onCall, now: now)
     }
+
+    // MARK: Confetti's aim
+
+    /// The provider of the session the Screen Bar is focused on, wired
+    /// by the delegate: the colour the card's Try it and the palette's
+    /// Fire Confetti wear — the one `jrbar://confetti` picks too. nil
+    /// until wired, and while nothing is focused.
+    @ObservationIgnored var focusedProvider: @MainActor () -> String? = { nil }
+
+    /// Where JR-Bar's own menu-bar icon is (AppKit screen space), wired
+    /// by the delegate: the Icon origin fires from under it. nil until
+    /// wired, and while the icon is parked.
+    @ObservationIgnored var iconFrame: @MainActor () -> NSRect? = { nil }
 }

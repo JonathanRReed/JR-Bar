@@ -25,13 +25,13 @@ final class ConfettiWindow: NSPanel {
     /// `screen` is the display this overlay covers — nil only when the
     /// Mac reports no screens at all, in which case the fallback frame
     /// stands in.
-    init(color: Color, settings: ConfettiSettings, screen: NSScreen?) {
+    init(color: Color, settings: ConfettiSettings, densityScale: Double = 1, screen: NSScreen?) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let height = ConfettiView.viewHeight(for: settings.landing, screenHeight: frame.height)
         let bandBottom = (screen.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0) + 12
         let view = ConfettiView(color: color, flash: reduceMotion, settings: settings,
-                                viewHeight: height, screenHeight: frame.height,
+                                densityScale: densityScale, viewHeight: height, screenHeight: frame.height,
                                 bandBottom: bandBottom)
         life = view.life
         hosting = NSHostingView(rootView: view)
