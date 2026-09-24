@@ -8,6 +8,26 @@ from dataclasses import dataclass
 
 from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot, UsageLane
 
+#: A TIMING reset: the old window's boundary passed between two reads and
+#: remaining rose. The clock proves it, so it is announced at once.
+RESET_TRIGGER_TIMING = "timing"
+#: A JUMP: remaining leapt by at least ``RESET_JUMP_POINTS`` without the
+#: boundary passing on our clock. One odd read can look like that, so a
+#: jump is only a candidate until a later read confirms it.
+RESET_TRIGGER_JUMP = "jump"
+RESET_TIMING_POINTS = 5.0
+RESET_JUMP_POINTS = 50.0
+#: A confirming read must come at least a minute after the jump (a
+#: second look, not the same answer twice) and at most half an hour
+#: after it (older evidence says nothing about this read).
+RESET_CONFIRM_MIN_S = 60.0
+RESET_CONFIRM_MAX_S = 1800.0
+#: The confirming read's reset time must match the jump's within two
+#: minutes: a real new window keeps its boundary.
+RESET_BOUNDARY_TOLERANCE_S = 120.0
+#: At or above this remaining percent a lane counts as unused.
+RESET_UNUSED_REMAINING = 99.5
+
 
 @dataclass(frozen=True, slots=True)
 class ResetEvent:
@@ -18,6 +38,79 @@ class ResetEvent:
     occurred_at: float
     source_instance_id: str = "default"
     reset_boundary: float | None = None
+    #: ``timing`` or ``jump`` (see ``RESET_TRIGGER_*``).
+    trigger: str = RESET_TRIGGER_TIMING
+    #: The lane's reset time and remaining percent on the read that fired,
+    #: and the remaining percent before it: what a confirmation compares.
+    after_reset_at: float | None = None
+    after_remaining: float | None = None
+    before_remaining: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResetCandidate:
+    """A jump waiting for a confirming read. Saved with the reset delivery
+    state, so a restart in the middle neither loses it nor fires it twice."""
+
+    event_id: str
+    provider_id: str
+    source_instance_id: str
+    lane_id: str
+    label: str
+    reset_boundary: float
+    after_reset_at: float
+    after_remaining: float
+    before_remaining: float
+    observed_at: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "event_id": self.event_id,
+            "provider_id": self.provider_id,
+            "source_instance_id": self.source_instance_id,
+            "lane_id": self.lane_id,
+            "label": self.label,
+            "reset_boundary": self.reset_boundary,
+            "after_reset_at": self.after_reset_at,
+            "after_remaining": self.after_remaining,
+            "before_remaining": self.before_remaining,
+            "observed_at": self.observed_at,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: object) -> ResetCandidate | None:
+        if not isinstance(raw, dict):
+            return None
+        try:
+            numbers = {
+                key: float(raw[key])
+                for key in (
+                    "reset_boundary",
+                    "after_reset_at",
+                    "after_remaining",
+                    "before_remaining",
+                    "observed_at",
+                )
+            }
+            words = {
+                key: raw[key]
+                for key in ("event_id", "provider_id", "source_instance_id", "lane_id", "label")
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not all(math.isfinite(value) for value in numbers.values()):
+            return None
+        if not all(isinstance(value, str) and value for value in words.values()):
+            return None
+        return cls(**words, **numbers)
+
+
+@dataclass(frozen=True, slots=True)
+class ResetConfirmation:
+    """The resets to announce now, and the jumps still waiting."""
+
+    events: tuple[ResetEvent, ...]
+    candidates: tuple[ResetCandidate, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,9 +258,141 @@ def detect_reset_events(
                     after.observed_at,
                     after.source_instance_id,
                     lane_before.reset_at,
+                    RESET_TRIGGER_TIMING if crossed else RESET_TRIGGER_JUMP,
+                    lane_after.reset_at,
+                    lane_after.remaining_percent,
+                    lane_before.remaining_percent,
                 )
             )
     return tuple(events)
+
+
+def _candidate_from(event: ResetEvent) -> ResetCandidate | None:
+    if (
+        event.reset_boundary is None
+        or event.after_reset_at is None
+        or event.after_remaining is None
+        or event.before_remaining is None
+    ):
+        return None
+    return ResetCandidate(
+        event.event_id,
+        event.provider_id,
+        event.source_instance_id,
+        event.lane_id,
+        event.label,
+        float(event.reset_boundary),
+        float(event.after_reset_at),
+        float(event.after_remaining),
+        float(event.before_remaining),
+        float(event.occurred_at),
+    )
+
+
+def _confirmed(candidate: ResetCandidate, observed_at: float) -> ResetEvent:
+    return ResetEvent(
+        candidate.event_id,
+        candidate.provider_id,
+        candidate.lane_id,
+        candidate.label,
+        observed_at,
+        candidate.source_instance_id,
+        candidate.reset_boundary,
+        RESET_TRIGGER_JUMP,
+        candidate.after_reset_at,
+        candidate.after_remaining,
+        candidate.before_remaining,
+    )
+
+
+def _judge_candidate(
+    candidate: ResetCandidate,
+    snapshot: ProviderUsageSnapshot | None,
+) -> str:
+    """``keep``, ``confirm`` or ``discard`` for one waiting jump."""
+    if snapshot is None or snapshot.state is not ProviderSourceState.READY:
+        return "keep"
+    lane = _lane_map(snapshot).get(candidate.lane_id)
+    if lane is None or lane.remaining_percent is None or lane.reset_at is None:
+        return "discard"
+    age = snapshot.observed_at - candidate.observed_at
+    if age <= 0.0:
+        return "keep"
+    if age > RESET_CONFIRM_MAX_S:
+        return "discard"
+    moved = lane.reset_at - candidate.after_reset_at
+    # A rolling unused window: nobody has started it, so the provider
+    # quotes "now + one window" as its reset on every read, and the reset
+    # time moves with the clock. That is a window waiting to start, not
+    # one that just reset (CodexBar #3851).
+    if (
+        lane.remaining_percent >= RESET_UNUSED_REMAINING
+        and candidate.after_remaining >= RESET_UNUSED_REMAINING
+        and age >= RESET_CONFIRM_MIN_S
+        and moved >= age / 2.0
+    ):
+        return "discard"
+    holds = (
+        lane.remaining_percent >= candidate.before_remaining + RESET_JUMP_POINTS
+        and abs(moved) <= RESET_BOUNDARY_TOLERANCE_S
+    )
+    if not holds:
+        return "discard"
+    if age < RESET_CONFIRM_MIN_S:
+        return "keep"
+    return "confirm"
+
+
+def confirm_reset_events(
+    detected: tuple[ResetEvent, ...],
+    current: tuple[ProviderUsageSnapshot, ...],
+    *,
+    candidates: tuple[ResetCandidate, ...] = (),
+    seen_event_ids: frozenset[str] = frozenset(),
+) -> ResetConfirmation:
+    """The one reset rule every consumer shares.
+
+    ``detected`` is ``detect_reset_events`` over the same reads. A TIMING
+    reset is announced at once. A JUMP becomes a candidate, and a later
+    READY read confirms it when it comes 60 s to 30 min after the jump,
+    still shows remaining at least 50 points above the pre-reset value,
+    and names a reset time within two minutes of the jump's. Anything else
+    discards it, and so does a rolling unused window. The celebrations,
+    the ``quota_reset`` wire event and the usage hooks all take the events
+    from here, so they agree, and they share one ``event_id``.
+    """
+    by_identity = _snapshot_map(current)
+    events: list[ResetEvent] = []
+    kept: list[ResetCandidate] = []
+    announced: set[str] = set()
+    for candidate in candidates:
+        verdict = _judge_candidate(
+            candidate,
+            by_identity.get((candidate.provider_id, candidate.source_instance_id)),
+        )
+        if verdict == "keep":
+            kept.append(candidate)
+        elif verdict == "confirm" and candidate.event_id not in seen_event_ids:
+            snapshot = by_identity[(candidate.provider_id, candidate.source_instance_id)]
+            events.append(_confirmed(candidate, snapshot.observed_at))
+            announced.add(candidate.event_id)
+    waiting = {candidate.event_id for candidate in kept}
+    for event in detected:
+        if event.event_id in seen_event_ids or event.event_id in announced:
+            continue
+        if event.trigger == RESET_TRIGGER_TIMING:
+            events.append(event)
+            announced.add(event.event_id)
+            waiting.discard(event.event_id)
+            kept = [candidate for candidate in kept if candidate.event_id != event.event_id]
+            continue
+        if event.event_id in waiting:
+            continue
+        candidate = _candidate_from(event)
+        if candidate is not None:
+            kept.append(candidate)
+            waiting.add(candidate.event_id)
+    return ResetConfirmation(tuple(events), tuple(kept))
 
 
 def threshold_crossings(
@@ -299,9 +524,16 @@ def usage_totals(
 
 
 __all__ = [
+    "RESET_CONFIRM_MAX_S",
+    "RESET_CONFIRM_MIN_S",
+    "RESET_TRIGGER_JUMP",
+    "RESET_TRIGGER_TIMING",
+    "ResetCandidate",
+    "ResetConfirmation",
     "ResetEvent",
     "ThresholdCrossing",
     "UsageTotals",
+    "confirm_reset_events",
     "detect_reset_events",
     "format_lane_meter",
     "format_reset_countdown",

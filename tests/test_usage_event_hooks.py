@@ -81,12 +81,26 @@ def test_quota_low_fires_on_the_downward_crossing_only__and_2_more() -> None:
     # 3% was already under the 20% threshold -- no second quota_low.
     assert [event.name for event in reached] == ["quota_reached"]
 
-    reset = detect_usage_hook_events(
+    # A jump alone is not a reset for a hook: the hook takes the reset the
+    # celebrations confirmed (provider_usage_qol.confirm_reset_events).
+    jump_only = detect_usage_hook_events(
         (snapshot((lane(2.0),)),),
         (snapshot((lane(100.0),)),),
         thresholds=THRESHOLDS,
     )
+    assert [event.name for event in jump_only] == []
+
+    from jrbar.provider_usage_qol import ResetEvent
+
+    confirmed = ResetEvent("claude:weekly:abc", "claude", "weekly", "Weekly reset", 1_000.0)
+    reset = detect_usage_hook_events(
+        (snapshot((lane(2.0),)),),
+        (snapshot((lane(100.0),)),),
+        thresholds=THRESHOLDS,
+        reset_events=(confirmed,),
+    )
     assert [event.name for event in reset] == ["quota_reset"]
+    assert reset[0].detail == "100"
 
     # --- scenario: provider_availability_edges
     down = detect_usage_hook_events(

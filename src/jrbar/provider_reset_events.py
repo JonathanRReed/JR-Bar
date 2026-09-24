@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
-from .provider_usage_qol import ResetEvent
+from .provider_usage_qol import ResetCandidate, ResetEvent
 
 RESET_DELIVERY_WINDOW_SECONDS = 300.0
 RESET_DELIVERY_PRIORITY = {
@@ -75,9 +75,29 @@ class ResetDeliveryEvent:
         )
 
 
+#: Jumps waiting for a confirming read are few by nature; the cap only
+#: guards the file against a runaway.
+MAX_RESET_CANDIDATES = 64
+
+
 @dataclass(frozen=True, slots=True)
 class ResetDeliveryState:
     events: tuple[ResetDeliveryEvent, ...] = ()
+    #: Jumps waiting for a confirming read (``confirm_reset_events``). Kept
+    #: here so they survive a restart with the deliveries they lead to.
+    candidates: tuple[ResetCandidate, ...] = ()
+
+
+def with_reset_candidates(
+    state: ResetDeliveryState,
+    candidates: tuple[ResetCandidate, ...],
+) -> ResetDeliveryState:
+    """``state`` holding exactly ``candidates`` (newest kept past the cap)."""
+    if type(state) is not ResetDeliveryState:
+        raise TypeError("typed reset delivery state required")
+    if not all(type(candidate) is ResetCandidate for candidate in candidates):
+        raise TypeError("typed reset candidates required")
+    return replace(state, candidates=tuple(candidates)[-MAX_RESET_CANDIDATES:])
 
 
 def _finite(value: object) -> float:
@@ -127,7 +147,7 @@ def begin_reset_delivery(
         settings,
         receipts,
     )
-    return ResetDeliveryState((*state.events, delivery))
+    return replace(state, events=(*state.events, delivery))
 
 
 def _latest(event: ResetDeliveryEvent, channel: ResetChannel) -> ResetChannelReceipt | None:
@@ -183,7 +203,7 @@ def apply_reset_channel_receipt(
         )
     if not found:
         raise KeyError(event_id)
-    return ResetDeliveryState(tuple(updated))
+    return replace(state, events=tuple(updated))
 
 
 def _pending(event: ResetDeliveryEvent) -> tuple[ResetChannel, ...]:
@@ -272,6 +292,8 @@ def encode_reset_delivery_state(state: ResetDeliveryState) -> str:
             for event in state.events
         ],
     }
+    if state.candidates:
+        document["candidates"] = [candidate.to_dict() for candidate in state.candidates]
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
@@ -303,10 +325,22 @@ def decode_reset_delivery_state(payload: str) -> ResetDeliveryState:
                 receipts,
             )
         )
-    return ResetDeliveryState(tuple(events))
+    # Additive in version 1: a file without candidates simply has none
+    # waiting, and an unreadable candidate is dropped, never fatal.
+    raw_candidates = document.get("candidates", ())
+    candidates = tuple(
+        candidate
+        for candidate in (
+            ResetCandidate.from_dict(item)
+            for item in (raw_candidates if isinstance(raw_candidates, list) else ())
+        )
+        if candidate is not None
+    )[-MAX_RESET_CANDIDATES:]
+    return ResetDeliveryState(tuple(events), candidates)
 
 
 __all__ = [
+    "MAX_RESET_CANDIDATES",
     "RESET_DELIVERY_PRIORITY",
     "RESET_DELIVERY_WINDOW_SECONDS",
     "ResetChannel",
@@ -322,4 +356,5 @@ __all__ = [
     "next_reset_retry_delay",
     "pending_reset_channels",
     "reset_event_is_terminal",
+    "with_reset_candidates",
 ]

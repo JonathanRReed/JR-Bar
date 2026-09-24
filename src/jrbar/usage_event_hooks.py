@@ -69,6 +69,7 @@ def detect_usage_hook_events(
     current_snapshots,
     *,
     thresholds: dict[object, float],
+    reset_events=(),
 ) -> tuple[UsageHookEvent, ...]:
     """Transitions between two usage states, in a stable order.
 
@@ -110,18 +111,23 @@ def detect_usage_hook_events(
                     source_instance_id,
                 )
             )
-        if current - prior >= 50.0:
-            # A large upward jump is a window reset seen through the
-            # percent lens -- the same signal the reset celebrations use.
-            events.append(
-                UsageHookEvent(
-                    "quota_reset",
-                    provider_id,
-                    lane_id,
-                    f"{current:.0f}",
-                    source_instance_id,
-                )
+    # A reset is the confirmed one the celebrations use
+    # (provider_usage_qol.confirm_reset_events), never a private jump rule:
+    # the hook and the confetti used to disagree about what a reset was.
+    current_percents = _lane_percents(current_snapshots)
+    for reset in reset_events:
+        remaining = current_percents.get(
+            (reset.provider_id, reset.source_instance_id, reset.lane_id)
+        )
+        events.append(
+            UsageHookEvent(
+                "quota_reset",
+                reset.provider_id,
+                reset.lane_id,
+                f"{remaining:.0f}" if remaining is not None else reset.label,
+                reset.source_instance_id,
             )
+        )
     previous_states = {
         snapshot.identity: snapshot.state for snapshot in previous_snapshots
     }

@@ -32,6 +32,7 @@ else:
         begin_reset_delivery,
         next_reset_retry_delay,
         reset_event_is_terminal,
+        with_reset_candidates,
     )
     from .provider_usage_controller_actions import (
         apply_provider_usage_settings_snapshot,
@@ -40,6 +41,7 @@ else:
         toggle_provider_menu_visibility,
     )
     from .provider_usage_event_store import (
+        load_reset_delivery_state,
         save_reset_delivery_state,
     )
     from .provider_usage_feedback_actions import (
@@ -49,6 +51,7 @@ else:
         report_reconnect_outcome,
     )
     from .provider_usage_qol import (
+        confirm_reset_events,
         detect_reset_events,
         merged_edge_baseline,
         threshold_crossings,
@@ -114,6 +117,8 @@ def _publish_reset_wire_events(controller, reset_events) -> None:
                 instance=event.source_instance_id,
                 label=event.label,
                 lane=event.lane_id,
+                # The same id the celebration and the usage hook carry.
+                event_id=event.event_id,
             )
         except Exception:
             pass
@@ -396,17 +401,39 @@ else:
                 is False
             ):
                 self._provider_usage_log("usage percent history write not queued")
-            delivery_state = getattr(self, "_jrbar_reset_delivery_state", ResetDeliveryState())
+            delivery_state = getattr(self, "_jrbar_reset_delivery_state", None)
+            if type(delivery_state) is not ResetDeliveryState:
+                # First apply since launch: the saved deliveries and the
+                # jumps still waiting for confirmation come back, so a
+                # restart mid-candidate neither drops nor repeats a reset.
+                try:
+                    delivery_state = load_reset_delivery_state()
+                except Exception:
+                    delivery_state = ResetDeliveryState()
+                self._jrbar_reset_delivery_state = delivery_state
             seen = {
                 event.event_id
                 for event in delivery_state.events
                 if reset_event_is_terminal(delivery_state, event.event_id)
             }
-            reset_events = detect_reset_events(
-                previous_state.snapshots,
+            # One reset rule for everything that reacts to a reset: TIMING
+            # fires at once, a JUMP waits for a confirming read.
+            confirmation = confirm_reset_events(
+                detect_reset_events(
+                    previous_state.snapshots,
+                    state.snapshots,
+                    seen_event_ids=frozenset(seen),
+                ),
                 state.snapshots,
+                candidates=delivery_state.candidates,
                 seen_event_ids=frozenset(seen),
             )
+            reset_events = confirmation.events
+            if confirmation.candidates != delivery_state.candidates:
+                delivery_state = with_reset_candidates(delivery_state, confirmation.candidates)
+                self._jrbar_reset_delivery_state = delivery_state
+                if not reset_events:
+                    self._persist_reset_delivery_state()
             reset_preferences = {preference.identity: preference for preference in settings.providers}
             if reset_events:
                 for event in reset_events:
@@ -439,6 +466,7 @@ else:
             )
             # Edge-triggered user hooks: transitions only, never states,
             # so a chime/webhook script needs no rate limiting of its own.
+            # Their quota_reset events are the confirmed ones above.
             hook_path = str(getattr(self.settings, "usage_event_hook_path", "") or "")
             if hook_path:
                 run_usage_hooks(
@@ -447,6 +475,7 @@ else:
                         previous_state.snapshots,
                         state.snapshots,
                         thresholds=thresholds,
+                        reset_events=reset_events,
                     ),
                 )
             # Pace as an interruption, not just a color: a lane that
