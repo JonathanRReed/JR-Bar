@@ -402,3 +402,89 @@ def test_dispatch_runs_on_the_reader_thread_and_reply_is_serialisable(sock_dir: 
         client.close()
     finally:
         instance.stop()
+
+
+
+def test_a_slow_read_never_holds_up_a_later_command_on_the_same_socket__and_2_more(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usage_graph took 107 s on 2026-09-23 and a ping sent behind it on
+    the same connection waited just as long; an Approve gives up after 8 s.
+    Slow-lane reads now run on one worker and reply by id when done."""
+    from jrbar import core_server
+
+    release = threading.Event()
+    started = threading.Event()
+    running = 0
+    overlap: list[int] = []
+    order: list[str] = []
+    threads: dict[str, str] = {}
+    guard = threading.Lock()
+
+    def dispatch(name: str, args: dict) -> object:
+        nonlocal running
+        threads[name] = threading.current_thread().name
+        if name in ("usage_graph", "list_history"):
+            with guard:
+                running += 1
+                overlap.append(running)
+            started.set()
+            try:
+                assert release.wait(5.0)
+            finally:
+                with guard:
+                    running -= 1
+                    order.append(args.get("tag", name))
+        return {"name": name, "tag": args.get("tag")}
+
+    setup_threads: list[str] = []
+    instance = CoreServer(
+        dispatch=dispatch,
+        initial_documents=lambda: [],
+        socket_path=sock_dir / "core.sock",
+        slow_lane_setup=lambda: setup_threads.append(threading.current_thread().name),
+    )
+    instance.start()
+    try:
+        # --- scenario: a fast command behind a slow read answers first
+        first = _connect(instance)
+        _read_frames(first, 1)
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "slow", "name": "usage_graph", "args": {"tag": "a"}}))
+        assert started.wait(5.0)
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "fast", "name": "answer_ask", "args": {}}))
+        reply = _read_frames(first, 1)[0]
+        assert reply["id"] == "fast" and reply["ok"] is True
+        assert threads["answer_ask"].startswith("JRBarCoreClient")
+
+        # --- scenario: two slow reads from two clients never overlap
+        second = _connect(instance)
+        _read_frames(second, 1)
+        second.sendall(encode_frame({"t": "command", "v": 1, "id": "slow2", "name": "list_history", "args": {"tag": "b"}}))
+        second.sendall(encode_frame({"t": "command", "v": 1, "id": "ping2", "name": "ping", "args": {}}))
+        assert _read_frames(second, 1)[0]["id"] == "ping2"
+        release.set()
+        assert _read_frames(first, 1)[0]["result"] == {"name": "usage_graph", "tag": "a"}
+        assert _read_frames(second, 1)[0]["result"] == {"name": "list_history", "tag": "b"}
+        assert overlap == [1, 1]
+        assert order == ["a", "b"]
+        assert threads["usage_graph"] == threads["list_history"] == "JRBarCoreSlowLane"
+        assert setup_threads == ["JRBarCoreSlowLane"]
+
+        # --- scenario: past the queue bound a slow read is refused busy at once
+        release.clear()
+        started.clear()
+        monkeypatch.setattr(core_server, "MAX_SLOW_LANE_QUEUED", 1)
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "s1", "name": "usage_graph", "args": {}}))
+        assert started.wait(5.0)  # s1 is running, so the queue is empty
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "s2", "name": "usage_graph", "args": {}}))
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "s3", "name": "usage_graph", "args": {}}))
+        refused = _read_frames(first, 1)[0]
+        assert refused["id"] == "s3" and refused["ok"] is False
+        assert refused["error"]["code"] == "busy"
+        release.set()
+        assert [frame["id"] for frame in _read_frames(first, 2)] == ["s1", "s2"]
+        first.close()
+        second.close()
+    finally:
+        release.set()
+        instance.stop()

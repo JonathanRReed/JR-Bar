@@ -2182,13 +2182,12 @@ def _cmd_usage_graph(self, args):
     Same local-transcript scan the old Settings graph ran. days,
     metric and providers are per-request overrides: nothing the pane
     picks rewrites the stored settings. Heavy (~9s warm, ~30s cold),
-    so it rides the client's socket thread at utility QoS and never
-    touches the menu.
+    so it rides the server's slow-lane worker, which runs at utility QoS
+    (``_core_start_server``), and never touches the menu.
     """
     from .t3_compat import T3ReadOnlyPolicy
-    from .usage_graph_worker import _drop_to_utility_qos, usage_graph_document
+    from .usage_graph_worker import usage_graph_document
 
-    _drop_to_utility_qos()
     t3_policy = getattr(self, "_t3_read_only_policy", None)
     if type(t3_policy) is not T3ReadOnlyPolicy:
         t3_policy = None
@@ -5453,6 +5452,8 @@ def build_headless_controller_class() -> type:
             legacy.log_status_bar(message)
 
         def _core_start_server(self) -> None:
+            from .usage_graph_worker import _drop_to_utility_qos
+
             server = CoreServer(
                 dispatch=self._core_dispatch,
                 initial_documents=self._core_initial_documents,
@@ -5460,6 +5461,10 @@ def build_headless_controller_class() -> type:
                 core_version=CORE_VERSION,
                 on_client_change=self._core_client_change,
                 log=legacy.log_status_bar,
+                # The scans on the slow lane parse six figures of JSONL
+                # lines; at default QoS they compete with the main thread
+                # that answers every Approve.
+                slow_lane_setup=_drop_to_utility_qos,
             )
             server.start()
             self._core = server

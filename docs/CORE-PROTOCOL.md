@@ -888,7 +888,13 @@ line the controller writes, mirrored. Bounded to 2000 characters a line.
 {"t":"command","v":1,"id":"c-42","name":"open_session","args":{"session":"claude:session:…"}}
 ```
 Commands are parsed on the socket thread and run on the AppKit main thread
-(`performSelectorOnMainThread`), one at a time, in order per client;
+(`performSelectorOnMainThread`), one at a time, in order per client --
+except the slow-lane reads `usage_graph`, `usage_history`,
+`session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
+`doctor`. Those queue on one daemon-wide worker at utility QoS, in order
+among themselves (two scans never overlap), and each replies by `id` when
+it is done, so a reply to a later command can arrive first and a scan never
+holds up an `answer_ask`. Past 32 queued, a new one is refused `busy`.
 `install_hooks` / `uninstall_hooks` run on the socket thread because the
 Codex trust handshake can take seconds, and so do `open_session` and
 `resume_session`, whose osascript and tmux calls can wait on a first
