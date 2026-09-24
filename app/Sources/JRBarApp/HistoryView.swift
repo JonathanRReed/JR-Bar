@@ -71,6 +71,10 @@ struct HistoryView: View {
                 VStack(spacing: 6) {
                     Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                     Button("Clear search") { store.clearFilter() }.buttonStyle(.link).font(.system(size: 12))
+                    if store.offersHoarder {
+                        HoarderOfferLine { store.offerHoarder() }
+                            .padding(.top, 10)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -90,6 +94,9 @@ struct HistoryView: View {
                     .padding(.bottom, 12)
                 }
             }
+        }
+        .sheet(item: $store.hoarderOffer) { offer in
+            DataHoarderOfferSheet(offer: offer) { store.hoarderOffer = nil }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -122,6 +129,23 @@ struct HistoryView: View {
                 .disabled(!store.isLive || store.loading)
             }
         }
+    }
+}
+
+/// The empty search's one line: History searched only its rows, and the
+/// Data Hoarder could keep the transcripts behind them.
+struct HoarderOfferLine: View {
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "archivebox").foregroundStyle(.tertiary)
+            Text("Only these rows were searched.").foregroundStyle(.secondary)
+            Button("Keep a searchable copy of your sessions…", action: action)
+                .buttonStyle(.link)
+        }
+        .font(.system(size: 11))
+        .accessibilityElement(children: .combine)
     }
 }
 

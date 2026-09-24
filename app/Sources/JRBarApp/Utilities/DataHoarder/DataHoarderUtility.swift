@@ -33,6 +33,15 @@ final class DataHoarderUtility: Toy {
         })
     }
 
+    /// History's offer, accepted: the chosen agent sources capture from
+    /// now on, the backfill window reads their last `backfillDays`, and the
+    /// utility switches on. Full content stays whatever the card says —
+    /// off unless chosen there.
+    func keepTranscripts(sourceIDs: [String], backfillDays: Int) {
+        model.keepAgentTranscripts(sourceIDs: sourceIDs, backfillDays: backfillDays)
+        isOn = true
+    }
+
     func openArchive() {
         if window == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 620),
@@ -733,8 +742,42 @@ final class DataHoarderModel {
         return list
     }
 
+    /// The known agent transcript sources — every default but the proxy's
+    /// request logs, which are not sessions.
+    static func agentSources(_ all: [ArchiveSource] = ArchiveSource.defaults()) -> [ArchiveSource] {
+        all.filter { $0.id != ArchiveSource.cliProxyAPILogs }
+    }
+
+    /// The utility is on and at least one agent source captures — History
+    /// stops offering the Data Hoarder once this holds. A paused capture
+    /// still counts: pausing was a choice, not a gap to sell into.
+    var keepsAgentTranscripts: Bool {
+        let agents = Set(Self.agentSources().map(\.id))
+        return enabled && captureSettings.enabledSources.contains(where: agents.contains)
+    }
+
+    /// The settings half of `DataHoarderUtility.keepTranscripts`: sources on
+    /// and the backfill window set, persisted through the store callback,
+    /// without raising the card's import review — the window already reads
+    /// the recent files, and a review would import them a second time.
+    func keepAgentTranscripts(sourceIDs: [String], backfillDays: Int) {
+        var settings = captureSettings
+        for id in sourceIDs { settings.captureSources[id] = true }
+        settings.backfillDays = backfillDays > 0 ? backfillDays : nil
+        captureSettings = settings
+    }
+
+    /// Whether switching a source on should open the import review: only
+    /// when no backfill window reads the recent files by itself.
+    var offersImportReviewOnCapture: Bool { captureSettings.backfillDays == nil }
+
+    /// The backfill window's start for a capture run starting `now`.
+    func backfillSince(now: Date = Date()) -> Date? {
+        captureSettings.backfillDays.map { now.addingTimeInterval(-Double($0) * 86_400) }
+    }
+
     func setCapture(_ on: Bool, sourceID: String) {
-        if on { backfillOffer = sourceID }
+        if on, offersImportReviewOnCapture { backfillOffer = sourceID }
         // Nested mutation still fires `captureSettings`' didSet, which
         // persists through the store and re-applies capture.
         captureSettings.captureSources[sourceID] = on
@@ -776,12 +819,13 @@ final class DataHoarderModel {
         }
         appliedCaptureSignature = signature
         let full = captureSettings.fullContent
+        let since = backfillSince()
         Task {
             if sources.isEmpty {
                 await capture.stop()
                 captureRunning = false
             } else {
-                await capture.start(sources: sources, fullContent: full)
+                await capture.start(sources: sources, fullContent: full, backfillSince: since)
                 captureRunning = !(await capture.activeSourceIDs).isEmpty
             }
             await refreshCaptureStatus()
@@ -802,7 +846,8 @@ final class DataHoarderModel {
             await capture.stop()
             captureRunning = false
         } else {
-            await capture.start(sources: sources, fullContent: captureSettings.fullContent)
+            await capture.start(sources: sources, fullContent: captureSettings.fullContent,
+                                backfillSince: backfillSince())
             captureRunning = !(await capture.activeSourceIDs).isEmpty
         }
         await refreshCaptureStatus()

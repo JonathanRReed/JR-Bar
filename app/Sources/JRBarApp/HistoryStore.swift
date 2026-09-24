@@ -190,6 +190,44 @@ final class HistoryStore {
         }
     }
 
+    // MARK: The Data Hoarder offer
+
+    /// Whether the Data Hoarder already keeps agent transcripts. Set by
+    /// the app delegate; unset reads as yes, so nothing is offered.
+    var hoarderKeepsTranscripts: (() -> Bool)?
+    /// The consent sheet's Turn On: the chosen sources and the backfill
+    /// window, handed to the utility — set by the app delegate.
+    @ObservationIgnored var keepTranscripts: (@MainActor (_ sourceIDs: [String], _ days: Int) -> Void)?
+    /// The folders the sheet looks in; tests point it at fixtures.
+    @ObservationIgnored var offerSources: () -> [ArchiveSource] = { DataHoarderModel.agentSources() }
+    /// The open consent sheet, if any.
+    var hoarderOffer: DataHoarderOffer?
+
+    /// The empty search's one-line offer: a real query found nothing, and
+    /// no transcript copy exists for it to have searched.
+    var offersHoarder: Bool {
+        trimmedQuery.count >= Self.transcriptQueryMinimum && keepTranscripts != nil
+            && !(hoarderKeepsTranscripts?() ?? true)
+    }
+
+    /// The offer's click opens the sheet. Only file names, sizes and dates
+    /// are read for its estimate; contents wait for its Turn On.
+    func offerHoarder() {
+        guard offersHoarder, let keep = keepTranscripts else { return }
+        hoarderOffer = DataHoarderOffer(sources: offerSources()) { [weak self] sourceIDs, days in
+            keep(sourceIDs, days)
+            self?.hoarderTurnedOn(days: days)
+        }
+    }
+
+    /// Turn On landed: the search reruns against what is indexed so far,
+    /// and the notice says the copy is still filling.
+    func hoarderTurnedOn(days: Int) {
+        hoarderOffer = nil
+        say("Data Hoarder is reading the last \(days) days — search reaches it as it indexes", isError: false)
+        searchTranscripts(debounce: .seconds(2))
+    }
+
     /// The session uuids the current text found in transcripts.
     private var liveTranscriptHits: Set<String> {
         transcriptHits.query == trimmedQuery && !trimmedQuery.isEmpty ? Set(transcriptHits.snippets.keys) : []

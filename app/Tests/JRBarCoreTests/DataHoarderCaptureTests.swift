@@ -170,6 +170,40 @@ struct DataHoarderCaptureTests {
         await capture.stop()
     }
 
+    @Test("a backfill window reads recent files from their start on the first scan only")
+    func backfillWindowReadsRecentFilesOnce() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let source = try fixture.source()
+        let recent = try fixture.file("recent.jsonl", data: Data("recent line\n".utf8))
+        let old = try fixture.file("old.jsonl", data: Data("old line\n".utf8))
+        let now = Date()
+        try FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-60 * 86_400)], ofItemAtPath: old.path)
+        let archive = DataHoarderArchive(root: fixture.archive)
+        let capture = DataHoarderCapture(archive: archive)
+
+        await capture.start(sources: [source], fullContent: true,
+                            backfillSince: now.addingTimeInterval(-30 * 86_400))
+        let records = try await archive.records()
+        #expect(records.count == 1)
+        let record = try #require(records.first)
+        #expect(try await archive.preview(id: record.id) == "recent line\n")
+        // Outside the window: positioned at its end, never read.
+        let oldRow = try #require(try await archive.captureState(path: old.path))
+        #expect(oldRow.offset == 9 && oldRow.recordID == nil)
+        #expect(try await archive.captureState(path: recent.path)?.recordID == record.id)
+        await capture.stop()
+
+        // A later start with a wider window never reaches back: the window
+        // is the first scan's, and every file already has its position.
+        let restarted = DataHoarderCapture(archive: archive)
+        await restarted.start(sources: [source], fullContent: true, backfillSince: .distantPast)
+        #expect(try await archive.records().count == 1)
+        #expect(try await archive.captureState(path: old.path)?.recordID == nil)
+        await restarted.stop()
+    }
+
     @Test("a file created while the engine was off captures from its start on the next scan")
     func offlineGrowthReconciles() async throws {
         let fixture = try Fixture()
@@ -531,6 +565,16 @@ struct DataHoarderCaptureTests {
             #"{"captureSources": "all", "fullContent": "yes", "paused": 1, "future": true}"#.utf8))
         #expect(tolerant == DataHoarderSettings())
 
+        // The backfill window round-trips; a zero, negative or junk value
+        // reads as no window rather than failing the struct.
+        settings.backfillDays = 30
+        let windowed = try JSONDecoder().decode(
+            DataHoarderSettings.self, from: JSONEncoder().encode(settings))
+        #expect(windowed.backfillDays == 30)
+        for junk in [#"{"backfillDays": 0}"#, #"{"backfillDays": -5}"#, #"{"backfillDays": "30"}"#] {
+            #expect(try JSONDecoder().decode(DataHoarderSettings.self, from: Data(junk.utf8)).backfillDays == nil)
+        }
+
         var state = UtilitiesState()
         state.dataHoarder.fullContent = true
         state.dataHoarder.captureSources = ["x": true]
@@ -540,6 +584,33 @@ struct DataHoarderCaptureTests {
         let missing = try JSONDecoder().decode(UtilitiesState.self, from: Data(
             #"{"dataHoarderEnabled": true, "dataHoarder": "junk"}"#.utf8))
         #expect(missing.dataHoarderEnabled && missing.dataHoarder == DataHoarderSettings())
+    }
+
+    // MARK: Backfill estimate
+
+    @Test("the backfill estimate counts only files inside the window, and saturates")
+    func backfillEstimate() {
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        let root = URL(fileURLWithPath: "/tmp/jrbar-estimate")
+        let source = ArchiveSource(id: "s", name: "S", root: root, extensions: ["jsonl"])
+        func file(_ name: String, bytes: Int64, daysAgo: Double?) -> ArchiveSourceFile {
+            ArchiveSourceFile(url: root.appendingPathComponent(name), byteCount: bytes,
+                              modifiedAt: daysAgo.map { now.addingTimeInterval(-$0 * 86_400) })
+        }
+        let inventory = ArchiveSourceInventory(source: source, files: [
+            file("a", bytes: 100, daysAgo: 1), file("b", bytes: 200, daysAgo: 29.9),
+            file("c", bytes: 400, daysAgo: 31), file("d", bytes: 800, daysAgo: nil),
+        ], warnings: [])
+        #expect(ArchiveBackfillEstimate.of(inventory, days: 30, now: now)
+                == ArchiveBackfillEstimate(fileCount: 2, byteCount: 300))
+        #expect(ArchiveBackfillEstimate.of(inventory, days: 7, now: now)
+                == ArchiveBackfillEstimate(fileCount: 1, byteCount: 100))
+        // No window: every file, dated or not.
+        #expect(ArchiveBackfillEstimate.of(inventory, days: 0, now: now)
+                == ArchiveBackfillEstimate(fileCount: 4, byteCount: 1_500))
+        let huge = ArchiveBackfillEstimate(fileCount: 1, byteCount: .max)
+        #expect(ArchiveBackfillEstimate.total([huge, huge]).byteCount == .max)
+        #expect(ArchiveBackfillEstimate.total([]) == .zero)
     }
 
     // MARK: Fixture

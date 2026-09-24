@@ -22,6 +22,11 @@ import Foundation
 /// their saved offset. A file with no row is pre-existing backlog unless its
 /// mtime is newer than the source's last scan — those seed a position only;
 /// importing their contents is the review flow's explicit choice.
+///
+/// Backfill window: a `start` given `backfillSince` lets a source's
+/// first-ever scan read files modified since then from their start. Older
+/// files still seed a position only, and later scans never backfill — the
+/// window is what "keep the last 30 days" reads once, not a standing rule.
 public actor DataHoarderCapture {
     private let archive: DataHoarderArchive
     private let debounceInterval: TimeInterval
@@ -32,6 +37,8 @@ public actor DataHoarderCapture {
     private let fileManager = FileManager.default
 
     private var fullContent = false
+    /// The backfill window's start for this run — nil reads no backlog.
+    private var backfillSince: Date?
     private var sources: [String: ArchiveSource] = [:]
     private var streams: [String: SourceEventStream] = [:]
     private var rescanTasks: [String: Task<Void, Never>] = [:]
@@ -78,10 +85,13 @@ public actor DataHoarderCapture {
     private var stopped = false
 
     /// Replaces any running capture: reconcile each root, then watch it.
-    public func start(sources: [ArchiveSource], fullContent: Bool) async {
+    /// `backfillSince` opens the backfill window for sources scanned for
+    /// the first time (see the type's doc).
+    public func start(sources: [ArchiveSource], fullContent: Bool, backfillSince: Date? = nil) async {
         stop()
         stopped = false
         self.fullContent = fullContent
+        self.backfillSince = backfillSince
         for source in sources {
             // FSEvents reports real paths — keep one canonical form so event
             // paths, capture_state keys and prefix checks all agree.
@@ -251,6 +261,10 @@ public actor DataHoarderCapture {
                     // engine was off or just now — captured from the start.
                     // The first-ever scan has no baseline, so everything it
                     // finds is pre-existing backlog, never fresh activity.
+                    await captureFile(at: child, source: source)
+                } else if lastScan == 0, let since = backfillSince, mtime >= since {
+                    // Inside the backfill window on the source's first
+                    // scan: the consented "last N days", read from 0.
                     await captureFile(at: child, source: source)
                 } else {
                     // Pre-existing backlog: track the position only. Its

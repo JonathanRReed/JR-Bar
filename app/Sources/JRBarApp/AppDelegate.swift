@@ -470,6 +470,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         historyStore.archiveSearchAvailable = { [weak utilitiesStore] in
             utilitiesStore?.dataHoarder.model.enabled ?? false
         }
+        // An empty search offers the Data Hoarder until it keeps agent
+        // transcripts; the offer's sheet turns it on only on its click.
+        historyStore.hoarderKeepsTranscripts = { [weak utilitiesStore] in
+            utilitiesStore?.dataHoarder.model.keepsAgentTranscripts ?? true
+        }
+        historyStore.keepTranscripts = { [weak utilitiesStore] sourceIDs, days in
+            utilitiesStore?.dataHoarder.keepTranscripts(sourceIDs: sourceIDs, backfillDays: days)
+        }
         statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
 
         // Overview window (⌘O): the scoped roster workspace.

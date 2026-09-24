@@ -782,6 +782,14 @@ struct DataHoarderCaptureControls: View {
                 .toggleStyle(.checkbox)
             Text("Off keeps each line's structure — types, timestamps, tool names, token counts — but stores prompt and response text as “[redacted]”. On stores transcripts verbatim; already-archived copies are unchanged either way.")
                 .font(.caption).foregroundStyle(.secondary)
+            Picker("When a source starts", selection: backfillBinding) {
+                Text("Follow new activity only").tag(0)
+                Text("Also read the last 7 days").tag(7)
+                Text("Also read the last 30 days").tag(30)
+                Text("Also read the last 90 days").tag(90)
+            }
+            .pickerStyle(.menu).fixedSize()
+            .help("Read once, on a source's first scan: files modified in the window are archived from their start; older files wait for Also import existing files.")
             Toggle("Pause capture", isOn: $model.captureSettings.paused)
                 .toggleStyle(.checkbox)
             if model.captureRunning {
@@ -800,11 +808,18 @@ struct DataHoarderCaptureControls: View {
     private func captureBinding(_ sourceID: String) -> Binding<Bool> {
         Binding(get: { model.captureSettings.captureSources[sourceID] ?? false },
                 set: { on in
+                    let review = on && model.offersImportReviewOnCapture
                     model.setCapture(on, sourceID: sourceID)
-                    if on {
+                    if review {
                         open()
                         Task { await model.offerBackfill(for: sourceID) }
                     }
                 })
+    }
+
+    /// 0 stands for "no window" — the picker needs a concrete tag for nil.
+    private var backfillBinding: Binding<Int> {
+        Binding(get: { model.captureSettings.backfillDays ?? 0 },
+                set: { model.captureSettings.backfillDays = $0 > 0 ? $0 : nil })
     }
 }

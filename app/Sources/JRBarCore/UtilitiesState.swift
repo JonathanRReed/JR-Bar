@@ -69,20 +69,25 @@ public struct DataHoarderSettings: Codable, Equatable, Sendable {
     /// Days a trashed record is kept before the archive purges it. nil keeps
     /// trash forever — retention only ever deletes what the user deleted.
     public var trashRetentionDays: Int?
+    /// Days of pre-existing files a source's first capture scan reads from
+    /// their start; older files are only positioned, and everything after
+    /// is followed live. nil reads nothing that predates the capture.
+    public var backfillDays: Int?
 
     public init(captureSources: [String: Bool] = [:], fullContent: Bool = false,
-                paused: Bool = false, trashRetentionDays: Int? = nil) {
+                paused: Bool = false, trashRetentionDays: Int? = nil, backfillDays: Int? = nil) {
         self.captureSources = captureSources
         self.fullContent = fullContent
         self.paused = paused
         self.trashRetentionDays = trashRetentionDays
+        self.backfillDays = backfillDays
     }
 
     public var enabledSources: [String] {
         captureSources.filter(\.value).map(\.key).sorted()
     }
 
-    private enum CodingKeys: String, CodingKey { case captureSources, fullContent, paused, trashRetentionDays }
+    private enum CodingKeys: String, CodingKey { case captureSources, fullContent, paused, trashRetentionDays, backfillDays }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -91,6 +96,8 @@ public struct DataHoarderSettings: Codable, Equatable, Sendable {
         paused = (try? c.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
         let days = (try? c.decodeIfPresent(Int.self, forKey: .trashRetentionDays)) ?? nil
         trashRetentionDays = (days ?? 0) > 0 ? days : nil
+        let backfill = (try? c.decodeIfPresent(Int.self, forKey: .backfillDays)) ?? nil
+        backfillDays = (backfill ?? 0) > 0 ? backfill : nil
     }
 }
 
