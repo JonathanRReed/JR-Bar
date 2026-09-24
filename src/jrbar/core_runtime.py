@@ -3251,6 +3251,34 @@ def _cmd_hooks_doctor(self, args):
     return hook_doctor_report()
 
 
+@command("t3code_integration")
+def _cmd_t3code_integration(self, args):
+    """Settings > Agents' T3 Code row: whether T3 Code's database is on
+    this Mac, whether JR-Bar reads it, and the reader's last look. With
+    ``enabled`` it flips the opt-in in integrations.json first and
+    reconciles the T3 reader at once rather than on the next refresh."""
+    from .t3code_toggle import T3CodeToggleRefused, t3code_integration, t3code_observation
+
+    enabled = args.get("enabled")
+    if enabled is not None and type(enabled) is not bool:
+        raise CommandError("invalid_args", "enabled is true or false")
+    try:
+        document, settings = t3code_integration(enabled)
+    except T3CodeToggleRefused as error:
+        raise CommandError("refused", f"integrations.json was not changed: {error}") from error
+    if enabled is not None:
+        try:
+            from .t3_compat import update_t3_snapshot_runtime
+
+            update_t3_snapshot_runtime(self, settings)
+        except Exception as exc:
+            self._core_log(f"core: t3 reconcile failed: {exc.__class__.__name__}")
+    document["observation"] = (
+        t3code_observation(getattr(self, "_t3_snapshot_service", None)) if document["enabled"] else None
+    )
+    return document
+
+
 @command("open_legacy_window")
 def _cmd_open_legacy_window(self, args):
     name = str(args.get("name") or "")

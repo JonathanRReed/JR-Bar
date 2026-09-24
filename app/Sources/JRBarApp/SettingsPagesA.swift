@@ -262,6 +262,9 @@ struct AgentsPage: View {
     /// `hooks_doctor`'s per-provider report — read when the page shows
     /// and again whenever an install or removal settles.
     @ViewState private var doctor = HooksDoctorModel()
+    /// `t3code_integration` — the T3 Code row shows once it says the
+    /// database is on this Mac.
+    @ViewState private var t3 = T3CodeModel()
 
     static let openChoices: [(value: String, label: String)] = [
         ("", "Automatic"), ("app", "Its app"), ("terminal", "Terminal"), ("vscode", "VS Code"),
@@ -281,6 +284,8 @@ struct AgentsPage: View {
             ForEach(split.found, id: \.self) { provider in
                 AgentRow(store: store, provider: provider, doctor: doctor.entry(for: provider))
             }
+            // Not a hook: T3 Code is read from its own database, by opt-in.
+            T3CodeRow(model: t3, core: store.core)
             if !split.missing.isEmpty {
                 // No CLI to hook into: out of the way, but Remove stays a
                 // click away for hooks an old install left behind.
@@ -292,13 +297,18 @@ struct AgentsPage: View {
                 .help("No CLI for these agents in ~/.local/bin, /opt/homebrew/bin or /usr/local/bin")
             }
         }
-        .task { doctor.refresh(core: store.core) }
+        .task {
+            doctor.refresh(core: store.core)
+            t3.refresh(core: store.core)
+        }
         .onChange(of: store.hookBusy) { before, after in
             // An install, repair or removal just finished: read again.
             if after.count < before.count { doctor.refresh(core: store.core) }
         }
         .onChange(of: store.core.isLive) { _, live in
-            if live { doctor.refresh(core: store.core) }
+            guard live else { return }
+            doctor.refresh(core: store.core)
+            t3.refresh(core: store.core)
         }
 
         SettingGroup("Transcripts", note: "Reads each agent's local transcript files for token and cost figures.") {
