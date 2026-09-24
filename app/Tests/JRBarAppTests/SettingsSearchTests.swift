@@ -85,7 +85,7 @@ import Testing
         let homes: [String: [String]] = [
             "notch": ["Toys/NotchToy.swift", "Toys/NotchControlsView.swift"],
             "notch-buddy": ["Toys/NotchBuddyToy.swift"],
-            "confetti": ["Toys/ConfettiToy.swift"],
+            "confetti": ["Toys/ConfettiToy.swift", "Toys/ConfettiCard.swift"],
             "aquarium": ["Toys/Aquarium"],
             "fold": ["Toys/Fold"],
             "menuBar": ["Utilities/MenuBar"],
