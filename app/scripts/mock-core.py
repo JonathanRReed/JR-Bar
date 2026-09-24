@@ -395,6 +395,9 @@ _MOTION_IDS = {row[0] for row in PROVIDER_ANIMATIONS}
 
 # The daemon's lid looks (`lid_presets.lid_presets_document`), a few of
 # them: enough for Effect Studio's Lid moments to draw and pick.
+MOCK_IRIS_CLOSE = ("0:#000000 75ms ease; 1:#000000 75ms ease 75ms; 2:#000000 75ms ease 150ms; "
+                   "3:#000000 75ms ease 225ms; 4:#000000 75ms ease 225ms; 5:#000000 75ms ease 150ms; "
+                   "6:#000000 75ms ease 75ms; 7:#000000 75ms ease\n#000000 1s")
 MOCK_LID_LOOKS = {
     "open": [
         ("Hello", 1.7, "#12E3B0 300ms pulse\n#0FA07C 300ms cosine\n#12E3B0 800ms pulse\noff 300ms ease-out", None),
@@ -404,9 +407,9 @@ MOCK_LID_LOOKS = {
     ],
     "closed": [
         ("Cool Down", 1.4, "#00E5FF 350ms pulse\n#0044AA 450ms cosine\noff 600ms cosine", None),
-        ("Iris", 1.5, "#00E5FF 200ms cosine\n0:#000000 75ms ease; 1:#000000 75ms ease 75ms; 2:#000000 75ms ease 150ms; "
-                      "3:#000000 75ms ease 225ms; 4:#000000 75ms ease 225ms; 5:#000000 75ms ease 150ms; "
-                      "6:#000000 75ms ease 75ms; 7:#000000 75ms ease\n#000000 1s", "iris_close"),
+        # The thumbnail eases up to cyan first; the stored program (what the
+        # strip plays) closes on whatever was lit.
+        ("Iris", 1.5, "#00E5FF 200ms cosine\n" + MOCK_IRIS_CLOSE, "iris_close", MOCK_IRIS_CLOSE),
     ],
     "open_active": [
         ("Back On It", 1.5, "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse\noff 300ms ease-out", None),
@@ -436,18 +439,24 @@ MOCK_FINISH_LOOKS = [
 
 def mock_lid_presets(document: dict) -> dict:
     kinds = []
+    shipped_document = default_settings_document()
     for kind, label, path in MOCK_LID_KINDS:
         stored = document.get(path) or {}
+        shipped = shipped_document.get(path) or {}
         presets = []
         current = None
-        for name, seconds, program, shape in MOCK_LID_LOOKS[kind]:
+        for name, seconds, program, shape, *rest in MOCK_LID_LOOKS[kind]:
+            setting_program = rest[0] if rest else program
             presets.append({"name": name, "duration_seconds": seconds, "shape": shape, "program": program,
-                            "dot_program": program, "setting": {"program": program, "duration_seconds": seconds, "shape": shape}})
+                            "dot_program": program,
+                            "setting": {"program": setting_program, "duration_seconds": seconds, "shape": shape}})
             if (shape and stored.get("shape") == shape) or (not shape and not stored.get("shape")
                                                             and (stored.get("program") or "").strip() == program):
                 current = name
+        is_shipped = ((stored.get("program") or "").strip() == (shipped.get("program") or "").strip()
+                      and stored.get("shape") == shipped.get("shape"))
         kinds.append({"kind": kind, "label": label, "path": path, "current": current,
-                      "shipped": current is None, "presets": presets})
+                      "shipped": is_shipped, "presets": presets})
     return {"kinds": kinds}
 
 
@@ -1146,8 +1155,8 @@ def default_settings_document() -> dict:
         },
         "lid_open_active_animation": {
             "shape": None,
-            "duration_seconds": 1.2,
-            "program": "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse",
+            "duration_seconds": 1.5,
+            "program": "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse\noff 300ms ease-out",
         },
         "lid_open_animation": {
             "shape": None,
