@@ -380,6 +380,11 @@ enum ShelfActionMenu {
         return verbs + [.copyTo, .moveTo]
     }
 
+    /// Remove from Tray, counting the files when a pick holds several.
+    nonisolated static func removeTitle(count: Int) -> String {
+        count > 1 ? "Remove \(count) Items from Tray" : "Remove from Tray"
+    }
+
     nonisolated static func title(_ verb: Verb, count: Int) -> String {
         switch verb {
         case .compress: return count > 1 ? "Compress \(count) Items" : "Compress"

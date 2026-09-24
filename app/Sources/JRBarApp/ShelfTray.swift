@@ -393,7 +393,9 @@ final class ShelfTrayModel {
         return entries.filter { selectedIDs.contains($0.id) }
     }
 
-    /// The files of `entries` that still resolve, each once.
+    /// The files of `entries` that still resolve, each once — what a drag
+    /// out, the share menu and every verb carry. A moved file is never
+    /// offered, and a canceled share claims nothing (T50).
     func presentURLs(of entries: [ShelfEntry]) -> [URL] {
         revalidate()
         let ids = Set(entries.map(\.id))
@@ -402,6 +404,61 @@ final class ShelfTrayModel {
             .flatMap(\.items)
             .filter { !$0.missing && seen.insert($0.path).inserted }
             .map(\.url)
+    }
+
+    // MARK: Verbs on a pick
+
+    /// Remove from Tray on a picked chip: the whole pick leaves the
+    /// shelf. The files stay where they are.
+    func remove(_ picked: [ShelfEntry]) {
+        for entry in picked { remove(entry) }
+    }
+
+    /// Reveal in Finder: the pick's files that still resolve, selected
+    /// together in Finder. A moved file is never revealed.
+    func reveal(_ picked: [ShelfEntry]) {
+        let live = presentURLs(of: picked)
+        guard !live.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(live)
+    }
+
+    /// The dedicated one-click path: straight to AirDrop, no picker —
+    /// Alcove's headline shelf verb — with every file of the pick that
+    /// still resolves. Returns whether the service ran.
+    @discardableResult
+    func sendViaAirDrop(_ picked: [ShelfEntry]) -> Bool {
+        let urls = presentURLs(of: picked)
+        guard !urls.isEmpty,
+              let service = NSSharingService(named: .sendViaAirDrop) else { return false }
+        service.perform(withItems: urls)
+        return true
+    }
+
+    /// Quick Look from a chip. A chip in a pick previews the pick, opened
+    /// on that chip; a lone chip previews the whole shelf, opened on it.
+    func quickLook(_ entry: ShelfEntry, among picked: [ShelfEntry]) {
+        guard picked.count > 1 else {
+            quickLook(entry)
+            return
+        }
+        let urls = presentURLs(of: picked)
+        guard !urls.isEmpty else { return }
+        let paths = Set(entry.items.map(\.path))
+        ShelfQuickLook.shared.show(urls: urls, at: urls.firstIndex { paths.contains($0.path) } ?? 0)
+    }
+
+    /// Hand the pick to an agent: every present file's `@path` goes on
+    /// the pasteboard as text beside the file URLs, and a single small
+    /// image rides along as image data. Nothing is typed anywhere — the
+    /// person pastes it into the session this opens. False when no file
+    /// of the pick is present.
+    @discardableResult
+    func copyForAgent(_ picked: [ShelfEntry], to board: NSPasteboard = .general) -> Bool {
+        let urls = presentURLs(of: picked)
+        guard !urls.isEmpty else { return false }
+        let attach = picked.count == 1 && canAttachCopy(picked[0])
+        copyForAgent(urls, attachImage: attach, to: board)
+        return true
     }
 
     // MARK: Drag out
@@ -551,51 +608,13 @@ final class ShelfTrayModel {
     /// Reveal in Finder — only for entries that still resolve. A
     /// stack reveals its live members.
     func reveal(_ entry: ShelfEntry) {
-        revalidate()
-        let live = entries.first(where: { $0.id == entry.id })?
-            .items.filter { !$0.missing }.map(\.url) ?? []
-        guard !live.isEmpty else { return }
-        NSWorkspace.shared.activateFileViewerSelecting(live)
+        reveal([entry])
     }
 
-    /// Drag-out / share payload for an entry that still resolves. A
-    /// stack drags out as a multi-item provider — the whole pile.
-    func provider(for entry: ShelfEntry) -> NSItemProvider? {
-        revalidate()
-        let urls = entries.first(where: { $0.id == entry.id })?
-            .items.filter { !$0.missing }.map { $0.url as NSURL } ?? []
-        guard !urls.isEmpty else { return nil }
-        if urls.count == 1, let url = urls.first {
-            return NSItemProvider(object: url)
-        }
-        let provider = NSItemProvider()
-        provider.suggestedName = entry.displayName
-        for url in urls {
-            provider.registerObject(url, visibility: .all)
-        }
-        return provider
-    }
-
-    /// Native share: the entry's files that still exist, for the
-    /// system's share menu (`ShareLink`) to offer. A moved file is
-    /// never offered, and a canceled share claims nothing (T50).
-    func shareableURLs(for entry: ShelfEntry) -> [URL] {
-        revalidate()
-        return entries.first(where: { $0.id == entry.id })?
-            .items.filter { !$0.missing }.map(\.url) ?? []
-    }
-
-    /// The dedicated one-click path: straight to AirDrop, no picker —
-    /// Alcove's headline shelf verb. Returns whether the service ran.
+    /// AirDrop for one chip; see the pick's version.
     @discardableResult
     func sendViaAirDrop(_ entry: ShelfEntry) -> Bool {
-        revalidate()
-        let urls = entries.first(where: { $0.id == entry.id })?
-            .items.filter { !$0.missing }.map(\.url) ?? []
-        guard !urls.isEmpty,
-              let service = NSSharingService(named: .sendViaAirDrop) else { return false }
-        service.perform(withItems: urls)
-        return true
+        sendViaAirDrop([entry])
     }
 
     /// File size for the attach bound — nil when unresolvable.
@@ -624,19 +643,6 @@ final class ShelfTrayModel {
             "@" + path.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: " ", with: "\\ ")
         }.joined(separator: " ")
-    }
-
-    /// Hand the entry to an agent: its `@path` references go on the
-    /// pasteboard as text beside the file URLs, and a single small
-    /// image rides along as image data. Nothing is typed anywhere —
-    /// the person pastes it into the session this opens. False when no
-    /// file of the entry is present.
-    @discardableResult
-    func copyForAgent(_ entry: ShelfEntry, to board: NSPasteboard = .general) -> Bool {
-        let present = entries.first(where: { $0.id == entry.id })?.items.filter { !$0.missing } ?? []
-        guard !present.isEmpty else { return false }
-        copyForAgent(present.map(\.url), attachImage: canAttachCopy(entry), to: board)
-        return true
     }
 
     /// The hand-off for files, shared with a file dropped straight onto

@@ -115,8 +115,7 @@ import JRBarCore
         tray.add([gone])
         tray.revalidate()
         let entry = tray.entries.first!
-        #expect(tray.provider(for: entry) == nil)
-        #expect(tray.shareableURLs(for: entry).isEmpty)
+        #expect(tray.presentURLs(of: [entry]).isEmpty, "nothing to drag, share or reveal")
         #expect(!tray.canAttachCopy(entry))
     }
 
@@ -710,6 +709,20 @@ extension ShelfTests {
         tray.shelfEnabled = { true }
         tray.add([URL(fileURLWithPath: "/tmp/shelf-off/a.txt")])
         #expect(tray.entries.count == 1)
+    }
+
+    @Test func aVerbOnAPickedChipRemovesTheWholePick() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        looseAdds(tray, (0..<4).map { "/tmp/pick-remove-\($0)/r\($0).txt" })
+        let chips = tray.entries
+        tray.toggleSelection(chips[0])
+        tray.toggleSelection(chips[2])
+        tray.remove(tray.targets(for: chips[2]))
+        #expect(tray.entries.map(\.displayName) == ["r1.txt", "r3.txt"])
+        #expect(tray.selectedIDs.isEmpty)
+        #expect(ShelfActionMenu.removeTitle(count: 1) == "Remove from Tray")
+        #expect(ShelfActionMenu.removeTitle(count: 3) == "Remove 3 Items from Tray")
     }
 
     @Test func moveToCarriesTheChipAlong() throws {

@@ -238,11 +238,11 @@ final class NotchCardModel {
         }
     }
 
-    /// The shelf's hand-to-agent verb: the entry's `@path` references go
+    /// The shelf's hand-to-agent verb: the chips' `@path` references go
     /// on the pasteboard and the session's window comes forward, ready
     /// for the person's paste. Nothing is ever typed for them.
-    func handToAgent(_ entry: ShelfTrayModel.ShelfEntry, session: String) {
-        guard tray.copyForAgent(entry) else { return }
+    func handToAgent(_ entries: [ShelfTrayModel.ShelfEntry], session: String) {
+        guard tray.copyForAgent(entries) else { return }
         onOpenRow?(session)
     }
 
@@ -674,8 +674,8 @@ struct NotchCardView: View {
         if model.tray.shelfEnabled() {
             revealRow(2, ShelfTrayRow(tray: model.tray, style: style,
                                       handTargets: model.handTargets,
-                                      onHand: { entry, session in
-                                          model.handToAgent(entry, session: session)
+                                      onHand: { picked, session in
+                                          model.handToAgent(picked, session: session)
                                       },
                                       dropHover: { dropHover($0) },
                                       onDropLanded: { model.onDropLanded?() }))
@@ -1615,7 +1615,7 @@ private struct ShelfTrayRow: View {
     let tray: ShelfTrayModel
     let style: NotchCardStyle
     var handTargets: [(id: String, label: String)] = []
-    var onHand: (ShelfTrayModel.ShelfEntry, String) -> Void = { _, _ in }
+    var onHand: ([ShelfTrayModel.ShelfEntry], String) -> Void = { _, _ in }
     /// Each tile is a drop target of its own; the card counts it among
     /// the targets a drag can be over (`NotchCardModel.dropHover`).
     var dropHover: ((String) -> Binding<Bool>)?
@@ -1721,46 +1721,7 @@ private struct ShelfTrayRow: View {
             }
         }
         .accessibilityAddTraits(tray.selectedIDs.contains(entry.id) ? .isSelected : [])
-        .contextMenu {
-            if !entry.missing {
-                // The job done all day: a screenshot or a file handed
-                // to an agent — copied as its `@path`, the session raised
-                // for the paste. Never typed for you.
-                if let first = handTargets.first {
-                    Button("Hand to \(first.label)") { onHand(entry, first.id) }
-                    if handTargets.count > 1 {
-                        Menu("Hand to") {
-                            ForEach(handTargets, id: \.id) { target in
-                                Button(target.label) { onHand(entry, target.id) }
-                            }
-                        }
-                    }
-                    Divider()
-                }
-                Button("Quick Look") { tray.quickLook(entry) }
-                Button("Reveal in Finder") { tray.reveal(entry) }
-                Button("Send via AirDrop") { _ = tray.sendViaAirDrop(entry) }
-                shareMenu(for: entry)
-                Divider()
-                ShelfActionMenuItems(tray: tray, targets: tray.targets(for: entry))
-                Divider()
-            }
-            switch entry {
-            case .item:
-                if tray.entries.firstIndex(where: { $0.id == entry.id })
-                    .map({ $0 + 1 < tray.entries.count }) == true {
-                    Button("Merge with Next") {
-                        tray.mergeWithNext(entry)
-                    }
-                }
-            case .stack:
-                Button("Split into Items") { tray.dissolve(entry) }
-            }
-            Button("Remove from Tray", role: .destructive) { tray.remove(entry) }
-            if tray.entries.count > 1 {
-                Button("Clear Shelf", role: .destructive) { tray.removeAll() }
-            }
-        }
+        .contextMenu { chipMenu(entry, picked: tray.targets(for: entry)) }
         // A copy unless ⌘ is held (`shelfDragOut`); a picked chip drags
         // the whole selection.
         .background(ShelfDragSource(
@@ -1808,6 +1769,55 @@ private struct ShelfTrayRow: View {
               : entry.items.first?.path ?? entry.displayName)
     }
 
+    /// A chip's menu. Every file verb acts on `picked` — the whole pick
+    /// when the chip is part of one, else the chip — while Merge and
+    /// Split stay the chip's own.
+    @ViewBuilder
+    private func chipMenu(_ entry: ShelfTrayModel.ShelfEntry,
+                          picked: [ShelfTrayModel.ShelfEntry]) -> some View {
+        if !entry.missing {
+            // The job done all day: a screenshot or a file handed to an
+            // agent — copied as its `@path`, the session raised for the
+            // paste. Never typed for you.
+            if let first = handTargets.first {
+                Button("Hand to \(first.label)") { onHand(picked, first.id) }
+                if handTargets.count > 1 {
+                    Menu("Hand to") {
+                        ForEach(handTargets, id: \.id) { target in
+                            Button(target.label) { onHand(picked, target.id) }
+                        }
+                    }
+                }
+                Divider()
+            }
+            Button("Quick Look") { tray.quickLook(entry, among: picked) }
+            Button("Reveal in Finder") { tray.reveal(picked) }
+            Button("Send via AirDrop") { _ = tray.sendViaAirDrop(picked) }
+            shareMenu(for: picked)
+            Divider()
+            ShelfActionMenuItems(tray: tray, targets: picked)
+            Divider()
+        }
+        switch entry {
+        case .item:
+            if tray.entries.firstIndex(where: { $0.id == entry.id })
+                .map({ $0 + 1 < tray.entries.count }) == true {
+                Button("Merge with Next") {
+                    tray.mergeWithNext(entry)
+                }
+            }
+        case .stack:
+            Button("Split into Items") { tray.dissolve(entry) }
+        }
+        let removing = picked.reduce(0) { $0 + $1.items.count }
+        Button(ShelfActionMenu.removeTitle(count: picked.count > 1 ? removing : 1), role: .destructive) {
+            tray.remove(picked)
+        }
+        if tray.entries.count > 1 {
+            Button("Clear Shelf", role: .destructive) { tray.removeAll() }
+        }
+    }
+
     /// A loose file's chip face — the Finder icon and the name;
     /// double-click previews. Tap handling lives on the chip's own
     /// gestures so a stack can answer a plain click with its grid.
@@ -1848,12 +1858,12 @@ private struct ShelfTrayRow: View {
         }
     }
 
-    /// The system's own share menu for the entry's files; a canceled
-    /// share delivers nothing and claims nothing. A shelf whose files
-    /// all moved offers nothing to share.
+    /// The system's own share menu for the pick's files; a canceled
+    /// share delivers nothing and claims nothing. A pick whose files all
+    /// moved offers nothing to share.
     @ViewBuilder
-    private func shareMenu(for entry: ShelfTrayModel.ShelfEntry) -> some View {
-        let urls = tray.shareableURLs(for: entry)
+    private func shareMenu(for picked: [ShelfTrayModel.ShelfEntry]) -> some View {
+        let urls = tray.presentURLs(of: picked)
         if !urls.isEmpty {
             ShareLink(items: urls) { Text("Share…") }
         }
