@@ -544,6 +544,9 @@ struct DockPreviewView: View {
         content.stillRunning ? "Force quit \(content.appName)" : "Quit \(content.appName)"
     }
 
+    /// The folder the pop is showing, by name.
+    private var folderName: String? { content.folderShown?.lastPathComponent }
+
     private var backLabel: String {
         "Back to \(content.folderTrail.dropLast().last?.lastPathComponent ?? content.appName)"
     }
@@ -610,7 +613,7 @@ struct DockPreviewView: View {
         content.windows.map { window in
             let armed = content.armedWindowID == window.id && content.armedNote != nil
             if armed { return 2 }
-            let title = showsTitle(window) || window.minimized ? 1 : 0
+            let title = showsTitle(window) ? 1 : 0
             return title + (content.agents[window.id] == nil ? 0 : 1)
         }.max() ?? 0
     }
@@ -632,7 +635,7 @@ struct DockPreviewView: View {
             .padding(.horizontal, 4)
         case .denied:
             DockFolderNotice(symbol: "lock.fill", tint: DockChrome.caution,
-                             title: "No access to \(content.folderShown?.lastPathComponent ?? "this folder")",
+                             title: "No access to \(folderName ?? "this folder")",
                              detail: "Allow Files & Folders for JR-Bar to list it here.") {
                 Button("Open Settings") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
@@ -649,7 +652,7 @@ struct DockPreviewView: View {
         case .ready:
             if content.folderEntries.isEmpty {
                 DockFolderNotice(symbol: "tray", tint: .secondary,
-                                 title: "Nothing in \(content.folderShown?.lastPathComponent ?? "here")",
+                                 title: "Nothing in \(folderName ?? "here")",
                                  detail: "Files you save here show up in this pop.") { EmptyView() }
             } else {
                 // Apple's Grid stack: five across, four rows before it
@@ -742,9 +745,8 @@ struct DockPreviewCard: View {
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
-    /// The plate's corner — concentric with the panel's glass at its
-    /// inset, and with the still inside it at `pad`.
-    static let radius: CGFloat = 13
+    /// The plate's corner — concentric with the still inside it at `pad`.
+    static let radius: CGFloat = DockChrome.stillRadius + pad
     /// The plate's reach past the still on every side.
     static let pad: CGFloat = 6
     /// One caption row's height.
@@ -882,21 +884,14 @@ struct DockPreviewCard: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             } else {
-                if showsTitle || window.minimized {
-                    HStack(spacing: 4) {
-                        if window.minimized {
-                            Image(systemName: "arrow.down.right.and.arrow.up.left")
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        if showsTitle {
-                            Text(window.title)
-                                .font(.system(size: 11, weight: .medium))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    .frame(height: Self.captionRow)
+                // A minimized window says so on its face — the corner
+                // mark on a still, the word on the icon — not here too.
+                if showsTitle {
+                    Text(window.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(height: Self.captionRow)
                 }
                 if let agent {
                     // What the agent in this window is doing — the fact the
@@ -987,8 +982,11 @@ struct DockPreviewCompactList: View {
         }
         // The list takes the panel's width — an ask row above it can be
         // wider than the rows need — and never less than a row's own.
-        .frame(minWidth: DockPreviewCompactRow.minWidth, maxHeight: 264)
+        .frame(minWidth: DockPreviewCompactRow.minWidth, maxHeight: Self.maxHeight)
     }
+
+    /// Nine rows and half the tenth: a longer list shows it scrolls.
+    static let maxHeight: CGFloat = 276
 }
 
 /// One chip in a folder pop: the file's Quick Look face (its type icon

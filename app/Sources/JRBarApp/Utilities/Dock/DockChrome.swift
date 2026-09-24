@@ -18,6 +18,20 @@ enum DockChrome {
     static let caution = Color(red: 1.0, green: 0.74, blue: 0.18)
     /// New window, full screen.
     static let go = Color(red: 0.16, green: 0.79, blue: 0.35)
+
+    /// The ink a glyph or a label wears on a `tint` fill: black where
+    /// white would wash out — the traffic lights' yellow, a yellow
+    /// provider — white everywhere else.
+    static func ink(on tint: Color) -> Color {
+        isLight(tint) ? Color.black.opacity(0.78) : .white
+    }
+
+    /// Whether `color` is light enough that white ink would wash out.
+    static func isLight(_ color: Color) -> Bool {
+        guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return false }
+        let luminance = 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
+        return luminance > 0.68
+    }
 }
 
 /// A hairline between the panel's sections.
@@ -158,7 +172,9 @@ struct DockRoundVerb: View {
                 .resizable()
                 .scaledToFit()
                 .fontWeight(.bold)
-                .frame(width: size * 0.4, height: size * 0.4)
+                // A wide glyph (the hide eye) takes a little more width,
+                // so it reads as heavy as the square ones beside it.
+                .frame(maxWidth: size * 0.52, maxHeight: size * 0.4)
                 .foregroundStyle(glyph)
                 .frame(width: size, height: size)
                 .background(Circle().fill(disc))
@@ -172,7 +188,7 @@ struct DockRoundVerb: View {
     }
 
     private var glyph: AnyShapeStyle {
-        if hovering || lit { return AnyShapeStyle(Color.white) }
+        if hovering || lit { return AnyShapeStyle(DockChrome.ink(on: tint)) }
         return onStill ? AnyShapeStyle(Color.white.opacity(0.92)) : AnyShapeStyle(.secondary)
     }
 
@@ -217,8 +233,7 @@ private struct DockCapsuleFace: View {
     }
 
     private var ink: Color {
-        guard prominent else { return .primary }
-        return Self.isLight(tint) ? Color.black.opacity(0.85) : .white
+        prominent ? DockChrome.ink(on: tint) : .primary
     }
 
     private var fill: Color {
@@ -226,10 +241,4 @@ private struct DockCapsuleFace: View {
         return Color.primary.opacity(configuration.isPressed ? 0.16 : 0.09)
     }
 
-    /// Whether `color` is light enough that white ink would wash out.
-    static func isLight(_ color: Color) -> Bool {
-        guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return false }
-        let luminance = 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
-        return luminance > 0.68
-    }
 }

@@ -61,6 +61,33 @@ struct UtilitySurfacesRenderProofTests {
         }
     }
 
+    /// The key row reads its caps off the line the controller writes, a
+    /// tool's node follows its name, and a yellow disc takes dark ink.
+    @Test("key caps, tool glyphs and verb ink read what they are given")
+    func chromeHelpers() {
+        let caps = DockKeyHints.parse(DockSwitcherList.verbHints(appMode: false, drilled: true))
+        #expect(caps.count == 6)
+        #expect(caps.first?.key == "W" && caps.first?.word == "close")
+        #expect(caps[2].key == "F" && caps[2].word == "full screen")
+        #expect(caps.last?.key == "↑" && caps.last?.word == "apps")
+        #expect(ReconstructedTimelineView.toolSymbol("Bash") == "terminal.fill")
+        #expect(ReconstructedTimelineView.toolSymbol("apply_patch") == "pencil")
+        #expect(ReconstructedTimelineView.toolSymbol(nil) == "wrench.and.screwdriver.fill")
+        #expect(DockChrome.isLight(DockChrome.caution))
+        #expect(!DockChrome.isLight(DockChrome.stop))
+    }
+
+    /// A window title as long as a browser tab's truncates in its row;
+    /// it never pushes the compact panel wider than short titles do.
+    @Test("a long window title never widens the compact list")
+    func compactTitleKeepsWidth() {
+        let short = DockPreviewPanel(content: Fixtures.compactContent()).fittingSize()
+        let long = Fixtures.compactContent()
+        long.windows[3] = Fixtures.window(4, String(repeating: "a very long page title ", count: 12))
+        let widened = DockPreviewPanel(content: long).fittingSize()
+        #expect(widened.width == short.width)
+    }
+
     // MARK: Proof shots
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
@@ -86,6 +113,45 @@ struct UtilitySurfacesRenderProofTests {
                 try Self.write(view, glassRadius: DockPreviewPanel.cornerRadius, name: name, dark: dark,
                                canvas: CGSize(width: 900, height: 460))
             }
+        }
+        // The hover faces a render never reaches by pointer: each verb
+        // lit in its colour, beside the resting discs, over glass and
+        // over a still.
+        let verbs = VStack(spacing: 12) {
+            HStack(spacing: 6) {
+                DockRoundVerb(symbol: "plus", tint: DockChrome.go, label: "New window", lit: true) {}
+                DockRoundVerb(symbol: "eye.slash", tint: DockChrome.caution, label: "Hide", lit: true) {}
+                DockRoundVerb(symbol: "minus", tint: DockChrome.caution, label: "Minimise all", lit: true) {}
+                DockRoundVerb(symbol: "xmark", tint: DockChrome.stop, label: "Close all", lit: true) {}
+                DockRoundVerb(symbol: "power", tint: DockChrome.stop, label: "Quit", lit: true) {}
+                DockRoundVerb(symbol: "folder", label: "Open in Finder", lit: true) {}
+            }
+            HStack(spacing: 6) {
+                DockRoundVerb(symbol: "plus", label: "New window") {}
+                DockRoundVerb(symbol: "eye.slash", label: "Hide") {}
+                DockRoundVerb(symbol: "minus", label: "Minimise all") {}
+                DockRoundVerb(symbol: "xmark", label: "Close all") {}
+                DockRoundVerb(symbol: "power", label: "Quit") {}
+                DockRoundVerb(symbol: "folder", label: "Open in Finder") {}
+            }
+            DockStill(image: Still.browser(hue: 0.58))
+                .frame(width: 200, height: 130)
+                .overlay(alignment: .topLeading) {
+                    HStack(spacing: 5) {
+                        DockRoundVerb(symbol: "xmark", tint: DockChrome.stop, label: "Close", size: 20,
+                                      onStill: true, lit: true) {}
+                        DockRoundVerb(symbol: "minus", tint: DockChrome.caution, label: "Minimize", size: 20,
+                                      onStill: true, lit: true) {}
+                        DockRoundVerb(symbol: "arrow.up.right.and.arrow.down.left", tint: DockChrome.go,
+                                      label: "Full screen", size: 20, onStill: true) {}
+                    }
+                    .padding(6)
+                }
+        }
+        .padding(14)
+        for dark in [true, false] {
+            try Self.write(verbs, glassRadius: DockPreviewPanel.cornerRadius, name: "dock-verbs", dark: dark,
+                           canvas: CGSize(width: 420, height: 320))
         }
         let toast = DockToastPanel.Model()
         toast.text = "Claude is working here — ⌘-right-click again to quit"
@@ -176,10 +242,10 @@ struct UtilitySurfacesRenderProofTests {
         let view = ReconstructedTimelineView(reconstruction: Fixtures.reconstruction(),
                                              viewState: ReconstructedTimelineViewState())
             .padding(16)
-            .frame(width: 560, height: 640)
+            .frame(width: 560, height: 860)
         for dark in [true, false] {
             try Self.write(view, glassRadius: nil, name: "timeline", dark: dark,
-                           canvas: CGSize(width: 600, height: 680), window: true)
+                           canvas: CGSize(width: 600, height: 900), window: true)
         }
     }
 
