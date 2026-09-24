@@ -25,9 +25,10 @@ import SwiftUI
 /// survives relaunches, clamped onto the visible screen), a drop back on
 /// the slot — or "Dock at the notch" — sends it home. Right-click or a
 /// held press opens its menu; "Tuck away" hides it until the next
-/// session event or a card re-enable. Floating, it wears a quiet
-/// caption naming the session it is watching, and the card's Size
-/// slider grows it up to 3× — the docked pill stays its 18pt self.
+/// session event or a card re-enable. Under the pointer it wears a
+/// quiet caption naming the session it is watching, and the card's Size
+/// slider grows the floating buddy up to 3× — the docked pill stays its
+/// 18pt self.
 @MainActor
 @Observable
 final class NotchBuddyToy: Toy {
@@ -253,6 +254,19 @@ final class NotchBuddyToy: Toy {
         store?.state.notchBuddy.resolvedName ?? buddyCharacter.defaultName
     }
 
+    /// The Size readout: "1×", "1.25×", "2.5×" — every stop the slider
+    /// has, spelled exactly.
+    static func sizeWords(_ scale: Double) -> String {
+        NotchBuddySettings.clampedScale(scale)
+            .formatted(.number.precision(.fractionLength(0...2)).locale(Locale(identifier: "en_US_POSIX")))
+            + "×"
+    }
+
+    /// The walk dial's readout: "12 min".
+    static func walkWords(_ minutes: Double) -> String {
+        "\(Int(NotchBuddySettings.clampedWalkEvery(minutes).rounded())) min"
+    }
+
     // MARK: Roaming
 
     /// Docked under the notch, or parked where the user dropped it.
@@ -261,8 +275,13 @@ final class NotchBuddyToy: Toy {
     /// Tucked away: off the screen until the next session event (the
     /// session observer clears it) or `isOn` flips back on.
     var isTucked: Bool { store?.state.notchBuddy.tucked ?? false }
-    /// The floating buddy's one-line tag under the pill.
+    /// The one-line caption under the buddy while the pointer is on it,
+    /// docked or floating.
     var showsCaption: Bool { store?.state.notchBuddy.showCaption ?? true }
+    var showsCaptionBinding: Binding<Bool> {
+        Binding(get: { self.showsCaption },
+                set: { if $0 != self.showsCaption { self.toggleCaption() } })
+    }
 
     /// The free-floating buddy's size multiplier — the card's Size
     /// slider. Docked ignores it: the notch slot is fixed at 18pt.
@@ -1034,7 +1053,7 @@ final class NotchBuddyToy: Toy {
         }
         menu.addItem(menuActions.item(title: isFree ? "Dock at the notch" : "Float free",
                                       action: #selector(BuddyMenuActions.toggleDock)))
-        let captionItem = menuActions.item(title: "Show caption",
+        let captionItem = menuActions.item(title: "Caption on hover",
                                            action: #selector(BuddyMenuActions.toggleCaption))
         captionItem.state = showsCaption ? .on : .off
         menu.addItem(captionItem)
@@ -1271,12 +1290,36 @@ private struct BuddyControlsView: View {
                 HStack(spacing: 10) {
                     Slider(value: toy.scaleBinding, in: NotchBuddySettings.scaleRange, step: 0.25)
                         .frame(width: 180)
-                    ValueText(text: String(format: "%.2g×", toy.buddyScale))
+                    ValueText(text: NotchBuddyToy.sizeWords(toy.buddyScale))
                 }
             } label: {
                 SettingLabel(title: "Size",
                              subtitle: "How big the floating buddy grows — the docked slot stays its 18pt self.")
             }
+
+            Toggle(isOn: toy.showsCaptionBinding) {
+                SettingLabel(title: "Caption on hover",
+                             subtitle: "Point at it to read what it's watching, or its name while nothing runs.")
+            }
+
+            Toggle(isOn: toy.takesWalksBinding) {
+                SettingLabel(title: "Take walks",
+                             subtitle: "Floating, it strolls along a window's top edge now and then while the agents work.")
+            }
+
+            LabeledContent {
+                HStack(spacing: 10) {
+                    // Whole minutes, but no tick marks: 38 of them read
+                    // as a dotted rule, not a dial.
+                    Slider(value: toy.walkEveryBinding, in: NotchBuddySettings.walkEveryRange)
+                        .frame(width: 180)
+                    ValueText(text: NotchBuddyToy.walkWords(toy.walkEvery))
+                }
+            } label: {
+                SettingLabel(title: "How often it walks",
+                             subtitle: "About one walk in this many minutes of work.")
+            }
+            .disabled(!toy.takesWalks)
 
             HStack(spacing: 10) {
                 Button("Give treat") { toy.giveTreat() }

@@ -57,6 +57,9 @@ enum ToySearchCatalog {
             ToySearchRow("Wear the Screen Bar's colour", keywords: ["color", "tint"]),
             ToySearchRow("Name", keywords: ["rename"]),
             ToySearchRow("Size", keywords: ["bigger", "smaller"]),
+            ToySearchRow("Caption on hover", keywords: ["name tag", "label", "caption"]),
+            ToySearchRow("Take walks", keywords: ["walkabout", "stroll", "wander"]),
+            ToySearchRow("How often it walks", keywords: ["walk", "stroll", "frequency"]),
         ],
         "confetti": [
             ToySearchRow("Weekly reset", keywords: ["trigger"]),

@@ -143,6 +143,29 @@ struct BuddyRoamingTests {
         #expect(store.state.notchBuddy.scale == 1)
     }
 
+    @Test("the card's readouts say exactly what the dials hold")
+    func readouts() {
+        // "%.2g" used to print 1.25 as "1.2×" and 2.75 as "2.8×".
+        #expect(NotchBuddyToy.sizeWords(1) == "1×")
+        #expect(NotchBuddyToy.sizeWords(1.25) == "1.25×")
+        #expect(NotchBuddyToy.sizeWords(1.5) == "1.5×")
+        #expect(NotchBuddyToy.sizeWords(2.75) == "2.75×")
+        #expect(NotchBuddyToy.sizeWords(9) == "3×")
+        #expect(NotchBuddyToy.walkWords(12) == "12 min")
+        #expect(NotchBuddyToy.walkWords(1) == "3 min")
+        let (toy, store) = makeToy()
+        toy.walkEveryBinding.wrappedValue = 7.4
+        #expect(store.state.notchBuddy.walkEvery == 7, "whole minutes")
+        toy.walkEveryBinding.wrappedValue = 99
+        #expect(toy.walkEvery == 40)
+        toy.takesWalksBinding.wrappedValue = false
+        #expect(store.state.notchBuddy.walkabout == false)
+        toy.showsCaptionBinding.wrappedValue = true
+        #expect(store.state.notchBuddy.showCaption == true, "setting what it already is keeps it")
+        toy.showsCaptionBinding.wrappedValue = false
+        #expect(store.state.notchBuddy.showCaption == false)
+    }
+
     @Test("with nothing on the clock the caption is the name tag")
     func captionFallback() {
         let (toy, store) = makeToy()
@@ -163,7 +186,7 @@ struct BuddyRoamingTests {
         #expect(titles[2] == "Rename…")
         #expect(titles[3] == "Change character")
         #expect(titles.contains("Float free"))
-        #expect(titles.contains("Show caption"))
+        #expect(titles.contains("Caption on hover"))
         #expect(titles.last == "Tuck away")
         #expect(!titles.contains { $0.hasPrefix("Open") },
                 "no ask is open — no session to open")
@@ -171,7 +194,7 @@ struct BuddyRoamingTests {
         let roster = menu.items[3].submenu
         #expect(roster?.items.count == BuddyCharacter.allCases.count)
         #expect(roster?.items.filter { $0.state == .on }.map(\.title) == ["Dot"])
-        #expect(menu.items.first { $0.title == "Show caption" }?.state == .on)
+        #expect(menu.items.first { $0.title == "Caption on hover" }?.state == .on)
     }
 
     @Test("the menu's dock line flips with where the buddy lives")
