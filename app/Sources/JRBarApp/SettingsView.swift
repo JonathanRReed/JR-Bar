@@ -12,13 +12,17 @@ struct SettingsRootView: View {
         NavigationSplitView {
             List(selection: $store.page) {
                 if store.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-                    ForEach(SettingsStore.Page.allCases) { page in
-                        Label {
-                            Text(page.title)
-                        } icon: {
-                            SidebarIcon(symbol: page.symbol, tint: page.tint)
+                    ForEach(Array(SettingsStore.Page.sidebarGroups.enumerated()), id: \.offset) { _, group in
+                        Section {
+                            ForEach(group) { page in
+                                Label {
+                                    Text(page.title)
+                                } icon: {
+                                    SidebarIcon(symbol: page.symbol, tint: page.tint)
+                                }
+                                .tag(page)
+                            }
                         }
-                        .tag(page)
                     }
                 } else {
                     SettingsSearchResults(store: store)
@@ -107,16 +111,22 @@ struct SidebarIcon: View {
     let tint: Color
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 5.5, style: .continuous)
-                .fill(tint.gradient)
-            Image(systemName: symbol)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(.white)
-                .symbolRenderingMode(.hierarchical)
-        }
-        .frame(width: 22, height: 22)
+        SettingsIconTile(symbol: symbol, tint: tint, size: SettingsMetrics.sidebarTile)
     }
+}
+
+extension SettingsStore.Page {
+    /// The sidebar's runs, System Settings-style: the app itself, the
+    /// agents and what they cost, the tools, the hardware and how it
+    /// looks and sounds, then the plumbing. Every page sits in exactly
+    /// one run.
+    static let sidebarGroups: [[SettingsStore.Page]] = [
+        [.general],
+        [.agents, .usage, .notifications],
+        [.utilities, .toys],
+        [.devices, .lighting, .sounds],
+        [.shortcuts, .remote, .advanced],
+    ]
 }
 
 /// One page: the form, an offline banner when the daemon has not sent its
@@ -155,57 +165,39 @@ struct SettingsPageContainer: View {
 
     private var form: some View {
         Form {
+            Section {
+                SettingsPageHeader(page: page)
+            }
             if !store.hasDocument {
                 Section {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Not connected").fontWeight(.semibold)
-                            Text("Settings are shown with defaults and cannot be changed until the monitor connects.")
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "bolt.horizontal.circle").foregroundStyle(.orange)
-                    }
+                    SettingsBanner(symbol: "bolt.horizontal.circle.fill", tint: .orange,
+                                   title: "Not connected",
+                                   detail: "Settings are shown with defaults and cannot be changed until the monitor connects.")
                 }
             }
             if let schema = store.core.settings?.schema, schema > CoreProtocol.knownSettingsSchema {
                 Section {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Newer settings schema").fontWeight(.semibold)
-                            Text("The monitor speaks schema \(schema); this app knows \(CoreProtocol.knownSettingsSchema). Newer settings may not appear — update the app.")
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                    }
+                    SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                                   title: "Newer settings schema",
+                                   detail: "The monitor speaks schema \(schema); this app knows \(CoreProtocol.knownSettingsSchema). Newer settings may not appear — update the app.")
                 }
             }
             if let error = store.lastError {
                 Section {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .lineLimit(2)
+                    SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .red, title: error)
                 }
             }
             if store.lastError == nil, let status = store.status {
                 Section {
-                    Label(status, systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                    SettingsBanner(symbol: "checkmark.circle.fill", tint: .green, title: status)
                 }
             }
             if let hit = store.searchHit, hit.page == page, hit.title != page.title {
                 Section {
-                    Label {
-                        Text(hit.group.isEmpty || hit.group == hit.title
-                             ? "“\(hit.title)” is on this page."
-                             : "“\(hit.title)” is under \(hit.group).")
-                    } icon: {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                    }
-                    .foregroundStyle(.secondary)
+                    SettingsBanner(symbol: "magnifyingglass", tint: page.tint,
+                                   title: hit.group.isEmpty || hit.group == hit.title
+                                       ? "“\(hit.title)” is on this page."
+                                       : "“\(hit.title)” is under \(hit.group).")
                 }
             }
             switch page {
@@ -227,6 +219,7 @@ struct SettingsPageContainer: View {
             }
         }
         .formStyle(.grouped)
+        .disclosureGroupStyle(SettingsDisclosureStyle())
         .animation(.easeInOut(duration: 0.15), value: store.lastError == nil)
         .animation(.easeInOut(duration: 0.15), value: store.status == nil)
     }
@@ -281,7 +274,7 @@ struct SettingLabel: View {
                 .foregroundStyle(isEnabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
             if let subtitle {
                 Text(subtitle)
-                    .font(.callout)
+                    .font(.subheadline)
                     .foregroundStyle(isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -594,7 +587,7 @@ struct SectionNote: View {
 
     var body: some View {
         Text(text)
-            .font(.callout)
+            .font(.subheadline)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }

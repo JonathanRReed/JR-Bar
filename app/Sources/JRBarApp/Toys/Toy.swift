@@ -123,9 +123,13 @@ final class ToyMeter {
     }
 }
 
-/// One toy on the page: the symbol tile in the page tint, name, blurb,
-/// status chip, the on/off toggle, and a disclosure with the toy's
-/// `controls`.
+/// One toy on the page, as its own group: a head row — the toy's mark
+/// in its tint, name, status pill, blurb, the turning chevron and the
+/// on/off switch — and, while open, a second row with what it costs and
+/// the toy's `controls` in the shared card-body styles.
+///
+/// Put each card in its own `Section`: the head and the body are two
+/// rows of it, so the form draws the hairline between them.
 ///
 /// Inside the Settings window the card's disclosure is the store's
 /// (`SettingsStore.expandedCards`), so a search hit can open it; the
@@ -142,23 +146,34 @@ struct ToyCard: View {
     }
 
     private func setExpanded(_ open: Bool) {
-        if let settings { settings.setCard(toy.id, expanded: open) } else { localExpanded = open }
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.3)) {
+            if let settings { settings.setCard(toy.id, expanded: open) } else { localExpanded = open }
+        }
     }
 
     var body: some View {
         let lit = settings?.highlightedCard == toy.id
-        card
+        head
             .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(tint.opacity(lit ? 0.14 : 0))
-                    .padding(.horizontal, -6)
-                    .padding(.vertical, -3)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(tint.opacity(lit ? 0.16 : 0))
+                    .padding(.horizontal, -8)
+                    .padding(.vertical, -4)
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: lit)
             .id(SettingsStore.cardAnchor(toy.id))
+        if expanded {
+            VStack(alignment: .leading, spacing: 0) {
+                ToyCostLine(toy: toy)
+                toy.controls
+            }
+            .cardBodyStyle()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, SettingsMetrics.xs)
+        }
     }
 
-    @ViewBuilder private var card: some View {
+    @ViewBuilder private var head: some View {
         // Read the observable surface here so the card re-renders on any
         // change; the binding's get returns the value tracked in this
         // body, so the switch can never sit stale.
@@ -167,56 +182,55 @@ struct ToyCard: View {
         let toggle = Binding(get: { isOn }, set: { toy.isOn = $0 })
         // Keep expansion and enablement as sibling controls. Nested actions
         // in a DisclosureGroup label can replace its expansion action.
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .center, spacing: 10) {
-                Button { setExpanded(!expanded) } label: {
-                    HStack(alignment: .center, spacing: 10) {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 10)
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(tint.gradient)
-                            Image(systemName: toy.symbol)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .symbolRenderingMode(.hierarchical)
-                        }
-                        .frame(width: 26, height: 26)
-                        VStack(alignment: .leading, spacing: 1) {
+        HStack(alignment: .center, spacing: SettingsMetrics.m) {
+            Button { setExpanded(!expanded) } label: {
+                HStack(alignment: .center, spacing: SettingsMetrics.m) {
+                    SettingsIconTile(symbol: toy.symbol, tint: tint, size: SettingsMetrics.cardTile)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
                             Text(toy.name)
-                                .fontWeight(.medium)
-                            Text(toy.blurb)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .font(.body.weight(.semibold))
+                                .layoutPriority(1)
+                            if status.showsChip {
+                                StatusPill(status.text, tint: status.tint)
+                            }
                         }
-                        Spacer(minLength: 8)
-                        if status.showsChip {
-                            StatusChip(status: status)
-                        }
+                        Text(toy.blurb)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    DisclosureChevron(open: expanded)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(expanded ? "Hide" : "Show") \(toy.name) settings")
-                Toggle(toy.name, isOn: toggle)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 2)
-            if expanded {
-                ToyCostLine(toy: toy)
-                    .padding(.leading, 20)
-                    .padding(.top, 2)
-                toy.controls
-                    .padding(.leading, 20)
-                    .padding(.top, 2)
-            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(expanded ? "Hide" : "Show") \(toy.name) settings")
+            Toggle(toy.name, isOn: toggle)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .padding(.vertical, SettingsMetrics.xs)
+    }
+}
+
+extension ToyCard {
+    /// Each card's own hue, so a page of cards scans like System
+    /// Settings' sidebar instead of one colour repeated; a card this
+    /// table does not name wears the page's tint.
+    static func tint(for id: String, page: Color) -> Color {
+        switch id {
+        case "menuBar": return Color(nsColor: .systemBlue)
+        case "notch": return Color(nsColor: .systemIndigo)
+        case "dock": return Color(nsColor: .systemTeal)
+        case "agents": return Color(nsColor: .systemPurple)
+        case "data-hoarder": return Color(nsColor: .systemBrown)
+        case "fold": return Color(nsColor: .systemOrange)
+        case "aquarium": return Color(nsColor: .systemCyan)
+        case "notch-buddy": return Color(nsColor: .systemGreen)
+        default: return page
         }
     }
 }
@@ -235,45 +249,12 @@ private struct ToyCostLine: View {
                     .labelStyle(.titleAndIcon)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, SettingsMetrics.s)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.primary.opacity(0.05)))
+                    .padding(.bottom, SettingsMetrics.xs)
                     .accessibilityLabel("Cost: \(line)")
             }
         }
-    }
-}
-
-/// The card's status chip, drawn only when the state has words the
-/// switch beside it cannot say (`ToyStatus.showsChip`). It holds still —
-/// no clock runs for it — and long status text truncates instead of
-/// pushing the toggle out.
-private struct StatusChip: View {
-    let status: ToyStatus
-
-    var body: some View {
-        Text(status.text)
-            .font(.caption)
-            .foregroundStyle(status.tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(status.tint.opacity(0.14), in: Capsule())
-            .lineLimit(1)
-            .truncationMode(.tail)
-    }
-}
-
-/// The page header's mark: "JR" set tight in the page tint's rounded
-/// square, drawn in SwiftUI — no asset.
-struct JRMonogram: View {
-    var tint: Color = Color(red: 0.93, green: 0.30, blue: 0.62)
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(tint.gradient)
-            Text("JR")
-                .font(.system(size: 21, weight: .bold, design: .rounded))
-                .tracking(-1)
-                .foregroundStyle(.white)
-        }
-        .frame(width: 44, height: 44)
     }
 }
