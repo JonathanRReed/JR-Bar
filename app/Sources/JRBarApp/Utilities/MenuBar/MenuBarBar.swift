@@ -786,9 +786,6 @@ final class MenuBarBar {
         if isOpen { close() } else { open() }
     }
 
-    /// Whether the open bar is the keyboard's.
-    var isKeyboardDriven: Bool { isOpen && model.keys != nil }
-
     /// The screen the bar hangs from — the pointer's, so a multi-
     /// display setup opens it where the hand is, falling back to the
     /// display carrying the menu bar.

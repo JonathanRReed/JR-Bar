@@ -205,11 +205,6 @@ final class PaletteModel {
         actionSelection = ((actionSelection + delta) % count + count) % count
     }
 
-    func selectAction(at index: Int) {
-        guard visibleActions.indices.contains(index) else { return }
-        actionSelection = index
-    }
-
     var selectedAction: PaletteAction? {
         let visible = visibleActions
         return visible.indices.contains(actionSelection) ? visible[actionSelection] : nil

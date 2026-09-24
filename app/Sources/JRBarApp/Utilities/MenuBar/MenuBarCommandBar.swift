@@ -465,18 +465,6 @@ enum MenuBarCommands {
                                          confirmation: "Rule on"),
             ])
     }
-
-    /// The section map `hideAll` should write: every listed
-    /// unprotected item → `.hidden`, no other keys. Protected owners
-    /// are skipped — the file can never carry an assignment for the
-    /// clock.
-    nonisolated static func hideAllSections(items: [MenuBarItem]) -> [String: MenuBarItemSection] {
-        var map: [String: MenuBarItemSection] = [:]
-        for item in items where !MenuBarItemLister.isProtected(item) {
-            map[item.id] = .hidden
-        }
-        return map
-    }
 }
 
 extension MenuBarCommand {

@@ -301,9 +301,6 @@ final class MenuBarCombinedItem {
         }
     }
 
-    /// Whether the popover is up — the mirror's highlight follows it.
-    var popoverShown: Bool { popover?.isShown ?? false }
-
     /// The item's face: battery gauge + percent when the machine has a
     /// battery, Wi-Fi when a network is joined, a moon while Focus is
     /// on — one template image so the bar tints it like its own.

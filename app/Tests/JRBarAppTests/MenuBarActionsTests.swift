@@ -186,14 +186,6 @@ struct MenuBarActionsTests {
         #expect(app?.actions.first { $0.id == "show" }?.run() == "Hid shown")
     }
 
-    @Test("hideAll assigns every listed unprotected item and spares the rest")
-    func hideAllSections() {
-        let items = [item("A", x: 600),
-                     item("Sys", owner: "MenuBarAgent", x: 1400)]
-        let map = MenuBarCommands.hideAllSections(items: items)
-        #expect(map == ["A": .hidden])
-    }
-
     // MARK: Hotkeys — model, conflicts, registration seam
 
     @Test("modifier bits round-trip between NSEvent and Carbon")

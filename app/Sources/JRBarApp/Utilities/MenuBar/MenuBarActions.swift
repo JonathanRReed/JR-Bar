@@ -7,17 +7,21 @@ import OSLog
 /// every piece here routes through it. Nothing in the actions files
 /// writes `MenuBarSettings` or touches the hider directly.
 ///
-/// Wiring checklist (see MenuBarActions' doc comment for the flow):
-///   * `menuBarItems` → `MenuBarItemLister.list()`
-///   * `menuBarSections` → `settings().sections`
-///   * `setSection` → the existing `setSection(_:for:)`
+/// How `MenuBarUtility` answers (its extension at the bottom of
+/// MenuBarUtility.swift):
+///   * `menuBarItems` → the live `listedItems`
+///   * `menuBarSections` → each listed item's effective section, so a
+///     concealed item reads hidden
+///   * `setSection` → the card's `setSection(_:for:)`
 ///   * `openItem` → the Item Bar tile's `trigger(_:)`
 ///   * `revealHidden`/`revealFor` → `hider.reveal([.hidden])` +
-///     `reveal.rearm()` (or a `rehideSeconds` override)
-///   * `hideAll`/`showAll` → write `MenuBarCommands.hideAllSections` /
-///     an empty map into `settings().sections`
-///   * `applyProfile` → `MenuBarProfiles.apply(_:to:)` resolved by name
-///   * `cycleProfile` → step through `settings().profiles` wrapping
+///     `reveal.rearm()` (or `rearm(for:)` with the rule's clock)
+///   * `hideAll`/`showAll` → the card's `hideAllListed()` /
+///     `showAllListed()`, which lay the quiet-bar or show-everything
+///     overlay over the curation and never touch the section map
+///   * `applyProfile` → `applyProfile(id:)`, resolved by name
+///   * `cycleProfile` → `MenuBarProfiles.cycled` from the active
+///     profile, through the built-in "None"
 @MainActor
 protocol MenuBarActionsDelegate: AnyObject {
     /// The live listing, for the palette's commands.
