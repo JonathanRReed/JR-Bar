@@ -352,9 +352,10 @@ struct SettingsRenderProofTests {
     // MARK: lane dock
 
     /// The Dock card's Appearance group with the spacing between stops
-    /// and the glass 12 pt off the Dock: the Custom tag beside the
-    /// segmented stops and the live sample at that spacing and gap, in
-    /// both appearances. The default card is `card-dock-*` above.
+    /// and the glass 12 pt off the Dock: no stop lit, the subtitle
+    /// naming the value with the control still beside the title, and the
+    /// live sample at that spacing and gap, in both appearances. The
+    /// default card is `card-dock-*` above.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the Dock card PNGs"))
     func dockCardAppearance() throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)

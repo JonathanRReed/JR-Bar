@@ -94,6 +94,14 @@ import Testing
         }
     }
 
+    @MainActor @Test func theSpacingRowNamesAValueBetweenTheStops() {
+        let onStop = DockUtilityControls.spacingSubtitle(0.6)
+        #expect(onStop.hasSuffix("Standard is the roomier look it had before."))
+        let between = DockUtilityControls.spacingSubtitle(0.85)
+        #expect(between.hasSuffix("Custom: 85%, set with Fine spacing."), "\(between)")
+        #expect(between.hasPrefix("The air around the cards inside the preview."))
+    }
+
     @Test func aScaleThatIsNotANumberIsStandard() {
         #expect(DockPreviewMetrics.scaled(.nan) == DockPreviewMetrics.standard)
     }

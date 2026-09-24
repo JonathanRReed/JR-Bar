@@ -95,14 +95,14 @@ struct DockUtilityControls: View {
             }
             .disabled(utility.enhance.preferences.previewTrigger == .middleClick)
 
-            CardSectionHeader("Appearance")
-            appearance
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
                              subtitle: "A capture of each window, kept for half a minute. Needs Screen Recording, and a fresh capture flashes macOS's recording dot; off shows icon and title cards.")
             }
 
-            CardSectionHeader("More")
+            CardSectionHeader("Appearance")
+            appearance
+
             DisclosureGroup(isExpanded: $showPreviewOptions) {
                 previewOptions
             } label: {
@@ -238,29 +238,19 @@ struct DockUtilityControls: View {
                           coversLabel: prefs.coverDockLabel)
             .frame(maxWidth: .infinity)
             .padding(.vertical, SettingsMetrics.s)
+        // Between the stops no segment is lit and the subtitle names the
+        // value, so the control keeps its place beside the title.
         LabeledContent {
-            HStack(spacing: 8) {
-                if spacingStop.wrappedValue == nil {
-                    Text("Custom")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.primary.opacity(0.08)))
-                        .help("Set with Fine spacing, under More preview options")
+            Picker(selection: spacingStop) {
+                ForEach(DockPreviewSpacing.allCases, id: \.self) { stop in
+                    Text(stop.title).tag(Optional(stop))
                 }
-                Picker(selection: spacingStop) {
-                    ForEach(DockPreviewSpacing.allCases, id: \.self) { stop in
-                        Text(stop.title).tag(Optional(stop))
-                    }
-                } label: { EmptyView() }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-            }
+            } label: { EmptyView() }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
         } label: {
-            SettingLabel(title: "Spacing",
-                         subtitle: "The air around the cards inside the preview. Standard is the roomier look it had before.")
+            SettingLabel(title: "Spacing", subtitle: Self.spacingSubtitle(prefs.previewSpacing))
         }
         LabeledContent {
             HStack(spacing: 10) {
@@ -290,7 +280,7 @@ struct DockUtilityControls: View {
                 }
             } label: {
                 SettingLabel(title: "Fine spacing",
-                             subtitle: "The spacing between the stops: 60 % is Tight, 100 % Standard, 140 % Roomy. The ⌥⇥ switcher follows it too.")
+                             subtitle: "The spacing between the stops: 60% is Tight, 100% Standard, 140% Roomy. The ⌥⇥ switcher follows it too.")
             }
             Toggle(isOn: liveCard) {
                 SettingLabel(title: "Live card under the pointer",
@@ -443,6 +433,16 @@ struct DockUtilityControls: View {
     /// "60%" — the fine spacing's readout.
     static func percent(_ scale: Double) -> String {
         "\(Int((scale * 100).rounded()))%"
+    }
+
+    /// The Spacing row's subtitle: what the knob does, and — between the
+    /// stops, where no segment is lit — the value Fine spacing set.
+    static func spacingSubtitle(_ scale: Double) -> String {
+        let lead = "The air around the cards inside the preview."
+        guard DockPreviewSpacing.stop(for: scale) == nil else {
+            return "\(lead) Standard is the roomier look it had before."
+        }
+        return "\(lead) Custom: \(percent(scale)), set with Fine spacing."
     }
 
     /// The stop the spacing sits on; nil between stops (Custom). Picking
