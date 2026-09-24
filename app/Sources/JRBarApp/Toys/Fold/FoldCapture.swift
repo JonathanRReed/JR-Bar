@@ -67,8 +67,16 @@ enum FoldCaptureError: LocalizedError {
     }
 }
 
-/// The Portal fold's two ScreenCaptureKit streams on the built-in
-/// display (`CGDisplayIsBuiltin`):
+/// The fold's ScreenCaptureKit streams on the built-in display
+/// (`CGDisplayIsBuiltin`).
+///
+/// The Duo look (`dual: false`) needs one picture and nothing else: a
+/// single **full** stream, no far wall and no window-list poll. It
+/// keeps JR-Bar's own menu-bar pieces — the icon mirror, the Screen Bar
+/// — through `exceptingWindows`, so the whole bar folds together the
+/// way the Duo's status bar does.
+///
+/// The Room look (`dual: true`) runs two:
 ///
 /// - **full** — the desktop as it is, minus JR-Bar itself: the source
 ///   the window cards are cut from and the Reduce-Motion fallback.
@@ -76,11 +84,12 @@ enum FoldCaptureError: LocalizedError {
 ///   application's windows excluded, so the wallpaper (and any
 ///   unowned system surface) is what shows behind the cards.
 ///
-/// Both run at 60 fps, BGRA sRGB, no audio, no cursor (cursor motion
-/// would mint frames nobody asked for), complete frames only, capped at
-/// 2560 px on the long edge — the fold defocuses the picture anyway.
-/// A timer polls the on-screen window list into `PortalDepth` cards at
-/// 4 Hz; the card layout only changes when a window does.
+/// Every stream runs at 60 fps, BGRA sRGB, no audio, no cursor (cursor
+/// motion would mint frames nobody asked for), complete frames only,
+/// capped at 2560 px on the long edge — the fold defocuses the picture
+/// anyway. In the Room a timer polls the on-screen window list into
+/// `PortalDepth` cards at 4 Hz; the card layout only changes when a
+/// window does.
 ///
 /// Lifecycle belongs to `FoldArming`: `FoldToy` starts this object when
 /// the lid enters the arming band and stops it on cooldown expiry or a
@@ -88,6 +97,8 @@ enum FoldCaptureError: LocalizedError {
 /// fold can actually be on screen.
 @MainActor
 final class FoldCapture {
+    /// Two streams and the card poll (the Room), or one stream (the Duo).
+    let dual: Bool
     private let fullSink = Sink()
     private let farSink = Sink()
     private var fullStream: SCStream?
@@ -128,7 +139,8 @@ final class FoldCapture {
     private var displayID: CGDirectDisplayID = 0
     private var lastCardRects: [CGRect] = []
 
-    init() {
+    init(dual: Bool = true) {
+        self.dual = dual
         fullSink.onFrame = { [weak self] buffer in
             let box = FrameBox(buffer)
             Task { @MainActor [weak self] in
@@ -191,39 +203,98 @@ final class FoldCapture {
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.colorSpaceName = CGColorSpace.sRGB
 
-        // The room's two walls: everything minus ourselves, and the far
-        // wall — the display with every application's windows excluded,
+        // The Duo's one picture keeps our own menu-bar pieces; the
+        // Room's near stream is everything minus ourselves, and its far
+        // wall the display with every application's windows excluded,
         // which is the wallpaper and any unowned system surface.
+        let barWindows = dual ? [] : Self.ownBarWindows(in: content, display: display)
         let fullFilter = SCContentFilter(
-            display: display, excludingApplications: [ownApp], exceptingWindows: [])
-        let farFilter = SCContentFilter(
-            display: display, excludingApplications: content.applications,
-            exceptingWindows: [])
+            display: display, excludingApplications: [ownApp], exceptingWindows: barWindows)
         let outputQueue = DispatchQueue(label: "jrbar.fold.capture")
         let full = SCStream(filter: fullFilter, configuration: config, delegate: fullSink)
         try full.addStreamOutput(fullSink, type: .screen, sampleHandlerQueue: outputQueue)
-        let far = SCStream(filter: farFilter, configuration: config, delegate: farSink)
-        try far.addStreamOutput(farSink, type: .screen, sampleHandlerQueue: outputQueue)
-        try await full.startCapture()
-        do {
-            try await far.startCapture()
-        } catch {
-            // The far wall is the nice-to-have half: if its stream
-            // refuses (some systems balk at an empty application set)
-            // the full texture stands in and the fold still runs.
-            FoldLog.log.error("capture: far stream failed, using full as far wall: \(error.localizedDescription, privacy: .public)")
+        var far: SCStream?
+        if dual {
+            let farFilter = SCContentFilter(
+                display: display, excludingApplications: content.applications,
+                exceptingWindows: [])
+            let stream = SCStream(filter: farFilter, configuration: config, delegate: farSink)
+            try stream.addStreamOutput(farSink, type: .screen, sampleHandlerQueue: outputQueue)
+            far = stream
         }
-        FoldLog.log.notice("capture: streams started (60fps, dual)")
+        try await full.startCapture()
+        if let far {
+            do {
+                try await far.startCapture()
+            } catch {
+                // The far wall is the nice-to-have half: if its stream
+                // refuses (some systems balk at an empty application set)
+                // the full texture stands in and the fold still runs.
+                FoldLog.log.error("capture: far stream failed, using full as far wall: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if dual {
+            FoldLog.log.notice("capture: streams started (60fps, dual)")
+        } else {
+            FoldLog.log.notice("capture: stream started (60fps, one picture, \(barWindows.count, privacy: .public) bar windows kept)")
+        }
         if stopRequested {
             // A stop landed while start was suspended: close what just
             // opened instead of storing it where nobody can reach it.
             try? await full.stopCapture()
-            try? await far.stopCapture()
+            if let far { try? await far.stopCapture() }
             return
         }
         fullStream = full
         farStream = far
-        startLayoutPolling()
+        if dual { startLayoutPolling() }
+    }
+
+    /// JR-Bar's own windows that live in the menu bar — the icon mirror,
+    /// the Screen Bar — so the Duo's picture keeps the whole bar. The
+    /// fold's own overlay never qualifies: it sits far above the bar
+    /// levels, and `sharingType = .none` keeps it out regardless.
+    private static func ownBarWindows(in content: SCShareableContent,
+                                      display: SCDisplay) -> [SCWindow] {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let own = content.windows.filter { $0.owningApplication?.processID == pid }
+        let facts = own.map {
+            BarWindowFacts(id: $0.windowID, frame: $0.frame, layer: $0.windowLayer)
+        }
+        let keep = Set(barWindowIDs(facts, displayFrame: CGDisplayBounds(display.displayID),
+                                    barHeight: menuBarHeight()))
+        return own.filter { keep.contains($0.windowID) }
+    }
+
+    /// One window as the bar rule sees it: its id, its frame in global
+    /// top-left points, its window level.
+    struct BarWindowFacts: Equatable, Sendable {
+        var id: CGWindowID
+        var frame: CGRect
+        var layer: Int
+    }
+
+    /// The bar rule, pure: a window at a menu-bar level (the main menu
+    /// through two above the status bar) that sits inside the top band
+    /// of the display, `barHeight` tall plus a couple of points.
+    nonisolated static func barWindowIDs(_ windows: [BarWindowFacts], displayFrame: CGRect,
+                                         barHeight: Double) -> [CGWindowID] {
+        let lowest = Int(CGWindowLevelForKey(.mainMenuWindow))
+        let highest = Int(CGWindowLevelForKey(.statusWindow)) + 2
+        let band = CGRect(x: displayFrame.minX, y: displayFrame.minY - 1,
+                          width: displayFrame.width, height: barHeight + 3)
+        return windows.filter { w in
+            (lowest...highest).contains(w.layer) && !w.frame.isEmpty
+                && band.contains(w.frame) && w.frame.intersects(displayFrame)
+        }.map(\.id)
+    }
+
+    /// The built-in screen's menu-bar height in points, with a floor for
+    /// an auto-hidden bar.
+    private static func menuBarHeight() -> Double {
+        let screen = FoldOverlayWindow.builtinScreen()
+        let inset = screen.map { $0.frame.maxY - $0.visibleFrame.maxY } ?? 0
+        return max(Double(inset), Double(NSStatusBar.system.thickness), 24)
     }
 
     func stop() async {

@@ -30,10 +30,19 @@ import JRBarCore
 ///   retraces the close; only a gate snap ever sees the rate limit.
 /// - `PortalDepth` — window z-order → depth buckets and normalized card
 ///   rects for the shader's layered room.
-/// - `FoldPortalModel` — the settings+delta → shader-params mapping:
-///   the Perspective/Blur/Shade/Frost knobs, the activation-edge
-///   opacity ramp and the dissolve to black over the last ~20° of
+/// - `FoldPortalModel` — the Room look's settings+delta → shader-params
+///   mapping: the Perspective/Blur/Shade/Frost knobs, the activation-
+///   edge opacity ramp and the dissolve to black over the last ~20° of
 ///   travel.
+/// - `FoldDuoModel` — the Duo look: one picture held still in space
+///   while the glass swings through it, softening and darkening away
+///   from the hinge until a seated eye loses the glass.
+/// - `EdgeInterpolator` — draws the 10 Hz sensor one period in the
+///   past, gliding between its edges, so a steady close moves at a
+///   steady speed instead of pulsing ten times a second.
+/// - `FirstFrameCatchUp` and `FoldBlackout` — the Duo's ends: no pop
+///   when the first captured frame lands late, and black held across
+///   the closed-lid pause so a reopen unfolds from black.
 
 // MARK: - SlewTracker
 
@@ -149,6 +158,10 @@ struct MoveAnchor: Sendable {
     var settleAfter: TimeInterval = 0.4
     /// The stillness deadband in degrees — the sensor's jitter window.
     var tolerance = 1.5
+    /// How far off the anchor counts as a real move — what arms the
+    /// capture. nil uses `tolerance`; the Duo sets 3° so a nudge of the
+    /// lid never flashes the Screen Recording indicator.
+    var armThreshold: Double?
     /// How far below the anchor counts as folded: past this the
     /// reference freezes until the lid returns.
     var flightMargin = 3.0
@@ -187,7 +200,7 @@ struct MoveAnchor: Sendable {
     /// stay); parked at rest does not.
     func moving(_ angle: Double) -> Bool {
         guard angle.isFinite, let a = anchor else { return false }
-        return abs(angle - a) > tolerance
+        return abs(angle - a) > (armThreshold ?? tolerance)
     }
 
     /// Seat the anchor directly — the dwell pause hands the desktop
@@ -566,4 +579,363 @@ enum FoldPortalModel {
               usedBuckets: usedBuckets, reduceMotion: reduceMotion)
         return p
     }
+}
+
+// MARK: - FoldDuoModel
+
+/// The Duo look: the iPhone Duo's fold on a Mac lid (docs/TOYS.md §Fold).
+///
+/// The Duo keeps its picture fixed in space while the glass swings
+/// through it. Here that picture is the desktop as a seated eye saw it
+/// on the resting lid: every pixel of the moving glass shows the point
+/// of the resting plane that lies behind it on a ray from the eye. Seen
+/// from the seat the desktop neither moves nor shrinks; only the glass
+/// silhouette drops. On the glass itself this is a stretch that grows
+/// toward the top.
+///
+/// Away from the hinge the picture softens and darkens, measured in the
+/// picture's own rows (e = 0 at the hinge row, 1 at the far edge): blur
+/// σ grows as e^1.35, the hinge-side fifth never darkens, and the far
+/// edge is black by half-closed. Both ride an eased `motion` with zero
+/// slope at the start, so the first degrees look like nothing at all.
+/// The whole glass fades to black as a seated eye loses it edge-on, so
+/// the fold is black well before the closed-lid pause.
+///
+/// Units: one screen height H. The frame is the keyboard's side view —
+/// forward toward the person, up from the deck — with the hinge at the
+/// origin. The lid at angle θ runs along u(θ) = (cos θ, sin θ) and its
+/// screen faces n(θ) = (sin θ, −cos θ). Angles in the API are degrees.
+enum FoldDuoModel {
+    /// The seated eye at the default Perspective: 2.6 H toward the
+    /// person and 2.0 H up (about 51 cm and 39 cm on a 14-inch panel).
+    static let baseEye = SIMD2<Double>(2.6, 2.0)
+    /// σ at the far edge at full motion and Blur 1, in screen heights.
+    /// 0.10 H is about the Duo's own softness; the default 0.6 sits a
+    /// notch under it.
+    static let blurScale = 0.10
+    /// The darkening gain at Shade 1. The default 0.67 gives the Duo's
+    /// "twice the transition": the far edge is black once motion ≥ 0.5.
+    static let darkScale = 3.0
+    /// The hinge-side share of the picture that never darkens.
+    static let darkStart = 0.2
+    /// The Duo's falloff exponent for blur and darkening alike.
+    static let gamma = 1.35
+    /// The end fade runs from black at edge-on + 2° to clear at + 22°.
+    static let endFadeFrom = 2.0
+    static let endFadeSpan = 20.0
+    /// Degrees of travel over which the overlay fades in at the start.
+    static let alphaSpan = 2.0
+    /// Seconds the overlay takes to fade in the first time it orders in
+    /// for a gesture — a late first frame never pops.
+    static let orderInDuration: TimeInterval = 0.12
+    /// Gaussian pyramid levels the renderer builds.
+    static let pyramidLevels = 8
+    /// Pyramid level L, read as a cubic B-spline, carries σ ≈ 0.82·2^L
+    /// base pixels: the levels' own 5-tap binomials add (4^L − 1)/3 px²
+    /// and the B-spline another 4^L/3.
+    static let levelSigma = 0.82
+
+    static func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
+        guard edge1 != edge0 else { return x < edge0 ? 0 : 1 }
+        let t = min(1, max(0, (x - edge0) / (edge1 - edge0)))
+        return t * t * (3 - 2 * t)
+    }
+
+    static func radians(_ degrees: Double) -> Double { degrees * .pi / 180 }
+
+    /// The eye for a Perspective (0…1): the default 0.6 is the seated
+    /// eye; lower sits further back (flatter), higher leans in.
+    static func eye(perspective: Double) -> SIMD2<Double> {
+        let p = perspective.isFinite ? min(1, max(0, perspective)) : 0.6
+        return baseEye * (1.6 - p)
+    }
+
+    /// The lid angle, in degrees, at which the eye sees the glass
+    /// edge-on — below it the eye is behind the screen. 37.6° for the
+    /// default eye.
+    static func edgeOn(eye: SIMD2<Double>) -> Double {
+        atan2(eye.y, eye.x) * 180 / .pi
+    }
+
+    /// The angle the glass is drawn as if it stood at: the real lid at a
+    /// full hold, the resting lid (the identity) at 0.
+    static func heldAngle(theta: Double, reference: Double, hold: Double) -> Double {
+        let k = hold.isFinite ? min(1, max(0, hold)) : 1
+        return reference - k * (reference - theta)
+    }
+
+    /// Where a panel pixel samples the picture. `x` is lateral from the
+    /// screen's centre and `h` the height up the glass, both in screen
+    /// heights; `u`/`v` are picture uv (v = 0 at the top, like the
+    /// capture). Invalid when the eye is behind the glass or the resting
+    /// plane — that pixel is black.
+    struct Source: Equatable {
+        var u: Double
+        var v: Double
+        var valid: Bool
+    }
+
+    static func source(x: Double, h: Double, theta: Double, reference: Double,
+                       hold: Double, eye: SIMD2<Double>, aspect: Double) -> Source {
+        let thE = radians(heldAngle(theta: theta, reference: reference, hold: hold))
+        let th0 = radians(reference)
+        let u0 = SIMD2<Double>(cos(th0), sin(th0))
+        let n0 = SIMD2<Double>(sin(th0), -cos(th0))
+        let nE = SIMD2<Double>(sin(thE), -cos(thE))
+        let w = h * SIMD2<Double>(cos(thE), sin(thE))
+        let en0 = (eye * n0).sum()
+        let den = ((w - eye) * n0).sum()
+        let valid = en0 > 0 && (eye * nE).sum() > 0 && den < -1e-4
+        let t = valid ? -en0 / den : 1
+        let hit = eye + t * (w - eye)
+        return Source(u: t * x / aspect + 0.5, v: 1 - (hit * u0).sum(), valid: valid)
+    }
+
+    /// The eased transition, 0…1: smoothstep over `fadeLength` of the
+    /// travel from the reference down to the closed line — zero slope at
+    /// the start, done by half-closed at the default 0.55.
+    static func motion(delta: Double, reference: Double, fadeLength: Double) -> Double {
+        guard delta.isFinite, delta > 0 else { return 0 }
+        let span = FoldSettings.clampFadeLength(fadeLength) * max(1, reference - FoldPause.closedAngle)
+        return smoothstep(0, 1, delta / span)
+    }
+
+    /// Blur σ, in screen heights, at picture row `e`.
+    static func sigma(e: Double, motion: Double, blur: Double) -> Double {
+        let b = blur.isFinite ? min(1, max(0, blur)) : 0
+        return blurScale * b * motion * pow(min(1, max(0, e)), gamma)
+    }
+
+    /// The darkening, 0…1, at picture row `e`.
+    static func darkening(e: Double, motion: Double, shade: Double) -> Double {
+        let g = min(1, max(0, (e - darkStart) / (1 - darkStart)))
+        let gain = darkScale * (shade.isFinite ? min(1, max(0, shade)) : 0)
+        return min(1, gain * motion * pow(g, gamma))
+    }
+
+    /// The fade to black as the seated eye loses the glass: 1 (black)
+    /// at or under edge-on + 2°, 0 from edge-on + 22° up.
+    static func endFade(theta: Double, eye: SIMD2<Double>) -> Double {
+        let edge = edgeOn(eye: eye)
+        return 1 - smoothstep(edge + endFadeFrom, edge + endFadeFrom + endFadeSpan, theta)
+    }
+
+    /// The overlay's own alpha over the first degrees of travel.
+    static func alpha(delta: Double) -> Double {
+        guard delta.isFinite else { return 0 }
+        return min(1, max(0, delta / alphaSpan))
+    }
+
+    /// The order-in fade, 0…1, `elapsed` seconds after the overlay first
+    /// ordered in for this gesture.
+    static func orderInRamp(elapsed: TimeInterval) -> Double {
+        smoothstep(0, orderInDuration, elapsed)
+    }
+
+    /// The pyramid level that carries `sigmaPixels` of blur.
+    static func lod(sigmaPixels: Double, levels: Int = pyramidLevels) -> Double {
+        let raw = log2(max(sigmaPixels, 1e-4) / levelSigma)
+        return min(Double(max(1, levels) - 1), max(0, raw))
+    }
+
+    /// The Duo's uniforms, written in place every vsync tick; like the
+    /// Room's `apply`, only the animatable fields — the upload's size and
+    /// level count and the encode's aspect survive. Reduce Motion keeps
+    /// the picture on the glass with no blur: it darkens only.
+    static func apply(to p: inout FoldRenderer.Params, reference: Double, theta: Double,
+                      hold: Double, perspective: Double, blur: Double, shade: Double,
+                      fadeLength: Double, reduceMotion: Bool) {
+        let delta = max(0, reference - theta)
+        let e = eye(perspective: perspective)
+        let m = motion(delta: delta, reference: reference, fadeLength: fadeLength)
+        p.delta = Float(radians(delta))
+        p.thetaRef = Float(radians(reference))
+        p.theta = Float(radians(theta))
+        p.eyeF = Float(e.x)
+        p.eyeU = Float(e.y)
+        p.hold = reduceMotion ? 0 : Float(hold.isFinite ? min(1, max(0, hold)) : 1)
+        p.motion = Float(m)
+        p.blurMax = reduceMotion ? 0 : Float(blurScale * (blur.isFinite ? min(1, max(0, blur)) : 0))
+        p.darkGain = Float(darkScale * (shade.isFinite ? min(1, max(0, shade)) : 0))
+        p.endFade = Float(endFade(theta: theta, eye: e))
+        p.opacity = Float(alpha(delta: delta))
+        p.blackout = 0
+        p.mode = 0
+    }
+
+    /// The closed-lid hold: flat black, nothing sampled, fully opaque.
+    static func applyBlackout(to p: inout FoldRenderer.Params) {
+        p.blackout = 1
+        p.opacity = 1
+    }
+}
+
+// MARK: - EdgeInterpolator
+
+/// The 10 Hz hinge sensor, drawn one period in the past.
+///
+/// The sensor reports whole degrees about every 100 ms, so a steady
+/// close arrives as a staircase. A tracker chasing each step speeds up
+/// right after it and slows before the next — a ±25 % pulse ten times a
+/// second that reads as judder. This draws the lid `delay` in the past
+/// instead, straight between the edges it has already seen, so the
+/// visible speed is the lid's real speed, at the same ~150 ms latency
+/// the old path had. Past the last edge it holds; a reversal is just
+/// another segment. A lid leaving rest back-dates its first segment by
+/// one period, so motion starts at once instead of stretching across
+/// the whole rest.
+struct EdgeInterpolator: Sendable {
+    struct Edge: Equatable, Sendable {
+        var at: TimeInterval
+        var value: Double
+    }
+
+    /// The sensor's own cadence.
+    var period: TimeInterval = 0.1
+    /// How far in the past the lid is drawn.
+    var delay: TimeInterval = 0.1
+    /// The newest edges, oldest first. Four covers the delay with room
+    /// for a poll's timing wobble.
+    private(set) var edges: [Edge] = []
+    private static let keep = 4
+
+    init() {}
+
+    mutating func reset() { edges = [] }
+
+    /// A reading. Repeats are not edges; the first reading seats the
+    /// lid where it is.
+    mutating func feed(_ value: Double, at t: TimeInterval) {
+        guard value.isFinite, t.isFinite else { return }
+        guard let last = edges.last else {
+            edges = [Edge(at: t - period, value: value), Edge(at: t, value: value)]
+            return
+        }
+        guard value != last.value else { return }
+        guard t > last.at else {
+            // Out of order (a clock hiccup): take the value, keep time.
+            edges[edges.count - 1].value = value
+            return
+        }
+        if t - last.at > period * 1.5 {
+            // Leaving rest: the lid began to move about one period
+            // before this edge showed it.
+            edges.append(Edge(at: t - period, value: last.value))
+        }
+        edges.append(Edge(at: t, value: value))
+        if edges.count > Self.keep { edges.removeFirst(edges.count - Self.keep) }
+    }
+
+    /// The lid to draw at host time `t`, or nil before any reading.
+    func value(at t: TimeInterval) -> Double? {
+        guard let first = edges.first, let last = edges.last else { return nil }
+        let q = t - delay
+        if q <= first.at { return first.value }
+        if q >= last.at { return last.value }
+        for i in 1..<edges.count where q <= edges[i].at {
+            let a = edges[i - 1], b = edges[i]
+            let span = b.at - a.at
+            guard span > 0 else { return b.value }
+            return a.value + (b.value - a.value) * (q - a.at) / span
+        }
+        return last.value
+    }
+
+    /// True once the drawn lid has reached the newest edge — nothing
+    /// left to glide until the sensor speaks again.
+    func settled(at t: TimeInterval) -> Bool {
+        guard let last = edges.last else { return true }
+        return t - delay >= last.at
+    }
+}
+
+// MARK: - FirstFrameCatchUp
+
+/// The movement fold's first-frame ease. The capture starts with the
+/// gesture and its first frame lands 200–300 ms later, by which time a
+/// quick close is already 10–20° in. Jumping straight there pops; this
+/// eases the displayed delta from 0 up to the live one over 150 ms
+/// instead, and then steps aside for good.
+struct FirstFrameCatchUp: Sendable {
+    static let duration: TimeInterval = 0.15
+    /// Below this much travel (radians) there is nothing to catch up.
+    static let threshold = 2.0 * Double.pi / 180
+    private(set) var startedAt: TimeInterval?
+
+    init() {}
+
+    var active: Bool { startedAt != nil }
+
+    mutating func reset() { startedAt = nil }
+
+    /// The first frame just landed with `liveDelta` already on the lid.
+    mutating func begin(liveDelta: Double, at t: TimeInterval) {
+        guard liveDelta.isFinite, liveDelta > Self.threshold, t.isFinite else { return }
+        startedAt = t
+    }
+
+    /// The share of the live delta to show at `t`; 1 once done, and
+    /// the ease retires itself there.
+    mutating func scale(at t: TimeInterval) -> Double {
+        guard let s = startedAt else { return 1 }
+        let u = (t - s) / Self.duration
+        if u >= 1 || !u.isFinite {
+            startedAt = nil
+            return 1
+        }
+        return FoldDuoModel.smoothstep(0, 1, max(0, u))
+    }
+}
+
+// MARK: - FoldBlackout
+
+/// The Duo's closed-lid hold. By the time the lid reaches the closed
+/// line the Duo picture is already black; ordering the overlay out there
+/// would flash the sharp desktop, and a reopen would pop straight to it.
+/// So the overlay stays up as a flat black pass with capture stopped,
+/// and lets go on the first of: `watchdog` seconds (restarted once when
+/// the lid reopens, so the reopen gets its own time to land a frame),
+/// the lid back past `releaseAngle` with a fresh frame in hand (the fold
+/// then unfolds from black), or anything that means nobody is looking
+/// at this desktop — the owner checks sleep, lock and session itself.
+/// It never draws above the lock screen and never uses private spaces.
+struct FoldBlackout: Sendable {
+    static let watchdog: TimeInterval = 3
+    /// 10° above the closed line.
+    static let releaseAngle = FoldPause.closedAngle + 10
+
+    private(set) var active = false
+    /// When the hold lets go on its own.
+    private(set) var deadline: TimeInterval = 0
+    private var reopened = false
+
+    init() {}
+
+    /// Start holding black at `now`; a no-op while already holding.
+    mutating func hold(at now: TimeInterval) {
+        guard !active else { return }
+        active = true
+        reopened = false
+        deadline = now + Self.watchdog
+    }
+
+    /// A lid reading while holding: the first one above the closed line
+    /// restarts the watchdog, once.
+    mutating func note(angle: Double?, at now: TimeInterval) {
+        guard active, !reopened, let a = angle, a.isFinite,
+              a > FoldPause.closedAngle else { return }
+        reopened = true
+        deadline = now + Self.watchdog
+    }
+
+    func expired(at now: TimeInterval) -> Bool { active && now >= deadline }
+
+    /// The lid is open enough and a frame captured after the close is
+    /// in hand: the fold can take over from black.
+    func releases(angle: Double?, freshFrame: Bool) -> Bool {
+        guard active, freshFrame, let a = angle, a.isFinite else { return false }
+        return a >= Self.releaseAngle
+    }
+
+    mutating func end() { self = FoldBlackout() }
 }
