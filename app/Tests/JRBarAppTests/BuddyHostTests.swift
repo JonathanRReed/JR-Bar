@@ -36,6 +36,7 @@ struct BuddyHostTests {
         toy.dock()
         #expect(sizes().floating == .zero)
         toy.tuckAway()
+        toy.finishTuck()
         let asleep = sizes()
         #expect(asleep.floating == .zero && asleep.docked == .zero)
     }

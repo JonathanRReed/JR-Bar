@@ -85,8 +85,14 @@ final class NotchBuddyToy: Toy {
     var isOn: Bool {
         get { (store?.state.notchBuddy.enabled ?? false) && !isTucked }
         set {
+            let wasTucked = isTucked
+            let comeBack = comeBackScale()
+            cancelTuck()
             store?.state.notchBuddy.enabled = newValue
-            if newValue { store?.state.notchBuddy.tucked = false }
+            if newValue {
+                store?.state.notchBuddy.tucked = false
+                if wasTucked { arrive(fromScale: comeBack) }
+            }
             onVisibilityChange?()
         }
     }
@@ -114,10 +120,50 @@ final class NotchBuddyToy: Toy {
 
     /// The floating buddy's walkabout (`BuddyStroll`) is allowed.
     var takesWalks: Bool { store?.state.notchBuddy.walkabout ?? true }
-    /// Which way it faces while strolling along an edge (+1 right, -1
-    /// left); nil the rest of the time. The free panel sets it at each
-    /// leg, never per frame.
-    var strollHeading: Double?
+    var takesWalksBinding: Binding<Bool> {
+        Binding(get: { self.takesWalks },
+                set: { self.store?.state.notchBuddy.walkabout = $0 })
+    }
+
+    /// About how many minutes between walks — the card's dial.
+    var walkEvery: Double {
+        NotchBuddySettings.clampedWalkEvery(store?.state.notchBuddy.walkEvery
+                                            ?? NotchBuddySettings.defaultWalkEvery)
+    }
+    var walkEveryBinding: Binding<Double> {
+        Binding(get: { self.walkEvery },
+                set: {
+                    let minutes = NotchBuddySettings.clampedWalkEvery($0.rounded())
+                    guard minutes != self.store?.state.notchBuddy.walkEvery else { return }
+                    self.store?.state.notchBuddy.walkEvery = minutes
+                })
+    }
+
+    /// Which way it is heading while strolling along an edge (+1 right,
+    /// -1 left); nil the rest of the time. This is the target: the figure
+    /// eases toward it through `turn`, so a change never flips the lean
+    /// or the eyes in one frame. The free panel sets it at each leg,
+    /// never per frame, through `setStrollHeading`.
+    private(set) var strollHeading: Double?
+    /// The eased turn toward `strollHeading`. Untracked: the view's own
+    /// timeline draws it every frame, and a change keeps that timeline
+    /// at full rate (`stayLively`).
+    @ObservationIgnored private(set) var turn = BuddyTurn()
+
+    /// A new heading to walk (nil: back to the mood's own patrol). The
+    /// turn starts from wherever the figure is drawn now.
+    func setStrollHeading(_ heading: Double?, at now: Date = Date()) {
+        guard heading != strollHeading else { return }
+        strollHeading = heading
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if turn.retarget(heading, at: now, still: still) { stayLively(from: now) }
+    }
+
+    /// The turn as drawn at `now`, or nil while the figure is simply in
+    /// its mood's own patrol.
+    func turnFrame(at now: Date, still: Bool) -> BuddyTurn.Frame? {
+        turn.isResting(at: now) ? nil : turn.frame(at: now, still: still)
+    }
 
     /// Where the buddy is in life, from the crumbs it has eaten.
     var stage: BuddyStage {
@@ -235,9 +281,51 @@ final class NotchBuddyToy: Toy {
     }
 
     /// Where a drop landed it — the HUD moves it to the free panel.
-    func parkFree(at point: CGPoint) {
+    /// Leaving the notch is a hand-off: the free panel takes over in
+    /// place (`takeHandoff`), so the pet doesn't blink out and back.
+    /// `figureCentre` is where the docked figure was drawn, in screen
+    /// points, when the caller knows it.
+    func parkFree(at point: CGPoint, figureCentre: CGPoint? = nil, now: Date = Date()) {
+        if !isFree, isOn { pendingHandoff = (now, figureCentre) }
         store?.state.notchBuddy.freePosition = BuddySpot(point)
         onVisibilityChange?()
+    }
+
+    // MARK: Arriving
+
+    /// A docked-to-floating hand-off waiting for the free panel: when it
+    /// was asked for and where the docked figure stood.
+    @ObservationIgnored private var pendingHandoff: (at: Date, figureCentre: CGPoint?)?
+    /// The arrival the figure is drawing, if any (`BuddyArrival`).
+    @ObservationIgnored private var arrivalStart: (fromScale: Double, drift: CGSize, at: Date)?
+    /// How long a hand-off waits for the free panel to claim it.
+    static let handoffWindow: TimeInterval = 1
+    /// Back from a nap, it pops up from this share of its size.
+    static let wakeScale: Double = 0.55
+
+    /// The free panel claims a fresh hand-off, once: nil when there is
+    /// none, or it went stale.
+    func takeHandoff(at now: Date = Date()) -> (at: Date, figureCentre: CGPoint?)? {
+        defer { pendingHandoff = nil }
+        guard let waiting = pendingHandoff,
+              now.timeIntervalSince(waiting.at) < Self.handoffWindow else { return nil }
+        return waiting
+    }
+
+    /// Grow in from `fromScale` of its size, drifting in by `drift`
+    /// (screen points, SwiftUI's y-down) over `BuddyArrival.duration`.
+    func arrive(fromScale: Double, drift: CGSize = .zero, at now: Date = Date()) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { arrivalStart = nil; return }
+        arrivalStart = (fromScale, drift, now)
+        stayLively(from: now)
+    }
+
+    /// The arrival as drawn at `now`, or nil once it has landed.
+    func arrival(at now: Date) -> BuddyArrival? {
+        guard let start = arrivalStart else { return nil }
+        let drawn = BuddyArrival(fromScale: start.fromScale, drift: start.drift,
+                                 age: now.timeIntervalSince(start.at))
+        return drawn.isOver ? nil : drawn
     }
 
     /// Back under the notch — the menu's "Dock at the notch" and a drop
@@ -259,11 +347,69 @@ final class NotchBuddyToy: Toy {
     /// "Tuck away": hidden until the next thing happening or a card
     /// re-enable. The roster stays — it is a nap, not a farewell. The
     /// snapshot counts workers too: a tucked buddy should wake on
-    /// sub-agent churn, not only on mains.
-    func tuckAway() {
+    /// sub-agent churn, not only on mains. It is tucked from this call
+    /// on, but it ducks out over `tuckDuration` before its panel goes
+    /// (straight up under the notch when docked, down to its feet when
+    /// floating) rather than vanishing in one frame; Reduce Motion, or a
+    /// buddy that wasn't showing, goes at once.
+    func tuckAway(at now: Date = Date()) {
+        let showing = isOn
         wakeSnapshot = Self.sessionSnapshot(core.state?.sessions ?? [])
         store?.state.notchBuddy.tucked = true
+        guard showing, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            finishTuck()
+            return
+        }
+        tuckingSince = now
+        stayLively(from: now)
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.finishTuck() }
+        }
+        tuckWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.tuckDuration, execute: work)
+    }
+
+    /// The duck-out has played: the panels let it go.
+    func finishTuck() {
+        cancelTuck()
         onVisibilityChange?()
+    }
+
+    /// A duck-out in flight is called off (a card toggle, a wake, the
+    /// end of the duck-out itself).
+    private func cancelTuck() {
+        tuckWork?.cancel()
+        tuckWork = nil
+        tuckingSince = nil
+    }
+
+    /// When the duck-out began; nil unless one is playing.
+    private(set) var tuckingSince: Date?
+    @ObservationIgnored private var tuckWork: DispatchWorkItem?
+    static let tuckDuration: TimeInterval = 0.26
+
+    /// Whether a home should draw it: on, or still ducking out of sight.
+    var isShowing: Bool {
+        isOn || (tuckingSince != nil && store?.state.notchBuddy.enabled == true)
+    }
+
+    /// The size it comes back from: `wakeScale` after a real nap, or
+    /// wherever a duck-out still in flight had got to, so a wake mid-duck
+    /// grows back from there instead of snapping.
+    private func comeBackScale(at now: Date = Date()) -> Double {
+        guard let tuck = tuckProgress(at: now) else { return Self.wakeScale }
+        return max(Self.wakeScale, Self.tuckScale(tuck))
+    }
+
+    /// The duck-out's size at `progress`: an ease-in down to a quarter.
+    static func tuckScale(_ progress: Double) -> Double {
+        1 - 0.75 * progress * progress
+    }
+
+    /// 0 → 1 across the duck-out; nil unless one is playing.
+    func tuckProgress(at now: Date) -> Double? {
+        guard let tuckingSince else { return nil }
+        return min(1, max(0, now.timeIntervalSince(tuckingSince) / Self.tuckDuration))
     }
 
     func toggleCaption() {
@@ -282,28 +428,53 @@ final class NotchBuddyToy: Toy {
     /// The carry's life, panel-side bookkeeping the view reads: held,
     /// it leans toward the travel direction (`dragTilt`, settling via
     /// `dragMovedAt`) with its feet up; put down, `landedAt` plays a
-    /// small squash. Reduce Motion ignores all of it.
+    /// small squash and lets go of whatever lean it still had
+    /// (`landingTilt`). Reduce Motion ignores all of it.
     private(set) var isDragged = false
     private(set) var dragTilt: Double = 0
     private(set) var dragMovedAt: Date?
     private(set) var landedAt: Date?
+    /// The lean it had the moment it was put down; the landing eases it
+    /// upright instead of snapping.
+    private(set) var landingTilt: Double = 0
 
     func dragStarted() {
         isDragged = true
         dragTilt = 0
         dragMovedAt = nil
         landedAt = nil
+        landingTilt = 0
     }
 
-    /// `dx` is this event's horizontal travel, not the total.
+    /// `dx` is this event's horizontal travel, not the total. The lean
+    /// heads toward that event's tilt on a short lag (`BuddyTurn.follow`)
+    /// from what is drawn now, so a change of direction swings it
+    /// through upright rather than flipping it.
     func dragMoved(dx: Double, at now: Date = Date()) {
         guard isDragged else { return }
-        dragTilt = BuddyPlacement.dragTilt(dx: dx)
+        let dt = dragMovedAt.map { now.timeIntervalSince($0) } ?? Self.firstMoveStep
+        dragTilt = BuddyTurn.follow(dangle(at: now), toward: BuddyPlacement.dragTilt(dx: dx), dt: dt)
         dragMovedAt = now
+    }
+
+    /// The first event of a carry has no event before it: it counts as
+    /// one display frame's worth of travel.
+    static let firstMoveStep: TimeInterval = 1.0 / 60.0
+    /// How long the cursor can sit between mouse events before the
+    /// dangle starts to settle.
+    static let parkGrace: TimeInterval = 0.05
+
+    /// The dangle as drawn at `now`: the followed tilt, settling on
+    /// `BuddyPlacement.tiltDecay` once the cursor has parked for longer
+    /// than a mouse event's gap.
+    func dangle(at now: Date) -> Double {
+        let parked = now.timeIntervalSince(dragMovedAt ?? now) - Self.parkGrace
+        return dragTilt * BuddyPlacement.tiltDecay(age: max(0, parked))
     }
 
     /// Put down — the landing beat plays from `landedAt`.
     func dragEnded(at now: Date = Date()) {
+        landingTilt = dangle(at: now)
         isDragged = false
         dragTilt = 0
         landedAt = now
@@ -315,6 +486,7 @@ final class NotchBuddyToy: Toy {
     func dragCancelled() {
         isDragged = false
         dragTilt = 0
+        landingTilt = 0
     }
 
     // MARK: Interaction
@@ -631,6 +803,13 @@ final class NotchBuddyToy: Toy {
     /// one-off effects play from — the view's tick is the only clock
     /// that drives them.
     func summary(at now: Date = Date()) -> BuddySummary {
+        // Several readers ask — the animation timeline, the floating
+        // caption's slow one, the hover line — and a slow timeline's
+        // date can be seconds behind. The wave, slump and mood clocks
+        // only ever take the latest time seen, so a stale reader can't
+        // start an ask's entrance in the past and skip it.
+        let stamp = max(now, latestSummaryAt ?? now)
+        latestSummaryAt = stamp
         let d = sessionDigest()
         var s = BuddySummary()
         s.working = d.working
@@ -651,15 +830,19 @@ final class NotchBuddyToy: Toy {
         }
         if let hopUntil, now < hopUntil { s.mood = .celebrating }
         if s.mood == .waving {
-            if wavingSince == nil { wavingSince = now; waveOrdinal += 1 }
+            if wavingSince == nil { wavingSince = stamp; waveOrdinal += 1 }
         } else if wavingSince != nil {
             wavingSince = nil
         }
         if s.mood == .slumped {
-            if slumpedSince == nil { slumpedSince = now }
+            if slumpedSince == nil { slumpedSince = stamp }
         } else if slumpedSince != nil {
             slumpedSince = nil
         }
+        if let shown = shownMood, shown != s.mood {
+            moodChange = (shown, stamp)
+        }
+        shownMood = s.mood
         s.care = store?.state.notchBuddy.care.mood(at: now) ?? .content
         s.name = buddyName
         s.focus = d.focus
@@ -684,6 +867,22 @@ final class NotchBuddyToy: Toy {
             s.statusLine = line
         }
         return s
+    }
+
+    /// The mood the last summary settled on, and the last change: the
+    /// figure eases from the old mood's pose into the new one's over
+    /// `BuddyHandoff.duration` (`handoff(at:)`). Untracked, like the
+    /// wave clock: `summary` maintains them mid-render.
+    @ObservationIgnored private var shownMood: Mood?
+    @ObservationIgnored private(set) var moodChange: (from: Mood, at: Date)?
+    /// The latest time any summary was taken at.
+    @ObservationIgnored private var latestSummaryAt: Date?
+
+    /// The mood change as drawn at `now`, or nil once it has handed off.
+    func handoff(at now: Date) -> BuddyHandoff? {
+        guard let change = moodChange else { return nil }
+        let drawn = BuddyHandoff(from: change.from, age: now.timeIntervalSince(change.at))
+        return drawn.isOver ? nil : drawn
     }
 
     // MARK: Strip link
@@ -940,6 +1139,8 @@ final class NotchBuddyToy: Toy {
         guard store?.state.notchBuddy.tucked == true else { return }
         store?.state.notchBuddy.tucked = false
         wakeSnapshot = nil
+        arrive(fromScale: comeBackScale())
+        cancelTuck()
         onVisibilityChange?()
     }
 
@@ -1244,7 +1445,8 @@ final class BuddyMenuActions: NSObject {
         if toy.isFree {
             toy.dock()
         } else if let panelFrame {
-            toy.parkFree(at: CGPoint(x: panelFrame.midX, y: panelFrame.midY))
+            toy.parkFree(at: CGPoint(x: panelFrame.midX, y: panelFrame.midY),
+                         figureCentre: BuddyPanel.dockedFigureCentre(in: panelFrame))
         } else {
             toy.floatFree()
         }

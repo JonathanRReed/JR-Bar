@@ -483,7 +483,7 @@ struct NotchHUDView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .fixedSize()
-        } else if let buddy = model.buddy, buddy.isOn, !buddy.isFree {
+        } else if let buddy = model.buddy, buddy.isShowing, !buddy.isFree {
             // The docked slot is the pet itself: the character with its
             // poses, tricks, treats and badges at the notch's fixed
             // 18pt — stepping back to the bare dot only while a
