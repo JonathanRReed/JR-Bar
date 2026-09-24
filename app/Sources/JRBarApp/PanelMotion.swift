@@ -5,10 +5,11 @@ import SwiftUI
 /// wrapper through this alias, which names the struct and not the macro.
 typealias ViewState<Value> = SwiftUICore.State<Value>
 
-/// The panel's whole motion vocabulary: three springs and nothing else, so
-/// every transition in the app feels like the same object moving.
+/// The panel's whole motion vocabulary, so every transition in the app
+/// feels like the same object moving.
 ///
-/// * `unfold`    -- the panel itself arriving (window fade + 6 pt rise);
+/// * `unfoldDuration` -- the panel itself arriving (the controller's
+///   window fade + 6 pt rise);
 /// * `contents`  -- rows entering, leaving and reordering;
 /// * `crossfade` -- a word or number changing in place.
 ///
@@ -18,11 +19,6 @@ typealias ViewState<Value> = SwiftUICore.State<Value>
 enum PanelMotion {
     static let unfoldDuration: TimeInterval = 0.26
     static let reducedDuration: TimeInterval = 0.12
-
-    static func unfold(reduced: Bool, armed: Bool = true) -> Animation? {
-        guard armed else { return nil }
-        return reduced ? .easeOut(duration: reducedDuration) : .spring(response: 0.34, dampingFraction: 0.86)
-    }
 
     static func contents(reduced: Bool, armed: Bool = true) -> Animation? {
         guard armed else { return nil }

@@ -247,8 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // own expand/collapse pair drives both directions so the card
         // obeys every existing guard (fold engaged, capsule mid-show).
         let shelfHotkey = PanelHotkey(signature: OSType(0x6A726273),
-                                      keyCode: UInt32(kVK_ANSI_D),
-                                      hotKeyID: 1)
+                                      keyCode: UInt32(kVK_ANSI_D))
         shelfHotkey.onPress = { [weak toysStore] in
             toysStore?.notch.toggleShelfFromHotkey()
         }

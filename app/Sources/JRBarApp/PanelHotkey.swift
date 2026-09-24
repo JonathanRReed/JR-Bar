@@ -55,8 +55,7 @@ final class PanelHotkey {
     /// modifiers are the default a rebind replaces.
     convenience init(signature: OSType = OSType(0x6A726272),
                      keyCode: UInt32 = UInt32(kVK_ANSI_J),
-                     modifiers: UInt32 = UInt32(controlKey | optionKey),
-                     hotKeyID: UInt32 = 1) {
+                     modifiers: UInt32 = UInt32(controlKey | optionKey)) {
         let isShelf = signature == OSType(0x6A726273)
         self.init(id: isShelf ? Self.shelfID : Self.panelID,
                   title: isShelf ? "Open the shelf" : "Show the panel",

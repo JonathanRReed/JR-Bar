@@ -807,7 +807,6 @@ final class PanelStore {
     }
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
-    var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
 
     // MARK: Notify when done
 
