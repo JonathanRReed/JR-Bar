@@ -111,34 +111,19 @@ struct LEDMotionRenderProofTests {
     @Test(.enabled(if: LEDMotionRenderProofTests.enabled))
     func momentsAndDeviceRows() throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
-        let fixtures = try Self.fixtures()
-        func program(_ name: String) -> String { fixtures.first { $0.name == name }?.program ?? "off" }
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-led-motion-proof.sock")
         let store = EffectStudioStore(core: core)
 
-        let hello = "#12E3B0 300ms pulse\n#0FA07C 300ms cosine\n#12E3B0 800ms pulse\noff 300ms ease-out"
-        let coolDown = "#00E5FF 350ms pulse\n#0044AA 450ms cosine\noff 600ms cosine"
-        func look(_ name: String, _ program: String, _ dot: String? = nil, shape: String? = nil) -> LidLook {
-            LidLook(name: name, durationSeconds: 1.4, shape: shape, program: program, dotProgram: dot ?? program,
-                    setting: .object([:]))
+        // The daemon's own documents, with Jonathan's picks: Hello opens and
+        // Cool Down closes, Land finishes.
+        let picked = ["open": "Hello", "closed": "Cool Down"]
+        let transitions = try EffectStudioMomentsTests.lidDocument().kinds.map { transition in
+            LidTransition(kind: transition.kind, label: transition.label, path: transition.path,
+                          current: picked[transition.kind] ?? transition.current, shipped: false,
+                          presets: transition.presets)
         }
-        let transitions = [
-            LidTransition(kind: "open", label: "Lid opens", path: "lid_open_animation", current: "Hello", shipped: false,
-                          presets: [look("Hello", hello),
-                                    look("Iris", program("lid_iris_open_8led"), program("lid_iris_open_2led"), shape: "iris_open")]),
-            LidTransition(kind: "closed", label: "Lid closes", path: "lid_closed_animation", current: "Cool Down", shipped: false,
-                          presets: [look("Cool Down", coolDown),
-                                    look("Iris", program("lid_iris_close_8led"), program("lid_iris_close_2led"), shape: "iris_close")]),
-            LidTransition(kind: "closed_active", label: "Lid closes while agents run", path: "lid_closed_active_animation",
-                          current: "Iris (active)", shipped: false,
-                          presets: [look("Iris (active)", program("lid_iris_close_active_8led"),
-                                         program("lid_iris_close_active_2led"), shape: "iris_close_active")]),
-        ]
-        let finish = FinishLookList(current: "land", enabled: true, looks: [
-            .init(style: "bloom", label: "Bloom", program: LightingPreviewPrograms.celebration(), dotProgram: "off"),
-            .init(style: "land", label: "Land", program: program("finish_land_8led"), dotProgram: program("finish_land_2led")),
-            .init(style: "ripple", label: "Ripple", program: program("finish_ripple_8led"), dotProgram: program("finish_ripple_2led")),
-        ])
+        let finishes = try EffectStudioMomentsTests.finishDocument()
+        let finish = FinishLookList(current: "land", enabled: true, looks: finishes.looks)
         let moments = VStack(alignment: .leading, spacing: 14) {
             LidMomentsSection(store: store, seed: transitions)
             FinishMomentsSection(store: store, seed: finish)
@@ -146,26 +131,31 @@ struct LEDMotionRenderProofTests {
         .padding(20)
         .frame(width: 780)
 
-        core.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,
-                                          document: Self.deviceDocument())))
-        let settings = SettingsStore(core: core)
-        let entries = settings.deviceEntries
-        let rows = VStack(alignment: .leading, spacing: 0) {
-            ForEach(entries) { device in
-                Text(device.name).font(.headline).padding(.top, 10)
-                LEDDirectionRow(store: settings, device: device)
-                DotTravelStyleRow(store: settings, device: device)
-            }
-        }
-        .padding(20)
-        .frame(width: 560)
-
         for dark in [true, false] {
             let suffix = dark ? "dark" : "light"
-            try Self.write(try Self.hosted(moments, size: CGSize(width: 780, height: 900), dark: dark),
+            try Self.write(try Self.hosted(moments, size: CGSize(width: 780, height: 960), dark: dark),
                            named: "moments-lid-finish-\(suffix).png")
-            try Self.write(try Self.hosted(rows, size: CGSize(width: 560, height: 420), dark: dark),
-                           named: "device-direction-travel-\(suffix).png")
+        }
+        // The Dot drawing its own display (role Status), then linked in
+        // Extend, where its rows wait and say why. The Screen Bar has none.
+        for (role, name) in [("status", "device-direction-travel"), ("extend", "device-direction-travel-linked")] {
+            let rowsCore = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-led-motion-rows.sock")
+            rowsCore.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,
+                                                  document: Self.deviceDocument(role: role))))
+            let settings = SettingsStore(core: rowsCore)
+            let rows = VStack(alignment: .leading, spacing: 0) {
+                ForEach(settings.deviceEntries) { device in
+                    Text(device.name).font(.headline).padding(.top, 10)
+                    LEDDirectionRow(store: settings, device: device)
+                    DotTravelStyleRow(store: settings, device: device)
+                }
+            }
+            .padding(20)
+            .frame(width: 560)
+            for dark in [true, false] {
+                try Self.write(try Self.hosted(rows, size: CGSize(width: 560, height: 300), dark: dark),
+                               named: "\(name)-\(dark ? "dark" : "light").png")
+            }
         }
     }
 
@@ -206,17 +196,18 @@ struct LEDMotionRenderProofTests {
         return rep
     }
 
-    /// A Pro mounted the right way round and a Dot, reversed and wiping,
-    /// with every key the rows read.
-    static func deviceDocument() -> JSONValue {
+    /// A Pro mounted the right way round, a Dot reversed and wiping in
+    /// `role`, and the Screen Bar, with every key the rows read.
+    static func deviceDocument(role: String) -> JSONValue {
         func device(_ id: String, _ name: String, direction: String) -> JSONValue {
             .object(["id": .string(id), "name": .string(name), "path": .string("/Volumes/\(name)"),
                      "led_display": .string("agent"), "brightness": .number(255),
                      "led_direction": .string(direction), "dot_travel_style": .string("wipe")])
         }
-        return .object(["devices": .array([
+        return .object(["devices_linked": .bool(true), "dot_role": .string(role), "devices": .array([
             device("sidepulse:pro:1", "SidePulse", direction: "forward"),
             device("sidepulse:dot:1", "PulseDot", direction: "reversed"),
+            device("status-bar", "Screen Bar", direction: "forward"),
         ])])
     }
 

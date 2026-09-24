@@ -5,7 +5,10 @@ import SwiftUI
 /// mounted, and a sweep that starts from LED 0 so you can match it to the
 /// strip on your desk. Reversed mirrors every agent light the monitor
 /// draws for this device (`devices.N.led_direction`), so a comet that ran
-/// left to right still does after the strip is turned round.
+/// left to right still does after the strip is turned round. Only the Pro
+/// and the Dot have one (the Screen Bar is drawn on screen, the right way
+/// round already), and a Dot linked to the Pro plays the Pro's light, so
+/// there the row is dimmed and says why.
 struct LEDDirectionRow: View {
     @Bindable var store: SettingsStore
     let device: SettingsStore.DeviceEntry
@@ -17,21 +20,30 @@ struct LEDDirectionRow: View {
     private var path: String { "\(device.prefix).led_direction" }
     private var reversed: Bool { store.document.string(SettingsPath(path)) == "reversed" }
     private var ledCount: Int { device.kind == "dot" ? 2 : 8 }
+    private var followsPro: Bool { device.kind == "dot" && DotLinkReading.followsPro(store) }
+    private var subtitle: String { followsPro ? DotLinkReading.note : Self.subtitle(reversed: reversed) }
+
+    /// The devices whose own strip the monitor draws for.
+    static func applies(to kind: String) -> Bool { kind == "pro" || kind == "dot" }
 
     var body: some View {
-        Provided(store, path) {
-            SettingRow("Strip direction", subtitle: Self.subtitle(reversed: reversed)) {
-                HStack(spacing: 10) {
-                    LEDStripPreview(program: Self.sweep(reversed: reversed, ledCount: ledCount),
-                                    ledCount: ledCount, style: .dots, dotSize: 6, spacing: 4)
-                        .frame(width: ledCount == 2 ? 44 : 96)
-                        .accessibilityLabel(reversed ? "A sweep starting at the right" : "A sweep starting at the left")
-                    Picker("Strip direction", selection: store.string(path, default: "forward")) {
-                        ForEach(Self.choices, id: \.value) { Text($0.label).tag($0.value) }
+        if Self.applies(to: device.kind) {
+            Provided(store, path) {
+                SettingRow("Strip direction", subtitle: subtitle) {
+                    HStack(spacing: 10) {
+                        LEDStripPreview(program: Self.sweep(reversed: reversed, ledCount: ledCount),
+                                        ledCount: ledCount, style: .dots, dotSize: 6, spacing: 4)
+                            .frame(width: ledCount == 2 ? 44 : 96)
+                            .opacity(followsPro ? 0.4 : 1)
+                            .accessibilityLabel(reversed ? "A sweep starting at the right" : "A sweep starting at the left")
+                        Picker("Strip direction", selection: store.string(path, default: "forward")) {
+                            ForEach(Self.choices, id: \.value) { Text($0.label).tag($0.value) }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .fixedSize()
                     }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
+                    .disabled(followsPro)
                 }
             }
         }
