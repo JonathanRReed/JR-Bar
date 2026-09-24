@@ -193,6 +193,10 @@ struct AquariumView: View {
                         let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
                         drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
                                       front: false, keepClear: caption?.rect)
+                        // The castle's pennant streams over its baked
+                        // keep, so it goes behind the fish as the keep
+                        // does.
+                        drawShopPennant(canvas: &canvas, size: size, t: t)
                         drawJellyfish(canvas: &canvas, size: size, t: t,
                                       resident: empty || owns(.jellyfish))
                         drawPlankton(canvas: &canvas, size: size, t: t,
@@ -274,10 +278,11 @@ struct AquariumView: View {
                                         layouts: layouts, t: t, now: context.date)
                         drawMeals(canvas: &canvas, meals: meals, now: context.date)
                         drawFeed(canvas: &canvas, size: size, now: context.date)
+                        // Only the decor that sways or glows draws over
+                        // the lane; the still pieces baked in behind it.
+                        // The buried treasure waits on the sand for its
+                        // taps.
                         drawShopDecor(canvas: &canvas, size: size, t: t)
-                        // Owned front-row decor stands over the lane
-                        // like the shop's first four; the buried
-                        // treasure waits on the sand for its taps.
                         drawOwnedFrontDecor(canvas: &canvas, size: size, t: t)
                         drawTreasure(canvas: &canvas, size: size, t: t,
                                      now: context.date)

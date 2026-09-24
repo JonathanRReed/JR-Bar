@@ -143,10 +143,12 @@ extension AquariumView {
         }
     }
 
-    /// Purchased decor (docs/TOYS.md shop), the moving half: the
-    /// plant's leaves sway and the castle's pennant streams. The still
-    /// pieces bake into the bed (`drawShopDecorStill`). Nothing here
-    /// touches session state; it's pure dressing.
+    /// Purchased decor (docs/TOYS.md shop), the swaying half: the
+    /// plant's leaves, drawn over the fish lane. The still pieces bake
+    /// into the bed behind it (`drawShopDecorStill`), and the castle's
+    /// pennant streams on its own pass behind the fish
+    /// (`drawShopPennant`). Nothing here touches session state; it's
+    /// pure dressing.
     func drawShopDecor(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         let tone = decorTone()
@@ -187,13 +189,18 @@ extension AquariumView {
                                 shade: tone(Color(red: 0.24, green: 0.22, blue: 0.20)), lineWidth: 0.5)
             }
         }
-        if game.owns(.castle) {
-            // The keep bakes into the bed; only its pennant moves.
-            var c = canvas
-            c.translateBy(x: size.width * 0.885, y: sandTop(atX: size.width * 0.885, in: size))
-            c.scaleBy(x: size.height / 242, y: size.height / 242)
-            drawCastleFlag(&c, t: t, tone: tone)
-        }
+    }
+
+    /// The castle's pennant, the one moving part of a keep that bakes
+    /// into the bed. It draws before the fish so it layers with its
+    /// tower and pole: a fish crossing the castle passes in front of
+    /// all three.
+    func drawShopPennant(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        guard let game, game.owns(.castle) else { return }
+        var c = canvas
+        c.translateBy(x: size.width * 0.885, y: sandTop(atX: size.width * 0.885, in: size))
+        c.scaleBy(x: size.height / 242, y: size.height / 242)
+        drawCastleFlag(&c, t: t, tone: decorTone())
     }
 
     /// Purchased decor, the still half — the rock a big lump with a
@@ -397,7 +404,7 @@ extension AquariumView {
     }
 
     /// The castle's pennant, streaming in the current — in the keep's
-    /// local units, over the baked keep.
+    /// local units, over the baked keep and under the fish.
     private func drawCastleFlag(_ c: inout GraphicsContext, t: Double, tone: TankPaint.Tone) {
         let line = Color(red: 0.16, green: 0.14, blue: 0.22).opacity(0.75)
         let flutter = reduceMotion ? 0 : sin(t * 2.6) * 1.2

@@ -555,10 +555,11 @@ extension AquariumView {
 
     // MARK: Owned decor — front row
 
-    /// The bought decor on the near crest (docs/TOYS.md shop):
-    /// driftwood, the anemone's swaying bed, the jelly lamp's pulsing
-    /// dome, the coral garden, the bubble wall's curtain — drawn over
-    /// the fish lane like the shop's original four.
+    /// The bought decor on the near crest (docs/TOYS.md shop), the
+    /// half that moves: the anemone's swaying bed, the jelly lamp's
+    /// pulsing dome, the bubble wall's curtain and a lit volcano's
+    /// glow, drawn over the fish lane. The still pieces bake into the
+    /// bed behind it (`drawOwnedFrontStill`).
     func drawOwnedFrontDecor(canvas: inout GraphicsContext, size: CGSize,
                                      t: Double) {
         guard let game else { return }
