@@ -30,7 +30,7 @@ struct ConfettiRenderProofTests {
 
     static func laptop(windows: [CGRect] = []) -> ConfettiStage {
         ConfettiStage(width: 1512, height: 982, notch: notch, menuBarBottom: 32, icon: icon, floor: 912,
-                      windows: windows)
+                      windows: windows, dockSpan: 378...1134)
     }
 
     static let claude = ConfettiView.look(.provider, tint: ProviderStyle.style(for: "claude").accent,
@@ -75,6 +75,13 @@ struct ConfettiRenderProofTests {
         }
         try write(Self.sheet(frames, columns: 3), "sheet-rest-on-windows")
         try write(try render(burst, look: Self.claude, at: 2.4, scale: 2), "confetti-rest-on-windows-2.4-2x")
+        // A maximised window in front of a smaller one: no ledge of its
+        // own, and the edge behind it is hidden, so pieces fall past its
+        // content to the Dock.
+        let maximised = [CGRect(x: 0, y: 38, width: 1512, height: 874), CGRect(x: 200, y: 300, width: 800, height: 500)]
+        let behind = ConfettiBurst(stage: Self.laptop(windows: maximised), recipe: Self.recipe(.notch, .rest), seed: 7)
+        let stills = try [1.2, 2.4, 3.6].map { try render(behind, look: Self.claude, at: $0, scale: 1) }
+        try write(Self.sheet(stills, columns: 3), "sheet-rest-maximised")
     }
 
     /// The first beats at 2×, where the pop at the lip and the paper's
@@ -225,17 +232,20 @@ struct ConfettiProofDesk: View {
         ZStack(alignment: .topLeading) {
             LinearGradient(colors: [Color(red: 0.13, green: 0.17, blue: 0.30), Color(red: 0.36, green: 0.27, blue: 0.42)],
                            startPoint: .top, endPoint: .bottom)
-            ForEach(Array(stage.windows.enumerated()), id: \.offset) { _, window in
+            // Back to front: the list runs front to back.
+            ForEach(Array(stage.windows.enumerated().reversed()), id: \.offset) { _, window in
                 ConfettiProofWindow()
                     .frame(width: window.width, height: window.height)
                     .offset(x: window.minX, y: window.minY)
             }
             Rectangle().fill(Color.black.opacity(0.3)).frame(width: stage.width, height: stage.menuBarBottom)
             if stage.floor < stage.height {
+                // The Dock, where the stage says it runs (else the middle half).
+                let span = stage.dockSpan ?? (stage.width * 0.25)...(stage.width * 0.75)
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color.white.opacity(0.16))
-                    .frame(width: stage.width * 0.5, height: stage.height - stage.floor - 6)
-                    .offset(x: stage.width * 0.25, y: stage.floor + 2)
+                    .frame(width: span.upperBound - span.lowerBound, height: stage.height - stage.floor - 6)
+                    .offset(x: span.lowerBound, y: stage.floor + 2)
             }
         }
         .frame(width: stage.width, height: stage.height, alignment: .topLeading)

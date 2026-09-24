@@ -378,15 +378,21 @@ final class ConfettiToy: Toy {
             playPop(pan: 0)
             return
         }
-        // Rest lands on windows: read where they are once, for every screen.
-        let quartz = plan.recipe.landing == .rest ? OnScreenWindows.quartzFrames() : []
+        // Rest lands on windows and the Dock: read where they are once,
+        // for every screen — the Dock only when one sits along a bottom.
+        let rest = plan.recipe.landing == .rest
+        let quartz = rest ? OnScreenWindows.quartzFrames() : []
+        let dockShown = targets.contains { screen in
+            screen.map { $0.visibleFrame.minY > $0.frame.minY } ?? false
+        }
+        let dock = rest && dockShown ? OnScreenWindows.dockBar() : nil
         let icon = store?.iconFrame()
         let meter = ConfettiDrawMeter()
         self.meter = meter
         var overlays: [ConfettiWindow] = []
         var pan = 0.0
         for screen in targets {
-            let stage = Self.stage(for: screen, icon: icon, windows: quartz)
+            let stage = Self.stage(for: screen, icon: icon, windows: quartz, dock: dock)
             if stage.icon != nil { pan = ConfettiEmitter.pan(plan.recipe.origin, on: stage) }
             let burst = ConfettiBurst(stage: stage, recipe: plan.recipe, seed: UInt64.random(in: 0...UInt64.max))
             let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: stage.width, height: stage.height)
@@ -462,9 +468,12 @@ final class ConfettiToy: Toy {
 
     /// A screen as a burst sees it: its size, its notch (or the island a
     /// simulated notch draws), the menu bar's bottom, the icon when it's
-    /// on this screen, the Dock's top, and the other apps' windows on it
-    /// front to back — all measured from its top-left corner.
-    static func stage(for screen: NSScreen?, icon: NSRect?, windows quartz: [CGRect]) -> ConfettiStage {
+    /// on this screen, the Dock's top and how far across it runs, and the
+    /// other apps' windows on it front to back — all measured from its
+    /// top-left corner. `dock` is the Dock's tiles in the window list's
+    /// space (`OnScreenWindows.dockBar`).
+    static func stage(for screen: NSScreen?, icon: NSRect?, windows quartz: [CGRect],
+                      dock: CGRect? = nil) -> ConfettiStage {
         guard let screen else {
             var fallback = ConfettiStage.reference
             fallback.notch = nil
@@ -486,10 +495,26 @@ final class ConfettiToy: Toy {
             local = CGRect(x: icon.minX - frame.minX, y: frame.maxY - icon.maxY,
                            width: icon.width, height: icon.height)
         }
-        return ConfettiStage(width: Double(frame.width), height: Double(frame.height), notch: notch,
-                             menuBarBottom: bar > 0 ? bar : 24, icon: local,
-                             floor: Double(frame.height) - Double(screen.visibleFrame.minY - frame.minY),
-                             windows: windows)
+        var stage = ConfettiStage(width: Double(frame.width), height: Double(frame.height), notch: notch,
+                                  menuBarBottom: bar > 0 ? bar : 24, icon: local,
+                                  floor: Double(frame.height) - Double(screen.visibleFrame.minY - frame.minY),
+                                  windows: windows)
+        if let dock {
+            stage.dockSpan = Self.dockSpan(OnScreenWindows.local(dock, on: frame, primaryHeight: primaryHeight),
+                                           on: stage)
+        }
+        return stage
+    }
+
+    /// How far across a stage's bottom the Dock runs, from its tiles'
+    /// frame measured from the stage's top-left corner: their span and a
+    /// few points more for the glass around them — or nil when the Dock
+    /// isn't along this screen's bottom edge (hidden, on a side, or on
+    /// another screen), so Rest keeps the Dock's top as its floor.
+    nonisolated static func dockSpan(_ tiles: CGRect, on stage: ConfettiStage) -> ClosedRange<Double>? {
+        guard stage.floor < stage.height, tiles.width > 0, tiles.maxY > stage.floor, tiles.minY < stage.height,
+              tiles.maxX > 0, tiles.minX < stage.width else { return nil }
+        return (Double(tiles.minX) - 6)...(Double(tiles.maxX) + 6)
     }
 
     /// The pop, if it's wanted and JR-Bar isn't being quiet — the

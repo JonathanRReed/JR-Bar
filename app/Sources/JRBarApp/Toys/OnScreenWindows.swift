@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 
 /// The other apps' windows on screen right now, front to back — read from
@@ -44,6 +45,18 @@ enum OnScreenWindows {
     /// inverse, so the same call takes a screen frame the other way.
     static func appKit(_ rect: CGRect, primaryHeight: CGFloat) -> CGRect {
         CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    /// Where the Dock's row of tiles is, in the window list's space, read
+    /// from its accessibility list: the window list only knows the Dock
+    /// as one screen-sized window. nil without Accessibility permission,
+    /// or when the Dock doesn't answer within a quarter of a second.
+    @MainActor
+    static func dockBar() -> CGRect? {
+        guard AXIsProcessTrusted(), let pid = AppleDockReader.dockPID(),
+              let list = AppleDockReader.dockList(pid: pid) else { return nil }
+        AXUIElementSetMessagingTimeout(list, 0.25)
+        return AppleDockReader.frame(of: list)
     }
 
     /// `rect` (window-list space) measured from the top-left corner of

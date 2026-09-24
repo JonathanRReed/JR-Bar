@@ -138,21 +138,89 @@ struct ConfettiEmitterTests {
         #expect(onWindows > burst.pieces.count / 3, "most of the burst lands on the two windows")
     }
 
-    /// A piece lands on the frontmost window's top edge under it, never
-    /// on an edge a window in front hides; with no windows, on the Dock.
-    @Test("the surface is the first visible edge below")
-    func surfaces() {
+    /// An edge shows where the window is, unless a window in front of it
+    /// covers it there.
+    @Test("an edge shows only where no window in front covers it")
+    func edgesThatShow() {
         let front = CGRect(x: 100, y: 300, width: 500, height: 400)
         let behind = CGRect(x: 200, y: 400, width: 800, height: 300)   // its edge is hidden at x 300
-        let ledges = [front, behind]
-        #expect(ConfettiBurst.surface(at: 300, below: 40, ledges: ledges, floor: 900).y == 300)
-        #expect(ConfettiBurst.surface(at: 300, below: 40, ledges: ledges, floor: 900).window == 0)
-        // Right of the front window, the back one's edge is open.
-        #expect(ConfettiBurst.surface(at: 800, below: 40, ledges: ledges, floor: 900).window == 1)
-        // Below the front window's edge already (inside it): the back
-        // edge is hidden, so the floor.
-        #expect(ConfettiBurst.surface(at: 300, below: 350, ledges: ledges, floor: 900).window == nil)
-        #expect(ConfettiBurst.surface(at: 300, below: 40, ledges: [], floor: 900).y == 900)
+        let windows = [front, behind]
+        #expect(ConfettiBurst.edgeShows(0, at: 300, in: windows))
+        #expect(!ConfettiBurst.edgeShows(1, at: 300, in: windows), "the front window covers it")
+        #expect(ConfettiBurst.edgeShows(1, at: 800, in: windows), "right of the front window it's open")
+        #expect(!ConfettiBurst.edgeShows(0, at: 700, in: windows), "past the end of the edge")
+    }
+
+    /// A maximised window is no ledge, but it still hides every edge
+    /// behind it: nothing lies across the middle of its content.
+    @Test("a maximised window hides the edges behind it")
+    func maximisedWindowHides() {
+        let windows = [CGRect(x: 0, y: 38, width: 1512, height: 944), CGRect(x: 200, y: 300, width: 800, height: 500)]
+        let stage = Self.laptop(windows: windows)
+        #expect(ConfettiBurst.ledgeOrder(from: stage) == [1], "only the window behind could hold a piece")
+        #expect(!ConfettiBurst.edgeShows(1, at: 500, in: windows))
+        for seed in 0..<6 {
+            let burst = ConfettiBurst(stage: stage, recipe: .init(landing: .rest), seed: UInt64(seed))
+            for piece in burst.pieces {
+                #expect(piece.landing?.window == nil, "a piece on the hidden edge at \(piece.landing?.x ?? 0)")
+                #expect(piece.landing?.y == stage.floor - 1)
+            }
+        }
+    }
+
+    /// A piece lies on the part of an edge it is over when it comes down
+    /// to it — never in the air past the end of a window's top.
+    @Test("a Rest piece lies within its window's edge")
+    func liesOnItsEdge() {
+        let windows = [CGRect(x: 120, y: 260, width: 640, height: 520), CGRect(x: 820, y: 420, width: 560, height: 420),
+                       CGRect(x: 500, y: 180, width: 300, height: 200)]
+        let stage = Self.laptop(windows: windows)
+        var onWindows = 0
+        for seed in 0..<12 {
+            let burst = ConfettiBurst(stage: stage, recipe: .init(landing: .rest), seed: UInt64(seed))
+            for piece in burst.pieces {
+                guard let landing = piece.landing, let window = landing.window else { continue }
+                onWindows += 1
+                let ledge = burst.ledges[window]
+                #expect(ledge.minX <= landing.x && landing.x <= ledge.maxX,
+                        "lies at \(landing.x) on an edge from \(ledge.minX) to \(ledge.maxX)")
+                #expect(ConfettiBurst.edgeShows(burst.ledgeOrder[window], at: landing.x, in: windows))
+                #expect(abs(ConfettiBurst.x(of: piece, at: landing.t) - landing.x) < 0.001,
+                        "touches down where it was flying")
+            }
+        }
+        #expect(onWindows > 0)
+    }
+
+    /// Beside a Dock that doesn't span the screen, pieces fall to the
+    /// bottom edge; over it, they land on its top.
+    @Test("Rest lands on the Dock only where the Dock is")
+    func dockSpan() {
+        var stage = Self.laptop()
+        stage.dockSpan = 378...1134
+        for seed in 0..<6 {
+            let burst = ConfettiBurst(stage: stage, recipe: .init(landing: .rest), seed: UInt64(seed))
+            for piece in burst.pieces {
+                guard let landing = piece.landing else { continue }
+                if landing.y == stage.floor - 1 {
+                    #expect((378...1134).contains(landing.x), "on the Dock's top at \(landing.x), beside it")
+                } else {
+                    // Beside the Dock when it came down past its top; its
+                    // sway may carry it a little way in front of the end.
+                    #expect(landing.y == stage.height - 1)
+                    let inside = (378 + piece.sway + 2)...(1134 - piece.sway - 2)
+                    #expect(!inside.contains(landing.x), "on the bottom edge at \(landing.x), under the Dock")
+                }
+            }
+        }
+        // Tiles along this screen's bottom give a span; a hidden Dock's
+        // (parked just below the screen) and a Dock-less screen give none.
+        let tiles = CGRect(x: 400, y: 918, width: 712, height: 58)
+        #expect(ConfettiToy.dockSpan(tiles, on: Self.laptop()) == 394...1118)
+        #expect(ConfettiToy.dockSpan(CGRect(x: 31, y: 982, width: 1450, height: 52), on: Self.laptop()) == nil)
+        var bare = Self.display(1920, 1080)
+        bare.floor = 1080
+        #expect(ConfettiToy.dockSpan(tiles, on: bare) == nil)
     }
 
     /// A window that moved or closed takes its ledge with it; a piece
@@ -174,7 +242,7 @@ struct ConfettiEmitterTests {
     func noLedgeUnderTheBar() {
         let stage = Self.laptop(windows: [CGRect(x: 0, y: 32, width: 1512, height: 880),
                                           CGRect(x: 10, y: 300, width: 40, height: 100)])
-        #expect(ConfettiBurst.ledges(from: stage).isEmpty, "too high, and too narrow")
+        #expect(ConfettiBurst.ledgeOrder(from: stage).isEmpty, "too high, and too narrow")
     }
 
     // MARK: Origins

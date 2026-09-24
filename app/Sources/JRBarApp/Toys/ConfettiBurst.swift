@@ -78,12 +78,11 @@ struct ConfettiBurst {
         var y: Double
         /// Seconds after launch it touches down.
         var t: Double
-        /// Which of the stage's windows it lies on; nil for the Dock or
+        /// Which of the burst's ledges it lies on; nil for the Dock or
         /// the bottom edge, which never move.
         var window: Int?
-        /// The flattened pose it settles into: how wide it lies, how much
-        /// of it you see from the side, and which face is up.
-        var lieWidth: Double
+        /// The flattened pose it settles into: how much of it you see
+        /// from the side, and which face is up.
         var lieDepth: Double
         var front: Bool
     }
@@ -113,6 +112,9 @@ struct ConfettiBurst {
     let life: TimeInterval
     /// The surfaces Rest lands on, from the stage's windows.
     let ledges: [CGRect]
+    /// Each ledge's place in the stage's front-to-back window list, so a
+    /// window in front of it can hide its edge.
+    let ledgeOrder: [Int]
 
     // MARK: The numbers
 
@@ -158,8 +160,9 @@ struct ConfettiBurst {
         var rng = ConfettiRandom(seed: seed)
         self.stage = stage
         self.recipe = recipe
-        let ledges = Self.ledges(from: stage)
-        self.ledges = ledges
+        let order = Self.ledgeOrder(from: stage)
+        ledgeOrder = order
+        ledges = order.map { stage.windows[$0] }
         let count = Self.count(recipe.intensity, density: recipe.density, stage: stage)
         var made: [Piece] = []
         made.reserveCapacity(count)
@@ -168,7 +171,7 @@ struct ConfettiBurst {
             var piece = Self.piece(recipe: recipe, stage: stage, using: &rng)
             // Big throws a second volley a beat after the first.
             if secondVolley, index % 3 == 2 { piece.launch.delay += 0.25 }
-            Self.plan(&piece, recipe: recipe, stage: stage, ledges: ledges)
+            Self.plan(&piece, recipe: recipe, stage: stage, ledgeOrder: order)
             made.append(piece)
         }
         // The far layer draws first, underneath.
@@ -307,31 +310,29 @@ struct ConfettiBurst {
 
     // MARK: Where it ends
 
-    /// The windows a piece can land on: wide enough to hold one, with a
-    /// top edge on the screen and clear of the menu bar (a maximised
-    /// window's edge would catch the pop the instant it left the lip),
-    /// and above the floor.
-    static func ledges(from stage: ConfettiStage) -> [CGRect] {
-        stage.windows.filter {
-            $0.width >= 80 && $0.minY >= stage.menuBarBottom + 36 && $0.minY < stage.floor - 20
-                && $0.maxX > 0 && $0.minX < stage.width
+    /// The windows a piece can land on, as their places in the stage's
+    /// front-to-back list: wide enough to hold one, with a top edge on
+    /// the screen and clear of the menu bar (a maximised window's edge
+    /// would catch the pop the instant it left the lip), and above the
+    /// floor.
+    static func ledgeOrder(from stage: ConfettiStage) -> [Int] {
+        stage.windows.indices.filter {
+            let window = stage.windows[$0]
+            return window.width >= 80 && window.minY >= stage.menuBarBottom + 36
+                && window.minY < stage.floor - 20 && window.maxX > 0 && window.minX < stage.width
         }
     }
 
-    /// The surface a piece falling at `x` meets first below `above`: the
-    /// highest window top edge there that no window in front of it
-    /// covers, else the floor (the Dock's top, or the bottom edge).
-    static func surface(at x: Double, below above: Double, ledges: [CGRect],
-                        floor: Double) -> (y: Double, window: Int?) {
-        var best: (y: Double, window: Int?) = (floor, nil)
-        for (index, ledge) in ledges.enumerated()
-        where ledge.minX <= x && x <= ledge.maxX && ledge.minY > above && ledge.minY < best.y {
-            let hidden = ledges[..<index].contains {
-                $0.minX <= x && x <= $0.maxX && $0.minY < ledge.minY - 1 && ledge.minY < $0.maxY
-            }
-            if !hidden { best = (ledge.minY, index) }
+    /// Whether the top edge of `windows[index]` can be seen at `x`: `x`
+    /// is over it, and no window in front of it covers the edge there.
+    /// Every window in front counts, ledge or not — a maximised window
+    /// hides the edges of everything behind it.
+    static func edgeShows(_ index: Int, at x: Double, in windows: [CGRect]) -> Bool {
+        let ledge = windows[index]
+        guard ledge.minX <= x, x <= ledge.maxX else { return false }
+        return !windows[..<index].contains {
+            $0.minX <= x && x <= $0.maxX && $0.minY < ledge.minY - 1 && ledge.minY < $0.maxY
         }
-        return best
     }
 
     /// How much faster than its own flutter a late piece may be nudged in
@@ -348,57 +349,88 @@ struct ConfettiBurst {
     /// in Fall and Fade one that would need more than `nudgeCap` fades
     /// out where it is as the burst ends, so a curtain never bunches up
     /// into one line catching up with itself.
-    private static func plan(_ piece: inout Piece, recipe: Recipe, stage: ConfettiStage, ledges: [CGRect]) {
+    private static func plan(_ piece: inout Piece, recipe: Recipe, stage: ConfettiStage, ledgeOrder: [Int]) {
         let hang = min(1.5, max(0.7, recipe.hang))
         let launch = piece.launch
         let by = deadline(recipe.landing) * hang - launch.delay
-        let natural = piece.vt
-        func reach(_ y: Double, cap: Double = .infinity) -> Double {
-            let d = y - launch.y
-            var t = ConfettiPhysics.settleTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf, d: d)
-            if t > by {
-                let needed = ConfettiPhysics.flutterNeeded(vy: launch.vy, tau: launch.tau, tf: piece.tf,
-                                                           d: d, by: by)
-                if needed.isFinite, needed > piece.vt {
-                    piece.vt = min(needed, natural * cap)
-                    t = ConfettiPhysics.settleTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf, d: d)
-                }
-            }
-            return t
-        }
         switch recipe.landing {
         case .fall, .fade:
             let target = recipe.landing == .fall ? stage.height + piece.size * 0.5 : stage.height * fadeBand.to
-            let t = reach(target, cap: nudgeCap)
-            piece.end = min(t, max(airFade, by))
-            piece.fadeFrom = t > piece.end ? piece.end - airFade : piece.end
+            let reach = timing(of: piece, to: target, by: by, cap: nudgeCap)
+            piece.vt = reach.vt
+            piece.end = min(reach.t, max(airFade, by))
+            piece.fadeFrom = reach.t > piece.end ? piece.end - airFade : piece.end
         case .rest:
-            let apex = launch.y + ConfettiPhysics.drop(
-                vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf,
-                t: ConfettiPhysics.apexTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf))
-            let floor = min(stage.floor, stage.height) - 1
-            // Where it lands depends on where it has drifted to by then,
-            // and when depends on where: settle it in a few passes.
-            var x = launch.x + launch.vx * launch.tau
-            var surface = Self.surface(at: x, below: apex + 4, ledges: ledges, floor: floor)
-            var t = 0.0
-            for _ in 0..<3 {
-                t = reach(surface.y - lieHeight(piece))
-                x = Self.x(of: piece, at: t)
-                let next = Self.surface(at: x, below: apex + 4, ledges: ledges, floor: floor)
-                if next.y == surface.y, next.window == surface.window { break }
-                surface = next
-            }
-            t = reach(surface.y - lieHeight(piece))
-            x = Self.x(of: piece, at: t)
+            let spot = restingPlace(of: piece, stage: stage, ledgeOrder: ledgeOrder, by: by)
+            piece.vt = spot.vt
             var lieRandom = rngForLie(piece)
             let flat = Double.random(in: 0.3...0.5, using: &lieRandom)
-            piece.landing = Landing(x: x, y: surface.y, t: t, window: surface.window,
-                                    lieWidth: 1, lieDepth: flat, front: piece.phase < .pi)
+            piece.landing = Landing(x: spot.x, y: spot.y, t: spot.t, window: spot.window,
+                                    lieDepth: flat, front: piece.phase < .pi)
             let lastFade = lastCall * hang - launch.delay - fadeOut
-            piece.fadeFrom = max(t + bounce, min(t + bounce + hold * hang, lastFade))
+            piece.fadeFrom = max(spot.t + bounce, min(spot.t + bounce + hold * hang, lastFade))
             piece.end = piece.fadeFrom + fadeOut
         }
+    }
+
+    /// When a piece reaches `y`, at its own flutter — or, when that would
+    /// finish after `by`, nudged faster, only as much as it needs and at
+    /// most `cap` times its own speed — and the flutter that does it.
+    private static func timing(of piece: Piece, to y: Double, by: Double,
+                               cap: Double = .infinity) -> (t: Double, vt: Double) {
+        let launch = piece.launch
+        let d = y - launch.y
+        let t = ConfettiPhysics.settleTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf, d: d)
+        guard t > by else { return (t, piece.vt) }
+        let needed = ConfettiPhysics.flutterNeeded(vy: launch.vy, tau: launch.tau, tf: piece.tf, d: d, by: by)
+        guard needed.isFinite, needed > piece.vt else { return (t, piece.vt) }
+        let vt = min(needed, piece.vt * cap)
+        return (ConfettiPhysics.settleTime(vy: launch.vy, tau: launch.tau, vt: vt, tf: piece.tf, d: d), vt)
+    }
+
+    /// Where a Rest piece comes to lie: the first surface it is over at
+    /// the moment it comes down to it. The window top edges below its
+    /// highest point are tried from the top down, each at the x the piece
+    /// has drifted to by the time it gets that low — the first one that
+    /// shows there takes it, so a piece never lies past the end of an
+    /// edge, or on one a window in front hides. Then the Dock's top, where
+    /// the Dock is; then the bottom edge.
+    private static func restingPlace(of piece: Piece, stage: ConfettiStage, ledgeOrder: [Int], by: Double)
+        -> (x: Double, y: Double, t: Double, vt: Double, window: Int?) {
+        let launch = piece.launch
+        let apex = ConfettiPhysics.apexTime(vy: launch.vy, tau: launch.tau, vt: piece.vt, tf: piece.tf)
+        let above = launch.y + ConfettiPhysics.drop(vy: launch.vy, tau: launch.tau, vt: piece.vt,
+                                                    tf: piece.tf, t: apex) + 4
+        // Past its highest point a piece's x stays between where the spray
+        // has carried it and where the spray ends, give or take its sway:
+        // only the edges across that stretch can catch it.
+        let early = launch.x + ConfettiPhysics.spray(v0: launch.vx, tau: launch.tau, t: apex)
+        let late = launch.x + launch.vx * launch.tau
+        let left = min(early, late) - piece.sway - 1
+        let right = max(early, late) + piece.sway + 1
+        let candidates = ledgeOrder.indices.filter {
+            let ledge = stage.windows[ledgeOrder[$0]]
+            return ledge.minY > above && ledge.maxX >= left && ledge.minX <= right
+        }
+        let lie = lieHeight(piece)
+        let highestFirst = candidates.sorted { stage.windows[ledgeOrder[$0]].minY < stage.windows[ledgeOrder[$1]].minY }
+        for index in highestFirst {
+            let ledge = stage.windows[ledgeOrder[index]]
+            let hit = timing(of: piece, to: ledge.minY - lie, by: by)
+            let x = Self.x(of: piece, at: hit.t)
+            if edgeShows(ledgeOrder[index], at: x, in: stage.windows) {
+                return (x, ledge.minY, hit.t, hit.vt, index)
+            }
+        }
+        let bottom = stage.height - 1
+        let dock = min(stage.floor, stage.height) - 1
+        if dock < bottom {
+            let hit = timing(of: piece, to: dock - lie, by: by)
+            let x = Self.x(of: piece, at: hit.t)
+            if stage.dockSpan?.contains(x) ?? true { return (x, dock, hit.t, hit.vt, nil) }
+        }
+        let hit = timing(of: piece, to: bottom - lie, by: by)
+        return (Self.x(of: piece, at: hit.t), bottom, hit.t, hit.vt, nil)
     }
 
     /// Half the height a piece shows lying on its side: how far its
@@ -460,7 +492,7 @@ struct ConfettiBurst {
             let since = t - landing.t
             let bounce = ConfettiPhysics.floorBounce(t: since, height: 5, duration: 0.26)
             let settle = ConfettiPhysics.smooth(since / 0.22)
-            let lie = CGAffineTransform(a: landing.lieWidth, b: 0, c: 0, d: landing.lieDepth, tx: 0, ty: 0)
+            let lie = CGAffineTransform(a: 1, b: 0, c: 0, d: landing.lieDepth, tx: 0, ty: 0)
             let atTouch = Self.transform(of: piece, at: landing.t)
             transform = Self.blend(atTouch, lie, settle)
                 .concatenating(CGAffineTransform(scaleX: bounce.squashX, y: bounce.squashY))

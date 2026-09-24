@@ -20,6 +20,10 @@ struct ConfettiStage: Equatable, Sendable {
     /// The other apps' windows on this screen, front to back: Rest lands
     /// pieces on their top edges.
     var windows: [CGRect] = []
+    /// Where a bottom Dock runs across the screen, when JR-Bar can read
+    /// it: Rest lands pieces on the Dock only over it, and on the bottom
+    /// edge beside it. nil lets the Dock's top stand for the whole width.
+    var dockSpan: ClosedRange<Double>?
 
     /// The area a burst's piece count is measured against: Jonathan's
     /// MacBook Pro screen, 1512 × 982.
