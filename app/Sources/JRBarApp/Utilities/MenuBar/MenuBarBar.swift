@@ -570,6 +570,8 @@ struct MenuBarBarView: View {
     /// feature is off, and the menu leaves the row out.
     var updateWatch: @MainActor (MenuBarItem) -> Bool? = { _ in nil }
     var onUpdateWatch: @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }
+    /// The tile under the pointer, for its plate.
+    @ViewState private var hoveredID: String?
 
     private var items: [MenuBarItem] { model.visibleItems }
 
@@ -603,14 +605,16 @@ struct MenuBarBarView: View {
                                         }
                                     } label: {
                                         tileLabel(for: item, width: width)
-                                            .background {
-                                                if item.id == selectedID {
-                                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                                        .fill(Color.accentColor.opacity(0.22))
-                                                }
-                                            }
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(MenuBarTileStyle(selected: item.id == selectedID,
+                                                                  hovered: item.id == hoveredID))
+                                    .onHover { inside in
+                                        if inside {
+                                            hoveredID = item.id
+                                        } else if hoveredID == item.id {
+                                            hoveredID = nil
+                                        }
+                                    }
                                     .id(item.id)
                                     .accessibilityLabel(itemLabel(for: item))
                                     .accessibilityAddTraits(item.id == selectedID ? .isSelected : [])
@@ -728,6 +732,29 @@ struct MenuBarBarView: View {
         var name = item.ownerName
         if let title = item.title { name += " · \(title)" }
         return name + " — click to open, ⌘-click to keep it out, right-click to move it"
+    }
+}
+
+/// A tile's plate: the keyboard's selection in the accent, the pointer's
+/// hover and press in a quiet fill, so a click on the glass answers
+/// before the item's own menu opens.
+private struct MenuBarTileStyle: ButtonStyle {
+    var selected: Bool
+    var hovered: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Self.fill(selected: selected, hovered: hovered, pressed: configuration.isPressed))
+            }
+            .animation(.easeOut(duration: 0.12), value: hovered)
+    }
+
+    static func fill(selected: Bool, hovered: Bool, pressed: Bool) -> Color {
+        if selected { return Color.accentColor.opacity(pressed ? 0.3 : 0.22) }
+        if pressed { return Color.primary.opacity(0.14) }
+        return hovered ? Color.primary.opacity(0.08) : .clear
     }
 }
 
