@@ -4,6 +4,7 @@
 
 altgraph==0.17.5
 build==1.5.0
+execnet==2.1.2
 keyring==25.7.0; sys_platform == "darwin"
 macholib==1.16.4; sys_platform == "darwin"
 packaging==26.2
@@ -16,6 +17,7 @@ pyobjc-framework-EventKit==12.2.1; sys_platform == "darwin"
 pyobjc-framework-Quartz==12.2.1; sys_platform == "darwin"
 pyobjc-framework-WebKit==12.2.1; sys_platform == "darwin"
 pytest==9.1.1
+pytest-xdist==3.8.0
 rleveldb==1.0.0; sys_platform == "darwin"
 ruamel.yaml==0.19.1
 ruamel.yaml.clibz==0.3.7; implementation_name == "cpython"
