@@ -1458,6 +1458,25 @@ public struct CorePowerRelease: Codable, Hashable, Sendable {
     public var reason: String?
     public var at: Double?
     public var duration: Double?
+    /// Runs the activity ledger saw finish during a closed-lid stretch.
+    public var finished: Int?
+    /// When the daemon's sleep landed, on a `slept` release.
+    public var sleptAt: Double?
+
+    public init(kind: String? = nil, reason: String? = nil, at: Double? = nil, duration: Double? = nil,
+                finished: Int? = nil, sleptAt: Double? = nil) {
+        self.kind = kind
+        self.reason = reason
+        self.at = at
+        self.duration = duration
+        self.finished = finished
+        self.sleptAt = sleptAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, reason, at, duration, finished
+        case sleptAt = "slept_at"
+    }
 }
 
 /// `state.power.battery.runway`: will the run holding the Mac awake

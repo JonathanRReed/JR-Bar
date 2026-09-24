@@ -62,6 +62,12 @@ final class EventCoordinator {
     private(set) var inFrontVerdict: AskingPane.Verdict?
     /// The verdict a check in flight is for, so one ask never asks twice.
     private var inFrontAsking: String?
+    /// Where a closed-lid sleep failure is remembered as said, so one
+    /// failure is said once across launches; a test hands in its own suite.
+    var sleepErrorDefaults: UserDefaults = .standard
+    /// Where it is said: the panel's notice queue and a local banner.
+    var notices: LaunchNotices = .shared
+    nonisolated static let sleepErrorKey = "jrbar.closedLidSleepErrorNoticed"
 
     init(core: CoreModel, hudAnchor: @escaping @MainActor () -> NSRect?) {
         self.core = core
@@ -176,10 +182,39 @@ final class EventCoordinator {
                     // announces in the notch pill.
                     self.hud.announcements.noteDaemonFocus(mode: state.focus?.mode,
                                                            source: state.focus?.source)
+                    self.noteClosedLid(state.power?.closedLid)
                 }
                 self.trackState()
             }
         }
+    }
+
+    /// `closed_lid.sleep_error`: the daemon asked the lid-shut Mac to
+    /// sleep and macOS refused. Said once per distinct (error,
+    /// last_sleep_at) — a notice on the panel and a local banner, nothing
+    /// off the Mac — with a way to the Power rows.
+    func noteClosedLid(_ lid: CoreClosedLid?) {
+        guard let error = lid?.sleepError?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty else { return }
+        let identity = Self.sleepErrorIdentity(error: error, lastSleepAt: lid?.lastSleepAt)
+        guard sleepErrorDefaults.string(forKey: Self.sleepErrorKey) != identity else { return }
+        sleepErrorDefaults.set(identity, forKey: Self.sleepErrorKey)
+        let text = Self.sleepErrorText(error)
+        notices.say(.init(key: "sleep-error", text: text, actionTitle: "Power") {
+            AppCommandRouter.shared.perform(.settings(page: SettingsStore.Page.notifications.rawValue))
+        })
+        notices.deliverBanner("sleep-error", "The Mac did not sleep", text)
+    }
+
+    nonisolated static func sleepErrorIdentity(error: String, lastSleepAt: Double?) -> String {
+        "\(error)|\(lastSleepAt.map { String(Int($0)) } ?? "never")"
+    }
+
+    /// "The Mac didn't sleep when the closed-lid hold let go: …", the
+    /// error cut to a line.
+    nonisolated static func sleepErrorText(_ error: String) -> String {
+        let line = error.split(whereSeparator: \.isNewline).first.map(String.init) ?? error
+        let cut = line.count > 120 ? String(line.prefix(119)) + "…" : line
+        return "The Mac didn't sleep when the closed-lid hold let go: \(cut)"
     }
 
     func handle(_ event: CoreEvent) {

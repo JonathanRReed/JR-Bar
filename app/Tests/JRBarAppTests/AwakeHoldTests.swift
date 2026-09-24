@@ -31,4 +31,12 @@ struct AwakeHoldTests {
         #expect(hold.symbol == "laptopcomputer")
         #expect(hold.text.hasPrefix("Running with the lid closed"))
     }
+
+    @Test("the mark's tooltip carries the power facts; a short runway wears the battery")
+    func facts() throws {
+        let hold = try #require(PanelStore.awakeHold(power: try power(
+            #"{"keep_awake":true,"battery":{"runway":{"agents":2,"minutes_left":20,"short":true}}}"#), working: 2))
+        #expect(hold.symbol == "battery.25percent")
+        #expect(hold.text.hasSuffix("\nOn battery with 2 agents working: about 20 min left"))
+    }
 }

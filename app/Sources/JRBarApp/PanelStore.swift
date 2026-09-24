@@ -804,15 +804,21 @@ final class PanelStore {
     nonisolated static func awakeHold(power: CorePower?, working: Int) -> (symbol: String, text: String)? {
         guard let power else { return nil }
         let agents = working == 1 ? "1 agent works" : "\(working) agents work"
+        // The runway, the charger and the last release ride in the
+        // mark's tooltip, a line each.
+        let facts = KeepAwakeReading(power: power).facts()
+        func told(_ text: String) -> String { ([text] + facts).joined(separator: "\n") }
         if power.closedLid?.holding == true {
-            return ("laptopcomputer", working > 0
+            return ("laptopcomputer", told(working > 0
                 ? "Running with the lid closed while \(agents); it sleeps once they stop"
-                : "Running with the lid closed; it sleeps once the agents stop")
+                : "Running with the lid closed; it sleeps once the agents stop"))
         }
         guard power.keepAwake == true else { return nil }
-        return ("cup.and.saucer.fill", working > 0
+        // A run the battery will not outlast wears the battery, not the cup.
+        let symbol = power.battery?.runway?.short == true ? "battery.25percent" : "cup.and.saucer.fill"
+        return (symbol, told(working > 0
             ? "Keeping this Mac awake while \(agents); it lets go a few minutes after they stop"
-            : "Keeping this Mac awake; it lets go a few minutes after the agents stop")
+            : "Keeping this Mac awake; it lets go a few minutes after the agents stop"))
     }
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
