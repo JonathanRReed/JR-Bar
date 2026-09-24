@@ -569,8 +569,23 @@ struct DataHoarderModelTests {
         #expect(imported.provider == nil || imported.provider == "other")
         let model = DataHoarderModel(archive: archive, capture: capture)
         model.enabled = true
-        await model.relabelSourceRecords(sources: [source])
+        let suite = "DataHoarderModelTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        await model.relabelSourceRecords(sources: [source], defaults: defaults)
         let providers = try await archive.records().map(\.provider)
         #expect(providers.allSatisfy { $0 == "pi" }, "\(providers)")
+
+        // Once per Mac: a second opening reads nothing and changes nothing.
+        let later = sessions.appending(path: "later.jsonl")
+        try Data("seed\n".utf8).write(to: later)
+        let unstamped = try await archive.importFile(later)
+        #expect(unstamped.provider == nil || unstamped.provider == "other")
+        await model.relabelSourceRecords(sources: [source], defaults: defaults)
+        #expect(try await archive.records().first { $0.id == unstamped.id }?.provider == unstamped.provider)
+        // An import is stamped as it lands instead.
+        #expect(await model.stampSourceProvider(unstamped, sources: [source]))
+        #expect(try await archive.records().first { $0.id == unstamped.id }?.provider == "pi")
+        #expect(DataHoarderProviders.sourceProvider(forPath: "/elsewhere/run.jsonl", sources: [source]) == nil)
     }
 }

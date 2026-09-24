@@ -128,25 +128,50 @@ extension DataHoarderModel {
     /// in tests and before the core is up.
     @MainActor static var resumeSender: ((String) async throws -> CoreReply)?
 
+    /// Where the one-time relabel below is marked done.
+    static let relabelDoneKey = "jrbar.dataHoarder.sourceProvidersRelabeled"
+
     /// Records captured before their source's provider was stamped read
     /// as "other"; the folder they came from says whose they are, so the
-    /// picker's pi, Gemini and Grok find them too. One pass, cheap: a
-    /// catalog read and one update per record it fixes.
-    func relabelSourceRecords(sources: [ArchiveSource] = ArchiveSource.defaults()) async {
-        guard enabled else { return }
-        let named = sources.compactMap { source in
-            ArchiveSource.namedProvider(of: source.id).map { (root: source.root.standardizedFileURL.path, provider: $0) }
-        }
-        guard !named.isEmpty,
-              let records = try? await archive.records(query: "", inTrash: false) else { return }
+    /// picker's pi, Gemini and Grok find them too. Once per Mac: capture
+    /// and import stamp the provider as each record lands now, so after
+    /// one pass over the catalog there is nothing left to fix, and the
+    /// archive's opening never reads the whole catalog for it again.
+    func relabelSourceRecords(sources: [ArchiveSource] = ArchiveSource.defaults(),
+                              defaults: UserDefaults = .standard) async {
+        guard enabled, !defaults.bool(forKey: Self.relabelDoneKey) else { return }
+        guard let records = try? await archive.records(query: "", inTrash: false) else { return }
         var fixed = 0
-        for record in records where record.provider == nil || record.provider == "other" {
-            let path = URL(fileURLWithPath: record.sourcePath).standardizedFileURL.path
-            guard let match = named.first(where: { path.hasPrefix($0.root + "/") }) else { continue }
-            if (try? await archive.updateRecordMetadata(id: record.id, provider: match.provider)) != nil {
-                fixed += 1
-            }
+        for record in records {
+            if await stampSourceProvider(record, sources: sources) { fixed += 1 }
         }
+        defaults.set(true, forKey: Self.relabelDoneKey)
         if fixed > 0 { await reload() }
+    }
+
+    /// A record the probe could only call "other" (or nothing) takes the
+    /// provider of the named source whose folder it came from, the way
+    /// capture stamps it. True when the record was changed.
+    @discardableResult
+    func stampSourceProvider(_ record: ArchiveRecord,
+                             sources: [ArchiveSource] = ArchiveSource.defaults()) async -> Bool {
+        guard record.provider == nil || record.provider == "other",
+              let provider = DataHoarderProviders.sourceProvider(forPath: record.sourcePath, sources: sources)
+        else { return false }
+        return (try? await archive.updateRecordMetadata(id: record.id, provider: provider)) != nil
+    }
+}
+
+extension DataHoarderProviders {
+    /// The named agent whose source folder holds `path` (pi, Gemini, Grok),
+    /// nil for Claude and Codex, whose content names them, and for any
+    /// folder the person added.
+    static func sourceProvider(forPath path: String, sources: [ArchiveSource]) -> String? {
+        let file = URL(fileURLWithPath: path).standardizedFileURL.path
+        for source in sources {
+            guard let provider = ArchiveSource.namedProvider(of: source.id) else { continue }
+            if file.hasPrefix(source.root.standardizedFileURL.path + "/") { return provider }
+        }
+        return nil
     }
 }
