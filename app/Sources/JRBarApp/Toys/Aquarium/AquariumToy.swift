@@ -684,6 +684,7 @@ final class AquariumToy: Toy {
             _ = game.apply(.identify(id: session.id, label: session.displayLabel,
                                      provider: session.provider), now: now)
         }
+        pruneIfDue(liveIDs: Set(sessions.map(\.id)), now: now)
         let residents = game.residents(excluding: Set(sessions.map(\.id)))
         fish = AquariumModel.reduce(sessions: sessions, previous: fish, now: now,
                                     residents: residents) {
@@ -694,6 +695,26 @@ final class AquariumToy: Toy {
         let base = AquariumWaterMood.base(core.state)
         if base != waterBase { waterBase = base }
     }
+
+    /// The care records stay trimmed while the tank is closed too: the
+    /// session list keeps minting records with the window shut, and the
+    /// tick's prune only runs while it's open. At most once a minute, on
+    /// a copy, written back (and saved) only when something went.
+    private func pruneIfDue(liveIDs: Set<String>, now: Date) {
+        guard now.timeIntervalSince(lastPruneAt) >= Self.pruneInterval else { return }
+        lastPruneAt = now
+        guard game.pets.count > AquariumRules.maxPets else { return }
+        var next = game
+        let effects = next.apply(.prune(liveIDs: liveIDs), now: now)
+        guard next != game else { return }
+        game = next
+        note(effects, now: now)
+        persist()
+    }
+
+    /// The slowest the session-driven prune runs.
+    static let pruneInterval: TimeInterval = 60
+    @ObservationIgnored private var lastPruneAt = Date.distantPast
 
     /// The work's own milestones (a school of six, a clean week, a week
     /// under budget, banked credits): the document's fleet facts, folded

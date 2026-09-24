@@ -48,7 +48,9 @@ public enum AquariumRules {
     /// sweeps up what has waited this long, so a drop it never reached
     /// is still paid.
     public static let snailBackstop: TimeInterval = 120
-    /// Pet records kept at most — the oldest non-live go first.
+    /// Pet records kept at most. The prune lets passers-by go first —
+    /// fish that never grew, the nameless before the named — then the
+    /// oldest, and never a live session's fish or a resident.
     public static let maxPets = 64
     /// The most raised fish that keep swimming after their sessions
     /// are gone — enough for a tank that never reads empty, few enough
@@ -578,7 +580,9 @@ public enum AquariumEvent: Equatable, Sendable {
     case collectDrop(String)
     /// The heartbeat: starvation, pearl drops, snail collection.
     case tick
-    /// Drop pet records over the cap — the oldest not in `liveIDs`.
+    /// Drop pet records over the cap: never one in `liveIDs` or a
+    /// current resident; small nameless fish first, then small named
+    /// ones, then the oldest.
     case prune(liveIDs: Set<String>)
     /// The snail reached a drop on the sand and picked it up — paid
     /// exactly like a click. A drop already gone is a no-op.
@@ -1127,8 +1131,16 @@ public struct AquariumGame: Codable, Equatable, Sendable {
 
         case .prune(let liveIDs):
             if pets.count > AquariumRules.maxPets {
-                let dead = pets.filter { !liveIDs.contains($0.key) }
-                    .sorted { $0.value.createdAt < $1.value.createdAt }
+                let keep = liveIDs.union(residents(excluding: liveIDs).map(\.id))
+                let dead = pets.filter { !keep.contains($0.key) }
+                    .sorted { a, b in
+                        let ra = Self.pruneRank(a.value), rb = Self.pruneRank(b.value)
+                        if ra != rb { return ra < rb }
+                        if a.value.createdAt != b.value.createdAt {
+                            return a.value.createdAt < b.value.createdAt
+                        }
+                        return a.key < b.key
+                    }
                 for (id, _) in dead.prefix(pets.count - AquariumRules.maxPets) {
                     pets.removeValue(forKey: id)
                     hats.removeValue(forKey: id)
@@ -1227,6 +1239,13 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             care.workSeconds -= AquariumRules.growthWorkSeconds
             effects.append(.fishGrew(id))
         }
+    }
+
+    /// Who the prune lets go first: a fish that never grew and was
+    /// never named (0), a small named one (1), then everything else (2).
+    private static func pruneRank(_ care: FishCare) -> Int {
+        guard care.stage == 0 else { return 2 }
+        return (care.label ?? "").isEmpty ? 0 : 1
     }
 
     private mutating func earn(_ count: Int) {

@@ -624,3 +624,47 @@ extension AquariumGameTests {
         #expect(game.away.dropsCollected == 1)
     }
 }
+
+// MARK: Pruning passers-by first
+
+extension AquariumGameTests {
+    @Test("prune evicts stage-0 before a raised resident, and keeps the resident set intact")
+    func pruneKeepsResidents() {
+        var game = AquariumGame()
+        // The oldest records are the raised, named residents; a crowd of
+        // newer passers-by fills the rest past the cap.
+        for i in 0..<AquariumRules.maxResidents {
+            game.pets["raised-\(i)"] = FishCare(stage: 2, createdAt: Double(i),
+                                                label: "run \(i)", provider: "claude")
+        }
+        for i in 0..<AquariumRules.maxPets {
+            game.pets["named-\(i)"] = FishCare(createdAt: 1000 + Double(i), label: "tmp \(i)")
+            game.pets["nameless-\(i)"] = FishCare(createdAt: 2000 + Double(i))
+        }
+        let residentsBefore = game.residents(excluding: [])
+        game.apply(.prune(liveIDs: []), now: Self.t0)
+        #expect(game.pets.count == AquariumRules.maxPets)
+        #expect(game.residents(excluding: []) == residentsBefore, "no resident is let go")
+        // The nameless small fish went before any named one.
+        #expect(!game.pets.keys.contains { $0.hasPrefix("nameless-") })
+        #expect(game.pets.keys.filter { $0.hasPrefix("named-") }.count
+                == AquariumRules.maxPets - AquariumRules.maxResidents)
+        // Among the named, the oldest went first.
+        #expect(game.pets["named-0"] == nil)
+        #expect(game.pets["named-\(AquariumRules.maxPets - 1)"] != nil)
+    }
+
+    @Test("prune caps a closed tank's records at maxPets and never drops a live fish")
+    func pruneCapsClosedTank() {
+        var game = AquariumGame()
+        game.apply(.setWindowOpen(false), now: Self.t0)
+        for i in 0..<200 {
+            game.apply(.sessionCompleted(id: "s\(i)"), now: Self.t0 + Double(i))
+        }
+        #expect(game.pets.count == 200, "completions keep minting records while closed")
+        game.apply(.prune(liveIDs: ["s0", "s199"]), now: Self.t0 + 300)
+        #expect(game.pets.count == AquariumRules.maxPets)
+        #expect(game.pets["s0"] != nil, "the oldest record is still a listed session")
+        #expect(game.pets["s199"] != nil)
+    }
+}
