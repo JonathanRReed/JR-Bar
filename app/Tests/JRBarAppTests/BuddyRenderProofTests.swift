@@ -342,19 +342,29 @@ struct BuddyRenderProofTests {
     /// The moves between homes and moods, frame by frame: a docked tuck
     /// ducking up under the notch, a 2× buddy fresh out of the notch
     /// growing in from the docked size (the dashed ring is where the
-    /// docked figure stood), and a completion hop handing off from the
-    /// patrol's right-hand end instead of jumping to centre.
+    /// docked figure stood), a completion hop handing off from the
+    /// patrol's right-hand end instead of jumping to centre, the patrol's
+    /// own turn at that end swinging its lean through upright into the
+    /// step off, and a quick pacing → gathering → pacing flicker carrying
+    /// on from the blend on screen.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write the presence strip"))
     func presenceStrip() throws {
         let tint = ProviderStyle.style(for: "codex").accent
         func body(_ mood: NotchBuddyToy.Mood = .pacing, hop: Double? = nil,
-                  handoff: BuddyHandoff? = nil) -> BuddyFigure {
+                  handoff: BuddyHandoff? = nil, stride: Double = 0.45 * 3.4) -> BuddyFigure {
             BuddyFigure(character: .cat, mood: mood, tint: mood == .celebrating ? .green : tint,
                         phase: 2.35, hopProgress: hop, waveAge: nil, slumpAge: nil, leans: false,
                         still: false, askCount: 0, care: .content, trick: nil, treatAge: nil,
-                        crumbAge: nil, stride: 0.45 * 3.4, handoff: handoff)
+                        crumbAge: nil, stride: stride, handoff: handoff)
         }
+        let still = NotchBuddyView.presence(tuck: nil, arrival: nil, docked: false, scale: 3,
+                                            reduceMotion: false)
+        // The pacing cycle's right-hand pause runs from 40 % to 50 % of
+        // its 3.4 s; the last frame is the first step back.
+        let patrol = [0.40, 0.425, 0.45, 0.475, 0.50, 0.52].map { $0 * 3.4 }
+        let firstChange = BuddyHandoff(from: .pacing, age: 0.1)
+        let carried = firstChange.shares(into: .gathering)
         func placed(_ figure: BuddyFigure, _ place: NotchBuddyView.Presence, scale: Double) -> some View {
             figure
                 .scaleEffect(place.scale, anchor: place.anchor)
@@ -404,6 +414,32 @@ struct BuddyRenderProofTests {
                                     handoff: BuddyHandoff(from: .pacing, age: age)),
                                NotchBuddyView.presence(tuck: nil, arrival: nil, docked: false, scale: 3,
                                                        reduceMotion: false), scale: 3)
+                            .frame(width: 66, height: 66)
+                            .background(alignment: .center) {
+                                Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 0.5)
+                            }
+                            .background(tile.fill(ground))
+                    }
+                }
+                Text("Patrol's own turn at its right-hand end · the pause, then the first step back")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(patrol.indices, id: \.self) { i in
+                        placed(body(stride: patrol[i]), still, scale: 3)
+                            .frame(width: 66, height: 66)
+                            .background(alignment: .center) {
+                                Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 0.5)
+                            }
+                            .background(tile.fill(ground))
+                    }
+                }
+                Text("Pacing → gathering → pacing, the second change 100 ms in · 0 → \(Int(BuddyHandoff.duration * 1000)) ms")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ticks.indices, id: \.self) { i in
+                        let second = BuddyHandoff(from: .gathering, age: ticks[i] * BuddyHandoff.duration,
+                                                  blend: carried)
+                        placed(body(handoff: second), still, scale: 3)
                             .frame(width: 66, height: 66)
                             .background(alignment: .center) {
                                 Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 0.5)
