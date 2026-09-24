@@ -37,10 +37,12 @@ import math
 import os
 import secrets
 import stat
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
+from typing import BinaryIO
 
 from .capacity_sources import (
     EvidenceMetricKind,
@@ -628,12 +630,102 @@ def _record_from_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple
     )
 
 
+#: Stands in for a line over ``USAGE_RECORD_MAX_BYTES`` that carries a
+#: marker: the scanners count it malformed without it ever being held whole.
+_OVERSIZED_LINE = object()
+_CLAUDE_MARKERS = (USAGE_MARKER.encode("ascii"),)
+_CODEX_MARKERS = (
+    CODEX_MARKER.encode("ascii"), b'"session_meta"', b'"turn_context"',
+)
+_READ_BUFFER_BYTES = 256 * 1024
+
+
+class _VerifiedPrefix:
+    """One identity-checked snapshot of a transcript, read a line at a time.
+
+    ``lines(markers)`` yields each complete line that carries one of
+    ``markers``, decoded, and ``_OVERSIZED_LINE`` for an over-cap line
+    that carries one; lines without a marker are never decoded. Reading
+    stops at the snapshot's size and the unfinished last line is left
+    for the next read. Once consumed, ``parsed_size`` is the absolute
+    offset just past the last complete line, and ``read_ok`` is False if
+    the read failed part way.
+    """
+
+    __slots__ = ("_handle", "_remaining", "parsed_size", "read_ok")
+
+    def __init__(self, handle: BinaryIO, resume_offset: int, snapshot_size: int) -> None:
+        self._handle = handle
+        self._remaining = snapshot_size - resume_offset
+        self.parsed_size = resume_offset
+        self.read_ok = True
+
+    def lines(self, markers: tuple[bytes, ...]) -> Iterator[str | object]:
+        handle = self._handle
+        cap = USAGE_RECORD_MAX_BYTES
+        try:
+            while self._remaining > 0:
+                limit = min(self._remaining, cap + 1)
+                raw = handle.readline(limit)
+                if not raw.endswith(b"\n"):
+                    if len(raw) < limit or limit == self._remaining:
+                        return  # the unfinished last line, or a short file
+                    carried = self._skip_rest_of_line(raw, markers)
+                    if carried is None:
+                        return
+                    if carried:
+                        yield _OVERSIZED_LINE
+                    continue
+                self._remaining -= len(raw)
+                self.parsed_size += len(raw)
+                for marker in markers:
+                    if marker in raw:
+                        break
+                else:
+                    continue
+                yield _OVERSIZED_LINE if len(raw) > cap else raw.decode("utf-8", errors="replace")
+        except OSError:
+            self.read_ok = False
+        finally:
+            handle.close()
+
+    def _skip_rest_of_line(self, head: bytes, markers: tuple[bytes, ...]) -> bool | None:
+        """Read past an over-cap line in bounded pieces.
+
+        True if the line carried a marker, False if not, None if it runs
+        past the snapshot unfinished (it is then left unread).
+        """
+        # A marker may straddle two pieces, so each piece is searched
+        # together with the end of the one before it.
+        overlap = max(len(marker) for marker in markers) - 1
+        carried = any(marker in head for marker in markers)
+        tail = head[len(head) - overlap:]
+        consumed = len(head)
+        while True:
+            left = self._remaining - consumed
+            if left <= 0:
+                return None
+            piece = self._handle.readline(min(left, _READ_BUFFER_BYTES))
+            if not piece:
+                return None
+            consumed += len(piece)
+            joined = tail + piece
+            if not carried:
+                carried = any(marker in joined for marker in markers)
+            tail = joined[len(joined) - overlap:]
+            if piece.endswith(b"\n"):
+                break
+        self._remaining -= consumed
+        self.parsed_size += consumed
+        return carried
+
+
 def _read_verified_prefix(
     path: Path,
     expected_stat: os.stat_result,
     resume_offset: int = 0,
-) -> tuple[str, int] | None:
-    """The snapshot's bytes of a possibly still-growing file, or None.
+) -> _VerifiedPrefix | None:
+    """The snapshot of a possibly still-growing file, or None.
 
     The scan works from a FROZEN inventory: every candidate is stat'd
     first, then parsed. A live agent transcript appends every few
@@ -644,9 +736,11 @@ def _read_verified_prefix(
     live 2026-08-20: weekly pinned at 99% while the active rollout said
     95%). Growth is not corruption: same device and inode, size and
     mtime at or past the snapshot, is the same file with more history.
-    This reads exactly the snapshot's bytes, trimmed back to the last
-    newline so no line is ever split mid-write, and reports the
-    absolute offset covered.
+    The identity checks run here; the returned reader then streams
+    exactly the snapshot's bytes from the checked descriptor. Reading a
+    whole transcript at once held bytes, a joined copy, a decoded copy
+    and its split lines together: 2.6 GB at the peak of a cold Codex
+    scan, and the allocator never handed it back.
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
@@ -655,37 +749,25 @@ def _read_verified_prefix(
         return None
     try:
         current = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(current.st_mode)
-            or current.st_dev != expected_stat.st_dev
-            or current.st_ino != expected_stat.st_ino
-            or current.st_size < expected_stat.st_size
-            or current.st_mtime_ns < expected_stat.st_mtime_ns
-            or resume_offset < 0
-            or resume_offset > expected_stat.st_size
-        ):
-            return None
-        target = expected_stat.st_size - resume_offset
-        chunks: list[bytes] = []
-        os.lseek(descriptor, resume_offset, os.SEEK_SET)
-        while target > 0:
-            chunk = os.read(descriptor, min(target, 1 << 20))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            target -= len(chunk)
+        verified = (
+            stat.S_ISREG(current.st_mode)
+            and current.st_dev == expected_stat.st_dev
+            and current.st_ino == expected_stat.st_ino
+            and current.st_size >= expected_stat.st_size
+            and current.st_mtime_ns >= expected_stat.st_mtime_ns
+            and 0 <= resume_offset <= expected_stat.st_size
+        )
+        if verified:
+            os.lseek(descriptor, resume_offset, os.SEEK_SET)
     except OSError:
-        return None
-    finally:
+        verified = False
+    if not verified:
         os.close(descriptor)
-    payload = b"".join(chunks)
-    cut = payload.rfind(b"\n")
-    if cut < 0:
-        return "", resume_offset
-    payload = payload[: cut + 1]
-    return (
-        payload.decode("utf-8", errors="replace"),
-        resume_offset + len(payload),
+        return None
+    return _VerifiedPrefix(
+        open(descriptor, "rb", buffering=_READ_BUFFER_BYTES),
+        resume_offset,
+        expected_stat.st_size,
     )
 
 
@@ -789,6 +871,9 @@ def _scan_codex_lines(
     eof_newline = True
     current_model = "codex"
     for line in handle:
+        if line is _OVERSIZED_LINE:
+            malformed_lines += 1
+            continue
         eof_newline = line.endswith("\n")
         if (
             CODEX_MARKER not in line
@@ -940,20 +1025,21 @@ def _parse_codex_file(
     snapshot = _read_verified_prefix(path, expected_stat)
     if snapshot is None:
         return _ParseResult([], 0, False)
-    text, parsed_size = snapshot
     physical_id = f"codex:{expected_stat.st_dev}:{expected_stat.st_ino}"
     records, rate_limit_windows, malformed_lines, _eof, _legacy = _scan_codex_lines(
-        text.splitlines(keepends=True),
+        snapshot.lines(_CODEX_MARKERS),
         fallback_session_id=physical_id,
         dedupe_secret=dedupe_secret,
     )
+    if not snapshot.read_ok:
+        return _ParseResult([], 0, False)
     return _ParseResult(
         records,
         malformed_lines,
         True,
         rate_limit_windows,
         True,
-        parsed_size,
+        snapshot.parsed_size,
     )
 
 
@@ -1417,19 +1503,28 @@ def _parse_file(
     snapshot = _read_verified_prefix(path, expected_stat)
     if snapshot is None:
         return _ParseResult([], 0, False)
-    text, parsed_size = snapshot
+    return _scan_claude_lines(snapshot, session_id, dedupe_secret)
+
+
+def _scan_claude_lines(
+    snapshot: _VerifiedPrefix, session_id: str, dedupe_secret: bytes,
+) -> _ParseResult:
     records: list[tuple] = []
     malformed_lines = 0
-    for line in text.splitlines(keepends=True):
-        # T3's mightCarryUsage: skip before parsing.
-        if USAGE_MARKER not in line:
-            continue
-        record = _record_from_line(line, session_id, dedupe_secret)
+    # T3's mightCarryUsage: the reader skips a line without the marker
+    # before it is decoded, let alone parsed.
+    for line in snapshot.lines(_CLAUDE_MARKERS):
+        record = (
+            None if line is _OVERSIZED_LINE
+            else _record_from_line(line, session_id, dedupe_secret)
+        )
         if record is not None:
             records.append(record)
         else:
             malformed_lines += 1
-    return _ParseResult(records, malformed_lines, True, (), True, parsed_size)
+    if not snapshot.read_ok:
+        return _ParseResult([], 0, False)
+    return _ParseResult(records, malformed_lines, True, (), True, snapshot.parsed_size)
 
 
 def _parse_file_tail(
@@ -1455,13 +1550,11 @@ def _parse_file_tail(
     snapshot = _read_verified_prefix(path, expected_stat, resume_offset)
     if snapshot is None:
         return _ParseResult([], 0, False)
-    text, parsed_size = snapshot
-    lines = text.splitlines(keepends=True)
     if provider_id == "codex":
         physical_id = f"codex:{expected_stat.st_dev}:{expected_stat.st_ino}"
         records, rate_limit_windows, malformed_lines, _eof, legacy_without_baseline = (
             _scan_codex_lines(
-                lines,
+                snapshot.lines(_CODEX_MARKERS),
                 fallback_session_id=codex_session_id or physical_id,
                 dedupe_secret=dedupe_secret,
                 initial_totals=codex_previous_totals,
@@ -1469,6 +1562,8 @@ def _parse_file_tail(
                 initial_root_id=codex_root_id,
             )
         )
+        if not snapshot.read_ok:
+            return _ParseResult([], 0, False)
         # A legacy cumulative-only tail cannot derive its first delta without
         # the cached cumulative endpoint. Refuse this optimization and let the
         # caller perform the existing full reparse instead of overcounting.
@@ -1480,20 +1575,10 @@ def _parse_file_tail(
             True,
             rate_limit_windows,
             True,
-            parsed_size,
+            snapshot.parsed_size,
         )
     session_id = f"claude:{expected_stat.st_dev}:{expected_stat.st_ino}"
-    records: list[tuple] = []
-    malformed_lines = 0
-    for line in lines:
-        if USAGE_MARKER not in line:
-            continue
-        record = _record_from_line(line, session_id, dedupe_secret)
-        if record is not None:
-            records.append(record)
-        else:
-            malformed_lines += 1
-    return _ParseResult(records, malformed_lines, True, (), True, parsed_size)
+    return _scan_claude_lines(snapshot, session_id, dedupe_secret)
 
 
 def _incremental_resume_offset(entry: object, candidate_stat: os.stat_result) -> int | None:
