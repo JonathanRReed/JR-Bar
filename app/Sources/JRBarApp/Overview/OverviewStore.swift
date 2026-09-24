@@ -1439,7 +1439,10 @@ final class OverviewStore {
     /// loose. Everything is the whole record, rows the panel's aging
     /// hides included. The sidebar's search applies to both.
     var graphNodes: [OverviewGraphNode] {
-        Self.graphEntries(roster, scope: graphScope, search: search, now: now).map(OverviewGraphNode.init)
+        // Only Active's one-hour horizon needs the clock. Everything must
+        // not read it, or the whole record would lay out again each second.
+        let clock = graphScope == .active ? now : .distantFuture
+        return Self.graphEntries(roster, scope: graphScope, search: search, now: clock).map(OverviewGraphNode.init)
     }
 
     static func graphEntries(_ roster: [CoreRosterEntry], scope: GraphScope, search: String,

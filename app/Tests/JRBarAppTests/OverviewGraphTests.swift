@@ -128,4 +128,32 @@ import JRBarCore
         store.selectInGraph(nil)
         #expect(store.selectedIDs.isEmpty)
     }
+
+    final class Tripped: @unchecked Sendable { var fired = false }
+
+    @Test("Everything's nodes ignore the one-second clock; Active's follow it")
+    func everythingIgnoresTheClock() {
+        let store = OverviewStore(core: CoreModel())
+        store.roster = [Self.entry("done", mode: "completed", lifecycle: "completed", updated: 1)]
+        store.graphScope = .everything
+        let everything = Tripped()
+        withObservationTracking { _ = store.graphNodes } onChange: { everything.fired = true }
+        store.now = store.now.addingTimeInterval(1)
+        #expect(!everything.fired, "a tick must not lay the whole record out again")
+
+        store.graphScope = .active
+        let active = Tripped()
+        withObservationTracking { _ = store.graphNodes } onChange: { active.fired = true }
+        store.now = store.now.addingTimeInterval(1)
+        #expect(active.fired, "Active's one-hour horizon moves with the clock")
+    }
+
+    @Test("only working and waiting marks sit under the timeline")
+    func inkLayers() {
+        let moving: [SessionActivity] = [.working, .waiting]
+        for activity in [SessionActivity.working, .waiting, .failed, .done, .idle, .ended] {
+            #expect(GraphInkLayer.ring(activity) == (moving.contains(activity) ? .moving : .still))
+            #expect(GraphInkLayer.drop(activity) == (activity == .working ? .moving : .still))
+        }
+    }
 }

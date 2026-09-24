@@ -90,16 +90,24 @@ struct OverviewGraphCanvas: View {
                     .offset(x: cluster.frame.minX, y: cluster.frame.minY)
                     .onTapGesture { store.selectInGraph(nil) }
             }
-            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animating)) { timeline in
-                GraphInk(layout: layout, nodes: byID, selectedID: store.selectedID, hoveredID: hoveredID,
-                         time: animating ? timeline.date.timeIntervalSinceReferenceDate : 0,
-                         still: reduceMotion)
+            // Two layers: the still ink redraws only when the graph
+            // changes; the timeline redraws just the working and waiting
+            // marks, however long the record behind them.
+            GraphInk(layout: layout, nodes: byID, selectedID: store.selectedID, hoveredID: hoveredID,
+                     time: 0, still: reduceMotion, layer: .still)
+                .allowsHitTesting(false)
+            if moving {
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animating)) { timeline in
+                    GraphInk(layout: layout, nodes: byID, selectedID: store.selectedID, hoveredID: hoveredID,
+                             time: animating ? timeline.date.timeIntervalSinceReferenceDate : 0,
+                             still: reduceMotion, layer: .moving)
+                }
+                .allowsHitTesting(false)
             }
-            .allowsHitTesting(false)
             ForEach(layout.order, id: \.self) { id in
                 if let node = byID[id], let placed = layout.nodes[id] {
-                    GraphNodeView(node: node, placed: placed,
-                                  caption: placed.isWorker ? nil : caption(for: node, entry: entries[id]),
+                    GraphNodeView(node: node, placed: placed, store: store,
+                                  since: entries[id]?.session.since.map { Date(timeIntervalSince1970: $0) },
                                   unseen: entries[id].map(store.showsUnseenDot) ?? false,
                                   selected: store.selectedID == id, hovered: hoveredID == id)
                         .position(placed.center)
@@ -133,13 +141,6 @@ struct OverviewGraphCanvas: View {
     nonisolated static func cardX(for placed: OverviewGraphLayout.Placed, in width: CGFloat) -> CGFloat {
         let right = placed.center.x + placed.diameter / 2 + 12
         return right + 250 > width ? max(8, placed.center.x - placed.diameter / 2 - 262) : right
-    }
-
-    /// "Working · 12m" under a main session; a worker keeps its name only.
-    private func caption(for node: OverviewGraphNode, entry: CoreRosterEntry?) -> String {
-        let since = entry?.session.since.map { Date(timeIntervalSince1970: $0) }
-        let elapsed = PanelStore.elapsed(since: since, now: store.now)
-        return [node.activity.word, elapsed].compactMap { $0 }.joined(separator: " · ")
     }
 
     private func open(_ id: String, entry: CoreRosterEntry?) {
@@ -290,9 +291,28 @@ private struct GraphClusterCard: View {
 
 // MARK: - Ink: edges and rings
 
-/// Everything that moves, in one Canvas: the edges from a session to its
-/// workers and each node's state ring. One timeline drives it, and only
-/// while something is working or waiting and the window is on screen.
+/// Which of the Graph's two ink layers draws a mark. Only a working or
+/// waiting mark moves, so only those sit under the 30 fps timeline; the
+/// rest draw once per change.
+enum GraphInkLayer: Equatable, Sendable {
+    case still, moving
+
+    /// A node's ring: the working comet and the waiting pulse move.
+    static func ring(_ activity: SessionActivity) -> GraphInkLayer {
+        activity == .working || activity == .waiting ? .moving : .still
+    }
+
+    /// A worker's drop: only a working one marches.
+    static func drop(_ activity: SessionActivity) -> GraphInkLayer {
+        activity == .working ? .moving : .still
+    }
+}
+
+/// The edges from a session to its workers and each node's state ring,
+/// in one Canvas per layer. The still layer holds the trunks, buses and
+/// quiet drops and rings; the moving layer holds the working and waiting
+/// marks, and a timeline drives it only while something works or waits
+/// and the window is on screen. A selection ring rides with its node's.
 private struct GraphInk: View {
     let layout: OverviewGraphLayout
     let nodes: [String: OverviewGraphNode]
@@ -300,6 +320,7 @@ private struct GraphInk: View {
     let hoveredID: String?
     let time: TimeInterval
     let still: Bool
+    let layer: GraphInkLayer
 
     var body: some View {
         Canvas { context, _ in
@@ -312,10 +333,12 @@ private struct GraphInk: View {
                     guard let placed = layout.nodes[edge.to], let node = nodes[edge.to] else { return nil }
                     return (placed, node.activity)
                 }
+                if layer == .moving, !children.contains(where: { GraphInkLayer.drop($0.1) == .moving }) { continue }
                 drawFamily(&context, parent: parent, children: children)
             }
             for id in layout.order {
                 guard let placed = layout.nodes[id], let node = nodes[id] else { continue }
+                guard GraphInkLayer.ring(node.activity) == layer else { continue }
                 drawRing(&context, placed: placed, activity: node.activity,
                          selected: id == selectedID, hovered: id == hoveredID)
             }
@@ -331,7 +354,7 @@ private struct GraphInk: View {
         let tops = children.map { CGPoint(x: $0.0.center.x, y: $0.0.center.y - $0.0.diameter / 2 - 4) }
         guard let firstTop = tops.map(\.y).min(), firstTop - stem.y > 12 else {
             // A worker's own workers can share its row: a plain curve.
-            for (index, child) in children.enumerated() {
+            for (index, child) in children.enumerated() where GraphInkLayer.drop(child.1) == layer {
                 var path = Path()
                 path.move(to: stem)
                 let end = tops[index]
@@ -350,15 +373,17 @@ private struct GraphInk: View {
         let leftCorner = left < stem.x - radius
         let rightCorner = right > stem.x + radius
 
-        var bus = Path()
-        bus.move(to: stem)
-        bus.addLine(to: CGPoint(x: stem.x, y: busY))
-        bus.move(to: CGPoint(x: left + (leftCorner ? radius : 0), y: busY))
-        bus.addLine(to: CGPoint(x: right - (rightCorner ? radius : 0), y: busY))
-        context.stroke(bus, with: .color(.secondary.opacity(0.4)),
-                       style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+        if layer == .still {
+            var bus = Path()
+            bus.move(to: stem)
+            bus.addLine(to: CGPoint(x: stem.x, y: busY))
+            bus.move(to: CGPoint(x: left + (leftCorner ? radius : 0), y: busY))
+            bus.addLine(to: CGPoint(x: right - (rightCorner ? radius : 0), y: busY))
+            context.stroke(bus, with: .color(.secondary.opacity(0.4)),
+                           style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+        }
 
-        for (index, child) in children.enumerated() {
+        for (index, child) in children.enumerated() where GraphInkLayer.drop(child.1) == layer {
             let top = tops[index]
             var drop = Path()
             if leftCorner, top.x == left {
@@ -447,7 +472,10 @@ private struct GraphInk: View {
 private struct GraphNodeView: View {
     let node: OverviewGraphNode
     let placed: OverviewGraphLayout.Placed
-    let caption: String?
+    let store: OverviewStore
+    /// When the session's current state began — a main session's caption
+    /// counts from it; a worker keeps its name only.
+    let since: Date?
     let unseen: Bool
     let selected: Bool
     let hovered: Bool
@@ -519,16 +547,30 @@ private struct GraphNodeView: View {
                 .foregroundStyle(finished ? .secondary : .primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if let caption {
-                Text(caption)
-                    .font(.system(size: 10))
-                    .monospacedDigit()
-                    .foregroundStyle(node.activity.wordColor)
-                    .lineLimit(1)
+            if !placed.isWorker {
+                GraphCaptionLine(store: store, activity: node.activity, since: since)
             }
         }
         .frame(width: placed.captionWidth)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// "Working · 12m" under a main session. The only part of a node that
+/// reads the store's clock, so each second redraws captions, not the
+/// whole graph.
+private struct GraphCaptionLine: View {
+    let store: OverviewStore
+    let activity: SessionActivity
+    let since: Date?
+
+    var body: some View {
+        Text([activity.word, PanelStore.elapsed(since: since, now: store.now)]
+            .compactMap { $0 }.joined(separator: " · "))
+            .font(.system(size: 10))
+            .monospacedDigit()
+            .foregroundStyle(activity.wordColor)
+            .lineLimit(1)
     }
 }
 
