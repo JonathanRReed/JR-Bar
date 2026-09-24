@@ -31,6 +31,9 @@ struct AquariumView: View {
         var visitorProgress: Double?
         /// A pinned water mood; nil is calm water.
         var mood: AquariumWaterMood?
+        /// The card's settings for the shot; nil builds them from
+        /// `showLabels` and `density` above.
+        var settings: AquariumSettings?
     }
 
     let toy: AquariumToy?
@@ -39,6 +42,16 @@ struct AquariumView: View {
     /// The game either side reads — the toy's live document, or the
     /// fixture's synthetic one.
     var game: AquariumGame? { toy?.game ?? fixture?.game }
+
+    /// The card's settings, read in one place: the toy's store, or the
+    /// fixture's own.
+    var tankSettings: AquariumSettings {
+        if let toy { return toy.store?.state.aquarium ?? AquariumSettings() }
+        if let pinned = fixture?.settings { return pinned }
+        return AquariumSettings(showLabels: fixture?.showLabels ?? true,
+                                density: fixture?.density ?? 1,
+                                dayNight: .cycle)
+    }
 
     /// The water column's theme key — "classic" when there's no game.
     var themeKey: String { game?.themeID ?? "classic" }
@@ -64,7 +77,7 @@ struct AquariumView: View {
         if let pinned = fixture?.night { return pinned }
         if reduceMotion { return 0.4 }
         let date = Date(timeIntervalSince1970: t)
-        switch toy?.store?.state.aquarium.dayNight ?? .cycle {
+        switch tankSettings.dayNight {
         case .cycle:
             return AquariumBehavior.night(at: t)
         case .realTime:
@@ -121,8 +134,9 @@ struct AquariumView: View {
         // Read the observable surface in `body` so the card's tracked
         // reads stay honest even while the timeline is paused.
         let fish = toy?.fish ?? fixture?.fish ?? []
-        let showLabels = toy?.store?.state.aquarium.showLabels ?? fixture?.showLabels ?? true
-        let density = max(0.1, toy?.store?.state.aquarium.density ?? fixture?.density ?? 1)
+        let settings = tankSettings
+        let showLabels = settings.showLabels
+        let density = max(0.1, settings.density)
         let paused = ambient ? !ambientVisible
             : (toy?.windowOccluded ?? fixture?.paused ?? false)
         ZStack {
