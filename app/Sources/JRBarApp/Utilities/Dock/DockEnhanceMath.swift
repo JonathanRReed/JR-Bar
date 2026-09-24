@@ -718,10 +718,11 @@ struct DockPlacement: Equatable {
 /// its Standard value times the scale, rounded to a point and held at a
 /// floor, so the tightest stop still clears the agent ring (it reaches
 /// 3 pt past a still), keeps a verb disc a fair target, and leaves the
-/// still's shadow room inside the glass. The corners are derived, not
-/// scaled: the card plate is the still's corner plus its pad, and the
-/// glass is the plate's corner plus the panel's inset, so every curve
-/// shares one centre.
+/// still's shadow room inside the glass. The header's icon and verb
+/// discs are controls, not air, so they stop growing at Standard. The
+/// corners are derived, not scaled: the card plate is the still's
+/// corner plus its pad, and the glass is the plate's corner plus the
+/// panel's inset, so every curve shares one centre.
 struct DockPreviewMetrics: Equatable {
     /// Glass edge to content.
     let panelInset: CGFloat
@@ -738,9 +739,11 @@ struct DockPreviewMetrics: Equatable {
     let rowPadV: CGFloat
     /// A compact-list row's padding across.
     let listPadH: CGFloat
-    /// The header's app icon.
+    /// The header's app icon. Spacing is air, not size: the icon
+    /// shrinks toward Tight but never grows past Standard's 30.
     let headerIcon: CGFloat
-    /// The header's verb discs — never under 20, a fair target.
+    /// The header's verb discs — never under 20, a fair target, and
+    /// never past Standard's 22.
     let verbDisc: CGFloat
     /// The hairline between sections. Below 0.8 the air alone
     /// separates them.
@@ -762,8 +765,8 @@ struct DockPreviewMetrics: Equatable {
                                   rowPadH: token(10, floor: 8),
                                   rowPadV: token(8, floor: 6),
                                   listPadH: token(8, floor: 6),
-                                  headerIcon: token(30, floor: 24),
-                                  verbDisc: token(22, floor: 20),
+                                  headerIcon: min(30, token(30, floor: 24)),
+                                  verbDisc: min(22, token(22, floor: 20)),
                                   showsRule: s >= 0.8)
     }
 

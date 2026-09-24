@@ -54,6 +54,16 @@ import Testing
         }
     }
 
+    @Test func roomyAddsAirNotBiggerControls() {
+        for scale in Self.steps where scale >= 1 {
+            let m = DockPreviewMetrics.scaled(scale)
+            #expect(m.headerIcon == 30, "header icon at \(scale)")
+            #expect(m.verbDisc == 22, "verb disc at \(scale)")
+        }
+        let roomy = DockPreviewMetrics.scaled(1.4)
+        #expect(roomy.panelInset == 14 && roomy.cardPad == 8, "the air still grows")
+    }
+
     @Test func theRuleShowsFromPointEight() {
         for scale in Self.steps {
             #expect(DockPreviewMetrics.scaled(scale).showsRule == (scale >= 0.8), "rule at \(scale)")
