@@ -1762,6 +1762,9 @@ extension AppDelegate {
         events?.sounds.onHeldForCall = { [weak self] name in
             self?.core?.appendLocalLog(level: "sound", "\(name) held: the microphone is live")
         }
+        // Confetti's pop plays through the same player: one audio engine
+        // on the alert device, and a held pop is logged like the rest.
+        toysStore?.confetti.sounds = events?.sounds
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             MainActor.assumeIsolated {
                 InstalledCopies.mentionOnce()

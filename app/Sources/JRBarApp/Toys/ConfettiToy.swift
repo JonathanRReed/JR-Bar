@@ -76,8 +76,10 @@ final class ConfettiToy: Toy {
     /// anything on screen.
     @ObservationIgnored var presentOverride: (@MainActor (ConfettiPresentation) -> Void)?
     /// Where the pop plays: Settings › Sounds' rules (volume, alert
-    /// device, the call hold). Made on the first pop; tests hand in one
-    /// that records instead of playing.
+    /// device, the call hold). The delegate hands in the app's own
+    /// player, the one every event sound uses; without one (previews) a
+    /// player is made on the first pop, and tests hand in one that
+    /// records instead of playing.
     @ObservationIgnored var sounds: SoundPlayer?
 
     init() {}
