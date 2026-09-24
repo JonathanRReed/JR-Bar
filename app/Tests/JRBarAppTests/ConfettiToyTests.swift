@@ -32,47 +32,98 @@ import JRBarCore
     }
 }
 
-/// The burst ballistics (`ConfettiPhysics`): the closed-form drag model
-/// must actually rise to an apex, settle at terminal speed, and bleed
-/// the sideways spray — a burst that only falls is the old toy.
-/// `ConfettiView` is a `View`, so its members are `@MainActor` — the
-/// suite runs on the main actor or those calls trap at runtime.
-@Suite @MainActor struct ConfettiPhysicsTests {
-    private let vt = 180.0
-
-    @Test func launchRisesToAnApex() {
-        let apex = ConfettiPhysics.apexTime(v0: 520, vt: vt)
-        #expect(apex > 0.1 && apex < 0.6)
-        #expect(ConfettiPhysics.rise(v0: 520, vt: vt, t: 0) == 0)
-        #expect(abs(ConfettiPhysics.rise(v0: 520, vt: vt, t: apex)
-                    - ConfettiPhysics.apexHeight(v0: 520, vt: vt)) < 0.5)
-        #expect(ConfettiPhysics.apexHeight(v0: 520, vt: vt) > 20)
-    }
-
-    @Test func fallApproachesTerminalSpeed() {
-        #expect(ConfettiPhysics.fall(vt: vt, t: 0) == 0)
-        // Far past the apex the ln-cosh solution is a straight line at vt.
-        let slope = ConfettiPhysics.fall(vt: vt, t: 3) - ConfettiPhysics.fall(vt: vt, t: 2)
-        #expect(abs(slope - vt) < 1)
-    }
-
-    @Test func sidewaysSprayDecelerates() {
-        let near = ConfettiPhysics.travel(v0: 500, vt: vt, t: 0.5)
-        let far = ConfettiPhysics.travel(v0: 500, vt: vt, t: 2)
-        #expect(near > 0 && far > near)
-        #expect(far < 500 * 2 / 2)  // drag ate it — no coasting
-        #expect(abs(ConfettiPhysics.travel(v0: -500, vt: vt, t: 1)
-                    + ConfettiPhysics.travel(v0: 500, vt: vt, t: 1)) < 0.001)
-    }
-
-    @Test func fallTimeInvertsFall() {
-        // The streamer bounce keys off this: fall(fallTime(d)) must be d.
-        for (vt, d) in [(105.0, 500.0), (130.0, 300.0), (180.0, 40.0)] {
-            let t = ConfettiPhysics.fallTime(vt: vt, d: d)
-            #expect(t > 0)
-            #expect(abs(ConfettiPhysics.fall(vt: vt, t: t) - d) < 0.5)
+/// The burst's motion (`ConfettiPhysics`): spray, then flutter. These
+/// replace the tests that pinned the old quadratic-drag model on purpose
+/// — that model is gone, not loosened.
+@Suite struct ConfettiPhysicsTests {
+    @Test func sprayStartsAtZeroAndApproachesItsReach() {
+        #expect(ConfettiPhysics.spray(v0: 1200, tau: 0.2, t: 0) == 0)
+        let reach = 1200 * 0.2
+        #expect(abs(ConfettiPhysics.spray(v0: 1200, tau: 0.2, t: 3) - reach) < 0.01)
+        var last = 0.0
+        for step in 1...60 {
+            let d = ConfettiPhysics.spray(v0: 1200, tau: 0.2, t: Double(step) * 0.02)
+            #expect(d > last, "monotone")
+            #expect(d < reach, "it never passes v0·τ")
+            last = d
         }
-        #expect(ConfettiPhysics.fallTime(vt: vt, d: 0) == 0)
+        // Linear drag: double the launch, double the reach.
+        #expect(abs(ConfettiPhysics.spray(v0: 2400, tau: 0.2, t: 1) - 2 * ConfettiPhysics.spray(v0: 1200, tau: 0.2, t: 1)) < 1e-9)
+    }
+
+    @Test func settleRampsToItsFlutterSpeed() {
+        #expect(ConfettiPhysics.settle(vt: 260, tf: 0.45, t: 0) == 0)
+        let slope = ConfettiPhysics.settle(vt: 260, tf: 0.45, t: 5) - ConfettiPhysics.settle(vt: 260, tf: 0.45, t: 4)
+        #expect(abs(slope - 260) < 0.5)
+        #expect(ConfettiPhysics.settleVelocity(vt: 260, tf: 0.45, t: 0) == 0)
+        #expect(ConfettiPhysics.settleVelocity(vt: 260, tf: 0.45, t: 0.45) < 260)
+    }
+
+    @Test func settleTimeInvertsTheDrop() {
+        for (vy, vt, d) in [(0.0, 180.0, 500.0), (400, 260, 900), (-1800, 300, 400), (60, 220, 40)] {
+            let t = ConfettiPhysics.settleTime(vy: vy, tau: 0.3, vt: vt, tf: 0.45, d: d)
+            let dropped = ConfettiPhysics.drop(vy: vy, tau: 0.3, vt: vt, tf: 0.45, t: t)
+            #expect(abs(dropped - d) < 0.5, "vy \(vy) vt \(vt) d \(d): dropped \(dropped)")
+            #expect(t >= ConfettiPhysics.apexTime(vy: vy, tau: 0.3, vt: vt, tf: 0.45))
+        }
+    }
+
+    @Test func aPieceFiredUpTurnsOverOnce() {
+        let apex = ConfettiPhysics.apexTime(vy: -1800, tau: 0.35, vt: 280, tf: 0.45)
+        #expect(apex > 0.2 && apex < 2)
+        let top = ConfettiPhysics.drop(vy: -1800, tau: 0.35, vt: 280, tf: 0.45, t: apex)
+        #expect(top < ConfettiPhysics.drop(vy: -1800, tau: 0.35, vt: 280, tf: 0.45, t: apex - 0.05))
+        #expect(top < ConfettiPhysics.drop(vy: -1800, tau: 0.35, vt: 280, tf: 0.45, t: apex + 0.05))
+        #expect(ConfettiPhysics.apexTime(vy: 300, tau: 0.35, vt: 280, tf: 0.45) == 0, "fired down, never rises")
+    }
+
+    @Test func flutterNeededLandsOnTime() {
+        let needed = ConfettiPhysics.flutterNeeded(vy: 50, tau: 0.2, tf: 0.45, d: 900, by: 3)
+        let t = ConfettiPhysics.settleTime(vy: 50, tau: 0.2, vt: needed, tf: 0.45, d: 900)
+        #expect(abs(t - 3) < 0.01)
+    }
+
+    /// The flutter takes over from the spray without a jump: a piece's
+    /// path is continuous everywhere, the hand-off included.
+    @Test func positionIsContinuousThroughTheHandOff() {
+        let burst = ConfettiBurst(stage: .reference, recipe: .init(landing: .fall), seed: 3)
+        for index in burst.pieces.indices.prefix(40) {
+            let piece = burst.pieces[index]
+            var previous: (x: Double, y: Double)?
+            for step in 0..<120 {
+                let t = Double(step) / 120 * min(2, piece.end)
+                let x = ConfettiBurst.x(of: piece, at: t)
+                let y = ConfettiBurst.y(of: piece, at: t)
+                if let previous {
+                    // At most a spray's worth of speed over one step.
+                    let limit = abs(piece.launch.vx) + abs(piece.launch.vy) + piece.vt + 400
+                    #expect(hypot(x - previous.x, y - previous.y) < limit * (2.0 / 120) + 1)
+                }
+                previous = (x, y)
+            }
+        }
+    }
+
+    /// The tumble is a true 3D rotation drawn straight on: the affine's
+    /// determinant is R22 (the paper's area follows its normal's pull to
+    /// the eye), face and back swap with its sign, and the shade stays
+    /// inside the Lambert band.
+    @Test func projectionIsTheRotatedPlane() {
+        var rng = ConfettiRandom(seed: 9)
+        for _ in 0..<200 {
+            var axis = (Double.random(in: -1...1, using: &rng), Double.random(in: -1...1, using: &rng),
+                        Double.random(in: -1...1, using: &rng))
+            let n = max(1e-6, (axis.0 * axis.0 + axis.1 * axis.1 + axis.2 * axis.2).squareRoot())
+            axis = (axis.0 / n, axis.1 / n, axis.2 / n)
+            let r = ConfettiPhysics.rotation(axis: axis, angle: Double.random(in: 0...(2 * .pi), using: &rng))
+            let affine = ConfettiPhysics.projection(r)
+            let determinant = affine.a * affine.d - affine.b * affine.c
+            #expect(abs(determinant - r.r22) < 1e-9)
+            let light = ConfettiPhysics.lighting(r)
+            #expect(light.front == (r.r22 >= 0))
+            #expect(light.shade >= 0.62 && light.shade <= 1)
+            #expect(light.glint >= 0 && light.glint <= 1)
+        }
     }
 
     @Test func floorBounceSquashesHopsOnceAndRests() {
@@ -89,120 +140,90 @@ import JRBarCore
         #expect(abs(rest.squashY - 1) < 0.05 && abs(rest.squashX - 1) < 0.05)
         #expect(ConfettiPhysics.floorBounce(t: -0.1, height: 7, duration: 0.3).lift == 0)
     }
+}
 
-    // MARK: Landing modes & settings
-
-    /// The window's life is derived, not hardcoded: for every landing
-    /// mode it must cover the slowest piece's whole journey — delay,
-    /// rise, and the inverse fall to that mode's end point — stretched
-    /// by `duration`, plus the 0.4 s tail.
-    @Test func lifeCoversTheSlowestPieceInEveryMode() {
-        let screen = 900.0
-        for mode in ConfettiLanding.allCases {
-            let viewHeight = ConfettiView.viewHeight(for: mode, screenHeight: screen)
-            var settings = ConfettiSettings()
-            settings.landing = mode
-            let view = ConfettiView(color: .red, flash: false, settings: settings,
-                                    viewHeight: viewHeight, screenHeight: screen,
-                                    bandBottom: 44)
-            for piece in view.pieces {
-                let endY: Double
-                var extra = 0.0
-                switch mode {
-                case .rest:
-                    if piece.shape == .streamer {
-                        endY = viewHeight - 7
-                        extra = 0.3
-                    } else {
-                        endY = viewHeight
-                    }
-                case .fall:
-                    endY = viewHeight
-                case .fade:
-                    endY = min(viewHeight, screen * 0.6)
-                }
-                let travel = piece.delay + piece.apexT
-                    + ConfettiPhysics.fallTime(vt: piece.vt,
-                                               d: max(0, piece.apexH + endY - ConfettiView.muzzleY))
-                    + extra
-                #expect(view.life + 0.001 >= travel + 0.4,
-                        "\(mode) life \(view.life) must outlast a piece's \(travel)s journey plus the tail")
-            }
-        }
+/// The burst as a whole: how many pieces, how long it lives, what the
+/// settings do to it.
+@Suite @MainActor struct ConfettiBurstTests {
+    /// Size sets the count, scaled by the screen's area and the Amount;
+    /// a bigger screen gets more, capped so a 5K display stays cheap.
+    @Test func countFollowsSizeAreaAndAmount() {
+        let laptop = ConfettiStage.reference
+        #expect(ConfettiBurst.count(.subtle, density: 1, stage: laptop) == 90)
+        #expect(ConfettiBurst.count(.standard, density: 1, stage: laptop) == 180)
+        #expect(ConfettiBurst.count(.big, density: 1, stage: laptop) == 300)
+        #expect(ConfettiBurst.count(.standard, density: 0.5, stage: laptop) == 90)
+        var wide = laptop
+        wide.width = 3440
+        wide.height = 1440
+        let ultrawide = ConfettiBurst.count(.standard, density: 1, stage: wide)
+        #expect(ultrawide > 180 && ultrawide <= Int(180 * 1.8))
+        var huge = laptop
+        huge.width = 6016
+        huge.height = 3384
+        #expect(ConfettiBurst.count(.standard, density: 1, stage: huge) == Int((180 * 1.8).rounded()))
     }
 
-    /// `duration` stretches the timeline: the derived life scales with
-    /// it, so a lingering burst keeps its window open just as long.
-    @Test func durationScalesLife() {
-        var settings = ConfettiSettings()
-        settings.landing = .fall
-        let short = ConfettiView(color: .red, flash: false, settings: settings,
-                                 viewHeight: 900, screenHeight: 900, bandBottom: 44)
-        settings.duration = 1.5
-        let long = ConfettiView(color: .red, flash: false, settings: settings,
-                                viewHeight: 900, screenHeight: 900, bandBottom: 44)
-        // Different rolls of pieces — compare against each view's own
-        // travel, and check the stretch itself.
-        let shortTravel = ConfettiView.travelTime(pieces: short.pieces, mode: .fall,
-                                                  viewHeight: 900, screenHeight: 900)
-        let longTravel = ConfettiView.travelTime(pieces: long.pieces, mode: .fall,
-                                                 viewHeight: 900, screenHeight: 900)
-        #expect(abs(short.life - (shortTravel + 0.4)) < 0.001)
-        #expect(abs(long.life - (longTravel * 1.5 + 0.4)) < 0.001)
-        #expect(long.life > short.life)
+    /// The shapes setting narrows the cast; the full mix carries the
+    /// provider's glyph when there is one, and a star when there isn't.
+    @Test func shapesNarrowTheCast() {
+        let streamers = ConfettiBurst(stage: .reference, recipe: .init(shapes: .streamers), seed: 1)
+        #expect(streamers.pieces.allSatisfy { $0.shape == .streamer })
+        let stars = ConfettiBurst(stage: .reference, recipe: .init(shapes: .stars), seed: 1)
+        #expect(stars.pieces.allSatisfy { $0.shape == .star })
+        let glyphs = ConfettiBurst(stage: .reference, recipe: .init(shapes: .glyphs, glyphs: 1), seed: 1)
+        #expect(glyphs.pieces.allSatisfy { $0.shape == .glyph })
+        let mixed = ConfettiBurst(stage: .reference, recipe: .init(shapes: .mixed, glyphs: 1), seed: 1)
+        let cast = Set(mixed.pieces.map(\.shape))
+        #expect(cast.isSuperset(of: [.rect, .dot, .streamer, .glyph]))
+        let bare = ConfettiBurst(stage: .reference, recipe: .init(shapes: .mixed, glyphs: 0), seed: 1)
+        #expect(!bare.pieces.contains { $0.shape == .glyph }, "no glyph to draw, no glyph fleck")
+        let hearts = ConfettiBurst(stage: .reference, recipe: .init(shapes: .stars, special: .heart), seed: 1)
+        #expect(hearts.pieces.allSatisfy { $0.shape == .heart })
     }
 
-    /// Fade dissolves between 40% and 60% of the screen's height: full
-    /// colour at the top of the band, gone by the bottom of it.
-    @Test func fadeModeDissolvesBySixtyPercent() {
-        let screen = 900.0
-        let viewHeight = ConfettiView.viewHeight(for: .fade, screenHeight: screen)
-        #expect(viewHeight >= screen * 0.6, "the window must reach the dissolve's end")
-        #expect(ConfettiView.heightFade(mode: .fade, y: screen * 0.3,
-                                        viewHeight: viewHeight, screenHeight: screen) == 1)
-        #expect(ConfettiView.heightFade(mode: .fade, y: screen * 0.4,
-                                        viewHeight: viewHeight, screenHeight: screen) == 1)
-        let mid = ConfettiView.heightFade(mode: .fade, y: screen * 0.5,
-                                          viewHeight: viewHeight, screenHeight: screen)
-        #expect(mid > 0.01 && mid < 0.99)
-        #expect(ConfettiView.heightFade(mode: .fade, y: screen * 0.6,
-                                        viewHeight: viewHeight, screenHeight: screen) == 0)
-        // And the shrink rides along: no shrink in the other modes.
-        #expect(ConfettiView.fadeShrink(mode: .fade, heightFade: 0) < 1)
-        #expect(ConfettiView.fadeShrink(mode: .rest, heightFade: 0) == 1)
+    /// Hang time slows the fall and lengthens the rest, and never the
+    /// pop: the launches are the same burst's either way.
+    @Test func hangTimeSlowsTheFallNotTheSpray() {
+        let brisk = ConfettiBurst(stage: .reference, recipe: .init(landing: .fall, hang: 0.7), seed: 5)
+        let slow = ConfettiBurst(stage: .reference, recipe: .init(landing: .fall, hang: 1.5), seed: 5)
+        #expect(brisk.pieces.map(\.launch) == slow.pieces.map(\.launch), "same pop, same spray")
+        #expect(slow.life > brisk.life)
+        let briskMedian = brisk.pieces.map(\.vt).sorted()[brisk.pieces.count / 2]
+        let slowMedian = slow.pieces.map(\.vt).sorted()[slow.pieces.count / 2]
+        #expect(slowMedian < briskMedian)
     }
 
-    /// Density scales the piece count monotonically — 0.5…2× the
-    /// baseline burst.
-    @Test func densityScalesPieceCount() {
-        let half = ConfettiView.makePieces(density: 0.5, shapes: .mixed).count
-        let one = ConfettiView.makePieces(density: 1, shapes: .mixed).count
-        let two = ConfettiView.makePieces(density: 2, shapes: .mixed).count
-        #expect(half < one && one < two)
-        #expect(one == 140)
+    /// Big throws a second volley a beat after the first.
+    @Test func bigFiresTwice() {
+        let big = ConfettiBurst(stage: .reference, recipe: .init(intensity: .big), seed: 2)
+        let late = big.pieces.filter { $0.launch.delay >= 0.25 }
+        #expect(late.count > big.pieces.count / 5)
     }
 
-    /// The shapes setting narrows the cast: streamers only, glyph
-    /// flecks only, or the full mix.
-    @Test func shapesNarrowsTheCast() {
-        #expect(ConfettiView.makePieces(density: 1, shapes: .streamers)
-            .allSatisfy { $0.shape == .streamer })
-        #expect(ConfettiView.makePieces(density: 1, shapes: .flecks)
-            .allSatisfy { $0.shape == .diamond || $0.shape == .pacDot })
+    /// The same seed is the same burst — what the render proofs rely on.
+    @Test func aSeedIsABurst() {
+        let a = ConfettiBurst(stage: .reference, recipe: .init(), seed: 42)
+        let b = ConfettiBurst(stage: .reference, recipe: .init(), seed: 42)
+        #expect(a.pieces == b.pieces)
+        #expect(a.life == b.life)
     }
 
-    /// Missing keys read as the shipped look; an unknown enum string
-    /// falls back to its default instead of sinking the burst.
+    /// Missing keys read as the defaults; an unknown string or a
+    /// mistyped number falls back to its default instead of sinking the
+    /// burst, and an older file's Rainbow reads as Party.
     @Test func settingsDecodeTolerantly() throws {
         let decode = { (json: String) throws -> ConfettiSettings in
             try JSONDecoder().decode(ConfettiSettings.self, from: Data(json.utf8))
         }
         #expect(try decode("{}") == ConfettiSettings())
         #expect(try decode(#"{"enabled": true}"#) == ConfettiSettings(enabled: true))
-        let odd = try decode(#"{"landing": "warp", "palette": "neon", "shapes": "shrapnel", "density": "lots", "duration": "ages"}"#)
-        #expect(odd == ConfettiSettings(), "unknown strings & mistyped numbers must all be defaults")
-        let partial = try decode(#"{"landing": "fall", "palette": "rainbow"}"#)
-        #expect(partial.landing == .fall && partial.palette == .rainbow)
+        let odd = try decode(#"{"landing": "warp", "palette": "neon", "shapes": "shrapnel", "density": "lots", "duration": "ages", "origin": "moon", "intensity": 11, "screens": "some", "seasonal": "yes", "momentStyles": 2}"#)
+        #expect(odd == ConfettiSettings(), "unknown strings & mistyped values must all be defaults")
+        let partial = try decode(#"{"landing": "fall", "palette": "rainbow", "origin": "corners"}"#)
+        #expect(partial.landing == .fall && partial.palette == .party && partial.origin == .corners)
         #expect(partial.shapes == .mixed && partial.density == 1 && partial.duration == 1)
+        #expect(partial.intensity == .standard && partial.screens == .all)
+        #expect(!partial.seasonal && !partial.momentStyles)
     }
 }

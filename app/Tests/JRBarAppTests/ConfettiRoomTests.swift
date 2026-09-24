@@ -239,6 +239,48 @@ struct ConfettiRoomTests {
         #expect(bursts.fired.last.map { same($0.tint, ConfettiView.toysTint) } == true)
     }
 
+    @Test("with Moment styles on, a milestone bursts gold, big and from the corners")
+    func momentStyles() {
+        let (toy, store, bursts) = makeToy()
+        store.state.confetti.triggers.milestones = true
+        store.state.confetti.triggers.allClear = true
+        toy.fire(reason: .milestone, at: t0)
+        #expect(bursts.fired.last?.recipe.origin == .notch, "off by default: one style fits every trigger")
+        store.state.confetti.momentStyles = true
+        toy.fire(reason: .milestone, at: t0)
+        let milestone = bursts.fired.last?.recipe
+        #expect(milestone?.origin == .corners && milestone?.intensity == .big)
+        #expect(bursts.fired.last?.pieces == 300)
+        // All caught up is a gentle rain.
+        let plan = ConfettiToy.plan(store.state.confetti,
+                                    shot: ConfettiShot(provider: nil, tint: .white, moment: .allClear),
+                                    densityScale: 1, everyone: [], season: nil)
+        #expect(plan.recipe.origin == .rain && plan.recipe.intensity == .subtle)
+    }
+
+    @Test("Main screen only plays on the main screen, when it's free")
+    func mainScreenOnly() {
+        let (toy, store, bursts) = makeToy(freeScreens: 2)
+        store.state.confetti.screens = .main
+        toy.mainScreen = { nil }
+        toy.fire(reason: .trigger, at: t0)
+        #expect(bursts.fired.last?.screens == 1)
+        store.state.confetti.screens = .all
+        toy.fire(reason: .trigger, at: t0)
+        #expect(bursts.fired.last?.screens == 2)
+    }
+
+    @Test("a seasonal day swaps in its own colours and fleck")
+    func seasonalPlan() {
+        var settings = ConfettiSettings(enabled: true)
+        settings.seasonal = true
+        let plan = ConfettiToy.plan(settings, shot: ConfettiShot(provider: "claude", tint: .orange),
+                                    densityScale: 1, everyone: [], season: .valentine)
+        #expect(plan.recipe.special == .heart)
+        #expect(plan.recipe.glyphs == 0)
+        #expect(plan.look.slots.count == ConfettiSeason.valentine.palette.slots.count)
+    }
+
     @Test("the pop goes through Settings › Sounds, at its volume")
     func popFollowsTheSoundsVolume() throws {
         let (toy, store, _) = makeToy()

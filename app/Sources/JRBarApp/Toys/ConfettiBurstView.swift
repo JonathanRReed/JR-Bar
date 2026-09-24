@@ -1,556 +1,357 @@
 import AppKit
 import JRBarCore
+import os
 import SwiftUI
 
-/// What the burst is: a cannon pop at the notch — pieces launch in an
-/// up-and-out cone with a few fired sideways, drag & gravity take over,
-/// and the survivors tumble & flutter down. Where they end up is the
-/// landing mode's business: Rest lets streamers squash-bounce onto the
-/// band floor and lie there as ribbons, Fall rains to the screen's
-/// bottom edge, Fade dissolves everything mid-air — or one soft bloom
-/// when Reduce Motion is on, whichever the mode. Every piece's constants
-/// are fixed at fire time; a frame only evaluates `ConfettiPhysics` and
-/// rotates the context.
+/// What the burst looks like on one screen: the pop at the notch's lip
+/// (or the icon, or the corners), then every piece of `ConfettiBurst`
+/// drawn where the burst puts it — a paper plane tumbling in 3D, lit
+/// from the upper left, its back a deeper shade of its front, a far
+/// layer smaller and hazier underneath. Or, under Reduce Motion, one
+/// soft glow at the lip and nothing else. One Canvas at up to 60 fps;
+/// a frame evaluates positions and fills paths, and never builds a path
+/// or mixes a colour.
 struct ConfettiView: View {
-    let color: Color
-    /// Reduce Motion: a bloom, not a burst.
+    let burst: ConfettiBurst
+    let look: ConfettiLook
+    /// Reduce Motion: a glow at the lip, not a burst.
     let flash: Bool
-    /// Where the pieces end up.
-    let landing: ConfettiLanding
-    /// Timeline stretch from `settings.duration`: `elapsed / timeScale`
-    /// is burst time, so the whole animation — pop, delays, flutter —
-    /// slows or quickens as one piece.
-    let timeScale: Double
-    /// The window's height; the pieces' world.
-    let viewHeight: Double
-    /// The host screen's height — Fade's dissolve band is a fraction of it.
-    let screenHeight: Double
-    /// The bottom of the top strip (notch + bar). In Rest a piece casts
-    /// its soft shadow only while it passes over it.
-    let bandBottom: Double
-    /// The palette choice, kept for the pop & bloom's colour.
-    let paletteChoice: ConfettiPalette
-    /// The resolved colours — `Piece.shade` indexes in.
-    let palette: [Color]
-    /// Each slot's paper, resolved once at fire time so a frame never
-    /// mixes a colour: the face a touch lit, the back a deeper and
-    /// richer shade of the same hue (not a grey one), the glint a face
-    /// catching the light square-on, and the rim along the edge.
-    private let faces: [Color]
-    private let backs: [Color]
-    private let glints: [Color]
-    private let rims: [Color]
-    let pieces: [Piece]
-    /// Real seconds the burst needs: the slowest piece's travel in this
-    /// mode on this geometry, stretched by `timeScale`, plus a 0.4 s tail.
-    let life: TimeInterval
-    /// Render proofs & tests freeze the burst at this many seconds.
-    var frozen: TimeInterval? = nil
+    /// Rest: which ledges have moved or closed since the burst fired.
+    var ledges: ConfettiLedgeWatch?
+    /// Where each frame's drawing time goes, for the card's cost line.
+    var meter: ConfettiDrawMeter?
+    /// Draw the screen at this size, its top middle centred in the canvas
+    /// (the card's preview); nil draws it full size, or shrunk to fit a
+    /// narrower canvas.
+    var scale: Double?
+    /// Render proofs and tests freeze the burst at this many seconds.
+    var frozen: TimeInterval?
 
-    /// The cannon's muzzle: notch centre, just under the top edge so the
-    /// up-cone reads on screen before pieces leave it.
-    static let muzzleY: Double = 30
-    /// The Toys page tint — the `toys` palette's base and the test burst's colour.
-    static let toysTint = Color(red: 0.93, green: 0.30, blue: 0.62)
+    /// The Reduce Motion glow's length.
+    static let flashLife: TimeInterval = 0.9
 
-    enum Shape { case rect, dot, streamer, diamond, pacDot }
-
-    /// One particle's constants; motion is evaluated, never stored.
-    struct Piece {
-        var shape: Shape
-        var x: Double        // launch x, as a fraction of the width
-        var delay: Double    // stagger inside the pop, seconds
-        var vx: Double       // sideways launch speed, pt/s (signed)
-        var vy: Double       // upward launch speed, pt/s
-        var vt: Double       // terminal flutter speed, pt/s
-        var apexT: Double    // seconds to the top of the arc
-        var apexH: Double    // height of that arc, pt
-        var size: Double
-        var shade: Int       // palette slot
-        var phase: Double
-        var spin: Double     // tumble rate, rad/s
-        var twirl: Double    // vertical-axis card spin (the twinkle), rad/s
-        var sway: Double     // falling drift amplitude, pt
-        var swayRate: Double
-        var trail: Bool      // drags a faint streak for its first 0.3 s
-    }
-
-    init(color: Color, flash: Bool, settings: ConfettiSettings = ConfettiSettings(),
-         densityScale: Double = 1,
-         viewHeight: Double = 360, screenHeight: Double = 900, bandBottom: Double = 44) {
-        self.color = color
-        self.flash = flash
-        self.landing = settings.landing
-        self.timeScale = min(1.5, max(0.7, settings.duration))
-        self.viewHeight = viewHeight
-        self.screenHeight = screenHeight
-        self.bandBottom = bandBottom
-        self.paletteChoice = settings.palette
-        let palette = Self.paletteColors(settings.palette, provider: color)
-        self.palette = palette
-        self.faces = palette.map { $0.mix(with: .white, by: 0.12) }
-        self.backs = palette.map(Self.deeper)
-        self.glints = palette.map { $0.mix(with: .white, by: 0.5) }
-        self.rims = palette.map { $0.mix(with: .white, by: 0.55) }
-        self.pieces = Self.makePieces(density: Self.density(settings: settings, densityScale: densityScale),
-                                      shapes: settings.shapes)
-        self.life = Self.travelTime(pieces: pieces, mode: settings.landing,
-                                    viewHeight: viewHeight, screenHeight: screenHeight)
-            * timeScale + 0.4
-    }
-
-    /// The window's height for a landing mode, measured off the screen
-    /// it hangs on: Rest rains inside the top band (deep enough to fall
-    /// through, narrow enough to never be a screen-sized shadow), Fall
-    /// needs the whole screen, Fade only the top ~70% — its dissolve
-    /// ends at 60%.
-    static func viewHeight(for mode: ConfettiLanding, screenHeight: Double) -> Double {
-        switch mode {
-        case .rest: return min(screenHeight * 0.45, 380)
-        case .fall: return screenHeight
-        case .fade: return screenHeight * 0.72
-        }
-    }
-
-    /// The floor streamers rest on in Rest, measured from the top.
-    static func floorY(viewHeight: Double) -> Double { viewHeight - 7 }
-
-    /// The colour the pop & the Reduce Motion bloom wear.
-    var themeColor: Color {
-        switch paletteChoice {
-        case .provider: return color
-        case .toys: return Self.toysTint
-        case .rainbow: return .white
-        }
-    }
-
-    /// Position-based alpha — how visible a piece at `y` is, per mode:
-    /// Rest eases out at the band's bottom edge, Fall fades over the
-    /// last ~8% of the drop, Fade dissolves between 40% & 60% of the
-    /// screen's height. 1 while a piece is in open air.
-    static func heightFade(mode: ConfettiLanding, y: Double,
-                           viewHeight: Double, screenHeight: Double) -> Double {
-        switch mode {
-        case .rest:
-            return min(1, max(0, (viewHeight - y) / 56))
-        case .fall:
-            return min(1, max(0, (viewHeight - y) / max(1, viewHeight * 0.08)))
-        case .fade:
-            let start = screenHeight * 0.4, end = screenHeight * 0.6
-            return 1 - smooth((y - start) / max(1, end - start))
-        }
-    }
-
-    /// Fade's little size shrink rides the same progress as its
-    /// dissolve; the other modes keep their size.
-    static func fadeShrink(mode: ConfettiLanding, heightFade: Double) -> Double {
-        mode == .fade ? 1 - 0.35 * (1 - heightFade) : 1
-    }
-
-    /// Burst-time seconds until the last piece reaches its end state:
-    /// in Rest a streamer's floor touchdown (plus its one bounce), every
-    /// other shape's fall to the bottom edge; in Fall the bottom edge
-    /// itself; in Fade the bottom of the dissolve band. The window's
-    /// life is this × `timeScale` + 0.4 s — derived, never a constant,
-    /// so a slow streamer can never be vanished mid-air the way the
-    /// hardcoded 2.6 s once did.
-    static func travelTime(pieces: [Piece], mode: ConfettiLanding,
-                           viewHeight: Double, screenHeight: Double) -> Double {
-        var latest = 0.0
-        for piece in pieces {
-            let endY: Double
-            var extra = 0.0
-            switch mode {
-            case .rest:
-                if piece.shape == .streamer {
-                    endY = floorY(viewHeight: viewHeight)
-                    extra = 0.3   // the squash-bounce
-                } else {
-                    endY = viewHeight
-                }
-            case .fall:
-                endY = viewHeight
-            case .fade:
-                endY = min(viewHeight, screenHeight * 0.6)
-            }
-            let travel = piece.delay + piece.apexT
-                + ConfettiPhysics.fallTime(vt: piece.vt,
-                                           d: max(0, piece.apexH + endY - muzzleY))
-                + extra
-            latest = max(latest, travel)
-        }
-        return latest
-    }
+    /// When the burst started; set on appear so `t = 0` is the pop.
+    @ViewState private var origin = Date()
 
     var body: some View {
         if let frozen {
-            Canvas { canvas, size in draw(&canvas, size: size, elapsed: frozen) }
+            Canvas { canvas, size in draw(&canvas, size: size, time: frozen) }
         } else {
             TimelineView(.animation(minimumInterval: 1.0 / 60)) { context in
                 Canvas { canvas, size in
-                    draw(&canvas, size: size, elapsed: context.date.timeIntervalSince(origin))
+                    let time = context.date.timeIntervalSince(origin)
+                    if let meter {
+                        meter.measure { draw(&canvas, size: size, time: time) }
+                    } else {
+                        draw(&canvas, size: size, time: time)
+                    }
                 }
             }
             .onAppear { origin = Date() }
         }
     }
 
-    /// One frame of the burst (or the Reduce Motion bloom), `elapsed`
-    /// real seconds after the pop.
-    private func draw(_ canvas: inout GraphicsContext, size: CGSize, elapsed: Double) {
+    /// One frame, `time` seconds after the pop. A canvas narrower than the
+    /// burst's screen (the card's preview) draws the whole screen scaled
+    /// to fit.
+    func draw(_ canvas: inout GraphicsContext, size: CGSize, time: Double) {
+        if let scale {
+            canvas.translateBy(x: size.width / 2 - burst.stage.width / 2 * scale, y: 0)
+            canvas.scaleBy(x: scale, y: scale)
+        } else {
+            let fit = min(1, size.width / max(1, burst.stage.width))
+            if fit < 0.999 { canvas.scaleBy(x: fit, y: fit) }
+        }
+        let width = burst.stage.width, height = burst.stage.height
         if flash {
-            drawBloom(&canvas, size: size, p: min(1, elapsed / ConfettiWindow.flashLife))
+            drawGlow(&canvas, p: min(1, time / Self.flashLife))
             return
         }
-        // `duration` stretches the whole timeline: physics & delays are
-        // evaluated in burst time, the window's life in real time.
-        let t = elapsed / timeScale
-        drawPop(&canvas, size: size, age: t)
-        let endFade = min(1, max(0, (life - elapsed) / 0.4))
-        guard endFade > 0 else { return }
-        let floorY = Self.floorY(viewHeight: size.height)
-        for piece in pieces {
-            let age = t - piece.delay
-            guard age > 0 else { continue }
-            // Rise to the apex, then fall from it at vt's mercy.
-            let falling = age > piece.apexT
-            var y = Self.muzzleY - (falling
-                ? piece.apexH - ConfettiPhysics.fall(vt: piece.vt, t: age - piece.apexT)
-                : ConfettiPhysics.rise(v0: piece.vy, vt: piece.vt, t: age))
-
-            // Rest only: a streamer that reaches the floor bounces once
-            // and rests there — the only pieces that ever land. The
-            // remap happens before the off-band cull, or landed ribbons
-            // would vanish a few frames after touchdown. Fall & Fade
-            // never land.
-            var impact = age   // horizontal motion freezes here
-            var settle: Double?
-            if landing == .rest, piece.shape == .streamer, falling, y >= floorY {
-                let hit = piece.apexT + ConfettiPhysics.fallTime(
-                    vt: piece.vt, d: piece.apexH + floorY - Self.muzzleY)
-                if age >= hit { impact = hit; settle = age - hit }
+        drawPop(&canvas, age: time, strength: 1)
+        if burst.recipe.intensity == .big { drawPop(&canvas, age: time - 0.25, strength: 0.55) }
+        let marks = resolveMarks(in: canvas)
+        let gone = ledges?.gone ?? [:]
+        for index in burst.pieces.indices {
+            guard let frame = burst.frame(of: index, at: time) else { continue }
+            let piece = burst.pieces[index]
+            var opacity = frame.opacity * (piece.far ? 0.72 : 0.97)
+            if frame.resting, let window = piece.landing?.window, let at = gone[window] {
+                opacity *= max(0, 1 - (time - at) / 0.3)
             }
-            guard settle != nil || y < size.height + 20 else { continue }
-
-            // Quadratic-drag spray plus a flutter that ramps in once the
-            // piece is falling; a landed streamer skids to a stop.
-            let x = piece.x * size.width
-                + ConfettiPhysics.travel(v0: piece.vx, vt: piece.vt, t: impact)
-                + piece.sway * sin(piece.swayRate * impact + piece.phase)
-                    * min(1, impact / 0.5)
-                    * (settle.map { max(0, 1 - $0 / 0.12) } ?? 1)
-
-            var bounce = (sx: 1.0, sy: 1.0)
-            var tumble = piece.phase + piece.spin * age
-                + (piece.shape == .streamer ? 0.85 * sin(6.2 * age + piece.phase) : 0)
-            let twirlAngle = piece.twirl * age + piece.phase
-            var osc = abs(cos(twirlAngle))
-            var posFade = Self.heightFade(mode: landing, y: y,
-                                          viewHeight: size.height, screenHeight: screenHeight)
-            var fade = endFade * posFade
-            if let settle {
-                let b = ConfettiPhysics.floorBounce(t: settle, height: 7, duration: 0.3)
-                y = floorY - b.lift
-                bounce = (b.squashX, b.squashY)
-                // Level out flat and let the twirl die as it lands.
-                let t0 = piece.phase + piece.spin * impact
-                    + 0.85 * sin(6.2 * impact + piece.phase)
-                tumble = t0 + ((t0 / .pi).rounded() * .pi - t0)
-                    * Self.smooth(min(1, settle / 0.22))
-                let osc0 = abs(cos(piece.twirl * impact + piece.phase))
-                osc = osc0 + (0.85 - osc0) * min(1, settle / 0.2)
-                fade = endFade   // resting ribbons keep their colour
-                posFade = 1
-            }
-            guard fade > 0.01 else { continue }
-
-            // A card spinning about its vertical axis reads as a
-            // scaleX oscillation — the classic confetti twinkle.
-            // A streamer twists about its long axis instead; the
-            // glyph flecks spin in-plane on their tumble alone.
-            let twirls = piece.shape == .rect || piece.shape == .dot
-            let shrink = Self.fadeShrink(mode: landing, heightFade: posFade)
-            let scaleX = (twirls ? max(0.16, osc) : 1) * bounce.sx * shrink
-            let scaleY = (piece.shape == .streamer ? max(0.25, osc) : 1) * bounce.sy * shrink
-
-            // The piece's speed now — the motion stretch's input. Drag
-            // bleeds vx; vy rides the tan rise / tanh fall curves.
-            let beta = ConfettiPhysics.gravity / (piece.vt * piece.vt)
-            let vxNow = piece.vx / (1 + beta * abs(piece.vx) * age)
-            let vyNow: Double = falling
-                ? -piece.vt * tanh(ConfettiPhysics.gravity * (age - piece.apexT) / piece.vt)
-                : piece.vt * tan(atan(piece.vy / piece.vt) - ConfettiPhysics.gravity * age / piece.vt)
-            let speed = settle == nil ? hypot(vxNow, vyNow) : 0
-
-            // A few streamers drag a faint streak of colour for
-            // their first 0.3 s.
-            if piece.trail, age < 0.3 {
-                let f = 1 - age / 0.3
-                let d = max(1, hypot(piece.vx, piece.vy))
-                let len = 14 * f
-                var streak = Path()
-                streak.move(to: CGPoint(x: x - piece.vx / d * len,
-                                        y: y + piece.vy / d * len))
-                streak.addLine(to: CGPoint(x: x, y: y))
-                var trailing = canvas
-                trailing.opacity = 0.4 * f * endFade
-                trailing.stroke(streak, with: .color(palette[piece.shade]),
-                                style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
-            }
-
-            // Paper reads two-tone: a lit face up front, a deeper back
-            // when the twirl flips it, and a glint the moment it faces
-            // you square-on — the shimmer a real burst has. Pieces with
-            // no twirl (dots, glyph flecks) always show their face.
-            let flipped = piece.twirl != 0 && cos(twirlAngle) < 0
-            let face = flipped ? backs[piece.shade]
-                : (piece.twirl != 0 && osc > 0.94 ? glints[piece.shade] : faces[piece.shade])
-
-            // Over the top strip a Rest piece casts a whisper of a
-            // shadow on the band — feathered out a few points below it,
-            // and never in the other modes.
-            if landing == .rest, y < bandBottom + 10 {
-                let near = min(1, max(0, (bandBottom + 10 - y) / 10))
-                var s = canvas
-                s.opacity = 0.16 * near * fade
-                s.translateBy(x: x, y: y + 1.2)
-                s.rotate(by: .radians(tumble))
-                s.scaleBy(x: scaleX * piece.size, y: scaleY * piece.size)
-                Self.paint(piece.shape, in: &s, color: .black, rim: nil, size: piece.size)
-            }
-
+            guard opacity > 0.01, frame.x > -60, frame.x < width + 60,
+                  frame.y > -60, frame.y < height + 60 else { continue }
             var c = canvas
-            c.translateBy(x: x, y: y)
-            c.rotate(by: .radians(tumble))
-            // Fast pieces stretch along their travel — the suggestion of
-            // motion blur, gone once they flutter down at vt.
-            if speed > 430 {
-                let stretch = min(0.5, (speed - 430) / 1400)
-                let dir = atan2(vyNow, vxNow) - tumble
-                c.rotate(by: .radians(dir))
-                c.scaleBy(x: 1 + stretch, y: 1 - stretch * 0.4)
-                c.rotate(by: .radians(-dir))
-            }
-            c.scaleBy(x: scaleX * piece.size, y: scaleY * piece.size)
-            c.opacity = 0.95 * fade
-            Self.paint(piece.shape, in: &c, color: face, rim: rims[piece.shade], size: piece.size)
+            c.opacity = opacity
+            c.translateBy(x: frame.x, y: frame.y)
+            c.concatenate(frame.transform)
+            let paper = look.paper(far: piece.far, front: frame.front, slot: piece.slot, shade: frame.shade)
+            paint(piece, frame: frame, paper: paper, marks: marks, in: &c)
         }
     }
 
-    /// When the burst started; set on appear so `t = 0` is the pop.
-    @ViewState private var origin = Date()
+    // MARK: Pieces
 
-    /// Every shape at size 1, built once — a frame scales the context,
-    /// never rebuilds a path.
-    private static let unitRect = Path(CGRect(x: -0.5, y: -0.3, width: 1, height: 0.6))
-    private static let unitDot = Path(ellipseIn: CGRect(x: -0.28, y: -0.28, width: 0.56, height: 0.56))
-    /// A curled ribbon: a wave a length and a bit long, stroked, so a
-    /// streamer reads as paper with a curl in it rather than a stick.
-    private static let unitStreamer: Path = {
+    /// Every shape at size 1, built once.
+    private static let unitRect = Path(CGRect(x: -0.5, y: -0.5, width: 1, height: 1))
+    private static let unitDot = Path(ellipseIn: CGRect(x: -0.5, y: -0.5, width: 1, height: 1))
+    private static let unitDiamond: Path = {
         var p = Path()
-        let steps = 24
-        for i in 0...steps {
-            let u = Double(i) / Double(steps)
-            let point = CGPoint(x: -2.4 + 4.8 * u, y: 0.36 * sin(u * .pi * 2.4))
-            if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
-        }
-        return p
-    }()
-    /// A rounded square; the in-plane spin does the diamond.
-    private static let unitDiamond = Path(roundedRect: CGRect(x: -0.5, y: -0.5, width: 1, height: 1),
-                                          cornerRadius: 0.22)
-    /// A circle with a wedge bite — the cheapest glyph there is.
-    private static let unitPacDot: Path = {
-        var p = Path()
-        p.move(to: .zero)
-        p.addArc(center: .zero, radius: 0.55, startAngle: .degrees(40), endAngle: .degrees(320),
-                 clockwise: false)
+        p.move(to: CGPoint(x: 0, y: -0.55))
+        p.addLine(to: CGPoint(x: 0.42, y: 0))
+        p.addLine(to: CGPoint(x: 0, y: 0.55))
+        p.addLine(to: CGPoint(x: -0.42, y: 0))
         p.closeSubpath()
         return p
     }()
+    private static let unitStar: Path = {
+        var p = Path()
+        for i in 0..<10 {
+            let r = i % 2 == 0 ? 0.55 : 0.23
+            let a = -Double.pi / 2 + Double(i) * .pi / 5
+            let point = CGPoint(x: r * cos(a), y: r * sin(a))
+            if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
+        }
+        p.closeSubpath()
+        return p
+    }()
+    private static let unitHeart: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0, y: 0.42))
+        p.addCurve(to: CGPoint(x: -0.5, y: -0.12), control1: CGPoint(x: -0.2, y: 0.25),
+                   control2: CGPoint(x: -0.5, y: 0.1))
+        p.addArc(center: CGPoint(x: -0.25, y: -0.18), radius: 0.25, startAngle: .degrees(180),
+                 endAngle: .degrees(0), clockwise: false)
+        p.addArc(center: CGPoint(x: 0.25, y: -0.18), radius: 0.25, startAngle: .degrees(180),
+                 endAngle: .degrees(0), clockwise: false)
+        p.addCurve(to: CGPoint(x: 0, y: 0.42), control1: CGPoint(x: 0.5, y: 0.1),
+                   control2: CGPoint(x: 0.2, y: 0.25))
+        p.closeSubpath()
+        return p
+    }()
+    /// A ribbon one unit long and a tenth of a unit wide, curled and
+    /// twisted: its width swells and pinches along its length the way a
+    /// paper strip does as it turns, and the curl and twist run along it.
+    /// Twelve steps of that ripple are built once; a frame picks one, so
+    /// a streamer is one fill and no path is built per frame.
+    private static let ribbons: [Path] = (0..<12).map { step in
+        let shift = Double(step) / 12 * 2 * .pi
+        let count = 20
+        var top: [CGPoint] = []
+        var bottom: [CGPoint] = []
+        for i in 0...count {
+            let u = Double(i) / Double(count)
+            let y = 0.11 * sin(u * .pi * 2.4 + shift)
+            let half = 0.05 * (0.25 + 0.75 * abs(cos(u * .pi * 1.7 + shift * 0.5)))
+            top.append(CGPoint(x: -0.5 + u, y: y - half))
+            bottom.append(CGPoint(x: -0.5 + u, y: y + half))
+        }
+        var p = Path()
+        p.addLines(top + bottom.reversed())
+        p.closeSubpath()
+        return p
+    }
 
-    /// One piece into a context already scaled to its size: the ribbon
-    /// stroked, every other shape filled with a hairline rim — the
-    /// paper's edge catching the light.
-    static func paint(_ shape: Shape, in context: inout GraphicsContext, color: Color,
-                      rim: Color?, size: Double) {
-        switch shape {
+    /// A provider's mark, resolved for this frame: set as heavy type so a
+    /// thin symbol (Claude's asterisk) still reads at fleck size.
+    private typealias Mark = GraphicsContext.ResolvedText
+
+    private func paint(_ piece: ConfettiBurst.Piece, frame: ConfettiBurst.Frame, paper: ConfettiLook.Paint,
+                       marks: [Mark], in c: inout GraphicsContext) {
+        let size = piece.size
+        switch piece.shape {
         case .streamer:
-            context.stroke(unitStreamer, with: .color(color),
-                           style: StrokeStyle(lineWidth: 0.3, lineCap: .round, lineJoin: .round))
-        case .rect, .dot, .diamond, .pacDot:
-            let path: Path
-            switch shape {
-            case .rect: path = unitRect
-            case .dot: path = unitDot
-            case .diamond: path = unitDiamond
-            default: path = unitPacDot
+            // The unit ribbon is a tenth as wide as it is long; its width
+            // in points is the piece's `aspect`.
+            c.scaleBy(x: size, y: piece.aspect * 10)
+            c.fill(Self.ribbons[min(11, Int(frame.ripple * 12))], with: paper.shading)
+            return
+        case .glyph:
+            guard !marks.isEmpty else {
+                c.scaleBy(x: size, y: size)
+                c.fill(Self.unitStar, with: paper.shading)
+                return
             }
-            context.fill(path, with: .color(color))
-            if let rim {
-                var edge = context
-                edge.opacity *= 0.45
-                edge.stroke(path, with: .color(rim), lineWidth: 0.6 / max(1, size))
+            var mark = marks[piece.glyph % marks.count]
+            mark.shading = paper.shading
+            c.scaleBy(x: size / Self.markPoints, y: size / Self.markPoints)
+            c.draw(mark, at: .zero, anchor: .center)
+            return
+        case .rect:
+            c.scaleBy(x: size, y: size * piece.aspect)
+            c.fill(Self.unitRect, with: paper.shading)
+            if frame.glint > 0.04 {
+                c.fill(Self.unitRect, with: .color(.white.opacity(min(0.8, frame.glint))))
+            }
+        case .dot:
+            c.scaleBy(x: size, y: size)
+            c.fill(Self.unitDot, with: paper.shading)
+        case .diamond:
+            c.scaleBy(x: size, y: size)
+            c.fill(Self.unitDiamond, with: paper.shading)
+            if frame.glint > 0.04 {
+                c.fill(Self.unitDiamond, with: .color(.white.opacity(min(0.8, frame.glint))))
+            }
+        case .star:
+            c.scaleBy(x: size, y: size)
+            c.fill(Self.unitStar, with: paper.shading)
+        case .heart:
+            c.scaleBy(x: size, y: size)
+            c.fill(Self.unitHeart, with: paper.shading)
+        }
+    }
+
+    /// The point size a letter mark is set at before it's scaled to its piece.
+    private static let markPoints = 13.0
+
+    /// The glyphs this burst draws, resolved once a frame.
+    private func resolveMarks(in canvas: GraphicsContext) -> [Mark] {
+        let font = Font.system(size: Self.markPoints, weight: .black, design: .rounded)
+        return look.glyphs.map { glyph in
+            switch glyph {
+            case .symbol(let name): return canvas.resolve(Text(Image(systemName: name)).font(font))
+            case .text(let text): return canvas.resolve(Text(text).font(font))
             }
         }
     }
 
-    /// Smoothstep, clamped — eases a landed streamer flat.
-    private static func smooth(_ t: Double) -> Double {
-        let t = min(max(t, 0), 1)
-        return t * t * (3 - 2 * t)
-    }
+    // MARK: The pop
 
-    /// The pop: a flash & shockwave at the muzzle, plus one beat of
-    /// starburst rays. Gone in ~0.3 s, behind the pieces.
-    private func drawPop(_ canvas: inout GraphicsContext, size: CGSize, age: Double) {
+    /// The pop, where it can be seen: light spilling out of the notch's
+    /// lower lip with a puff at each lower corner (the notch pops, in the
+    /// island's own idiom); a ring around the icon; a puff at each bottom
+    /// corner. Rain has no cannon, so no pop. Gone in about a quarter of a
+    /// second, under the pieces.
+    private func drawPop(_ canvas: inout GraphicsContext, age: Double, strength: Double) {
         guard age >= 0, age < 0.32 else { return }
         let p = age / 0.32
         let ease = 1 - (1 - p) * (1 - p)
-        let muzzle = CGPoint(x: size.width / 2, y: Self.muzzleY)
-        canvas.fill(Path(ellipseIn: circle(muzzle, 9 + 26 * ease)),
-                    with: .color(themeColor.opacity(0.55 * (1 - p))))
-        canvas.stroke(Path(ellipseIn: circle(muzzle, 5 + 52 * ease)),
-                      with: .color(themeColor.opacity(0.5 * (1 - p))), lineWidth: 1.6)
-        var rays = Path()
-        for i in 0..<10 {
-            let a = Double(i) * (.pi * 2 / 10) + 0.3
-            let r0 = 10 + 18 * ease, r1 = r0 + 30 * ease
-            rays.move(to: CGPoint(x: muzzle.x + r0 * cos(a), y: muzzle.y + r0 * sin(a)))
-            rays.addLine(to: CGPoint(x: muzzle.x + r1 * cos(a), y: muzzle.y + r1 * sin(a)))
-        }
-        canvas.stroke(rays, with: .color(.white.opacity(0.8 * (1 - p))), lineWidth: 1.4)
-        // Sparks: three hot white streaks inside the cone, gone in 0.15 s.
-        if age < 0.15 {
-            let sp = age / 0.15
-            let ease2 = 1 - (1 - sp) * (1 - sp)
-            var sparks = Path()
-            for i in 0..<3 {
-                let a = -.pi / 2 + [-0.55, 0.08, 0.62][i]
-                let r0 = 7 + 26 * ease2, r1 = r0 + 7 * (1 - sp)
-                sparks.move(to: CGPoint(x: muzzle.x + r0 * cos(a), y: muzzle.y + r0 * sin(a)))
-                sparks.addLine(to: CGPoint(x: muzzle.x + r1 * cos(a), y: muzzle.y + r1 * sin(a)))
+        let fade = (1 - p) * (1 - p) * strength
+        let stage = burst.stage
+        switch ConfettiEmitter.resolved(burst.recipe.origin, on: stage) {
+        case .notch:
+            let lip = ConfettiEmitter.lip(of: stage)
+            glow(&canvas, center: CGPoint(x: lip.midX, y: lip.minY), width: lip.width + 60 * ease,
+                 height: 10 + 26 * ease, opacity: 0.75 * fade)
+            var edge = Path()
+            edge.move(to: CGPoint(x: lip.minX + 8, y: lip.minY - 0.5))
+            edge.addLine(to: CGPoint(x: lip.maxX - 8, y: lip.minY - 0.5))
+            canvas.stroke(edge, with: .color(look.theme.mix(with: .white, by: 0.5).opacity(0.9 * fade)),
+                          style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+            for x in [lip.minX + 4, lip.maxX - 4] {
+                puff(&canvas, at: CGPoint(x: x, y: lip.minY + 2), radius: 4 + 16 * ease, opacity: fade)
             }
-            canvas.stroke(sparks, with: .color(.white.opacity(0.85 * (1 - sp))), lineWidth: 1.2)
+        case .icon:
+            let icon = stage.icon ?? .zero
+            let center = CGPoint(x: icon.midX, y: icon.midY)
+            let r = max(icon.width, icon.height) / 2 + 2 + 20 * ease
+            canvas.stroke(Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r)),
+                          with: .color(look.theme.opacity(0.7 * fade)), lineWidth: 1.8)
+            puff(&canvas, at: CGPoint(x: icon.midX, y: icon.maxY + 2), radius: 5 + 14 * ease, opacity: fade)
+        case .corners:
+            for x in [0, stage.width] {
+                puff(&canvas, at: CGPoint(x: x, y: stage.height), radius: 16 + 70 * ease, opacity: 0.8 * fade)
+            }
+        case .rain:
+            break
         }
     }
 
-    /// Reduce Motion: a gentle radial bloom of the provider colour at the
-    /// notch — the whole cue, no motion.
-    private func drawBloom(_ canvas: inout GraphicsContext, size: CGSize, p: Double) {
+    /// Reduce Motion: the lip (or the icon) glows once in the burst's
+    /// colour and fades — the whole cue, nothing moving across the screen.
+    private func drawGlow(_ canvas: inout GraphicsContext, p: Double) {
         guard p < 1 else { return }
-        let ease = 1 - (1 - p) * (1 - p)
-        let centre = CGPoint(x: size.width / 2, y: Self.muzzleY)
-        for i in (0..<3).reversed() {
-            let r = 14 + Double(i) * 18 + 110 * ease
-            canvas.fill(Path(ellipseIn: circle(centre, r)),
-                        with: .color(themeColor.opacity((1 - p) * (0.26 - Double(i) * 0.07))))
+        let rise = min(1, p / 0.25)
+        let fade = p < 0.25 ? rise : 1 - (p - 0.25) / 0.75
+        let stage = burst.stage
+        if ConfettiEmitter.resolved(burst.recipe.origin, on: stage) == .icon, let icon = stage.icon {
+            glow(&canvas, center: CGPoint(x: icon.midX, y: icon.maxY), width: icon.width + 70,
+                 height: 34, opacity: 0.7 * fade)
+            return
+        }
+        let lip = ConfettiEmitter.lip(of: stage)
+        glow(&canvas, center: CGPoint(x: lip.midX, y: lip.minY), width: lip.width + 120 * rise,
+             height: 22 + 26 * rise, opacity: 0.7 * fade)
+    }
+
+    /// A soft elliptical light, bright at its centre.
+    private func glow(_ canvas: inout GraphicsContext, center: CGPoint, width: Double, height: Double,
+                      opacity: Double) {
+        guard opacity > 0.005 else { return }
+        var c = canvas
+        c.translateBy(x: center.x, y: center.y)
+        c.scaleBy(x: width / 2, y: height / 2)
+        let gradient = Gradient(colors: [look.theme.opacity(opacity), look.theme.opacity(opacity * 0.35),
+                                         look.theme.opacity(0)])
+        c.fill(Path(ellipseIn: CGRect(x: -1, y: -1, width: 2, height: 2)),
+               with: .radialGradient(gradient, center: .zero, startRadius: 0, endRadius: 1))
+    }
+
+    /// A little round burst of light where a cannon fires.
+    private func puff(_ canvas: inout GraphicsContext, at point: CGPoint, radius: Double, opacity: Double) {
+        guard opacity > 0.005 else { return }
+        let gradient = Gradient(colors: [Color.white.opacity(0.8 * opacity), look.theme.opacity(0.6 * opacity),
+                                         look.theme.opacity(0)])
+        canvas.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius,
+                                           width: 2 * radius, height: 2 * radius)),
+                    with: .radialGradient(gradient, center: point, startRadius: 0, endRadius: radius))
+    }
+}
+
+/// Rest's check on the ledges its pieces lie on: which have moved or
+/// closed, and when that was seen (burst seconds). The window updates it
+/// once a second; a frame reads it.
+@MainActor
+final class ConfettiLedgeWatch {
+    var gone: [Int: Double] = [:]
+
+    /// Folds one reading of which ledges still stand in at `time`.
+    func note(standing: [Bool], at time: Double) {
+        for (index, stands) in standing.enumerated() where !stands && gone[index] == nil {
+            gone[index] = time
         }
     }
+}
 
-    private func circle(_ c: CGPoint, _ r: Double) -> CGRect {
-        CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
+/// How long the burst's frames take to draw, measured on the live path
+/// (with an os_signpost interval around each, for Instruments): the
+/// card's cost line quotes the last burst's p50 and p90.
+@MainActor
+final class ConfettiDrawMeter {
+    /// One finished burst: how long it ran and what its frames cost.
+    struct Summary: Equatable {
+        var seconds: Double
+        var frames: Int
+        var p50: Double
+        var p90: Double
     }
 
-    /// The piece-count multiplier: the setting inside its 0.5…2 range,
-    /// then a replay's shrink, floored at a quarter — so a held burst
-    /// replays smaller even at the lowest density.
-    static func density(settings: ConfettiSettings, densityScale: Double) -> Double {
-        max(0.25, min(2.0, max(0.5, settings.density)) * densityScale)
+    private static let signposter = OSSignposter(subsystem: "devin.jrbar", category: "confetti")
+    private var samples: [Double] = []
+    private let started = ProcessInfo.processInfo.systemUptime
+
+    init() {
+        samples.reserveCapacity(600)
     }
 
-    /// How many pieces one screen's burst throws.
-    static func pieceCount(settings: ConfettiSettings, densityScale: Double = 1) -> Int {
-        max(1, Int((140 * density(settings: settings, densityScale: densityScale)).rounded()))
+    /// Times one frame's drawing.
+    func measure(_ draw: () -> Void) {
+        let state = Self.signposter.beginInterval("draw")
+        let start = DispatchTime.now().uptimeNanoseconds
+        draw()
+        record(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+        Self.signposter.endInterval("draw", state)
     }
 
-    static func makePieces(density: Double = 1, shapes: ConfettiShapes = .mixed) -> [Piece] {
-        var rng = SystemRandomNumberGenerator()
-        var streamerOrdinal = 0
-        let count = max(1, Int((140 * density).rounded()))
-        return (0..<count).map { _ in
-            let roll = Double.random(in: 0...1, using: &rng)
-            // In the full mix ~8% are glyph flecks: tiny provider marks
-            // that spin in-plane. The shapes setting can make the burst
-            // all one note.
-            let shape: Shape
-            switch shapes {
-            case .mixed:
-                shape = roll < 0.50 ? .rect : roll < 0.76 ? .dot
-                    : roll < 0.92 ? .streamer : roll < 0.96 ? .diamond : .pacDot
-            case .streamers:
-                shape = .streamer
-            case .flecks:
-                shape = roll < 0.5 ? .diamond : .pacDot
-            }
-            // The cone: most pieces go up & out, a few are sideways spray.
-            let spray = Double.random(in: 0...1, using: &rng) < 0.2
-            let speed = Double.random(in: 240...640, using: &rng)
-            let theta = spray
-                ? Double.random(in: 1.2...1.5, using: &rng) * (Bool.random(using: &rng) ? 1 : -1)
-                : Double.random(in: -1.05...1.05, using: &rng)
-            let vt: Double
-            let size: Double
-            let sway: Double
-            switch shape {
-            case .rect:
-                vt = Double.random(in: 150...215, using: &rng)
-                size = Double.random(in: 5...9, using: &rng)
-                sway = Double.random(in: 6...18, using: &rng)
-            case .dot:
-                vt = Double.random(in: 185...260, using: &rng)
-                size = Double.random(in: 4...6.5, using: &rng)
-                sway = Double.random(in: 2...6, using: &rng)
-            case .streamer:
-                vt = Double.random(in: 105...160, using: &rng)
-                size = Double.random(in: 5.5...8, using: &rng)
-                sway = Double.random(in: 8...20, using: &rng)
-            case .diamond, .pacDot:
-                vt = Double.random(in: 165...235, using: &rng)
-                size = Double.random(in: 3...4.5, using: &rng)
-                sway = Double.random(in: 1.5...5, using: &rng)
-            }
-            // Provider colour in steps, white, & a few gold flecks; the
-            // glyph flecks wear the provider colour or its pale step.
-            let s = Double.random(in: 0...1, using: &rng)
-            let shade: Int
-            switch shape {
-            case .diamond, .pacDot:
-                shade = s < 0.6 ? 0 : 5
-            case .rect, .dot, .streamer:
-                shade = s < 0.45 ? 0 : s < 0.65 ? 1 : s < 0.8 ? 2 : s < 0.95 ? 3 : 4
-            }
-            let sign = Bool.random(using: &rng) ? 1.0 : -1.0
-            let vy = speed * cos(theta)
-            var piece = Piece(
-                shape: shape,
-                x: 0.5 + Double.random(in: -0.035...0.035, using: &rng),
-                delay: Double.random(in: 0...0.09, using: &rng),
-                vx: speed * sin(theta),
-                vy: vy,
-                vt: vt,
-                apexT: ConfettiPhysics.apexTime(v0: vy, vt: vt),
-                apexH: ConfettiPhysics.apexHeight(v0: vy, vt: vt),
-                size: size,
-                shade: shade,
-                phase: Double.random(in: 0...(.pi * 2), using: &rng),
-                spin: sign * (shape == .streamer
-                    ? Double.random(in: 0.6...1.6, using: &rng)
-                    : (shape == .diamond || shape == .pacDot)
-                        ? Double.random(in: 2.5...6, using: &rng)
-                        : Double.random(in: 1.2...3.6, using: &rng)),
-                twirl: (shape == .rect || shape == .streamer)
-                    ? Double.random(in: 4...10, using: &rng) : 0,
-                sway: sway,
-                swayRate: Double.random(in: 2...4.4, using: &rng),
-                trail: false
-            )
-            // A couple of streamers drag a faint streak off the launch.
-            if shape == .streamer {
-                piece.trail = streamerOrdinal % 8 == 0
-                streamerOrdinal += 1
-            }
-            return piece
-        }
+    /// One frame's milliseconds (the tests feed these by hand).
+    func record(_ milliseconds: Double) {
+        if samples.count < 4_000 { samples.append(milliseconds) }
+    }
+
+    /// The burst so far, or nil before its first frame.
+    func summary(at now: Double = ProcessInfo.processInfo.systemUptime) -> Summary? {
+        guard !samples.isEmpty else { return nil }
+        let sorted = samples.sorted()
+        func at(_ q: Double) -> Double { sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * q))] }
+        return Summary(seconds: now - started, frames: sorted.count, p50: at(0.5), p90: at(0.9))
     }
 }

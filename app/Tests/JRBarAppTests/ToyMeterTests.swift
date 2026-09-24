@@ -54,9 +54,18 @@ struct ToyMeterTests {
         #expect(buddy.cost(at: now) == nil)
     }
 
-    @Test("confetti costs nothing between bursts")
-    func confettiLine() {
+    @Test("confetti costs nothing between bursts, and quotes what the last one measured")
+    func confettiLine() throws {
         let toy = ConfettiToy()
         #expect(toy.cost(at: ToyMeter.uptime)?.hasPrefix("Nothing runs between bursts") == true)
+        let meter = ConfettiDrawMeter()
+        for milliseconds in [1.8, 2.0, 2.2, 2.4, 3.0, 2.1, 1.9, 2.3, 2.6, 4.0] { meter.record(milliseconds) }
+        let summary = try #require(meter.summary(at: ProcessInfo.processInfo.systemUptime))
+        #expect(summary.frames == 10)
+        #expect(summary.p50 == 2.2 && summary.p90 == 3.0)
+        toy.lastBurst = summary
+        let line = toy.cost(at: ToyMeter.uptime) ?? ""
+        #expect(line.hasPrefix("Nothing runs between bursts · the last burst ran"), "\(line)")
+        #expect(line.contains("2.2 ms a frame (p90 3.0 ms)"), "\(line)")
     }
 }

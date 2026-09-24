@@ -33,17 +33,33 @@ final class ConfettiToy: Toy {
     @ObservationIgnored private var windows: [ConfettiWindow] = []
 
     /// Nothing runs between bursts; a burst's windows close themselves.
+    /// Once one has played, the line quotes what its frames measured.
     func cost(at now: TimeInterval) -> String? {
-        windows.isEmpty
-            ? "Nothing runs between bursts · a burst draws for a few seconds, then its window closes"
-            : "Drawing a burst on \(windows.count) screen\(windows.count == 1 ? "" : "s")"
+        guard windows.isEmpty else {
+            return "Drawing a burst on \(windows.count) screen\(windows.count == 1 ? "" : "s")"
+        }
+        guard let last = lastBurst else {
+            return "Nothing runs between bursts · a burst draws for a few seconds, then its window closes"
+        }
+        return "Nothing runs between bursts · " + Self.measured(last)
     }
+
+    /// "the last burst ran 4.2 s at 2.1 ms a frame (p90 2.9 ms)".
+    static func measured(_ last: ConfettiDrawMeter.Summary) -> String {
+        String(format: "the last burst ran %.1f s at %.1f ms a frame (p90 %.1f ms)",
+               last.seconds, last.p50, last.p90)
+    }
+
+    /// What the last burst's frames cost, measured while it drew.
+    @ObservationIgnored var lastBurst: ConfettiDrawMeter.Summary?
+    /// The burst in flight's meter, shared by its screens.
+    @ObservationIgnored private var meter: ConfettiDrawMeter?
     /// The state-edge memory for the triggers no event carries (banked
     /// credits growing, the ask set emptying).
     @ObservationIgnored private var edges = ConfettiEdgeTracker()
-    /// The burst the room is holding, newest wins: its colour, when it
+    /// The burst the room is holding, newest wins: whose it is, when it
     /// was held, and why — the chip says so while it waits.
-    private(set) var held: (color: Color, at: Date, why: ToysHush.Reason)?
+    private(set) var held: (shot: ConfettiShot, at: Date, why: ToysHush.Reason)?
     /// Re-reads the room while a burst is held; exists only then.
     @ObservationIgnored private var recheck: Timer?
     /// When an outside caller last got a burst — `requestCooldown`.
@@ -134,10 +150,14 @@ final class ConfettiToy: Toy {
     /// cooling down or an unticked trigger does not.
     @discardableResult
     func fire(reason: Reason, provider: String? = nil, at now: Date = Date()) -> Bool {
-        let color = tint(for: provider)
+        fire(reason: reason, shot: shot(for: provider, moment: reason == .milestone ? .milestone : .plain),
+             at: now)
+    }
+
+    private func fire(reason: Reason, shot: ConfettiShot, at now: Date) -> Bool {
         switch reason {
         case .test:
-            present(color)
+            present(shot)
             return true
         case .trigger:
             guard isOn else { return false }
@@ -148,7 +168,7 @@ final class ConfettiToy: Toy {
             else { return false }
             lastRequestAt = now
         }
-        mindTheRoom(color, now: now)
+        mindTheRoom(shot, now: now)
         return true
     }
 
@@ -203,7 +223,20 @@ final class ConfettiToy: Toy {
         store?.state.confetti.noteFired(decision.key)
         let provider = decision.provider
             ?? event?.session.flatMap { store?.core.state?.session(withID: $0) }?.provider
-        fire(reason: .trigger, provider: provider)
+        let moment: ConfettiShot.Moment
+        switch decision.reason {
+        case .milestone: moment = .milestone
+        case .allClear: moment = .allClear
+        default: moment = .plain
+        }
+        _ = fire(reason: .trigger, shot: shot(for: provider, moment: moment), at: Date())
+    }
+
+    /// A burst for `provider`: its colour, and the provider itself (a
+    /// known one) for its glyph flecks.
+    func shot(for provider: String?, moment: ConfettiShot.Moment = .plain) -> ConfettiShot {
+        let known = provider.map { $0.lowercased() }.flatMap { ProviderStyle.table[$0] != nil ? $0 : nil }
+        return ConfettiShot(provider: known, tint: tint(for: provider), moment: moment)
     }
 
     /// The burst's colour for `provider`, from the same table (and the
@@ -224,22 +257,22 @@ final class ConfettiToy: Toy {
     /// An explicit ask in `provider`'s colour (`jrbar://confetti`'s
     /// link resolves the provider first). Fires even while the toy is off.
     func testBurst(provider: String?) {
-        present(tint(for: provider))
+        present(shot(for: provider))
     }
 
     // MARK: The room
 
     /// Fire now on the free screens, hold for later, or let it go.
-    private func mindTheRoom(_ color: Color, now: Date) {
+    private func mindTheRoom(_ shot: ConfettiShot, now: Date) {
         let hush = store?.hushReason(now: now)
         let minding = store?.state.hushDuringQuiet ?? true
-        let screens = minding ? screensForBurst() : Self.allScreens()
+        let screens = pickScreens(minding ? screensForBurst() : Self.allScreens())
         let free = screens.count
         switch ConfettiRoom.verdict(hush: hush, freeScreens: free, whenHeld: settings.whenHeld) {
         case .fire:
-            present(color, on: screens)
+            present(shot, on: screens)
         case .hold:
-            held = (color, now, hush ?? .fullscreen)
+            held = (shot, now, hush ?? .fullscreen)
             armRecheck()
         case .drop:
             dropHeld()
@@ -258,17 +291,17 @@ final class ConfettiToy: Toy {
         // The daemon's reading first — it is free; the window list is
         // only worth asking once nothing else is keeping the room down.
         if let hush = store?.hushReason(now: now) {
-            if hush != held.why { self.held = (held.color, held.at, hush) }
+            if hush != held.why { self.held = (held.shot, held.at, hush) }
             return
         }
         let minding = store?.state.hushDuringQuiet ?? true
-        let screens = minding ? screensForBurst() : Self.allScreens()
+        let screens = pickScreens(minding ? screensForBurst() : Self.allScreens())
         guard !screens.isEmpty else {
-            if held.why != .fullscreen { self.held = (held.color, held.at, .fullscreen) }
+            if held.why != .fullscreen { self.held = (held.shot, held.at, .fullscreen) }
             return
         }
         dropHeld()
-        present(held.color, on: screens, densityScale: ConfettiRoom.replayDensity)
+        present(held.shot, on: screens, densityScale: ConfettiRoom.replayDensity)
     }
 
     private func armRecheck() {
@@ -285,6 +318,17 @@ final class ConfettiToy: Toy {
         recheck?.invalidate()
         recheck = nil
     }
+
+    /// The Screens pick: every free screen, or only the main one (the
+    /// screen with the key window, else the menu bar's) when it's free.
+    private func pickScreens(_ free: [NSScreen?]) -> [NSScreen?] {
+        guard settings.screens == .main else { return free }
+        guard let main = mainScreen() else { return Array(free.prefix(1)) }
+        return free.filter { $0.map { $0 == main } ?? false }
+    }
+
+    /// Which screen is the main one — injectable for the tests.
+    @ObservationIgnored var mainScreen: @MainActor () -> NSScreen? = { NSScreen.main ?? NSScreen.screens.first }
 
     /// Every attached screen — nil only headless, where the fallback
     /// frame stands in.
@@ -311,47 +355,149 @@ final class ConfettiToy: Toy {
 
     // MARK: The burst
 
-    /// One burst per screen, or the soft flash under Reduce Motion. A
+    /// One burst per screen, or the soft glow under Reduce Motion. A
     /// burst already on screen is replaced — the newest wins, on every
     /// screen at once. `densityScale` shrinks a replayed hold.
-    private func present(_ color: Color, on screens: [NSScreen?]? = nil, densityScale: Double = 1) {
+    private func present(_ shot: ConfettiShot, on screens: [NSScreen?]? = nil, densityScale: Double = 1) {
         for window in windows { window.close() }
-        // One overlay per screen — each framed & timed off its own
+        finishBurst()
+        // One overlay per screen — each staged & timed off its own
         // display, same physics & life rules everywhere, and each closes
         // itself, so the replaces-burst policy stays per screen.
-        let targets = screens ?? Self.allScreens()
+        let targets = screens ?? pickScreens(Self.allScreens())
+        let plan = Self.plan(settings, shot: shot, densityScale: densityScale,
+                             everyone: workingProviders(), season: seasonToday())
         if let presentOverride {
             presentOverride(ConfettiPresentation(
                 screens: targets.count, densityScale: densityScale,
-                pieces: ConfettiView.pieceCount(settings: settings, densityScale: densityScale),
-                tint: color))
-            playPop()
+                pieces: ConfettiBurst.count(plan.recipe.intensity, density: plan.recipe.density,
+                                            stage: .reference),
+                tint: shot.tint, recipe: plan.recipe))
+            playPop(pan: 0)
             return
         }
+        // Rest lands on windows: read where they are once, for every screen.
+        let quartz = plan.recipe.landing == .rest ? OnScreenWindows.quartzFrames() : []
+        let icon = store?.iconFrame()
+        let meter = ConfettiDrawMeter()
+        self.meter = meter
         var overlays: [ConfettiWindow] = []
+        var pan = 0.0
         for screen in targets {
-            let overlay = ConfettiWindow(color: color, settings: settings,
-                                         densityScale: densityScale, screen: screen)
+            let stage = Self.stage(for: screen, icon: icon, windows: quartz)
+            if stage.icon != nil { pan = ConfettiEmitter.pan(plan.recipe.origin, on: stage) }
+            let burst = ConfettiBurst(stage: stage, recipe: plan.recipe, seed: UInt64.random(in: 0...UInt64.max))
+            let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: stage.width, height: stage.height)
+            let overlay = ConfettiWindow(burst: burst, look: plan.look, frame: frame, meter: meter)
             overlays.append(overlay)
             overlay.burst { [weak self, weak overlay] in
                 MainActor.assumeIsolated {
-                    guard let overlay else { return }
-                    self?.windows.removeAll { $0 === overlay }
+                    guard let self, let overlay else { return }
+                    self.windows.removeAll { $0 === overlay }
+                    if self.windows.isEmpty { self.finishBurst() }
                 }
             }
         }
         windows = overlays
-        if !targets.isEmpty { playPop() }
+        if !targets.isEmpty { playPop(pan: pan) }
+    }
+
+    /// Keeps what the finished burst's frames cost, for the card.
+    private func finishBurst() {
+        if let summary = meter?.summary() { lastBurst = summary }
+        meter = nil
+    }
+
+    /// What a burst is asked to be, from the settings: the moment's own
+    /// style when Moment styles is on, the day's colours when Seasonal is
+    /// on and it's a holiday, and the look (resolved colours and glyphs).
+    static func plan(_ settings: ConfettiSettings, shot: ConfettiShot, densityScale: Double,
+                     everyone: [(id: String, color: Color)], season: ConfettiSeason?)
+        -> (recipe: ConfettiBurst.Recipe, look: ConfettiLook) {
+        var settings = settings
+        if settings.momentStyles {
+            switch shot.moment {
+            case .milestone:
+                settings.palette = .gold
+                settings.intensity = .big
+                settings.origin = .corners
+            case .allClear:
+                settings.origin = .rain
+                settings.intensity = .subtle
+            case .plain:
+                break
+            }
+        }
+        let look = ConfettiView.look(settings.palette, tint: shot.tint, provider: shot.provider,
+                                     everyone: everyone, season: season)
+        let recipe = ConfettiBurst.Recipe(
+            origin: settings.origin, landing: settings.landing, intensity: settings.intensity,
+            shapes: settings.shapes,
+            density: ConfettiView.density(settings: settings, densityScale: densityScale),
+            hang: settings.duration, slotWeights: look.weights, glyphs: look.glyphs.count,
+            special: season?.special ?? .star)
+        return (recipe, look)
+    }
+
+    /// The providers working right now (the Everyone palette), each once.
+    func workingProviders() -> [(id: String, color: Color)] {
+        let sessions = store?.core.state?.mainSessions ?? []
+        var seen = Set<String>()
+        var providers: [(id: String, color: Color)] = []
+        for session in sessions {
+            let activity = SessionActivity.reduce(session)
+            guard activity == .working || activity == .waiting,
+                  case let id = session.provider.lowercased(), !id.isEmpty, seen.insert(id).inserted else { continue }
+            providers.append((id, tint(for: id)))
+        }
+        return providers.sorted { $0.id < $1.id }
+    }
+
+    /// Today's holiday when Seasonal is on.
+    private func seasonToday() -> ConfettiSeason? {
+        settings.seasonal ? ConfettiSeason.on(Date()) : nil
+    }
+
+    /// A screen as a burst sees it: its size, its notch (or the island a
+    /// simulated notch draws), the menu bar's bottom, the icon when it's
+    /// on this screen, the Dock's top, and the other apps' windows on it
+    /// front to back — all measured from its top-left corner.
+    static func stage(for screen: NSScreen?, icon: NSRect?, windows quartz: [CGRect]) -> ConfettiStage {
+        guard let screen else {
+            var fallback = ConfettiStage.reference
+            fallback.notch = nil
+            return fallback
+        }
+        let frame = screen.frame
+        let depth = Double(ScreenBarGeometry.islandDepth(of: screen))
+        var notch: CGRect?
+        if let slot = ScreenBarGeometry.islandSlot(on: screen), depth > 0 {
+            notch = CGRect(x: Double(slot.centerX - frame.minX) - Double(slot.width) / 2, y: 0,
+                           width: Double(slot.width), height: depth)
+        }
+        let bar = max(Double(frame.maxY - screen.visibleFrame.maxY), depth)
+        let primaryHeight = NSScreen.screens.first?.frame.maxY ?? frame.maxY
+        let windows = quartz.map { OnScreenWindows.local($0, on: frame, primaryHeight: primaryHeight) }
+            .filter { $0.intersects(CGRect(origin: .zero, size: frame.size)) }
+        var local: CGRect?
+        if let icon, frame.intersects(icon) {
+            local = CGRect(x: icon.minX - frame.minX, y: frame.maxY - icon.maxY,
+                           width: icon.width, height: icon.height)
+        }
+        return ConfettiStage(width: Double(frame.width), height: Double(frame.height), notch: notch,
+                             menuBarBottom: bar > 0 ? bar : 24, icon: local,
+                             floor: Double(frame.height) - Double(screen.visibleFrame.minY - frame.minY),
+                             windows: windows)
     }
 
     /// The pop, if it's wanted and JR-Bar isn't being quiet — the
     /// lights' own reading decides, whatever the hush switch says — at
     /// Settings › Sounds' volume, a touch higher or lower each burst.
-    private func playPop() {
+    private func playPop(pan: Double) {
         guard settings.sound, !isQuietNow() else { return }
         let player = sounds ?? SoundPlayer()
         sounds = player
-        ConfettiSound.play(through: player, rate: Double.random(in: 0.94...1.06))
+        ConfettiSound.play(through: player, rate: Double.random(in: 0.94...1.06), pan: pan)
     }
 
     /// JR-Bar's quiet or a Focus, from the daemon's reading — the sound's
@@ -365,11 +511,39 @@ final class ConfettiToy: Toy {
 }
 
 /// What a burst was, for the tests that stand in for the overlays: how
-/// many screens, the replay's shrink, the pieces one screen throws and
-/// the colour it wears.
+/// many screens, the replay's shrink, the pieces a laptop screen throws,
+/// the colour it wears and the recipe it fired with.
 struct ConfettiPresentation {
     var screens: Int
     var densityScale: Double
     var pieces: Int
     var tint: Color
+    var recipe: ConfettiBurst.Recipe
+}
+
+/// What a burst is for: whose colours it wears (and whose glyph), and
+/// which moment — a milestone and "All caught up" get their own style
+/// when Moment styles is on. Resolved when it's asked for, so a held
+/// burst replays in the colour it was fired in.
+struct ConfettiShot {
+    enum Moment: Equatable, Sendable { case plain, milestone, allClear }
+
+    var provider: String?
+    var tint: Color
+    var moment: Moment = .plain
+}
+
+extension ConfettiView {
+    /// The Amount multiplier: the setting inside its 0.5…2 range, then a
+    /// replay's shrink, floored at a quarter — so a held burst replays
+    /// smaller even at the lowest Amount.
+    static func density(settings: ConfettiSettings, densityScale: Double) -> Double {
+        max(0.25, min(2.0, max(0.5, settings.density)) * densityScale)
+    }
+
+    /// How many pieces a laptop screen's burst throws with these settings.
+    static func pieceCount(settings: ConfettiSettings, densityScale: Double = 1) -> Int {
+        ConfettiBurst.count(settings.intensity, density: density(settings: settings, densityScale: densityScale),
+                            stage: .reference)
+    }
 }

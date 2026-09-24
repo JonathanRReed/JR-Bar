@@ -679,9 +679,11 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     /// Where the pieces end up.
     public var landing: ConfettiLanding
-    /// Piece-count multiplier, 0.5…2.
+    /// Piece-count multiplier, 0.5…2 — the card's "Amount", a fine-tune
+    /// on top of `intensity`.
     public var density: Double
-    /// Burst-length multiplier, 0.7…1.5 — stretches the whole timeline.
+    /// Hang-time multiplier, 0.7…1.5: how slowly the pieces fall and how
+    /// long they rest. The pop and the spray keep their speed.
     public var duration: Double
     /// Whose colours the burst wears.
     public var palette: ConfettiPalette
@@ -699,6 +701,19 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     /// A soft synthesized pop and rustle with the burst. Off by default,
     /// and silent while JR-Bar is quiet.
     public var sound: Bool = false
+    /// Where the burst comes from: the notch's lower lip by default.
+    public var origin: ConfettiOrigin = .notch
+    /// How big a burst is — about 90, 180 or 300 pieces on a laptop
+    /// screen, scaled by each screen's area.
+    public var intensity: ConfettiIntensity = .standard
+    /// On a holiday, that day's colours and shapes (a local calendar,
+    /// nothing asked of the network). Off by default.
+    public var seasonal: Bool = false
+    /// Every free screen, or only the main one.
+    public var screens: ConfettiScreens = .all
+    /// Milestones burst gold, big and from the corners, and "All caught
+    /// up" is a gentle rain, whatever the look above. Off by default.
+    public var momentStyles: Bool = false
 
     /// The ring's depth: an old key falls off long after the fact it
     /// guarded is history.
@@ -730,6 +745,7 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled, landing, density, duration, palette, shapes, triggers, firedKeys
         case whenHeld, sound
+        case origin, intensity, seasonal, screens, momentStyles
     }
 
     public init(from decoder: any Decoder) throws {
@@ -745,6 +761,11 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
         firedKeys = Array(keys.filter { !$0.isEmpty }.suffix(Self.firedKeyLimit))
         whenHeld = (try? c.decodeIfPresent(ConfettiHeldBurst.self, forKey: .whenHeld)) ?? .later
         sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? false
+        origin = (try? c.decodeIfPresent(ConfettiOrigin.self, forKey: .origin)) ?? .notch
+        intensity = (try? c.decodeIfPresent(ConfettiIntensity.self, forKey: .intensity)) ?? .standard
+        seasonal = (try? c.decodeIfPresent(Bool.self, forKey: .seasonal)) ?? false
+        screens = (try? c.decodeIfPresent(ConfettiScreens.self, forKey: .screens)) ?? .all
+        momentStyles = (try? c.decodeIfPresent(Bool.self, forKey: .momentStyles)) ?? false
     }
 }
 
@@ -797,22 +818,58 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
     }
 }
 
-/// Where confetti ends up: resting as litter on the band floor, raining
-/// to the bottom edge of the screen, or dissolving mid-air.
+/// Where confetti ends up: resting on the top edges of windows and the
+/// Dock, raining off the bottom edge of the screen, or dissolving
+/// mid-air.
 public enum ConfettiLanding: String, Codable, CaseIterable, Sendable {
     case rest, fall, fade
 }
 
-/// Whose colours the burst wears: the resetting provider's, the Toys
-/// page tint, or a six-colour spectrum.
+/// Whose colours the burst wears: the provider's, the Toys page tint,
+/// a party spectrum, gold and champagne, pastels, the tint alone, or
+/// every provider working right now. An older file's `rainbow` reads
+/// as Party, the palette that replaced it.
 public enum ConfettiPalette: String, Codable, CaseIterable, Sendable {
-    case provider, toys, rainbow
+    case provider, toys, party, gold, pastel, mono, everyone
+
+    public init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        if raw == "rainbow" {
+            self = .party
+            return
+        }
+        guard let palette = ConfettiPalette(rawValue: raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "no palette named \(raw)"))
+        }
+        self = palette
+    }
 }
 
-/// What the pieces are: the full mix, streamers only, or glyph flecks
-/// only.
+/// What the pieces are: the full mix, streamers only, small flecks,
+/// the provider's own glyph, or stars.
 public enum ConfettiShapes: String, Codable, CaseIterable, Sendable {
-    case mixed, streamers, flecks
+    case mixed, streamers, flecks, glyphs, stars
+}
+
+/// Where a burst comes from: out of the notch's lower lip (the menu
+/// bar's bottom centre on a screen without one), out of JR-Bar's own
+/// menu-bar icon, from cannons at the bottom corners, or as rain along
+/// the top edge.
+public enum ConfettiOrigin: String, Codable, CaseIterable, Sendable {
+    case notch, icon, corners, rain
+}
+
+/// How big a burst is: Subtle, Standard or Big (Big throws a second
+/// volley a beat later).
+public enum ConfettiIntensity: String, Codable, CaseIterable, Sendable {
+    case subtle, standard, big
+}
+
+/// Which screens a burst plays on: every screen no fullscreen app owns,
+/// or only the main one.
+public enum ConfettiScreens: String, Codable, CaseIterable, Sendable {
+    case all, main
 }
 
 /// Notch: the island — a capsule hugging the notch that shows who is
