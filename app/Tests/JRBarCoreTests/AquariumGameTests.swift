@@ -853,4 +853,15 @@ extension AquariumGameTests {
         game.apply(.quotaReset, now: Self.t0 + 1)
         #expect(game.pendingVisitors == [.submarine])
     }
+
+    @Test("turning visitors off sends away one already waiting")
+    func visitorsOffClearsTheQueue() {
+        var game = AquariumGame()
+        game.apply(.quotaReset, now: Self.t0)
+        #expect(game.pendingVisitors == [.submarine])
+        game.visitorsWelcome = false
+        #expect(game.pendingVisitors.isEmpty)
+        game.apply(.visitorShown(.submarine), now: Self.t0 + 1)
+        #expect(game.totals.visitorsSeen == 0, "nothing swims by")
+    }
 }

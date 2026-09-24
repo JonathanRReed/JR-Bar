@@ -805,9 +805,12 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     /// window a shoo can pay in.
     public var alienShownAt: Double = 0
     /// Card › Fine-tune › Visitors: while false no visitor queues at all,
-    /// the alien included. A setting, not part of the save — the toy
-    /// keeps it in step with the card.
-    public var visitorsWelcome = true
+    /// the alien included, and turning it off sends away any that were
+    /// already waiting. A setting, not part of the save — the toy keeps
+    /// it in step with the card.
+    public var visitorsWelcome = true {
+        didSet { if !visitorsWelcome { pendingVisitors.removeAll() } }
+    }
 
     public struct Totals: Codable, Equatable, Sendable {
         public var feedings: Int
