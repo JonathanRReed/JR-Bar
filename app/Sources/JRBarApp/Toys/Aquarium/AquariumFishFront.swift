@@ -155,7 +155,9 @@ extension CartoonFish {
     }
 
     /// Only the tail's tips show behind the body, sweeping side to side
-    /// on the beat. A veil (the betta's) billows as a translucent fan.
+    /// on the beat. A veil (the betta's) billows as a translucent fan as
+    /// wide as the side view's veil at the cut, so its bulk carries into
+    /// the head-on frame instead of vanishing there.
     private static func drawFrontTail(into f: inout GraphicsContext, art: Art, width w: Double,
                                       midY: Double, beat: Double, palette: Palette, vivid: Bool) {
         guard let tail = art.fins.first(where: { if case .tail = $0.motion { return true }; return false })
@@ -163,12 +165,26 @@ extension CartoonFish {
         let r = tail.path.boundingRect
         let sweep = beat * w * 0.55
         if art.iridescent {
-            let veil = w * 0.95
+            let veil = max(w * 0.95, art.extent.width * AquariumTurn.frontCut * 0.5)
             let fan = Path(ellipseIn: CGRect(x: -veil + sweep * 0.4, y: r.minY,
                                              width: veil * 2, height: r.height))
+            // As solid as the veil it was a frame ago, rays and all.
+            let cloth = vivid ? (tail.tint ?? palette.body) : palette.body
             f.fill(fan, with: .radialGradient(
-                Gradient(colors: [palette.body.opacity(0.70), palette.body.opacity(0.18)]),
+                Gradient(colors: [cloth.opacity(0.9), cloth.opacity(0.55)]),
                 center: CGPoint(x: sweep * 0.2, y: midY), startRadius: 0, endRadius: r.height * 0.5))
+            var rays = Path()
+            for k in 0..<7 {
+                let spread = (Double(k) - 3) / 3 * veil * 0.85
+                for end in [r.minY, r.maxY] {
+                    rays.move(to: CGPoint(x: sweep * 0.2, y: midY))
+                    rays.addQuadCurve(to: CGPoint(x: spread + sweep * 0.4, y: end + (midY - end) * 0.06),
+                                      control: CGPoint(x: spread * 0.4 + sweep * 0.3, y: (midY + end) / 2))
+                }
+            }
+            var ribbed = f
+            ribbed.clip(to: fan)
+            ribbed.stroke(rays, with: .color(palette.dark.opacity(0.3)), lineWidth: 0.005)
             if vivid {
                 var sheen = f
                 sheen.blendMode = .plusLighter
@@ -196,8 +212,9 @@ extension CartoonFish {
         f.fill(p, with: .color(tint.opacity(0.72)))
     }
 
-    /// The dorsal and anal fins edge-on: thin spikes leaning a little
-    /// with the beat.
+    /// The dorsal and anal fins edge-on: blades leaning a little with the
+    /// beat, their roots as wide as the side view's fins at the cut — an
+    /// angelfish's tall sails narrow into the turn, they don't vanish.
     private static func drawFrontSpikes(into f: inout GraphicsContext, art: Art, width w: Double,
                                         beat: Double, palette: Palette, lw: Double) {
         let top = art.bounds.minY, bottom = art.bounds.maxY
@@ -208,21 +225,24 @@ extension CartoonFish {
         for fin in art.fins {
             guard case .ripple = fin.motion else { continue }
             let r = fin.path.boundingRect
+            let root = r.width * AquariumTurn.frontCut * 0.5
             if !upper, fin.pivot.y < midY, r.minY < top + 0.01 {
                 upper = true
-                spikes.move(to: CGPoint(x: -w * 0.10, y: top + h * 0.10))
+                let half = max(w * 0.10, root)
+                spikes.move(to: CGPoint(x: -half, y: top + h * 0.10))
                 spikes.addQuadCurve(to: CGPoint(x: lean, y: r.minY),
-                                    control: CGPoint(x: -w * 0.05, y: (top + r.minY) / 2))
-                spikes.addQuadCurve(to: CGPoint(x: w * 0.10, y: top + h * 0.10),
-                                    control: CGPoint(x: w * 0.05, y: (top + r.minY) / 2))
+                                    control: CGPoint(x: -half * 0.5, y: (top + r.minY) / 2))
+                spikes.addQuadCurve(to: CGPoint(x: half, y: top + h * 0.10),
+                                    control: CGPoint(x: half * 0.5, y: (top + r.minY) / 2))
                 spikes.closeSubpath()
             } else if !lower, fin.pivot.y > midY, r.maxY > bottom - 0.01 {
                 lower = true
-                spikes.move(to: CGPoint(x: -w * 0.07, y: bottom - h * 0.10))
+                let half = max(w * 0.07, root)
+                spikes.move(to: CGPoint(x: -half, y: bottom - h * 0.10))
                 spikes.addQuadCurve(to: CGPoint(x: -lean, y: r.maxY),
-                                    control: CGPoint(x: -w * 0.04, y: (bottom + r.maxY) / 2))
-                spikes.addQuadCurve(to: CGPoint(x: w * 0.07, y: bottom - h * 0.10),
-                                    control: CGPoint(x: w * 0.04, y: (bottom + r.maxY) / 2))
+                                    control: CGPoint(x: -half * 0.57, y: (bottom + r.maxY) / 2))
+                spikes.addQuadCurve(to: CGPoint(x: half, y: bottom - h * 0.10),
+                                    control: CGPoint(x: half * 0.57, y: (bottom + r.maxY) / 2))
                 spikes.closeSubpath()
             }
         }
