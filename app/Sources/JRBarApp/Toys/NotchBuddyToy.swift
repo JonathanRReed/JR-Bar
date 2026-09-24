@@ -1356,7 +1356,7 @@ private struct BuddyControlsView: View {
                 }
             } label: {
                 SettingLabel(title: "Time between walks",
-                             subtitle: "About this many minutes of work pass between one walk and the next.")
+                             subtitle: "About this many minutes of work between walks.")
             }
             .disabled(!toy.takesWalks)
 
