@@ -766,7 +766,7 @@ struct OverviewConnectionRow: View {
     }
 }
 
-/// "Share of this 5 h window" — which session is spending the quota
+/// "5 h window share" — which session is spending the quota
 /// (Agent Sessions' Quota Meter), as one inspector fact. The session's
 /// tokens since its provider's primary window opened (`window_tokens`,
 /// the daemon's) over every session of that provider JR-Bar has read in
@@ -788,7 +788,7 @@ enum OverviewWindowShare {
         return Double(tokens) / Double(whole)
     }
 
-    /// The fact's name and value: "Share of this 5 h window", "≈ 34 %".
+    /// The fact's name and value: "5 h window share", "≈ 34 %".
     static func fact(for usage: SessionUsage, provider: String,
                      readings: [SessionUsage]) -> (name: String, value: String)? {
         guard let fraction = share(tokens: usage.windowTokens, provider: provider, readings: readings) else {
@@ -797,8 +797,9 @@ enum OverviewWindowShare {
         let percent = fraction * 100
         let value = percent > 0 && percent < 1 ? "≈ <1 %" : "≈ \(Int(percent.rounded())) %"
         // Claude's and Codex's primary windows are five hours; the rest
-        // are named only as "this window".
-        let name = ["claude", "codex"].contains(provider) ? "Share of this 5 h window" : "Share of this window"
+        // are named only as the window. Short enough for the facts'
+        // name column, with the "5 h" kept on one line.
+        let name = ["claude", "codex"].contains(provider) ? "5\u{00A0}h window share" : "Window share"
         return (name, value)
     }
 }
