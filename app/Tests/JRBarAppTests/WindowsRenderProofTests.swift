@@ -328,7 +328,7 @@ struct WindowsRenderProofTests {
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func floatingCards() throws {
-        try Self.write("whats-new", size: CGSize(width: WhatsNewView.width, height: 620), plate: .glass) {
+        try Self.write("whats-new", size: CGSize(width: WhatsNewView.width, height: 780), plate: .glass) {
             WhatsNewView(entries: WhatsNewCatalog.entries, tryIt: { _ in nil }, onDone: {})
                 .frame(maxHeight: .infinity, alignment: .top)
         }

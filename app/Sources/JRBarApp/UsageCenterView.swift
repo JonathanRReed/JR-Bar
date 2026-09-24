@@ -736,7 +736,7 @@ struct CombinedUsageCard: View {
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(width: 118, alignment: .leading)
+                .frame(width: 104, alignment: .leading)
             if provider.isSignedOut {
                 Text("not signed in")
                     .font(.caption)
@@ -763,7 +763,7 @@ struct CombinedUsageCard: View {
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .frame(width: 92, alignment: .trailing)
+                    .frame(width: 84, alignment: .trailing)
             }
         }
         .padding(.horizontal, 8)
@@ -783,7 +783,7 @@ struct CombinedWindowGauge: View {
     let window: CoreUsageWindow
     let accent: Color
 
-    static let barWidth: CGFloat = 46
+    static let barWidth: CGFloat = 40
 
     private var color: Color { UsageColors.level(window.usedPct, accent: accent) }
 
@@ -793,7 +793,7 @@ struct CombinedWindowGauge: View {
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .frame(width: 44, alignment: .trailing)
+                .frame(width: 40, alignment: .trailing)
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.primary.opacity(0.08))
                 if let used = window.usedPct {

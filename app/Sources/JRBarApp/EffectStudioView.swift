@@ -219,6 +219,7 @@ struct EffectLibraryPane: View {
                     ForEach(group.effects) { effect in
                         EffectLibraryRow(effect: effect, store: store, uses: store.usage(of: effect),
                                          selected: store.selectedID == effect.id)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 3)
                             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
