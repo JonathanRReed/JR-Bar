@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol
 
 from .boot_identity import boot_identifier_basis
 from .capacity_types import SourceKey
@@ -129,10 +129,13 @@ TRANSCRIPT_FILE_LIST_CACHE_MAX_ENTRIES = 16
 # Keep a day of finished sessions: latest.json once accumulated every
 # session ever seen and was re-serialized on every hook event.
 STATUS_RETENTION_SECONDS = 24 * 3600.0
-# latest.json is the restore snapshot, not a live feed: socket clients get
-# every change as it lands, and a restart replays the newest event per
-# session from the hook logs. At 1 s the daemon rewrote and fsynced 145 KB
-# about 0.6 times a second while agents worked.
+# latest.json is the restore snapshot and a slow feed: socket clients get
+# every change as it lands, but serve.py's /status.json, doctor and the
+# app's offline fallback read the file. At 1 s the daemon rewrote and
+# fsynced 145 KB about 0.6 times a second while agents worked. A change
+# that lands inside the interval is written by one trailing flush when
+# the interval ends, so the last state of a burst never waits for the
+# next hook event.
 LATEST_STATE_WRITE_INTERVAL_SECONDS = 5.0
 # Transcript detail is capped before any UI surface (T3 caps at 160 --
 # long tool output in a menu row is noise at best, a leak at worst).
@@ -222,6 +225,20 @@ def _default_clock_sample() -> ClockSample:
         time.monotonic(),
         _LOCAL_BOOT_IDENTIFIER,
     )
+
+
+class _CancellableFlush(Protocol):
+    def cancel(self) -> None: ...
+
+
+def _start_latest_state_flush_timer(
+    delay: float, flush: Callable[[], None]
+) -> _CancellableFlush:
+    """Run ``flush`` once after ``delay`` seconds on a daemon thread."""
+    timer = threading.Timer(delay, flush)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _registered_hook_source(provider: str) -> NegotiatedProviderSource | None:
@@ -1155,6 +1172,10 @@ class LiveAgentMonitor(LiveSessionMemory):
         restore_work_keys: tuple[WorkKey, ...] = (),
         clock_sampler: Callable[[], ClockSample] = _default_clock_sample,
         acknowledged_requests_supplier: Callable[[], frozenset[RequestKey]] | None = None,
+        schedule_latest_state_flush: Callable[
+            [float, Callable[[], None]], _CancellableFlush
+        ]
+        | None = None,
     ) -> None:
         self.sources = tuple(sources)
         self.stale_after_seconds = stale_after_seconds
@@ -1184,6 +1205,10 @@ class LiveAgentMonitor(LiveSessionMemory):
         self._latest_state_written_at = 0.0
         self._latest_state_digest: bytes | None = None
         self._latest_state_write_lock = threading.Lock()
+        self._schedule_latest_state_flush = (
+            schedule_latest_state_flush or _start_latest_state_flush_timer
+        )
+        self._latest_state_flush_timer: _CancellableFlush | None = None
         self.acknowledged_requests_supplier = acknowledged_requests_supplier
         self.load_latest_state()
 
@@ -1534,18 +1559,44 @@ class LiveAgentMonitor(LiveSessionMemory):
         """Debounce private persistence without holding the reducer lock."""
         self._write_latest_state(force=False)
 
-    def _write_latest_state(self, *, force: bool) -> None:
+    def _flush_deferred_latest_state(self) -> None:
+        """The trailing write a change deferred by the interval armed."""
+        self._write_latest_state(force=False, trailing=True)
+
+    def _write_latest_state(self, *, force: bool, trailing: bool = False) -> None:
         if self.latest_state_path is None:
             return
         with self._latest_state_write_lock:
+            if trailing:
+                self._latest_state_flush_timer = None
             now_monotonic = time.monotonic()
-            if not force:
+            if force:
+                pending = self._latest_state_flush_timer
+                self._latest_state_flush_timer = None
+                if pending is not None:
+                    pending.cancel()
+            else:
                 if not self._latest_state_dirty:
                     return
-                if (
-                    now_monotonic - self._latest_state_written_at
-                    < LATEST_STATE_WRITE_INTERVAL_SECONDS
-                ):
+                elapsed = now_monotonic - self._latest_state_written_at
+                if elapsed < LATEST_STATE_WRITE_INTERVAL_SECONDS:
+                    # Without this the last change of a burst -- often an
+                    # agent's Stop -- sat unwritten until the next hook
+                    # event, which can be hours away.
+                    if self._latest_state_flush_timer is None:
+                        delay = min(
+                            LATEST_STATE_WRITE_INTERVAL_SECONDS,
+                            max(0.0, LATEST_STATE_WRITE_INTERVAL_SECONDS - elapsed),
+                        )
+                        try:
+                            self._latest_state_flush_timer = (
+                                self._schedule_latest_state_flush(
+                                    delay, self._flush_deferred_latest_state
+                                )
+                            )
+                        except RuntimeError:
+                            # No thread to spare: the next event retries.
+                            self._latest_state_flush_timer = None
                     return
             with self.lock:
                 state = self.operator_state

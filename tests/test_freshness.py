@@ -308,13 +308,34 @@ def _restore_batch(
 
 def test_latest_state_is_written_at_most_every_five_seconds_and_never_twice_the_same(tmp_path: Path) -> None:
     """latest.json is the restore snapshot: at one write a second the daemon
-    rewrote and fsynced 145 KB about 0.6 times a second while agents worked."""
+    rewrote and fsynced 145 KB about 0.6 times a second while agents worked.
+    A change inside the interval is written by one trailing flush when the
+    interval ends -- /status.json and the app's offline fallback read the
+    file, and the last change of a burst (an agent's Stop) must not wait
+    for the next hook event."""
     from jrbar import _collector_legacy
+
+    class _Flush:
+        def __init__(self, delay: float, fire) -> None:
+            self.delay = delay
+            self.fire = fire
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    flushes: list[_Flush] = []
+
+    def schedule(delay: float, fire) -> _Flush:
+        flush = _Flush(delay, fire)
+        flushes.append(flush)
+        return flush
 
     state_path = tmp_path / "latest.json"
     monitor = LiveAgentMonitor(
         latest_state_path=state_path,
         clock_sampler=lambda: _restore_clock(monotonic=101.0),
+        schedule_latest_state_flush=schedule,
     )
     writes: list[str] = []
     real_write = _collector_legacy.atomic_private_write
@@ -330,15 +351,29 @@ def test_latest_state_is_written_at_most_every_five_seconds_and_never_twice_the_
     ):
         monitor.ingest_batch(_restore_batch(WorkLifecycle.ACTIVE, 1), clock=_restore_clock(monotonic=101.0))
         assert len(writes) == 1
+        assert flushes == [], "a write on time arms nothing"
 
         now[0] += 4.0
         monitor.ingest_batch(_restore_batch(WorkLifecycle.WAITING, 2), clock=_restore_clock(monotonic=105.0))
         assert len(writes) == 1, "a change inside five seconds waits for the interval"
         assert monitor._latest_state_dirty is True
-        now[0] += 1.5
-        monitor.maybe_write_latest_state()
+        assert len(flushes) == 1
+        assert abs(flushes[0].delay - 1.0) < 1e-9, "the trailing flush lands when the interval ends"
+
+        # A second change inside the same interval rides the flush already armed.
+        now[0] += 0.5
+        monitor.ingest_batch(_restore_batch(WorkLifecycle.COMPLETED, 3), clock=_restore_clock(monotonic=105.5))
+        assert len(writes) == 1
+        assert len(flushes) == 1
+
+        # The trailing flush writes the last state of the burst on its own.
+        now[0] += 0.5
+        flushes[0].fire()
         assert len(writes) == 2
         assert writes[1] != writes[0]
+        assert '"completed"' in writes[1]
+        assert monitor._latest_state_dirty is False
+        assert monitor._latest_state_flush_timer is None
 
         # Due again with nothing new to say: the bytes on disk stand.
         now[0] += 6.0
@@ -347,9 +382,17 @@ def test_latest_state_is_written_at_most_every_five_seconds_and_never_twice_the_
         assert len(writes) == 2
         assert monitor._latest_state_dirty is False
 
-        # The shutdown flush writes whatever it finds.
+        # The shutdown flush writes whatever it finds and cancels a pending
+        # trailing flush.
+        now[0] += 1.0
+        monitor._latest_state_dirty = True
+        monitor.maybe_write_latest_state()
+        assert len(flushes) == 2
         monitor.write_latest_state()
         assert len(writes) == 3
+        assert flushes[1].cancelled is True
+        assert monitor._latest_state_flush_timer is None
+        assert flushes[0].cancelled is False
     assert state_path.read_text() == writes[1] == writes[2]
 
 
