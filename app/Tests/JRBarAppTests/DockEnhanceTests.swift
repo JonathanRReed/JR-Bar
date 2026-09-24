@@ -625,6 +625,28 @@ import Testing
         #expect(bySlot.hoverID == "dock-item@10")
     }
 
+    @Test("the Dock's pid is kept between reads; its launch and exit move it, a failed read asks again")
+    func dockPIDIsKept() {
+        var asked = 0
+        var running: pid_t? = 400
+        let cache = DockPIDCache(center: NotificationCenter(), lookUp: {
+            asked += 1
+            return running
+        })
+        for _ in 0..<20 { _ = cache.pid }
+        #expect(cache.pid == 400 && asked == 1, "twenty reads, one workspace query")
+        cache.noteWorkspace(launched: true, bundleID: "com.apple.Safari", pid: 999)
+        #expect(cache.pid == 400, "another app's launch is no news")
+        cache.noteWorkspace(launched: false, bundleID: AppleDockReader.dockBundleID, pid: 400)
+        running = nil
+        #expect(cache.pid == nil && asked == 2, "the Dock quit: asked again, and it isn't running")
+        cache.noteWorkspace(launched: true, bundleID: AppleDockReader.dockBundleID, pid: 512)
+        #expect(cache.pid == 512 && asked == 2, "its relaunch brings the new pid")
+        running = 640
+        cache.forget()
+        #expect(cache.pid == 640 && asked == 3, "a read that failed at the kept pid asks the workspace")
+    }
+
     @Test func tileKindsMapTheDocksSubroles() {
         #expect(DockAXItem.kind(forSubrole: "AXApplicationDockItem") == .app)
         #expect(DockAXItem.kind(forSubrole: "AXFolderDockItem") == .folder)

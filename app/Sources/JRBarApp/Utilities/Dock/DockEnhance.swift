@@ -897,6 +897,63 @@ struct DockAXItem {
     }
 }
 
+/// The Dock's pid, kept rather than asked for: the preview tick re-reads
+/// the Dock's list up to twenty times a second, and each read looked the
+/// Dock up among every running app first. The workspace's launch and
+/// terminate notices keep the answer; a read that found nothing at it
+/// (`forget`) asks the workspace again, so a Dock relaunch no notice
+/// reported still heals on the next read.
+@MainActor
+final class DockPIDCache {
+    private var cached: pid_t?
+    private let center: NotificationCenter
+    private var observers: [NSObjectProtocol] = []
+    /// The workspace query — the tests count it.
+    private let lookUp: () -> pid_t?
+
+    /// nil watches the shared workspace's notices.
+    init(center: NotificationCenter? = nil,
+         lookUp: @escaping () -> pid_t? = {
+             NSRunningApplication.runningApplications(withBundleIdentifier: AppleDockReader.dockBundleID)
+                 .first?.processIdentifier
+         }) {
+        let center = center ?? NSWorkspace.shared.notificationCenter
+        self.center = center
+        self.lookUp = lookUp
+        for name in [NSWorkspace.didLaunchApplicationNotification,
+                     NSWorkspace.didTerminateApplicationNotification] {
+            let launched = name == NSWorkspace.didLaunchApplicationNotification
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                let bundleID = app?.bundleIdentifier
+                let pid = app?.processIdentifier ?? 0
+                MainActor.assumeIsolated {
+                    self?.noteWorkspace(launched: launched, bundleID: bundleID, pid: pid)
+                }
+            })
+        }
+    }
+
+    isolated deinit {
+        for observer in observers { center.removeObserver(observer) }
+    }
+
+    var pid: pid_t? {
+        if let cached { return cached }
+        cached = lookUp()
+        return cached
+    }
+
+    func forget() { cached = nil }
+
+    /// A workspace notice: the Dock's launch brings its new pid, its
+    /// exit takes the old one away; any other app's is no news.
+    func noteWorkspace(launched: Bool, bundleID: String?, pid: pid_t) {
+        guard bundleID == AppleDockReader.dockBundleID else { return }
+        cached = launched ? pid : nil
+    }
+}
+
 /// Read-only queries against the Dock process's accessibility tree,
 /// plus the window verbs a preview card offers. Every read fails soft
 /// (nil / []) without Accessibility permission — the caller's
@@ -905,10 +962,16 @@ struct DockAXItem {
 enum AppleDockReader {
     static let dockBundleID = "com.apple.dock"
 
-    static func dockPID() -> pid_t? {
-        NSRunningApplication.runningApplications(withBundleIdentifier: dockBundleID)
-            .first?.processIdentifier
-    }
+    /// The Dock's pid, from `dockProcess` rather than a running-apps
+    /// query each time the tick re-reads the list.
+    @MainActor
+    static func dockPID() -> pid_t? { dockProcess.pid }
+
+    /// A read against the pid failed: ask the workspace again next time.
+    @MainActor
+    static func forgetDockPID() { dockProcess.forget() }
+
+    @MainActor static let dockProcess = DockPIDCache()
 
     /// The dock's `AXList` element. Older releases gave it the
     /// `AXDockList` subrole; macOS 26 reports no subrole at all
@@ -2023,6 +2086,9 @@ final class DockEnhanceController {
         guard let pid = AppleDockReader.dockPID(),
               let list = AppleDockReader.dockList(pid: pid),
               let frame = AppleDockReader.frame(of: list) else {
+            // A Dock that relaunched unannounced answers nothing at the
+            // pid kept for it — the next read asks the workspace again.
+            AppleDockReader.forgetDockPID()
             cachedList = nil
             return nil
         }
