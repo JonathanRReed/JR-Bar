@@ -937,6 +937,10 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// evidence, never an applicable constraint (it must not drive the
     /// featured-window pick or an interruption).
     public var bindable: Bool
+    /// Which source read this window when the daemon says (`claude-oauth`,
+    /// `claude-statusline`, `cliproxy`, `opencode-go-api`); nil from a
+    /// daemon that predates the field.
+    public var source: String? = nil
 
     public var id: String { key ?? name }
 
@@ -974,6 +978,7 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         case usedPct = "used_pct"
         case resetsAt = "resets_at"
         case forecast
+        case source
     }
 
     public init(from decoder: Decoder) throws {
@@ -988,6 +993,7 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         resetsAt = try c.decodeIfPresent(Double.self, forKey: .resetsAt)
         forecast = try? c.decodeIfPresent(CoreUsageForecast.self, forKey: .forecast)
         bindable = (try? c.decodeIfPresent(Bool.self, forKey: .bindable)) ?? true
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
     }
 }
 

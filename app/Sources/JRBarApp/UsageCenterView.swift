@@ -25,7 +25,10 @@ struct UsageCenterView: View {
                             if store.providers.count > 1 {
                                 CombinedUsageCard(providers: store.providers, store: store)
                             }
-                            ForEach(store.providers) { provider in
+                            // Keyed by identity: two accounts of one provider
+                            // (a hub account beside the local one) share `id`,
+                            // and a ForEach keyed by `id` drew the first twice.
+                            ForEach(store.providers, id: \.identity) { provider in
                                 ProviderUsageCard(provider: provider, store: store)
                                     .id(provider.identity)
                             }
@@ -158,6 +161,10 @@ struct ProviderUsageCard: View {
                         .frame(maxWidth: 320, alignment: .leading)
                         .padding(.top, 6)
                 }
+                let detail = UsageSourceNotes.detailWindows(provider.windows)
+                if !detail.isEmpty {
+                    UsageDetailWindowsLine(windows: detail, now: store.now, fix: provider.staleFix)
+                }
             }
             if let readings = readingsLine {
                 Text(readings)
@@ -170,7 +177,9 @@ struct ProviderUsageCard: View {
                 Divider().opacity(0.6)
                 connectionSection(row)
             }
-            if !provider.isSignedOut {
+            // A hub account's card has no graph: the token history is this
+            // Mac's own transcripts, which belong to the local card.
+            if !provider.isSignedOut && !UsageSourceNotes.isHubInstance(provider.instance) {
                 Divider().opacity(0.6)
                 historySection
             }
@@ -258,7 +267,7 @@ struct ProviderUsageCard: View {
                 HStack(spacing: 8) {
                     Text(style.name).font(.title3.weight(.semibold))
                     if duplicated, let instance = provider.instance, !instance.isEmpty, instance != "default" {
-                        Text(instance)
+                        Text(UsageSourceNotes.instanceBadge(instance))
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -283,7 +292,7 @@ struct ProviderUsageCard: View {
                             .help("The provider's status feed reports: \(incident)")
                     }
                 }
-                Text(UsageCenterStore.accountLine(provider, history: history))
+                Text(accountText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -311,6 +320,14 @@ struct ProviderUsageCard: View {
                 .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: primary.usedPct)
             }
         }
+    }
+
+    /// The account line, with where the numbers came from when that is not
+    /// the provider's own endpoint ("Max 20× · official · via Claude Code").
+    private var accountText: String {
+        let line = UsageCenterStore.accountLine(provider, history: history)
+        guard let caption = UsageSourceNotes.sourceCaption(provider) else { return line }
+        return line + " · " + caption
     }
 
     private var stateBadge: (text: String, color: Color)? {
@@ -356,6 +373,7 @@ struct ProviderUsageCard: View {
     /// What stands in for the rings when the daemon reports no window: the
     /// state word's own sentence, not a flat "nothing here".
     private var noWindowsLine: String {
+        if let line = UsageSourceNotes.noQuotaLine(provider, name: style.name) { return line }
         switch provider.state?.lowercased() {
         case "disabled", "off":
             return "Turned off: the monitor is not collecting \(style.name) usage."
@@ -370,8 +388,9 @@ struct ProviderUsageCard: View {
     /// The primary window leads, so the ring under the headline percent is
     /// the one the headline is about; the rest keep the daemon's order.
     private var orderedWindows: [CoreUsageWindow] {
-        guard let primary, let index = provider.windows.firstIndex(of: primary), index != 0 else { return provider.windows }
-        var windows = provider.windows
+        let rings = UsageSourceNotes.ringWindows(provider.windows)
+        guard let primary, let index = rings.firstIndex(of: primary), index != 0 else { return rings }
+        var windows = rings
         windows.remove(at: index)
         return [primary] + windows
     }
@@ -695,7 +714,7 @@ struct CombinedUsageCard: View {
                 }
             }
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(providers) { provider in
+                ForEach(providers, id: \.identity) { provider in
                     row(provider)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -725,6 +744,13 @@ struct CombinedUsageCard: View {
         return parts.joined(separator: " · ") + " across providers"
     }
 
+    /// A row with no windows names why: no quota source at all, or the
+    /// daemon's state word.
+    static func emptyRowWord(_ provider: CoreProviderUsage) -> String {
+        guard provider.quotaSource else { return "no quota source" }
+        return provider.state?.replacingOccurrences(of: "_", with: " ") ?? "no quota windows"
+    }
+
     /// One provider: its tile and name, then each window as its short
     /// name, a slim continuous bar and the percent, and the leading
     /// window's reset.
@@ -745,7 +771,7 @@ struct CombinedUsageCard: View {
                 Spacer(minLength: 4)
                 ResignInButton(provider: provider, store: store)
             } else if provider.windows.isEmpty {
-                Text(provider.state?.replacingOccurrences(of: "_", with: " ") ?? "no quota windows")
+                Text(Self.emptyRowWord(provider))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
@@ -754,7 +780,7 @@ struct CombinedUsageCard: View {
                 // Windows keep their columns across rows: the daemon lists
                 // them in the same order for every provider.
                 HStack(spacing: 14) {
-                    ForEach(provider.windows.prefix(3)) { window in
+                    ForEach(UsageSourceNotes.ringWindows(provider.windows).prefix(3)) { window in
                         CombinedWindowGauge(window: window, accent: style.accent)
                     }
                 }
@@ -772,7 +798,7 @@ struct CombinedUsageCard: View {
         .background(RoundedRectangle(cornerRadius: WindowMetrics.controlRadius, style: .continuous)
             .fill(Color.primary.opacity(0.0001)))
         .contentShape(Rectangle())
-        .onTapGesture { store.focus(provider: provider.id) }
+        .onTapGesture { store.focus(provider: provider.identity) }
         .help("Scroll to \(style.name)'s card")
         .accessibilityAddTraits(.isButton)
     }
@@ -1464,6 +1490,14 @@ struct NoLocalRecordsHint: View {
     let style: ProviderStyle
     let provider: CoreProviderUsage
 
+    /// A card with no quota has no percentages above to point at.
+    private var detail: String {
+        guard provider.quotaSource else {
+            return "The graph needs transcripts on this Mac, and the monitor found none."
+        }
+        return "The percentages above come from the provider; the graph needs transcripts on this Mac, and the monitor found none."
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "tray")
@@ -1473,7 +1507,7 @@ struct NoLocalRecordsHint: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(style.name) reports no local records")
                     .font(.callout.weight(.medium))
-                Text("The percentages above come from the provider; the graph needs transcripts on this Mac, and the monitor found none.")
+                Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
