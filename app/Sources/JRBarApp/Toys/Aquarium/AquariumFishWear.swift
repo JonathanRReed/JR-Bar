@@ -119,72 +119,74 @@ extension CartoonFish {
     /// `hatAnchor` (the view skips a hat while headwear wins the
     /// slot), the bow tie knots under the chin and the scarf wraps the
     /// collar. Same unit space as `drawHat` — the body's flip, pitch
-    /// and squash carry it. `trail` (−1…1) lifts the scarf's loose end.
+    /// and squash carry it. `trail` (−1…1) lifts the scarf's loose end;
+    /// `thin` is the swim's turn, so eyewear follows the eyes round.
     static func drawAccessory(_ item: ShopItem, into f: inout GraphicsContext,
-                              art: Art, trail: Double = 0, lineWidth lw: Double = 0.02) {
+                              art: Art, trail: Double = 0, thin: Double = 1,
+                              lineWidth lw: Double = 0.02) {
         let e = art.eye, r = art.eyeR
         switch item {
         case .sunglasses:
-            // One big lens over the near eye, a sliver of the far one
-            // past the bridge, the arm running back to the gill.
+            // A big dark lens over the near eye, the arm running back
+            // to the gill. Through a turn the frames come round with
+            // the face: the far lens shows and the bridge spans them.
+            let face = faceTurn(art: art, thin: thin)
+            let near = CGPoint(x: e.x + face.spread, y: e.y)
+            let far = CGPoint(x: e.x - face.spread, y: e.y)
+            let frame = Color(red: 0.05, green: 0.05, blue: 0.07)
+            if face.turn > 0.05 {
+                var back = f
+                back.opacity = face.turn
+                sunglassLens(&back, at: far, r: r * 0.94, sx: face.sx, lw: lw)
+                var bridge = Path()
+                bridge.move(to: CGPoint(x: far.x + r * 1.3 * face.sx, y: e.y - r * 0.8))
+                bridge.addQuadCurve(to: CGPoint(x: near.x - r * 1.25 * face.sx, y: e.y - r * 0.8),
+                                    control: CGPoint(x: e.x, y: e.y - r * 1.15))
+                back.stroke(bridge, with: .color(frame), style: StrokeStyle(lineWidth: r * 0.26, lineCap: .round))
+            }
+            var side = f
+            side.opacity = 1 - face.turn
             var arm = Path()
             arm.move(to: CGPoint(x: e.x - r * 1.2, y: e.y - r * 0.55))
             arm.addQuadCurve(to: CGPoint(x: e.x - r * 3.4, y: e.y - r * 0.9),
                              control: CGPoint(x: e.x - r * 2.4, y: e.y - r * 0.95))
-            f.stroke(arm, with: .color(Color(red: 0.08, green: 0.08, blue: 0.10)),
-                     style: StrokeStyle(lineWidth: r * 0.32, lineCap: .round))
-            var lens = Path()
-            lens.move(to: CGPoint(x: e.x - r * 1.35, y: e.y - r * 1.05))
-            lens.addLine(to: CGPoint(x: e.x + r * 1.45, y: e.y - r * 1.05))
-            lens.addQuadCurve(to: CGPoint(x: e.x + r * 0.5, y: e.y + r * 1.15),
-                              control: CGPoint(x: e.x + r * 1.45, y: e.y + r * 1.0))
-            lens.addQuadCurve(to: CGPoint(x: e.x - r * 1.35, y: e.y - r * 0.2),
-                              control: CGPoint(x: e.x - r * 1.35, y: e.y + r * 1.1))
-            lens.closeSubpath()
-            f.fill(lens, with: .linearGradient(
-                Gradient(colors: [Color(red: 0.16, green: 0.18, blue: 0.26), Color(red: 0.03, green: 0.03, blue: 0.06)]),
-                startPoint: CGPoint(x: e.x, y: e.y - r), endPoint: CGPoint(x: e.x, y: e.y + r)))
-            var glass = f
-            glass.clip(to: lens)
-            // Sky caught in the lens: a bright streak and a soft band.
-            var streak = Path()
-            streak.move(to: CGPoint(x: e.x - r * 0.9, y: e.y + r * 0.1))
-            streak.addLine(to: CGPoint(x: e.x - r * 0.1, y: e.y - r * 1.1))
-            glass.stroke(streak, with: .color(.white.opacity(0.55)), lineWidth: r * 0.28)
-            glass.fill(Path(CGRect(x: e.x - r * 2, y: e.y - r * 1.1, width: r * 4, height: r * 0.5)),
-                       with: .color(Color(red: 0.55, green: 0.80, blue: 1.0).opacity(0.18)))
-            f.stroke(lens, with: .color(Color(red: 0.05, green: 0.05, blue: 0.07)),
-                     style: StrokeStyle(lineWidth: max(lw * 1.2, r * 0.18), lineJoin: .round))
-            var bridge = Path()
-            bridge.move(to: CGPoint(x: e.x + r * 1.45, y: e.y - r * 0.85))
-            bridge.addLine(to: CGPoint(x: e.x + r * 2.0, y: e.y - r * 0.75))
-            f.stroke(bridge, with: .color(Color(red: 0.05, green: 0.05, blue: 0.07)),
-                     style: StrokeStyle(lineWidth: r * 0.26, lineCap: .round))
+            side.stroke(arm, with: .color(Color(red: 0.08, green: 0.08, blue: 0.10)),
+                        style: StrokeStyle(lineWidth: r * 0.32, lineCap: .round))
+            var nose = Path()
+            nose.move(to: CGPoint(x: e.x + r * 1.45, y: e.y - r * 0.85))
+            nose.addLine(to: CGPoint(x: e.x + r * 2.0, y: e.y - r * 0.75))
+            side.stroke(nose, with: .color(frame), style: StrokeStyle(lineWidth: r * 0.26, lineCap: .round))
+            sunglassLens(&f, at: near, r: r, sx: face.sx, lw: lw)
         case .monocle:
             // A gold rim over the eye, faintly tinted glass, a glint and
-            // a fine chain looping down to the chin.
-            let ringR = r * 1.45
-            let ring = Path(ellipseIn: CGRect(x: e.x - ringR, y: e.y - ringR, width: ringR * 2, height: ringR * 2))
-            f.fill(ring, with: .radialGradient(
-                Gradient(colors: [Color(red: 0.85, green: 0.95, blue: 1.0).opacity(0.10),
-                                  Color(red: 0.85, green: 0.95, blue: 1.0).opacity(0.28)]),
-                center: e, startRadius: 0, endRadius: ringR))
+            // a fine chain looping down to the chin; it stays on the near
+            // eye through a turn.
+            let face = faceTurn(art: art, thin: thin)
+            let eye = CGPoint(x: e.x + face.spread, y: e.y)
             var chain = Path()
-            chain.move(to: CGPoint(x: e.x - ringR * 0.6, y: e.y + ringR * 0.8))
-            chain.addQuadCurve(to: art.chin,
-                               control: CGPoint(x: e.x - ringR * 0.9, y: art.chin.y + r * 1.4))
+            chain.move(to: CGPoint(x: eye.x - r * 0.9 * face.sx, y: e.y + r * 1.15))
+            chain.addQuadCurve(to: art.chin, control: CGPoint(x: eye.x - r * 1.3, y: art.chin.y + r * 1.4))
             f.stroke(chain, with: .color(Color(red: 0.86, green: 0.68, blue: 0.26)),
                      style: StrokeStyle(lineWidth: max(lw * 0.8, r * 0.12), lineCap: .round,
                                         dash: [r * 0.18, r * 0.14]))
-            f.stroke(ring, with: .color(Color(red: 0.52, green: 0.36, blue: 0.06)), lineWidth: r * 0.42)
-            f.stroke(ring, with: .linearGradient(
+            var m = f
+            m.translateBy(x: eye.x, y: eye.y)
+            m.scaleBy(x: face.sx, y: 1)
+            let ringR = r * 1.45
+            let ring = Path(ellipseIn: CGRect(x: -ringR, y: -ringR, width: ringR * 2, height: ringR * 2))
+            m.fill(ring, with: .radialGradient(
+                Gradient(colors: [Color(red: 0.85, green: 0.95, blue: 1.0).opacity(0.10),
+                                  Color(red: 0.85, green: 0.95, blue: 1.0).opacity(0.28)]),
+                center: .zero, startRadius: 0, endRadius: ringR))
+            m.stroke(ring, with: .color(Color(red: 0.52, green: 0.36, blue: 0.06)), lineWidth: r * 0.42)
+            m.stroke(ring, with: .linearGradient(
                 Gradient(colors: [Color(red: 1.0, green: 0.93, blue: 0.60), Color(red: 0.86, green: 0.62, blue: 0.16)]),
-                startPoint: CGPoint(x: e.x - ringR, y: e.y - ringR), endPoint: CGPoint(x: e.x + ringR, y: e.y + ringR)),
+                startPoint: CGPoint(x: -ringR, y: -ringR), endPoint: CGPoint(x: ringR, y: ringR)),
                 lineWidth: r * 0.26)
             var glint = Path()
-            glint.addArc(center: e, radius: ringR * 0.72, startAngle: .degrees(200), endAngle: .degrees(250),
+            glint.addArc(center: .zero, radius: ringR * 0.72, startAngle: .degrees(200), endAngle: .degrees(250),
                          clockwise: false)
-            f.stroke(glint, with: .color(.white.opacity(0.85)),
+            m.stroke(glint, with: .color(.white.opacity(0.85)),
                      style: StrokeStyle(lineWidth: r * 0.16, lineCap: .round))
         case .topHat:
             var h = f
@@ -348,5 +350,34 @@ extension CartoonFish {
         default:
             break
         }
+    }
+
+    /// One sunglass lens centred on `e`, `sx` wide against a turn's
+    /// squash: dark glass with the sky caught in it and a crisp frame.
+    private static func sunglassLens(_ c: inout GraphicsContext, at e: CGPoint, r: Double,
+                                     sx: Double, lw: Double) {
+        var g = c
+        g.translateBy(x: e.x, y: e.y)
+        g.scaleBy(x: sx, y: 1)
+        var lens = Path()
+        lens.move(to: CGPoint(x: -r * 1.35, y: -r * 1.05))
+        lens.addLine(to: CGPoint(x: r * 1.45, y: -r * 1.05))
+        lens.addQuadCurve(to: CGPoint(x: r * 0.5, y: r * 1.15), control: CGPoint(x: r * 1.45, y: r * 1.0))
+        lens.addQuadCurve(to: CGPoint(x: -r * 1.35, y: -r * 0.2), control: CGPoint(x: -r * 1.35, y: r * 1.1))
+        lens.closeSubpath()
+        g.fill(lens, with: .linearGradient(
+            Gradient(colors: [Color(red: 0.16, green: 0.18, blue: 0.26), Color(red: 0.03, green: 0.03, blue: 0.06)]),
+            startPoint: CGPoint(x: 0, y: -r), endPoint: CGPoint(x: 0, y: r)))
+        var glass = g
+        glass.clip(to: lens)
+        // Sky caught in the lens: a bright streak and a soft band.
+        var streak = Path()
+        streak.move(to: CGPoint(x: -r * 0.9, y: r * 0.1))
+        streak.addLine(to: CGPoint(x: -r * 0.1, y: -r * 1.1))
+        glass.stroke(streak, with: .color(.white.opacity(0.55)), lineWidth: r * 0.28)
+        glass.fill(Path(CGRect(x: -r * 2, y: -r * 1.1, width: r * 4, height: r * 0.5)),
+                   with: .color(Color(red: 0.55, green: 0.80, blue: 1.0).opacity(0.18)))
+        g.stroke(lens, with: .color(Color(red: 0.05, green: 0.05, blue: 0.07)),
+                 style: StrokeStyle(lineWidth: max(lw * 1.2, r * 0.18), lineJoin: .round))
     }
 }

@@ -61,7 +61,7 @@ struct AquariumFishRenderProofTests {
                                 tilt: art.hatTilt, lineWidth: lw)
         }
         if let accessory {
-            CartoonFish.drawAccessory(accessory, into: &f, art: art, trail: 0.4, lineWidth: lw)
+            CartoonFish.drawAccessory(accessory, into: &f, art: art, trail: 0.4, thin: swim.thin, lineWidth: lw)
         }
     }
 
@@ -219,6 +219,22 @@ struct AquariumFishRenderProofTests {
             }
         }
         try Self.write(view, "fish-wearables")
+
+        // Eyewear follows the eyes round through a wall turn.
+        let turning = Self.sheet(width: 800, height: 360) { c, _ in
+            let rows: [(FishSpecies, ShopItem, String)] = [(.shark, .sunglasses, "codex"),
+                                                           (.clownfish, .monocle, "claude"),
+                                                           (.puffer, .sunglasses, "antigravity")]
+            for (row, (species, item, provider)) in rows.enumerated() {
+                for (k, thin) in [1.0, 0.75, 0.58, 0.4, 0.22].enumerated() {
+                    Self.pose(&c, species, at: CGPoint(x: 80 + Double(k) * 160, y: 60 + Double(row) * 120),
+                              length: 100, palette: Self.palette(provider),
+                              swim: CartoonFish.Swim(phase: 0.9, amplitude: 0.2, thin: thin),
+                              accessory: item)
+                }
+            }
+        }
+        try Self.write(turning, "fish-turn-wear")
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",

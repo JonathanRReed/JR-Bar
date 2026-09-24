@@ -660,11 +660,8 @@ enum CartoonFish {
     private static func drawFace(art: Art, species: FishSpecies, swim: Swim, palette: Palette,
                                  into f: inout GraphicsContext, mouth: MouthKind,
                                  blink: Double, dead: Bool, lw: Double, detailed: Bool) {
-        let thin = max(0.12, min(1, swim.thin))
-        let turn = min(1, max(0, (0.9 - thin) / 0.6))
-        let spread = art.eyeSpread * (1 - thin * thin).squareRoot() / thin * turn
-        // Round on screen: the eye widens back against the squash.
-        let sx = (0.55 + 0.45 * thin) / thin * turn + (1 - turn)
+        let face = faceTurn(art: art, thin: swim.thin)
+        let turn = face.turn, spread = face.spread, sx = face.sx
         if turn > 0.05 {
             // The far eye, peeking over the brow as the head comes round.
             var far = f
@@ -685,6 +682,18 @@ enum CartoonFish {
             drawMouth(into: &m, at: art.mouth, kind: mouth, palette: palette, lw: lw,
                       s: art.mouthScale)
         }
+    }
+
+    /// How far a turn has brought the face round to the glass: `turn`
+    /// 0 side-on … 1 face-on, how far the eyes part from where they sit
+    /// side-on (unit space, before the caller's squash), and how much
+    /// wider to draw an eye so it stays round on screen.
+    static func faceTurn(art: Art, thin: Double) -> (turn: Double, spread: Double, sx: Double) {
+        let thin = max(0.12, min(1, thin))
+        let turn = min(1, max(0, (0.9 - thin) / 0.6))
+        let spread = art.eyeSpread * (1 - thin * thin).squareRoot() / thin * turn
+        let sx = (0.55 + 0.45 * thin) / thin * turn + (1 - turn)
+        return (turn, spread, sx)
     }
 
     /// The big friendly eye: a soft socket, a white that shades toward

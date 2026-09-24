@@ -518,7 +518,7 @@ extension AquariumView {
                     || (fish.state == .swimming && !fish.isResident) {
                     CartoonFish.drawAccessory(accessory, into: &f, art: art,
                                               trail: reduceMotion ? 0 : sin(clock.phase * 0.5),
-                                              lineWidth: lw)
+                                              thin: l.thin, lineWidth: lw)
                 }
             }
         }
