@@ -584,6 +584,15 @@ public enum AquariumEvent: Equatable, Sendable {
     /// windows, banked credits — for the milestones only the daemon
     /// could know about.
     case fleet(AquariumFleetFacts)
+    /// Put a surface back to the tank's own: the classic water, sand or
+    /// back wall. Always allowed — nothing has to be owned to go home.
+    case useClassic(AquariumSurface)
+}
+
+/// The three surfaces a tank dresses: the water, the floor and the
+/// back wall. Each has a classic look the tank starts with.
+public enum AquariumSurface: String, Codable, CaseIterable, Sendable {
+    case water, floor, wall
 }
 
 /// A raised fish still in the tank after its session left — the
@@ -1154,6 +1163,13 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 care.variant = AquariumVariant.starry.rawValue
                 pets[parent] = care
                 effects.append(.variantEarned(parent, .starry))
+            }
+
+        case .useClassic(let surface):
+            switch surface {
+            case .water: themeID = "classic"
+            case .floor: substrateID = "classic"
+            case .wall: backdropID = "classic"
             }
         }
         checkAchievements(now: now, event: event,

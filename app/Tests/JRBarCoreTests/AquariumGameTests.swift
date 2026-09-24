@@ -551,3 +551,23 @@ private struct AnyCodableInventory: Decodable {
         items = try? decoder.singleValueContainer().decode([String: Int].self)
     }
 }
+
+// MARK: Going back to classic
+
+extension AquariumGameTests {
+    @Test("useClassic returns each surface to classic without owning anything")
+    func useClassic() {
+        var game = AquariumGame(themeID: "midnight", substrateID: "black", backdropID: "rocky")
+        game.apply(.useClassic(.water), now: Self.t0)
+        #expect(game.themeID == "classic")
+        #expect(game.substrateID == "black", "one surface at a time")
+        game.apply(.useClassic(.floor), now: Self.t0)
+        #expect(game.substrateID == "classic")
+        game.apply(.useClassic(.wall), now: Self.t0)
+        #expect(game.backdropID == "classic")
+        // Already classic stays classic, and nothing is spent.
+        let effects = game.apply(.useClassic(.water), now: Self.t0)
+        #expect(game.themeID == "classic")
+        #expect(!effects.contains { if case .purchaseDenied = $0 { return true }; return false })
+    }
+}
