@@ -9,7 +9,8 @@ import JRBarCore
 /// pose-shapes that read at a glance (pacing, waving, asleep, slumped,
 /// celebrating — plus the care layers: the missing-you droop and a
 /// treat's hearts), still poses in a dark capsule, 4×, written to
-/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/buddy-proof`). Manual evidence for the review, not a golden
+/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/buddy-proof`). Manual
+/// evidence for the review, not a golden
 /// test — the skeleton's still poses are deterministic, but the proof
 /// exists so a human can look at them. It only runs when
 /// `JRBAR_RENDER_PROOF=1` is in the environment, so the regular suite

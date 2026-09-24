@@ -7,7 +7,8 @@ import JRBarCore
 
 /// Render proof for the Confetti work: freeze a burst ~0.9 s in and
 /// write one 2× PNG per landing mode × palette to
-/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/confetti-proof`). Manual evidence for the review, not a golden
+/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/confetti-proof`). Manual
+/// evidence for the review, not a golden
 /// test — the pieces are a fresh roll every run. It only runs when
 /// `JRBAR_RENDER_PROOF=1` is in the environment, so the regular suite
 /// never writes files.
