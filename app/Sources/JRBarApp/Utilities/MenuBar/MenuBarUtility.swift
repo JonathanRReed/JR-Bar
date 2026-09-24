@@ -511,6 +511,13 @@ final class MenuBarUtility: Toy {
             self.hider.reconcile()
         }
         stateRules.onOutcomeChange = { [weak self] in self?.stateOutcomeVersion += 1 }
+        // A read of macOS's layout table re-orders the Item Bar and the
+        // editor, and refreshes the card's mismatch rows.
+        layoutTableReader.onChange = { [weak self] in
+            guard let self else { return }
+            self.layoutTableVersion += 1
+            if self.running { self.hider.reconcile() }
+        }
         menuActions.utility = self
         spacerActions.onClick = { [weak self] in self?.spacerClicked() }
         agentActions.onClick = { [weak self] in self?.onOpenOverview() }
@@ -993,7 +1000,14 @@ final class MenuBarUtility: Toy {
                     title: item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName, item: item))
             }
         }
-        return rows
+        // Granted, the agent's own order — the listing's otherwise.
+        let ranks = layoutTableRanks(apps: Set(rows.compactMap { $0.item.bundleID }))
+        guard !ranks.isEmpty else { return rows }
+        return rows.enumerated().sorted { lhs, rhs in
+            let l = lhs.element.item.bundleID.flatMap { ranks[$0] } ?? Int.max
+            let r = rhs.element.item.bundleID.flatMap { ranks[$0] } ?? Int.max
+            return l == r ? lhs.offset < rhs.offset : l < r
+        }.map(\.element)
     }
 
     /// The profile editor's write — nil makes the app follow the base.
@@ -1184,6 +1198,7 @@ final class MenuBarUtility: Toy {
         migrateSectionsIfNeeded()
         syncSpacing()
         scheduleOverlayExpiry()
+        syncLayoutTable()
         let enabled = settings().enabled && settings().provider == .jrbar
         if enabled, !running {
             start()
@@ -1402,6 +1417,7 @@ final class MenuBarUtility: Toy {
         stopDeskWatch()
         failedHotkeyActions = []
         running = false
+        syncLayoutTable()
         // The ear lets go of the menu bar with the utility, its nudges
         // included — they belonged to this run.
         earNudgeExpiry?.cancel()
@@ -1879,6 +1895,11 @@ final class MenuBarUtility: Toy {
     /// The icon's slot length under the `.slot` seat, damped — a length
     /// write re-sorts the bar.
     @ObservationIgnored var slotLength = MenuBarSlotLength()
+
+    /// macOS's layout table, once the person grants it — read-only.
+    @ObservationIgnored let layoutTableReader = MenuBarLayoutTableReader()
+    /// Bumped on every read of the table, so the card's rows observe it.
+    var layoutTableVersion = 0
 
     /// A rule's keep-awake hold — the app's own hold by default; a test
     /// records it.

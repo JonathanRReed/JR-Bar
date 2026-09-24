@@ -59,8 +59,8 @@ struct MenuBarItemBarAnchorRow: View {
     }
 }
 
-/// The Advanced rows for where things stand: the icon's seat and the
-/// clock and Control Center.
+/// The Advanced rows for where things stand: the icon's seat, the clock
+/// and Control Center, and the layout table.
 struct MenuBarPlacementRows: View {
     let utility: MenuBarUtility
 
@@ -81,6 +81,63 @@ struct MenuBarPlacementRows: View {
                 SettingLabel(title: "Hide the clock and Control Center",
                              subtitle: "Experimental: lets a ⌘-drag hide them through macOS's own list. Wi-Fi, the battery and sound always stay.")
             }
+            MenuBarLayoutTableRows(utility: utility)
         }
+    }
+}
+
+/// macOS's layout table: the grant, what was read, and the apps whose
+/// section and place disagree, each with its one-click fix.
+struct MenuBarLayoutTableRows: View {
+    let utility: MenuBarUtility
+
+    private var granted: Bool { utility.settings().curation.layoutTableBookmark != nil }
+
+    private var status: String {
+        guard granted else {
+            return "Pick macOS's own record of your bar's order once, and JR-Bar reads it: ⌘-drags confirm without Accessibility, the Item Bar follows macOS's order, and a mismatch shows here. Never written."
+        }
+        if let failure = utility.layoutTableReader.failure { return failure }
+        guard let table = utility.layoutTable else { return "Reading…" }
+        return "Read \(table.entries.count) items — the Item Bar and the editor follow this order."
+    }
+
+    var body: some View {
+        LabeledContent {
+            if granted {
+                Button("Forget") { utility.forgetLayoutTable() }
+                    .controlSize(.small)
+                    .fixedSize()
+            } else {
+                Button("Grant access…") { utility.grantLayoutTable() }
+                    .controlSize(.small)
+                    .fixedSize()
+            }
+        } label: {
+            SettingLabel(title: "Menu bar layout table", subtitle: status)
+        }
+        ForEach(utility.layoutTableMismatches) { mismatch in
+            HStack(spacing: SettingsMetrics.s) {
+                CardNote(Self.words(mismatch, name: name(of: mismatch.app)),
+                         symbol: "arrow.left.arrow.right", tint: .orange)
+                Spacer(minLength: SettingsMetrics.s)
+                Button(mismatch.fix == .shown ? "Show it" : "Hide it") {
+                    utility.fixLayoutMismatch(mismatch)
+                }
+                .controlSize(.small)
+                .fixedSize()
+            }
+        }
+    }
+
+    private func name(of app: String) -> String {
+        (utility.listedItems.first { $0.bundleID == app } ?? utility.knownItems[app]?.first)?.ownerName ?? app
+    }
+
+    /// A mismatch in the card's words.
+    static func words(_ mismatch: MenuBarLayoutTable.Mismatch, name: String) -> String {
+        mismatch.side == .right
+            ? "\(name) is hidden but sits right of the icon — a reveal brings it back there."
+            : "\(name) is shown but sits left of the icon."
     }
 }

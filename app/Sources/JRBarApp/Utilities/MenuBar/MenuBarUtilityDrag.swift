@@ -182,8 +182,14 @@ extension MenuBarUtility {
     /// really moved the item, say why not otherwise.
     private func settleDrop(_ drag: MenuBarDragInFlight, grabbed: MenuBarItem, section: MenuBarItemSection,
                             note: MenuBarDropNote?, fresh: [MenuBarItem]?, crossed: Bool, releasedAt: Date) {
-        let verdict = MenuBarDragLearn.verdict(grabbed: grabbed, before: drag.listing, after: fresh,
+        var verdict = MenuBarDragLearn.verdict(grabbed: grabbed, before: drag.listing, after: fresh,
                                                crossed: crossed, row: drag.row, concealed: drag.concealed)
+        // Without Accessibility's answer, the granted layout table — read
+        // after the drop — can still say where the agent put the app.
+        if fresh == nil, !verdict.confirmed,
+           layoutTableConfirms(grabbed, section: section, releasedAt: releasedAt) {
+            verdict.confirmed = true
+        }
         // A whole-bar shift (the recording indicator) holds the icon as
         // long as the shift lasts, so it never re-seats against it.
         let hold = verdict.anchorDrifted

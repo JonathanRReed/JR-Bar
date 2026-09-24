@@ -745,7 +745,11 @@ extension MenuBarUtility {
                 lastX[id] = min(lastX[id] ?? .infinity, ghost.minX)
             }
         }
-        for (id, section) in Self.concealedOrder(apps: apps, lastX: lastX) {
+        // Granted, macOS's own layout table is the order — concealed
+        // apps included; remembered x is the fallback.
+        let ranks = layoutTableRanks(apps: Set(apps.keys))
+        let order = ranks.isEmpty ? lastX : ranks.mapValues { CGFloat($0) }
+        for (id, section) in Self.concealedOrder(apps: apps, lastX: order) {
             let items = knownItems[id] ?? []
             switch section {
             case .hidden: plan.hidden.append(contentsOf: items)
