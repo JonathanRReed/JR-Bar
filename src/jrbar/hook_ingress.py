@@ -699,20 +699,49 @@ class HookIngressService:
                 if not self._server_running or self._server_socket is not server:
                     connection.close()
                     return
-                if not self._connection_slots.acquire(blocking=False):
-                    # Every worker slot is held; refuse at the TCP level
-                    # (close) so the submitter sees a clean failure.
-                    connection.close()
-                    continue
-                worker = threading.Thread(
-                    target=self._serve_connection,
-                    args=(connection,),
-                    name="JRBarHookIngressConn",
-                    daemon=True,
-                )
-                self._connections.add(connection)
-                self._connection_workers.add(worker)
+                slot = self._connection_slots.acquire(blocking=False)
+                if slot:
+                    worker = threading.Thread(
+                        target=self._serve_connection,
+                        args=(connection,),
+                        name="JRBarHookIngressConn",
+                        daemon=True,
+                    )
+                    self._connections.add(connection)
+                    self._connection_workers.add(worker)
+            if not slot:
+                # Outside the server lock: the refusal takes the queue's.
+                self._refuse_without_a_slot(connection)
+                continue
             worker.start()
+
+    def _refuse_without_a_slot(self, connection: socket.socket) -> None:
+        """Every worker slot is held: answer refused_full, then close.
+
+        A bare close read as delivered to the C shim -- its small frame was
+        already in the socket buffer, it read EOF and spooled nothing -- so
+        a burst of parallel hooks lost the ones past the slots. With the
+        answer it spools them for the drain, and the Python client spools
+        rather than running its synchronous fallback. The frame is never
+        read. Nothing is written to the rejection log on the accept thread
+        a burst is already crowding; the counter still says it happened.
+        """
+        with self._condition:
+            self._sequence += 1
+            self._increment("submitted")
+            self._increment("refused_full")
+            self._refused_since_idle = True
+        try:
+            # Never block the accept loop: a fresh socket's send buffer
+            # takes one short line, and a peer already gone costs nothing.
+            connection.setblocking(False)
+            connection.send(
+                encode_hook_ingress_response(HookIngressDisposition.REFUSED_FULL)
+            )
+        except OSError:
+            pass
+        finally:
+            connection.close()
 
     def _serve_connection(self, connection: socket.socket) -> None:
         parked = None

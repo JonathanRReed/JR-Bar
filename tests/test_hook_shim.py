@@ -375,3 +375,39 @@ def test_shim_spools_what_a_full_or_closing_daemon_refused__and_2_more(shim: Pat
     assert result.returncode == 0 and result.stdout == b""
     rows = [json.loads(line) for line in pending.read_text().splitlines()]
     assert [row["payload"] for row in rows] == [payload]
+
+
+def test_shim_spools_a_hook_that_arrives_past_every_ingress_slot(
+    shim: Path, sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real ingress with its connection slots all held: it used to
+    close the socket unanswered and the shim, reading EOF, counted the hook
+    delivered. The ingress now answers refused_full, and the shim spools
+    whether that answer or the close reaches it first."""
+    from jrbar.hook_ingress import HookIngressService
+
+    monkeypatch.setattr("jrbar.hook_ingress.MAX_HOOK_INGRESS_CONNECTIONS", 1)
+    processed: list = []
+    service = HookIngressService(
+        process=processed.append,
+        socket_path=sock_dir / "hook-ingress.sock",
+        rejection_path=sock_dir / "rejections.jsonl",
+        backlog_cleared=lambda: None,
+    )
+    service.start()
+    pending = sock_dir / "claude.pending.jsonl"
+    payload = json.dumps({"hook_event_name": "Stop", "session_id": "past-the-slots"})
+    try:
+        holder = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        holder.connect(str(sock_dir / "hook-ingress.sock"))
+        holder.sendall(b"J")
+        try:
+            result = _run(shim, sock_dir, "claude", payload)
+        finally:
+            holder.close()
+    finally:
+        assert service.close(timeout_seconds=1.0)
+    assert result.returncode == 0 and result.stdout == b""
+    assert processed == []
+    rows = [json.loads(line) for line in pending.read_text().splitlines()]
+    assert [row["payload"] for row in rows] == [payload]

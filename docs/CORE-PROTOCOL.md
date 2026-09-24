@@ -1172,7 +1172,8 @@ fork/exec (`/usr/bin/true` in the same loop), so the shim's own work is
 about 3 ms; from Python's `subprocess.run` the median is 5.7 ms; the
 Python hook client took 88 ms. If the socket is absent, the budget cut
 the frame short, or the daemon answered `refused_full` or `refused_closed`
-(its queue holds 128 hooks and 16 MiB of payload), the shim appends
+(its queue holds 128 hooks and 16 MiB of payload; a connection that finds
+all eight connection slots busy is answered `refused_full` unread), the shim appends
 `{"provider","ppid","ppid_start","queued_at_ms","payload"}` as one JSON
 line to `$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and
 exits 0; at 16 MiB the file rotates to `<provider>.overflow.jsonl` (one

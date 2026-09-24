@@ -20,6 +20,7 @@ from jrbar.hook_ingress import (
 from jrbar.hook_ingress_protocol import (
     HookIngressDisposition,
     HookIngressRequest,
+    encode_hook_ingress_request,
     submit_hook_ingress,
 )
 
@@ -622,3 +623,50 @@ def test_the_queue_holds_128_hooks_and_16_mb_of_payloads__and_1_more() -> None:
         assert cleared == [0]
     finally:
         assert service.close(timeout_seconds=5.0)
+
+
+def test_a_connection_past_every_worker_slot_is_answered_refused_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With every connection slot held the accept loop used to close the
+    socket without a word; the C shim read that EOF as delivered and
+    spooled nothing, so a burst of parallel hooks lost the ones past the
+    slots. It now answers refused_full. The frame is never read, so the
+    answer may land before the send does; it is readable either way."""
+    monkeypatch.setattr("jrbar.hook_ingress.MAX_HOOK_INGRESS_CONNECTIONS", 1)
+    with tempfile.TemporaryDirectory(prefix="jrbar-hi-", dir="/tmp") as directory:
+        socket_path = Path(directory) / "hook-ingress.sock"
+        processed: list[HookIngressRequest] = []
+        service = HookIngressService(
+            process=processed.append,
+            socket_path=socket_path,
+            rejection_path=Path(directory) / "rejections.jsonl",
+            backlog_cleared=lambda: None,
+        )
+        service.start()
+        try:
+            # Accepts are served in order, so this one holds the only slot
+            # before the next connection is looked at.
+            holder = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            holder.connect(str(socket_path))
+            holder.sendall(b"J")
+            try:
+                late = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                late.settimeout(1.0)
+                late.connect(str(socket_path))
+                try:
+                    try:
+                        late.sendall(encode_hook_ingress_request(_request("past-the-slots")))
+                    except OSError:
+                        pass  # closed before the send: the shim spools on that too
+                    assert late.recv(64) == b"refused_full\n"
+                finally:
+                    late.close()
+                snapshot = service.snapshot()
+                assert snapshot.refused_full == 1
+                assert snapshot.submitted == 1
+                assert processed == []
+            finally:
+                holder.close()
+        finally:
+            assert service.close(timeout_seconds=1.0)
