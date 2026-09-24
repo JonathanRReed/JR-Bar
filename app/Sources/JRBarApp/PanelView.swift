@@ -1608,23 +1608,32 @@ struct DevicesSection: View {
                 .controlSize(.mini)
                 .disabled(!store.isLive || !hasTarget)
                 .accessibilityLabel("Brightness")
-                .accessibilityValue("\(Int((store.brightness * 100).rounded())) percent")
+                .accessibilityValue(brightnessWords)
                 Image(systemName: "sun.max").font(.system(size: 11)).foregroundStyle(.tertiary)
-                Text("\(Int((store.brightness * 100).rounded()))%")
+                Text(store.brightnessIsMixed ? "Mixed" : "\(Int((store.brightness * 100).rounded()))%")
                     .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                    .frame(width: 34, alignment: .trailing)
+                    .frame(width: 38, alignment: .trailing)
                     .contentTransition(.numericText())
             }
             .padding(.horizontal, 14)
             .frame(height: 18)
             .padding(.bottom, 10)
-            .help(store.isLive
-                  ? (store.hasHardware ? "Brightness — strip, Dot and Screen Bar"
-                                       : "Screen Bar brightness — no strip connected")
-                  : "Brightness needs the monitor")
+            .help(brightnessHelp)
         }
         .frame(height: CGFloat(PanelLayout.devicesHeight), alignment: .top)
         .clipped()
+    }
+
+    /// One brightness story: while the devices disagree the tooltip
+    /// names each, and says the slider sets them all.
+    private var brightnessHelp: String {
+        guard store.isLive else { return "Brightness needs the monitor" }
+        if store.brightnessIsMixed { return "\(store.brightnessBreakdown) — dragging sets them all" }
+        return store.hasHardware ? "Brightness — strip, Dot and Screen Bar" : "Screen Bar brightness — no strip connected"
+    }
+
+    private var brightnessWords: String {
+        store.brightnessIsMixed ? "Mixed: \(store.brightnessBreakdown)" : "\(Int((store.brightness * 100).rounded())) percent"
     }
 
     private func deviceHelp(_ device: CoreDevice) -> String {

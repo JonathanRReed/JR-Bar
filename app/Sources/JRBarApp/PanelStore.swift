@@ -1335,15 +1335,49 @@ final class PanelStore {
         return nil
     }
 
-    /// The slider's value: a local drag wins, else the Pro's brightness, else the lights document's.
+    /// The slider's value: a local drag wins; devices that disagree show
+    /// the brightest of them (the slider reads "Mixed"); else the Pro's
+    /// brightness, else the lights document's.
     var brightness: Double {
         if let localBrightness { return localBrightness }
+        if brightnessIsMixed, let brightest = brightnessReadings.map(\.fraction).max() { return brightest }
         if let pro = devices.first(where: { $0.kind == "pro" }), let value = pro.brightnessFraction { return value }
         if let any = devices.compactMap(\.brightnessFraction).first { return any }
         return core.lights?.hardware?.brightness ?? 0.8
     }
 
     var hasHardware: Bool { devices.contains { $0.kind == "pro" || $0.kind == "dot" } }
+
+    /// What each present device says its brightness is, in the daemon's
+    /// order.
+    var brightnessReadings: [(name: String, fraction: Double)] {
+        devices.compactMap { device in
+            guard device.isPresent, let fraction = device.brightnessFraction else { return nil }
+            return (device.name ?? Self.deviceWord(device.kind), fraction)
+        }
+    }
+
+    /// The devices disagree by at least a whole percent, and no drag is
+    /// in hand: one number on the slider would be true of one of them.
+    /// A drag sets them all (`set_brightness "all"`), which ends it.
+    var brightnessIsMixed: Bool {
+        guard localBrightness == nil else { return false }
+        return Set(brightnessReadings.map { Int(($0.fraction * 100).rounded()) }).count > 1
+    }
+
+    /// "Pro 80% · Dot 40% · Screen Bar 100%".
+    var brightnessBreakdown: String {
+        brightnessReadings.map { "\($0.name) \(Int(($0.fraction * 100).rounded()))%" }.joined(separator: " · ")
+    }
+
+    nonisolated static func deviceWord(_ kind: String) -> String {
+        switch kind {
+        case "pro": return "Pro"
+        case "dot": return "Dot"
+        case "screen_bar": return "Screen Bar"
+        default: return kind.replacingOccurrences(of: "_", with: " ")
+        }
+    }
 
     // MARK: Actions
 
