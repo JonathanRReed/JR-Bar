@@ -800,8 +800,6 @@ struct CombinedWindowGauge: View {
                     Capsule()
                         .fill(LinearGradient(colors: [color.opacity(0.7), color], startPoint: .leading, endPoint: .trailing))
                         .frame(width: max(3, Self.barWidth * CGFloat(min(100, max(0, used)) / 100)))
-                } else {
-                    Capsule().strokeBorder(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
                 }
             }
             .frame(width: Self.barWidth, height: 4)
@@ -940,10 +938,20 @@ struct QuotaRing: View {
     let now: Date
     let reduced: Bool
 
-    /// Nil when the window has no reading: the ring is drawn as an open
-    /// track with a dashed edge, never as an arc of zero.
+    /// Nil when the window has no reading: the ring is drawn as a hairline
+    /// round a dash, never as an arc of zero.
     private var fraction: Double? { window.usedPct.map { min(1, max(0, $0 / 100)) } }
     private var color: Color { UsageColors.level(window.usedPct, accent: accent) }
+    /// The arc deepens from its start to its tip. The shading begins a
+    /// little before twelve o'clock so the start's round cap takes the
+    /// start's colour; a nearly full ring is one colour, since its tip
+    /// would wrap round into that shading.
+    private func arcShading(_ fraction: Double) -> AnyShapeStyle {
+        guard fraction < 0.94 else { return AnyShapeStyle(color) }
+        return AnyShapeStyle(AngularGradient(colors: [color.opacity(0.7), color], center: .center,
+                                             startAngle: .degrees(-8), endAngle: .degrees(max(4, 360 * fraction))))
+    }
+
     /// Where the window lands at reset at this pace, as a fraction of the
     /// ring — past 1 when it would run out first.
     private var projected: Double? { forecast.projectedAtReset(now: now.timeIntervalSince1970).map { $0 / 100 } }
@@ -951,7 +959,9 @@ struct QuotaRing: View {
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                Circle().stroke(Color.primary.opacity(0.07), lineWidth: 7)
+                if fraction != nil {
+                    Circle().stroke(Color.primary.opacity(0.07), lineWidth: 7)
+                }
                 if let fraction, let projected, projected > fraction + 0.005 {
                     // The ghost arc: where this window stands at the reset
                     // if the pace holds — amber when it would not make it.
@@ -965,15 +975,14 @@ struct QuotaRing: View {
                 if let fraction {
                     Circle()
                         .trim(from: 0, to: fraction)
-                        .stroke(AngularGradient(colors: [color.opacity(0.7), color],
-                                                center: .center, startAngle: .degrees(0), endAngle: .degrees(360 * max(0.01, fraction))),
-                                style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                        .stroke(arcShading(fraction), style: StrokeStyle(lineWidth: 7, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                         .animation(reduced ? .easeOut(duration: 0.15) : .spring(response: 0.6, dampingFraction: 0.8), value: fraction)
                 } else {
-                    // A dashed ring: unmistakably not an empty one.
+                    // A hairline where the track would be: unmistakably not
+                    // an empty ring, and no reading dressed as one.
                     Circle()
-                        .stroke(Color.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 7, dash: [3, 5]))
+                        .stroke(Color.secondary.opacity(0.45), lineWidth: 1)
                 }
                 Text(window.percentText)
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
