@@ -128,7 +128,7 @@ final class AquariumToy: Toy {
             _ = store?.state.aquarium.speciesOverrides
             _ = store?.state.aquarium.visitors
         } onChange: { [weak self] in
-            Task { @MainActor [weak self] in self?.observeRosterSettings() }
+            _ = Task { @MainActor [weak self] in self?.observeRosterSettings() }
         }
         if game.visitorsWelcome != settings.visitors { game.visitorsWelcome = settings.visitors }
         let wanted = RosterSettings(maxFish: settings.maxFish,
