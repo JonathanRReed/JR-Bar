@@ -139,6 +139,15 @@ final class SoundPlayer {
     /// Told when a sound is held for a live microphone.
     var onHeldForCall: ((String) -> Void)?
     private lazy var alertDevice = AlertDevicePlayer()
+    /// Where synthesized sounds (`playSynthesized`) are kept as WAV
+    /// files: the app's caches folder. Tests point it at a scratch one.
+    var synthesizedFolder: URL = SoundPlayer.defaultSynthesizedFolder
+    /// Stands in for the speakers when set: each synthesized play lands
+    /// here instead of being heard, so a test can read the volume back.
+    var synthesizedOutput: ((SynthesizedPlay) -> Void)?
+    /// The synthesized files already checked against their bytes this
+    /// run: each is written at most once, then only read.
+    private var synthesizedChecked: Set<String> = []
 
     /// The folders a sound name is looked up in: the system's, then the
     /// person's own (`~/Library/Sounds`, where macOS keeps custom alerts).
@@ -258,6 +267,126 @@ final class SoundPlayer {
     }
 }
 
+// MARK: Synthesized sounds
+
+extension SoundPlayer {
+    /// One play of a synthesized sound as it went out: the cached file,
+    /// the volume after Settings › Sounds, the pitch step, the pan and
+    /// whether it took the alert device.
+    struct SynthesizedPlay: Equatable, Sendable {
+        var file: URL
+        var volume: Float
+        var rate: Double
+        var pan: Float
+        var alertDevice: Bool
+    }
+
+    /// `~/Library/Caches/<bundle id>/Sounds`.
+    nonisolated static var defaultSynthesizedFolder: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        return caches.appending(path: Bundle.main.bundleIdentifier ?? "JR-Bar").appending(path: "Sounds")
+    }
+
+    /// The pitch steps a synthesized sound can play at: ±6 % in 2 %
+    /// steps, so a handful of files covers every pop.
+    nonisolated static let pitchSteps: [Double] = [0.94, 0.96, 0.98, 1.0, 1.02, 1.04, 1.06]
+
+    /// The step nearest `rate`.
+    nonisolated static func pitchStep(_ rate: Double) -> Double {
+        guard rate.isFinite else { return 1 }
+        return pitchSteps.min { abs($0 - rate) < abs($1 - rate) } ?? 1
+    }
+
+    /// A sound JR-Bar makes itself (the confetti's pop), played by the
+    /// same rules as every other: Settings › Sounds' volume times `gain`,
+    /// the alert device when that is picked, and held while another app
+    /// has the microphone and sounds keep quiet on calls. `wav` is
+    /// written to the caches folder once per pitch step — `rate` moves
+    /// the pitch (and the length with it) up to 6 % either way — and
+    /// `pan` sits it left or right, -1 … 1. Returns what played, or nil
+    /// when nothing did.
+    @discardableResult
+    func playSynthesized(_ wav: Data, key: String, gain: Double = 1, rate: Double = 1,
+                         pan: Double = 0) -> SynthesizedPlay? {
+        let preferences = preferences()
+        if preferences.quietOnCalls, microphoneLive() {
+            onHeldForCall?(key)
+            return nil
+        }
+        let volume = Float(min(1, max(0, preferences.volume * gain)))
+        guard volume > 0 else { return nil }
+        let step = Self.pitchStep(rate)
+        guard let file = synthesizedFile(wav, key: key, rate: step) else { return nil }
+        let play = SynthesizedPlay(file: file, volume: volume, rate: step,
+                                   pan: Float(max(-1, min(1, pan))),
+                                   alertDevice: preferences.useAlertDevice)
+        if let synthesizedOutput {
+            synthesizedOutput(play)
+            return play
+        }
+        if play.alertDevice, alertDevice.play(url: file, volume: volume, pan: play.pan) { return play }
+        let name = "synthesized:" + file.lastPathComponent
+        let player: AVAudioPlayer
+        if let cached = players[name] {
+            player = cached
+        } else {
+            guard let made = try? AVAudioPlayer(contentsOf: file) else { return nil }
+            made.prepareToPlay()
+            players[name] = made
+            player = made
+        }
+        player.volume = volume
+        player.pan = play.pan
+        player.currentTime = 0
+        player.play()
+        return play
+    }
+
+    /// The cached file for `key` at a pitch step, written when it is
+    /// missing or its bytes changed (a new build's sound) and otherwise
+    /// only read; checked once a run.
+    private func synthesizedFile(_ wav: Data, key: String, rate: Double) -> URL? {
+        let percent = Int((rate * 100).rounded())
+        let file = synthesizedFolder.appending(path: "\(key)-\(percent).wav")
+        if synthesizedChecked.contains(file.path) { return file }
+        guard let bytes = Self.retimed(wav, rate: rate) else { return nil }
+        if (try? Data(contentsOf: file)) != bytes {
+            do {
+                try FileManager.default.createDirectory(at: synthesizedFolder, withIntermediateDirectories: true)
+                try bytes.write(to: file, options: .atomic)
+            } catch {
+                return nil
+            }
+        }
+        synthesizedChecked.insert(file.path)
+        return file
+    }
+
+    /// The same PCM WAV told to play `rate` times as fast: its sample
+    /// and byte rates are rewritten, so the pitch moves with the speed
+    /// — a varispeed, not a stretch. nil for bytes that aren't the plain
+    /// 44-byte-header WAV `ConfettiSound.wav` writes.
+    nonisolated static func retimed(_ wav: Data, rate: Double) -> Data? {
+        let bytes = [UInt8](wav)
+        guard bytes.count >= 44,
+              bytes[0..<4].elementsEqual("RIFF".utf8),
+              bytes[8..<12].elementsEqual("WAVE".utf8),
+              bytes[12..<16].elementsEqual("fmt ".utf8) else { return nil }
+        guard rate != 1 else { return wav }
+        func read(_ at: Int) -> UInt32 {
+            (0..<4).reduce(UInt32(0)) { $0 | UInt32(bytes[at + $1]) << (8 * UInt32($1)) }
+        }
+        var out = bytes
+        func write(_ value: UInt32, _ at: Int) {
+            for i in 0..<4 { out[at + i] = UInt8((value >> (8 * UInt32(i))) & 0xFF) }
+        }
+        write(UInt32((Double(read(24)) * rate).rounded()), 24)
+        write(UInt32((Double(read(28)) * rate).rounded()), 28)
+        return Data(out)
+    }
+}
+
 /// Plays a sound on macOS's alert device — System Settings › Sound ›
 /// "Play sound effects through" — rather than the current output, the
 /// way the system's own alerts do. AVAudioPlayer always follows the
@@ -287,11 +416,14 @@ final class AlertDevicePlayer {
     /// Whether the output unit holds the device right now.
     var isRunning: Bool { output.isRunning }
 
-    func play(url: URL, volume: Float) -> Bool {
+    /// `pan` is -1 (left) … 1 (right); every ring sets it, so a panned
+    /// pop never leaves the next alert off-centre.
+    func play(url: URL, volume: Float, pan: Float = 0) -> Bool {
         guard let target = alertOutputDevice(),
               let file = try? AVAudioFile(forReading: url) else { return false }
         ring += 1
         let current = ring
+        output.setPan(pan)
         return output.start(file, on: target, volume: volume) { [weak self] in
             guard let self, self.ring == current else { return }
             self.output.stop()
@@ -312,6 +444,13 @@ protocol AlertDeviceOutput: AnyObject {
                ended: @escaping @MainActor @Sendable () -> Void) -> Bool
     /// Stops the node and the engine, so the device can go idle.
     func stop()
+    /// Where the next ring sits left to right, -1 … 1.
+    func setPan(_ pan: Float)
+}
+
+extension AlertDeviceOutput {
+    /// An output that can't pan plays centred.
+    func setPan(_ pan: Float) {}
 }
 
 /// The real output: one AVAudioEngine, its output unit on the alert
@@ -322,8 +461,13 @@ final class EngineAlertOutput: AlertDeviceOutput {
     private let node = AVAudioPlayerNode()
     private var device: AudioObjectID?
     private var attached = false
+    private var pan: Float = 0
 
     var isRunning: Bool { engine.isRunning }
+
+    func setPan(_ pan: Float) {
+        self.pan = max(-1, min(1, pan))
+    }
 
     func start(_ file: AVAudioFile, on target: AudioObjectID, volume: Float,
                ended: @escaping @MainActor @Sendable () -> Void) -> Bool {
@@ -346,6 +490,7 @@ final class EngineAlertOutput: AlertDeviceOutput {
         engine.connect(node, to: engine.mainMixerNode, format: file.processingFormat)
         do { try engine.start() } catch { return false }
         node.volume = volume
+        node.pan = pan
         // The node calls back on its own render thread; the handler is
         // `@Sendable`, so it carries no main-actor isolation and hops.
         node.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { _ in
