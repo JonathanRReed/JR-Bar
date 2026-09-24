@@ -823,9 +823,6 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         }
     }
 
-    /// The menu's "Hidden Menu Bar Items" row: the utility's submenu
-    /// while it runs, gone while it is parked. Both secondary clicks —
-    /// the button's and the mirror's — prepare it here.
     /// The rows that depend on the moment: the hidden items, and Creator
     /// Micro once a pad has been seen.
     private func prepareMenu() {
@@ -833,6 +830,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         creatorMicroItem?.isHidden = showsCreatorMicro?() != true
     }
 
+    /// The menu's "Hidden Menu Bar Items" row: the utility's submenu
+    /// while it runs, gone while it is parked. Both secondary clicks —
+    /// the button's and the mirror's — prepare it, through prepareMenu.
     private func prepareHiddenItemsRow() {
         if let submenu = hiddenItemsMenu?() {
             hiddenItemsMenuItem.submenu = submenu

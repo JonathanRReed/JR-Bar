@@ -1745,9 +1745,6 @@ extension AppDelegate {
         }
     }
 
-    /// The router's hands: the same paths the panel, the status menu and
-    /// the summon keys already take, so a link or a shortcut does
-    /// exactly what the click would.
     /// A line for the person that did not come from a panel click — a
     /// link, a shortcut, a banner, the ear. The panel's toast while it is
     /// open or a palette verb is listening for it; with the panel shut
@@ -1762,6 +1759,9 @@ extension AppDelegate {
         }
     }
 
+    /// The router's hands: the same paths the panel, the status menu and
+    /// the summon keys already take, so a link or a shortcut does
+    /// exactly what the click would.
     private func wireCommandRouter() {
         let router = AppCommandRouter.shared
         router.onRefused = { [weak self] text in self?.showFeedback(text) }
