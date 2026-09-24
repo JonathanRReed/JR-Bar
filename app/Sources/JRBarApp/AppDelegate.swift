@@ -251,7 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let shelfHotkey = PanelHotkey(signature: OSType(0x6A726273),
                                       keyCode: UInt32(kVK_ANSI_D))
         shelfHotkey.onPress = { [weak toysStore] in
-            toysStore?.notch.toggleShelfFromHotkey()
+            _ = toysStore?.notch.toggleShelf()
         }
         shelfHotkey.setEnabled(settingsStore.shelfHotkeyEnabled)
         settingsStore.shelfHotkeyRegistrationFailed = shelfHotkey.registrationFailed
@@ -1845,10 +1845,11 @@ extension AppDelegate {
             self?.panel?.open()
             return nil
         }
+        // The ⌃⌥D key's own toggle, so the link lands on the Shelf page
+        // too rather than on Now.
         router.toggleShelf = { [weak self] in
             guard let notch = self?.toysStore?.notch else { return "JR-Bar is still starting." }
-            if notch.islandExpanded { notch.collapseFromBand() } else { notch.expandFromBand() }
-            return nil
+            return notch.toggleShelf()
         }
     }
 

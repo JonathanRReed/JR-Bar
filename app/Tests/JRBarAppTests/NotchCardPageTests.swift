@@ -72,14 +72,60 @@ struct NotchCardPageTests {
     func shelfSummonsLandOnShelf() {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
-        toy.toggleShelfFromHotkey()
+        toy.toggleShelf()
         #expect(toy.islandExpanded)
         #expect(toy.cardModel.page == .shelf)
-        toy.toggleShelfFromHotkey()
+        toy.toggleShelf()
         #expect(!toy.islandExpanded)
         toy.shelfSummon()
         #expect(toy.cardModel.page == .now, "the agents are drop targets on Now")
         toy.shelfDrop([])
         #expect(toy.cardModel.page == .shelf, "the drop shows where it landed")
+    }
+
+    @Test("jrbar://shelf opens onto the shelf, not the page the card last showed")
+    func shelfLinkLandsOnShelf() {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        // The router's hand is the key's own toggle, as the delegate wires it.
+        let router = AppCommandRouter()
+        router.toggleShelf = { toy.toggleShelf() }
+        let link = URL(string: "jrbar://shelf")!
+        // The card was last up on Now, from a band click.
+        toy.expandFromBand()
+        #expect(toy.cardModel.page == .now)
+        toy.collapseFromBand()
+        #expect(router.open(link) == .done)
+        #expect(toy.islandExpanded)
+        #expect(toy.cardModel.page == .shelf)
+        // Still a toggle: a second link folds the card it opened.
+        #expect(router.open(link) == .done)
+        #expect(!toy.islandExpanded)
+        #expect(toy.cardModel.page == .now, "the next band open starts on Now")
+    }
+
+    @Test("the delegate hands the shelf link the key's own toggle")
+    func delegateWiresTheShelfToggle() throws {
+        let delegate = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Sources/JRBarApp/AppDelegate.swift")
+        let text = try String(contentsOf: delegate, encoding: .utf8)
+        let start = try #require(text.range(of: "router.toggleShelf = {"))
+        let end = try #require(text.range(of: "\n        }\n", range: start.upperBound..<text.endIndex))
+        let wiring = String(text[start.upperBound..<end.lowerBound])
+        #expect(wiring.contains("return notch.toggleShelf()"))
+        #expect(!wiring.contains("expandFromBand"), "a bare expand opens on Now")
+    }
+
+    @Test("with no island drawn the shelf link says why instead of doing nothing")
+    func shelfLinkWithoutIslandIsRefused() {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        toy.islandVisible = false
+        #expect(toy.toggleShelf() == "The shelf opens in the notch island, and the island isn't showing.")
+        #expect(!toy.islandExpanded)
+        #expect(toy.cardModel.page == .now, "a refused open leaves no shelf page waiting")
+        store.state.notch.enabled = false
+        #expect(toy.toggleShelf() == "The Notch utility is off — turn it on in Utilities.")
     }
 }
