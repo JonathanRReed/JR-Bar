@@ -127,6 +127,25 @@ import Testing
         #expect(WhatsNewView.versionLine(bundle: Bundle(for: WhatsNewWindowController.self)).isEmpty == false)
     }
 
+    @Test func theWindowIsAsTallAsTheCardAndStaysSoAcrossAReopen() {
+        let controller = WhatsNewWindowController()
+        let measured = WhatsNewWindowController.contentSize(of: NSHostingController(rootView: WhatsNewView(
+            entries: WhatsNewCatalog.entries, tryIt: { _ in nil }, onDone: {})))
+        let window = controller.makeWindow()
+        defer { WindowContentLifecycle.detach(from: window) }
+        #expect(!window.isVisible, "built, not shown")
+        #expect(measured.height != 560, "the card is not the window's first guess, or this proves nothing")
+        #expect(window.contentRect(forFrameRect: window.frame).size == measured,
+                "the whole card shows: header, rows and Done")
+        #expect(window.contentView?.frame.size == measured, "the plate fills the window")
+
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: window))
+        #expect(window.contentViewController == nil)
+        controller.attachContent(to: window)
+        #expect(window.contentRect(forFrameRect: window.frame).size == measured, "a reopen keeps the card's height")
+        #expect(window.contentView?.frame.size == measured)
+    }
+
     // MARK: The stamp in setup.json
 
     @Test func whatsNewSeenDecodesTolerantly() throws {

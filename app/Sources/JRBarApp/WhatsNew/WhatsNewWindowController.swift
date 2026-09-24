@@ -22,6 +22,10 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
     /// What wakes the wait: workspace and lock notifications.
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var settle: DispatchWorkItem?
+    /// The card's size as SwiftUI last measured it. Attaching content
+    /// puts the window's old frame back, so the window takes its size
+    /// from here, never from the plate after the attach.
+    private(set) var cardSize = NSSize(width: WhatsNewView.width, height: 560)
 
     var isVisible: Bool { window?.isVisible ?? false }
 
@@ -63,7 +67,9 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
                 tryIt: { [weak self] command in self?.tryIt(command) },
                 onDone: { [weak window] in window?.performClose(nil) }))
             hosting.sizingOptions = []
-            return WindowContentLifecycle.glassPlate(around: hosting, size: Self.contentSize(of: hosting))
+            let size = Self.contentSize(of: hosting)
+            cardSize = size
+            return WindowContentLifecycle.glassPlate(around: hosting, size: size)
         }
     }
 
@@ -74,13 +80,17 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
         return NSSize(width: WhatsNewView.width, height: max(320, fitting.height.rounded(.up)))
     }
 
-    private func makeWindow() -> NSWindow {
+    /// Internal for the sizing test, which builds the window without
+    /// showing it.
+    func makeWindow() -> NSWindow {
         let window = WhatsNewWindow(
-            contentRect: NSRect(x: 0, y: 0, width: WhatsNewView.width, height: 560),
+            contentRect: NSRect(origin: .zero, size: cardSize),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        let content = attachContent(to: window)
-        window.setContentSize(content.view.frame.size)
+        attachContent(to: window)
+        // The attach measured the card and then put the window's first
+        // frame back; the measured height is the one that fits the rows.
+        window.setContentSize(cardSize)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
