@@ -800,7 +800,9 @@ final class PanelStore {
 
     /// Amphetamine's lesson: the hold is state worth a glance. A closed
     /// lid held open outranks the plain keep-awake, since it is the one
-    /// that keeps a shut laptop running.
+    /// that keeps a shut laptop running. It counts only while the lid
+    /// really is shut, as on the Screen Bar: with the lid open the hold
+    /// is only armed, and the cup tells the truth.
     nonisolated static func awakeHold(power: CorePower?, working: Int) -> (symbol: String, text: String)? {
         guard let power else { return nil }
         let agents = working == 1 ? "1 agent works" : "\(working) agents work"
@@ -808,7 +810,7 @@ final class PanelStore {
         // mark's tooltip, a line each.
         let facts = KeepAwakeReading(power: power).facts()
         func told(_ text: String) -> String { ([text] + facts).joined(separator: "\n") }
-        if power.closedLid?.holding == true {
+        if let lid = power.closedLid, lid.holding == true, lid.lidClosed == true {
             return ("laptopcomputer", told(working > 0
                 ? "Running with the lid closed while \(agents); it sleeps once they stop"
                 : "Running with the lid closed; it sleeps once the agents stop"))

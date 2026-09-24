@@ -27,9 +27,21 @@ struct AwakeHoldTests {
     @Test("a closed lid held open outranks the plain hold")
     func closedLid() throws {
         let hold = try #require(PanelStore.awakeHold(
-            power: try power(#"{"keep_awake":true,"closed_lid":{"policy":"agents","holding":true}}"#), working: 0))
+            power: try power(#"{"keep_awake":true,"closed_lid":{"policy":"agents","holding":true,"lid_closed":true}}"#),
+            working: 0))
         #expect(hold.symbol == "laptopcomputer")
         #expect(hold.text.hasPrefix("Running with the lid closed"))
+    }
+
+    @Test("an armed closed-lid hold with the lid open wears the cup")
+    func lidOpen() throws {
+        let armed = try power(#"{"keep_awake":true,"closed_lid":{"policy":"agents","holding":true,"lid_closed":false}}"#)
+        let hold = try #require(PanelStore.awakeHold(power: armed, working: 2))
+        #expect(hold.symbol == "cup.and.saucer.fill")
+        #expect(hold.text.hasPrefix("Keeping this Mac awake while 2 agents work"))
+        #expect(!hold.text.contains("lid closed"))
+        let unread = try power(#"{"keep_awake":true,"closed_lid":{"policy":"agents","holding":true}}"#)
+        #expect(PanelStore.awakeHold(power: unread, working: 2)?.symbol == "cup.and.saucer.fill")
     }
 
     @Test("the mark's tooltip carries the power facts; a short runway wears the battery")
