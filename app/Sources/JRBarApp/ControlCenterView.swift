@@ -881,7 +881,7 @@ struct SessionDragRow: View {
         .background(hovered ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture { store.core.openSession(session.id) }
+        .onTapGesture { Task { await store.openSession(session.id) } }
         .draggable(session.id) {
             HStack(spacing: 8) {
                 ProviderTile(style: style, size: 20)
@@ -898,7 +898,7 @@ struct SessionDragRow: View {
             } else {
                 Text("On another bank")
             }
-            Button("Open session") { store.core.openSession(session.id) }
+            Button("Open session") { Task { await store.openSession(session.id) } }
         }
         .accessibilityLabel("\(session.displayLabel), \(activity.word)\(boundKey.map { ", key \($0 + 1)" } ?? "")")
     }
