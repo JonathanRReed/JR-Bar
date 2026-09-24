@@ -102,17 +102,17 @@ import Testing
         let toys = ToysStore(core: core, settings: settings, state: ToysState(),
                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         settings.toys = toys
-        let entries = settings.searchEntries
-        let lyrics = SettingsSearch.search("synced lyrics", in: entries).first
+        let searchable = settings.searchEntries
+        let lyrics = SettingsSearch.search("synced lyrics", in: searchable).first
         #expect(lyrics?.title == "Synced lyrics")
         #expect(lyrics?.page == .utilities)
         #expect(lyrics?.card == "notch")
-        #expect(SettingsSearch.search("lrclib", in: entries).first?.card == "notch")
-        let screensaver = SettingsSearch.search("screensaver", in: entries).first
+        #expect(SettingsSearch.search("lrclib", in: searchable).first?.card == "notch")
+        let screensaver = SettingsSearch.search("screensaver", in: searchable).first
         #expect(screensaver?.card == "aquarium")
         #expect(screensaver?.page == .toys)
         // The notch card itself is searchable, on the Utilities page.
-        #expect(entries.contains { $0.title == "Notch" && $0.page == .utilities && $0.card == "notch" })
+        #expect(searchable.contains { $0.title == "Notch" && $0.page == .utilities && $0.card == "notch" })
         withExtendedLifetime(toys) {}
     }
 
