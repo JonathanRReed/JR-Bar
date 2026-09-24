@@ -446,7 +446,14 @@ struct NotchCardView: View {
                         .foregroundStyle(style.subColor)
                         .lineLimit(1)
                 }
-                if let explanation = model.focus.explanation {
+                // An Open that did not land says why where the light's
+                // reason sits, for a few seconds.
+                if let refusal = model.focus.clickSession.flatMap({ model.openRefusals[$0] }) {
+                    Text(refusal)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                } else if let explanation = model.focus.explanation {
                     Text(explanation)
                         .font(.system(size: 10.5))
                         .foregroundStyle(style.faintColor)

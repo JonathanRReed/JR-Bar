@@ -25,6 +25,24 @@ struct BuddyInteractionTests {
         return (store.notchBuddy, store)
     }
 
+    @Test("the ask badge opens the longest-waiting session through the one opener")
+    func askBadgeOpensThroughTheOpener() async {
+        let core = CoreModel()
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "claude:new", provider: "claude", since: 2, ask: CoreAsk(openedAt: 20)),
+            CoreSession(id: "claude:old", provider: "claude", since: 1, ask: CoreAsk(openedAt: 10)),
+        ])))
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        var opened: [String] = []
+        toy.openSession = { opened.append($0); return nil }
+        #expect(toy.openAskingSession())
+        await toy.openInFlight?.value
+        #expect(opened == ["claude:old"])
+    }
+
     @Test("a tap is a pet and cycles the tricks")
     func tapPetsAndTricks() {
         let (toy, store) = makeToy()

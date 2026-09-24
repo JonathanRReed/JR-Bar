@@ -329,13 +329,24 @@ final class NotchBuddyToy: Toy {
     }
 
     /// While an ask is open the buddy is useful: this opens the session
-    /// doing the asking — that is where the answer lives.
+    /// doing the asking — that is where the answer lives — through the
+    /// one opener, so a window the daemon cannot find still comes up
+    /// through the Dock's locator. The buddy has no line of its own to
+    /// say a refusal in; the notch's ask face and the panel carry it.
     @discardableResult
     func openAskingSession() -> Bool {
         guard let asking = askingSession else { return false }
-        core.openSession(asking.id)
+        let open = openSession
+        openInFlight = Task { _ = await open(asking.id) }
         return true
     }
+
+    /// The one way the buddy opens a session (`SessionOpener`); tests
+    /// swap it and await `openInFlight`.
+    @ObservationIgnored var openSession: @MainActor (String) async -> String? = { id in
+        await SessionOpener.open(id)
+    }
+    @ObservationIgnored private(set) var openInFlight: Task<Void, Never>?
 
     /// The "!" badge hangs over the figure's crown: in the pill's
     /// unscaled layout (36×30 — the 18pt figure plus its padding) it

@@ -296,27 +296,23 @@ struct AskSurfacesTests {
         #expect(store.toast == "This one has no rule to remember — approve it once instead")
     }
 
-    @Test("the notch card's Open falls back to the window locator only for a running session")
-    func notchCardOpenFallback() async {
+    @Test("the glass card opens through the one opener and keeps a refusal to read")
+    func notchCardOpensThroughTheOpener() async {
         let presenter = NotchCardPresenter(model: makeTestCardModel())
         let log = Log()
-        presenter.sessionRows = {
-            [NotchIslandRow(id: "claude:run", label: "run", provider: "claude", activity: .working),
-             NotchIslandRow(id: "claude:done", label: "done", provider: "claude", activity: .done)]
+        presenter.openSession = { id in
+            log.calls.append(id)
+            return id == "claude:done" ? "That session is gone" : nil
         }
-        presenter.openSessionNow = { id in
-            log.calls.append("open:\(id)")
-            return CoreReply(id: "1", ok: false, error: CoreReplyError(code: "not_found"))
-        }
-        presenter.raiseSessionWindow = { id in
-            log.calls.append("raise:\(id)")
-            return true
-        }
-        presenter.open("claude:run")
-        presenter.open("claude:done")
-        presenter.open("remote:studio:claude:x")
+        await presenter.open("claude:done").value
+        await presenter.open("claude:run").value
+        #expect(log.calls == ["claude:done", "claude:run"])
+        #expect(presenter.model.openRefusals["claude:done"] == "That session is gone")
+        #expect(presenter.model.openRefusals["claude:run"] == nil)
+        // The row's click and the header's Open take the same path.
+        presenter.model.onOpenRow?("claude:row")
         await Self.waitFor { log.calls.count >= 3 }
-        #expect(log.calls.sorted() == ["open:claude:done", "open:claude:run", "raise:claude:run"])
+        #expect(log.calls.last == "claude:row")
     }
 
     // MARK: Rail

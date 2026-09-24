@@ -204,22 +204,13 @@ final class NotchToy: Toy {
         capsuleQueue.onEvict = { [weak self] notice in
             MainActor.assumeIsolated { self?.onCapsuleEvicted(notice) }
         }
-        // The card folds once the session is in front; a refusal stays
-        // on the row that was clicked.
-        cardModel.onOpenRow = { [weak self] session in
-            guard let self else { return }
-            self.openInFlight = Task { [weak self] in
-                guard let self, await self.open(session: session) else { return }
-                self.collapseIsland()
-            }
-        }
+        cardModel.onOpenRow = { [weak self] session in self?.openFromCard(session) }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
         cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }
         cardModel.onDropLanded = { [weak self] in self?.shelfDragLanded() }
         cardModel.onOpenSession = { [weak self] in
             guard let self, let session = self.cardModel.focus.clickSession else { return }
-            self.collapseIsland()
-            self.core.openSession(session)
+            self.openFromCard(session)
         }
         cardModel.onOpenOverview = { [weak self] in self?.onOpenOverview() }
         cardModel.mirrorEnabled = { [weak self] in self?.settings.mirror ?? false }
@@ -1581,6 +1572,15 @@ final class NotchToy: Toy {
         guard let refusal = await openSession(session) else { return true }
         cardModel.noteOpenRefused(refusal, session: session)
         return false
+    }
+
+    /// A row or the header's Open on the grown card: the card folds once
+    /// the session is in front; a refusal stays on the card to be read.
+    private func openFromCard(_ session: String) {
+        openInFlight = Task { [weak self] in
+            guard let self, await self.open(session: session) else { return }
+            self.collapseIsland()
+        }
     }
 
     // MARK: Quiet hold

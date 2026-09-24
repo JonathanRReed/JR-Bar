@@ -48,15 +48,12 @@ final class NotchCardPresenter {
     /// that slips past the gesture layer must stay dark; `.none` — the
     /// utility switched off — means nothing notch-related draws at all.
     var surface: @MainActor () -> NotchSurface = { NotchCardPresenter.publishedSurface }
-    var onOpenSession: @MainActor (String) -> Void = { _ in }
     var onOpenOverview: @MainActor () -> Void = {}
-    /// `open_session` awaited, so a refusal is heard; nil when the
-    /// monitor did not answer. Unset, a click posts `onOpenSession`.
-    var openSessionNow: (@MainActor (String) async -> CoreReply?)?
-    /// The exact window a live session runs in, raised through the
-    /// Dock's window locator — the fallback when the daemon answers
-    /// `not_found` for a session that is still running.
-    var raiseSessionWindow: (@MainActor (String) -> Bool)?
+    /// The one way the card opens a session (`SessionOpener`): the
+    /// daemon's raise, then the Dock's window locator for a session still
+    /// running here. nil once it is in front, else the refusal to show.
+    /// Tests swap it.
+    var openSession: @MainActor (String) async -> String? = { id in await SessionOpener.open(id) }
 
     /// The last focus presented, so a re-anchor can re-show what was up
     /// even when the provider is momentarily empty.
@@ -70,36 +67,28 @@ final class NotchCardPresenter {
         panel = NotchCardPanel(model: model)
         model.onOpenSession = { [weak self] in
             guard let self, let session = self.model.focus.clickSession else { return }
-            self.hide()
             self.open(session)
         }
         // A click on any session row opens it — the same raise the
         // header's Open does for the focus session.
-        model.onOpenRow = { [weak self] session in
-            guard let self else { return }
-            self.hide()
-            self.open(session)
-        }
+        model.onOpenRow = { [weak self] session in self?.open(session) }
         model.onClose = { [weak self] in self?.hide() }
         model.onOpenOverview = { [weak self] in self?.onOpenOverview() }
     }
 
-    /// Open a session from the card: the daemon's raise, and when it
-    /// cannot find a still-running session's window, the Dock's window
-    /// locator's. A remote session has no window here at all.
-    func open(_ session: String) {
-        guard !CoreSession.isRemoteID(session) else { return }
-        guard let openSessionNow else {
-            onOpenSession(session)
-            return
-        }
-        let raise = raiseSessionWindow
-        let stillRunning = sessionRows().contains {
-            $0.id == session && !$0.activity.isClearable && $0.activity != .failed
-        }
-        Task {
-            let reply = await openSessionNow(session)
-            if reply?.error?.code == "not_found", stillRunning { _ = raise?(session) }
+    /// Open a session from the card through the one opener. The card
+    /// goes once the session is in front; a refusal (a peer's session, a
+    /// window nothing could find) stays on the card as its row's line.
+    /// The returned task is the open in flight — tests await it.
+    @discardableResult
+    func open(_ session: String) -> Task<Void, Never> {
+        Task { [weak self] in
+            guard let self else { return }
+            if let refusal = await self.openSession(session) {
+                self.model.noteOpenRefused(refusal, session: session)
+            } else {
+                self.hide()
+            }
         }
     }
 

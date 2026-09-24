@@ -296,15 +296,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.clearance = { [weak self] in
             self?.events?.hud.panelClearance ?? 0
         }
-        notchCard.onOpenSession = { [weak self] session in
-            self?.core?.openSession(session)
-        }
-        // …awaited, so a live session the daemon cannot find still comes
-        // up through the Dock's window locator.
-        notchCard.openSessionNow = { [weak core] session in
-            try? await core?.send("open_session", args: ["session": .string(session)])
-        }
-        notchCard.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
         // …and its calendar and reminders glances follow the Notch
         // settings' switches, the same as the grown island's.
         notchCard.model.calendarEnabled = { [weak toysStore] in toysStore?.state.notch.calendar ?? true }
