@@ -642,6 +642,7 @@ extension AquariumView {
         contactShadow(canvas: &canvas, x: slot.x * size.width, y: ownedBaseY(slot, in: size),
                       halfW: 24 * s)
         var c = slotContext(canvas, slot, scale: s, in: size)
+        let still = reduceMotion
         // Two anemones: one rose, one violet, the smaller behind.
         let heads: [(x: Double, r: Double, lit: Color, deep: Color, tip: Color, seed: String)] = [
             (8, 9, tone(Color(red: 0.74, green: 0.56, blue: 0.96)), tone(Color(red: 0.36, green: 0.18, blue: 0.54)),
@@ -673,7 +674,7 @@ extension AquariumView {
                 let rootY = -head.r * 0.85
                 let reach = head.r * (0.9 + Double((h >> 8) & 0xFF) / 0xFF * 0.8)
                 let lean = u * head.r * 1.6 + (Double((h >> 16) & 0xFF) / 0xFF - 0.5) * 4
-                let sway = reduceMotion ? 1.5
+                let sway = still ? 1.5
                     : sin(t * 1.25 + u * 2.4 + Double((h >> 24) & 0xFF) * 0.02) * 3.2
                 let tip = CGPoint(x: rootX + lean + sway, y: rootY - reach)
                 tentacles.move(to: CGPoint(x: rootX, y: rootY))

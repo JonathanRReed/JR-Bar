@@ -268,38 +268,47 @@ extension AquariumView {
         }
     }
 
-    /// Ripple marks: short parallel crests in rows, each a shaded lee
-    /// under a lit brow, closer together and finer toward the crest and
-    /// wider toward the glass — the perspective of a flat bed.
+    /// Ripple marks: long low crests the current has combed into the
+    /// bed, each a soft shaded lee under a faint lit brow, closer
+    /// together and finer toward the crest and broader toward the glass
+    /// — the perspective of a flat floor. They wander, break and pick
+    /// up again, so they never read as ruled lines.
     private func drawRipples(canvas: inout GraphicsContext, size: CGSize, sand: SandPalette) {
         var shade = Path()
         var light = Path()
         var rng = TankPaint.Seeded(0x21_99)
-        let rows = 9
+        let rows = 7
         for row in 0..<rows {
             let v = Double(row + 1) / Double(rows + 1)
             let depth = v * v
-            let spacing = 2 + depth * 9
-            var x = rng.next(-60, 0)
+            let amplitude = 1.2 + depth * 3.5
+            let wavelength = 90 + depth * 120
+            let phase = rng.next(0, .pi * 2)
+            var x = rng.next(-80, 0)
             while x < size.width + 20 {
-                let len = rng.next(24, 70) * (0.7 + depth)
-                let top = sandTop(atX: x + len / 2, in: size)
-                let y0 = top + 6 + depth * max(0, size.height - top - 10) + rng.next(-2.5, 2.5)
-                let bow = rng.next(2, 4.5) * (0.6 + depth)
-                let tilt = rng.next(-1.5, 1.5)
+                let len = rng.next(140, 380)
+                let offset = rng.next(-3, 3)
                 var seg = Path()
-                seg.move(to: CGPoint(x: x, y: y0 + tilt))
-                seg.addQuadCurve(to: CGPoint(x: x + len, y: y0 - tilt),
-                                 control: CGPoint(x: x + len / 2, y: y0 - bow))
+                var sx = x
+                var first = true
+                while sx <= x + len {
+                    let top = sandTop(atX: sx, in: size)
+                    let y = top + 8 + depth * max(0, size.height - top - 14) + offset
+                        + amplitude * sin(sx / wavelength * .pi * 2 + phase)
+                    if first { seg.move(to: CGPoint(x: sx, y: y)); first = false } else {
+                        seg.addLine(to: CGPoint(x: sx, y: y))
+                    }
+                    sx += 10
+                }
                 shade.addPath(seg)
-                light.addPath(seg.offsetBy(dx: 0, dy: -spacing * 0.22))
-                x += len + rng.next(4, 26)
+                light.addPath(seg.offsetBy(dx: 0, dy: -(1 + depth * 1.4)))
+                x += len + rng.next(20, 90)
             }
         }
-        canvas.stroke(shade, with: .color(TankPaint.color(sand.rippleShade, 0.30)),
-                      style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
-        canvas.stroke(light, with: .color(TankPaint.color(sand.rippleLight, 0.28)),
-                      style: StrokeStyle(lineWidth: 1.0, lineCap: .round))
+        canvas.stroke(shade, with: .color(TankPaint.color(sand.rippleShade, 0.16)),
+                      style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+        canvas.stroke(light, with: .color(TankPaint.color(sand.rippleLight, 0.16)),
+                      style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
     }
 
     /// Pebbles and shell chips half set into the sand, bigger toward the
@@ -404,7 +413,8 @@ extension AquariumView {
     /// park the motes in visible rows.
     func drawPlankton(canvas: inout GraphicsContext, size: CGSize, t: Double,
                       density: Double, front: Bool) {
-        let tt = reduceMotion ? 0.0 : t
+        let still = reduceMotion
+        let tt = still ? 0.0 : t
         let count = Int((44 * density).rounded())
         // The dark themes' motes are bioluminescent — cyan and teal
         // pulses instead of dust catching the light.
@@ -424,7 +434,7 @@ extension AquariumView {
                          + 0.018 * sin(tt * 0.20 + phase)) * size.width
             // Stay in the water column, off the bed.
             let y = (0.10 + frac(y0 + 0.018 * sin(tt * 0.26 + phase)) * 0.70) * size.height
-            let twinkle = reduceMotion ? 0.8 : 0.55 + 0.45 * sin(t * 0.6 + phase)
+            let twinkle = still ? 0.8 : 0.55 + 0.45 * sin(t * 0.6 + phase)
             let alpha = (front ? 0.14 : 0.08)
                 + Double((h >> 48) & 0xFF) / 0xFF * (front ? 0.16 : 0.10)
             let moteColor = lit
@@ -473,6 +483,7 @@ extension AquariumView {
     func drawBubbles(canvas: inout GraphicsContext, size: CGSize, t: Double, density: Double) {
         let count = Int((9 * density).rounded())
         let chestX = Self.decor.first(where: { $0.kind == .chest })?.x ?? 0.5
+        let still = reduceMotion
         for i in 0..<count {
             let h = scatter(AquariumModel.stableHash("bubble-seed"), i)
             let nearChest = (h >> 52) & 1 == 0
@@ -482,11 +493,11 @@ extension AquariumView {
             let phase = Double((h >> 16) & 0xFF) / 0xFF * .pi * 2
             let speed = 0.04 + Double((h >> 24) & 0xFF) / 0xFF * 0.09
             let r = 1.2 + Double((h >> 32) & 0xFF) / 0xFF * 3.4
-            let rise = frac(Double((h >> 40) & 0xFF) / 0xFF + (reduceMotion ? 0 : t) * speed)
+            let rise = frac(Double((h >> 40) & 0xFF) / 0xFF + (still ? 0 : t) * speed)
             // Each bubble staggers its own amount at its own rate.
             let wobble = 2.5 + Double((h >> 48) & 0xF) / 0xF * 8.5
             let x = x0 * size.width
-                + (reduceMotion ? 0 : sin(t * (0.9 + speed * 6) + phase) * wobble)
+                + (still ? 0 : sin(t * (0.9 + speed * 6) + phase) * wobble)
             if rise > 0.92 {
                 // The pop: a quick expanding ring just under the
                 // meniscus, then gone — where a bubble's story ends.

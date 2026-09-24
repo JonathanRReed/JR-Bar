@@ -20,29 +20,37 @@ extension AquariumView {
         // A canvas caught mid-layout with no height would lay its
         // silhouettes out of nothing; a tank that short has no wall.
         guard size.height >= 8, size.width > 0 else { return }
-        let far = ridge(in: size, base: 0.665, swell: 0.05, seed: 11)
+        let far = tierPath("ridge", size) { ridge(in: size, base: 0.665, swell: 0.05, seed: 11) }
         paintTier(far, canvas: &canvas, size: size, depth: 0, top: size.height * 0.60)
         switch backdropKey {
         case "reefwall":
-            let wall = reefTier(in: size, rise: 0.15, floor: 0.70, seed: 23, count: 22)
+            let wall = tierPath("reef", size) {
+                reefTier(in: size, rise: 0.15, floor: 0.70, seed: 23, count: 22)
+            }
             paintTier(wall, canvas: &canvas, size: size, depth: 0.45, top: size.height * 0.50)
-            let near = reefTier(in: size, rise: 0.24, floor: 0.80, seed: 41, count: 10, edgesOnly: true)
+            let near = tierPath("reef-near", size) {
+                reefTier(in: size, rise: 0.24, floor: 0.80, seed: 41, count: 10, edgesOnly: true)
+            }
             paintTier(near, canvas: &canvas, size: size, depth: 0.8, top: size.height * 0.50)
         case "rocky":
             let tips = spireTips(in: size, rise: 0.20, floor: 0.72, seed: 61, spires: 9)
-            let spires = rockTier(tips, in: size, floor: 0.72, seed: 61, rubble: true)
+            let spires = tierPath("spires", size) { rockTier(tips, in: size, floor: 0.72, seed: 61, rubble: true) }
             paintTier(spires, canvas: &canvas, size: size, depth: 0.45, top: size.height * 0.46)
             paintFacets(tips, clip: spires, canvas: &canvas, size: size, depth: 0.45, floor: 0.72)
             let nearTips = spireTips(in: size, rise: 0.26, floor: 0.82, seed: 71, spires: 5, edgesOnly: true)
-            let near = rockTier(nearTips, in: size, floor: 0.82, seed: 71, rubble: false)
+            let near = tierPath("spires-near", size) {
+                rockTier(nearTips, in: size, floor: 0.82, seed: 71, rubble: false)
+            }
             paintTier(near, canvas: &canvas, size: size, depth: 0.8, top: size.height * 0.46)
             paintFacets(nearTips, clip: near, canvas: &canvas, size: size, depth: 0.8, floor: 0.82)
         default:
             // Open water: a far reef of low coral heads, a fan or a
             // branch standing up here and there, a long way off.
-            let reef = moundProfile(in: size, base: 0.765, seed: 83)
-                .union(reefDressing(in: size, top: { _ in size.height * 0.75 }, unitScale: 0.8,
-                                    count: 9, seed: 89))
+            let reef = tierPath("mounds", size) {
+                moundProfile(in: size, base: 0.765, seed: 83)
+                    .union(reefDressing(in: size, top: { _ in size.height * 0.75 }, unitScale: 0.8,
+                                        count: 9, seed: 89))
+            }
             paintTier(reef, canvas: &canvas, size: size, depth: 0.3, top: size.height * 0.66)
         }
         // The horizon's haze, where the far bed and the water meet: a
@@ -58,6 +66,20 @@ extension AquariumView {
                         ]),
                         startPoint: CGPoint(x: 0, y: size.height * 0.55),
                         endPoint: CGPoint(x: 0, y: horizon)))
+    }
+
+    /// The tiers' outlines, built once per window size: a reef's crown
+    /// is a few dozen shapes unioned into one, which the slow still
+    /// tick has no reason to redo every two seconds.
+    private static var tierPaths: [String: Path] = [:]
+
+    private func tierPath(_ name: String, _ size: CGSize, build: () -> Path) -> Path {
+        let key = "\(name)-\(Int(size.width))x\(Int(size.height))"
+        if let hit = Self.tierPaths[key] { return hit }
+        if Self.tierPaths.count > 12 { Self.tierPaths.removeAll(keepingCapacity: true) }
+        let path = build()
+        Self.tierPaths[key] = path
+        return path
     }
 
     /// A tier's colour: a shade deeper than the water behind it, deeper

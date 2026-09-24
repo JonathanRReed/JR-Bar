@@ -208,8 +208,8 @@ extension AquariumView {
     /// wall of leaves, so the water and the fish show between the
     /// blades. Olive at the holdfast, gold where the light comes through
     /// the tips, veiled by depth; a stand at the glass is a short dark
-    /// frond framing a corner. Every blade of a stipe goes down in one
-    /// fill. Reduce Motion freezes the sway.
+    /// frond framing a corner. A whole stand goes down in four calls —
+    /// stipes, blades, ribs, floats. Reduce Motion freezes the sway.
     private func drawKelp(canvas: inout GraphicsContext, size: CGSize, t: Double, piece: TankDecor,
                           tone: TankPaint.Tone = .none) {
         let b = piece.bits
@@ -233,6 +233,12 @@ extension AquariumView {
         let rib = front ? kelp(.init(0.30, 0.40, 0.16), 0.5) : kelp(.init(0.92, 0.86, 0.48), 0.55)
         let float = front ? kelp(.init(0.24, 0.30, 0.10)) : kelp(.init(0.66, 0.60, 0.26))
         let unit = size.height / 700
+        let still = reduceMotion
+        var stipes = Path()
+        var blades = Path()
+        var floats = Path()
+        var ribs = Path()
+        var top = baseY
         for k in 0..<fronds {
             let fb = scatter(b, k)
             let phase = Double(fb & 0xFF) / 0xFF * .pi * 2
@@ -242,33 +248,27 @@ extension AquariumView {
             let hgt = size.height * (front ? min(0.24, reach * 0.62) : min(0.40, reach * (0.75 + piece.scale * 0.22)))
             let spread = (Double(k) - Double(fronds - 1) / 2) * 12 * unit * piece.scale
             let lean = (Double((fb >> 16) & 0xFF) / 0xFF - 0.5) * 40 * unit + spread
-            let sway = reduceMotion ? 0
+            let sway = still ? 0
                 : sin(t * (0.22 + Double((fb >> 24) & 0xFF) / 0xFF * 0.18) + phase) * (6 + hgt * 0.05)
             let p0 = CGPoint(x: baseX + spread * 0.4, y: baseY)
             let p1 = CGPoint(x: baseX + lean + sway, y: baseY - hgt)
             let drift = lean + sway
-            let sAmp = hgt * (0.10 + (reduceMotion ? 0 : 0.03 * sin(t * 0.4 + phase)))
+            let sAmp = hgt * (0.10 + (still ? 0 : 0.03 * sin(t * 0.4 + phase)))
             let c1 = CGPoint(x: p0.x + drift * 0.30 - sAmp * 0.6, y: baseY - hgt * 0.34)
             let c2 = CGPoint(x: p0.x + drift * 0.70 + sAmp * 0.6, y: baseY - hgt * 0.70)
-            var stipe = Path()
-            stipe.move(to: p0)
-            stipe.addCurve(to: p1, control1: c1, control2: c2)
-            canvas.stroke(stipe, with: .color(stem),
-                          style: StrokeStyle(lineWidth: max(1.2, 2.4 * unit), lineCap: .round))
+            stipes.move(to: p0)
+            stipes.addCurve(to: p1, control1: c1, control2: c2)
             // Blades, alternating sides up the stipe, all leaning a
             // little downstream with the current; the crown blade
             // carries on from the tip.
-            var blades = Path()
-            var floats = Path()
-            var ribs = Path()
-            let count = front ? 6 : 8 + Int((fb >> 36) % 3)
+            let count = front ? 5 : 7 + Int((fb >> 36) % 2)
             let bladeLength = hgt * (front ? 0.38 : 0.30)
-            let current = 0.22 + (reduceMotion ? 0 : 0.08 * sin(t * 0.3 + phase))
+            let current = 0.22 + (still ? 0 : 0.08 * sin(t * 0.3 + phase))
             for i in 0..<count {
                 let u = 0.12 + 0.88 * Double(i) / Double(count - 1)
                 let at = bezier(p0, c1, c2, p1, u)
                 let side = i.isMultiple(of: 2) ? 1.0 : -1.0
-                let flutter = reduceMotion ? 0 : sin(t * 1.1 + Double(i) * 0.9 + phase) * 0.10
+                let flutter = still ? 0 : sin(t * 1.1 + Double(i) * 0.9 + phase) * 0.10
                 let stemAngle = atan2(-at.normal.dx, at.normal.dy)
                 let bh = scatter(fb, i &+ 50)
                 let jitter = (Double(bh & 0xFF) / 0xFF - 0.5) * 0.3
@@ -281,6 +281,7 @@ extension AquariumView {
                 let blade = leaf(from: at.point, angle: angle, length: length, width: width,
                                  curl: length * 0.12)
                 blades.addPath(blade)
+                guard !front else { continue }
                 ribs.move(to: at.point)
                 ribs.addQuadCurve(to: CGPoint(x: at.point.x + cos(angle) * length * 0.82 - sin(angle) * length * 0.08,
                                               y: at.point.y + sin(angle) * length * 0.82 + cos(angle) * length * 0.08),
@@ -291,16 +292,19 @@ extension AquariumView {
                                              y: at.point.y + sin(angle) * r * 0.9 - r,
                                              width: r * 2, height: r * 2))
             }
-            canvas.fill(blades, with: .linearGradient(
-                Gradient(stops: [
-                    .init(color: root, location: 0),
-                    .init(color: mid, location: 0.45),
-                    .init(color: tip, location: 1),
-                ]),
-                startPoint: p0, endPoint: CGPoint(x: p1.x, y: p1.y - bladeLength)))
-            canvas.stroke(ribs, with: .color(rib), lineWidth: max(0.6, 0.9 * unit))
-            canvas.fill(floats, with: .color(float))
+            top = min(top, p1.y - bladeLength)
         }
+        canvas.stroke(stipes, with: .color(stem),
+                      style: StrokeStyle(lineWidth: max(1.2, 2.4 * unit), lineCap: .round))
+        canvas.fill(blades, with: .linearGradient(
+            Gradient(stops: [
+                .init(color: root, location: 0),
+                .init(color: mid, location: 0.45),
+                .init(color: tip, location: 1),
+            ]),
+            startPoint: CGPoint(x: baseX, y: baseY), endPoint: CGPoint(x: baseX, y: top)))
+        canvas.stroke(ribs, with: .color(rib), lineWidth: max(0.6, 0.9 * unit))
+        canvas.fill(floats, with: .color(float))
     }
 
     /// A tuft of sea grass: thin tapered blades fanning from one root,
@@ -321,6 +325,7 @@ extension AquariumView {
                 : TankPaint.color(TankPaint.mix(rgb * dim, veil.hazeColor, haze))
         }
         let scale = piece.scale * max(0.7, min(1.5, size.height / 240)) * 1.1
+        let still = reduceMotion
         var tuft = Path()
         var top = baseY
         for k in 0..<blades {
@@ -328,7 +333,7 @@ extension AquariumView {
             let spread = (Double((fb >> 40) & 0xFF) / 0xFF - 0.5) * 18 * scale
             let hgt = (12 + Double((fb >> 8) & 0xFF) / 0xFF * 26) * scale
             let phase = Double(fb & 0xFF) / 0xFF * .pi * 2
-            let sway = reduceMotion ? 0
+            let sway = still ? 0
                 : sin(t * (0.5 + Double((fb >> 24) & 0xFF) / 0xFF * 0.4) + phase) * 3.5
             let rootX = baseX + spread * 0.25
             let tipX = baseX + spread + (Double((fb >> 16) & 0xFF) / 0xFF - 0.5) * 12 + sway

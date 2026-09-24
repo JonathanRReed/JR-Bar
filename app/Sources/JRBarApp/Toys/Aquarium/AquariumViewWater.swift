@@ -261,9 +261,10 @@ extension AquariumView {
         let level = w.shafts * (1 - night * 0.72)
         let apex = CGPoint(x: size.width * 0.34, y: -size.height * 0.62)
         let length = size.height * 1.05
+        let still = reduceMotion
         for (i, shaft) in Self.shafts.enumerated() where !blackwater || i % 3 == 1 {
-            let sway = reduceMotion ? 0 : sin(t * shaft.swayRate + shaft.phase) * 0.022
-            let breathe = reduceMotion ? 0.75
+            let sway = still ? 0 : sin(t * shaft.swayRate + shaft.phase) * 0.022
+            let breathe = still ? 0.75
                 : 0.62 + 0.38 * sin(t * shaft.breatheRate + shaft.phase * 1.7)
             let alpha = 0.16 * shaft.strength * breathe * level
             // Where the shaft crosses the surface: its brightest point
@@ -447,7 +448,8 @@ extension AquariumView {
     func drawSurface(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         let light = water.light
         let day = (1 - nightFactor(t: t) * 0.7) * (isDarkTheme ? 0.5 : 1)
-        let tt = reduceMotion ? 0 : t
+        let still = reduceMotion
+        let tt = still ? 0 : t
         let band = min(48, size.height * 0.08)
         canvas.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: band)),
                     with: .linearGradient(
@@ -484,7 +486,7 @@ extension AquariumView {
         // Glints: three brightness buckets, one fill each.
         var buckets = [Path(), Path(), Path()]
         for g in Self.glints {
-            let shimmer = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(tt * g.rate + g.phase)
+            let shimmer = still ? 0.5 : 0.5 + 0.5 * sin(tt * g.rate + g.phase)
             guard shimmer > 0.25 else { continue }
             let gx = (g.x * (size.width + 60) + tt * 6 * g.rate).truncatingRemainder(dividingBy: size.width + 60) - 30
             let gy = 10 + g.y * g.y * band * 0.8

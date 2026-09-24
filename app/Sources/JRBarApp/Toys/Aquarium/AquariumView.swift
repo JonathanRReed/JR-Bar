@@ -2,14 +2,17 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
-/// The tank (docs/TOYS.md): a still `Canvas` for everything that never
-/// moves (water, sand, the non-swaying decor — rasterized once by
-/// `.drawingGroup` and recomposited for free), an additive light pass
-/// (god rays, caustic dapples, a slow sheen drift), and a live
-/// `TimelineView` + `Canvas` for the swimmers. Fish positions are
-/// integrated from each `Fish`'s constants and the frame clock, so
-/// `toy.fish` only has to change when the session set does, and the
-/// timelines pause while the window is covered.
+/// The tank (docs/TOYS.md), painted in depth order: a still far pass
+/// (the water, the back wall, the far bank and the back row of bought
+/// pieces), a live plant pass (the kelp and grass that sway between
+/// them), a still near pass (the lit sand and every unmoving piece on
+/// it) — both still passes rasterized by `.drawingGroup` on a slow tick
+/// and recomposited for free — then an additive light pass (shafts,
+/// the caustic net, a slow sheen) and the live `Canvas` for the
+/// swimmers and everything at the glass. Fish positions are integrated
+/// from each `Fish`'s constants and the frame clock, so `toy.fish` only
+/// has to change when the session set does, and every timeline pauses
+/// while the window is covered.
 struct AquariumView: View {
     /// A fixed scene for the snapshot renderer (JRBarAppTests): the
     /// tank drawn without a toy. The app only ever uses `init(toy:)`.
@@ -144,8 +147,9 @@ struct AquariumView: View {
             // The plants: kelp and grass rooted on the near crest,
             // swaying between the far tank and the near still pieces,
             // so a stand grows up behind the castle and in front of the
-            // wreck. Its own live canvas, the only thing in it.
-            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 30.0,
+            // wreck. Its own canvas, the only thing in it; a slow sway
+            // is smooth at twenty frames a second.
+            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 20.0,
                                     paused: paused)) { context in
                 let empty = fish.isEmpty || fish.allSatisfy { $0.isRetired(at: context.date) }
                 Canvas { canvas, size in
@@ -174,6 +178,22 @@ struct AquariumView: View {
                 }
             }
             .drawingGroup(opaque: false, colorMode: .nonLinear)
+            // The light pass: the shafts, the caustic net on the sand and
+            // a slow sheen drift through the column. The canvas
+            // composites additively over the tank, so these read as
+            // light, not pale decals. Everything in it moves a few
+            // points a second, so twelve frames a second is smooth.
+            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 12.0,
+                                    paused: paused)) { context in
+                let t = context.date.timeIntervalSince1970
+                Canvas { canvas, size in
+                    drawGodRays(canvas: &canvas, size: size, t: t)
+                    drawSandCaustics(canvas: &canvas, size: size, t: t)
+                    drawWaterSheen(canvas: &canvas, size: size, t: t)
+                }
+                .blendMode(.plusLighter)
+                .allowsHitTesting(false)
+            }
             // The live timeline: 30 fps normally, a 1 fps heartbeat under
             // Reduce Motion — every draw inside already stills itself, so
             // the slow tick only keeps the sim honest (pellets still
@@ -191,173 +211,158 @@ struct AquariumView: View {
                 // rebuilding it.
                 let order = fishOrder(fish)
                 let empty = fish.isEmpty || fish.allSatisfy { $0.isRetired(at: context.date) }
-                ZStack {
-                    // The light pass: rays, caustic dapples on the dune
-                    // crest and a slow sheen drift through the column.
-                    // The canvas composites additively over the still
-                    // tank, so these read as light, not pale decals —
-                    // and the rays get to pool on the sand, which they
-                    // never could while the floor drew over them.
-                    Canvas { canvas, size in
-                        drawGodRays(canvas: &canvas, size: size, t: t)
-                        drawSandCaustics(canvas: &canvas, size: size, t: t)
-                        drawWaterSheen(canvas: &canvas, size: size, t: t)
+                Canvas { canvas, size in
+                    // One steering step per frame before anything
+                    // reads a position: wander, glass, food, school.
+                    stepSwim(order.ordered, in: size, t: t, now: context.date,
+                             density: density)
+                    // The empty-tank caption's capsule: decor keeps
+                    // clear of it, and it draws last, over the sand.
+                    let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
+                    drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
+                                  front: false, keepClear: caption?.rect)
+                    // The castle's pennant streams over its baked
+                    // keep, so it goes behind the fish as the keep
+                    // does.
+                    drawShopPennant(canvas: &canvas, size: size, t: t)
+                    drawJellyfish(canvas: &canvas, size: size, t: t,
+                                  resident: empty || owns(.jellyfish))
+                    drawPlankton(canvas: &canvas, size: size, t: t,
+                                 density: density, front: false)
+                    drawBubbles(canvas: &canvas, size: size, t: t, density: density)
+                    // The passers-by and the sand/mid-water pets
+                    // live behind the fish lane.
+                    drawVisitor(canvas: &canvas, size: size, t: t, now: context.date)
+                    drawManta(canvas: &canvas, size: size, t: t)
+                    if owns(.seaTurtle) {
+                        drawSeaTurtle(canvas: &canvas, size: size, t: t)
                     }
-                    .blendMode(.plusLighter)
-                    .allowsHitTesting(false)
-                    Canvas { canvas, size in
-                        // One steering step per frame before anything
-                        // reads a position: wander, glass, food, school.
-                        stepSwim(order.ordered, in: size, t: t, now: context.date,
-                                 density: density)
-                        // The empty-tank caption's capsule: decor keeps
-                        // clear of it, and it draws last, over the sand.
-                        let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
-                        drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
-                                      front: false, keepClear: caption?.rect)
-                        // The castle's pennant streams over its baked
-                        // keep, so it goes behind the fish as the keep
-                        // does.
-                        drawShopPennant(canvas: &canvas, size: size, t: t)
-                        drawJellyfish(canvas: &canvas, size: size, t: t,
-                                      resident: empty || owns(.jellyfish))
-                        drawPlankton(canvas: &canvas, size: size, t: t,
-                                     density: density, front: false)
-                        drawBubbles(canvas: &canvas, size: size, t: t, density: density)
-                        // The passers-by and the sand/mid-water pets
-                        // live behind the fish lane.
-                        drawVisitor(canvas: &canvas, size: size, t: t, now: context.date)
-                        drawManta(canvas: &canvas, size: size, t: t)
-                        if owns(.seaTurtle) {
-                            drawSeaTurtle(canvas: &canvas, size: size, t: t)
-                        }
-                        if owns(.octopus) {
-                            drawOctopus(canvas: &canvas, size: size, t: t)
-                        }
-                        if owns(.axolotl) {
-                            drawAxolotl(canvas: &canvas, size: size, t: t)
-                        }
-                        // A batch of finishes pops the chest: a fast
-                        // plume off its lid while the milestone window
-                        // is still open.
-                        let leavers = order.ordered.filter {
-                            !$0.isFry && $0.state == .leaving
-                                && context.date.timeIntervalSince($0.stateSince)
-                                    < AquariumModel.milestoneWindow
-                        }
-                        if leavers.count >= AquariumModel.milestoneCount,
-                           let first = leavers.map(\.stateSince).min() {
-                            drawChestBurst(canvas: &canvas, size: size,
-                                           age: context.date.timeIntervalSince(first))
-                        }
-                        // Mains lay out first so fry can orbit their
-                        // parents.
-                        var layouts: [String: Layout] = [:]
-                        for aFish in order.ordered
-                        where !aFish.isFry && !aFish.isRetired(at: context.date) {
-                            layouts[aFish.id] = layout(of: aFish, in: size,
-                                                       at: t, now: context.date)
-                        }
-                        // A finished fish drops a meal: the pellets and
-                        // who comes to eat them are planned before the
-                        // fish draw, because an eater's dart bends its
-                        // layout.
-                        let meals = completionMeals(in: size, now: context.date,
-                                                    roster: order.ordered)
-                        applyPursuits(meals, to: &layouts, now: context.date)
-                        // The nameplate's target, off the previous
-                        // frame's boxes: a fish wearing the tag skips
-                        // its always-on chip so the two never stack.
-                        let nameplateID: String? = {
-                            let probe = hoverProbe.point
-                                ?? (hoverProbe.flashUntil > context.date
-                                    ? hoverProbe.flashPoint : nil)
-                            guard let probe else { return nil }
-                            return hoverProbe.boxes.last(where: { $0.rect.contains(probe) })?.id
-                        }()
-                        hoverProbe.boxes.removeAll(keepingCapacity: true)
-                        for aFish in order.ordered where !aFish.isRetired(at: context.date) {
-                            let parent = parentContext(of: aFish, mains: order.mains,
-                                                       layouts: layouts)
-                            let l = layouts[aFish.id]
-                                ?? layout(of: aFish, in: size, at: t,
-                                          now: context.date, parent: parent)
-                            layouts[aFish.id] = l
-                            drawFish(canvas: &canvas, size: size, t: t, now: context.date,
-                                     fish: aFish, layout: l, parent: parent,
-                                     showLabels: showLabels && aFish.id != nameplateID)
-                            // The hover/tap hit area: a soft-edged box
-                            // around the drawn body, front-most fish wins.
-                            let len = Self.fishBaseLength * l.scale * aFish.species.sizeScale
-                                * (aFish.isFry ? AquariumModel.fryScale : 1)
-                            let hgt = len * aFish.species.aspect
-                            hoverProbe.boxes.append((
-                                aFish.id,
-                                CGRect(x: l.x - len * 0.62, y: l.y - hgt * 0.85,
-                                       width: len * 1.24, height: hgt * 1.7)))
-                        }
-                        drawTokenPasses(canvas: &canvas, roster: order.ordered,
-                                        layouts: layouts, t: t, now: context.date)
-                        drawMeals(canvas: &canvas, meals: meals, now: context.date)
-                        drawFeed(canvas: &canvas, size: size, now: context.date)
-                        // Only the decor that sways or glows draws over
-                        // the lane; the still pieces baked in behind it.
-                        // The buried treasure waits on the sand for its
-                        // taps.
-                        drawShopDecor(canvas: &canvas, size: size, t: t)
-                        drawOwnedFrontDecor(canvas: &canvas, size: size, t: t)
-                        drawTreasure(canvas: &canvas, size: size, t: t,
-                                     now: context.date)
-                        if owns(.tetraSchool) {
-                            drawTetraSchool(canvas: &canvas, size: size, t: t)
-                        }
-                        if owns(.cleanerShrimp) {
-                            drawCleanerShrimp(canvas: &canvas, size: size, t: t,
-                                              layouts: layouts, roster: order.ordered,
-                                              now: context.date)
-                        }
-                        drawDrops(canvas: &canvas, size: size, t: t,
-                                  layouts: layouts)
-                        drawGoldBursts(canvas: &canvas, size: size, now: context.date)
-                        drawTrickRings(canvas: &canvas, size: size,
-                                       layouts: layouts, now: context.date)
-                        // The juice: tap/eat/collect rings and pearls
-                        // arcing home to the counter.
-                        drawPuffs(canvas: &canvas, size: size, now: context.date)
-                        drawFlights(canvas: &canvas, size: size, now: context.date)
-                        if owns(.snail) {
-                            drawSnail(canvas: &canvas, size: size, t: t)
-                        }
-                        if owns(.hermitCrab) {
-                            drawHermitCrab(canvas: &canvas, size: size, t: t)
-                        }
-                        drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
-                                      front: true, keepClear: caption?.rect)
-                        drawPlants(canvas: &canvas, size: size, t: t, density: density,
-                                   front: true, keepClear: caption?.rect)
-                        drawPlankton(canvas: &canvas, size: size, t: t,
-                                     density: density, front: true)
-                        // The surface draws over everything: a surfacing
-                        // fish reads as under the waterline, not pasted
-                        // on top.
-                        drawSurface(canvas: &canvas, size: size, t: t)
-                        drawGlass(canvas: &canvas, size: size)
-                        // A hovered or tapped fish gets a name tag over
-                        // the glass — this is how a fry says its
-                        // worker's name.
+                    if owns(.octopus) {
+                        drawOctopus(canvas: &canvas, size: size, t: t)
+                    }
+                    if owns(.axolotl) {
+                        drawAxolotl(canvas: &canvas, size: size, t: t)
+                    }
+                    // A batch of finishes pops the chest: a fast
+                    // plume off its lid while the milestone window
+                    // is still open.
+                    let leavers = order.ordered.filter {
+                        !$0.isFry && $0.state == .leaving
+                            && context.date.timeIntervalSince($0.stateSince)
+                                < AquariumModel.milestoneWindow
+                    }
+                    if leavers.count >= AquariumModel.milestoneCount,
+                       let first = leavers.map(\.stateSince).min() {
+                        drawChestBurst(canvas: &canvas, size: size,
+                                       age: context.date.timeIntervalSince(first))
+                    }
+                    // Mains lay out first so fry can orbit their
+                    // parents.
+                    var layouts: [String: Layout] = [:]
+                    for aFish in order.ordered
+                    where !aFish.isFry && !aFish.isRetired(at: context.date) {
+                        layouts[aFish.id] = layout(of: aFish, in: size,
+                                                   at: t, now: context.date)
+                    }
+                    // A finished fish drops a meal: the pellets and
+                    // who comes to eat them are planned before the
+                    // fish draw, because an eater's dart bends its
+                    // layout.
+                    let meals = completionMeals(in: size, now: context.date,
+                                                roster: order.ordered)
+                    applyPursuits(meals, to: &layouts, now: context.date)
+                    // The nameplate's target, off the previous
+                    // frame's boxes: a fish wearing the tag skips
+                    // its always-on chip so the two never stack.
+                    let nameplateID: String? = {
                         let probe = hoverProbe.point
                             ?? (hoverProbe.flashUntil > context.date
                                 ? hoverProbe.flashPoint : nil)
-                        if let point = probe,
-                           let hit = hoverProbe.boxes.last(where: { $0.rect.contains(point) }),
-                           let l = layouts[hit.id],
-                           let hitFish = order.ordered.first(where: { $0.id == hit.id }) {
-                            drawNameplate(canvas: &canvas, size: size,
-                                          fish: hitFish, layout: l)
-                        }
-                        if let caption {
-                            drawEmpty(canvas: &canvas, size: size, caption: caption)
-                        }
+                        guard let probe else { return nil }
+                        return hoverProbe.boxes.last(where: { $0.rect.contains(probe) })?.id
+                    }()
+                    hoverProbe.boxes.removeAll(keepingCapacity: true)
+                    for aFish in order.ordered where !aFish.isRetired(at: context.date) {
+                        let parent = parentContext(of: aFish, mains: order.mains,
+                                                   layouts: layouts)
+                        let l = layouts[aFish.id]
+                            ?? layout(of: aFish, in: size, at: t,
+                                      now: context.date, parent: parent)
+                        layouts[aFish.id] = l
+                        drawFish(canvas: &canvas, size: size, t: t, now: context.date,
+                                 fish: aFish, layout: l, parent: parent,
+                                 showLabels: showLabels && aFish.id != nameplateID)
+                        // The hover/tap hit area: a soft-edged box
+                        // around the drawn body, front-most fish wins.
+                        let len = Self.fishBaseLength * l.scale * aFish.species.sizeScale
+                            * (aFish.isFry ? AquariumModel.fryScale : 1)
+                        let hgt = len * aFish.species.aspect
+                        hoverProbe.boxes.append((
+                            aFish.id,
+                            CGRect(x: l.x - len * 0.62, y: l.y - hgt * 0.85,
+                                   width: len * 1.24, height: hgt * 1.7)))
+                    }
+                    drawTokenPasses(canvas: &canvas, roster: order.ordered,
+                                    layouts: layouts, t: t, now: context.date)
+                    drawMeals(canvas: &canvas, meals: meals, now: context.date)
+                    drawFeed(canvas: &canvas, size: size, now: context.date)
+                    // Only the decor that sways or glows draws over
+                    // the lane; the still pieces baked in behind it.
+                    // The buried treasure waits on the sand for its
+                    // taps.
+                    drawShopDecor(canvas: &canvas, size: size, t: t)
+                    drawOwnedFrontDecor(canvas: &canvas, size: size, t: t)
+                    drawTreasure(canvas: &canvas, size: size, t: t,
+                                 now: context.date)
+                    if owns(.tetraSchool) {
+                        drawTetraSchool(canvas: &canvas, size: size, t: t)
+                    }
+                    if owns(.cleanerShrimp) {
+                        drawCleanerShrimp(canvas: &canvas, size: size, t: t,
+                                          layouts: layouts, roster: order.ordered,
+                                          now: context.date)
+                    }
+                    drawDrops(canvas: &canvas, size: size, t: t,
+                              layouts: layouts)
+                    drawGoldBursts(canvas: &canvas, size: size, now: context.date)
+                    drawTrickRings(canvas: &canvas, size: size,
+                                   layouts: layouts, now: context.date)
+                    // The juice: tap/eat/collect rings and pearls
+                    // arcing home to the counter.
+                    drawPuffs(canvas: &canvas, size: size, now: context.date)
+                    drawFlights(canvas: &canvas, size: size, now: context.date)
+                    if owns(.snail) {
+                        drawSnail(canvas: &canvas, size: size, t: t)
+                    }
+                    if owns(.hermitCrab) {
+                        drawHermitCrab(canvas: &canvas, size: size, t: t)
+                    }
+                    drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
+                                  front: true, keepClear: caption?.rect)
+                    drawPlants(canvas: &canvas, size: size, t: t, density: density,
+                               front: true, keepClear: caption?.rect)
+                    drawPlankton(canvas: &canvas, size: size, t: t,
+                                 density: density, front: true)
+                    // The surface draws over everything: a surfacing
+                    // fish reads as under the waterline, not pasted
+                    // on top.
+                    drawSurface(canvas: &canvas, size: size, t: t)
+                    drawGlass(canvas: &canvas, size: size)
+                    // A hovered or tapped fish gets a name tag over
+                    // the glass — this is how a fry says its
+                    // worker's name.
+                    let probe = hoverProbe.point
+                        ?? (hoverProbe.flashUntil > context.date
+                            ? hoverProbe.flashPoint : nil)
+                    if let point = probe,
+                       let hit = hoverProbe.boxes.last(where: { $0.rect.contains(point) }),
+                       let l = layouts[hit.id],
+                       let hitFish = order.ordered.first(where: { $0.id == hit.id }) {
+                        drawNameplate(canvas: &canvas, size: size,
+                                      fish: hitFish, layout: l)
+                    }
+                    if let caption {
+                        drawEmpty(canvas: &canvas, size: size, caption: caption)
                     }
                 }
             }
