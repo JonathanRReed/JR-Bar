@@ -1863,8 +1863,10 @@ class ToolTintGate:
     Only the FAMILY matters -- Read then Grep is the same light, so a tool
     change inside a family changes nothing and writes nothing. A new family
     is taken at most once every ``min_seconds``; until then the head keeps
-    the family it already shows. Thread-safe: every device's writer asks
-    the same gate, so the Pro and the Dot agree.
+    the family it already shows, and ``held_until`` says when the waiting
+    one may show, so the caller can come back then instead of at the next
+    status event. Thread-safe: every device's writer asks the same gate, so
+    the Pro and the Dot agree.
     """
 
     def __init__(self, min_seconds: float = TOOL_TINT_MIN_REWRITE_SECONDS) -> None:
@@ -1874,20 +1876,30 @@ class ToolTintGate:
         self._min_seconds = float(min_seconds)
         self._shown: str | None = None
         self._changed_at: float | None = None
+        self._held_until: float | None = None
 
     def family(self, tool_name: object, now: float) -> str | None:
         wanted = tool_family(tool_name)
         with self._lock:
             if wanted == self._shown:
+                self._held_until = None
                 return self._shown
             if (
                 self._changed_at is not None
                 and now - self._changed_at < self._min_seconds
             ):
+                self._held_until = self._changed_at + self._min_seconds
                 return self._shown
             self._shown = wanted
             self._changed_at = now
+            self._held_until = None
             return self._shown
+
+    def held_until(self) -> float | None:
+        """When a family the floor is holding back may show, on the clock
+        ``family`` is given; None while nothing is waiting."""
+        with self._lock:
+            return self._held_until
 
 
 #: The one gate every surface asks, so the Pro, the Dot and the Screen Bar

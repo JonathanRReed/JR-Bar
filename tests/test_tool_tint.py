@@ -165,3 +165,32 @@ def test_the_setting_round_trips() -> None:
     settings = ColorSettings.defaults().with_tint_by_tool(True)
     assert ColorSettings.from_dict(settings.to_dict()).tint_by_tool is True
     assert ColorSettings.from_dict({"tint_by_tool": "yes"}).tint_by_tool is False
+
+
+def test_a_held_family_comes_back_when_the_floor_ends() -> None:
+    """A family the floor holds back is shown the moment the floor ends:
+    the writer asks to be woken then, instead of waiting for the next
+    status event or the 15 s refresh during a long shell command."""
+    from types import SimpleNamespace
+
+    from jrbar.status_bar_legacy import tool_tinted_colors
+
+    gate = ToolTintGate()
+    woken: list[float] = []
+    target = SimpleNamespace(schedule_tool_tint_wake=woken.append)
+    settings = ColorSettings.defaults().with_agent_animation("claude", "comet").with_tint_by_tool(True)
+
+    shown = tool_tinted_colors(target, settings, (_status("Bash"),), "claude", now=100.0, gate=gate)
+    assert shown.render_tool_family == "shell" and woken == []
+    held = tool_tinted_colors(target, settings, (_status("Edit"),), "claude", now=101.0, gate=gate)
+    assert held.render_tool_family == "shell"
+    assert gate.held_until() == 103.0
+    assert woken == [pytest.approx(2.0)]
+    # The wake's render takes the waiting family and asks for nothing more.
+    taken = tool_tinted_colors(target, settings, (_status("Edit"),), "claude", now=103.0, gate=gate)
+    assert taken.render_tool_family == "edit"
+    assert gate.held_until() is None and len(woken) == 1
+    # With the tint off nothing is ever held or woken.
+    plain = settings.with_tint_by_tool(False)
+    tool_tinted_colors(target, plain, (_status("Read"),), "claude", now=103.5, gate=gate)
+    assert len(woken) == 1

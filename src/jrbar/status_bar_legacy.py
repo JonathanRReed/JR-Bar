@@ -9156,6 +9156,29 @@ class StatusBarController(NSObject):
         self._last_event_refresh_at = time.monotonic()
         self.refresh_(None)
 
+    def schedule_tool_tint_wake(self, delay: float) -> None:
+        """Comes back for a tool tint the three-second floor held back
+        once the floor ends, from any thread (the writers run off main)."""
+        try:
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "armToolTintWake:", max(0.05, float(delay)), False
+            )
+        except Exception:
+            log_status_bar("tool tint wake not scheduled")
+
+    @objc.IBAction
+    def armToolTintWake_(self, delay) -> None:
+        # One wake at a time: each render the floor holds re-arms it for
+        # the time that is left.
+        NSObject.cancelPreviousPerformRequestsWithTarget_selector_object_(
+            self, "toolTintWake:", None
+        )
+        self.performSelector_withObject_afterDelay_("toolTintWake:", None, float(delay))
+
+    @objc.IBAction
+    def toolTintWake_(self, _sender) -> None:
+        self.schedule_event_refresh()
+
     def replay_debug_logs(self) -> None:
         replayed = replay_recent_debug_logs(self.monitor)
         if replayed:
@@ -12925,11 +12948,11 @@ class StatusBarController(NSObject):
                         if projection is not None
                         else None
                     ),
-                    color_settings=colors_module.with_tool_tint(
+                    color_settings=tool_tinted_colors(
+                        self,
                         colors_for_render,
                         statuses,
                         projection.dominant_provider if projection is not None else None,
-                        now=time.monotonic(),
                     ),
                 )
                 program = apply_brightness(presentation.dsl, brightness)
@@ -13935,13 +13958,13 @@ class StatusBarController(NSObject):
                         if device_projection is not None
                         else None
                     ),
-                    color_settings=colors_module.with_tool_tint(
+                    color_settings=tool_tinted_colors(
+                        self,
                         colors_for_render,
                         statuses_for_device,
                         device_projection.dominant_provider
                         if device_projection is not None
                         else None,
-                        now=time.monotonic(),
                     ),
                 )
                 continuity = continuous_presentation_identity(presentation)
@@ -16668,6 +16691,22 @@ def program_for_lid_animation(
         accent=accent,
     )
     return apply_brightness(normalize_led_text(program), brightness)
+
+
+def tool_tinted_colors(target, colors, statuses, provider, *, now: float | None = None, gate=None):
+    """``colors`` carrying the tool family the working head shows. When the
+    three-second floor holds a new family back, ``target`` is asked to come
+    back as it ends (``schedule_tool_tint_wake``), so the head changes then
+    and not at the next status event or refresh, up to 15 s later."""
+    clock = time.monotonic() if now is None else float(now)
+    tint_gate = gate or colors_module.TOOL_TINT_GATE
+    tinted = colors_module.with_tool_tint(colors, statuses, provider, now=clock, gate=tint_gate)
+    if getattr(colors, "tint_by_tool", False):
+        held = tint_gate.held_until()
+        schedule = getattr(target, "schedule_tool_tint_wake", None)
+        if held is not None and schedule is not None:
+            schedule(held - clock)
+    return tinted
 
 
 def lid_accent_color(target) -> str | None:
