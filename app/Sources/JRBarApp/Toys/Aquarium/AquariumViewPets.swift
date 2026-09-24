@@ -51,7 +51,7 @@ extension AquariumView {
         // Home: the amphora's slot, else the first rock's lee.
         let homeX: Double
         let homeY: Double
-        if game?.owns(.amphora) == true,
+        if owns(.amphora),
            let s = AquariumModel.decorSlot(for: .amphora) {
             homeX = s.x * size.width
             homeY = backDuneTop(atX: s.x * size.width, in: size) - 4
