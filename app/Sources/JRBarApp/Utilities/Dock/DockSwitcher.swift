@@ -310,16 +310,21 @@ enum DockSwitcherList {
 
     /// Stamp each window row with the agent session it exclusively
     /// hosts. Only rows of a session's host app are candidates, so a
-    /// Safari tab titled like a session never claims it.
+    /// Safari tab titled like a session never claims it. The rows are
+    /// the app's whole set, before any scope or display filter: a
+    /// window's claim is judged against every window it competes with.
+    /// `soleAppWindows` is `DockAgentMatch.match`'s.
     static func annotate(_ items: [SwitcherItem], marks: [DockAgentMark],
-                         bundleID: (pid_t) -> String?) -> [SwitcherItem] {
+                         bundleID: (pid_t) -> String?,
+                         soleAppWindows: Bool = true) -> [SwitcherItem] {
         guard !marks.isEmpty else { return items }
         let hosts = marks.reduce(into: Set<String>()) { $0.formUnion($1.hosts) }
         let candidates = items.compactMap { item -> DockAgentMatch.Candidate? in
             guard let bundle = bundleID(item.pid), hosts.contains(bundle) else { return nil }
             return .init(key: item.id, bundleID: bundle, title: item.title)
         }
-        let map = DockAgentMatch.match(marks: marks, candidates: candidates)
+        let map = DockAgentMatch.match(marks: marks, candidates: candidates,
+                                       soleAppWindows: soleAppWindows)
         return items.map { item in
             var item = item
             item.agent = map[item.id]
@@ -1507,17 +1512,20 @@ final class DockSwitcherController {
             icon: { apps[$0]?.icon })
         // The Dock's unread badges ride the window cards too — Mail's 3
         // shows on each Mail window, the way the tile shows it.
-        var scoped = badges.isEmpty ? items : items.map { item in
+        let badged = badges.isEmpty ? items : items.map { item in
             var item = item
             item.badge = apps[item.pid]?.bundleURL.flatMap { badges[$0.path] }
             return item
         }
+        // Marked before the scope and the display narrow the rows: a
+        // window's claim is weighed against all its app's windows.
+        var scoped = DockSwitcherList.annotate(badged, marks: agentMarks(),
+                                               bundleID: { apps[$0]?.bundleIdentifier })
         if let scopePID { scoped = scoped.filter { $0.pid == scopePID } }
         if thisDisplayOnly(), let display = Self.pointerDisplayQuartz() {
             scoped = DockSwitcherList.onDisplay(scoped, display: display)
         }
-        return DockSwitcherList.annotate(scoped, marks: agentMarks(),
-                                         bundleID: { apps[$0]?.bundleIdentifier })
+        return scoped
     }
 
     /// A rebuild under the open strip: the AX half — the window lists

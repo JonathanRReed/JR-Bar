@@ -156,4 +156,73 @@ struct DockAgentMatchTests {
         #expect(windows["claude:session:a"] == "w2")
         #expect(windows["claude:session:b"] == "w1")
     }
+
+    // MARK: App-hosted agents
+
+    static let claudeApp = "com.anthropic.claudefordesktop"
+    static let codexApp = "com.openai.codex"
+
+    @Test("Claude's only window carries its waiting session over nine working ones, and leads ⌥⇥")
+    func soleAppWindow() {
+        var sessions = (1...9).map { session("w\($0)", label: "Working \($0)", host: Self.claudeApp) }
+        sessions.insert(session("ask", label: "Asker", mode: "waiting",
+                                ask: CoreAsk(openedAt: 100, summary: "Allow Bash?"), host: Self.claudeApp),
+                        at: 4)
+        let marks = DockAgentMark.marks(from: sessions)
+        let map = DockAgentMatch.match(marks: marks, candidates: [
+            candidate("front", "zsh"),
+            candidate("claude", "Claude", bundle: Self.claudeApp),
+        ])
+        #expect(map["claude"]?.sessionID == "claude:session:ask")
+        #expect(map["front"] == nil)
+        // The switcher: the waiting agent's window leads and takes the pick.
+        func item(_ id: String, pid: pid_t, title: String) -> SwitcherItem {
+            SwitcherItem(id: id, pid: pid, appName: title, icon: nil, title: title,
+                         minimized: false, onScreen: true, element: nil, windowID: nil)
+        }
+        let items = DockSwitcherList.annotate(
+            [item("front", pid: 1, title: "zsh"), item("claude", pid: 2, title: "Claude")],
+            marks: marks, bundleID: { $0 == 1 ? Self.ghostty : Self.claudeApp })
+        let lane = DockSwitcherList.needsYouFirst(items)
+        #expect(lane.items.first?.id == "claude" && lane.selection == 0)
+        // The locator only raises a window that is the session's own.
+        #expect(SessionWindowLocator.locate(sessionID: "claude:session:ask", marks: marks, items: items,
+                                            bundleID: { $0 == 1 ? Self.ghostty : Self.claudeApp }) == nil)
+        #expect(DockAgentMatch.windows(for: marks, candidates: [
+            candidate("claude", "Claude", bundle: Self.claudeApp)]).isEmpty)
+    }
+
+    @Test("of several waiting sessions, the sole window carries the one that has waited longest")
+    func soleWindowOldestAsk() {
+        let marks = DockAgentMark.marks(from: [
+            session("new", label: "Newer", mode: "waiting", ask: CoreAsk(openedAt: 300, summary: "?"),
+                    host: Self.codexApp, provider: "codex"),
+            session("old", label: "Older", mode: "waiting", ask: CoreAsk(openedAt: 200, summary: "?"),
+                    host: Self.codexApp, provider: "codex"),
+        ])
+        let map = DockAgentMatch.match(marks: marks, candidates: [
+            candidate("chatgpt", "ChatGPT", bundle: Self.codexApp),
+        ])
+        #expect(map["chatgpt"]?.sessionID == "codex:session:old")
+    }
+
+    @Test("two ChatGPT windows: nothing says which holds what, so neither is marked")
+    func twoAppWindowsNoGuess() {
+        let marks = DockAgentMark.marks(from: [
+            session("a", label: "Asker", mode: "waiting", ask: CoreAsk(openedAt: 100, summary: "?"),
+                    host: Self.codexApp, provider: "codex"),
+            session("b", label: "Worker", host: Self.codexApp, provider: "codex"),
+        ])
+        let map = DockAgentMatch.match(marks: marks, candidates: [
+            candidate("one", "ChatGPT", bundle: Self.codexApp),
+            candidate("two", "ChatGPT", bundle: Self.codexApp),
+        ])
+        #expect(map.isEmpty)
+        let idle = DockAgentMark.marks(from: [
+            session("c", label: "Resting", mode: "idle", host: Self.codexApp, provider: "codex"),
+        ])
+        #expect(DockAgentMatch.match(marks: idle, candidates: [
+            candidate("one", "ChatGPT", bundle: Self.codexApp)]).isEmpty,
+                "an idle session is no live mark")
+    }
 }
