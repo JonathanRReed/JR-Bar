@@ -150,4 +150,41 @@ struct ToysStateTests {
                                   #"{"dayNight": 4}"#)
         #expect(mistyped.dayNight == .realTime)
     }
+
+    // MARK: lane aquarium-swim
+
+    @Test("the swim settings default to Natural at 1× and round-trip")
+    func aquariumSwimRoundTrip() throws {
+        let defaults = AquariumSettings()
+        #expect(defaults.swimPace == .natural)
+        #expect(defaults.swimSpeed == 1)
+        #expect(defaults.fishScale == 1)
+        var settings = AquariumSettings(enabled: true)
+        settings.swimPace = .lively
+        settings.swimSpeed = 1.4
+        settings.fishScale = 0.7
+        let text = try encode(settings)
+        #expect(text.contains("\"swimPace\":\"lively\""), "the key is written")
+        let decoded = try decode(AquariumSettings.self, text)
+        #expect(decoded == settings)
+    }
+
+    @Test("the swim settings read tolerantly and clamp")
+    func aquariumSwimTolerant() throws {
+        let old = try decode(AquariumSettings.self, #"{"enabled": true, "density": 0.5}"#)
+        #expect(old.swimPace == .natural && old.swimSpeed == 1 && old.fishScale == 1)
+        let wild = try decode(AquariumSettings.self,
+                              #"{"swimPace": "frantic", "swimSpeed": 9, "fishScale": 0.01}"#)
+        #expect(wild.swimPace == .natural, "an unknown pace is Natural")
+        #expect(wild.swimSpeed == AquariumSettings.swimSpeedRange.upperBound)
+        #expect(wild.fishScale == AquariumSettings.fishScaleRange.lowerBound)
+        let mistyped = try decode(AquariumSettings.self,
+                                  #"{"swimPace": 2, "swimSpeed": "fast", "fishScale": true}"#)
+        #expect(mistyped.swimPace == .natural && mistyped.swimSpeed == 1 && mistyped.fishScale == 1)
+        #expect(AquariumSettings.clamped(.nan, to: AquariumSettings.fishScaleRange) == 1)
+        for pace in SwimPace.allCases {
+            let back = try decode(AquariumSettings.self, #"{"swimPace": "\#(pace.rawValue)"}"#)
+            #expect(back.swimPace == pace)
+        }
+    }
 }

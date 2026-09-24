@@ -272,6 +272,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled, showLabels, density, speciesOverrides, dayNight
         case idleFillMinutes, ambientDisplay, saverClock
+        case swimPace, swimSpeed, fishScale
     }
 
     public init(from decoder: any Decoder) throws {
@@ -288,6 +289,12 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         let display = (try? c.decodeIfPresent(String.self, forKey: .ambientDisplay)) ?? nil
         ambientDisplay = display?.isEmpty == false ? display : nil
         saverClock = (try? c.decodeIfPresent(Bool.self, forKey: .saverClock)) ?? true
+        let pace = (try? c.decodeIfPresent(String.self, forKey: .swimPace)) ?? nil
+        swimPace = pace.flatMap(SwimPace.init(rawValue:)) ?? .natural
+        swimSpeed = Self.clamped((try? c.decodeIfPresent(Double.self, forKey: .swimSpeed)) ?? 1,
+                                 to: Self.swimSpeedRange)
+        fishScale = Self.clamped((try? c.decodeIfPresent(Double.self, forKey: .fishScale)) ?? 1,
+                                 to: Self.fishScaleRange)
     }
 
     /// What `provider` swims as: the user's pick when one is stored,
@@ -296,6 +303,26 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         if let raw = speciesOverrides[provider.lowercased()],
            let species = FishSpecies(rawValue: raw) { return species }
         return FishSpecies.forProvider(provider)
+    }
+
+    /// How busy the swimmers are: how often they wander and turn round.
+    public var swimPace: SwimPace = .natural
+    /// Multiplies how fast every fish swims — and turns, so its paths
+    /// keep their shape. Read through `swimSpeedRange`.
+    public var swimSpeed: Double = 1
+    /// Multiplies every fish's drawn size, and its hover box with it.
+    /// Read through `fishScaleRange`.
+    public var fishScale: Double = 1
+
+    /// The Swimming speed slider's reach.
+    public static let swimSpeedRange: ClosedRange<Double> = 0.5...1.6
+    /// The Fish size slider's reach.
+    public static let fishScaleRange: ClosedRange<Double> = 0.6...1.6
+
+    /// `value` inside `range`; a non-finite value reads as 1×.
+    public static func clamped(_ value: Double, to range: ClosedRange<Double>) -> Double {
+        guard value.isFinite else { return 1 }
+        return min(range.upperBound, max(range.lowerBound, value))
     }
 }
 
