@@ -25,6 +25,7 @@ from __future__ import annotations
 import hmac
 import json
 import math
+import threading
 import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -58,6 +59,14 @@ _SOURCE_FRESHNESS = frozenset(item.value for item in SourceFreshness)
 _PROVIDER_STATES = frozenset(item.value for item in ProviderSourceState)
 _PROVIDER_IDS = frozenset(item.provider_id for item in provider_descriptors())
 _MAX_ACCESS_TOKEN_BYTES = 4_096
+# A peer that sends half a request line, or a Content-Length it never
+# delivers, gives up its thread after this long; polling integrators finish
+# in milliseconds.
+SERVE_HANDLER_TIMEOUT_SECONDS = 5.0
+# Connections served at once. Loopback TCP is open to every local user
+# before the bearer check, and each connection is a thread and a file
+# descriptor out of the daemon's 256; past this one is closed unanswered.
+MAX_SERVE_CONNECTIONS = 16
 
 
 def _read_json(path: Path) -> object | None:
@@ -292,11 +301,35 @@ class ServeConfiguration:
 class _ServeServer(ThreadingHTTPServer):
     def __init__(self, address, handler, configuration: ServeConfiguration) -> None:
         self.serve_configuration = configuration
+        self._connection_slots = threading.BoundedSemaphore(MAX_SERVE_CONNECTIONS)
+        self._slot_lock = threading.Lock()
+        self._slot_holders: set[object] = set()
         super().__init__(address, handler)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._connection_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        with self._slot_lock:
+            self._slot_holders.add(request)
+        super().process_request(request, client_address)
+
+    def shutdown_request(self, request) -> None:
+        try:
+            super().shutdown_request(request)
+        finally:
+            # Every path out of a request ends here, the refused one too;
+            # only a connection that took a slot gives one back.
+            with self._slot_lock:
+                held = request in self._slot_holders
+                self._slot_holders.discard(request)
+            if held:
+                self._connection_slots.release()
 
 
 class _ServeHandler(BaseHTTPRequestHandler):
     server_version = PRODUCT_DISPLAY_NAME
+    timeout = SERVE_HANDLER_TIMEOUT_SECONDS
 
     def do_GET(self) -> None:
         route = self.path.split("?", 1)[0]

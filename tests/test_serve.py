@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -404,3 +405,59 @@ def test_in_process_integrations_are_authenticated_and_only_reuse_redacted_proje
 
     encoded = response.encode()
     assert all(sentinel.encode() not in encoded for sentinel in PRIVATE_SENTINELS)
+
+
+def test_a_peer_cannot_pin_serve_threads__and_1_more(monkeypatch) -> None:
+    import socket
+
+    from jrbar import serve as serve_module
+
+    def closed_by_server(connection: socket.socket, timeout: float = 5.0) -> bool:
+        connection.settimeout(timeout)
+        try:
+            return connection.recv(1024) == b""
+        except ConnectionResetError:
+            return True
+
+    # --- scenario: a half-sent request gives its thread up at the handler timeout
+    assert serve_module._ServeHandler.timeout == serve_module.SERVE_HANDLER_TIMEOUT_SECONDS == 5.0
+    monkeypatch.setattr(serve_module._ServeHandler, "timeout", 0.2)
+    server = create_serve_server(port=0, allow_anonymous_status=True)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        trickler = socket.create_connection(("127.0.0.1", port), timeout=5)
+        trickler.sendall(b"GET /status.js")
+        assert closed_by_server(trickler)
+        trickler.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    # --- scenario: past the connection cap a new one is closed, and a slot comes back when one ends
+    monkeypatch.setattr(serve_module._ServeHandler, "timeout", 5.0)
+    monkeypatch.setattr(serve_module, "MAX_SERVE_CONNECTIONS", 2)
+    server = create_serve_server(port=0, allow_anonymous_status=True)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        idle = [socket.create_connection(("127.0.0.1", port), timeout=5) for _ in range(2)]
+        refused = socket.create_connection(("127.0.0.1", port), timeout=5)
+        assert closed_by_server(refused)
+        refused.close()
+        for connection in idle:
+            connection.close()
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/status.json", timeout=5) as response:
+                    assert response.status == 200
+                break
+            except (urllib.error.URLError, ConnectionError):
+                # The idle handlers are still noticing their peers left.
+                assert time.monotonic() < deadline
+    finally:
+        server.shutdown()
+        server.server_close()
