@@ -574,30 +574,39 @@ pieces on a 1512 × 982 screen, scaled by each screen's area, 0.8–1.8×;
 Big throws a second volley and a softer second pop); **Palette** —
 Provider (base, a lighter step, a gold- or cyan-leaning accent, white,
 gold, pale), Toys tint, Everyone working (each working provider's colour
-and glyph), Party, Gold, Pastel, Mono (the tint alone); an older file's
+and glyph, a glyph always in its own provider's colour), Party, Gold, Pastel, Mono (the tint alone); an older file's
 Rainbow reads as Party; **Shapes** — Mixed, Streamers, Flecks, Glyphs,
 Stars; **Landing** (below); **Seasonal** (off: on New Year, Valentine's,
 Lunar New Year, Easter, Halloween and Christmas, that day's colours and
 fleck, read off the Mac's calendar); and under **Adjust**, Amount
 (density, 0.5–2× on top of the Size) and Hang time (0.7–1.5×: how slowly
-pieces fall and how long they rest — never the pop or the spray).
+pieces fall and how long they rest — never the pop or the spray); a
+Settings search for either opens Adjust.
 **When**: the triggers, and **Moment styles** (off: a milestone bursts
 gold, big and from the corners; "All caught up" is a gentle rain).
 **Manners**: the quiet switch and the held burst, Sound, and **Screens**
 (every free screen, or the main one only).
 
 **Landing.** Rest (the default) lands every piece on something real:
-the top edge of the frontmost window under it that no window in front
-hides (read once from the window list — bounds only, no permission —
-through `OnScreenWindows`, shared with the buddy), else the Dock's top,
-else the bottom edge. A piece squash-bounces, eases flat onto its ledge,
+the first surface it is over at the moment it comes down to it. That is
+the highest window top edge showing there (read once from the window
+list — bounds only, no permission — through `OnScreenWindows`, shared
+with the buddy). Every window in front counts, so a maximised window
+hides the edges behind it, though it holds no pieces itself, and a
+piece never lies past the end of an edge. Else it is the Dock's top,
+only across the Dock (its tiles read from the Dock's accessibility list;
+without Accessibility the Dock's top stands for the whole width), else
+the bottom edge. A piece squash-bounces, eases flat onto its ledge,
 lies about 1.2 s and fades; the window list is read again once a second,
 and a piece whose window moved or closed fades early. Fall is a quick
 shower off the bottom, fading over the last 12% of the screen and done
-in about 4.3 s (it used to drizzle for 9.6 s). Fade dissolves pieces
-between 35% and 55% of the screen's height, with a little shrink. A
-Standard burst is gone within 5 s in every landing on screens 900–1329
-pt tall.
+in about 4.3 s (it used to drizzle for 9.6 s); the slow pieces are
+hurried, each to its own deadline, so the last ones trail off instead of
+landing in a line. Fade dissolves pieces on their way down, between 35%
+and 55% of the screen's height (one thrown up from the corners that
+peaks lower dissolves over the same depth from its peak), with a little
+shrink; a rising piece always shows in full. A Standard burst is gone
+within 5 s in every landing on screens 900–1329 pt tall.
 
 **Triggers** are judged by `ConfettiTriggerPolicy` in JRBarCore: a
 session completing (`completed` events), any provider's weekly lane
@@ -623,7 +632,8 @@ screen a fullscreen app owns is skipped. The overlay is invisible to
 screen capture and sharing. Reduce Motion gets one soft glow at the lip
 (or the icon) and nothing moving. The optional pop and rustle is
 synthesized once, cached as a WAV in the caches folder and played
-through `SoundPlayer.playSynthesized`: Settings › Sounds' volume, the
+through `SoundPlayer.playSynthesized` on the app's one player (the event
+sounds' own): Settings › Sounds' volume, the
 alert device when that's picked, held while another app has the
 microphone, a touch higher or lower each burst (±6%), and panned toward
 the icon when it fires from there. The card's cost line quotes the last
