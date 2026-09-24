@@ -41,6 +41,9 @@ public struct KeepAwakeReading: Equatable, Sendable {
     public var runway: CoreBatteryRunway?
     /// The newest release worth reading (`power.last_release`).
     public var lastRelease: CorePowerRelease?
+    /// The closed-lid hold is up (`power.closed_lid.holding`): something
+    /// holds the Mac even while the hold itself is off.
+    public var lidHolding = false
     /// Clock times follow the Mac's locale and zone; tests pin both.
     public var locale: Locale = .current
     public var timeZone: TimeZone = .current
@@ -64,6 +67,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
         self.init(hold: power?.hold)
         runway = power?.battery?.runway
         lastRelease = power?.lastRelease
+        lidHolding = power?.closedLid?.holding == true
     }
 
     /// The daemon's hold; off when it sent none.
@@ -185,12 +189,16 @@ public struct KeepAwakeReading: Equatable, Sendable {
     public func footerLine(now: Date) -> (full: String, short: String)? {
         if let why = suspendedWords { return ("Awake paused · \(why)", "Paused") }
         // A run the battery or the charger will not carry outranks the
-        // hold's own words: it is the one thing to act on.
-        if runway?.short == true {
-            if let minutes = runway?.minutesLeft { return ("Awake · battery ~\(minutes) min left", "~\(minutes) min") }
-            return ("Awake · battery running short", "Battery low")
+        // hold's own words: it is the one thing to act on. Only while
+        // something holds the Mac, though — the daemon's charger verdict
+        // does not ask whether a hold is up, and "Awake" would be false.
+        if state != .off || lidHolding {
+            if runway?.short == true {
+                if let minutes = runway?.minutesLeft { return ("Awake · battery ~\(minutes) min left", "~\(minutes) min") }
+                return ("Awake · battery running short", "Battery low")
+            }
+            if runway?.adapterShort == true { return ("Awake · the charger can't keep up", "Charger short") }
         }
-        if runway?.adapterShort == true { return ("Awake · the charger can't keep up", "Charger short") }
         switch state {
         case .off:
             return releaseNews(now: now)

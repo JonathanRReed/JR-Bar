@@ -152,6 +152,17 @@ struct KeepAwakeReadingTests {
         #expect(fine.footerLine(now: now)?.full == "Awake · 2 agents working")
     }
 
+    @Test("a charger falling behind never says Awake while nothing holds the Mac")
+    func runwayNeedsAHold() throws {
+        let released = pinned(KeepAwakeReading(power: try power(
+            #"{"hold":{"state":"off"},"battery":{"runway":{"agents":2,"adapter_short":true}}}"#)))
+        #expect(released.footerLine(now: now) == nil)
+        #expect(released.facts().contains { $0.hasPrefix("The charger can't keep up") }, "the fact stays in the tooltip")
+        let lid = pinned(KeepAwakeReading(power: try power(
+            #"{"hold":{"state":"off"},"closed_lid":{"holding":true},"battery":{"runway":{"agents":2,"adapter_short":true}}}"#)))
+        #expect(lid.footerLine(now: now)?.short == "Charger short", "the closed-lid hold holds the Mac")
+    }
+
     @Test("the last release says when and why; a closed-lid stretch reads as one story")
     func lastRelease() throws {
         let at = now.timeIntervalSince1970 - 10 * 60
