@@ -82,7 +82,12 @@ final class SettingsStore {
     var page: Page = .general {
         // A search hit names its row only on its own page; choosing any
         // other page retires it.
-        didSet { if searchHit?.page != page { searchHit = nil } }
+        didSet {
+            if searchHit?.page != page {
+                searchHit = nil
+                highlightedCard = nil
+            }
+        }
     }
     /// The Toys page's store, created beside this one in the delegate.
     /// Weak: the delegate owns it.
@@ -263,21 +268,42 @@ final class SettingsStore {
     /// top until another page is chosen.
     var searchHit: SettingsSearchEntry?
 
+    /// Toy and utility cards held open on their pages, by toy id — a
+    /// search hit opens its card, and a card stays as the person left
+    /// it while the app runs.
+    var expandedCards: Set<String> = []
+    /// The card a search hit landed on, lit on its page until the page
+    /// lets it go.
+    var highlightedCard: String?
+    /// Bumped by every reveal into a card, so the page scrolls to it
+    /// again even when the same card is picked twice.
+    private(set) var revealRequest = 0
+
+    /// The scroll anchor a card's row carries on its page.
+    nonisolated static func cardAnchor(_ card: String) -> String { "card:\(card)" }
+
     /// Every searchable row: the daemon pages' titled rows, each page,
-    /// the shortcut catalogue, and the toys and utilities as they are.
+    /// the shortcut catalogue, the toys and utilities as they are, and
+    /// the titled rows inside their cards.
     var searchEntries: [SettingsSearchEntry] {
         var entries = SettingsSearch.rows + SettingsSearch.pages + SettingsSearch.shortcutRows
         entries += MenuBarHotkeyAction.allCases.map {
             SettingsSearchEntry(.shortcuts, "Menu bar", MenuBarHotkeys.title(for: $0))
         }
+        var cards: [(page: Page, toy: any Toy)] = []
         if let utilities {
-            let cards: [any Toy] = [utilities.menuBar, utilities.dock, utilities.agents, utilities.dataHoarder]
-            entries += cards.map { SettingsSearchEntry(.utilities, $0.name, $0.name, subtitle: $0.blurb) }
+            cards += ([utilities.menuBar, utilities.dock, utilities.agents, utilities.dataHoarder] as [any Toy])
+                .map { (.utilities, $0) }
         }
         if let toys {
-            entries += toys.toys.map {
-                // The notch reads as a utility and sits on that page.
-                SettingsSearchEntry($0.id == "notch" ? .utilities : .toys, $0.name, $0.name, subtitle: $0.blurb)
+            // The notch reads as a utility and sits on that page.
+            if let notch = toys.notch { cards.append((.utilities, notch)) }
+            cards += toys.toys.map { (.toys, $0) }
+        }
+        for (page, toy) in cards {
+            entries.append(SettingsSearchEntry(page, toy.name, toy.name, subtitle: toy.blurb, card: toy.id))
+            entries += toy.searchRows.map {
+                SettingsSearchEntry(page, toy.name, $0.title, keywords: $0.keywords, card: toy.id)
             }
         }
         return entries
@@ -287,10 +313,23 @@ final class SettingsStore {
         SettingsSearch.search(searchQuery, in: searchEntries)
     }
 
-    /// A result picked: its page, named at the top.
+    /// A result picked: its page, named at the top — and for a row in a
+    /// toy or utility card, that card opened, scrolled to and lit.
     func reveal(_ entry: SettingsSearchEntry) {
         searchHit = entry
         page = entry.page
+        if let card = entry.card {
+            expandedCards.insert(card)
+            highlightedCard = card
+            revealRequest += 1
+        } else {
+            highlightedCard = nil
+        }
+    }
+
+    /// Open or fold one card by hand.
+    func setCard(_ card: String, expanded: Bool) {
+        if expanded { expandedCards.insert(card) } else { expandedCards.remove(card) }
     }
 
     /// macOS's answer to the notification permission, asked by the

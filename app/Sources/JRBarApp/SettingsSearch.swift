@@ -8,25 +8,30 @@ import JRBarCore
 /// The rows are listed here rather than discovered: a page builds its
 /// rows only when shown, and the daemon's pages are plain SwiftUI. A test
 /// holds the list honest — every title here must still be a row title in
-/// the app's sources — and the dynamic rows (each toy and utility, each
-/// shortcut action and quick toggle) are added at search time from their
-/// own catalogues, so they can never go stale.
+/// the app's sources — and the dynamic rows (each toy and utility and
+/// the rows inside their cards, each shortcut action and quick toggle)
+/// are added at search time from their own catalogues, so they can
+/// never go stale.
 struct SettingsSearchEntry: Hashable, Identifiable, Sendable {
     let page: SettingsStore.Page
     let group: String
     let title: String
     let subtitle: String?
     let keywords: [String]
+    /// The toy or utility card the row lives in (its toy id): picking
+    /// the hit opens that card, scrolls to it and lights it.
+    let card: String?
 
     var id: String { "\(page.rawValue)/\(group)/\(title)" }
 
     init(_ page: SettingsStore.Page, _ group: String, _ title: String,
-         subtitle: String? = nil, keywords: [String] = []) {
+         subtitle: String? = nil, keywords: [String] = [], card: String? = nil) {
         self.page = page
         self.group = group
         self.title = title
         self.subtitle = subtitle
         self.keywords = keywords
+        self.card = card
     }
 }
 
@@ -66,7 +71,8 @@ enum SettingsSearch {
         .init(.devices, "Creator Micro 2", "Analog joystick sectors", subtitle: "Sectors 1–4 (AG20–AG23) count as inputs and can carry mappings in the Control Center."),
         .init(.devices, "Creator Micro 2", "Details"),
         .init(.devices, "Creator Micro 2", "Layers", subtitle: "Who each hardware layer belongs to. Layer 1 is always JR-Bar's; a layer handed to Codex, Claude or other apps is left to that writer instead of fought over."),
-        .init(.devices, "Creator Micro 2", "Control Center", subtitle: "Pins, banks, the rail, input check and the keymap."),
+        .init(.devices, "Creator Micro 2", "Control Center", subtitle: "Pins, banks, the rail, input check and the keymap.",
+              keywords: ["creator micro", "keymap", "pad", "window"]),
         .init(.devices, "Screen Bar", "Show Screen Bar", subtitle: "The light band under the notch."),
         .init(.devices, "Screen Bar", "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band."),
         .init(.devices, "Screen Bar", "In full screen", subtitle: "Hidden, shown but not over video, or always over full-screen apps."),

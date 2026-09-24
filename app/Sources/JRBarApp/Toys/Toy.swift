@@ -75,6 +75,9 @@ protocol Toy: AnyObject, Observable {
     /// 30 fps · none when covered". nil hides the line. `now` is system
     /// uptime, the clock `ToyMeter` stamps with.
     func cost(at now: TimeInterval) -> String?
+    /// The titled rows inside `controls` that Settings search can land
+    /// on (`ToySearchCatalog`).
+    var searchRows: [ToySearchRow] { get }
 }
 
 extension Toy {
@@ -123,12 +126,39 @@ final class ToyMeter {
 /// One toy on the page: the symbol tile in the page tint, name, blurb,
 /// status chip, the on/off toggle, and a disclosure with the toy's
 /// `controls`.
+///
+/// Inside the Settings window the card's disclosure is the store's
+/// (`SettingsStore.expandedCards`), so a search hit can open it; the
+/// card carries its scroll anchor and lights up while it is the hit.
 struct ToyCard: View {
     let toy: any Toy
     let tint: Color
-    @ViewState private var expanded = false
+    @Environment(SettingsStore.self) private var settings: SettingsStore?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewState private var localExpanded = false
+
+    private var expanded: Bool {
+        settings.map { $0.expandedCards.contains(toy.id) } ?? localExpanded
+    }
+
+    private func setExpanded(_ open: Bool) {
+        if let settings { settings.setCard(toy.id, expanded: open) } else { localExpanded = open }
+    }
 
     var body: some View {
+        let lit = settings?.highlightedCard == toy.id
+        card
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(tint.opacity(lit ? 0.14 : 0))
+                    .padding(.horizontal, -6)
+                    .padding(.vertical, -3)
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: lit)
+            .id(SettingsStore.cardAnchor(toy.id))
+    }
+
+    @ViewBuilder private var card: some View {
         // Read the observable surface here so the card re-renders on any
         // change; the binding's get returns the value tracked in this
         // body, so the switch can never sit stale.
@@ -139,7 +169,7 @@ struct ToyCard: View {
         // in a DisclosureGroup label can replace its expansion action.
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
-                Button { expanded.toggle() } label: {
+                Button { setExpanded(!expanded) } label: {
                     HStack(alignment: .center, spacing: 10) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 9, weight: .semibold))
