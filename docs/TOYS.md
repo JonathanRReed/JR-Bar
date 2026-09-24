@@ -511,12 +511,13 @@ hops up onto the top edge of the frontmost window with room (or the
 bottom of the screen), walks along it, turns round on the spot at the
 far end — the edge's end when the edge is short — wanders half the way
 back, and hops home to where you parked it. "Take walks" turns it off;
-"How often it walks" (`walkEvery`, 3–40 minutes, 12 by default, the
-cadence it always had) sets roughly one walk per that many minutes of
-work. It only ever moves its own panel. A press on it holds it still
-under the pointer (the walk picks up on release), its menu holds it
-too, a carry ends the walk, and an ask, a failure, idle agents or a
-window that moved send it straight home from where it stands. Resizing
+"Time between walks" (`walkEvery`, 3–40 minutes, 12 by default, the
+cadence it always had) sets roughly how many minutes of work pass
+between one walk and the next, so further right is rarer. It only ever
+moves its own panel. A press on it holds it still under the pointer
+(the walk picks up on release), its menu holds it too, a carry ends the
+walk, and an ask, a failure, idle agents, a window that moved or "Take
+walks" turned off send it straight home from where it stands. Resizing
 or re-parking it mid-walk does the same instead of teleporting it.
 Reduce Motion never walks.
 
@@ -526,21 +527,27 @@ through upright and the body narrows a touch at the midpoint; stepping
 from its patrol into the walk and back blends the two poses over the
 same beat. A mood change (a completion hop, an ask, a slump, waking)
 hands the old pose over to the new one over 0.24 s (`BuddyHandoff`), so
-the patrol's three-point swing never jumps; the new mood's own entrance
-still plays. The carried dangle follows the cursor on a short lag, so a
-change of direction swings it through upright, and the drop eases out
-whatever lean it had. Dragged out of the notch it takes over in place:
+the patrol's three-point swing never jumps, and a second change inside
+that beat carries on from the blend on screen; the new mood's own
+entrance still plays. The carried dangle follows the cursor on a short
+lag, so a change of direction swings it through upright, and the drop
+eases out whatever lean it had. Dragged out of the notch it takes over in place:
 no blink, and at 2× it grows from the docked size over 0.3 s instead of
-doubling in a frame. "Tuck away" ducks it out over a quarter second —
-up under the notch when docked, down to its feet when floating — and it
-pops back up when it wakes. Reduce Motion takes every one of these in a
-single step.
+doubling in a frame. Docked again (a drop on the slot, the menu, the
+card), the floating one fades out with its figure still in it while the
+notch's fades in, and switched off it fades the same way. "Tuck away"
+ducks it out over a quarter second — up under the notch when docked,
+down to its feet when floating — and it pops back up when it wakes.
+Reduce Motion takes every one of these moves in a single step: the tuck
+goes at once, and nothing grows, turns or swings; only the panels'
+short fades stay.
 
 The skeleton is a soft body, two pupils under lids, a mouth and a ground
 shadow — at 18pt the silhouette does the work, so the craft lives in the
 animation. Pacing is an eased walk with a per-step bob and a pause at
-each end where the eyes turn before the body follows; the gathering
-trades the walk for quick happy micro-hops in place. The wave and the
+each end where the eyes turn before the body follows, the lean swinging
+through upright to the way back; the gathering trades the walk for
+quick happy micro-hops in place. The wave and the
 hop both crouch first, stretch on the way up and land flat. Asks
 alternate deterministically: odd asks wave with a popped "!", even asks
 just lean in holding eye contact — wide pupils, a slight loom, no bang.
