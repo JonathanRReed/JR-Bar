@@ -313,15 +313,18 @@ struct AquariumRenderProofTests {
                                  backdropID: "classic", night: 0, visitor: nil)
         purse.game?.inventory = ["plant": 1, "rock": 1, "castle": 1, "themeReef": 1, "sandWhite": 1]
         let shopTank = AquariumView(fixture: purse)
-        for scheme in [ColorScheme.light, .dark] {
+        // Hosted, so the In tank switches draw as the shop shows them.
+        purse.game?.stored = ["rock"]
+        for dark in [false, true] {
             let shelves = shopTank.shopShelves(game: purse.game ?? AquariumGame(), adults: purse.fish)
                 .padding(16)
-                .frame(width: 348, height: 3400, alignment: .top)
+                .frame(width: 348, height: 3900, alignment: .top)
                 .background(Color(nsColor: .windowBackgroundColor))
-                .environment(\.colorScheme, scheme)
-            if try Self.writePNG(shelves, size: CGSize(width: 348, height: 3400),
-                                 name: "aquarium-shop-\(scheme == .dark ? "dark" : "light")",
-                                 into: dir) { written += 1 }
+            let rep = try Self.hostedSnapshot(shelves, size: CGSize(width: 348, height: 3900), dark: dark)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                try png.write(to: dir.appendingPathComponent("aquarium-shop-\(dark ? "dark" : "light").png"))
+                written += 1
+            }
         }
         // The card's controls and the live tank's HUD, from a real toy
         // on a scratch save.
