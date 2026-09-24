@@ -409,7 +409,9 @@ extension AquariumView {
             : (golden ? NSColor(srgbRed: 0.98, green: 0.76, blue: 0.22, alpha: 1)
                       : ProviderStyle.style(for: fish.providerID).nsAccent)
         // Depth: deeper lanes wash toward the column's floor colour.
-        let palette = CartoonFish.Palette(accent: base, depth: lane, floor: floorNS)
+        let palette = CartoonFish.Palette(accent: base, depth: lane, floor: floorNS,
+                                          haze: water.style.haze, vivid: water.style.vivid,
+                                          ink: water.style.ink)
 
         // The tail beats on the fish's own clock: faster the faster it
         // really swims, quicker still while its session is busy. A
@@ -490,7 +492,7 @@ extension AquariumView {
             * smooth(clamp01((1.0 - blinkPhase) / 0.025))
         let drowsy = smooth(clamp01((l.sleep - 0.3) / 0.5))
         let blink = dead || reduceMotion ? 0.0 : max(wink, drowsy)
-        let lw = CartoonFish.outlineWidth(length)
+        let lw = CartoonFish.outlineWidth(length, ink: palette.ink)
         CartoonFish.draw(into: &f, species: fish.species, palette: palette, swim: swim,
                          mouth: mouth, blink: blink, dead: dead,
                          pointSize: length,

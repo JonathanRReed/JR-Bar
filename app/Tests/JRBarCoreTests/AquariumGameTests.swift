@@ -668,3 +668,36 @@ extension AquariumGameTests {
         #expect(game.pets["s199"] != nil)
     }
 }
+
+// MARK: The Arcade set
+
+extension AquariumGameTests {
+    @Test("the Arcade set's price, tier and shelf")
+    func arcadeCatalog() {
+        #expect(ShopItem.themeArcade.category == .themes)
+        #expect(ShopItem.themeArcade.price == 60)
+        #expect(ShopItem.themeArcade.tier == 1)
+        #expect(ShopItem.themeArcade.themeID == "arcade")
+        #expect(ShopItem.gravelCandy.category == .substrates)
+        #expect(ShopItem.gravelCandy.price == 35)
+        #expect(ShopItem.gravelCandy.tier == 0)
+        #expect(ShopItem.gravelCandy.substrateID == "candy")
+        #expect(ShopItem.toyReefBackdrop.category == .substrates)
+        #expect(ShopItem.toyReefBackdrop.price == 110)
+        #expect(ShopItem.toyReefBackdrop.tier == 2)
+        #expect(ShopItem.toyReefBackdrop.backdropID == "toyreef")
+    }
+
+    @Test("buying Arcade puts it on, and Classic takes it off again")
+    func buyArcadeThenRevert() {
+        var game = AquariumGame(pearls: 200, lifetimePearls: 60)
+        game.apply(.purchase(.themeArcade), now: Self.t0)
+        #expect(game.owns(.themeArcade))
+        #expect(game.themeID == "arcade")
+        game.apply(.useClassic(.water), now: Self.t0)
+        #expect(game.themeID == "classic")
+        #expect(game.owns(.themeArcade), "going back to Classic keeps what you bought")
+        game.apply(.selectTheme(.themeArcade), now: Self.t0)
+        #expect(game.themeID == "arcade")
+    }
+}

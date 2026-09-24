@@ -82,15 +82,26 @@ extension AquariumView {
         /// fine.
         var grain: Double
         var grainAlpha: Double
+        /// A multicoloured gravel's colours — each grain and pebble
+        /// picks one; nil keeps the two-tone grains.
+        var speckColors: [TankPaint.RGB]? = nil
     }
 
     var sandPalette: SandPalette { Self.sandPalette(forSubstrate: substrateKey) }
 
     /// A substrate's sand as a swatch, crest to foot — the shop's tile.
+    /// A multicoloured gravel shows its colours instead.
     static func sandSwatch(forSubstrate substrate: String) -> [Color] {
         let sand = sandPalette(forSubstrate: substrate)
+        if let candy = sand.speckColors { return candy.map { TankPaint.color($0) } }
         return [TankPaint.color(sand.lit), TankPaint.color(sand.body), TankPaint.color(sand.foot)]
     }
+
+    /// Candy gravel's five colours: pink, lemon, cyan, lime and violet.
+    static let candyColors: [TankPaint.RGB] = [
+        .init(1.0, 0.45, 0.70), .init(1.0, 0.88, 0.30), .init(0.30, 0.85, 1.0),
+        .init(0.55, 0.95, 0.35), .init(0.70, 0.50, 1.0),
+    ]
 
     /// The palette for a substrate key — "classic" tan when unknown.
     static func sandPalette(forSubstrate substrate: String) -> SandPalette {
@@ -101,6 +112,14 @@ extension AquariumView {
                                rippleShade: .init(0.58, 0.54, 0.46), rippleLight: .init(1.0, 1.0, 0.96),
                                speckLight: .init(1.0, 0.99, 0.95), speckDark: .init(0.46, 0.42, 0.34),
                                grain: 0.9, grainAlpha: 0.9)
+        case "candy":
+            // Pet-store gravel: a light tan bed under big round grains in
+            // five candy colours.
+            return SandPalette(lit: .init(0.97, 0.92, 0.82), body: .init(0.88, 0.80, 0.68),
+                               foot: .init(0.52, 0.45, 0.36), crest: .init(1.0, 0.98, 0.92),
+                               rippleShade: .init(0.66, 0.58, 0.48), rippleLight: .init(1.0, 0.98, 0.93),
+                               speckLight: .init(1.0, 0.97, 0.92), speckDark: .init(0.50, 0.43, 0.34),
+                               grain: 2.4, grainAlpha: 1.8, speckColors: candyColors)
         case "black":
             return SandPalette(lit: .init(0.30, 0.31, 0.35), body: .init(0.15, 0.16, 0.19),
                                foot: .init(0.05, 0.05, 0.07), crest: .init(0.66, 0.69, 0.76),
@@ -255,19 +274,23 @@ extension AquariumView {
         }
         drawRipples(canvas: &bed, size: size, sand: sand)
         // Grains: fine and bright on aragonite, chunky on basalt.
-        var lightGrains = Path()
-        var darkGrains = Path()
-        for speck in Self.sandSpeckles {
-            let sx = speck.x * size.width
-            let top = sandTop(atX: sx, in: size)
-            let depth = speck.y
-            let sy = top + 3 + depth * depth * max(0, size.height - top - 4)
-            let r = speck.r * sand.grain * (0.6 + depth * 0.8)
-            let rect = CGRect(x: sx - r, y: sy - r * 0.6, width: r * 2, height: r * 1.2)
-            if speck.light { lightGrains.addEllipse(in: rect) } else { darkGrains.addEllipse(in: rect) }
+        if let colors = sand.speckColors {
+            drawCandyGrains(canvas: &bed, size: size, colors: colors, grain: sand.grain)
+        } else {
+            var lightGrains = Path()
+            var darkGrains = Path()
+            for speck in Self.sandSpeckles {
+                let sx = speck.x * size.width
+                let top = sandTop(atX: sx, in: size)
+                let depth = speck.y
+                let sy = top + 3 + depth * depth * max(0, size.height - top - 4)
+                let r = speck.r * sand.grain * (0.6 + depth * 0.8)
+                let rect = CGRect(x: sx - r, y: sy - r * 0.6, width: r * 2, height: r * 1.2)
+                if speck.light { lightGrains.addEllipse(in: rect) } else { darkGrains.addEllipse(in: rect) }
+            }
+            bed.fill(lightGrains, with: .color(TankPaint.color(sand.speckLight, min(1, 0.30 * sand.grainAlpha))))
+            bed.fill(darkGrains, with: .color(TankPaint.color(sand.speckDark, min(1, 0.26 * sand.grainAlpha))))
         }
-        bed.fill(lightGrains, with: .color(TankPaint.color(sand.speckLight, min(1, 0.30 * sand.grainAlpha))))
-        bed.fill(darkGrains, with: .color(TankPaint.color(sand.speckDark, min(1, 0.26 * sand.grainAlpha))))
         drawPebbles(canvas: &bed, size: size, sand: sand)
         // The crest: a broad soft glow under a thin bright edge, so the
         // dune tops read lit from above.
@@ -336,8 +359,41 @@ extension AquariumView {
                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
     }
 
+    /// Candy gravel's grains: every seeded grain plus a second, denser
+    /// scatter, each a round bead in one of the palette's colours with a
+    /// darker lower half and a white glint — bucketed by colour so the
+    /// whole bed is a handful of fills, baked on the still pass.
+    private func drawCandyGrains(canvas: inout GraphicsContext, size: CGSize,
+                                 colors: [TankPaint.RGB], grain: Double) {
+        var beads = [Path](repeating: Path(), count: colors.count)
+        var glints = Path()
+        var shades = Path()
+        var rng = TankPaint.Seeded(0xCA4D1)
+        let dense = Self.sandSpeckles.count * 2
+        for k in 0..<dense {
+            let speck = Self.sandSpeckles[k % Self.sandSpeckles.count]
+            let ux = k < Self.sandSpeckles.count ? speck.x : rng.next()
+            let depth = k < Self.sandSpeckles.count ? speck.y : rng.next()
+            let sx = ux * size.width
+            let top = sandTop(atX: sx, in: size)
+            let sy = top + 3 + depth * depth * max(0, size.height - top - 4)
+            let r = (0.55 + 0.45 * speck.r) * grain * (0.55 + depth * 0.75)
+            let rect = CGRect(x: sx - r, y: sy - r * 0.8, width: r * 2, height: r * 1.6)
+            beads[k % colors.count].addEllipse(in: rect)
+            shades.addEllipse(in: CGRect(x: sx - r * 0.8, y: sy, width: r * 1.6, height: r * 0.8))
+            glints.addEllipse(in: CGRect(x: sx - r * 0.5, y: sy - r * 0.55,
+                                         width: r * 0.45, height: r * 0.35))
+        }
+        for (color, path) in zip(colors, beads) {
+            canvas.fill(path, with: .color(TankPaint.color(color, 0.95)))
+        }
+        canvas.fill(shades, with: .color(.black.opacity(0.16)))
+        canvas.fill(glints, with: .color(.white.opacity(0.75)))
+    }
+
     /// Pebbles and shell chips half set into the sand, bigger toward the
-    /// glass, each lit from above with a tight contact shadow.
+    /// glass, each lit from above with a tight contact shadow. On candy
+    /// gravel the pebbles are candy too.
     private func drawPebbles(canvas: inout GraphicsContext, size: CGSize, sand: SandPalette) {
         var rng = TankPaint.Seeded(0x9EB)
         for k in 0..<30 {
@@ -348,9 +404,15 @@ extension AquariumView {
             let pw = (2.4 + rng.next(0, 3.4)) * (0.6 + depth * 0.9) * (substrateKey == "black" ? 1.3 : 1)
             let ph = pw * rng.next(0.55, 0.72)
             let shellChip = k % 5 == 0
-            let lit = shellChip ? TankPaint.RGB(1.0, 0.93, 0.88) : TankPaint.mix(sand.speckLight, .init(1, 1, 1), 0.2)
-            let base = shellChip ? TankPaint.RGB(0.90, 0.70, 0.62) : TankPaint.mix(sand.body, sand.foot, 0.3)
-            let shade = shellChip ? TankPaint.RGB(0.55, 0.36, 0.30) : sand.foot
+            var lit = shellChip ? TankPaint.RGB(1.0, 0.93, 0.88) : TankPaint.mix(sand.speckLight, .init(1, 1, 1), 0.2)
+            var base = shellChip ? TankPaint.RGB(0.90, 0.70, 0.62) : TankPaint.mix(sand.body, sand.foot, 0.3)
+            var shade = shellChip ? TankPaint.RGB(0.55, 0.36, 0.30) : sand.foot
+            if let candy = sand.speckColors, !shellChip {
+                let pick = candy[k % candy.count]
+                lit = TankPaint.mix(pick, .init(1, 1, 1), 0.55)
+                base = pick
+                shade = TankPaint.mix(pick, .init(0.1, 0.05, 0.15), 0.45)
+            }
             contactShadow(canvas: &canvas, x: px + pw * 0.12, y: py + ph * 0.38, halfW: pw * 0.62, alpha: 0.28)
             canvas.fill(Path(ellipseIn: CGRect(x: px - pw / 2, y: py - ph / 2, width: pw, height: ph)),
                         with: .radialGradient(
@@ -544,9 +606,17 @@ extension AquariumView {
     }
 
     /// One glassy bubble — the tank's single bubble look, shared by the
-    /// ambient stream, the bubble wall and the trick rings' spray.
-    func drawBubble(canvas: inout GraphicsContext, at p: CGPoint, radius r: Double, alpha: Double) {
+    /// ambient stream, the bubble wall and the trick rings' spray. The
+    /// water's style sizes it, and an inked tank (Arcade) gives it a
+    /// thicker rim and a hard crescent glint, cartoon-style.
+    func drawBubble(canvas: inout GraphicsContext, at p: CGPoint, radius: Double, alpha: Double) {
+        let style = water.style
+        let r = radius * style.bubbleScale
         let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
+        if style.ink > 0 {
+            drawInkedBubble(canvas: &canvas, rect: rect, alpha: alpha, ink: style.ink)
+            return
+        }
         canvas.fill(Path(ellipseIn: rect),
                     with: .radialGradient(
                         Gradient(stops: [
@@ -563,5 +633,32 @@ extension AquariumView {
         canvas.fill(Path(ellipseIn: CGRect(x: p.x - r * 0.52, y: p.y - r * 0.58,
                                            width: r * 0.42, height: r * 0.32)),
                     with: .color(.white.opacity(0.75 * alpha)))
+    }
+
+    /// The Arcade bubble: a pale body, a bright rim a good deal
+    /// heavier than the glassy one, and a white crescent hugging the
+    /// upper left with a dot of glint under it.
+    private func drawInkedBubble(canvas: inout GraphicsContext, rect: CGRect, alpha: Double,
+                                 ink: Double) {
+        let r = rect.width / 2
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        canvas.fill(Path(ellipseIn: rect), with: .radialGradient(
+            Gradient(stops: [
+                .init(color: .white.opacity(0.10 * alpha), location: 0),
+                .init(color: .white.opacity(0.18 * alpha), location: 0.7),
+                .init(color: .white.opacity(0.34 * alpha), location: 1),
+            ]),
+            center: c, startRadius: 0, endRadius: r))
+        canvas.stroke(Path(ellipseIn: rect), with: .color(.white.opacity(0.80 * alpha)),
+                      lineWidth: max(0.9, r * (0.16 + 0.10 * ink)))
+        // The crescent: the rim's upper-left arc, doubled in weight.
+        var crescent = Path()
+        crescent.addArc(center: c, radius: r * 0.62, startAngle: .degrees(195),
+                        endAngle: .degrees(265), clockwise: false)
+        canvas.stroke(crescent, with: .color(.white.opacity(0.95 * alpha)),
+                      style: StrokeStyle(lineWidth: max(0.8, r * 0.22), lineCap: .round))
+        canvas.fill(Path(ellipseIn: CGRect(x: c.x + r * 0.22, y: c.y + r * 0.20,
+                                           width: r * 0.20, height: r * 0.20)),
+                    with: .color(.white.opacity(0.7 * alpha)))
     }
 }

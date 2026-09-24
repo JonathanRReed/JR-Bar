@@ -14,6 +14,26 @@ extension AquariumView {
         var stops: [(location: Double, rgb: TankPaint.RGB)]
         var light: TankPaint.RGB
         var shafts: Double
+        /// How the tank is drawn in this water, beyond its colours.
+        var style = TankStyle()
+    }
+
+    /// A theme's drawing style — the dimension a colour preset can't
+    /// carry. The classic tank is all defaults; Arcade wipes the depth
+    /// haze, pushes the colour, inks the outlines and blows bigger
+    /// bubbles; the dark themes cool the sun to moonlight.
+    struct TankStyle: Equatable {
+        /// How much the water veils what's far away (1 classic, 0 none).
+        var haze = 1.0
+        /// Cartoon ink: 0 the soft classic edge, 1 a thick dark outline
+        /// and hard white highlights.
+        var ink = 0.0
+        /// A saturation push on the fish, 0 none.
+        var vivid = 0.0
+        /// The bubbles' size.
+        var bubbleScale = 1.0
+        /// Dark enough that the warm sun glow cools to moonlight.
+        var dark = false
     }
 
     /// Seven stops down the column, at the depths every theme shares.
@@ -28,6 +48,14 @@ extension AquariumView {
         (0.50, 0.84, 0.78), (0.29, 0.69, 0.70), (0.13, 0.51, 0.63), (0.06, 0.33, 0.54),
         (0.04, 0.22, 0.45), (0.03, 0.15, 0.37), (0.02, 0.09, 0.27)]),
         light: TankPaint.RGB(1.0, 0.97, 0.84), shafts: 1)
+
+    /// The Arcade tank: bright cyan under the surface falling to royal
+    /// blue, sunny light, soft shafts, and the cartoon style.
+    private static let arcadeWater = TankWater(stops: column([
+        (0.62, 0.93, 1.00), (0.36, 0.80, 0.99), (0.18, 0.62, 0.95), (0.12, 0.48, 0.90),
+        (0.10, 0.36, 0.82), (0.08, 0.27, 0.70), (0.06, 0.19, 0.58)]),
+        light: TankPaint.RGB(1.0, 1.0, 0.92), shafts: 0.55,
+        style: TankStyle(haze: 0.3, ink: 1, vivid: 0.35, bubbleScale: 1.5))
 
     /// Every theme's water. The deep stops keep their cast all the way
     /// down, so the far water reads as distance, not as a flat wall.
@@ -48,7 +76,8 @@ extension AquariumView {
         "midnight": TankWater(stops: column([
             (0.11, 0.18, 0.33), (0.08, 0.14, 0.29), (0.055, 0.10, 0.24), (0.035, 0.07, 0.20),
             (0.025, 0.05, 0.16), (0.018, 0.035, 0.13), (0.012, 0.025, 0.10)]),
-            light: TankPaint.RGB(0.70, 0.80, 1.0), shafts: 0.35),
+            light: TankPaint.RGB(0.70, 0.80, 1.0), shafts: 0.35,
+            style: TankStyle(dark: true)),
         "dawn": TankWater(stops: column([
             (0.88, 0.64, 0.66), (0.70, 0.57, 0.69), (0.44, 0.50, 0.68), (0.23, 0.38, 0.60),
             (0.12, 0.26, 0.49), (0.06, 0.16, 0.38), (0.035, 0.09, 0.28)]),
@@ -60,7 +89,8 @@ extension AquariumView {
         "abyss": TankWater(stops: column([
             (0.05, 0.08, 0.17), (0.035, 0.06, 0.14), (0.025, 0.045, 0.11), (0.018, 0.03, 0.08),
             (0.012, 0.02, 0.06), (0.008, 0.015, 0.045), (0.005, 0.01, 0.03)]),
-            light: TankPaint.RGB(0.55, 0.75, 1.0), shafts: 0),
+            light: TankPaint.RGB(0.55, 0.75, 1.0), shafts: 0,
+            style: TankStyle(dark: true)),
         "sunset": TankWater(stops: column([
             (0.94, 0.58, 0.32), (0.82, 0.44, 0.39), (0.57, 0.31, 0.49), (0.33, 0.21, 0.51),
             (0.19, 0.13, 0.45), (0.10, 0.08, 0.35), (0.055, 0.045, 0.26)]),
@@ -69,6 +99,7 @@ extension AquariumView {
             (0.55, 0.44, 0.27), (0.44, 0.35, 0.21), (0.33, 0.25, 0.16), (0.23, 0.17, 0.11),
             (0.15, 0.11, 0.075), (0.095, 0.07, 0.05), (0.055, 0.04, 0.03)]),
             light: TankPaint.RGB(1.0, 0.84, 0.54), shafts: 0.45),
+        "arcade": arcadeWater,
     ]
 
     /// The water for a theme key — "classic" when the key is unknown.
@@ -122,7 +153,8 @@ extension AquariumView {
         let far = 1 - min(1, max(0, depth))
         let deep = waterRGB(at: 0.62)
         let haze = TankPaint.mix(deep, Self.nightWater, night * 0.55)
-        return TankPaint.Atmosphere(haze: 0.08 + 0.46 * far * far + night * 0.30,
+        let amount = (0.08 + 0.46 * far * far) * water.style.haze + night * 0.30
+        return TankPaint.Atmosphere(haze: amount,
                                     hazeColor: haze, light: water.light, night: night)
     }
 

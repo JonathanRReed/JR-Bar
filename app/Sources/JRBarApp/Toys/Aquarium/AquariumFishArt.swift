@@ -31,6 +31,8 @@ enum CartoonFish {
         var outline: Color   // the silhouette's edge
         /// The cool light the surface rims the back with.
         var glow: Color
+        /// The tank's cartoon ink (Arcade 1): the outline draws heavier.
+        var ink: Double = 0
 
         init(body: Color, light: Color, dark: Color, outline: Color, glow: Color? = nil) {
             self.body = body
@@ -46,16 +48,33 @@ enum CartoonFish {
         /// a deep fish reads watery rather than just dim. Shadows cool
         /// toward navy instead of black, the way light falls off in
         /// water. Plain sRGB colours, so a frame resolves them for free.
-        init(accent: NSColor, depth: Double = 0, floor: NSColor) {
+        ///
+        /// The water's style tunes it: `haze` scales the depth wash (the
+        /// Arcade tank keeps a deep fish nearly as bright as a shallow
+        /// one), `vivid` pushes the colour's saturation, and `ink`
+        /// darkens the outline and makes it draw heavier.
+        init(accent: NSColor, depth: Double = 0, floor: NSColor,
+             haze: Double = 1, vivid: Double = 0, ink: Double = 0) {
             let a = Self.rgb(accent), fl = Self.rgb(floor)
             let grey = (0.5, 0.5, 0.5)
-            let washed = Self.mix(Self.mix(a, grey, depth * 0.30), fl, depth * 0.45)
+            let hazed = Self.mix(Self.mix(a, grey, depth * 0.30 * haze), fl, depth * 0.45 * haze)
+            let washed = Self.saturate(hazed, by: 1 + vivid)
             self.init(
                 body: Self.color(washed),
                 light: Self.color(Self.mix(washed, (1, 1, 1), 0.58)),
                 dark: Self.color(Self.mix(washed, (0.03, 0.07, 0.19), 0.42)),
-                outline: Self.color(Self.mix(washed, (0.02, 0.03, 0.08), 0.74)),
+                outline: Self.color(Self.mix(washed, (0.02, 0.03, 0.08), 0.74 + 0.18 * ink)),
                 glow: Self.color(Self.mix(washed, (0.86, 0.97, 1.0), 0.72)))
+            self.ink = ink
+        }
+
+        /// A colour pushed away from its own grey by `factor` (1 keeps
+        /// it), clamped to the displayable range.
+        private static func saturate(_ c: RGB, by factor: Double) -> RGB {
+            guard factor != 1 else { return c }
+            let l = 0.299 * c.0 + 0.587 * c.1 + 0.114 * c.2
+            func push(_ v: Double) -> Double { min(1, max(0, l + (v - l) * factor)) }
+            return (push(c.0), push(c.1), push(c.2))
         }
 
         private typealias RGB = (Double, Double, Double)
@@ -340,8 +359,9 @@ enum CartoonFish {
 
     /// The outline's weight in unit space for a fish `pointSize` long:
     /// about 1.2 pt on a tank-sized fish, never hairline, never heavy.
-    static func outlineWidth(_ pointSize: Double) -> Double {
-        min(1.9, max(0.95, 0.72 + pointSize * 0.0085)) / max(1, pointSize)
+    /// A tank's cartoon `ink` (Arcade 1) thickens it by up to 60 %.
+    static func outlineWidth(_ pointSize: Double, ink: Double = 0) -> Double {
+        min(1.9, max(0.95, 0.72 + pointSize * 0.0085)) * (1 + 0.6 * ink) / max(1, pointSize)
     }
 
     /// Draw one fish at the origin of `f` — already translated, rotated,
@@ -358,7 +378,7 @@ enum CartoonFish {
                      variant: AquariumVariant? = nil) {
         let art = art(for: species)
         let pose = Pose(art: art, swim: swim)
-        let lw = outlineWidth(pointSize)
+        let lw = outlineWidth(pointSize, ink: palette.ink)
         let detailed = pointSize >= 38
         let vivid = !dead
 

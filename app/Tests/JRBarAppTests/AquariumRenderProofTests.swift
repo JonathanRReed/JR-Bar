@@ -252,6 +252,27 @@ struct AquariumRenderProofTests {
                 backdropID: backdrop, night: night, visitor: visitor))
             if try Self.writePNG(view, size: tank, name: name, into: dir) { written += 1 }
         }
+        // The Arcade tank: each Toy reef act by tank level, candy
+        // gravel, then the same at night.
+        for (act, lifetime) in [0, 400, 3200, 12000].enumerated() {
+            var arcade = Self.fixture(themeID: "arcade", substrateID: "candy",
+                                      backdropID: "toyreef", night: 0, visitor: nil)
+            arcade.game?.lifetimePearls = lifetime
+            if try Self.writePNG(AquariumView(fixture: arcade), size: tank,
+                                 name: "aquarium-arcade-act\(act + 1)", into: dir) { written += 1 }
+        }
+        var arcadeNight = Self.fixture(themeID: "arcade", substrateID: "candy",
+                                       backdropID: "toyreef", night: 1, visitor: nil)
+        arcadeNight.game?.lifetimePearls = 3200
+        if try Self.writePNG(AquariumView(fixture: arcadeNight), size: tank,
+                             name: "aquarium-arcade-night", into: dir) { written += 1 }
+        // Candy gravel under the classic water.
+        let candy = AquariumView(fixture: Self.fixture(themeID: "classic", substrateID: "candy",
+                                                       backdropID: "classic", night: 0, visitor: nil))
+        if try Self.writePNG(candy, size: tank, name: "aquarium-candy-classic", into: dir) { written += 1 }
+        // Coins mid-fall, at rest and a crowned fish's gem.
+        if try Self.writePNG(Self.coins(), size: CGSize(width: 640, height: 360),
+                             name: "aquarium-coins", into: dir) { written += 1 }
         // A new tank: the seeded bed only, four sessions swimming.
         var starter = Self.fixture(themeID: "classic", substrateID: "classic",
                                    backdropID: "classic", night: 0, visitor: nil)
@@ -343,7 +364,92 @@ struct AquariumRenderProofTests {
                 written += 1
             }
         }
-        #expect(written == shots.count + 12)
+        #expect(written == shots.count + 19)
+    }
+
+    // MARK: The Arcade tank
+
+    /// Mean colourfulness of a render, 0…1: each pixel's chroma, how
+    /// far its brightest channel stands from its dimmest. (HSV's ratio
+    /// would score a near-black navy as vivid as a lit cyan; the loud
+    /// tank is the one whose colour you can see.)
+    private static func saturation(_ image: CGImage) -> Double {
+        let w = 90, h = 52
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let context = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8,
+                                bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var sum = 0.0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let rgb = [Double(pixels[i]), Double(pixels[i + 1]), Double(pixels[i + 2])]
+            let hi = rgb.max() ?? 0, lo = rgb.min() ?? 0
+            sum += (hi - lo) / 255
+        }
+        return sum / Double(w * h)
+    }
+
+    /// Mean colour of a render, per channel 0…1.
+    private static func meanColor(_ image: CGImage) -> SIMD3<Double> {
+        let w = 90, h = 52
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let context = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8,
+                                bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var sum = SIMD3<Double>(0, 0, 0)
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            sum += SIMD3(Double(pixels[i]), Double(pixels[i + 1]), Double(pixels[i + 2])) / 255
+        }
+        return sum / Double(w * h)
+    }
+
+    /// A day tank in `theme` with nobody in it.
+    private static func quietTank(theme: String, substrate: String = "classic") -> AquariumView.Fixture {
+        var fixture = Self.fixture(themeID: theme, substrateID: substrate,
+                                   backdropID: "classic", night: 0, visitor: nil)
+        fixture.fish = []
+        return fixture
+    }
+
+    @Test("the Arcade tank renders brighter and more saturated than classic")
+    func arcadeIsLoud() throws {
+        func render(_ theme: String) throws -> CGImage {
+            let renderer = ImageRenderer(content: AquariumView(fixture: Self.quietTank(theme: theme))
+                .frame(width: 450, height: 260))
+            renderer.scale = 1
+            return try #require(renderer.cgImage)
+        }
+        let classic = try render("classic")
+        let arcade = try render("arcade")
+        #expect(Self.brightness(arcade) > Self.brightness(classic) + 0.06)
+        #expect(Self.saturation(arcade) > Self.saturation(classic) + 0.08)
+    }
+
+    @Test("every Toy reef act renders, and each act looks different from the one before")
+    func toyReefActs() throws {
+        #expect(AquariumView.toyReefAct(level: 0) == 0)
+        #expect(AquariumView.toyReefAct(level: 5) == 1)
+        #expect(AquariumView.toyReefAct(level: 8) == 2)
+        #expect(AquariumView.toyReefAct(level: 9) == 3)
+        var means: [SIMD3<Double>] = []
+        for lifetime in [0, 400, 3200, 12000] {
+            var fixture = Self.quietTank(theme: "classic")
+            fixture.game?.backdropID = "toyreef"
+            fixture.game?.lifetimePearls = lifetime
+            let tank = AquariumView(fixture: fixture)
+            let renderer = ImageRenderer(content: Canvas { canvas, size in
+                tank.drawWater(canvas: &canvas, size: size, t: 0)
+                tank.drawBackdrop(canvas: &canvas, size: size)
+                tank.drawToyReefLights(canvas: &canvas, size: size, t: 0)
+            }.frame(width: 450, height: 260))
+            renderer.scale = 1
+            means.append(Self.meanColor(try #require(renderer.cgImage)))
+        }
+        for (a, b) in zip(means, means.dropFirst()) {
+            let d = a - b
+            #expect((d * d).sum().squareRoot() > 0.01, "consecutive acts differ")
+        }
     }
 
     // MARK: Pearls that stay put
@@ -389,6 +495,32 @@ struct AquariumRenderProofTests {
                                              at: t + 0.5))
         #expect(first == next)
         #expect(first.midY > 400, "on the sand, not up with its fish")
+    }
+
+    /// A patch of the Arcade tank with four drops: two coins caught 20 %
+    /// and 60 % through their fall, one resting, and a crowned fish's
+    /// gem beside it.
+    private static func coins() -> some View {
+        var fixture = Self.quietTank(theme: "arcade", substrate: "candy")
+        let now = Date()
+        let t = now.timeIntervalSince1970
+        fixture.game?.drops = (0..<4).map { PearlDrop(id: "c\($0)", fishID: "gone", at: t - 600, value: 1) }
+        let tank = AquariumView(fixture: fixture)
+        let fall = AquariumView.dropFallSeconds
+        tank.motion.dropSpots = [
+            "c0": .init(x: 0.25, fromY: 0.25, seenAt: t - fall * 0.2),
+            "c1": .init(x: 0.42, fromY: 0.25, seenAt: t - fall * 0.6),
+            "c2": .init(x: 0.60, fromY: nil, seenAt: t),
+            "c3": .init(x: 0.75, fromY: nil, seenAt: t, gem: true),
+        ]
+        return Canvas { canvas, size in
+            tank.drawWater(canvas: &canvas, size: size, t: t)
+            tank.drawBackdrop(canvas: &canvas, size: size)
+            tank.drawFarSand(canvas: &canvas, size: size)
+            tank.drawSand(canvas: &canvas, size: size, t: t)
+            tank.drawBubbles(canvas: &canvas, size: size, t: t, density: 1)
+            tank.drawDrops(canvas: &canvas, size: size, t: t, layouts: [:])
+        }
     }
 
     /// A patch of the classic tank with every tap event caught mid-way,

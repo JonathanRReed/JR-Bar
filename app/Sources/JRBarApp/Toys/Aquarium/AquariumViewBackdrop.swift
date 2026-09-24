@@ -43,6 +43,10 @@ extension AquariumView {
             }
             paintTier(near, canvas: &canvas, size: size, depth: 0.8, top: size.height * 0.46)
             paintFacets(nearTips, clip: near, canvas: &canvas, size: size, depth: 0.8, floor: 0.82)
+        case "toyreef":
+            // The painted set, its act chosen by the tank's level
+            // (AquariumViewToyReef.swift).
+            drawToyReef(canvas: &canvas, size: size)
         default:
             // Open water: a far reef of low coral heads, a fan or a
             // branch standing up here and there, a long way off.
@@ -55,14 +59,16 @@ extension AquariumView {
         }
         // The horizon's haze, where the far bed and the water meet: a
         // luminous band, not a darkening.
+        // A painted set keeps most of its colour through it.
         let haze = TankPaint.mix(waterRGB(at: 0.5), water.light, isDarkTheme ? 0.02 : 0.10)
         let horizon = size.height * 0.84
+        let veil = backdropKey == "toyreef" ? 0.45 : 1
         canvas.fill(Path(CGRect(x: 0, y: size.height * 0.55, width: size.width, height: size.height * 0.45)),
                     with: .linearGradient(
                         Gradient(stops: [
                             .init(color: TankPaint.color(haze, 0), location: 0),
-                            .init(color: TankPaint.color(haze, 0.26), location: 0.62),
-                            .init(color: TankPaint.color(haze, 0.38), location: 1),
+                            .init(color: TankPaint.color(haze, 0.26 * veil), location: 0.62),
+                            .init(color: TankPaint.color(haze, 0.38 * veil), location: 1),
                         ]),
                         startPoint: CGPoint(x: 0, y: size.height * 0.55),
                         endPoint: CGPoint(x: 0, y: horizon)))

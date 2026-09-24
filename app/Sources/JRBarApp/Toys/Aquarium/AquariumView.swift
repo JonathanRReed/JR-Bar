@@ -62,8 +62,9 @@ struct AquariumView: View {
     var substrateKey: String { game?.substrateID ?? "classic" }
     /// The back wall's backdrop key.
     var backdropKey: String { game?.backdropID ?? "classic" }
-    /// Themes dark enough that the warm sun glow cools to moonlight.
-    var isDarkTheme: Bool { themeKey == "midnight" || themeKey == "abyss" }
+    /// Themes dark enough that the warm sun glow cools to moonlight —
+    /// the water's own style says so.
+    var isDarkTheme: Bool { water.style.dark }
     /// The column's floor colour — what deep water attenuates toward.
     var floorColor: Color {
         waterStops.last?.color ?? Color(red: 0.015, green: 0.06, blue: 0.22)
@@ -171,6 +172,9 @@ struct AquariumView: View {
                     drawBackdrop(canvas: &canvas, size: size)
                     drawFarSand(canvas: &canvas, size: size)
                     drawNight(canvas: &canvas, size: size, t: t)
+                    // The Toy reef's windows and crystals shine through
+                    // the night, so they draw after it.
+                    drawToyReefLights(canvas: &canvas, size: size, t: t)
                     // Owned back-row pieces root on the far dune —
                     // still, so they bake in with the distance.
                     drawOwnedBackDecor(canvas: &canvas, size: size, t: t)
@@ -620,7 +624,7 @@ struct AquariumView: View {
         /// Where each pearl drop was first seen, in unit space, and when:
         /// it falls from there to the sand and rests at that x for good,
         /// however its fish swims on. `fromY` nil rests at once.
-        var dropSpots: [String: (x: Double, fromY: Double?, seenAt: Double)] = [:]
+        var dropSpots: [String: DropSpot] = [:]
     }
 
     /// A game event a draw pass produced — recorded, not applied.

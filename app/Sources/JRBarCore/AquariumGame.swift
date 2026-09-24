@@ -148,6 +148,12 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
     case gravelBlack
     case reefWallBackdrop
     case rockyBackdrop
+    // The Arcade set — a loud, bright tank, look only — and the pets
+    // and decor that play with it. Appended: the raw values are save
+    // keys, and a build that doesn't know them keeps them anyway.
+    case themeArcade
+    case gravelCandy
+    case toyReefBackdrop
 
     public enum Category: String, Equatable, Sendable, CaseIterable {
         case decor, pets, accessories, hats, buddy, themes, substrates
@@ -181,9 +187,10 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .buddyBeanie, .buddyBow, .buddyFlower: return .buddy
         case .themeReef, .themeLagoon, .themeTwilight, .themeMidnight,
              .themeDawn, .themeSunset, .themeKelpForest, .themeBlackwater,
-             .themeAbyss:
+             .themeAbyss, .themeArcade:
             return .themes
-        case .sandWhite, .gravelBlack, .reefWallBackdrop, .rockyBackdrop:
+        case .sandWhite, .gravelBlack, .reefWallBackdrop, .rockyBackdrop,
+             .gravelCandy, .toyReefBackdrop:
             return .substrates
         }
     }
@@ -200,12 +207,13 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .bowTie: return 20
         case .themeReef, .themeLagoon, .sunglasses: return 25
         case .jellyfish, .monocle, .sandWhite: return 30
-        case .themeTwilight, .driftwood, .scarf: return 35
+        case .themeTwilight, .driftwood, .scarf, .gravelCandy: return 35
         case .treasureChest, .hermitCrab, .themeDawn: return 40
         case .hatCrown, .headphones, .amphora, .gravelBlack: return 45
         case .snail: return 50
         case .bubbleWall, .themeKelpForest: return 55
-        case .themeMidnight, .castle, .cleanerShrimp, .topHat, .themeSunset:
+        case .themeMidnight, .castle, .cleanerShrimp, .topHat, .themeSunset,
+             .themeArcade:
             return 60
         case .anemoneBed: return 70
         case .themeBlackwater: return 75
@@ -213,7 +221,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .ruinedColumns, .tetraSchool: return 90
         case .sunkenStatue: return 95
         case .reefWallBackdrop: return 100
-        case .moonJellyLamp: return 110
+        case .moonJellyLamp, .toyReefBackdrop: return 110
         case .shipwreck, .themeAbyss: return 120
         case .coralGarden: return 130
         case .axolotl: return 140
@@ -230,12 +238,12 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         switch self {
         case .castle, .themeMidnight, .snail, .hatCrown, .driftwood,
              .amphora, .bubbleWall, .cleanerShrimp, .monocle, .headphones,
-             .scarf, .themeDawn, .gravelBlack:
+             .scarf, .themeDawn, .gravelBlack, .themeArcade:
             return 1
         case .anemoneBed, .sunkenStatue, .shipwreck, .ruinedColumns,
              .tetraSchool, .seaTurtle, .topHat, .tinyLaptop, .themeSunset,
              .themeKelpForest, .themeBlackwater, .reefWallBackdrop,
-             .rockyBackdrop:
+             .rockyBackdrop, .toyReefBackdrop:
             return 2
         case .coralGarden, .moonJellyLamp, .volcano, .axolotl, .octopus,
              .themeAbyss:
@@ -296,6 +304,9 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .gravelBlack: return "Black gravel"
         case .reefWallBackdrop: return "Reef wall"
         case .rockyBackdrop: return "Rocky backdrop"
+        case .themeArcade: return "Arcade"
+        case .gravelCandy: return "Candy gravel"
+        case .toyReefBackdrop: return "Toy reef"
         }
     }
 
@@ -351,6 +362,9 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .gravelBlack: return "Moody substrate, dramatic fish."
         case .reefWallBackdrop: return "A living wall behind the glass."
         case .rockyBackdrop: return "Canyon walls for the tank."
+        case .themeArcade: return "Loud, bright and bubbly. Pearls come as coins."
+        case .gravelCandy: return "Pet-store gravel in five colours."
+        case .toyReefBackdrop: return "A painted set that changes as the tank climbs."
         }
     }
 
@@ -366,6 +380,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         case .themeKelpForest: return "kelp"
         case .themeBlackwater: return "blackwater"
         case .themeAbyss: return "abyss"
+        case .themeArcade: return "arcade"
         default: return nil
         }
     }
@@ -375,6 +390,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         switch self {
         case .sandWhite: return "white"
         case .gravelBlack: return "black"
+        case .gravelCandy: return "candy"
         default: return nil
         }
     }
@@ -384,6 +400,7 @@ public enum ShopItem: String, Codable, CaseIterable, Sendable {
         switch self {
         case .reefWallBackdrop: return "reefwall"
         case .rockyBackdrop: return "rocky"
+        case .toyReefBackdrop: return "toyreef"
         default: return nil
         }
     }

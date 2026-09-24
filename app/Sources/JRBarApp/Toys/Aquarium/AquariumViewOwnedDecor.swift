@@ -916,13 +916,33 @@ extension AquariumView {
             let live = Set(game.drops.map(\.id))
             m.dropSpots = m.dropSpots.filter { live.contains($0.key) }
         }
+        let arcade = themeKey == "arcade"
         for drop in game.drops {
             let at = dropPoint(drop, size: size, t: t, layouts: layouts)
-            let pulse = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(t * 2.2 + Double(drop.at.truncatingRemainder(dividingBy: 6)))
-            drawPearl(canvas: &canvas, at: at.point, pulse: pulse, resting: at.fall >= 1)
+            let seed = Double(drop.at.truncatingRemainder(dividingBy: 6))
+            let pulse = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(t * 2.2 + seed)
+            if arcade {
+                // Arcade pearls come as coins: a fast spin as they fall,
+                // a slow one at rest. A crowned fish's drop is a gem.
+                let rate = at.fall < 1 ? 9.0 : 0.9
+                let spin = reduceMotion ? 1 : abs(cos(t * rate + seed))
+                let gem = motion.dropSpots[drop.id]?.gem ?? false
+                drawCoin(canvas: &canvas, at: at.point, spin: spin, gem: gem, resting: at.fall >= 1)
+            } else {
+                drawPearl(canvas: &canvas, at: at.point, pulse: pulse, resting: at.fall >= 1)
+            }
             m.dropBoxes.append((drop.id, CGRect(x: at.point.x - 16, y: at.point.y - 16,
                                                 width: 32, height: 32)))
         }
+    }
+
+    /// Where a drop was first seen and how it came to rest (see
+    /// `drawDrops`); `gem` pins whether a crowned fish minted it.
+    struct DropSpot {
+        var x: Double
+        var fromY: Double?
+        var seenAt: Double
+        var gem = false
     }
 
     /// How long a fresh drop takes to reach the sand.
@@ -957,18 +977,98 @@ extension AquariumView {
     /// fish's x and y if the fish is in the tank, else a steady hashed
     /// spot along the bed. Only a fresh drop falls.
     private func dropSpot(_ drop: PearlDrop, size: CGSize, layouts: [String: Layout],
-                          t: Double) -> (x: Double, fromY: Double?, seenAt: Double) {
+                          t: Double) -> DropSpot {
         if let spot = motion.dropSpots[drop.id] { return spot }
         let fresh = t - drop.at < 25 && !reduceMotion
-        let spot: (x: Double, fromY: Double?, seenAt: Double)
+        var spot: DropSpot
         if let l = layouts[drop.fishID], size.width > 0, size.height > 0 {
-            spot = (l.x / size.width, fresh ? l.y / size.height : nil, t)
+            spot = DropSpot(x: l.x / size.width, fromY: fresh ? l.y / size.height : nil, seenAt: t)
         } else {
             let h = AquariumModel.stableHash("drop-\(drop.id)")
-            spot = (0.12 + 0.76 * Double(h & 0xFFFF) / 0xFFFF, nil, t)
+            spot = DropSpot(x: 0.12 + 0.76 * Double(h & 0xFFFF) / 0xFFFF, fromY: nil, seenAt: t)
+        }
+        if let game {
+            let stage = game.pets[drop.fishID]?.stage ?? 0
+            spot.gem = game.hat(for: drop.fishID) == nil
+                && AquariumBehavior.wearsCrown(streakDays: game.streakDays, stage: stage)
         }
         motion.dropSpots[drop.id] = spot
         return spot
+    }
+
+    /// An Arcade coin at `p`: a gold disc with a dark rim, an embossed
+    /// ring and a hard white highlight, squeezed to `spin` (|cos|) as it
+    /// turns — or, for a crowned fish's drop, a faceted cyan gem that
+    /// twinkles instead. Worth the same pearl either way.
+    func drawCoin(canvas: inout GraphicsContext, at p: CGPoint, spin: Double, gem: Bool,
+                  resting: Bool, radius: Double = 6.5) {
+        let r = radius
+        if resting {
+            contactShadow(canvas: &canvas, x: p.x, y: p.y + r * 0.9, halfW: r * 0.9, alpha: 0.32)
+        }
+        var halo = canvas
+        halo.blendMode = .plusLighter
+        let glow = gem ? Color(red: 0.55, green: 0.95, blue: 1.0) : Color(red: 1.0, green: 0.86, blue: 0.40)
+        halo.fill(Path(ellipseIn: CGRect(x: p.x - r * 2.4, y: p.y - r * 2.4, width: r * 4.8, height: r * 4.8)),
+                  with: .radialGradient(Gradient(colors: [glow.opacity(0.30), .clear]),
+                                        center: p, startRadius: 0, endRadius: r * 2.4))
+        if gem {
+            drawGem(canvas: &canvas, at: p, radius: r * 1.05, twinkle: spin)
+            return
+        }
+        let w = max(0.2, spin)
+        var c = canvas
+        c.translateBy(x: p.x, y: p.y)
+        c.scaleBy(x: w, y: 1)
+        let disc = Path(ellipseIn: CGRect(x: -r, y: -r, width: r * 2, height: r * 2))
+        c.fill(disc, with: .linearGradient(
+            Gradient(colors: [Color(red: 1.0, green: 0.93, blue: 0.52), Color(red: 0.96, green: 0.70, blue: 0.14),
+                              Color(red: 0.78, green: 0.48, blue: 0.06)]),
+            startPoint: CGPoint(x: -r, y: -r), endPoint: CGPoint(x: r, y: r)))
+        let ink = Color(red: 0.42, green: 0.24, blue: 0.02)
+        c.stroke(disc, with: .color(ink), lineWidth: 1.3 / w)
+        // The embossed ring and its centre dot.
+        let ring = Path(ellipseIn: CGRect(x: -r * 0.55, y: -r * 0.55, width: r * 1.1, height: r * 1.1))
+        c.stroke(ring, with: .color(Color(red: 0.72, green: 0.44, blue: 0.05).opacity(0.9)), lineWidth: 1.0 / w)
+        c.fill(Path(ellipseIn: CGRect(x: -r * 0.18, y: -r * 0.18, width: r * 0.36, height: r * 0.36)),
+               with: .color(Color(red: 0.72, green: 0.44, blue: 0.05).opacity(0.9)))
+        // The hard highlight blob, upper left.
+        c.fill(Path(ellipseIn: CGRect(x: -r * 0.72, y: -r * 0.78, width: r * 0.52, height: r * 0.40)),
+               with: .color(.white.opacity(0.92)))
+    }
+
+    /// A crowned fish's drop in the Arcade tank: a cut cyan gem with
+    /// lit and shaded facets and a star glint that comes and goes.
+    private func drawGem(canvas: inout GraphicsContext, at p: CGPoint, radius r: Double,
+                         twinkle: Double) {
+        let top = CGPoint(x: p.x, y: p.y - r)
+        let left = CGPoint(x: p.x - r, y: p.y - r * 0.2)
+        let right = CGPoint(x: p.x + r, y: p.y - r * 0.2)
+        let bottom = CGPoint(x: p.x, y: p.y + r)
+        let mid = CGPoint(x: p.x, y: p.y - r * 0.2)
+        func facet(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> Path {
+            var path = Path()
+            path.move(to: a)
+            path.addLine(to: b)
+            path.addLine(to: c)
+            path.closeSubpath()
+            return path
+        }
+        canvas.fill(facet(top, left, mid), with: .color(Color(red: 0.80, green: 1.0, blue: 1.0)))
+        canvas.fill(facet(top, mid, right), with: .color(Color(red: 0.42, green: 0.90, blue: 1.0)))
+        canvas.fill(facet(left, bottom, mid), with: .color(Color(red: 0.20, green: 0.70, blue: 0.95)))
+        canvas.fill(facet(mid, bottom, right), with: .color(Color(red: 0.08, green: 0.45, blue: 0.78)))
+        var outline = Path()
+        outline.move(to: top)
+        outline.addLine(to: right)
+        outline.addLine(to: bottom)
+        outline.addLine(to: left)
+        outline.closeSubpath()
+        canvas.stroke(outline, with: .color(Color(red: 0.02, green: 0.20, blue: 0.40)),
+                      style: StrokeStyle(lineWidth: 1.2, lineJoin: .round))
+        let glint = 0.4 + 0.6 * (1 - twinkle)
+        drawSparkle(canvas: &canvas, at: CGPoint(x: p.x - r * 0.35, y: p.y - r * 0.45),
+                    size: r * 0.9 * glint, alpha: glint)
     }
 
     /// One pearl at `p`: a warm halo so it reads as a pick-up, the
@@ -1054,6 +1154,11 @@ extension AquariumView {
             trail.fill(Path(ellipseIn: CGRect(x: at.x - r * 2.4, y: at.y - r * 2.4, width: r * 4.8, height: r * 4.8)),
                        with: .radialGradient(Gradient(colors: [Color(red: 1, green: 0.95, blue: 0.80).opacity(0.35), .clear]),
                                              center: at, startRadius: 0, endRadius: r * 2.4))
+            if themeKey == "arcade" {
+                let spin = abs(cos(p * 14))
+                drawCoin(canvas: &f, at: at, spin: spin, gem: false, resting: false, radius: 4)
+                continue
+            }
             f.fill(Path(ellipseIn: CGRect(x: at.x - r, y: at.y - r, width: r * 2, height: r * 2)),
                    with: .radialGradient(
                     Gradient(colors: [.white, Color(red: 0.95, green: 0.90, blue: 0.80)]),
