@@ -21,7 +21,8 @@ struct ToysStateTests {
         let state = ToysState()
         #expect(state.fold == FoldSettings())
         #expect(state.fold.enabled == false)
-        #expect(state.fold.anchor == .angle)
+        #expect(state.fold.anchor == .movement)
+        #expect(state.fold.look == .duo)
         #expect(state.fold.activationAngle == 65)
         #expect(state.fold.provider == .jrbar)
         #expect(state.fold.holdStrength == 1)
@@ -53,7 +54,7 @@ struct ToysStateTests {
         let json = #"{"fold": {"enabled": true, "anchor": "someday", "activationAngle": "soon", "style": "glow", "provider": "someone", "holdPicture": "sure"}, "confetti": {"enabled": "yes"}, "externalApps": "many", "futureToy": {"enabled": true}}"#
         let state = try decode(ToysState.self, json)
         #expect(state.fold.enabled == true)
-        #expect(state.fold.anchor == .angle, "an unknown anchor reads as a set angle")
+        #expect(state.fold.anchor == .movement, "an unknown anchor reads as wherever the lid rests")
         #expect(state.fold.activationAngle == 65, "a string is not an angle")
         #expect(state.fold.provider == .jrbar, "an unknown renderer is jrbar")
         #expect(state.fold.holdStrength == 1, "a string is not a flag")
@@ -169,5 +170,64 @@ struct ToysStateTests {
         let written = try encode(FoldSettings(holdStrength: 0.25))
         #expect(written.contains("\"holdStrength\":0.25"))
         #expect(!written.contains("holdPicture"))
+    }
+
+    @Test("a file from before the looks moves to Duo and the resting angle, keeping its own knobs")
+    func foldLookMigration() throws {
+        // Jonathan's live file, as it was written before the looks.
+        let live = try decode(FoldSettings.self, #"""
+            {"activationAngle": 69.92919921875, "anchor": "angle", "blur": 1, "dwellTimeout": 0,
+             "enabled": true, "frost": 0.012841796875, "hingeVoice": "off", "holdPicture": true,
+             "jitterTolerance": 1.5, "perspective": 0.454150390625, "provider": "jrbar",
+             "restoreSound": false, "shade": 1, "wallpaperFallback": true}
+            """#)
+        #expect(live.look == .duo, "a missing look is Duo")
+        #expect(live.holdStrength == 1, "the old switch on means a full hold")
+        #expect(live.anchor == .movement, "every older file folds from where the lid rests")
+        #expect(live.activationAngle == 69.92919921875, "the stored angle stays for Set angle")
+        #expect(live.blur == 1 && live.shade == 1, "his maxed knobs are kept as stored")
+        #expect(live.perspective == 0.454150390625)
+        #expect(live.frost == 0.012841796875)
+        #expect(live.fadeLength == 0.55)
+        #expect(live.enabled)
+        // A switch that was off rides the lid; the rest of the move holds.
+        let off = try decode(FoldSettings.self, #"{"anchor": "angle", "holdPicture": false, "blur": 0.2}"#)
+        #expect(off.holdStrength == 0)
+        #expect(off.anchor == .movement)
+        #expect(off.blur == 0.2)
+        // Once a file has a look, its choices are its own: Room and a set
+        // angle survive every later read.
+        let chosen = try decode(FoldSettings.self, #"{"look": "room", "anchor": "angle", "activationAngle": 80}"#)
+        #expect(chosen.look == .room)
+        #expect(chosen.anchor == .angle)
+        #expect(chosen.activationAngle == 80)
+        // A mistyped look is still a look that was written: Duo, anchor kept.
+        let garbled = try decode(FoldSettings.self, #"{"look": 4, "anchor": "angle"}"#)
+        #expect(garbled.look == .duo)
+        #expect(garbled.anchor == .angle)
+        let unknown = try decode(FoldSettings.self, #"{"look": "origami", "anchor": "angle"}"#)
+        #expect(unknown.look == .duo)
+        #expect(unknown.anchor == .angle)
+    }
+
+    @Test("new fold keys round-trip, default for a new file, and the fade length clamps")
+    func foldDuoKeys() throws {
+        let fresh = FoldSettings()
+        #expect(fresh.look == .duo)
+        #expect(fresh.anchor == .movement)
+        #expect(fresh.holdStrength == 1)
+        #expect(fresh.fadeLength == 0.55)
+        #expect(fresh.blur == 0.6)
+        #expect(fresh.shade == 0.67)
+        #expect(try decode(FoldSettings.self, "{}") == fresh, "an empty blob is a new file")
+        var room = FoldSettings(enabled: true, anchor: .angle, activationAngle: 100,
+                                holdStrength: 0.8, look: .room, fadeLength: 0.3)
+        room.frost = 0.4
+        let back = try decode(FoldSettings.self, encode(room))
+        #expect(back == room)
+        #expect(try decode(FoldSettings.self, #"{"look": "duo", "fadeLength": 9}"#).fadeLength == 1)
+        #expect(try decode(FoldSettings.self, #"{"look": "duo", "fadeLength": 0}"#).fadeLength == 0.2)
+        #expect(try decode(FoldSettings.self, #"{"look": "duo", "fadeLength": "slow"}"#).fadeLength == 0.55)
+        #expect(FoldSettings.clampFadeLength(.nan) == 0.55)
     }
 }
