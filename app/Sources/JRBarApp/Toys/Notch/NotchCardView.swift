@@ -416,11 +416,16 @@ struct NotchCardView: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(style.faintColor)
+                    .frame(width: 12, height: 12)
+                    .notchHitArea(horizontal: 6, vertical: 6)
             }
             .buttonStyle(.plain)
             .help("Don't show this hint again")
         }
     }
+
+    /// The smallest target a card control offers, in points.
+    static let hitSide: CGFloat = 24
 
     /// The header row: who the bar is about — provider tile, label,
     /// word — with the light's reason underneath. Pinned adds the
@@ -483,7 +488,10 @@ struct NotchCardView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
-                    .frame(width: 20)
+                    // An AppKit pop-up: its frame is its hit area, so the
+                    // frame itself is the 24-point target.
+                    .frame(width: Self.hitSide, height: Self.hitSide)
+                    .contentShape(Rectangle())
                     .help("Add a timer")
                     .popover(isPresented: $timerEntryShown, arrowEdge: .bottom) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -524,22 +532,35 @@ struct NotchCardView: View {
                             Image(systemName: model.mirrorSummoned ? "camera.fill" : "camera")
                                 .font(.system(size: 9))
                                 .foregroundStyle(model.mirrorSummoned ? style.titleColor : style.faintColor)
-                                .frame(width: 16, height: 16)
+                                .frame(width: 20, height: 20)
+                                .notchHitArea(horizontal: 2, vertical: 4)
                         }
                         .help(model.mirrorSummoned ? "Close the mirror" : "Mirror — a quick look through the camera")
                         .accessibilityLabel(model.mirrorSummoned ? "Close the mirror" : "Open the mirror")
                     }
                     if model.focus.clickSession != nil {
-                        Button("Open") { model.onOpenSession?() }
-                            .controlSize(.mini)
+                        Button { model.onOpenSession?() } label: {
+                            Text("Open")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                                .frame(minWidth: Self.hitSide - 4, minHeight: 20)
+                                .notchHitArea(horizontal: 2, vertical: 4)
+                        }
+                        .help("Bring this session's window forward")
                     }
                     Button { model.onClose?() } label: {
                         Image(systemName: "xmark")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(style.faintColor)
+                            .frame(width: 20, height: 20)
+                            .notchHitArea(horizontal: 2, vertical: 4)
                     }
-                    .controlSize(.mini)
                     .accessibilityLabel("Close pinned card")
                 }
-                .buttonStyle(.borderless)
+                // Plain, so each label's own shape is its hit area: the
+                // marks stay 20 points, the targets reach 24 and stop
+                // halfway to their neighbours.
+                .buttonStyle(.plain)
             }
         }
     }
@@ -633,7 +654,9 @@ struct NotchCardView: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
                 .background(Capsule(style: .continuous).fill(selected ? style.chipFill : .clear))
-                .contentShape(Capsule())
+                // The capsule draws 18 points tall; the target is 26,
+                // and stops halfway to the next tab.
+                .notchHitArea(horizontal: 2, vertical: 4)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -2031,4 +2054,17 @@ private struct MirrorPreview: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MirrorPreviewView { view }
     func updateNSView(_ nsView: MirrorPreviewView, context: Context) {}
+}
+
+extension View {
+    /// Grows a small control's hit area without moving anything: the
+    /// padding is taken back, the shape stays. Keep `horizontal` within
+    /// half the row's spacing so two neighbours never claim one point.
+    func notchHitArea(horizontal: CGFloat = 8, vertical: CGFloat = 8) -> some View {
+        padding(.horizontal, horizontal)
+            .padding(.vertical, vertical)
+            .contentShape(Rectangle())
+            .padding(.horizontal, -horizontal)
+            .padding(.vertical, -vertical)
+    }
 }
