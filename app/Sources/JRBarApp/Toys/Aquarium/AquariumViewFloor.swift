@@ -445,8 +445,9 @@ extension AquariumView {
         // pulses instead of dust catching the light.
         let lit = isDarkTheme
         let light = water.light
+        let field = AquariumModel.stableHash("plankton-field")
         for i in 0..<count {
-            let h = scatter(AquariumModel.stableHash("plankton-field"), i)
+            let h = scatter(field, i)
             let isFront = (h >> 56) & 1 == 1
             guard isFront == front else { continue }
             let x0 = Double(h & 0xFFFF) / 0xFFFF
@@ -509,8 +510,9 @@ extension AquariumView {
         let count = Int((9 * density).rounded())
         let chestX = Self.decor.first(where: { $0.kind == .chest })?.x ?? 0.5
         let still = reduceMotion
+        let field = AquariumModel.stableHash("bubble-seed")
         for i in 0..<count {
-            let h = scatter(AquariumModel.stableHash("bubble-seed"), i)
+            let h = scatter(field, i)
             let nearChest = (h >> 52) & 1 == 0
             let x0 = nearChest
                 ? chestX + (Double((h >> 54) & 0xFF) / 0xFF - 0.5) * 0.10
