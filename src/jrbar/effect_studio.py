@@ -620,6 +620,10 @@ def _detached_color_settings(colors: ColorSettings) -> ColorSettings:
         mode_animation=dict(colors.mode_animation),
         provider_animation=dict(colors.provider_animation),
         speed_overrides=dict(colors.speed_overrides),
+        provider_animation_parameters={
+            provider: dict(values)
+            for provider, values in colors.provider_animation_parameters.items()
+        },
     )
 
 

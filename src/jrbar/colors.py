@@ -303,6 +303,15 @@ PROVIDER_ANIMATION_DESCRIPTIONS: dict[str, str] = {
     MOTION_BLINK: "Hard-edged on/off, no easing.",
 }
 
+#: Providers that come with a motion of their own instead of Automatic,
+#: with the values it plays at. OpenCode's purple swings as a Pendulum --
+#: a rhythm no Automatic provider has -- so two agents side by side can
+#: be told apart by movement as well as colour (J17). Choosing Automatic
+#: (or anything else) for it overrides this like any other choice.
+PROVIDER_DEFAULT_ANIMATIONS: dict[str, tuple[str, dict[str, Any]]] = {
+    "opencode": (MOTION_PENDULUM, {"duration_seconds": 2.4}),
+}
+
 STATE_MOTION: dict[LedDisplayState, str] = {
     LedDisplayState.IDLE: MOTION_BREATHE,
     LedDisplayState.WORKING: MOTION_CHASE,
@@ -1359,12 +1368,15 @@ class ColorSettings:
         return replace(self, agent_colors=colors)
 
     def agent_animation(self, provider: str) -> str:
-        """The motion this provider was given, or PROVIDER_ANIMATION_AUTO.
+        """The motion this provider was given, its own default motion when
+        it has one (``PROVIDER_DEFAULT_ANIMATIONS``), or Automatic.
 
         Anything unrecognized reads as Automatic rather than raising: a
         settings file written by a newer build must never brick the render.
         """
         motion = self.provider_animation.get(provider)
+        if motion is None and provider in PROVIDER_DEFAULT_ANIMATIONS:
+            return PROVIDER_DEFAULT_ANIMATIONS[provider][0]
         if motion not in PROVIDER_ANIMATION_CHOICES:
             return PROVIDER_ANIMATION_AUTO
         return motion
@@ -1380,6 +1392,10 @@ class ColorSettings:
         if motion == PROVIDER_ANIMATION_AUTO:
             animations.pop(provider, None)
             parameters.pop(provider, None)
+            if provider in PROVIDER_DEFAULT_ANIMATIONS:
+                # A provider with a motion of its own keeps Automatic only
+                # if the file says so.
+                animations[provider] = PROVIDER_ANIMATION_AUTO
         else:
             animations[provider] = motion
         return replace(
@@ -1389,11 +1405,16 @@ class ColorSettings:
         )
 
     def agent_animation_parameters(self, provider: str | None) -> dict[str, Any]:
-        """The Effect Studio values this provider's motion was given, or {}."""
+        """The Effect Studio values this provider's motion was given, or {}
+        -- or, while it plays its own default motion, that motion's values."""
         if not provider:
             return {}
         raw = self.provider_animation_parameters.get(provider)
-        return dict(raw) if isinstance(raw, dict) else {}
+        if isinstance(raw, dict):
+            return dict(raw)
+        if provider not in self.provider_animation and provider in PROVIDER_DEFAULT_ANIMATIONS:
+            return dict(PROVIDER_DEFAULT_ANIMATIONS[provider][1])
+        return {}
 
     def with_agent_animation_parameters(
         self, provider: str, parameters: object
@@ -1614,7 +1635,10 @@ class ColorSettings:
                     isinstance(provider, str)
                     and provider
                     and value in PROVIDER_ANIMATION_CHOICES
-                    and value != PROVIDER_ANIMATION_AUTO
+                    and (
+                        value != PROVIDER_ANIMATION_AUTO
+                        or provider in PROVIDER_DEFAULT_ANIMATIONS
+                    )
                 ):
                     provider_animation[provider] = value
 
@@ -1659,6 +1683,7 @@ class ColorSettings:
             provider_animation_parameters = {
                 provider: {"duration_seconds": _seeded_motion_seconds(motion)}
                 for provider, motion in provider_animation.items()
+                if motion != PROVIDER_ANIMATION_AUTO
             }
 
         raw_tint = data.get("tint_by_tool")

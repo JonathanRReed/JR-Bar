@@ -295,3 +295,24 @@ def test_motion_values_round_trip_and_are_bounded() -> None:
         {"provider_animation_parameters": {"codex": "fast", "": {"a": 1}, "claude": [1, 2]}}
     )
     assert garbage.provider_animation_parameters == {}
+
+
+def test_opencode_swings_its_own_motion_until_told_otherwise() -> None:
+    """J17's OpenCode check: its purple moves as a Pendulum by default -- a
+    rhythm no Automatic provider has -- and choosing Automatic sticks."""
+    defaults = colors_module.ColorSettings.defaults()
+    assert defaults.agent_color("opencode") == "#AF52DE"
+    assert defaults.agent_animation("opencode") == colors_module.MOTION_PENDULUM
+    assert defaults.agent_animation("claude") == colors_module.PROVIDER_ANIMATION_AUTO
+    assert defaults.agent_cycle_ms("opencode", 500) == 2400
+    preview = colors_module.provider_motion_preview_program(
+        "opencode", defaults.agent_color("opencode"), defaults
+    )
+    assert "pulse" in preview and "7:" in preview  # a swing across the strip
+    automatic = defaults.with_agent_animation("opencode", colors_module.PROVIDER_ANIMATION_AUTO)
+    assert automatic.agent_animation("opencode") == colors_module.PROVIDER_ANIMATION_AUTO
+    reloaded = colors_module.ColorSettings.from_dict(automatic.to_dict())
+    assert reloaded.agent_animation("opencode") == colors_module.PROVIDER_ANIMATION_AUTO
+    assert reloaded.provider_animation_parameters == {}
+    # Automatic is still never stored for a provider without a motion of its own.
+    assert "claude" not in defaults.with_agent_animation("claude", "auto").provider_animation
