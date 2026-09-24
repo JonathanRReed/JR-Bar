@@ -234,6 +234,11 @@ final class BuddyPanelModel {
     var toy: NotchBuddyToy?
     /// The pointer is on the pet — the name tag only shows while it is.
     var hovered = false
+    /// The panel is showing the buddy or still fading it out. It outlasts
+    /// the toy's own state on purpose: docked or switched off, the figure
+    /// stays drawn until the fade has played, so a dock crossfades with
+    /// the notch pill fading in instead of blinking out.
+    var drawsBuddy = false
 }
 
 /// The buddy's free-floating home: the pet bare on a transparent
@@ -264,7 +269,7 @@ final class BuddyPanel: NSPanel {
         // A window shadow would hug the caption text and read as a
         // smudge over whatever is behind the pet.
         hasShadow = false
-        ignoresMouseEvents = false   // the draggable one — never click-through
+        ignoresMouseEvents = false   // the draggable one — click-through only while it fades out
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         isExcludedFromWindowsMenu = true
@@ -296,6 +301,10 @@ final class BuddyPanel: NSPanel {
         // A carry owns the frame until the drop lands it — a resize
         // mid-carry re-presents on the drop.
         guard buddyDrag?.inProgress != true else { return }
+        // Drawn before it is measured, so a panel coming back from a
+        // fade-out sizes to the pet, not to nothing.
+        model.drawsBuddy = true
+        ignoresMouseEvents = false
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let height = max(26, size.height)
@@ -349,20 +358,25 @@ final class BuddyPanel: NSPanel {
         armWalkabout()
     }
 
-    /// Fades out rather than vanishing; a present that lands mid-fade
-    /// keeps the panel.
+    /// Fades out with the figure still drawn in it, rather than vanishing;
+    /// a present that lands mid-fade keeps the panel. Fading, it lets the
+    /// mouse through: a click meant for the pill fading in under it at
+    /// the notch reaches that one.
     func dismiss() {
         endStroll(reframe: false)
         beat?.invalidate()
         beat = nil
         home = nil
         showing = false
+        ignoresMouseEvents = true
         guard isVisible else {
             alphaValue = 0
+            model.drawsBuddy = false
             return
         }
         NotchSurfaceMotion.dismiss(self, duration: 0.2, reducedDuration: 0.1,
-                                   stillGone: { [weak self] in self?.showing == false })
+                                   stillGone: { [weak self] in self?.showing == false },
+                                   then: { [weak self] in self?.model.drawsBuddy = false })
     }
 
     /// Meant to be on screen; a fade-out only orders the panel out while
@@ -506,8 +520,10 @@ struct BuddyPanelView: View {
         // The buddy view owns its own animation timeline; this layer
         // re-reads the summary only often enough to keep the caption's
         // relative time honest — a display-rate reduce of every session,
-        // just for a one-line caption, was pure churn.
-        if let toy = model.toy, toy.isShowing, toy.isFree {
+        // just for a one-line caption, was pure churn. It draws for as
+        // long as the panel shows or fades (`drawsBuddy`), except a buddy
+        // that has finished ducking out for a nap: that one is gone already.
+        if let toy = model.toy, model.drawsBuddy, toy.isShowing || !toy.isTucked {
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 let summary = toy.summary(at: context.date)
                 let scale = toy.buddyScale
