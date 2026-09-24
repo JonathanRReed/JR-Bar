@@ -872,8 +872,11 @@ struct ConfettiView: View {
          color.mix(with: .white, by: 0.62)]         // pale — glyph flecks
     }
 
-    /// The same hue, darker and a little richer — the shaded side of a
-    /// coloured paper. Mixing in black would grey it toward mud.
+    /// The same colour, darker and a little richer — the shaded side of
+    /// a coloured paper. Mixing in black would grey it toward mud, and a
+    /// yellow darkened in place turns olive, so the shade leans the way a
+    /// painter's does: yellows and oranges toward amber, greens toward
+    /// teal.
     static func deeper(_ color: Color) -> Color {
         guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else {
             return color.mix(with: .black, by: 0.25)
@@ -882,8 +885,16 @@ struct ConfettiView: View {
         rgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
         // White has no hue to deepen: it turns a cool pearl grey instead.
         guard saturation > 0.05 else { return Color(white: 0.78) }
-        return Color(hue: Double(hue), saturation: Double(min(1, saturation * 1.15 + 0.05)),
-                     brightness: Double(brightness * 0.7), opacity: Double(alpha))
+        let lean: CGFloat
+        if (0.06..<0.2).contains(hue) {
+            lean = -0.045
+        } else if (0.2..<0.45).contains(hue) {
+            lean = 0.03
+        } else {
+            lean = 0
+        }
+        return Color(hue: Double(hue + lean), saturation: Double(min(1, saturation * 1.15 + 0.05)),
+                     brightness: Double(brightness * 0.72), opacity: Double(alpha))
     }
 
     /// The colour the pop & the Reduce Motion bloom wear.
