@@ -334,6 +334,12 @@ final class BuddyPanel: NSPanel {
                 return CGSize(width: $0.x - own.x, height: own.y - $0.y)
             } ?? .zero
             toy.arrive(fromScale: 1 / max(1, toy.buddyScale), drift: drift)
+            // At once, and over any fade-out still running from a dock a
+            // moment ago: a zero-length group replaces that animation.
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                self.animator().alphaValue = 1
+            }
             alphaValue = 1
             orderFrontRegardless()
         } else {
