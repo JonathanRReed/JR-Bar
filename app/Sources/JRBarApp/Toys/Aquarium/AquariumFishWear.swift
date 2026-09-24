@@ -136,7 +136,7 @@ extension CartoonFish {
             let frame = Color(red: 0.05, green: 0.05, blue: 0.07)
             if face.turn > 0.05 {
                 var back = f
-                back.opacity = face.turn
+                back.opacity = face.far
                 sunglassLens(&back, at: far, r: r * 0.94, sx: face.sx, lw: lw)
                 var bridge = Path()
                 bridge.move(to: CGPoint(x: far.x + r * 1.3 * face.sx, y: e.y - r * 0.8))

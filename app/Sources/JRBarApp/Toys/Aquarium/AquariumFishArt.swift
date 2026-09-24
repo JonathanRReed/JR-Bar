@@ -665,7 +665,7 @@ enum CartoonFish {
         if turn > 0.05 {
             // The far eye, peeking over the brow as the head comes round.
             var far = f
-            far.opacity = turn
+            far.opacity = face.far
             drawEye(into: &far, at: CGPoint(x: art.eye.x - spread, y: art.eye.y), r: art.eyeR * 0.94,
                     palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: false,
                     sx: sx)
@@ -686,14 +686,18 @@ enum CartoonFish {
 
     /// How far a turn has brought the face round to the glass: `turn`
     /// 0 side-on … 1 face-on, how far the eyes part from where they sit
-    /// side-on (unit space, before the caller's squash), and how much
-    /// wider to draw an eye so it stays round on screen.
-    static func faceTurn(art: Art, thin: Double) -> (turn: Double, spread: Double, sx: Double) {
+    /// side-on (unit space, before the caller's squash), how much
+    /// wider to draw an eye so it stays round on screen, and how solid
+    /// the far eye (and anything worn over it) shows — solid by half
+    /// way, so a fish holding a half turn at the glass never looks at
+    /// you through a ghost of an eye.
+    static func faceTurn(art: Art, thin: Double)
+        -> (turn: Double, spread: Double, sx: Double, far: Double) {
         let thin = max(0.12, min(1, thin))
         let turn = min(1, max(0, (0.9 - thin) / 0.6))
         let spread = art.eyeSpread * (1 - thin * thin).squareRoot() / thin * turn
         let sx = (0.55 + 0.45 * thin) / thin * turn + (1 - turn)
-        return (turn, spread, sx)
+        return (turn, spread, sx, min(1, turn * 2.2))
     }
 
     /// The big friendly eye: a soft socket, a white that shades toward
