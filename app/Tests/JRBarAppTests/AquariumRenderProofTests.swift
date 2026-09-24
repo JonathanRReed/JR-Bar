@@ -10,7 +10,8 @@ import JRBarCore
 /// a buried treasure, a resident or two — rendered at 1200×700 under
 /// four looks so a human can eyeball the tranche-2B art the way the
 /// review screenshots do. Off by default; set `JRBAR_RENDER_PROOF=1`
-/// to write `/tmp/jrbar-audit/aquarium-*.png`.
+/// to write `aquarium-*.png` into `JRBAR_RENDER_PROOF_DIR` (default
+/// `/tmp/jrbar-audit`).
 @Suite("Aquarium render proof")
 @MainActor
 struct AquariumRenderProofTests {
@@ -160,7 +161,8 @@ struct AquariumRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write /tmp/jrbar-audit PNGs"))
     func snapshots() throws {
-        let dir = URL(fileURLWithPath: "/tmp/jrbar-audit", isDirectory: true)
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // name, theme, substrate, backdrop, pinned night, visitor.
         let shots: [(String, String, String, String, Double,
