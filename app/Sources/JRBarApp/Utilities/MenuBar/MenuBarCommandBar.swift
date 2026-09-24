@@ -117,15 +117,76 @@ enum MenuBarCommands {
     /// prefix for the query's first character. Longer candidates pay a
     /// small tax so a short exact word beats a long ramble.
     nonisolated static func score(_ query: String, _ candidate: String) -> Int? {
-        let qs = Array(query.lowercased().filter { !$0.isWhitespace })
+        score(Folded(query: query), Folded(candidate))
+    }
+
+    /// Text folded for the matcher: lowercased once, one key per
+    /// character. A list that asks the same rows on every keystroke —
+    /// the palette's — folds each field once and the query once per
+    /// keystroke, instead of lowercasing and copying every field for
+    /// every letter typed.
+    struct Folded: Equatable, Sendable {
+        let keys: [UInt64]
+        /// Which characters occur, one bit per letter, digit or bucket
+        /// of the rest: a query needing a bit the candidate lacks cannot
+        /// be a subsequence of it, so most rows fail on one AND.
+        let mask: UInt64
+
+        /// A candidate: every character, spaces included — they mark
+        /// word starts.
+        nonisolated init(_ text: String) {
+            self.init(keys: text.lowercased().map(Folded.key))
+        }
+
+        /// A query: its spaces dropped, as the matcher reads it.
+        nonisolated init(query: String) {
+            self.init(keys: query.lowercased().filter { !$0.isWhitespace }.map(Folded.key))
+        }
+
+        private nonisolated init(keys: [UInt64]) {
+            self.keys = keys
+            mask = keys.reduce(0) { $0 | Folded.bit($1) }
+        }
+
+        /// A key's bit in `mask`: a–z and 0–9 their own, the rest shared.
+        nonisolated static func bit(_ key: UInt64) -> UInt64 {
+            switch key {
+            case 97...122: return 1 << (key - 97)
+            case 48...57: return 1 << (key - 48 + 26)
+            default: return 1 << (36 + key % 28)
+            }
+        }
+
+        /// One character's key, equal exactly when the characters are:
+        /// plain ASCII is its own scalar; anything else compares the
+        /// way `Character` does, canonically — the one scalar its
+        /// composed form has, or, for a cluster that stays several (an
+        /// emoji sequence, a flag), its hash above the scalar range.
+        nonisolated static func key(_ character: Character) -> UInt64 {
+            let scalars = character.unicodeScalars
+            if scalars.count == 1, let scalar = scalars.first, scalar.isASCII { return UInt64(scalar.value) }
+            let composed = String(character).precomposedStringWithCanonicalMapping.unicodeScalars
+            if composed.count == 1, let scalar = composed.first { return UInt64(scalar.value) }
+            return 0x11_0000 &+ (UInt64(bitPattern: Int64(character.hashValue)) >> 1)
+        }
+    }
+
+    /// The characters a word starts after.
+    nonisolated static let wordBreaks: Set<UInt64> = Set([" ", "·", "-", "/", ":"].map(Folded.key))
+
+    /// `score(_:_:)` over folded text — the same points, nothing
+    /// lowercased or copied.
+    nonisolated static func score(_ query: Folded, _ candidate: Folded) -> Int? {
+        let qs = query.keys
         guard !qs.isEmpty else { return 0 }
-        let cs = Array(candidate.lowercased())
+        guard query.mask & ~candidate.mask == 0 else { return nil }
+        let cs = candidate.keys
         var qi = 0
         var total = 0
         var lastMatch = -2
         var streak = 0
-        for (i, ch) in cs.enumerated() where qi < qs.count {
-            guard ch == qs[qi] else { continue }
+        for i in cs.indices {
+            guard cs[i] == qs[qi] else { continue }
             var pts = 2
             if i == lastMatch + 1 {
                 streak += 1
@@ -133,13 +194,14 @@ enum MenuBarCommands {
             } else {
                 streak = 0
             }
-            if i == 0 || [" ", "·", "-", "/", ":"].contains(cs[i - 1]) {
+            if i == 0 || wordBreaks.contains(cs[i - 1]) {
                 pts += 8
             }
             if qi == 0 && i == 0 { pts += 10 }
             total += pts
             lastMatch = i
             qi += 1
+            if qi == qs.count { break }
         }
         guard qi == qs.count else { return nil }
         return total - cs.count / 4

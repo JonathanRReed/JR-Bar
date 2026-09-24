@@ -14,6 +14,9 @@ import Observation
 final class PaletteModel {
     /// Every row the sources offered at open.
     private(set) var items: [PaletteItem] = []
+    /// `items` folded for the matcher, in the same order — once per
+    /// load or reload, so a keystroke folds only the query.
+    @ObservationIgnored private var foldedItems: [PaletteRanking.FoldedItem] = []
     /// Rows a slower source found for the current query — the front
     /// app's menu items, the archive's full-text hits. Listed after the
     /// ranked results, each source under its own heading.
@@ -70,6 +73,7 @@ final class PaletteModel {
 
     func load(items: [PaletteItem], usage: PaletteUsage, now: Date = Date()) {
         self.items = items
+        foldedItems = items.map(PaletteRanking.FoldedItem.init)
         self.usage = usage
         self.now = now
         searchResults = []
@@ -90,6 +94,7 @@ final class PaletteModel {
     /// field — an ask answered in its own window takes its Reply with it.
     func reload(items: [PaletteItem]) {
         self.items = items
+        foldedItems = items.map(PaletteRanking.FoldedItem.init)
         let previous = selectedID
         refilter(keepSelection: true)
         if actionsOpen, selectedID != previous { closeActions() }
@@ -115,7 +120,8 @@ final class PaletteModel {
         let previous = selectedID
         let trimmedQuery = Self.trimmed(query)
         let typed = trimmedQuery.isEmpty ? [] : typedRows(trimmedQuery)
-        var arranged = PaletteRanking.arrange(items, typed: typed, query: query, usage: usage, now: now)
+        var arranged = PaletteRanking.arrange(items, folded: foldedItems, typed: typed, query: query,
+                                              usage: usage, now: now)
         if !Self.trimmed(query).isEmpty, !searchResults.isEmpty {
             // Each slower source's hits under its own heading — the
             // frontmost app's menus, then the archive — in source order.

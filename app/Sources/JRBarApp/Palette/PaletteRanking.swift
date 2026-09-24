@@ -36,13 +36,25 @@ enum PaletteRanking {
     /// 45m"): they lead Results unranked — the words were written for
     /// them — and stand in for any row of the same id, so a typed "quiet
     /// 1h" is the 1-hour preset's row, habit and all, said once.
-    static func arrange(_ items: [PaletteItem], typed: [PaletteItem] = [], query: String,
-                        usage: PaletteUsage, now: Date = Date()) -> [PaletteListSection] {
+    ///
+    /// `folded` is `items` folded once (`FoldedItem`), in the same order
+    /// — the model keeps it with its rows; nil folds them here.
+    static func arrange(_ items: [PaletteItem], folded: [FoldedItem]? = nil, typed: [PaletteItem] = [],
+                        query: String, usage: PaletteUsage, now: Date = Date()) -> [PaletteListSection] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return home(items, usage: usage, now: now) }
         let typedIDs = Set(typed.map(\.id))
-        let ranked = typed + rank(items.filter { !typedIDs.contains($0.id) }, query: trimmed,
-                                  usage: usage, now: now)
+        let fields: [FoldedItem]
+        if let folded, folded.count == items.count {
+            fields = folded
+        } else {
+            fields = items.map(FoldedItem.init)
+        }
+        var candidates: [(item: PaletteItem, folded: FoldedItem)] = []
+        for (item, fold) in zip(items, fields) where !typedIDs.contains(item.id) {
+            candidates.append((item, fold))
+        }
+        let ranked = typed + rank(candidates, query: trimmed, usage: usage, now: now)
         return ranked.isEmpty ? [] : [PaletteListSection(section: .results, items: ranked)]
     }
 
@@ -95,16 +107,25 @@ enum PaletteRanking {
     /// front — see `promoting`.
     static func rank(_ items: [PaletteItem], query: String, usage: PaletteUsage,
                      now: Date = Date()) -> [PaletteItem] {
-        items.enumerated()
-            .compactMap { offset, item -> (item: PaletteItem, score: Int, offset: Int)? in
-                guard let match = match(item, query: query) else { return nil }
-                var total = match.score + boost(usage.score(for: item.id, at: now))
-                if item.urgent { total += urgencyBonus }
-                if usage.isFavorite(item.id) { total += favoriteBonus }
-                return (promoting(match.verbID, in: item), total, offset)
-            }
-            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.offset < $1.offset }
-            .map(\.item)
+        rank(items.map { ($0, FoldedItem($0)) }, query: query, usage: usage, now: now)
+    }
+
+    /// `rank` over rows already folded: the query folds once here, and
+    /// no row's fields fold at all.
+    static func rank(_ candidates: [(item: PaletteItem, folded: FoldedItem)], query: String,
+                     usage: PaletteUsage, now: Date = Date()) -> [PaletteItem] {
+        let folded = FoldedQuery(query)
+        var scored: [(item: PaletteItem, score: Int, offset: Int)] = []
+        for (offset, candidate) in candidates.enumerated() {
+            guard let found = match(candidate.folded, query: folded) else { continue }
+            let item = candidate.item
+            var total = found.score + boost(usage.score(for: item.id, at: now))
+            if item.urgent { total += urgencyBonus }
+            if usage.isFavorite(item.id) { total += favoriteBonus }
+            scored.append((promoting(found.verbID, in: item), total, offset))
+        }
+        scored.sort { a, b in a.score != b.score ? a.score > b.score : a.offset < b.offset }
+        return scored.map { $0.item }
     }
 
     /// A row's best match, and the verb it came through when that beat
@@ -125,27 +146,72 @@ enum PaletteRanking {
     /// so "dark" never finds "Dock Auto-Hide Restarts" by picking
     /// letters out of three words.
     static func match(_ item: PaletteItem, query: String) -> Match? {
-        let floor = 3 * query.filter { !$0.isWhitespace }.count
+        match(FoldedItem(item), query: FoldedQuery(query))
+    }
+
+    /// A query folded once per keystroke, with the floor it sets.
+    struct FoldedQuery {
+        let text: MenuBarCommands.Folded
+        /// Three points a letter — what bare scattered letters earn.
+        let floor: Int
+
+        init(_ query: String) {
+            text = MenuBarCommands.Folded(query: query)
+            floor = 3 * query.filter { !$0.isWhitespace }.count
+        }
+    }
+
+    /// A row's searchable fields folded once — when the model takes its
+    /// rows, not on every keystroke. The "verb title" phrases are
+    /// spelled here too, so a keystroke builds no string at all.
+    struct FoldedItem {
+        struct Verb {
+            let id: String
+            let title: MenuBarCommands.Folded
+            let phrase: MenuBarCommands.Folded
+        }
+
+        let title: MenuBarCommands.Folded
+        let verbs: [Verb]
+        let keywords: [MenuBarCommands.Folded]
+        let subtitle: MenuBarCommands.Folded?
+        let kind: MenuBarCommands.Folded
+
+        init(_ item: PaletteItem) {
+            title = MenuBarCommands.Folded(item.title)
+            verbs = item.actions.map { action in
+                Verb(id: action.id, title: MenuBarCommands.Folded(action.title),
+                     phrase: MenuBarCommands.Folded(action.title + " " + item.title))
+            }
+            keywords = item.keywords.map { MenuBarCommands.Folded($0) }
+            subtitle = item.subtitle.map { MenuBarCommands.Folded($0) }
+            kind = MenuBarCommands.Folded(item.kind)
+        }
+    }
+
+    /// `match` over folded fields — the same points, field for field.
+    static func match(_ item: FoldedItem, query: FoldedQuery) -> Match? {
+        let floor = query.floor
         var best: Match?
         func consider(_ value: Int?, verb: String? = nil) {
             guard let value, value >= floor else { return }
             if value > (best?.score ?? .min) { best = Match(score: value, verbID: verb) }
         }
-        consider(MenuBarCommands.score(query, item.title))
+        let text = query.text
+        consider(MenuBarCommands.score(text, item.title))
         // A verb phrase counts only when the query reaches past the
         // verb into the row's own name: "d" alone must never turn Deny
         // into Return, but "deny fix" means it.
-        for action in item.actions where MenuBarCommands.score(query, action.title) == nil {
-            consider(MenuBarCommands.score(query, "\(action.title) \(item.title)").map { $0 - 1 },
-                     verb: action.id)
+        for verb in item.verbs where MenuBarCommands.score(text, verb.title) == nil {
+            consider(MenuBarCommands.score(text, verb.phrase).map { $0 - 1 }, verb: verb.id)
         }
         for keyword in item.keywords {
-            consider(MenuBarCommands.score(query, keyword).map { $0 * 4 / 5 })
+            consider(MenuBarCommands.score(text, keyword).map { $0 * 4 / 5 })
         }
         if let subtitle = item.subtitle {
-            consider(MenuBarCommands.score(query, subtitle).map { $0 / 2 })
+            consider(MenuBarCommands.score(text, subtitle).map { $0 / 2 })
         }
-        consider(MenuBarCommands.score(query, item.kind).map { $0 / 2 })
+        consider(MenuBarCommands.score(text, item.kind).map { $0 / 2 })
         return best
     }
 
