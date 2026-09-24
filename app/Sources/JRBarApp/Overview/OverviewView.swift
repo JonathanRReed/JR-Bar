@@ -330,6 +330,14 @@ struct OverviewView: View {
             } else if let error = store.error, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "exclamationmark.triangle", title: "Couldn't load the roster",
                                    text: error)
+            } else if store.nobodyWaiting {
+                // The default view with nothing to answer is good news,
+                // not a filter that failed.
+                let working = store.workingOverall
+                OverviewEmptyState(symbol: "checkmark.circle", title: "Nobody's waiting on you",
+                                   text: "When an agent asks for you, it lands here.",
+                                   actionTitle: working > 0 ? "Show \(working) working" : nil,
+                                   action: { store.showWorking() })
             } else if store.rows.isEmpty {
                 OverviewEmptyState(symbol: store.roster.isEmpty ? "tray" : "line.3.horizontal.decrease.circle",
                                    title: store.roster.isEmpty ? "Nothing on record" : "Nothing matches",
@@ -339,12 +347,15 @@ struct OverviewView: View {
             } else {
                 rosterTable
             }
-            if let note = store.coverageNote {
+            if store.coverageNote != nil {
+                // The daemon's note says the roster keeps statuses, not
+                // every run; where the rest are is what the reader needs.
                 Divider()
-                Text(note)
+                Text("Older runs live in History (⌘Y)")
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
                     .padding(.horizontal, 12).padding(.vertical, 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(store.coverageNote ?? "")
             }
             if store.counts.listed < store.counts.total {
                 Divider()
@@ -569,6 +580,10 @@ struct OverviewView: View {
             if counts.hidden > 0 {
                 Text("· \(counts.hidden) hidden").foregroundStyle(.tertiary)
             }
+            if let whole = store.wholeRosterPhrase {
+                // The counts above are this view's; this is everyone's.
+                Text("· \(whole)").foregroundStyle(.tertiary).lineLimit(1)
+            }
             Spacer()
             if store.loading {
                 ProgressView().controlSize(.mini)
@@ -586,7 +601,8 @@ struct OverviewView: View {
     /// The wiring row: core link, this Mac, each peer, each device,
     /// each provider — the live connections the roster runs on, visible
     /// even when no session is. A chip focuses the same link's facts in
-    /// the inspector.
+    /// the inspector. The row scrolls sideways, and its edges fade so a
+    /// chip cut by the pane reads as "more", not as a clipped view.
     @ViewBuilder
     private var connectionsStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -596,6 +612,15 @@ struct OverviewView: View {
                 }
             }
             .padding(.horizontal, 12)
+        }
+        .mask {
+            HStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 12)
+                Color.black
+                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 12)
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.bottom, 5)
@@ -1442,6 +1467,9 @@ struct OverviewEmptyState: View {
     let symbol: String
     let title: String
     let text: String
+    /// One way on from the empty state, when there is an obvious one.
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1449,9 +1477,14 @@ struct OverviewEmptyState: View {
             Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
             Text(text).font(.system(size: 11)).foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center).frame(maxWidth: 320)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.link).font(.system(size: 12))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
+        // A button of its own must stay a button to VoiceOver.
+        .accessibilityElement(children: actionTitle == nil ? .combine : .contain)
     }
 }
 

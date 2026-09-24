@@ -246,6 +246,8 @@ final class OverviewStore {
     struct DerivedResult {
         var rows: [CoreRosterEntry] = []
         var stripCounts = StripCounts()
+        /// Working rows across the whole roster, whatever the cut.
+        var workingOverall = 0
     }
     /// The summary strip's counts — computed over the SAME filtered rows
     /// the table shows (S7.1: the strip and the list never disagree).
@@ -304,6 +306,7 @@ final class OverviewStore {
             if entry.axes?.review == "unreviewed" { result.stripCounts.unreviewed += 1 }
             if entry.visibility == "hidden" { result.stripCounts.hidden += 1 }
         }
+        result.workingOverall = roster.reduce(0) { $0 + (OverviewPreset.working.matches($1) ? 1 : 0) }
         derivedComputations += 1
         derivedCache = (key, result)
         return result
@@ -313,6 +316,35 @@ final class OverviewStore {
     /// applies to the whole filtered set so a column click never lies
     /// about the order the daemon sent.
     var rows: [CoreRosterEntry] { derived.rows }
+
+    /// Working rows across the whole roster, whatever the view shows.
+    var workingOverall: Int { derived.workingOverall }
+
+    /// The whole roster's word beside a strip the view has cut down —
+    /// "2 working overall · 14 outside this view" — so "0 live" under
+    /// Needs me never reads as nothing running. nil when every row shows.
+    var wholeRosterPhrase: String? {
+        let outside = roster.count - rows.count
+        guard outside > 0 else { return nil }
+        return (workingOverall > 0 ? "\(workingOverall) working overall · " : "") + "\(outside) outside this view"
+    }
+
+    /// Needs me with nothing waiting — the quiet state, not a filter that
+    /// matched nothing: no search, worker or day cut narrows it.
+    var nobodyWaiting: Bool {
+        rows.isEmpty && !roster.isEmpty && filter.preset == .needsMe && activeSavedFilter == nil
+            && search.isEmpty && workerFilter == nil && dayFilter == nil
+    }
+
+    /// "Show 2 working", from the quiet Needs me view.
+    func showWorking() {
+        pane = .roster
+        workerFilter = nil
+        dayFilter = nil
+        activeSavedFilter = nil
+        search = ""
+        filter = OverviewFilter(preset: .working)
+    }
 
     /// A Model or Cost column click: those orders move when a reading
     /// lands, every other order does not.

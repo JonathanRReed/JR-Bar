@@ -60,6 +60,34 @@ import JRBarCore
         #expect(store.rows.map(\.id) == ["a", "b"])
     }
 
+    @Test("an empty Needs me is nobody waiting, with the whole roster's working count one click away")
+    func quietNeedsMe() {
+        let store = Self.store(with: [
+            Self.entry("w1", mode: "tool_running"),
+            Self.entry("w2", mode: "working"),
+            Self.entry("done", mode: "completed", lifecycle: "completed", outcome: "succeeded"),
+        ])
+        #expect(store.filter.preset == .needsMe, "Needs me stays the default view")
+        #expect(store.rows.isEmpty)
+        #expect(store.nobodyWaiting)
+        #expect(store.workingOverall == 2)
+        #expect(store.wholeRosterPhrase == "2 working overall · 3 outside this view")
+
+        store.search = "w1"
+        #expect(!store.nobodyWaiting, "a search that matches nothing is not the quiet state")
+        store.search = ""
+
+        store.showWorking()
+        #expect(store.filter.preset == .working)
+        #expect(Set(store.rows.map(\.id)) == ["w1", "w2"])
+        #expect(!store.nobodyWaiting)
+        #expect(store.wholeRosterPhrase == "2 working overall · 1 outside this view")
+
+        store.filter = OverviewFilter(preset: .all)
+        #expect(store.wholeRosterPhrase == nil, "every row shows: nothing to add")
+        #expect(!Self.store(with: []).nobodyWaiting, "an empty roster is Nothing on record")
+    }
+
     @Test func workingPresetUsesTheCanonicalStateWord() {
         let store = Self.store(with: [
             Self.entry("w", mode: "tool_running"),
