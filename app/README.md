@@ -189,7 +189,7 @@ API:
 ```swift
 let program = try LEDSProgram.parse(text, ledCount: 8)   // throws LEDSParseError, never renders red strobe
 let sampler = LEDSSampler(program: program, ledCount: 8, initialCodes: previous)
-sampler.colors(at: seconds)          // [RGB] floats 0...1 (codes / 255), .linear / RGB.fromLinear helpers
+sampler.colors(at: seconds)          // [RGB] floats 0...1 (codes / 255), .linear decodes
 sampler.codes(atMilliseconds: ms)    // exact [RGB8] after brightness
 program.cycleDuration, program.isStatic, program.motionEndsAt
 LEDSKeyframePlan.render(sampler: sampler)   // lead + loop keyframe tracks for Core Animation, nil when too long
@@ -201,8 +201,9 @@ Colour note: the sampler's floats are the firmware codes over 255. The strip
 PWMs those linearly; the Python Screen Bar paints them straight into an sRGB
 context ("identity transfer", see `_led_status_legacy.py`). The app does the
 same, in the sRGB colour space rather than the Python's DeviceRGB, so the hex
-codes mean what a colour picker says they mean. `RGB.linear` and
-`RGB.fromLinear` are the exact IEC 61966-2-1 curves for anyone who needs light.
+codes mean what a colour picker says they mean. `RGB.linear` (and
+`LEDSTransfer` both ways) is the exact IEC 61966-2-1 curve for anyone who
+needs light.
 
 ### Keyframes
 

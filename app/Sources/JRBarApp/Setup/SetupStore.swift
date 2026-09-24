@@ -160,7 +160,6 @@ final class SetupStore {
 
     var canGoBack: Bool { step != .welcome }
     var canSkip: Bool { step.skippable }
-    var canGoNext: Bool { true }
 
     /// The primary button's word: Get Started → Next → Finish.
     var nextTitle: String {

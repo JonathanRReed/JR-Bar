@@ -10,7 +10,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     let store: SettingsStore
     private var window: NSWindow?
-    private var pageObservation: Any?
 
     init(store: SettingsStore) {
         self.store = store

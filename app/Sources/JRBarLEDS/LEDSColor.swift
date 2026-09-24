@@ -39,8 +39,8 @@ public struct RGB8: Hashable, Sendable, Codable {
 /// those codes linearly, so on the hardware they are linear light; the Python
 /// Screen Bar paints the same numbers straight into an sRGB drawing context
 /// (its "identity transfer" reconciliation, see `_led_status_legacy.py`). Use
-/// `linear` / `fromLinear` when a consumer genuinely needs the IEC 61966-2-1
-/// decode, for example to blend in linear light.
+/// `linear` when a consumer genuinely needs the IEC 61966-2-1 decode, for
+/// example to blend in linear light.
 public struct RGB: Hashable, Sendable {
     public var r: Double
     public var g: Double
@@ -60,11 +60,6 @@ public struct RGB: Hashable, Sendable {
     /// Decoded through the exact sRGB piecewise curve (port of `srgb_to_linear`).
     public var linear: RGB {
         RGB(r: LEDSTransfer.srgbToLinear(r), g: LEDSTransfer.srgbToLinear(g), b: LEDSTransfer.srgbToLinear(b))
-    }
-
-    /// Encoded through the exact sRGB piecewise curve (port of `linear_to_srgb`).
-    public static func fromLinear(_ value: RGB) -> RGB {
-        RGB(r: LEDSTransfer.linearToSRGB(value.r), g: LEDSTransfer.linearToSRGB(value.g), b: LEDSTransfer.linearToSRGB(value.b))
     }
 
     /// Nearest 8-bit codes.

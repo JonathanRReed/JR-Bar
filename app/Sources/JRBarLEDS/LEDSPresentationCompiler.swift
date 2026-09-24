@@ -9,7 +9,6 @@ import Foundation
 /// shorter than the minimum cycle is scaled up by an integer factor. Delays
 /// are never clamped (they are phase offsets and cannot raise the flash rate).
 public enum LEDSPresentationCompiler {
-    public static let maxPresentationHz = 2.0
     public static let minPresentationCycleMs = 500
     public static let minPresentationPhaseMs = 250
     public static let minSaturatedRedCycleMs = 1000

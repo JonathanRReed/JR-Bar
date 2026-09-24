@@ -343,10 +343,6 @@ final class DeckStore {
         run("deck_approve_device", success: "Approved \(device?.serial ?? "the device")") { try await self.core.deckApproveDevice() }
     }
 
-    func setSettings(enabled: Bool? = nil, sessionMode: Bool? = nil, analogEnabled: Bool? = nil) {
-        run("deck_set_settings") { try await self.core.deckSetSettings(enabled: enabled, sessionMode: sessionMode, analogEnabled: analogEnabled) }
-    }
-
     /// The four calibrated analog sectors (AG20–AG23), while
     /// `analog_enabled` is on. A daemon's `aux` array stops at AG19, so a
     /// sector's mapping comes from the explicit `settings.bindings`; a

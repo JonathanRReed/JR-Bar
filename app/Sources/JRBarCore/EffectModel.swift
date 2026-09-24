@@ -512,9 +512,6 @@ public enum EffectScope: String, Codable, Hashable, Sendable, CaseIterable, Iden
         }
     }
 
-    /// Every scope but `global` names a target.
-    public var needsTarget: Bool { self != .global }
-
     /// Most specific first, the daemon's `_SCOPE_PRECEDENCE`.
     public static let precedence: [EffectScope] = [.device, .project, .providerInstance, .provider, .scene, .semantic, .global]
 }
