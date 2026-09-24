@@ -523,10 +523,20 @@ final class DisplayWatcher {
 
 /// The felt edge a capsule deserves: the system's own Tink, quiet
 /// enough that a volume key run does not turn into a woodblock solo.
+@MainActor
 enum NotchSounds {
+    /// Its own copy of Tink: the shared named sound keeps its volume
+    /// for everyone else, and a run of presses restarts the click
+    /// instead of dropping it while the last one still rings.
+    private static let tink: NSSound? = {
+        let sound = NSSound(named: NSSound.Name("Tink"))?.copy() as? NSSound
+        sound?.volume = 0.12
+        return sound
+    }()
+
     static func tick() {
-        guard let sound = NSSound(named: NSSound.Name("Tink")) else { return }
-        sound.volume = 0.12
+        guard let sound = tink else { return }
+        if sound.isPlaying { sound.stop() }
         sound.play()
     }
 }
