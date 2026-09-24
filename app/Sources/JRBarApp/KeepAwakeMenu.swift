@@ -100,8 +100,7 @@ enum KeepAwakeMenu {
     nonisolated static func items(durations: [Int], reading: KeepAwakeReading, displayOn: Bool,
                                   monitorLive: Bool, now: Date) -> [Item] {
         var items = durations.map { Item(choice: .seconds($0), title: "For \(title(seconds: $0))") }
-        let morning = now.addingTimeInterval(TimeInterval(PanelStore.secondsUntilMorning(from: now)))
-        items.append(Item(choice: .untilMorning, title: PanelStore.morningLabel(verb: "Until", target: morning)))
+        items.append(Item(choice: .untilMorning, title: PanelStore.morningLabel(verb: "Until", target: morning(from: now))))
         items.append(Item(choice: .untilAgentsFinish, title: "Until the agents finish",
                           checked: reading.state == .lease(.agentsFinish), enabled: monitorLive))
         items.append(Item(choice: .indefinitely, title: "Indefinitely",
@@ -111,6 +110,13 @@ enum KeepAwakeMenu {
         items.append(Item(choice: .turnOff, title: "Turn off", enabled: reading.leaseInForce,
                           dividerBefore: true))
         return items
+    }
+
+    /// The moment "Until 08:00" ends, on the minute: the rule counts
+    /// whole seconds, so `now`'s fraction would otherwise name 07:59.
+    nonisolated static func morning(from now: Date) -> Date {
+        let end = now.timeIntervalSinceReferenceDate + TimeInterval(PanelStore.secondsUntilMorning(from: now))
+        return Date(timeIntervalSinceReferenceDate: (end / 60).rounded() * 60)
     }
 
     /// What a choice asks of the hold: seconds for a countdown (the

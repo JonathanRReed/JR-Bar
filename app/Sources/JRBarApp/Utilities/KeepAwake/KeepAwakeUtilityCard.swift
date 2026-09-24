@@ -44,9 +44,11 @@ final class KeepAwakeUtility: Toy {
             return .off
         case .agents(let count):
             return .note(count == 1 ? "1 agent holds it" : count > 0 ? "\(count) agents hold it" : "Agents' grace")
-        case .lease(.until(let end)):
-            let left = end.timeIntervalSince(toggles.state.awakeClock)
-            return left > 0 ? .note(KeepAwakeMenu.shortTitle(seconds: Int(left)) + " left") : .on
+        case .lease(.until):
+            // The footer's own compact words ("42m"), rounded the same way.
+            guard let words = reading.footerLine(now: toggles.state.awakeClock), words.short != "Awake"
+            else { return .on }
+            return .note(words.short + " left")
         case .lease(.agentsFinish):
             return .note("Until the agents finish")
         case .lease(.indefinite):
@@ -113,7 +115,9 @@ struct KeepAwakeUtilityControls: View {
         let items = KeepAwakeMenu.items(durations: durations, reading: toggles.state.awakeReading,
                                         displayOn: toggles.awakeKeepsDisplay,
                                         monitorLive: toggles.state.daemonLive, now: now ?? Date())
-        let buttons = items.filter { $0.choice != .keepDisplayOn }
+        // The display switch is its own row below; Turn off shows only
+        // while there is a hold to end (the menus keep it, greyed).
+        let buttons = items.filter { $0.choice != .keepDisplayOn && ($0.choice != .turnOff || $0.enabled) }
         return FlowLayout {
             ForEach(buttons) { item in
                 Button(presetTitle(item)) { KeepAwakeMenu.perform(item.choice, on: toggles) }
@@ -157,7 +161,7 @@ struct KeepAwakeUtilityControls: View {
 
     @ViewBuilder
     private var durationRows: some View {
-        CardSectionHeader("Durations")
+        CardSectionHeader("Presets")
         LabeledContent {
             HStack(spacing: SettingsMetrics.s) {
                 Stepper(value: $newMinutes, in: 1...1440, step: newMinutes < 60 ? 5 : 15) {

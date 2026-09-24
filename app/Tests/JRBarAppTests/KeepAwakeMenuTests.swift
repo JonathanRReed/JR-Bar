@@ -90,6 +90,11 @@ import Testing
         let early = KeepAwakeMenu.items(durations: [], reading: KeepAwakeReading(state: .off),
                                         displayOn: false, monitorLive: true, now: try today(6, 45))
         #expect(early.first { $0.choice == .untilMorning }?.title == "Until 08:00")
+        // A moment with a fraction of a second still names 08:00, not 07:59.
+        let fractional = try today(23, 10).addingTimeInterval(0.6)
+        let named = KeepAwakeMenu.items(durations: [], reading: KeepAwakeReading(state: .off),
+                                        displayOn: false, monitorLive: true, now: fractional)
+        #expect(named.first { $0.choice == .untilMorning }?.title == "Until 08:00 tomorrow")
     }
 
     @Test func theAgentsItemSendsTheAgentsLease() async throws {
