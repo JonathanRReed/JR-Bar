@@ -1732,23 +1732,37 @@ _ROUTABLE_SEMANTIC_TARGETS: Final = frozenset(
 )
 
 
-def _apply_provider_motion_assignment(self, effect, scope, target_id) -> str | None:
+#: Values that shape a finite pass, meaningless to a loop that plays for
+#: as long as the agent works; a provider's live motion never stores them.
+_LOOP_ONLY_EXCLUDED_PARAMETERS: Final = frozenset({"pass_mode"})
+
+
+def _apply_provider_motion_assignment(self, effect, scope, target_id, parameters=None) -> str | None:
     """Provider-scope motion assignments write the live color policy.
 
     ``provider_animation``-catalog effects are the persistent per-provider
-    motion the solo renderers read through ``colors.provider_animation``.
-    Recording the assignment alone would leave the picker's promise a dead
-    write, so a provider target also lands in settings. Returns a warning
-    string when the motion could not be applied; the assignment itself is
-    already saved either way.
+    motion the solo renderers read through ``colors.provider_animation``,
+    and ``parameters`` -- the Effect Studio values, tempo included -- ride
+    along into ``colors.provider_animation_parameters``, so the knobs that
+    shaped the preview shape the strip. Recording the assignment alone
+    would leave the picker's promise a dead write, so a provider target
+    also lands in settings. Returns a warning string when the motion could
+    not be applied; the assignment itself is already saved either way.
     """
     from .effect_studio import AssignmentScope
 
     if effect.catalog != "provider_animation" or scope is not AssignmentScope.PROVIDER:
         return None
     legacy = self._core_legacy()
+    values = {
+        name: value
+        for name, value in (parameters or {}).items()
+        if name not in _LOOP_ONLY_EXCLUDED_PARAMETERS
+    }
     try:
-        colors = self.settings.colors.with_agent_animation(target_id, effect.identifier)
+        colors = self.settings.colors.with_agent_animation(
+            target_id, effect.identifier
+        ).with_agent_animation_parameters(target_id, values)
     except (TypeError, ValueError):
         return f"{effect.identifier} is not a motion this build can apply"
     self.settings = self.settings.with_colors(colors)
@@ -1827,7 +1841,9 @@ def _cmd_set_assignment(self, args):
         core_effects.save_assignment_parameters(table)
     except OSError as error:
         self._core_log(f"core: assignment parameters not saved: {error}")
-    motion_error = _apply_provider_motion_assignment(self, effect, plan.scope, plan.target_id)
+    motion_error = _apply_provider_motion_assignment(
+        self, effect, plan.scope, plan.target_id, parameters
+    )
     result = _assignments_document(self)
     result["assignment"] = {
         "effect_id": plan.effect_id,

@@ -735,7 +735,7 @@ def _hue_shifted_color(color: str, degrees: float) -> str:
     hue = (hue + degrees / 360.0) % 1.0
     shifted = colorsys.hls_to_rgb(hue, lightness, saturation)
     return "#" + "".join(
-        f"{max(0, min(255, round(channel * 255.0))):02x}" for channel in shifted
+        f"{max(0, min(255, round(channel * 255.0))):02X}" for channel in shifted
     )
 
 

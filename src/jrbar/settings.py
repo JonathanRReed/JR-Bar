@@ -237,6 +237,7 @@ _OWNED_COLLECTION_PATHS = frozenset(
         "colors.fade_ceiling",
         "colors.mode_animation",
         "colors.provider_animation",
+        "colors.provider_animation_parameters",
         "colors.speed_overrides",
         "signal_styles",
         "calibration_profiles",

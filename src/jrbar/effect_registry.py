@@ -486,6 +486,11 @@ def _palette(
 
 
 def _duration(*, minimum: float | None = None) -> EffectParameter:
+    """One cycle's length. Each motion's floor is the shortest cycle at
+    which every combination of its other knobs still passes the safety
+    compiler untouched (measured 2026-09-24): faster than that, the
+    compiler would have to slow it, and the slider would promise a speed
+    the strip never plays."""
     return _number(
         "duration_seconds",
         colors_module.DEFAULT_CYCLE_SPEED_SECONDS,
@@ -508,7 +513,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_BREATHE: (
-        _duration(),
+        _duration(minimum=0.5),
         _number(
             "amplitude",
             1.0,
@@ -518,13 +523,13 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_DUOTONE: (
-        _duration(),
+        _duration(minimum=0.5),
         _number(
             "secondary_hue_offset_degrees",
             40.0,
-            "Hue offset used when no explicit two-color palette is supplied.",
-            -180.0,
-            180.0,
+            "How far round the colour wheel the second tone sits, when no palette is set.",
+            -150.0,
+            150.0,
             unit="degrees",
         ),
         _palette(
@@ -595,7 +600,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_FLICKER: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.2),
         _integer("seed", 271, "Picks one of many repeatable flicker patterns.", 0, 2_147_483_647),
         _number("luminance_floor", 0.35, "Lowest relative luminance.", 0.1, 0.8),
         _number("variation", 0.25, "How far the brightness wanders as it flickers.", 0.0, 0.5),
@@ -611,7 +616,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_TWINKLE: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.2),
         _number("density", 0.15, "Maximum fraction of LEDs sparkling at once.", 0.02, 0.3),
         _integer("seed", 271, "Picks one of many repeatable sparkle patterns.", 0, 2_147_483_647),
     ),
@@ -620,7 +625,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         _number("detune", 0.08, "How far each LED's slow swell strays from the others.", 0.0, 0.25),
     ),
     colors_module.MOTION_CONVERGE: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.2),
         _choice(
             "variant",
             "endpoints_to_center",
@@ -654,7 +659,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_BLOOM: (
-        _duration(minimum=0.5),
+        _duration(minimum=0.7),
         _number(
             "hold_ratio",
             0.0,
@@ -664,7 +669,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_FRONTIER: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.3),
         _number(
             "level",
             0.625,

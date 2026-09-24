@@ -1146,6 +1146,9 @@ ROLL_LAPS = 6
 #: pattern exactly; any other value picks another repeatable one.
 DEFAULT_SCATTER_SEED = 271
 DEFAULT_AURORA_SEED = 617
+#: Bytes a motion leaves for its caller: a settle ease, ``repeat`` and a
+#: ``brightness`` line.
+RENDER_RESERVE_BYTES = 48
 #: ``aurora.wave_count`` 1-4 as the swell width it stands for.
 AURORA_STRETCH: dict[int, float] = {1: 2.8, 2: 2.0, 3: 1.5, 4: 1.1}
 
@@ -1211,6 +1214,7 @@ def render_motion(
     dot_travel: str = DEFAULT_DOT_TRAVEL_STYLE,
     head: str | None = None,
     ceiling: float = 1.0,
+    reserve_bytes: int = RENDER_RESERVE_BYTES,
 ) -> list[str]:
     """One motion as whole-strip lines: the only geometry JR-Bar has.
 
@@ -1227,19 +1231,31 @@ def render_motion(
     motion moves on two LEDs. ``head`` is the tool tint for the motions
     whose crest can carry it, and ``ceiling`` is how far ``peak`` was
     scaled from the full colour, so chosen colours are dimmed to match.
+
+    When the chosen values would leave less than ``reserve_bytes`` of the
+    firmware's 512 for the caller's own lines (a settle ease, ``repeat``, a
+    brightness line), the motion is drawn with its default values instead:
+    a slightly plainer motion beats a program the strip cannot take.
     """
-    lines = _motion_lines(
-        motion,
-        peak,
-        floor_color,
-        led_count=max(1, int(led_count)),
-        cycle_ms=max(1, int(cycle_ms)),
-        params=params if isinstance(params, dict) else {},
-        compact=compact,
-        dot_travel=dot_travel,
-        head=head if motion in TINTABLE_MOTIONS else None,
-        ceiling=max(0.0, min(1.0, float(ceiling))),
-    )
+    values = params if isinstance(params, dict) else {}
+
+    def draw(knobs: dict) -> list[str]:
+        return _motion_lines(
+            motion,
+            peak,
+            floor_color,
+            led_count=max(1, int(led_count)),
+            cycle_ms=max(1, int(cycle_ms)),
+            params=knobs,
+            compact=compact,
+            dot_travel=dot_travel,
+            head=head if motion in TINTABLE_MOTIONS else None,
+            ceiling=max(0.0, min(1.0, float(ceiling))),
+        )
+
+    lines = draw(values)
+    if values and not fits(lines, reserve_bytes=reserve_bytes):
+        lines = draw({})
     return oriented(lines, led_count=led_count, direction=direction)
 
 
