@@ -48,4 +48,28 @@ import JRBarCore
         #expect(refused.line == "This T3 Code version isn't one JR-Bar can read yet.")
         #expect(T3CodeStatus.words(for: "anything-else") == "JR-Bar couldn't read T3 Code's database.")
     }
+
+    @Test("a row switched on reads again until the reader's look lands")
+    func settling() {
+        func row(enabled: Bool = true, _ observation: T3CodeStatus.Observation?) -> T3CodeStatus {
+            T3CodeStatus(present: true, enabled: enabled, readOnly: false, observation: observation)
+        }
+        func look(available: Bool, reason: String? = nil, inFlight: Bool) -> T3CodeStatus.Observation {
+            .init(available: available, threads: available ? 4 : 0, active: 0, needsUser: 0,
+                  reason: reason, inFlight: inFlight)
+        }
+        // The switch's own reply: the reader reconciled, its first look
+        // still on its way.
+        #expect(row(nil).isSettling)
+        #expect(row(look(available: false, inFlight: true)).isSettling)
+        #expect(row(look(available: false, inFlight: false)).isSettling)
+        #expect(row(look(available: false, reason: "t3_database_busy", inFlight: false)).isSettling)
+        // Settled: a look to show, or a refusal that will not change alone.
+        #expect(!row(look(available: true, inFlight: false)).isSettling)
+        #expect(!row(look(available: true, inFlight: true)).isSettling)
+        #expect(!row(look(available: false, reason: "t3_schema_unsupported", inFlight: false)).isSettling)
+        #expect(!row(look(available: false, reason: "t3_database_missing", inFlight: false)).isSettling)
+        // Off never reads.
+        #expect(!row(enabled: false, nil).isSettling)
+    }
 }

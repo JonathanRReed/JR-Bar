@@ -57,6 +57,18 @@ struct T3CodeStatus: Equatable {
         return "Reading T3 Code…"
     }
 
+    /// Switched on, but the line still shows a look on its way: no
+    /// observation yet, a first read in flight or not yet begun, or a busy
+    /// database being retried. Turning the switch on returns before the
+    /// reader's first look lands, so the model reads again while this holds.
+    var isSettling: Bool {
+        guard enabled else { return false }
+        guard let observation else { return true }
+        if observation.available { return false }
+        return observation.inFlight || observation.reason == nil
+            || observation.reason == "t3_database_busy"
+    }
+
     /// The reader's refusal codes, said plainly.
     static func words(for reason: String) -> String {
         switch reason {
@@ -90,17 +102,45 @@ final class T3CodeModel {
     /// The last switch's refusal, in the monitor's words.
     private(set) var error: String?
 
+    /// Follow-up reads taken since the last settled look, page show or
+    /// click — capped so a reader that never settles stops being asked.
+    @ObservationIgnored private var settleReads = 0
+    @ObservationIgnored private var followUp: Task<Void, Never>?
+    static let settleReadLimit = 8
+
     nonisolated init() {}
 
     func refresh(core: CoreModel) {
-        guard core.isLive, !busy else { return }
-        Task { [weak self] in await self?.run(core: core, args: [:]) }
+        settleReads = 0
+        reread(core: core)
     }
 
     /// The explicit click: the opt-in written, the reader reconciled.
     func setEnabled(_ on: Bool, core: CoreModel) {
         guard core.isLive, !busy else { return }
+        settleReads = 0
         Task { [weak self] in await self?.run(core: core, args: ["enabled": .bool(on)]) }
+    }
+
+    private func reread(core: CoreModel) {
+        guard core.isLive, !busy else { return }
+        Task { [weak self] in await self?.run(core: core, args: [:]) }
+    }
+
+    /// Reads once more in a moment while the reader's look is still on
+    /// its way, so the row reaches "Watching …" or a refusal without the
+    /// page being left and reopened.
+    private func followUpIfSettling(_ parsed: T3CodeStatus, core: CoreModel) {
+        followUp?.cancel()
+        followUp = nil
+        guard parsed.isSettling else { settleReads = 0; return }
+        guard settleReads < Self.settleReadLimit else { return }
+        settleReads += 1
+        followUp = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            self?.reread(core: core)
+        }
     }
 
     func run(core: CoreModel, args: [String: JSONValue]) async {
@@ -111,6 +151,7 @@ final class T3CodeModel {
             if reply.ok, let parsed = T3CodeStatus.parse(reply.result) {
                 status = parsed
                 error = nil
+                followUpIfSettling(parsed, core: core)
             } else if !args.isEmpty {
                 error = reply.error?.message ?? "The monitor refused the change."
             }
