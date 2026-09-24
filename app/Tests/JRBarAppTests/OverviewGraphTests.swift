@@ -218,6 +218,12 @@ import JRBarCore
         let moved = whole.revealing(CGRect(x: 600, y: 0, width: 50, height: 50), in: size, margin: 20)
         #expect(moved?.scale == whole.scale)
         #expect(moved.map { $0.screen(CGRect(x: 600, y: 0, width: 50, height: 50)).maxX } == 980)
+
+        // Flung far off, the map is pulled back until a corner shows.
+        let flung = whole.panned(by: CGSize(width: -5_000, height: 3_000)).keeping(bounds, in: size, reach: 96)
+        let left = flung.screen(bounds)
+        #expect(left.maxX == 96 && left.minY == size.height - 96)
+        #expect(whole.keeping(bounds, in: size) == whole, "a map in view stays put")
     }
 
     @Test("the Graph opens whole when it reads, else readable on its middle with the first ask in sight")

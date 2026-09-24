@@ -234,7 +234,8 @@ struct OverviewGraphCanvas: View {
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hover)
                 GraphZoomControls(scale: view.scale, whole: view == whole,
                                   zoom: { factor in
-                                      zoom(by: factor, about: CGPoint(x: size.width / 2, y: size.height / 2), from: view)
+                                      zoom(by: factor, about: CGPoint(x: size.width / 2, y: size.height / 2), from: view,
+                                           in: current, size: size)
                                   },
                                   fit: { animate { framing = .whole } })
                     .padding(12)
@@ -264,7 +265,7 @@ struct OverviewGraphCanvas: View {
                 .onChanged { value in
                     let from = dragFrom ?? live(view)
                     dragFrom = from
-                    framing = .manual(from.panned(by: value.translation))
+                    framing = .manual(from.panned(by: value.translation).keeping(current.layout.bounds, in: size))
                 }
                 .onEnded { _ in dragFrom = nil })
             .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { value in
@@ -281,7 +282,9 @@ struct OverviewGraphCanvas: View {
             .contextMenu {
                 if case .node(let id)? = hovered { menu(for: id) }
             }
-            .background(GraphPointerReader { intent in pointer(intent, from: view, whole: whole) })
+            .background(GraphPointerReader { intent in
+                pointer(intent, from: view, whole: whole, in: current, size: size)
+            })
             .background(WindowVisibilityReader { onScreen = $0 })
             .focusable()
             .focused($focused)
@@ -302,7 +305,8 @@ struct OverviewGraphCanvas: View {
             }
             .onKeyPress(keys: ["+"]) { press in
                 guard press.modifiers.contains(.command) else { return .ignored }
-                zoom(by: 1.25, about: CGPoint(x: size.width / 2, y: size.height / 2), from: view)
+                zoom(by: 1.25, about: CGPoint(x: size.width / 2, y: size.height / 2), from: view, in: current,
+                     size: size)
                 return .handled
             }
             .onChange(of: store.selectedID) { _, id in
@@ -411,9 +415,14 @@ struct OverviewGraphCanvas: View {
     /// one that only changes a state shows at once.
     private func settle(to new: Shown, from old: Shown) {
         let from = shown ?? old
-        guard !new.layout.placesMatch(from.layout), !reduceMotion else {
+        guard !reduceMotion else {
             shown = new
             previous = nil
+            return
+        }
+        // Nothing moved: show it now, and let any settle still running finish.
+        guard !new.layout.placesMatch(from.layout) else {
+            shown = new
             return
         }
         let next = generation + 1
@@ -430,18 +439,22 @@ struct OverviewGraphCanvas: View {
         if reduceMotion { change() } else { withAnimation(.smooth(duration: 0.4), change) }
     }
 
-    private func zoom(by factor: CGFloat, about point: CGPoint, from drawn: GraphCamera) {
+    private func zoom(by factor: CGFloat, about point: CGPoint, from drawn: GraphCamera, in current: Shown,
+                      size: CGSize) {
         let base = live(drawn)
-        animate { framing = .manual(base.zoomed(by: factor, about: point)) }
+        let zoomed = base.zoomed(by: factor, about: point).keeping(current.layout.bounds, in: size)
+        animate { framing = .manual(zoomed) }
     }
 
-    private func pointer(_ intent: GraphPointerIntent, from drawn: GraphCamera, whole: GraphCamera) {
+    private func pointer(_ intent: GraphPointerIntent, from drawn: GraphCamera, whole: GraphCamera, in current: Shown,
+                         size: CGSize) {
         let base = live(drawn)
+        let bounds = current.layout.bounds
         switch intent {
         case .pan(let delta):
-            framing = .manual(base.panned(by: delta))
+            framing = .manual(base.panned(by: delta).keeping(bounds, in: size))
         case .zoom(let factor, let point):
-            framing = .manual(base.zoomed(by: factor, about: point))
+            framing = .manual(base.zoomed(by: factor, about: point).keeping(bounds, in: size))
         case .smartZoom(let point):
             // 100% about the pointer from the whole map, the whole map
             // from anywhere else.

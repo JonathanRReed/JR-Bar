@@ -515,6 +515,21 @@ struct GraphCamera: Equatable, Sendable {
         GraphCamera(scale: scale, offset: CGPoint(x: offset.x + delta.width, y: offset.y + delta.height))
     }
 
+    /// Panned back just enough that some of the map — `reach` points of
+    /// it — stays in the window, so a fling never loses it.
+    func keeping(_ bounds: CGRect, in size: CGSize, reach: CGFloat = 96) -> GraphCamera {
+        guard !bounds.isEmpty else { return self }
+        let shown = screen(bounds)
+        var dx: CGFloat = 0, dy: CGFloat = 0
+        if shown.maxX < reach { dx = reach - shown.maxX } else if shown.minX > size.width - reach {
+            dx = size.width - reach - shown.minX
+        }
+        if shown.maxY < reach { dy = reach - shown.maxY } else if shown.minY > size.height - reach {
+            dy = size.height - reach - shown.minY
+        }
+        return dx == 0 && dy == 0 ? self : panned(by: CGSize(width: dx, height: dy))
+    }
+
     /// The least pan that brings `rect` (on the map) inside the window
     /// with `margin` to spare; nil when it is already in view.
     func revealing(_ rect: CGRect, in size: CGSize, margin: CGFloat = 32) -> GraphCamera? {
