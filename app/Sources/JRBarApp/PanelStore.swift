@@ -581,7 +581,21 @@ final class PanelStore {
             let total = state.mainSessions.count
             return total == 0 ? "No sessions" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
         }
-        return parts.joined(separator: " · ")
+        return Self.countLine(parts: parts, headerWord: headerWord)
+    }
+
+    /// The count parts beside the header word, the word said once: a lone
+    /// "2 working" under "Working" reads "2 sessions", since the word
+    /// already says what they are doing.
+    nonisolated static func countLine(parts: [String], headerWord: String) -> String {
+        guard parts.count == 1, let part = parts.first, let space = part.firstIndex(of: " "),
+              let count = Int(part[..<space]) else { return parts.joined(separator: " · ") }
+        // "2 need you" is the plural of the header's "Needs you".
+        func word(_ text: some StringProtocol) -> String {
+            text.lowercased().replacingOccurrences(of: "needs you", with: "need you")
+        }
+        guard word(part[part.index(after: space)...]) == word(headerWord) else { return part }
+        return count == 1 ? "1 session" : "\(count) sessions"
     }
 
     // MARK: Derived: sessions
