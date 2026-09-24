@@ -47,7 +47,7 @@ struct LightingPage: View {
                 .pickerStyle(.menu)
             }
             FleetPreviewRow(store: store, sketch: fleetProgram)
-            SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
+            SettingSlider(store, "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Effect Studio keeps its own tempo.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
             SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
                           path: "colors.done_celebration_enabled", default: true)
             SettingRow("Celebration preview", subtitle: "The finish the strip plays, once, when a session is done.") {
