@@ -240,6 +240,13 @@ struct DataHoarderModelTests {
         model.applyCaptureSettings(incoming)
         #expect(model.captureSettings.captureSources == ["claude-projects": true])
         #expect(mirrored == false, "mirroring must not bounce the same settings back")
+
+        // Every persisted dial mirrors in — trash retention included, or a
+        // relaunch would show "keep forever" and the next edit would save it.
+        incoming.trashRetentionDays = 30
+        model.applyCaptureSettings(incoming)
+        #expect(model.captureSettings == incoming)
+        #expect(mirrored == false)
     }
 
     @Test func searchRunsCancellablePagesAndLoadMore() async throws {

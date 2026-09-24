@@ -742,14 +742,13 @@ final class DataHoarderModel {
 
     /// Mirrors a persisted settings struct in without echoing it back —
     /// the store is the owner, this only keeps the card's bindings fresh.
+    /// The whole struct comes across: a field left behind here (trash
+    /// retention once was) reads as unset after a relaunch, and the next
+    /// card edit would write that blank back over the saved choice.
     func applyCaptureSettings(_ settings: DataHoarderSettings) {
         guard captureSettings != settings else { return }
-        var copy = captureSettings
-        copy.captureSources = settings.captureSources
-        copy.fullContent = settings.fullContent
-        copy.paused = settings.paused
         suppressCaptureNotify = true
-        captureSettings = copy
+        captureSettings = settings
         suppressCaptureNotify = false
     }
 
