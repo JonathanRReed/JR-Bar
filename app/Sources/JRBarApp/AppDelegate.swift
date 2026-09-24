@@ -1322,6 +1322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         let live = core.isLive
         if wasLive, !live { events?.reset() }
+        if live != wasLive { syncFileFeeds(live: live, core: core) }
         wasLive = live
         refreshAggregate()
         // The menu bar's rules hear the agents, the asks, the headroom
@@ -1629,14 +1630,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: Socket directory watch
 
     /// The daemon may start after us: when its directory changes, retry at
-    /// once instead of waiting out the backoff.
+    /// once instead of waiting out the backoff. Only while it is not live —
+    /// a live daemon writes that directory dozens of times a minute.
     private func watchSocketDirectory(_ socketPath: String) {
         let directory = (socketPath as NSString).deletingLastPathComponent
-        guard FileManager.default.fileExists(atPath: directory) else { return }
+        guard socketWatcher == nil, FileManager.default.fileExists(atPath: directory) else { return }
         socketWatcher = FileWatcher(path: directory, mask: [.write, .link, .attrib]) { [weak self] _ in
             self?.core?.retryNow()
         }
         socketWatcher?.start()
+    }
+
+    /// The file feeds are the fallback while the daemon is not live: the
+    /// state-directory monitor, the strip's LEDS.LED watches and the socket
+    /// directory watch stop when it goes live and start again — the
+    /// monitor reading at once — when it goes away.
+    private func syncFileFeeds(live: Bool, core: CoreModel) {
+        if live {
+            monitor?.stop()
+            feed?.stop()
+            socketWatcher?.stop()
+            socketWatcher = nil
+        } else {
+            monitor?.start()
+            feed?.start()
+            watchSocketDirectory(core.socketPath)
+        }
     }
 }
 

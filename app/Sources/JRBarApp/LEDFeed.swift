@@ -174,7 +174,17 @@ final class LEDFeed {
     /// own mtime cannot tell the writes apart.
     private var writeEpoch: Double = 0
 
+    /// Whether the feed is watching. It runs only while the daemon is not
+    /// live — the daemon itself writes LEDS.LED on every reassert, and the
+    /// bar draws the daemon's lights then — so the delegate stops it on
+    /// connect and starts it again when the daemon goes away.
+    private(set) var isRunning = false
+
+    /// Watch the volumes and resolve the source now. A second start while
+    /// running changes nothing.
     func start() {
+        guard !isRunning else { return }
+        isRunning = true
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(volumesChanged(_:)), name: NSWorkspace.didMountNotification, object: nil)
         center.addObserver(self, selector: #selector(volumesChanged(_:)), name: NSWorkspace.didUnmountNotification, object: nil)
@@ -182,6 +192,29 @@ final class LEDFeed {
         volumeWatcher = FileWatcher(path: "/Volumes", mask: [.write, .link, .attrib]) { [weak self] _ in self?.resolve() }
         volumeWatcher?.start()
         resolve()
+    }
+
+    /// Every watch and the mount notifications go, and a resolve or read
+    /// on its way is dropped. The last published program stays, so a
+    /// restart publishes only what changed while stopped.
+    func stop() {
+        guard isRunning else { return }
+        isRunning = false
+        let center = NSWorkspace.shared.notificationCenter
+        center.removeObserver(self, name: NSWorkspace.didMountNotification, object: nil)
+        center.removeObserver(self, name: NSWorkspace.didUnmountNotification, object: nil)
+        volumeWatcher?.stop()
+        volumeWatcher = nil
+        fileWatcher?.stop()
+        directoryWatcher?.stop()
+        pendingDeviceWatcher?.stop()
+        fileWatcher = nil
+        directoryWatcher = nil
+        pendingDeviceWatcher = nil
+        pendingRead?.cancel()
+        pendingRead = nil
+        resolveGeneration += 1
+        readGeneration += 1
     }
 
     @objc private func volumesChanged(_ note: Notification) {
@@ -193,6 +226,8 @@ final class LEDFeed {
     static let overridePath: String? = ProcessInfo.processInfo.environment["JRBAR_PROGRAM_FILE"].flatMap { $0.isEmpty ? nil : $0 }
 
     private func resolve() {
+        // A watch's delayed look-again can land after `stop`.
+        guard isRunning else { return }
         resolveGeneration += 1
         readGeneration += 1
         let generation = resolveGeneration
