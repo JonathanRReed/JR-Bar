@@ -204,6 +204,34 @@ struct DataHoarderCaptureTests {
         await restarted.stop()
     }
 
+    @Test("a cancelled start stops mid-backfill: no watcher, no scan stamp, the window kept")
+    func cancelledStartWatchesNothing() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let source = try fixture.source()
+        _ = try fixture.file("a.jsonl", data: Data("first\n".utf8))
+        _ = try fixture.file("b.jsonl", data: Data("second\n".utf8))
+        let archive = DataHoarderArchive(root: fixture.archive)
+        let capture = DataHoarderCapture(archive: archive)
+
+        // The task cancels itself before the engine runs — a pause landing
+        // mid-backfill, with nothing timed to race.
+        let superseded = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await capture.start(sources: [source], fullContent: true, backfillSince: .distantPast)
+        }
+        await superseded.value
+        #expect(await capture.activeSourceIDs.isEmpty)
+        #expect(try await archive.records().isEmpty)
+        #expect(try await archive.metadata(key: "capture_last_scan:test-source") == nil)
+
+        // Unstamped, the source is still on its first scan: the next start
+        // reads the whole window it never finished.
+        await capture.start(sources: [source], fullContent: true, backfillSince: .distantPast)
+        #expect(try await archive.records().count == 2)
+        await capture.stop()
+    }
+
     @Test("a file created while the engine was off captures from its start on the next scan")
     func offlineGrowthReconciles() async throws {
         let fixture = try Fixture()

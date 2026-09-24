@@ -812,7 +812,11 @@ final class DataHoarderModel {
     /// The apply on its way, if any. Applies run one after another, so a
     /// stop and a start — or two starts — never interleave on the engine,
     /// where a second start's `stop` could land mid-rescan and the first
-    /// would then open a stream nothing stops.
+    /// would then open a stream nothing stops. A newer plan cancels the one
+    /// before it rather than waiting it out: a first start can be reading a
+    /// 30-day backfill, and a pause or switch-off must not queue behind
+    /// gigabytes of transcripts. The engine's rescan stops at its next
+    /// file without stamping the scan, so the backfill resumes next start.
     @ObservationIgnored private var applyTask: Task<Void, Never>?
     @ObservationIgnored private var appliesInFlight = 0
     /// Engine applies launched; tests read it to see a repeat dropped.
@@ -837,6 +841,7 @@ final class DataHoarderModel {
         let full = captureSettings.fullContent
         let since = backfillSince()
         let previous = applyTask
+        previous?.cancel()
         appliesInFlight += 1
         captureApplies += 1
         applyTask = Task {

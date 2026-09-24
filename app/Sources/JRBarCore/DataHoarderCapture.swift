@@ -86,7 +86,9 @@ public actor DataHoarderCapture {
 
     /// Replaces any running capture: reconcile each root, then watch it.
     /// `backfillSince` opens the backfill window for sources scanned for
-    /// the first time (see the type's doc).
+    /// the first time (see the type's doc). Cancelling the calling task
+    /// ends the reconcile at its next file, leaves that source's scan
+    /// unstamped so the backfill resumes later, and watches nothing.
     public func start(sources: [ArchiveSource], fullContent: Bool, backfillSince: Date? = nil) async {
         stop()
         stopped = false
@@ -102,6 +104,9 @@ public actor DataHoarderCapture {
             self.sources[source.id] = normalized
             activeSourceIDs.insert(source.id)
             await rescan(source: normalized)
+            // A superseded start (the caller's task cancelled mid-backfill)
+            // opens no stream and no timer — the newer plan owns the engine.
+            guard !Task.isCancelled else { stop(); return }
             let stream = SourceEventStream { [weak self] paths in
                 Task { await self?.noteChanged(paths: paths) }
             }

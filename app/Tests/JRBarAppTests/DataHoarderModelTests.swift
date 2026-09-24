@@ -216,6 +216,33 @@ struct DataHoarderModelTests {
         #expect(model.captureRunning == false)
     }
 
+    @Test func pausingDuringTheFirstBackfillCancelsItInsteadOfWaiting() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let watch = root.appending(path: "watch")
+        try FileManager.default.createDirectory(at: watch, withIntermediateDirectories: true)
+        try Data("inside the window\n".utf8).write(to: watch.appending(path: "a.jsonl"))
+        let archive = DataHoarderArchive(root: root.appending(path: "archive"))
+        let model = DataHoarderModel(archive: archive)
+        model.captureSettings.captureSources = [watch.path: true]
+        model.captureSettings.backfillDays = 30
+        await model.applyCaptureNow()
+
+        // Turn On queues a start that would read the backfill; Pause lands
+        // before it runs. The pause cancels the start instead of queueing
+        // behind the whole window.
+        model.enabled = true
+        model.captureSettings.paused = true
+        await model.applyCaptureNow()
+        #expect(await model.capture.activeSourceIDs.isEmpty)
+        #expect(model.captureRunning == false)
+        // Nothing read, and the scan left unstamped — the next start
+        // reads the window from its beginning.
+        #expect(try await archive.records().isEmpty)
+        #expect(try await archive.metadata(key: "capture_last_scan:" + watch.path) == nil)
+    }
+
     @Test func switchingOnTwiceStartsTheEngineOnce() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
