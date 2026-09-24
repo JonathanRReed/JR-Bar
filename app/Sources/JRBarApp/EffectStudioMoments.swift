@@ -506,7 +506,7 @@ private struct LidTransitionRow: View {
     private func play() {
         guard let look = playing else { return }
         let run: @MainActor () -> Void = { [store, transition] in
-            Task {
+            _ = Task {
                 do {
                     _ = try await store.core.request("play_lid_preset",
                                                      args: ["kind": .string(transition.kind), "name": .string(look.name)],
