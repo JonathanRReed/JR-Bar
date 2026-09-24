@@ -378,11 +378,19 @@ final class OverviewStore {
 
     var isLive: Bool { core.isLive }
 
-    var selected: CoreRosterEntry? { rows.first { $0.id == selectedID } }
+    /// The inspector's session. The Graph draws the whole roster rather
+    /// than the table's cut, so a node picked there resolves against it.
+    var selected: CoreRosterEntry? {
+        pane == .graph ? roster.first { $0.id == selectedID } : rows.first { $0.id == selectedID }
+    }
 
     // MARK: Lifecycle
 
+    /// Whether the window is on screen — the Graph animates only then.
+    private(set) var windowOpen = false
+
     func windowDidOpen() {
+        windowOpen = true
         now = Date()
         selectedLinkID = nil
         lastEventID = core.lastEvent?.id
@@ -399,6 +407,7 @@ final class OverviewStore {
     }
 
     func windowDidClose() {
+        windowOpen = false
         clock?.invalidate()
         clock = nil
         loadWork?.cancel()
@@ -1398,9 +1407,84 @@ final class OverviewStore {
     /// the Usage graph. Sidebar rows pick it; `filter`/`saved` only
     /// apply to the roster.
     enum Pane: String, Hashable {
-        case roster, usage
+        case roster, usage, graph
     }
     var pane: Pane = .roster
+
+    // MARK: Graph pane
+
+    /// What the Graph draws: what is happening now, or every row on record.
+    enum GraphScope: String, CaseIterable, Identifiable {
+        case active = "Active"
+        case everything = "Everything"
+        var id: String { rawValue }
+    }
+    var graphScope: GraphScope = .active
+    /// How long a finished run stays on the Active graph.
+    static let graphFinishedWindow: TimeInterval = 3_600
+
+    /// The sidebar's Graph row. The selection carries over when the
+    /// session is on record, so the inspector keeps what it showed.
+    func showGraph() {
+        pane = .graph
+        if let id = selectedID, !roster.contains(where: { $0.id == id }) {
+            selectedID = nil
+            selectedIDs = []
+        }
+    }
+
+    /// The Graph's sessions. Active keeps everything live — working,
+    /// asking, failed, idle — plus runs that finished in the last hour,
+    /// and the parent of any worker it keeps, so a family never floats
+    /// loose. Everything is the whole record, rows the panel's aging
+    /// hides included. The sidebar's search applies to both.
+    var graphNodes: [OverviewGraphNode] {
+        Self.graphEntries(roster, scope: graphScope, search: search, now: now).map(OverviewGraphNode.init)
+    }
+
+    static func graphEntries(_ roster: [CoreRosterEntry], scope: GraphScope, search: String,
+                             now: Date) -> [CoreRosterEntry] {
+        let searched = roster.filter { search.isEmpty || matchesSearch($0, search) }
+        guard scope == .active else { return searched }
+        let horizon = now.timeIntervalSince1970 - graphFinishedWindow
+        var kept = Set(searched.filter { entry in
+            guard entry.visibility != "hidden" else { return false }
+            switch SessionActivity.reduce(entry.session) {
+            case .working, .waiting, .failed, .idle: return true
+            case .done, .ended: return (entry.session.updatedAt ?? entry.session.since ?? 0) >= horizon
+            }
+        }.map(\.id))
+        let byID = Dictionary(roster.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for id in kept {
+            var parent = byID[id]?.session.parent
+            var hops = 0
+            while let next = parent, hops < 8, let entry = byID[next] {
+                kept.insert(next)
+                parent = entry.session.parent
+                hops += 1
+            }
+        }
+        return roster.filter { kept.contains($0.id) }
+    }
+
+    /// One click on a node: it becomes the inspector's session.
+    func selectInGraph(_ id: String?) {
+        selectedID = id
+        selectedIDs = id.map { [$0] } ?? []
+        if id != nil { selectedLinkID = nil }
+    }
+
+    /// A node's "Show in Roster": the table, cut to everything on record,
+    /// with that row selected.
+    func showInRoster(_ id: String) {
+        pane = .roster
+        workerFilter = nil
+        dayFilter = nil
+        activeSavedFilter = nil
+        filter = OverviewFilter(preset: .all)
+        search = ""
+        selectionChanged(to: [id])
+    }
 
     /// The `usage_graph` document — the shared-axis multi-provider
     /// chart the daemon computes from local transcripts. The pane asks

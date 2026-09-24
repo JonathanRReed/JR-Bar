@@ -118,11 +118,13 @@ struct OverviewView: View {
             // The Usage tag carries `saved: nil` — emit it that way while
             // the usage pane is up or a live saved filter makes the
             // selection match nothing and the sidebar shows no highlight.
-            get: { SidebarSelection(filter: store.filter, saved: store.pane == .usage ? nil : store.activeSavedFilter, pane: store.pane) },
+            get: { SidebarSelection(filter: store.filter, saved: store.pane == .roster ? store.activeSavedFilter : nil, pane: store.pane) },
             set: { selection in
                 guard let selection else { return }
                 if selection.pane == .usage {
                     store.showUsage()
+                } else if selection.pane == .graph {
+                    store.showGraph()
                 } else {
                     store.pane = .roster
                     store.workerFilter = nil
@@ -151,6 +153,8 @@ struct OverviewView: View {
                 }
             }
             Section("Insights") {
+                Label("Graph", systemImage: "point.3.connected.trianglepath.dotted")
+                    .tag(SidebarSelection(filter: store.filter, saved: nil, pane: .graph))
                 Label("Usage", systemImage: "chart.xyaxis.line")
                     .tag(SidebarSelection(filter: store.filter, saved: nil, pane: .usage))
             }
@@ -231,10 +235,10 @@ struct OverviewView: View {
 
     @ViewBuilder
     private var content: some View {
-        if store.pane == .usage {
-            UsageGraphView(store: store)
-        } else {
-            rosterContent
+        switch store.pane {
+        case .usage: UsageGraphView(store: store)
+        case .graph: OverviewGraphView(store: store)
+        case .roster: rosterContent
         }
     }
 
