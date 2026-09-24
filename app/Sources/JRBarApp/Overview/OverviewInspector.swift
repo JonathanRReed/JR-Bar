@@ -788,14 +788,15 @@ enum OverviewWindowShare {
         return Double(tokens) / Double(whole)
     }
 
-    /// The fact's name and value: "5 h window share", "≈ 34 %".
+    /// The fact's name and value: "5 h window share", "≈ 34%" — written
+    /// the way the column's other percentages are ("44%", "87% cached").
     static func fact(for usage: SessionUsage, provider: String,
                      readings: [SessionUsage]) -> (name: String, value: String)? {
         guard let fraction = share(tokens: usage.windowTokens, provider: provider, readings: readings) else {
             return nil
         }
         let percent = fraction * 100
-        let value = percent > 0 && percent < 1 ? "≈ <1 %" : "≈ \(Int(percent.rounded())) %"
+        let value = percent > 0 && percent < 1 ? "≈ <1%" : "≈ \(Int(percent.rounded()))%"
         // Claude's and Codex's primary windows are five hours; the rest
         // are named only as the window. Short enough for the facts'
         // name column, with the "5 h" kept on one line.
