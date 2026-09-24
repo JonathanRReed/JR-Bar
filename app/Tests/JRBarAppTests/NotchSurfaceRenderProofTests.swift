@@ -459,20 +459,54 @@ struct NotchSurfaceRenderProofTests {
         if let fold = store.fold { cards.append(("fold", fold.controls)) }
         for dark in [false, true] {
             for (name, controls) in cards {
-                let body = controls
-                    .padding(16)
-                    .frame(width: 600, alignment: .topLeading)
-                let probe = NSHostingView(rootView: body)
+                // The Toys page is a grouped form; a card's body is one
+                // row of its section.
+                let probe = NSHostingView(rootView: controls.frame(width: 560))
                 probe.layoutSubtreeIfNeeded()
-                let height = ceil(probe.fittingSize.height)
-                let view = body
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor)))
-                    .padding(20)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                try ProofRender.write(view, size: CGSize(width: 640, height: height + 40),
+                let height = ceil(probe.fittingSize.height) + 90
+                let view = Form { Section { controls } }
+                    .formStyle(.grouped)
+                    .frame(width: 640, height: height)
+                try ProofRender.write(view, size: CGSize(width: 640, height: height),
                                       name: "card-\(name)-\(dark ? "dark" : "light")", dark: dark)
             }
+        }
+        // The Fold card's lid at a few angles, the fold zone swept out.
+        let lids = HStack(spacing: 12) {
+            ForEach([nil, 40.0, 100.0, 135.0] as [Double?], id: \.self) { angle in
+                FoldLidGlyph(angle: angle, activation: 65)
+                    .frame(width: 118, height: 70)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.primary.opacity(0.05)))
+            }
+        }
+        .padding(16)
+        for dark in [false, true] {
+            try ProofRender.write(lids.background(Color(nsColor: .windowBackgroundColor)),
+                                  size: CGSize(width: 620, height: 126),
+                                  name: "card-fold-lids-\(dark ? "dark" : "light")", dark: dark)
+        }
+    }
+
+    /// The buddy's pal card, both appearances, a well-kept friendship.
+    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write PNGs"))
+    func palCard() throws {
+        var care = BuddyCare()
+        let start = Date().addingTimeInterval(-86400 * 40)
+        care.pet(at: start)
+        for day in 0..<30 { care.feed(at: start.addingTimeInterval(Double(day) * 86400)) }
+        care.eat(at: Date(), count: 120, provider: "claude")
+        care.noteAsk(lasted: 1260)
+        let card = BuddyPalCard.make(care: care)
+        for dark in [false, true] {
+            let view = ZStack {
+                ProofDesktop(dark: dark)
+                BuddyCardView(character: .cat, name: "Miso", card: card)
+                    .background(ProofGlass(cornerRadius: 14))
+            }
+            try ProofRender.write(view.frame(width: 320, height: 280), size: CGSize(width: 320, height: 280),
+                                  name: "buddy-pal-\(dark ? "dark" : "light")", dark: dark)
         }
     }
 

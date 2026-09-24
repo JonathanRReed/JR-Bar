@@ -120,45 +120,57 @@ struct BuddyCardView: View {
     let card: BuddyPalCard
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
                 BuddyFigure(character: character, mood: .pacing, tint: .accentColor,
                             phase: 0, hopProgress: nil, waveAge: nil, slumpAge: nil,
                             leans: false, still: true, askCount: 0, care: .content,
                             trick: nil, treatAge: nil, crumbAge: nil, stage: card.stage)
                     .frame(width: 18, height: 18)
-                    .scaleEffect(1.6)
-                    .frame(width: 30, height: 30)
-                VStack(alignment: .leading, spacing: 1) {
+                    .scaleEffect(2.1)
+                    .frame(width: 46, height: 46)
+                    .background(Circle().fill(Color.accentColor.opacity(0.12)))
+                    .overlay(Circle().strokeBorder(Color.accentColor.opacity(0.22), lineWidth: 0.5))
+                VStack(alignment: .leading, spacing: 2) {
                     Text(name)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                     Text(character.displayName)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                Label(card.feeling, systemImage: "heart.fill")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.pink)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                if let since = card.since { line(since) }
-                line(card.growth)
-                line(card.tally)
-                if let favourite = card.favourite { line(favourite) }
-                if let longestAsk = card.longestAsk { line(longestAsk) }
+            // One heart, never a row of them — a relationship is not a meter.
+            Label(card.feeling, systemImage: "heart.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.pink)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule(style: .continuous).fill(Color.pink.opacity(0.12)))
+            VStack(alignment: .leading, spacing: 5) {
+                if let since = card.since { line(since, symbol: "calendar") }
+                line(card.growth, symbol: "leaf")
+                line(card.tally, symbol: "hand.wave")
+                if let favourite = card.favourite { line(favourite, symbol: "star") }
+                if let longestAsk = card.longestAsk { line(longestAsk, symbol: "hourglass") }
             }
         }
-        .padding(12)
-        .frame(width: 250, alignment: .leading)
+        .padding(14)
+        .frame(width: 260, alignment: .leading)
     }
 
-    private func line(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .truncationMode(.tail)
+    private func line(_ text: String, symbol: String) -> some View {
+        Label {
+            Text(text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } icon: {
+            Image(systemName: symbol)
+                .foregroundStyle(.tertiary)
+                .frame(width: 14)
+        }
+        .font(.system(size: 11.5))
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -176,7 +188,8 @@ final class BuddyCardPanel: NSPanel {
         effect.blendingMode = .behindWindow
         effect.state = .active
         effect.wantsLayer = true
-        effect.layer?.cornerRadius = 11
+        effect.layer?.cornerRadius = 14
+        effect.layer?.cornerCurve = .continuous
         effect.layer?.masksToBounds = true
         hosting.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(hosting)

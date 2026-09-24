@@ -1044,21 +1044,18 @@ private struct BuddyControlsView: View {
                 SettingLabel(title: "Character", subtitle: "Who lives in your notch.")
             }
             .pickerStyle(.menu)
-            .fixedSize()
             .disabled(toy.miniMode)
+
+            if !toy.miniMode { roster }
 
             Toggle(isOn: toy.presentationBinding) {
                 SettingLabel(title: "Mini", subtitle: "Just the status dot — docked or floating, no body.")
             }
-            .toggleStyle(.checkbox)
 
             Toggle(isOn: toy.wearsStripColorBinding) {
                 SettingLabel(title: "Wear the Screen Bar's colour",
                              subtitle: "Docked under a lit band, it takes the band's colour instead of its own.")
             }
-            .toggleStyle(.checkbox)
-
-            if !toy.miniMode { roster }
 
             LabeledContent {
                 TextField("", text: toy.nameBinding, prompt: Text(toy.buddyCharacter.defaultName))
@@ -1082,12 +1079,12 @@ private struct BuddyControlsView: View {
 
             HStack(spacing: 10) {
                 Button("Give treat") { toy.giveTreat() }
-                    .controlSize(.small)
                     .overlay(alignment: .top) { treatHearts }
                 Text(toy.careLine)
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            .padding(.top, 4)
 
             // The pal card's history, the part the caption can't hold —
             // the same lines "About…" in its menu shows.
@@ -1106,16 +1103,14 @@ private struct BuddyControlsView: View {
             if toy.isTucked {
                 HStack(spacing: 10) {
                     Button("Bring it back") { toy.isOn = true }
-                        .controlSize(.small)
                     Text("Tucked away until the next event.")
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
             } else {
                 Button(toy.isFree ? "Dock at the notch" : "Float free") {
                     toy.isFree ? toy.dock() : toy.floatFree()
                 }
-                .controlSize(.small)
             }
         }
     }
@@ -1153,28 +1148,40 @@ private struct BuddyControlsView: View {
         TimelineView(.animation(minimumInterval: BuddyBurstSchedule.rosterInterval,
                                 paused: reduceMotion
                                     || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 ForEach(BuddyCharacter.allCases, id: \.self) { c in
                     cell(c, at: context.date)
                 }
             }
+            .padding(.vertical, 4)
         }
     }
 
+    /// One character on a tile of its own, half again the docked size,
+    /// with its name under it; the one living in the notch sits lit.
     private func cell(_ c: BuddyCharacter, at now: Date) -> some View {
         let selected = toy.characterBinding.wrappedValue == c
-        return BuddyFigure(character: c, mood: .pacing, tint: .accentColor,
-                           phase: now.timeIntervalSince1970, hopProgress: nil,
-                           waveAge: nil, slumpAge: nil, leans: false,
-                           still: reduceMotion, askCount: 0, care: .content,
-                           trick: nil, treatAge: nil, crumbAge: nil)
-            .frame(width: 18, height: 18)
-            .padding(4)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05)))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(selected ? Color.accentColor.opacity(0.7) : .clear, lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        let tile = RoundedRectangle(cornerRadius: 11, style: .continuous)
+        return VStack(spacing: 4) {
+            BuddyFigure(character: c, mood: .pacing, tint: .accentColor,
+                        phase: now.timeIntervalSince1970, hopProgress: nil,
+                        waveAge: nil, slumpAge: nil, leans: false,
+                        still: reduceMotion, askCount: 0, care: .content,
+                        trick: nil, treatAge: nil, crumbAge: nil)
+                .frame(width: 18, height: 18)
+                .scaleEffect(1.5)
+                .frame(width: 40, height: 38)
+                .background(tile.fill(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05)))
+                .overlay(tile.strokeBorder(selected ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.06),
+                                           lineWidth: selected ? 1.5 : 0.5))
+            Text(c.displayName)
+                .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? .primary : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+            .frame(width: 44)
+            .contentShape(Rectangle())
             .onTapGesture { toy.characterBinding.wrappedValue = c }
             .help("\(c.displayName) — \(c.blurb)")
             .accessibilityElement(children: .ignore)
