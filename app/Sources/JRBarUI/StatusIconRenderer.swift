@@ -108,9 +108,14 @@ public struct StatusMeter: Hashable, Sendable {
         case comfortable, runsOut, exhausted, guarded, unknown
     }
     public var paceVerdict: PaceVerdict
+    /// The figure is old: the provider's last refresh did not land, so
+    /// this is how full the window was then, not how full it is now. The
+    /// column draws it faint and never warns with it.
+    public var stale: Bool
 
     public init(id: String, name: String, glyph: Glyph, fraction: Double?, approximate: Bool = false,
-                accentHex: String? = nil, resetsAt: Double? = nil, paceVerdict: PaceVerdict = .unknown) {
+                accentHex: String? = nil, resetsAt: Double? = nil, paceVerdict: PaceVerdict = .unknown,
+                stale: Bool = false) {
         self.id = id
         self.name = name
         self.glyph = glyph
@@ -119,23 +124,27 @@ public struct StatusMeter: Hashable, Sendable {
         self.accentHex = accentHex
         self.resetsAt = resetsAt
         self.paceVerdict = paceVerdict
+        self.stale = stale
     }
 
     /// The window exists and nobody said how full it is.
     public var isUnknown: Bool { fraction == nil }
 
     public var warning: StatusIconSpec.RingWarning {
-        guard let fraction else { return .none }
+        guard let fraction, !stale else { return .none }
         if fraction >= 0.95 { return .red }
         if fraction >= 0.80 { return .amber }
         return .none
     }
 
     /// "Claude 82%" for the tooltip, "Claude no reading" for a window the
-    /// provider reports without a number.
+    /// provider reports without a number, and "(stale)" after either when
+    /// the reading is old.
     public var readout: String {
-        guard let fraction else { return "\(name) no reading" }
-        return "\(name) \(approximate ? "~" : "")\(Int((fraction * 100).rounded()))%"
+        let staleNote = stale ? " (stale)" : ""
+        guard let fraction else { return "\(name) no reading\(staleNote)" }
+        let percent = Int((fraction * 100).rounded())
+        return "\(name) \(approximate ? "~" : "")\(percent)%\(staleNote)"
     }
 }
 
@@ -399,9 +408,16 @@ public final class StatusIconRenderer: @unchecked Sendable {
 
     /// The meter whose window is nearest to spent — the compact strip's
     /// subject. Unmeasured windows sort last, so a provider that never
-    /// reported a number cannot win the readout over one that did.
+    /// reported a number cannot win the readout over one that did, and a
+    /// stale figure sorts below every fresh one.
     static func tightestMeter(_ spec: StatusIconSpec) -> StatusMeter? {
-        spec.meters.max(by: { ($0.fraction ?? -1) < ($1.fraction ?? -1) })
+        spec.meters.max(by: { tightness($0) < tightness($1) })
+    }
+
+    /// Fresh readings 0…1, stale ones below them, unread ones last.
+    static func tightness(_ meter: StatusMeter) -> Double {
+        guard let fraction = meter.fraction else { return -3 }
+        return meter.stale ? fraction - 2 : fraction
     }
 
     /// The compact strip's figure: the reset countdown when the rule
@@ -423,7 +439,9 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// amber — then the meter's own warning, then the provider accent;
     /// nil leaves a template image to follow the menu bar's colour.
     static func compactColor(_ meter: StatusMeter?) -> NSColor? {
-        guard let meter else { return nil }
+        // A stale figure says nothing about where the window is heading
+        // now, so it takes no colour at all.
+        guard let meter, !meter.stale else { return nil }
         switch meter.paceVerdict {
         case .exhausted: return .systemRed
         case .runsOut: return .systemOrange
@@ -531,7 +549,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         // A configured provider colour is the reason the column exists, so
         // it shows even while everything is calm -- which costs the strip
         // its template colouring, the same trade a warning makes.
-        let coloured = spec.meters.contains { $0.accentHex != nil }
+        let coloured = spec.meters.contains { $0.accentHex != nil && !$0.stale }
         let template = warning == .none && dotColor == nil && !coloured
         let imageSize = Self.size(for: spec)
         let image = NSImage(size: imageSize, flipped: false) { _ in
@@ -698,6 +716,10 @@ public final class StatusIconRenderer: @unchecked Sendable {
     }
 
     static func meterColor(_ meter: StatusMeter, ink: NSColor, template: Bool) -> NSColor {
+        // A stale figure is drawn faint in the strip's own ink: not the
+        // accent, and not a warning colour, since it is not what the
+        // window holds now.
+        if meter.stale { return ink.withAlphaComponent(staleAlpha) }
         switch meter.warning {
         case .red: return template ? ink : .systemRed
         case .amber: return template ? ink : .systemOrange
@@ -715,7 +737,8 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// One provider's column: a faint full-height track with the used
     /// fraction filled from the bottom. A provider that has barely started
     /// still shows a sliver, so an empty column always means "nothing
-    /// reported" rather than "nothing used".
+    /// reported" rather than "nothing used". A stale figure fills the
+    /// same continuous column, only faint.
     static func drawMeter(_ meter: StatusMeter, in rect: NSRect, ink: NSColor, template: Bool) {
         let radius = rect.width / 2
         let track = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
@@ -771,8 +794,14 @@ public final class StatusIconRenderer: @unchecked Sendable {
             }
             x += glyphBox + glyphGap
             let text = compactText(meter) as NSString
+            // A stale figure keeps the readout's hue, the agents' tint
+            // included, and loses its strength. The glyph keeps its
+            // colour, as the percent strip's does: it says whose figure
+            // it is, which is still true.
+            let base = colour ?? ink
+            let textColor = meter?.stale == true ? base.withAlphaComponent(staleAlpha) : base
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: percentFont, .foregroundColor: colour ?? ink,
+                .font: percentFont, .foregroundColor: textColor,
             ]
             let height = text.size(withAttributes: attributes).height
             text.draw(at: NSPoint(x: x, y: midY - height / 2), withAttributes: attributes)
@@ -790,6 +819,10 @@ public final class StatusIconRenderer: @unchecked Sendable {
 
     /// The height of the dash that marks a column with no reading.
     static let unknownMarkHeight: CGFloat = 1.5
+
+    /// How strongly a stale figure is drawn: plainly above the 0.22
+    /// track, plainly below a fresh fill.
+    static let staleAlpha: CGFloat = 0.45
 
     /// An SF Symbol scaled into the box, or one or two characters centred
     /// in it; both in `color`.
@@ -847,8 +880,10 @@ public final class StatusIconRenderer: @unchecked Sendable {
             if let countdown = countdownText(meter) {
                 return "JR-Bar · \(meter.name) resets in \(countdown)"
             }
-            guard let fraction = meter.fraction else { return "JR-Bar · \(meter.name) no reading" }
-            return "JR-Bar · \(meter.name) \(Int(((1 - fraction) * 100).rounded()))% left"
+            let staleNote = meter.stale ? " (stale)" : ""
+            guard let fraction = meter.fraction else { return "JR-Bar · \(meter.name) no reading\(staleNote)" }
+            let left = Int(((1 - fraction) * 100).rounded())
+            return "JR-Bar · \(meter.name) \(left)% left\(staleNote)"
         }
         guard spec.style.isMeters else { return "JR-Bar" }
         var parts: [String] = ["JR-Bar"]

@@ -606,10 +606,12 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         // the 5h one. The ring takes the same figure so a weekly lane at
         // 100 % cannot leave a calm 5 h ring on the bar; when the leading
         // provider reports no window at all, the first metered provider's
-        // constraint still fills the ring rather than drawing nothing.
+        // constraint still fills the ring rather than drawing nothing. A
+        // stale lead fills nothing: the ring has no faint form, so an old
+        // figure would draw as live, warning colours and all.
         var ring = ringFraction
-        if style == .glyphRing || style == .orbit, let lead = meters.first?.fraction {
-            ring = max(ring ?? lead, lead)
+        if style == .glyphRing || style == .orbit, let lead = meters.first, !lead.stale, let leadFraction = lead.fraction {
+            ring = max(ring ?? leadFraction, leadFraction)
         }
         let spec = StatusIconSpec(style: style,
                                   ringFraction: style == .glyphRing || style == .orbit ? ring : nil,
@@ -995,6 +997,19 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
                            approximate: approximate,
                            accentHex: document?.agentColorHex(provider),
                            resetsAt: resetsAt, paceVerdict: paceVerdict(for: verdict))
+    }
+
+    /// One provider's meter as the Settings and Setup previews draw it:
+    /// the same window, figure and staleness the menu bar's column gets,
+    /// so a stale or lapsed reading looks the same in both places. The
+    /// reset countdown and pace tint stay with the live item.
+    static func previewMeter(for provider: CoreProviderUsage, document: SettingsDocument?, now: Double) -> StatusMeter {
+        let window = UsageCenterStore.primaryWindow(of: provider)
+        let reading = AppDelegate.meterReading(of: provider, window: window, now: now)
+        var drawn = Self.meter(for: provider.id, fraction: reading.fraction,
+                               approximate: provider.isDerived, document: document)
+        drawn.stale = reading.stale
+        return drawn
     }
 
     /// The app-side verdict collapsed onto the meter's tint vocabulary.

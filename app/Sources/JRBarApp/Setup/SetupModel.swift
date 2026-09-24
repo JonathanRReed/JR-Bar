@@ -679,13 +679,10 @@ extension SetupModel {
         let document = SettingsDocument(core.settings?.document ?? .object([:]))
         let preferred = document.strings("usage_graph_providers") ?? []
         let shown = AppDelegate.meteredProviders(preferred: preferred, usage: core.isLive ? core.usage : [])
+        let now = Date().timeIntervalSince1970
         let meters: [StatusMeter] = shown.isEmpty ? StatusItemController.sampleMeters
             : shown.prefix(StatusIconRenderer.maxMeters).map { provider in
-                StatusItemController.meter(
-                    for: provider.id,
-                    fraction: UsageCenterStore.primaryWindow(of: provider).flatMap { $0.usedPct }.map { $0 / 100 },
-                    approximate: provider.isDerived,
-                    document: document)
+                StatusItemController.previewMeter(for: provider, document: document, now: now)
             }
         let live = core.isLive ? core.sessions : []
         let sessions: [SessionDot] = live.isEmpty ? StatusItemController.sampleSessionDots

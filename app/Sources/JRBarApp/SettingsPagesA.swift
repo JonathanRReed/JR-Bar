@@ -90,11 +90,9 @@ struct MenuBarStylePicker: View {
         let preferred = store.document.strings("usage_graph_providers") ?? []
         let shown = AppDelegate.meteredProviders(preferred: preferred, usage: store.core.isLive ? store.core.usage : [])
         guard !shown.isEmpty else { return StatusItemController.sampleMeters }
+        let now = Date().timeIntervalSince1970
         return shown.prefix(StatusIconRenderer.maxMeters).map { provider in
-            StatusItemController.meter(for: provider.id,
-                                       fraction: UsageCenterStore.primaryWindow(of: provider).flatMap { $0.usedPct }.map { $0 / 100 },
-                                       approximate: provider.isDerived,
-                                       document: store.document)
+            StatusItemController.previewMeter(for: provider, document: store.document, now: now)
         }
     }
 
@@ -282,9 +280,16 @@ struct MenuBarPreview: View {
     /// every row's text starts at the same x and none of them truncates.
     static let width: CGFloat = 152
 
+    /// The ring reads the leading meter the way the bar's own does: a
+    /// stale or unread lead draws no ring rather than a made-up figure.
+    private var ringFraction: Double? {
+        guard let lead = meters.first else { return 0.42 }
+        return lead.stale ? nil : lead.fraction
+    }
+
     private var spec: StatusIconSpec {
         StatusIconSpec(style: style,
-                       ringFraction: meters.first?.fraction ?? 0.42,
+                       ringFraction: ringFraction,
                        tintHex: "#00E5FF",
                        meters: style.isMeters || style == .compactPercent ? meters : [],
                        overflow: style.isMeters ? overflow : 0,

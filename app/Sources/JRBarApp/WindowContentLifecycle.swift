@@ -18,12 +18,19 @@ enum WindowContentLifecycle {
     /// window's frame and size limits come through unchanged, and the
     /// title and subtitle are reapplied: replacing the content controller
     /// clears the unified titlebar's subtitle.
+    ///
+    /// The new view is sized to the window's content before it goes in.
+    /// A window takes the size of the view it is handed, and a hosting
+    /// view that owns no size is zero by zero: the window used to fold to
+    /// a 1-point sliver for that moment, squeezing the toolbar's title
+    /// into conflicting constraints, before its frame was put back.
     @discardableResult
     static func attach(to window: NSWindow, title: String, subtitle: String = "",
                        make: () -> NSViewController) -> NSViewController {
         if let existing = window.contentViewController { return existing }
         let geometry = Geometry(of: window)
         let controller = make()
+        controller.view.setFrameSize(window.contentRect(forFrameRect: window.frame).size)
         window.contentViewController = controller
         geometry.restore(to: window)
         window.title = title

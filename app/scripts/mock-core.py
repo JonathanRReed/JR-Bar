@@ -49,6 +49,7 @@ Standard library only.
   mock-core.py --socket /tmp/x.sock  # elsewhere
   mock-core.py --step 1.5            # seconds between timeline steps
   mock-core.py --once                # hello/state/lights/settings, then exit
+  mock-core.py --parent-pid 4242     # stop by itself once process 4242 is gone
 """
 
 from __future__ import annotations
@@ -3253,6 +3254,31 @@ class Client:
             log("client disconnected")
 
 
+def parent_watch(pid: int):
+    """A check that says when process `pid` has gone away.
+
+    A test that starts this mock stops it when it finishes; a test run that
+    is killed never does, and its mocks used to run on for hours. When
+    `pid` is the mock's own parent, the parent is gone once the mock has
+    been handed to another one (its pid never comes back to us, so a reused
+    pid cannot fool it). Any other pid is gone once no process has it.
+    """
+    direct = os.getppid() == pid
+
+    def gone() -> bool:
+        if direct:
+            return os.getppid() != pid
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        return False
+
+    return gone
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--socket", default=str(DEFAULT_SOCKET),
@@ -3280,7 +3306,12 @@ def main() -> int:
                         help="how the Creator Micro 2 starts: approved over Bluetooth (default), connected but "
                              "not yet approved, not connected, approved over USB, or with an interrupted keymap "
                              "write that needs Restore")
+    parser.add_argument("--parent-pid", type=int, default=None, metavar="PID",
+                        help="stop by itself once process PID exits (tests pass their own pid, so a killed "
+                             "test run leaves no mock behind); without it the mock runs until it is stopped")
     args = parser.parse_args()
+    if args.parent_pid is not None and args.parent_pid <= 1:
+        parser.error("--parent-pid must name a process other than launchd")
 
     path = Path(args.socket).expanduser()
     if not args.i_know_this_is_the_real_socket and (
@@ -3329,6 +3360,8 @@ def main() -> int:
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    parent_gone = parent_watch(args.parent_pid) if args.parent_pid is not None else None
+
     timeline = None
     if not args.once:
         timeline = threading.Thread(target=world.run_timeline, args=(stop, args.start_at), name="timeline", daemon=True)
@@ -3336,6 +3369,11 @@ def main() -> int:
 
     try:
         while not stop.is_set():
+            # Checked on every accept timeout, so a gone parent is noticed
+            # within a quarter of a second.
+            if parent_gone is not None and parent_gone():
+                log(f"parent process {args.parent_pid} is gone; stopping")
+                break
             try:
                 conn, _ = server.accept()
             except socket.timeout:

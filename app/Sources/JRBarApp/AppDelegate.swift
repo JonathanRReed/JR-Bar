@@ -1447,8 +1447,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let primary = preferred.lazy.compactMap { id in usage.first { $0.id == id } }.first ?? usage.first
         let window = primary?.windows.first { $0.name.lowercased() == "5h" } ?? primary?.windows.first
         // A window with no reading draws no ring at all: an empty ring is
-        // a ring at zero, and this window was never measured.
-        statusItem.ringFraction = window.flatMap { $0.usedPct }.map { $0 / 100 }
+        // a ring at zero, and this window was never measured. A stale or
+        // lapsed reading is not a reading of the window running now, and
+        // the ring has no faint form, so it draws no ring either.
+        let ring = primary.map { Self.meterReading(of: $0, window: window, now: Date().timeIntervalSince1970) }
+        statusItem.ringFraction = ring?.stale == true ? nil : ring?.fraction
         refreshMeters(preferred: preferred, usage: usage)
         refreshSessionDots()
         if core.isLive, let aggregate = core.state?.aggregate {
@@ -1474,14 +1477,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// primary window — the 5 h one when the provider has it, else the
     /// first it reports. Providers that report no window at all (signed
     /// out, disabled) are left out rather than drawn empty. Past
-    /// `maxMeters` the rest become "+n".
+    /// `maxMeters` the rest become "+n". A stale figure is drawn faint,
+    /// and a window whose reset has passed is drawn unread.
     private func refreshMeters(preferred: [String], usage: [CoreProviderUsage]) {
         guard let statusItem else { return }
         let document = core?.settings.map { SettingsDocument($0.document) }
         let shown = Self.meteredProviders(preferred: preferred, usage: usage)
         let cap = StatusIconRenderer.maxMeters
+        let now = Date().timeIntervalSince1970
         statusItem.meters = shown.prefix(cap).map { provider in
             let window = UsageCenterStore.primaryWindow(of: provider)
+            let reading = Self.meterReading(of: provider, window: window, now: now)
             // The percent styles need the window's reset stamp (the
             // countdown swap) and its pace verdict (the compact tint).
             // Same daemon-forecast pick the Usage Center card applies:
@@ -1489,17 +1495,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // conventional 5h lane.
             let conventional = window?.id == UsageCenterStore.conventionalWindow(of: provider)?.id
             let daemon = window?.forecast ?? (conventional ? provider.forecast : provider.forecast.map { CoreUsageForecast(exhaustsAt: nil, pace: $0.pace) })
-            let verdict = window.map { w in
-                UsageForecaster.forecast(window: w, daemon: daemon,
-                                         samples: core?.usageSamples.samples(provider: provider.identity, window: w.name) ?? [],
-                                         now: Date().timeIntervalSince1970).verdict
+            // An old or lapsed figure says nothing about where the window
+            // is heading now, so it gets no verdict to tint with.
+            var verdict: UsageForecast.Verdict?
+            if reading.current, let w = window {
+                let samples = core?.usageSamples.samples(provider: provider.identity, window: w.name) ?? []
+                verdict = UsageForecaster.forecast(window: w, daemon: daemon, samples: samples, now: now).verdict
             }
-            return StatusItemController.meter(for: provider.id,
-                                              fraction: window.flatMap { $0.usedPct }.map { $0 / 100 },
-                                              approximate: provider.isDerived,
-                                              document: document,
-                                              resetsAt: window?.resetsAt,
-                                              verdict: verdict)
+            var meter = StatusItemController.meter(for: provider.id,
+                                                   fraction: reading.fraction,
+                                                   approximate: provider.isDerived,
+                                                   document: document,
+                                                   resetsAt: window?.resetsAt,
+                                                   verdict: verdict)
+            meter.stale = reading.stale
+            return meter
         }
         statusItem.meterOverflow = max(0, shown.count - cap)
         statusItem.dotState = dotState()
@@ -1549,6 +1559,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         if row.isRemote, let machine = row.remoteMachine { word += " · on \(machine)" }
         return "\(row.label) · \(word) · \(row.style.name)"
+    }
+
+    /// What the icon may say about one provider's window. A window whose
+    /// reset has passed describes a window that is over and has no
+    /// reading for the one running now, so its figure is dropped and the
+    /// column is drawn unread. A provider the daemon marks stale keeps its
+    /// last figure, flagged so the column draws it faint.
+    struct MeterReading: Equatable {
+        var fraction: Double?
+        var stale: Bool
+        /// Neither stale nor lapsed: the figure, if there is one, is how
+        /// full the window is now.
+        var current: Bool
+    }
+
+    nonisolated static func meterReading(of provider: CoreProviderUsage, window: CoreUsageWindow?, now: Double) -> MeterReading {
+        let stale = provider.state?.lowercased() == "stale" || provider.fidelity?.lowercased() == "stale"
+        let lapsed = window?.resetsAt.map { $0 <= now } ?? false
+        let fraction = lapsed ? nil : window?.usedPct.map { $0 / 100 }
+        return MeterReading(fraction: fraction, stale: stale, current: !stale && !lapsed)
     }
 
     /// The providers the strip meters, in the panel's order: the ones
