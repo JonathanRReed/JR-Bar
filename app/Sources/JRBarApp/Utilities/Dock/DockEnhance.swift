@@ -701,6 +701,7 @@ final class DockEnhanceController {
         if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
         mediaToken = nil
         preview.largeCards = preferences.largePreviews
+        preview.metrics = preferences.metrics
         fill(preview, for: item)
 
         // Nothing to preview — no windows to raise — is no panel. A
@@ -751,13 +752,14 @@ final class DockEnhanceController {
         anchor = (item, edge, screenFrame)
 
         let panel = ensurePanel()
+        panel.apply(preview.metrics)
         let size = panel.fittingSize()
         let target = DockEnhanceMath.panelFrame(
             anchor: itemFrame, edge: edge, size: size,
             screen: screenFrame, gap: Self.panelGap,
             labelClearance: DockEnhanceMath.nativeLabelClearance(
                 title: preview.appName, edge: edge))
-        panel.present(frame: target, dockedAt: edge)
+        panel.present(frame: target, dockedAt: edge, coversLabel: preferences.coverDockLabel)
         watchers.start(escape: true, clickAway: true)
         switcher.setPreviewOpen(true)
         // An app tile's cards follow the app while the panel is up — a

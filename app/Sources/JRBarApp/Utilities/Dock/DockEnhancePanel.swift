@@ -164,17 +164,19 @@ enum DockDisplays {
 }
 
 /// The Enhance preview's window: a borderless, nonactivating glass
-/// panel (it floats, so the material rule allows glass) just above
-/// Apple's Dock — dock-window level + 1 so a magnified icon can't
-/// cover it — all-spaces like the Dock. The controller positions it;
-/// the view reads `DockPreviewContent`, so late thumbnails re-render
-/// without a re-present.
+/// panel (it floats, so the material rule allows glass) off Apple's
+/// Dock, all-spaces like the Dock. It rides above the Dock while it
+/// covers the Dock's name bubble, just under it otherwise (see
+/// `level(coversLabel:)`). The controller positions it; the view reads
+/// `DockPreviewContent`, so late thumbnails re-render without a
+/// re-present.
 @MainActor
 final class DockPreviewPanel: NSPanel {
     let actions: DockPreviewActions
-    static let cornerRadius: CGFloat = 20
 
     private let hosting: NSHostingView<DockPreviewView>
+    private let glass: NSGlassEffectView
+    private let container: NSView
 
     init(content: DockPreviewContent) {
         actions = DockPreviewActions(content: content)
@@ -184,15 +186,17 @@ final class DockPreviewPanel: NSPanel {
         // initial frame drew the content in the panel's bottom-left
         // corner, which read as "the preview is off-centre".
         hosting.sizingOptions = [.intrinsicContentSize]
-        let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 240, height: 96))
-        glass.cornerRadius = Self.cornerRadius
+        let radius = content.metrics.panelRadius
+        glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 240, height: 96))
+        glass.cornerRadius = radius
         glass.style = .regular
         hosting.frame = glass.bounds
         hosting.autoresizingMask = [.width, .height]
         glass.contentView = hosting
+        container = GlassBackdrop.rounded(glass, cornerRadius: radius)
         super.init(contentRect: NSRect(x: 0, y: 0, width: 240, height: 96),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = GlassBackdrop.rounded(glass, cornerRadius: Self.cornerRadius)
+        contentView = container
         actions.isActive = { [weak self] in self?.isVisible == true }
         isOpaque = false
         backgroundColor = .clear
@@ -209,11 +213,7 @@ final class DockPreviewPanel: NSPanel {
         // a non-key panel does not get unless it asks.
         acceptsMouseMovedEvents = true
         title = "JR-Bar Dock Preview"
-        // Just under the Dock's own level: above every app window, but
-        // a magnified icon that swells into the panel's band still
-        // draws over it and still takes its click. One level over the
-        // Dock made the upper half of every magnified icon dead.
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
+        level = Self.level(coversLabel: false)
         // Out of screen recordings and window captures — and out of its
         // own app's window list, so hovering JR-Bar's tile never
         // previews the preview. JRBAR_CAPTURE_CARD is the dev escape.
@@ -224,6 +224,28 @@ final class DockPreviewPanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    /// The panel's level. Covering the Dock's name bubble, it rides at
+    /// the status-bar level, over the Dock's own window (the bubble is
+    /// drawn inside it) — DockDoor's "above app labels"; the controller
+    /// then keeps it clear of a magnified icon's reach. Otherwise it sits
+    /// just under the Dock: above every app window, while a magnified
+    /// icon swelling into its band still draws over it and takes its
+    /// click (one level over the Dock made the upper half of every
+    /// magnified icon dead).
+    static func level(coversLabel: Bool) -> NSWindow.Level {
+        coversLabel ? .statusBar : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
+    }
+
+    /// The glass takes the spacing's corner — concentric with the card
+    /// plates at the spacing's inset — and the window re-reads the
+    /// rounded shadow. Called on every show.
+    func apply(_ metrics: DockPreviewMetrics) {
+        let radius = metrics.panelRadius
+        glass.cornerRadius = radius
+        container.layer?.cornerRadius = radius
+        invalidateShadow()
+    }
 
     /// The size the content wants, clamped so a many-windowed app
     /// can't sprawl the panel across the screen.
@@ -240,7 +262,8 @@ final class DockPreviewPanel: NSPanel {
     /// cap, so the panel visibly tracks which icon summoned it. A
     /// retarget while visible just slides to the new anchor; dismiss
     /// stays instant (a leave means leave), and Reduce Motion snaps.
-    func present(frame target: CGRect, dockedAt edge: DockEdge) {
+    func present(frame target: CGRect, dockedAt edge: DockEdge, coversLabel: Bool) {
+        level = Self.level(coversLabel: coversLabel)
         if isVisible, alphaValue > 0.5 {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.14
@@ -370,12 +393,13 @@ struct DockPreviewView: View {
     /// A document card held over the panel — the highlight ring.
     @ViewState private var dropTargeted = false
 
-    /// The panel's inset from its glass edge — the cards' plates sit
-    /// concentric inside `DockPreviewPanel.cornerRadius` at this inset.
-    static let inset: CGFloat = 10
+    /// The spacing the panel was shown at: its inset from the glass
+    /// edge, the air between sections, and the corners — the cards'
+    /// plates sit concentric inside the glass at this inset.
+    private var metrics: DockPreviewMetrics { content.metrics }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
             header
             if let note = content.headerNote {
                 Label(note, systemImage: "info.circle")
@@ -387,30 +411,30 @@ struct DockPreviewView: View {
             if !content.askRows.isEmpty {
                 VStack(spacing: 6) {
                     ForEach(content.askRows) { mark in
-                        DockAskRow(mark: mark, actions: actions)
+                        DockAskRow(mark: mark, actions: actions, metrics: metrics)
                     }
                 }
             }
             if let media = content.media {
-                DockPanelRule()
+                rule
                 DockMediaRow(media: media, actions: actions)
             }
             if !content.calendarEvents.isEmpty || content.calendarNeedsAuth {
-                DockPanelRule()
+                rule
                 DockCalendarRow(events: content.calendarEvents,
                                 freeUntil: content.calendarFreeUntil,
                                 needsAuth: content.calendarNeedsAuth,
                                 actions: actions)
             }
             if content.folderURL != nil {
-                DockPanelRule()
+                rule
                 folder
             } else if !content.windows.isEmpty {
-                DockPanelRule()
+                rule
                 windows
             }
         }
-        .padding(Self.inset)
+        .padding(metrics.panelInset)
         // The card→Dock-tile handoff's other half: a document card
         // dropped on this preview opens the file in the previewed app —
         // DockDoor's drag between previews. Folder previews and bare
@@ -425,7 +449,7 @@ struct DockPreviewView: View {
         }
         .overlay {
             if dropTargeted, content.bundleID != nil {
-                RoundedRectangle(cornerRadius: DockPreviewPanel.cornerRadius - 4, style: .continuous)
+                RoundedRectangle(cornerRadius: metrics.panelRadius - 4, style: .continuous)
                     .strokeBorder(Color.accentColor, lineWidth: 2)
                     .padding(4)
                     .allowsHitTesting(false)
@@ -433,12 +457,19 @@ struct DockPreviewView: View {
         }
     }
 
+    /// The hairline between sections — at the tighter scales the air
+    /// alone separates them.
+    @ViewBuilder
+    private var rule: some View {
+        if metrics.showsRule { DockPanelRule() }
+    }
+
     // MARK: Header
 
     private var header: some View {
         HStack(spacing: 10) {
             if !content.folderTrail.isEmpty {
-                DockRoundVerb(symbol: "chevron.left", label: backLabel, size: 22) {
+                DockRoundVerb(symbol: "chevron.left", label: backLabel, size: metrics.verbDisc) {
                     actions.onFolderBack?()
                 }
             }
@@ -446,7 +477,7 @@ struct DockPreviewView: View {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 30, height: 30)
+                    .frame(width: metrics.headerIcon, height: metrics.headerIcon)
                     .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
                     .overlay(alignment: .topTrailing) {
                         // The Dock tile's own badge, on the icon the way
@@ -506,33 +537,35 @@ struct DockPreviewView: View {
     private var verbs: some View {
         if let shown = content.folderShown {
             DockRoundVerb(symbol: "folder", tint: .accentColor,
-                          label: "Open \(shown.lastPathComponent) in Finder") {
+                          label: "Open \(shown.lastPathComponent) in Finder", size: metrics.verbDisc) {
                 actions.onOpen?(shown)
             }
         } else if content.isRunning {
             HStack(spacing: 6) {
                 DockRoundVerb(symbol: "plus", tint: DockChrome.go,
-                              label: "New window in \(content.appName)") {
+                              label: "New window in \(content.appName)", size: metrics.verbDisc) {
                     actions.onNewWindow?()
                 }
                 DockRoundVerb(symbol: "eye.slash", tint: DockChrome.caution,
-                              label: "Hide \(content.appName) (⌘H)") {
+                              label: "Hide \(content.appName) (⌘H)", size: metrics.verbDisc) {
                     actions.onHideApp?()
                 }
                 if content.windows.contains(where: { !$0.minimized }), content.windows.count > 1 {
                     DockRoundVerb(symbol: "minus", tint: DockChrome.caution,
-                                  label: "Minimise every \(content.appName) window") {
+                                  label: "Minimise every \(content.appName) window",
+                                  size: metrics.verbDisc) {
                         actions.onMinimizeAll?()
                     }
                 }
                 if content.windows.count > 1 {
                     DockRoundVerb(symbol: "xmark", tint: DockChrome.stop,
-                                  label: "Close every \(content.appName) window (app stays running)") {
+                                  label: "Close every \(content.appName) window (app stays running)",
+                                  size: metrics.verbDisc) {
                         actions.onCloseAll?()
                     }
                 }
                 DockRoundVerb(symbol: content.stillRunning ? "bolt.horizontal.fill" : "power",
-                              tint: DockChrome.stop, label: quitLabel,
+                              tint: DockChrome.stop, label: quitLabel, size: metrics.verbDisc,
                               lit: content.stillRunning) {
                     actions.onQuitApp?()
                 }
@@ -559,7 +592,8 @@ struct DockPreviewView: View {
             DockPreviewCompactList(windows: content.windows, agents: content.agents,
                                    selectedWindowID: content.selectedWindowID,
                                    armedWindowID: content.armedWindowID,
-                                   armedNote: content.armedNote, actions: actions)
+                                   armedNote: content.armedNote, rowPad: metrics.listPadH,
+                                   actions: actions)
         } else {
             // A strip that fits centres in the panel — one card
             // left-anchored with dead glass beside it reads as a
@@ -571,9 +605,9 @@ struct DockPreviewView: View {
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 4) { cards }
+                    HStack(alignment: .top, spacing: metrics.cardSpacing) { cards }
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: 4) { cards }
+                        HStack(alignment: .top, spacing: metrics.cardSpacing) { cards }
                     }
                 }
                 Spacer(minLength: 0)
@@ -595,6 +629,7 @@ struct DockPreviewView: View {
                             agent: content.agents[window.id],
                             armedNote: content.armedWindowID == window.id ? content.armedNote : nil,
                             pulsed: content.pulsedWindowIDs.contains(window.id),
+                            metrics: metrics,
                             actions: actions)
         }
     }
@@ -658,18 +693,18 @@ struct DockPreviewView: View {
                 // Apple's Grid stack: five across, four rows before it
                 // scrolls; a folder chip browses in.
                 let grid = DockEnhanceMath.folderGrid(count: content.folderEntries.count)
+                let gap = DockFolderChip.gap(metrics)
                 ScrollView(.vertical, showsIndicators: true) {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(DockFolderChip.width),
-                                                                 spacing: DockFolderChip.gap),
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(DockFolderChip.width), spacing: gap),
                                              count: grid.columns),
-                              spacing: DockFolderChip.gap) {
+                              spacing: gap) {
                         ForEach(content.folderEntries) { entry in
                             DockFolderChip(entry: entry, actions: actions)
                         }
                     }
                 }
-                .frame(width: CGFloat(grid.columns) * (DockFolderChip.width + DockFolderChip.gap),
-                       height: CGFloat(grid.rows) * (DockFolderChip.height + DockFolderChip.gap))
+                .frame(width: CGFloat(grid.columns) * (DockFolderChip.width + gap),
+                       height: CGFloat(grid.rows) * (DockFolderChip.height + gap))
             }
         }
     }
@@ -742,18 +777,17 @@ struct DockPreviewCard: View {
     var armedNote: String? = nil
     /// A shake or flick just moved this window — the card dips a beat.
     var pulsed = false
+    /// The plate's reach past the still, its corner (concentric with the
+    /// still inside it), and the air between still and caption.
+    var metrics = DockPreviewMetrics.standard
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
-    /// The plate's corner — concentric with the still inside it at `pad`.
-    static let radius: CGFloat = DockChrome.stillRadius + pad
-    /// The plate's reach past the still on every side.
-    static let pad: CGFloat = 6
     /// One caption row's height.
     static let captionRow: CGFloat = 14
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: metrics.captionGap) {
             ZStack(alignment: .topLeading) {
                 Button { actions.pick(window) } label: {
                     face
@@ -814,7 +848,7 @@ struct DockPreviewCard: View {
                     .frame(width: size.width, height: CGFloat(captionLines) * Self.captionRow, alignment: .top)
             }
         }
-        .padding(Self.pad)
+        .padding(metrics.cardPad)
         .background(plate)
         .contentShape(Rectangle())
         .onHover { inside in
@@ -842,7 +876,7 @@ struct DockPreviewCard: View {
     /// The keyboard's pick wears the accent; the pointer's a quiet plate.
     @ViewBuilder
     private var plate: some View {
-        let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: metrics.plateRadius, style: .continuous)
         if selected {
             shape.fill(Color.accentColor.opacity(0.16))
                 .overlay(shape.strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1))
@@ -963,6 +997,8 @@ struct DockPreviewCompactList: View {
     var selectedWindowID: Int? = nil
     var armedWindowID: Int? = nil
     var armedNote: String? = nil
+    /// A row's padding across — the spacing's `listPadH`.
+    var rowPad: CGFloat = DockPreviewMetrics.standard.listPadH
     let actions: DockPreviewActions
 
     var body: some View {
@@ -976,7 +1012,7 @@ struct DockPreviewCompactList: View {
                     DockPreviewCompactRow(window: window, agent: agents[window.id],
                                           selected: window.id == selectedWindowID,
                                           armedNote: armedWindowID == window.id ? armedNote : nil,
-                                          columns: columns, actions: actions)
+                                          columns: columns, pad: rowPad, actions: actions)
                 }
             }
         }
@@ -999,7 +1035,9 @@ private struct DockFolderChip: View {
     /// The chip's box — the grid lays out on it.
     static let width: CGFloat = 92
     static let height: CGFloat = 72
-    static let gap: CGFloat = 4
+    /// Chip to chip: the cards' spacing, so the grid tightens with the
+    /// strip.
+    static func gap(_ metrics: DockPreviewMetrics) -> CGFloat { metrics.cardSpacing }
     @ViewState private var hovering = false
     /// The file's Quick Look thumbnail once it lands — a screenshot or
     /// a PDF reads at a glance instead of as one more document icon.
@@ -1260,6 +1298,7 @@ private struct DockPreviewCompactRow: View {
     var selected = false
     var armedNote: String? = nil
     var columns = DockCompactColumns()
+    var pad: CGFloat = DockPreviewMetrics.standard.listPadH
     let actions: DockPreviewActions
     @ViewState private var hovering = false
 
@@ -1324,7 +1363,7 @@ private struct DockPreviewCompactRow: View {
                         .frame(maxWidth: 130, alignment: .trailing)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, pad)
             .frame(minWidth: Self.minWidth, maxWidth: .infinity, minHeight: 28, maxHeight: 28)
             .background(plate)
             .contentShape(Rectangle())
@@ -1363,6 +1402,7 @@ private struct DockPreviewCompactRow: View {
 private struct DockAskRow: View {
     let mark: DockAgentMark
     let actions: DockPreviewActions
+    var metrics = DockPreviewMetrics.standard
 
     /// The mark's ask with its session filled in, for the desk.
     private var ask: CoreAsk? {
@@ -1408,8 +1448,8 @@ private struct DockAskRow: View {
                 verbs(desk: desk, busy: busy)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, metrics.rowPadH)
+        .padding(.vertical, metrics.rowPadV)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .fill(mark.accent.opacity(0.09)))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)

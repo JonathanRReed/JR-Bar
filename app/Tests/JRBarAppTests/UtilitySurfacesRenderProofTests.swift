@@ -110,7 +110,7 @@ struct UtilitySurfacesRenderProofTests {
         for (name, content) in shots {
             for dark in [true, false] {
                 let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
-                try Self.write(view, glassRadius: DockPreviewPanel.cornerRadius, name: name, dark: dark,
+                try Self.write(view, glassRadius: content.metrics.panelRadius, name: name, dark: dark,
                                canvas: CGSize(width: 900, height: 460))
             }
         }
@@ -150,7 +150,7 @@ struct UtilitySurfacesRenderProofTests {
         }
         .padding(14)
         for dark in [true, false] {
-            try Self.write(verbs, glassRadius: DockPreviewPanel.cornerRadius, name: "dock-verbs", dark: dark,
+            try Self.write(verbs, glassRadius: DockPreviewMetrics.standard.panelRadius, name: "dock-verbs", dark: dark,
                            canvas: CGSize(width: 420, height: 320))
         }
         let toast = DockToastPanel.Model()

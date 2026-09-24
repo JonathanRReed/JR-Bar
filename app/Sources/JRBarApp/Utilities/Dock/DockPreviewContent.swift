@@ -185,6 +185,9 @@ final class DockPreviewContent {
     /// "Show events" button rather than reading unprompted.
     var calendarNeedsAuth = false
     var largeCards = false
+    /// The insets and corners the panel draws, from the card's Spacing —
+    /// set at each show, so a late thumbnail re-renders at the same air.
+    var metrics = DockPreviewMetrics.standard
     /// True when the window count passed `compactListLimit` — the
     /// panel lists titles instead of thumbnails and skips captures.
     var compact = false
