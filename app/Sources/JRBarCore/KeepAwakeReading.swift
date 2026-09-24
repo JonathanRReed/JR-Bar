@@ -6,8 +6,11 @@ import Foundation
 /// the daemon's own words: off; the agents holding the Mac (their own
 /// switch, not the person's); or the person's lease — a countdown, until
 /// the agents finish, or until turned off. A yield to heat or the battery
-/// floor is said too: the demand stands, the hold does not. Pure, so the
-/// words are pinned without a daemon.
+/// floor is said too: the demand stands, the hold does not. So are the
+/// power facts around it — when the agents' grace lets go, a battery that
+/// will not outlast the run, a charger that cannot carry it, and the last
+/// time a hold let go and why. Pure, so the words are pinned without a
+/// daemon.
 public struct KeepAwakeReading: Equatable, Sendable {
     public enum State: Equatable, Sendable {
         case off
@@ -32,11 +35,39 @@ public struct KeepAwakeReading: Equatable, Sendable {
     public var suspended: String?
     /// The screen is held too — no screen saver, no lock.
     public var display: Bool
+    /// When the agents' post-work grace ends (`hold.grace_until`).
+    public var graceUntil: Date?
+    /// Will the run outlast the battery (`battery.runway`).
+    public var runway: CoreBatteryRunway?
+    /// The newest release worth reading (`power.last_release`).
+    public var lastRelease: CorePowerRelease?
+    /// The closed-lid hold is up (`power.closed_lid.holding`): something
+    /// holds the Mac even while the hold itself is off.
+    public var lidHolding = false
+    /// Clock times follow the Mac's locale and zone; tests pin both.
+    public var locale: Locale = .current
+    public var timeZone: TimeZone = .current
 
-    public init(state: State, suspended: String? = nil, display: Bool = false) {
+    /// A release this recent is still news on the footer line when
+    /// nothing holds the Mac; older, it stays in the tooltip.
+    public static let releaseNewsFor: TimeInterval = 30 * 60
+
+    public init(state: State, suspended: String? = nil, display: Bool = false, graceUntil: Date? = nil,
+                runway: CoreBatteryRunway? = nil, lastRelease: CorePowerRelease? = nil) {
         self.state = state
         self.suspended = suspended
         self.display = display
+        self.graceUntil = graceUntil
+        self.runway = runway
+        self.lastRelease = lastRelease
+    }
+
+    /// The whole of `state.power`: the hold and the facts around it.
+    public init(power: CorePower?) {
+        self.init(hold: power?.hold)
+        runway = power?.battery?.runway
+        lastRelease = power?.lastRelease
+        lidHolding = power?.closedLid?.holding == true
     }
 
     /// The daemon's hold; off when it sent none.
@@ -63,7 +94,8 @@ public struct KeepAwakeReading: Equatable, Sendable {
         }
         let suspended = hold.suspended?.trimmingCharacters(in: .whitespaces)
         self.init(state: state, suspended: suspended?.isEmpty == false ? suspended : nil,
-                  display: hold.display == true)
+                  display: hold.display == true,
+                  graceUntil: hold.graceUntil.map { Date(timeIntervalSince1970: $0) })
     }
 
     /// The app's own assertion, the fallback while the daemon is away: a
@@ -111,8 +143,13 @@ public struct KeepAwakeReading: Equatable, Sendable {
         }
     }
 
-    /// The chip's tooltip: the truth, and what a click does to it.
+    /// The chip's tooltip: the truth, and what a click does to it, then
+    /// the power facts one per line.
     public func chipHelp(now: Date) -> String {
+        ([holdHelp(now: now)] + facts()).joined(separator: "\n")
+    }
+
+    private func holdHelp(now: Date) -> String {
         var text: String
         switch state {
         case .off:
@@ -120,9 +157,13 @@ public struct KeepAwakeReading: Equatable, Sendable {
                 ? "Keep the Mac and its display awake — the screen will not lock while held."
                 : "Keep the Mac awake (the display may still sleep and lock)."
         case .agents(let count):
-            text = count > 0
-                ? "Held awake while \(Self.agents(count)) work — their own switch, under Settings › Notifications › Power. It lets go a few minutes after they stop. Click to keep it awake after that too."
-                : "Held awake for a few minutes after the agents stopped. Click to keep it awake."
+            if count > 0 {
+                text = "Held awake while \(Self.agents(count)) work — their own switch, under Settings › Notifications › Power. It lets go a few minutes after they stop. Click to keep it awake after that too."
+            } else if let end = graceEnd(now: now) {
+                text = "Held awake until \(clock(end)), a few minutes after the agents stopped. Click to keep it awake."
+            } else {
+                text = "Held awake for a few minutes after the agents stopped. Click to keep it awake."
+            }
         case .lease(.until(let end)):
             let left = end.timeIntervalSince(now)
             text = left > 0
@@ -147,13 +188,24 @@ public struct KeepAwakeReading: Equatable, Sendable {
     /// footer; nil while nothing holds the Mac or waits to.
     public func footerLine(now: Date) -> (full: String, short: String)? {
         if let why = suspendedWords { return ("Awake paused · \(why)", "Paused") }
+        // A run the battery or the charger will not carry outranks the
+        // hold's own words: it is the one thing to act on. Only while
+        // something holds the Mac, though — the daemon's charger verdict
+        // does not ask whether a hold is up, and "Awake" would be false.
+        if state != .off || lidHolding {
+            if runway?.short == true {
+                if let minutes = runway?.minutesLeft { return ("Awake · battery ~\(minutes) min left", "~\(minutes) min") }
+                return ("Awake · battery running short", "Battery low")
+            }
+            if runway?.adapterShort == true { return ("Awake · the charger can't keep up", "Charger short") }
+        }
         switch state {
         case .off:
-            return nil
+            return releaseNews(now: now)
         case .agents(let count):
-            return count > 0
-                ? ("Awake · \(Self.agents(count)) working", count == 1 ? "1 agent" : "\(count) agents")
-                : ("Awake · a few minutes more", "Awake")
+            if count > 0 { return ("Awake · \(Self.agents(count)) working", count == 1 ? "1 agent" : "\(count) agents") }
+            if let end = graceEnd(now: now) { return ("Awake · lets go at \(clock(end))", clock(end)) }
+            return ("Awake · a few minutes more", "Awake")
         case .lease(.until(let end)):
             let left = end.timeIntervalSince(now)
             guard left > 0 else { return ("Awake", "Awake") }
@@ -163,6 +215,89 @@ public struct KeepAwakeReading: Equatable, Sendable {
         case .lease(.indefinite):
             return ("Awake until you turn it off", "Awake")
         }
+    }
+
+    // MARK: The facts
+
+    /// The power facts past the hold's own words, one line each, for the
+    /// tooltips: the battery runway, the charger shortfall and the last
+    /// release. (The grace's end is the hold's own sentence.) Empty when
+    /// there is nothing more to say.
+    public func facts() -> [String] {
+        var lines: [String] = []
+        if let runway, runway.short == true {
+            let who = runway.agents.map { " with \(Self.agents($0)) working" } ?? ""
+            lines.append(runway.minutesLeft.map { "On battery\(who): about \($0) min left" }
+                ?? "On battery\(who), and the battery is running short")
+        }
+        if let runway, runway.adapterShort == true {
+            var line = "The charger can't keep up — the battery still falls under the agents' load"
+            if let watts = runway.fullSpeedWatts, watts > 0 { line += "; this Mac charges at full speed on \(Int(watts.rounded())) W" }
+            lines.append(line)
+        }
+        if let release = releaseLine() { lines.append(release) }
+        return lines
+    }
+
+    /// The grace's end, while it is ahead.
+    func graceEnd(now: Date) -> Date? {
+        guard let graceUntil, graceUntil > now else { return nil }
+        return graceUntil
+    }
+
+    /// "Last let go at 02:14 — time up"; a closed-lid stretch as one
+    /// story: "Ran 2 h 40 min with the lid closed, 3 finished, slept at
+    /// 02:14".
+    func releaseLine() -> String? {
+        guard let release = lastRelease, let at = release.at else { return nil }
+        let when = clock(Date(timeIntervalSince1970: at))
+        switch release.kind {
+        case "lid_hold_ended", "slept":
+            var parts: [String] = []
+            if let duration = release.duration, duration > 0 { parts.append("Ran \(Self.long(duration)) with the lid closed") }
+            if let finished = release.finished, finished > 0 { parts.append("\(finished) finished") }
+            let slept = release.kind == "slept"
+            let end = slept ? "slept at \(release.sleptAt.map { clock(Date(timeIntervalSince1970: $0)) } ?? when)" : "let go at \(when)"
+            parts.append(parts.isEmpty ? (slept ? "Slept at \(when)" : "Let go at \(when)") : end)
+            return parts.joined(separator: ", ")
+        default:
+            guard let why = Self.releaseWords(release.reason) else { return "Last let go at \(when)" }
+            return "Last let go at \(when) — \(why)"
+        }
+    }
+
+    /// A recent release while nothing holds the Mac: "Let go at 02:14 ·
+    /// time up", the short form the clock alone.
+    func releaseNews(now: Date) -> (full: String, short: String)? {
+        guard let release = lastRelease, let at = release.at else { return nil }
+        let age = now.timeIntervalSince1970 - at
+        guard age >= 0, age <= Self.releaseNewsFor else { return nil }
+        let when = clock(Date(timeIntervalSince1970: at))
+        if release.kind == "slept" { return ("Slept at \(when)", when) }
+        let why = Self.releaseWords(release.reason).map { " · \($0)" } ?? ""
+        return ("Let go at \(when)\(why)", when)
+    }
+
+    /// The daemon's release reasons in the reader's words.
+    static func releaseWords(_ reason: String?) -> String? {
+        switch reason {
+        case nil, "": return nil
+        case "expired": return "time up"
+        case "finished", "agents_idle": return "the agents finished"
+        case "thermal": return "too warm"
+        case "battery": return "battery low"
+        case "policy": return "the setting changed"
+        case let other?: return other.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    /// "14:32" or "2:32 PM", as the Mac tells time.
+    func clock(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
+        return formatter.string(from: date)
     }
 
     // MARK: Words

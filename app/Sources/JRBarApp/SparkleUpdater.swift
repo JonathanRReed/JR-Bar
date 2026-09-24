@@ -240,6 +240,14 @@ enum InstalledCopies {
     /// a copy kept on purpose is named once, not on every launch.
     nonisolated static func noticedKey(_ url: URL) -> String { "staleCopyNoticed.\(url.path)" }
 
+    /// "JR-Bar.app.bak-20260921-105351 in /Applications is another
+    /// JR-Bar — updates replace only this one": the bundle by its own
+    /// name, so a backup is told apart from a second real install.
+    nonisolated static func noticeText(for copy: URL, home: URL) -> String {
+        let folder = copy.deletingLastPathComponent().path.replacingOccurrences(of: home.path, with: "~")
+        return "\(copy.lastPathComponent) in \(folder) is another JR-Bar — updates replace only this one"
+    }
+
     /// Names one not-yet-mentioned stale copy on the panel, with Show to
     /// reveal it, so Spotlight or a Login Item never starts it unseen.
     @MainActor
@@ -250,10 +258,7 @@ enum InstalledCopies {
         let stale = stale(among: copies, running: Bundle.main.bundleURL, home: home)
         guard let first = stale.first(where: { !defaults.bool(forKey: noticedKey($0)) }) else { return }
         defaults.set(true, forKey: noticedKey(first))
-        let folder = first.deletingLastPathComponent().path.replacingOccurrences(of: home.path, with: "~")
-        notices.say(.init(key: "stale-copy",
-                          text: "Another JR-Bar is installed in \(folder) — updates replace only this one",
-                          actionTitle: "Show") {
+        notices.say(.init(key: "stale-copy", text: noticeText(for: first, home: home), actionTitle: "Show") {
             NSWorkspace.shared.activateFileViewerSelecting([first])
         })
     }

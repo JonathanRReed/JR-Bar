@@ -14,25 +14,55 @@ extension AgentAggregateState {
 /// `AgentAggregateState`, re-reading only when the directory changes.
 /// The reduction itself is `AgentMonitorFeed.reduce` in JRBarCore, so the
 /// words and the precedence are unit-testable without AppKit.
+///
+/// It runs only while the daemon is not live: the result is the panel's
+/// fallback, and a live daemon rewrites that directory dozens of times a
+/// minute. The delegate stops it on connect and starts it again — with a
+/// read at once, so the fallback is fresh — when the daemon goes away.
 @MainActor
 final class AgentStateMonitor {
     static let directory = CoreSocketPath.stateDirectory()
-    static let path = directory + "/latest.json"
     nonisolated static let completedWindow: TimeInterval = AgentMonitorFeed.completedWindow
 
     var onChange: (@MainActor (AgentAggregateState, String) -> Void)?
     private(set) var state: AgentAggregateState = .idle
     private(set) var detail: String = "No agent monitor state"
+    /// The watched directory and the document in it; tests point these
+    /// at a scratch folder.
+    let directory: String
+    var path: String { directory + "/latest.json" }
     private var watcher: FileWatcher?
     private var pending: DispatchWorkItem?
     private var generation = 0
 
+    init(directory: String = AgentStateMonitor.directory) {
+        self.directory = directory
+    }
+
+    /// Whether the directory is being watched.
+    var isWatching: Bool { watcher != nil }
+
+    /// Watch the directory and read now. A second start while watching
+    /// changes nothing.
     func start() {
-        watcher = FileWatcher(path: Self.directory, mask: [.write, .link, .attrib, .delete, .rename, .revoke]) { [weak self] _ in
+        guard watcher == nil else { return }
+        let watcher = FileWatcher(path: directory, mask: [.write, .link, .attrib, .delete, .rename, .revoke]) { [weak self] _ in
             self?.scheduleRead()
         }
-        watcher?.start()
-        scheduleRead()
+        watcher.start()
+        self.watcher = watcher
+        pending?.cancel()
+        pending = nil
+        read()
+    }
+
+    /// Stop watching; a read already on its way is dropped.
+    func stop() {
+        watcher?.stop()
+        watcher = nil
+        pending?.cancel()
+        pending = nil
+        generation += 1
     }
 
     private func scheduleRead() {
@@ -45,7 +75,7 @@ final class AgentStateMonitor {
     private func read() {
         generation += 1
         let generation = generation
-        let path = Self.path
+        let path = self.path
         Task.detached(priority: .utility) {
             let data = try? Data(contentsOf: URL(fileURLWithPath: path))
             // The doc's `last_clock` stamp is checked first; the mtime is

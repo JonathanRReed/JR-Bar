@@ -11,13 +11,6 @@ import JRBarCore
 @Suite("Reply drafts + Mini")
 @MainActor
 struct ReplyDraftTests {
-    private func freshDefaults() -> UserDefaults {
-        let suite = "jrbar.tests.drafts.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        return defaults
-    }
-
     private func ask(request: String? = "req-1", summary: String = "allow?") -> CoreAsk {
         CoreAsk(session: "s1", kind: "permission", openedAt: 100, summary: summary,
                 answerable: true, replyable: true, request: request)
@@ -25,50 +18,92 @@ struct ReplyDraftTests {
 
     @Test("a draft survives a fresh store — the relaunch case")
     func draftsSurviveRelaunch() {
-        let defaults = freshDefaults()
-        let a = ask()
-        let first = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
-        first.setReplyDraft("yes, but only for this repo", for: a)
+        withScratchDefaults { defaults in
+            let a = ask()
+            let first = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
+            first.setReplyDraft("yes, but only for this repo", for: a)
 
-        let second = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
-        #expect(second.replyDraft(for: a) == "yes, but only for this repo")
+            let second = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
+            #expect(second.replyDraft(for: a) == "yes, but only for this repo")
+        }
     }
 
     @Test("drafts key by request id; distinct asks don't share text")
     func draftsKeyByRequest() {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: freshDefaults(), screenBarShown: false)
-        let a = ask(request: "req-1")
-        let b = ask(request: "req-2", summary: "other?")
-        store.setReplyDraft("first", for: a)
-        store.setReplyDraft("second", for: b)
-        #expect(store.replyDraft(for: a) == "first")
-        #expect(store.replyDraft(for: b) == "second")
-        // An ask with no request id keys on its own id instead.
-        let c = ask(request: nil, summary: "third?")
-        store.setReplyDraft("third", for: c)
-        #expect(store.replyDraft(for: c) == "third")
+        withScratchDefaults { defaults in
+            let store = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
+            let a = ask(request: "req-1")
+            let b = ask(request: "req-2", summary: "other?")
+            store.setReplyDraft("first", for: a)
+            store.setReplyDraft("second", for: b)
+            #expect(store.replyDraft(for: a) == "first")
+            #expect(store.replyDraft(for: b) == "second")
+            // An ask with no request id keys on its own id instead.
+            let c = ask(request: nil, summary: "third?")
+            store.setReplyDraft("third", for: c)
+            #expect(store.replyDraft(for: c) == "third")
+        }
     }
 
     @Test("an empty write clears the draft — send confirmation uses it")
     func emptyClearsDraft() {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: freshDefaults(), screenBarShown: false)
-        let a = ask()
-        store.setReplyDraft("half typed", for: a)
-        store.setReplyDraft("", for: a)
-        #expect(store.replyDraft(for: a) == "")
+        withScratchDefaults { defaults in
+            let store = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
+            let a = ask()
+            store.setReplyDraft("half typed", for: a)
+            store.setReplyDraft("", for: a)
+            #expect(store.replyDraft(for: a) == "")
+        }
+    }
+
+    @Test("a reply goes through the shared desk; only a confirmed send clears the draft")
+    func replyClearsOnConfirm() async {
+        await withScratchDefaults { defaults in
+            let store = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
+            let a = ask()
+            let sent = AskSurfacesTests.Log()
+            store.askDesk.send = { _, verdict, request in
+                sent.calls.append("\(verdict)|\(request ?? "")")
+                return CoreReply(id: "1", ok: false, error: CoreReplyError(code: "unsupported", message: "no input kind"))
+            }
+            store.setReplyDraft("  only this repo ", for: a)
+            store.reply(a, text: store.replyDraft(for: a))
+            await AskSurfacesTests.waitFor { store.toast != nil }
+            #expect(sent.calls == ["\(AskVerdict.reply("only this repo"))|req-1"])
+            #expect(store.replyDraft(for: a) == "  only this repo ", "a refused reply keeps its text")
+
+            store.askDesk.send = { _, _, _ in CoreReply(id: "2", ok: true) }
+            store.reply(a, text: store.replyDraft(for: a))
+            await AskSurfacesTests.waitFor { store.replyDraft(for: a).isEmpty }
+            #expect(store.replyDraft(for: a) == "")
+            #expect(store.toast == "Reply sent · typed into the terminal")
+        }
     }
 
     @Test("the store stays bounded — the oldest draft drops first")
     func draftsBounded() {
-        let defaults = freshDefaults()
-        let store = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
-        for i in 0...55 {
-            store.setReplyDraft("draft \(i)", for: ask(request: "req-\(i)"))
+        withScratchDefaults { defaults in
+            let store = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
+            for i in 0...55 {
+                store.setReplyDraft("draft \(i)", for: ask(request: "req-\(i)"))
+            }
+            // 56 writes into a 50-cap store: the earliest six are gone.
+            #expect(store.replyDraft(for: ask(request: "req-0")) == "")
+            #expect(store.replyDraft(for: ask(request: "req-5")) == "")
+            #expect(store.replyDraft(for: ask(request: "req-55")) == "draft 55")
         }
-        // 56 writes into a 50-cap store: the earliest six are gone.
-        #expect(store.replyDraft(for: ask(request: "req-0")) == "")
-        #expect(store.replyDraft(for: ask(request: "req-5")) == "")
-        #expect(store.replyDraft(for: ask(request: "req-55")) == "draft 55")
+    }
+
+    @Test("a scratch suite's values are gone once its test is done")
+    func scratchSuiteIsRemoved() {
+        let suite = ScratchDefaults.suiteName("draftsBounded()")
+        #expect(suite.hasPrefix("jrbar.tests.draftsBounded."))
+        let defaults = ScratchDefaults.open(suite)
+        defaults.set("half typed", forKey: "probe")
+        #expect(defaults.string(forKey: "probe") == "half typed")
+        ScratchDefaults.remove(suite)
+        #expect(UserDefaults(suiteName: suite)?.string(forKey: "probe") == nil)
+        #expect(!FileManager.default.fileExists(atPath: ScratchDefaults.plist(suite).path))
     }
 
     @Test("mini mode writes `presentation`; the toggle reads it back")

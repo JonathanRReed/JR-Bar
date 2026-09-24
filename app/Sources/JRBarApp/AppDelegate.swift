@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var monitor: AgentStateMonitor?
     private var core: CoreModel?
     private var store: PanelStore?
+    /// The HUD a closed panel's feedback lands in (`showFeedback`).
+    private let feedbackHUD = PaletteHUD()
     private var panel: PanelController?
     private var settingsStore: SettingsStore?
     private var settingsWindow: SettingsWindowController?
@@ -206,6 +208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             MainActor.assumeIsolated { settingsStore?.refreshUpdater() }
         }
         store.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
+        statusItem.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
+        statusItem.showsCreatorMicro = { [weak store] in store?.hasCreatorMicro == true }
         installMainMenu()
         self.statusItem = statusItem
         self.screenBar = screenBar
@@ -247,8 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // own expand/collapse pair drives both directions so the card
         // obeys every existing guard (fold engaged, capsule mid-show).
         let shelfHotkey = PanelHotkey(signature: OSType(0x6A726273),
-                                      keyCode: UInt32(kVK_ANSI_D),
-                                      hotKeyID: 1)
+                                      keyCode: UInt32(kVK_ANSI_D))
         shelfHotkey.onPress = { [weak toysStore] in
             toysStore?.notch.toggleShelfFromHotkey()
         }
@@ -409,7 +412,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let self, side == .left else { return false }
             let focus = self.store?.screenBarFocus
             guard let session = focus?.focusSession ?? focus?.clickSession else { return false }
-            self.core?.openSession(session)
+            Task { @MainActor [weak self] in
+                if let refusal = await SessionOpener.open(session) { self?.showFeedback(refusal) }
+            }
             return true
         }
         // The hidden-run ‹ lives in the island's own surface — a status
@@ -462,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.historyStore = historyStore
         self.historyWindow = historyWindow
         store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
+        store.onOpenEvents = { [weak historyWindow] in historyWindow?.showEvents() }
         // History's search also reads what was said, when the Data
         // Hoarder keeps transcripts.
         historyStore.archiveSearch = { [weak utilitiesStore] query in
@@ -625,6 +631,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         commandBar.palette.toastFeed = { [weak store] in store?.toast }
         commandBar.openSettings = { [weak settingsWindow] in settingsWindow?.show(page: .utilities) }
+        // Command Palette… in More, the right-click menu and the app menu.
+        store.onOpenPalette = { [weak commandBar] in commandBar?.open() }
+        statusItem.onOpenPalette = { [weak commandBar] in commandBar?.open() }
         utilitiesStore.menuBar.actions.paletteBinding = { [weak utilitiesStore] in
             utilitiesStore?.menuBar.resolvedHotkeyBindings().first { $0.action == .commandBar }
         }
@@ -690,18 +699,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             events?.hud.islandDropped(notice)
         }
         events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
-        // Approve/Deny on a banner are awaited, so a refused answer is
-        // heard: the bridge turns it into a follow-up banner that opens
-        // the session on click.
-        events.notifications.onAnswerAskNow = { [weak core] session, approve in
-            guard let core else { return "the core is not connected" }
-            do {
-                let reply = try await core.answerAskNow(session: session, approve: approve)
-                return reply.ok ? nil : (reply.error?.message ?? reply.error?.code ?? "the core refused")
-            } catch {
-                return "the core is not answering"
-            }
-        }
+        events.onOpenRefused = { [weak self] text in self?.showFeedback(text) }
+        // Approve/Deny on a banner go through the panel's desk, pinned to
+        // the banner's own ask; a refusal becomes a follow-up banner that
+        // opens the session on click.
+        events.askDesk = store.askDesk
 
         // File feeds: the fallback until the daemon is connected.
         feed.onProgram = { [weak self] text, source, anchor in
@@ -1077,12 +1079,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let main = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(AppMenuVerb.commandPalette.menuItem(action: #selector(openCommandPalette(_:)), target: nil))
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","))
         appMenu.addItem(NSMenuItem(title: "History", action: #selector(openHistory(_:)), keyEquivalent: "y"))
         appMenu.addItem(NSMenuItem(title: "Overview", action: #selector(openOverview(_:)), keyEquivalent: "o"))
         appMenu.addItem(NSMenuItem(title: "Usage Center", action: #selector(openUsageCenter(_:)), keyEquivalent: "u"))
         appMenu.addItem(NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
-        appMenu.addItem(NSMenuItem(title: "Control Center…", action: #selector(openControlCenter(_:)), keyEquivalent: "k"))
+        appMenu.addItem(NSMenuItem(title: "Creator Micro…", action: #selector(openControlCenter(_:)), keyEquivalent: ""))
         appMenu.addItem(.separator())
         let checkForUpdates = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
         checkForUpdates.target = self
@@ -1126,7 +1130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard let updater, updater.isAvailable else {
             let why = "Software update: \(updater?.availability.description ?? "unavailable")"
             settingsStore?.report(error: why)
-            store?.show(toast: why)
+            showFeedback(why)
             return
         }
         updater.checkForUpdates(sender)
@@ -1145,6 +1149,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc private func openControlCenter(_ sender: Any?) {
         controlCenterWindow?.show()
+    }
+
+    @objc private func openCommandPalette(_ sender: Any?) {
+        utilitiesStore?.menuBar.actions.commandBar.open()
     }
 
     @objc private func openEffects(_ sender: Any?) {
@@ -1330,6 +1338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         let live = core.isLive
         if wasLive, !live { events?.reset() }
+        if live != wasLive { syncFileFeeds(live: live, core: core) }
         wasLive = live
         refreshAggregate()
         // The menu bar's rules hear the agents, the asks, the headroom
@@ -1637,14 +1646,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: Socket directory watch
 
     /// The daemon may start after us: when its directory changes, retry at
-    /// once instead of waiting out the backoff.
+    /// once instead of waiting out the backoff. Only while it is not live —
+    /// a live daemon writes that directory dozens of times a minute.
     private func watchSocketDirectory(_ socketPath: String) {
         let directory = (socketPath as NSString).deletingLastPathComponent
-        guard FileManager.default.fileExists(atPath: directory) else { return }
+        guard socketWatcher == nil, FileManager.default.fileExists(atPath: directory) else { return }
         socketWatcher = FileWatcher(path: directory, mask: [.write, .link, .attrib]) { [weak self] _ in
             self?.core?.retryNow()
         }
         socketWatcher?.start()
+    }
+
+    /// The file feeds are the fallback while the daemon is not live: the
+    /// state-directory monitor, the strip's LEDS.LED watches and the socket
+    /// directory watch stop when it goes live and start again — the
+    /// monitor reading at once — when it goes away.
+    private func syncFileFeeds(live: Bool, core: CoreModel) {
+        if live {
+            monitor?.stop()
+            feed?.stop()
+            socketWatcher?.stop()
+            socketWatcher = nil
+        } else {
+            monitor?.start()
+            feed?.start()
+            watchSocketDirectory(core.socketPath)
+        }
     }
 }
 
@@ -1721,12 +1748,26 @@ extension AppDelegate {
         }
     }
 
+    /// A line for the person that did not come from a panel click — a
+    /// link, a shortcut, a banner, the ear. The panel's toast while it is
+    /// open or a palette verb is listening for it; with the panel shut
+    /// the toast would go unseen, so the HUD says it on the screen under
+    /// the pointer.
+    private func showFeedback(_ text: String, symbol: String = "exclamationmark.circle.fill") {
+        let route = PanelStore.feedbackRoute(panelOpen: store?.isOpen == true,
+                                             paletteListening: PaletteVerbScope.ticket != nil)
+        switch route {
+        case .toast: store?.show(toast: text)
+        case .hud: feedbackHUD.show(text, symbol: symbol, near: nil)
+        }
+    }
+
     /// The router's hands: the same paths the panel, the status menu and
     /// the summon keys already take, so a link or a shortcut does
     /// exactly what the click would.
     private func wireCommandRouter() {
         let router = AppCommandRouter.shared
-        router.onRefused = { [weak self] text in self?.store?.show(toast: text) }
+        router.onRefused = { [weak self] text in self?.showFeedback(text) }
         router.showPanel = { [weak self] toggle in
             if toggle { self?.panel?.toggle() } else { self?.panel?.open() }
         }
@@ -1752,7 +1793,7 @@ extension AppDelegate {
             let mode = mode ?? store.quietMode
             core.quiet(mode: mode, seconds: seconds)
             let until = Date().addingTimeInterval(TimeInterval(seconds))
-            store.show(toast: "\(PanelStore.quietWord(mode)) until \(PanelStore.clockTime(until))")
+            self.showFeedback("\(PanelStore.quietWord(mode)) until \(PanelStore.clockTime(until))", symbol: "moon.fill")
             return nil
         }
         // Deep work reads the live sessions at its start and its end.
@@ -1761,7 +1802,7 @@ extension AppDelegate {
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
             guard core.isLive else { return "The monitor is not connected." }
             core.quiet(mode: store.quietMode, seconds: 0)
-            store.show(toast: "Quiet ended")
+            self.showFeedback("Quiet ended", symbol: "checkmark.circle.fill")
             return nil
         }
         router.setScreenBar = { [weak self] on in
@@ -1792,10 +1833,14 @@ extension AppDelegate {
             }
             return nil
         }
+        // The checks a link can fail at once stay synchronous; the open
+        // itself is awaited, and a refusal after it is said the same way.
         router.openSession = { [weak self] id in
             guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
             guard core.state?.session(withID: id) != nil else { return "No session \(id.prefix(40)) is being watched." }
-            core.openSession(id)
+            Task { @MainActor [weak self] in
+                if let refusal = await SessionOpener.open(id) { self?.showFeedback(refusal) }
+            }
             return nil
         }
         router.revealAsk = { [weak self] in

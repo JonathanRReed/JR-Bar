@@ -21,6 +21,10 @@ struct SessionRow: Identifiable, Equatable {
     let activity: SessionActivity
     let since: Date?
     let workers: Int
+    /// "10 workers", "1 worker"; nil with none.
+    var workersText: String? {
+        workers <= 0 ? nil : (workers == 1 ? "1 worker" : "\(workers) workers")
+    }
     let ask: CoreAsk?
     let stale: Bool
     /// A peer's session mirrored onto this Mac (`remote:<machine>:…`):
@@ -300,6 +304,12 @@ final class PanelStore {
     var onOpenUsageCenter: (@MainActor (String?) -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
+    /// History's Events tab (the journal).
+    var onOpenEvents: (@MainActor () -> Void)?
+    /// The ⇧⌘K palette.
+    var onOpenPalette: (@MainActor () -> Void)?
+    /// What's New, through the same route `jrbar://window/whats-new` takes.
+    var onOpenWhatsNew: (@MainActor () -> Void)? = { AppCommandRouter.shared.perform(.window(.whatsNew)) }
     /// The overflow menu's "Check for Updates…" (Sparkle, through the delegate).
     var onCheckForUpdates: (@MainActor () -> Void)?
     var onRestartCore: (@MainActor () -> Void)?
@@ -326,6 +336,10 @@ final class PanelStore {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
         self.askDesk = AskAnswerDesk(core: core)
+        self.fetchUsageHistory = { [weak core] provider, range in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.usageHistory(provider: provider, range: range)
+        }
         self.draftsDefaults = draftsDefaults
         self.mediaFeed = mediaFeed
         self.screenBarShown = screenBarShown
@@ -380,6 +394,7 @@ final class PanelStore {
         clock?.invalidate()
         brightnessFlush?.cancel()
         toastClear?.cancel()
+        sparklineWork?.cancel()
     }
 
     /// The media ear rides the shared feed — one monitor for every
@@ -419,7 +434,7 @@ final class PanelStore {
         }
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
-        refreshSparklines()
+        scheduleSparklines()
         refreshSessionUsage()
     }
 
@@ -437,16 +452,17 @@ final class PanelStore {
         findQuery = ""
         clock?.invalidate()
         clock = nil
+        sparklineWork?.cancel()
+        sparklineWork = nil
     }
 
     // MARK: Derived: layout
 
-    /// What the panel shows, counted for `PanelLayout`. The windowless
-    /// usage providers take a row each ("setup needed"), so they count
-    /// toward the section's height.
+    /// What the panel shows, counted for `PanelLayout`. The quiet
+    /// providers share one trailing row, so they count as one.
     var layoutContent: PanelLayout.Content {
         PanelLayout.Content(asks: visibleAskRows.count, sessions: visiblePlainRows.count, hasWhyRow: lightExplanation != nil,
-                            usageProviders: usage.count + windowlessUsage.count, hasHiddenFooter: hiddenCount > 0)
+                            usageProviders: usage.count + (quietUsage.isEmpty ? 0 : 1), hasHiddenFooter: hiddenCount > 0)
     }
 
     /// `state.hidden_count`: sessions the daemon keeps out of `sessions`
@@ -725,23 +741,34 @@ final class PanelStore {
     /// the clock moves, so without it the ring would wait for unrelated
     /// activity. Nil without an open ask in focus.
     func nextAskAgeTick(now: Double = Date().timeIntervalSince1970) -> Double? {
-        Self.nextAskAgeTick(opened: focusAskOpened, now: now, finalSeconds: escalationFinalSeconds)
+        Self.nextAskAgeTick(opened: focusAskOpened, now: now, finalSeconds: escalationFinalSeconds,
+                            holdUntil: focusAskHoldUntil)
+    }
+
+    /// When the hook's hold on the focus pick's ask lapses — a moment the
+    /// ask's verbs change with no daemon frame to mark it.
+    var focusAskHoldUntil: Double? {
+        focusPick?.ask.flatMap { $0.isHeldForDecision ? $0.decision?.holdUntil : nil }
     }
 
     /// The next boundary the ear shows: the ring's next twelfth of
-    /// `finalSeconds` while it is filling, or the wait's next whole minute
-    /// (the peek's "· N min"), whichever comes first. The words keep
-    /// counting past an hour, so a full ring still ticks once a minute;
-    /// nil only when there is no ask to count.
-    nonisolated static func nextAskAgeTick(opened: Double?, now: Double, finalSeconds: Double) -> Double? {
+    /// `finalSeconds` while it is filling, the wait's next whole minute
+    /// (the peek's "· N min"), or the hold's lapse, whichever comes
+    /// first. The words keep counting past an hour, so a full ring still
+    /// ticks once a minute; nil only when there is no ask to count.
+    nonisolated static func nextAskAgeTick(opened: Double?, now: Double, finalSeconds: Double,
+                                           holdUntil: Double? = nil) -> Double? {
         guard let opened else { return nil }
         let waited = max(0, now - opened)
         let minute = opened + ((waited / 60).rounded(.down) + 1) * 60
-        guard finalSeconds > 0, waited < finalSeconds else { return minute }
-        // The same arithmetic `askAgeFraction` steps on, so the tick lands
-        // on the twelfth that changes the fill.
-        let twelfth = opened + ((waited / finalSeconds * 12).rounded(.down) + 1) * finalSeconds / 12
-        return min(twelfth, minute)
+        var next = minute
+        if finalSeconds > 0, waited < finalSeconds {
+            // The same arithmetic `askAgeFraction` steps on, so the tick
+            // lands on the twelfth that changes the fill.
+            next = min(next, opened + ((waited / finalSeconds * 12).rounded(.down) + 1) * finalSeconds / 12)
+        }
+        if let holdUntil, holdUntil > now { next = min(next, holdUntil) }
+        return next
     }
 
     /// The ask-age ring's fill: the share of the way to the final stage,
@@ -777,19 +804,24 @@ final class PanelStore {
     nonisolated static func awakeHold(power: CorePower?, working: Int) -> (symbol: String, text: String)? {
         guard let power else { return nil }
         let agents = working == 1 ? "1 agent works" : "\(working) agents work"
+        // The runway, the charger and the last release ride in the
+        // mark's tooltip, a line each.
+        let facts = KeepAwakeReading(power: power).facts()
+        func told(_ text: String) -> String { ([text] + facts).joined(separator: "\n") }
         if power.closedLid?.holding == true {
-            return ("laptopcomputer", working > 0
+            return ("laptopcomputer", told(working > 0
                 ? "Running with the lid closed while \(agents); it sleeps once they stop"
-                : "Running with the lid closed; it sleeps once the agents stop")
+                : "Running with the lid closed; it sleeps once the agents stop"))
         }
         guard power.keepAwake == true else { return nil }
-        return ("cup.and.saucer.fill", working > 0
+        // A run the battery will not outlast wears the battery, not the cup.
+        let symbol = power.battery?.runway?.short == true ? "battery.25percent" : "cup.and.saucer.fill"
+        return (symbol, told(working > 0
             ? "Keeping this Mac awake while \(agents); it lets go a few minutes after they stop"
-            : "Keeping this Mac awake; it lets go a few minutes after the agents stop")
+            : "Keeping this Mac awake; it lets go a few minutes after the agents stop"))
     }
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
-    var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
 
     // MARK: Notify when done
 
@@ -1043,35 +1075,41 @@ final class PanelStore {
     // MARK: Derived: why this light
 
     /// "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)".
+    /// The wait counts on `stalenessReference`: the notch card reads this
+    /// line with the panel closed, where `now` stopped at the last close.
     var lightExplanation: LightExplanation? {
         guard core.isLive else { return nil }
         let settings = core.settings.map { SettingsDocument($0.document) }
-        return LightExplainer.explain(lights: core.lights, state: core.state, settings: settings, now: now)
+        return LightExplainer.explain(lights: core.lights, state: core.state, settings: settings,
+                                      now: stalenessReference)
     }
 
     func whyHover(_ hovering: Bool, frame: CGRect) {
         onWhyHover?(hovering, frame)
     }
 
+    /// The light's session, through `SessionOpener` like a row's click: a
+    /// peer's session is refused locally, and the panel closes only once
+    /// the session is in front.
     func openExplainedSession() {
         guard let session = lightExplanation?.session else { return }
-        // A light about a peer's session has no local window to raise.
-        guard !CoreSession.isRemoteID(session) else {
-            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac")")
-            return
+        Task { [weak self] in
+            let refusal = await SessionOpener.open(session)
+            guard let self else { return }
+            if let refusal { self.show(toast: refusal) } else { self.onClose?() }
         }
-        core.openSession(session)
-        onClose?()
     }
 
     // MARK: Derived: usage and devices
 
-    /// Providers with at least one window; signed-out ones are the Usage Center's business.
-    var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !$0.windows.isEmpty } : [] }
-    /// Providers that report in but carry no window at all (signed out,
-    /// the reader has no source configured): a compact "setup needed" row
-    /// each, so they vanish with a hint instead of silently.
-    var windowlessUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { $0.windows.isEmpty } : [] }
+    /// Providers that earn a full row: a window with something on it,
+    /// from a source that is on and found.
+    var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !Self.foldsIntoQuietRow($0) } : [] }
+    /// The providers with nothing to say — every window at 0 %, no window
+    /// at all, the source not found or switched off: one trailing row
+    /// names them and opens the Usage Center, so they neither vanish
+    /// silently nor take a 50 pt row each to say "nothing".
+    var quietUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { Self.foldsIntoQuietRow($0) } : [] }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
 
     /// `state.health.hooks` providers the daemon reports as `missing`: the
@@ -1159,13 +1197,43 @@ final class PanelStore {
         return days <= 7 ? .week : .month
     }
 
+    /// How long after the panel opens its sparklines are asked for. The
+    /// daemon answers one client's commands in order, so a burst of
+    /// `usage_history` sent on open queued ahead of the Approve the panel
+    /// was opened to click.
+    static let sparklineDelay: TimeInterval = 1.5
+    /// `sparklineDelay`, shortened by the tests.
+    @ObservationIgnored var sparklineWait = PanelStore.sparklineDelay
+    @ObservationIgnored private var sparklineWork: Task<Void, Never>?
+    /// `usage_history` for one provider — the core's in production; tests
+    /// stage it.
+    @ObservationIgnored var fetchUsageHistory: @MainActor (_ provider: String, _ range: UsageHistoryRange) async throws -> UsageHistory
+
+    /// The sparklines are fetched a beat after the panel opens, if it is
+    /// still open then.
+    private func scheduleSparklines() {
+        sparklineWork?.cancel()
+        let wait = sparklineWait
+        sparklineWork = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self, self.isOpen else { return }
+            self.sparklineWork = nil
+            self.refreshSparklines()
+        }
+    }
+
+    /// Whether the sparklines are worth asking for now: never while an
+    /// ask is open, since every `usage_history` waits in line ahead of its
+    /// answer.
+    nonisolated static func wantsSparklines(live: Bool, asksOpen: Bool) -> Bool { live && !asksOpen }
+
     /// Asks the daemon for `usage_graph_days` of history — week or month,
     /// see `sparklineRange` — for every provider the panel shows, unless
-    /// it asked recently. Failures are silent: a row without a sparkline
-    /// simply has none. `force` is for the `usage_history_ready` event,
-    /// which means the rows just changed.
+    /// it asked recently or an ask is open. Failures are silent: a row
+    /// without a sparkline simply has none. `force` is for the
+    /// `usage_history_ready` event, which means the rows just changed.
     func refreshSparklines(force: Bool = false) {
-        guard core.isLive else { return }
+        guard Self.wantsSparklines(live: core.isLive, asksOpen: !askRows.isEmpty) else { return }
         let now = Date()
         let range = sparklineRange
         for provider in usage {
@@ -1175,7 +1243,7 @@ final class PanelStore {
             Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let history = try await self.core.usageHistory(provider: id, range: range)
+                    let history = try await self.fetchUsageHistory(id, range)
                     let values = UsageSparkline.tokensPerDay(history)
                     if UsageSparkline.hasSignal(values) {
                         self.sparklines[id] = values
@@ -1203,9 +1271,82 @@ final class PanelStore {
         return (primary, secondary)
     }
 
-    /// The slider's value: a local drag wins, else the Pro's brightness, else the lights document's.
+    /// A provider whose row would say nothing: no window, every window at
+    /// 0 %, or a source that is switched off or was never found.
+    static func foldsIntoQuietRow(_ usage: CoreProviderUsage) -> Bool {
+        if usage.windows.isEmpty { return true }
+        if let state = usage.state?.lowercased(), state == "disabled" || state == "source_not_found" { return true }
+        return usage.windows.allSatisfy { ($0.usedPct ?? 1) < 0.5 }
+    }
+
+    /// Why a provider sits in the quiet row, in the fewest words.
+    static func quietWord(_ usage: CoreProviderUsage) -> String {
+        switch usage.state?.lowercased() {
+        case "disabled": return "off"
+        case "source_not_found": return "not found"
+        case "needs_sign_in": return "signed out"
+        case "needs_consent": return "needs consent"
+        case let state? where state != "ready" && state != "stale" && usage.windows.isEmpty:
+            return state.replacingOccurrences(of: "_", with: " ")
+        default: return usage.windows.isEmpty ? "no windows" : "at 0%"
+        }
+    }
+
+    /// The quiet row's second line: "at 0%" for one provider, else
+    /// "2 at 0% · 1 not found", in the order the providers came.
+    static func quietSummary(_ providers: [CoreProviderUsage]) -> String {
+        let words = providers.map(quietWord)
+        guard words.count > 1 else { return words.first ?? "" }
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        for word in words {
+            if counts[word] == nil { order.append(word) }
+            counts[word, default: 0] += 1
+        }
+        return order.map { "\(counts[$0] ?? 0) \($0)" }.joined(separator: " · ")
+    }
+
+    /// The one thing a usage row's tag says, worst first. Nothing when
+    /// the provider is on track.
+    enum UsageTag: Equatable {
+        /// The reading is old — the last refresh did not land.
+        case stale
+        /// The leading window is at or past 100 %.
+        case usedUp
+        /// The forecast runs dry before the window resets.
+        case runsOut(String)
+        /// The vendor's status feed reports an outage.
+        case incident(String)
+
+        var text: String {
+            switch self {
+            case .stale: return "Stale"
+            case .usedUp: return "Used up"
+            case .runsOut(let when): return "Runs out \(when)"
+            case .incident: return "Incident"
+            }
+        }
+    }
+
+    static func usageTag(for usage: CoreProviderUsage, primary: CoreUsageWindow?, heldIdle: Bool, now: Date) -> UsageTag? {
+        if usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale" { return .stale }
+        if (primary?.usedPct ?? 0) >= 100 || usage.forecast?.pace?.lowercased() == "exhausted" { return .usedUp }
+        // A held-idle provider's last slope is history, and a window that
+        // resets before the forecast runs dry is on track.
+        if !heldIdle, let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > now.timeIntervalSince1970,
+           primary?.resetsAt.map({ exhaustsAt < $0 }) ?? true {
+            return .runsOut(UsageForecast.relative(to: exhaustsAt, now: now))
+        }
+        if let incident = usage.incident, !incident.isEmpty { return .incident(incident) }
+        return nil
+    }
+
+    /// The slider's value: a local drag wins; devices that disagree show
+    /// the brightest of them (the slider reads "Mixed"); else the Pro's
+    /// brightness, else the lights document's.
     var brightness: Double {
         if let localBrightness { return localBrightness }
+        if brightnessIsMixed, let brightest = brightnessReadings.map(\.fraction).max() { return brightest }
         if let pro = devices.first(where: { $0.kind == "pro" }), let value = pro.brightnessFraction { return value }
         if let any = devices.compactMap(\.brightnessFraction).first { return any }
         return core.lights?.hardware?.brightness ?? 0.8
@@ -1213,13 +1354,38 @@ final class PanelStore {
 
     var hasHardware: Bool { devices.contains { $0.kind == "pro" || $0.kind == "dot" } }
 
-    // MARK: Actions
+    /// What each present device says its brightness is, in the daemon's
+    /// order.
+    var brightnessReadings: [(name: String, fraction: Double)] {
+        devices.compactMap { device in
+            guard device.isPresent, let fraction = device.brightnessFraction else { return nil }
+            return (device.name ?? Self.deviceWord(device.kind), fraction)
+        }
+    }
 
-    /// Asks whose `answer_ask` is still on the wire, keyed by ask id:
-    /// while one is in flight (the daemon raises a terminal and types,
-    /// which can take a few seconds) the card's buttons are disabled so a
-    /// second click cannot post a second answer.
-    private(set) var pendingAnswers: Set<String> = []
+    /// The devices disagree by at least a whole percent, and no drag is
+    /// in hand: one number on the slider would be true of one of them.
+    /// A drag sets them all (`set_brightness "all"`), which ends it.
+    var brightnessIsMixed: Bool {
+        guard localBrightness == nil else { return false }
+        return Set(brightnessReadings.map { Int(($0.fraction * 100).rounded()) }).count > 1
+    }
+
+    /// "Pro 80% · Dot 40% · Screen Bar 100%".
+    var brightnessBreakdown: String {
+        brightnessReadings.map { "\($0.name) \(Int(($0.fraction * 100).rounded()))%" }.joined(separator: " · ")
+    }
+
+    nonisolated static func deviceWord(_ kind: String) -> String {
+        switch kind {
+        case "pro": return "Pro"
+        case "dot": return "Dot"
+        case "screen_bar": return "Screen Bar"
+        default: return kind.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    // MARK: Actions
 
     /// A half-typed reply, keyed by the ask's request id. Persisted so
     /// closing the panel — or the app — mid-draft doesn't lose the text;
@@ -1271,108 +1437,33 @@ final class PanelStore {
         draftsDefaults.set(data, forKey: Self.replyDraftsKey)
     }
 
-    func isAnswerPending(_ ask: CoreAsk) -> Bool {
-        pendingAnswers.contains(ask.id) || askDesk.isPending(ask.session)
-    }
+    /// While an answer for the ask's session is on the wire — from here or
+    /// any other surface — the card's buttons are disabled, so a second
+    /// click cannot post a second answer.
+    func isAnswerPending(_ ask: CoreAsk) -> Bool { askDesk.isPending(ask.session) }
 
-    func approve(_ ask: CoreAsk) { answer(ask, approve: true) }
-    func deny(_ ask: CoreAsk) { answer(ask, approve: false) }
-
-    /// `answer_ask`, awaited: the toast reports the daemon's verdict, not a
-    /// guess — a refused answer leaves the ask open and says why — and
-    /// how it went: through the agent's permission hook, or typed into
-    /// the terminal (the reply's `mechanism`).
-    private func answer(_ ask: CoreAsk, approve: Bool) {
-        guard let session = ask.session, !session.isEmpty else {
-            show(toast: "This ask has no session left to answer")
-            return
-        }
-        if approve, AskVerbs.chooses(ask) {
-            // A held question: a bare yes answers nothing — its options do.
-            show(toast: "Pick one of its options")
-            return
-        }
-        guard ask.canAnswer || (!approve && AskVerbs.denies(ask)) else {
-            // The daemon marked it unanswerable from here (no live target,
-            // a kind it cannot type into): the only honest path is the
-            // session's own window. A held question still declines
-            // through its hook, whatever hosts the session.
-            show(toast: "This one has to be answered in the session's window")
-            return
-        }
-        guard !isAnswerPending(ask) else { return }
-        if CoreSession.isRemoteID(session) {
-            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
-            return
-        }
-        pendingAnswers.insert(ask.id)
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.pendingAnswers.remove(ask.id) }
-            do {
-                // `request` pins the card to its episode: a session that
-                // moved on to a different ask refuses `stale_request`
-                // instead of approving whatever is live now.
-                let reply = try await self.core.answerAskNow(session: session, approve: approve,
-                                                             request: ask.request)
-                if reply.ok {
-                    self.show(toast: AskAnswerLine.sent(approve ? .approve : .deny, reply: reply))
-                } else {
-                    self.answerRefused(reply.error)
-                }
-            } catch {
-                self.show(toast: "No answer from the monitor — the ask is still open")
-            }
-        }
-    }
+    /// Approve and Deny through the shared desk: the toast reports the
+    /// daemon's verdict, not a guess — a refused answer leaves the ask
+    /// open and says why — and how it went: through the agent's
+    /// permission hook, or typed into the terminal. `request` pins the
+    /// answer to the card's episode, so a session that moved on refuses
+    /// `stale_request` rather than approving whatever is live now.
+    func approve(_ ask: CoreAsk) { send(ask, .approve) }
+    func deny(_ ask: CoreAsk) { send(ask, .deny) }
 
     /// The free-text reply a `replyable` ask asks for, sent as
     /// `reply_text` on the same `answer_ask` command. A daemon that cannot
-    /// take text for this ask (a remote row, a provider without an input
-    /// kind) refuses, and the refusal is the toast.
+    /// take text for this ask refuses, and the refusal is the toast. The
+    /// draft clears only once the send is confirmed.
     func reply(_ ask: CoreAsk, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard let session = ask.session, !session.isEmpty else {
-            show(toast: "This ask has no session left to answer")
-            return
-        }
-        guard !pendingAnswers.contains(ask.id) else { return }
-        if CoreSession.isRemoteID(session) {
-            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
-            return
-        }
-        pendingAnswers.insert(ask.id)
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.pendingAnswers.remove(ask.id) }
-            do {
-                let reply = try await self.core.answerAskNow(session: session, approve: true, replyText: trimmed,
-                                                             request: ask.request)
-                if reply.ok {
-                    // Sent and confirmed — the draft's job is done. A
-                    // refusal keeps the text so it isn't lost.
-                    self.setReplyDraft("", for: ask)
-                    self.show(toast: AskAnswerLine.replied(reply))
-                } else {
-                    self.answerRefused(reply.error)
-                }
-            } catch {
-                self.show(toast: "No answer from the monitor — the ask is still open")
-            }
-        }
+        send(ask, .reply(trimmed)) { [weak self] in self?.setReplyDraft("", for: ask) }
     }
 
     /// Always allow, from its own button only: the agent remembers the
-    /// allow rule it offered (`CoreAsk.canAlwaysAllow`). Through the
-    /// shared desk, so every surface's copy of the ask dims with it.
-    func alwaysAllow(_ ask: CoreAsk) {
-        guard AskVerbs.alwaysAllows(ask) else {
-            show(toast: "This one has no rule to remember — approve it once instead")
-            return
-        }
-        send(ask, .always)
-    }
+    /// allow rule it offered (`CoreAsk.canAlwaysAllow`).
+    func alwaysAllow(_ ask: CoreAsk) { send(ask, .always) }
 
     /// A click on one of a held question's options: the answer itself
     /// for a single-pick question, one more pick otherwise.
@@ -1397,34 +1488,35 @@ final class PanelStore {
         send(ask, .choose(answers))
     }
 
-    /// One of the desk's verdicts, awaited; its line is the toast.
-    private func send(_ ask: CoreAsk, _ verdict: AskVerdict) {
-        guard !pendingAnswers.contains(ask.id) else { return }
+    /// Every verdict the panel sends goes through the shared desk, so the
+    /// notch, the Dock and a banner see the same answer in flight. A
+    /// refusal the desk can name before sending is the toast at once;
+    /// otherwise the outcome's line is, and `landed` runs only when the
+    /// daemon took the answer.
+    private func send(_ ask: CoreAsk, _ verdict: AskVerdict, landed: (@MainActor () -> Void)? = nil) {
+        if let line = askDesk.refusal(ask, verdict) {
+            show(toast: line)
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
             let outcome = await self.askDesk.answer(ask, verdict)
-            self.show(toast: outcome.line)
+            if outcome.ok { landed?() }
+            self.showAnswer(outcome)
         }
     }
 
-    /// A refused `answer_ask`: the daemon's own message, and for the one
-    /// refusal the user can fix a button into System Settings. The daemon
-    /// names its `jrbar-core` helper in the refusal; here that row reads
-    /// "JR-Bar's helper", the name the Accessibility pane shows.
-    private func answerRefused(_ error: CoreReplyError?) {
-        let message = error?.message ?? error?.code ?? "refused"
-        if error?.code == "stale_request" {
-            // The card answered a request the provider already replaced:
-            // nothing was typed — the current ask is still live.
-            show(toast: "That request changed while the card was open — nothing was sent")
-        } else if error?.code == "accessibility_required" {
-            show(toast: "Answering needs Accessibility access for JR-Bar's helper", actionTitle: "Open Settings") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                    NSWorkspace.shared.open(url)
-                }
+    /// The desk's line, and for the one refusal the user can fix a button
+    /// into System Settings' Accessibility pane.
+    private func showAnswer(_ outcome: AskAnswerDesk.Outcome) {
+        guard outcome.code == "accessibility_required" else {
+            show(toast: outcome.line)
+            return
+        }
+        show(toast: outcome.line, actionTitle: "Open Settings") {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
             }
-        } else {
-            show(toast: "Couldn't answer: \(message)")
         }
     }
 
@@ -1710,6 +1802,48 @@ final class PanelStore {
         onCheckForUpdates?()
     }
 
+    func openEvents() {
+        onClose?()
+        onOpenEvents?()
+    }
+
+    /// ⌘K in the panel, and the first item in More: the panel folds and
+    /// the palette opens in its place.
+    func openCommandPalette() {
+        onClose?()
+        onOpenPalette?()
+    }
+
+    func openWhatsNew() {
+        onClose?()
+        onOpenWhatsNew?()
+    }
+
+    /// A pad the daemon knows — approved, or seen by its HID probe — or
+    /// the pad switched on in its settings: then the menus list Creator
+    /// Micro. A Mac that never had one never sees the word.
+    var hasCreatorMicro: Bool {
+        guard let deck = core.state?.deck else { return false }
+        return deck.device != nil || deck.settings.enabled
+    }
+
+    /// Runs one of the menus' shared verbs (`AppMenuCatalog`).
+    func perform(_ verb: AppMenuVerb) {
+        switch verb {
+        case .commandPalette: openCommandPalette()
+        case .history: openHistory()
+        case .events: openEvents()
+        case .overview: openOverview()
+        case .usageCenter: openUsageCenter()
+        case .effects: openEffects()
+        case .creatorMicro: openControlCenter()
+        case .whatsNew: openWhatsNew()
+        case .checkForUpdates: checkForUpdates()
+        case .settings: openSettings()
+        case .quit: quit()
+        }
+    }
+
     func restartCore() {
         onRestartCore?()
         show(toast: "Restarting the monitor…")
@@ -1731,6 +1865,20 @@ final class PanelStore {
     func show(toast text: String, actionTitle: String, action: @escaping () -> Void) {
         toastAction = (actionTitle, action)
         present(toast: text, life: 6)
+    }
+
+    /// Where a line that did not come from a panel click is said.
+    enum FeedbackRoute: Equatable {
+        /// The panel's toast: the panel is open, or a palette verb's
+        /// ticket will hear the toast and say it in the palette's HUD.
+        case toast
+        /// The glass HUD on the screen under the pointer, since a closed
+        /// panel's toast is seen by nobody.
+        case hud
+    }
+
+    nonisolated static func feedbackRoute(panelOpen: Bool, paletteListening: Bool) -> FeedbackRoute {
+        panelOpen || paletteListening ? .toast : .hud
     }
 
     private func present(toast text: String, life: TimeInterval) {
@@ -1778,7 +1926,9 @@ final class PanelStore {
     nonisolated static func countdown(to epoch: Double?, now: Date) -> String? {
         guard let epoch else { return nil }
         let seconds = Int(epoch - now.timeIntervalSince1970)
-        if seconds <= 0 { return "resets now" }
+        // Past the reset the number on screen is the old window's until
+        // the next reading lands; "resets now" read like a promise.
+        if seconds <= 0 { return "reset — waiting for a new reading" }
         let minutes = (seconds + 30) / 60
         if minutes < 60 { return "resets in \(max(1, minutes))m" }
         let hours = minutes / 60
@@ -1788,20 +1938,12 @@ final class PanelStore {
 
     /// The daemon's `forecast.pace` as the outcome it names, not the
     /// race-course word it sends: "ahead of pace" used to read as headroom
-    /// when it means the window runs dry early. When the forecast also
-    /// names `exhausts_at` and the window a `resets_at`, the slack between
-    /// them is the line worth showing ("runs out ~2h before the reset").
-    nonisolated static func paceHint(_ pace: String?, exhaustsAt: Double? = nil, resetsAt: Double? = nil, now: Date = Date()) -> String? {
+    /// when it means the window runs dry early. A window that resets
+    /// before it runs out is on track and says nothing.
+    nonisolated static func paceHint(_ pace: String?) -> String? {
         switch pace?.lowercased() {
-        case "ahead":
-            if let exhaustsAt, let resetsAt, resetsAt > exhaustsAt + 60 {
-                return "runs out ~\(shortGap(resetsAt - exhaustsAt)) before the reset"
-            }
-            if let exhaustsAt, exhaustsAt > now.timeIntervalSince1970 {
-                return "runs out \(UsageForecast.relative(to: exhaustsAt, now: now))"
-            }
-            return "runs out early"
-        case "behind", "under": return "resets first"
+        case "ahead": return "runs out early"
+        case "behind", "under": return nil
         case "on", "on_pace", "on-pace", "onpace", "steady": return "on pace"
         case "exhausted": return "used up"
         // A guarded pace already explains itself through the forecast's
@@ -1810,15 +1952,5 @@ final class PanelStore {
         case nil, "": return nil
         case let other?: return other.replacingOccurrences(of: "_", with: " ")
         }
-    }
-
-    /// "2h", "45m", "1d": the gap between exhaustion and reset, rounded
-    /// so "~2h before the reset" never pretends to minutes it cannot see.
-    nonisolated static func shortGap(_ seconds: Double) -> String {
-        let minutes = Int((seconds + 30) / 60)
-        if minutes < 60 { return "\(max(1, minutes))m" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h" }
-        return "\(hours / 24)d"
     }
 }

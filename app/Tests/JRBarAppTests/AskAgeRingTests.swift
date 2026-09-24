@@ -33,6 +33,15 @@ struct AskAgeRingTests {
         #expect(PanelStore.nextAskAgeTick(opened: nil, now: 50, finalSeconds: 300) == nil)
     }
 
+    @Test("a held ask's lapse is a boundary too, while it is still ahead")
+    func nextTickAtHoldLapse() {
+        #expect(PanelStore.nextAskAgeTick(opened: 100, now: 110, finalSeconds: 300, holdUntil: 118) == 118)
+        #expect(PanelStore.nextAskAgeTick(opened: 100, now: 110, finalSeconds: 300, holdUntil: 145) == 125,
+                "the ring's step comes first")
+        #expect(PanelStore.nextAskAgeTick(opened: 100, now: 120, finalSeconds: 300, holdUntil: 118) == 125,
+                "a lapse already past marks nothing")
+    }
+
     @Test("each tick lands on a boundary the ring or the words actually cross")
     func ticksChangeTheSlot() {
         let opened: Double = 1_000

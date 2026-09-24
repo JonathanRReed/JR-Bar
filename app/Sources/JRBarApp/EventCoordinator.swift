@@ -25,6 +25,21 @@ final class EventCoordinator {
     /// `EventPolicy` decided before anything plays; wired by the delegate,
     /// a pass-through until then.
     var deliveryRules: @MainActor (EventDelivery, CoreEvent) -> EventDelivery = { delivery, _ in delivery }
+    /// The panel's answer desk, wired by the delegate: a banner's Approve
+    /// and Deny go through it like every other surface's. Unset, a banner
+    /// answers nothing.
+    var askDesk: AskAnswerDesk?
+    /// How long an ask banner waits for the state that carries its ask —
+    /// the daemon publishes `ask_opened` just ahead of that state — before
+    /// it is posted without knowing the ask's verbs.
+    static let askBannerWait: Duration = .seconds(1)
+    /// Ask banners waiting on that state, by identifier; a withdrawal
+    /// while one waits means it is never posted.
+    private var waitingAskBanners: [String: UUID] = [:]
+    /// Where a banner click's refused open is said — the panel is closed
+    /// when a banner is clicked, so the delegate points it at the HUD.
+    /// Unset, the refusal is only logged.
+    var onOpenRefused: (@MainActor (String) -> Void)?
     /// The frontmost-app read, injectable so tests can stage the pane.
     var frontmostApp: @MainActor () -> (bundleID: String?, pid: Int32?) = {
         let app = NSWorkspace.shared.frontmostApplication
@@ -36,13 +51,23 @@ final class EventCoordinator {
     var sessionInFront: @MainActor (String) async -> Bool?
     /// The last escalation_stage the daemon announced — remembered so a
     /// frontmost flip can re-decide the noise without waiting for the
-    /// next stage boundary.
-    private var lastEscalation: CoreEvent?
+    /// next stage boundary. Its session's `ask_resolved` forgets it.
+    private(set) var lastEscalation: CoreEvent?
+    /// One process's parent, for the ancestry walk that skips a
+    /// `session_in_front` the daemon could only answer no to; tests
+    /// stage it.
+    var parentPID: (Int32) -> Int32? = AskingPane.parentPID
     /// The daemon's last word on whether the owner is watching an asking
     /// session, and under which frontmost app it was read.
     private(set) var inFrontVerdict: AskingPane.Verdict?
     /// The verdict a check in flight is for, so one ask never asks twice.
     private var inFrontAsking: String?
+    /// Where a closed-lid sleep failure is remembered as said, so one
+    /// failure is said once across launches; a test hands in its own suite.
+    var sleepErrorDefaults: UserDefaults = .standard
+    /// Where it is said: the panel's notice queue and a local banner.
+    var notices: LaunchNotices = .shared
+    nonisolated static let sleepErrorKey = "jrbar.closedLidSleepErrorNoticed"
 
     init(core: CoreModel, hudAnchor: @escaping @MainActor () -> NSRect?) {
         self.core = core
@@ -54,8 +79,11 @@ final class EventCoordinator {
         hud = NotchHUD(anchorRect: hudAnchor)
         sounds.onMissing = { [weak core] name in core?.appendLocalLog(level: "warn", "no system sound named \(name)") }
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
-        notifications.onOpenSession = { [weak core] session in core?.openSession(session) }
-        notifications.onAnswerAsk = { [weak core] session, approve in core?.answerAsk(session: session, approve: approve) }
+        notifications.onOpenSession = { [weak self] session in self?.openFromBanner(session) }
+        notifications.onAnswerAskNow = { [weak self] session, request, approve in
+            guard let self else { return SessionOpener.notAnswering }
+            return await self.answerFromBanner(session: session, request: request, approve: approve)
+        }
         // One announcer at the top of the screen: the Mac's own news is
         // offered to the island first and takes the pill only when the
         // island can't; a headphone the ear already names is not said
@@ -81,6 +109,61 @@ final class EventCoordinator {
         trackState()
     }
 
+    /// A banner's click opens its session through `SessionOpener`, so a
+    /// live session the daemon cannot find still comes up through the
+    /// Dock's window locator, and a refusal is said rather than dropped.
+    private func openFromBanner(_ session: String) {
+        Task { [weak self] in
+            guard let refusal = await SessionOpener.open(session), let self else { return }
+            self.core.appendLocalLog("open_session refused: \(refusal)")
+            self.onOpenRefused?(refusal)
+        }
+    }
+
+    /// A banner's Approve or Deny: only for the ask the banner was posted
+    /// for, still live, and only through the shared desk — its gate, its
+    /// request pin, its one pending set. nil once the answer landed.
+    func answerFromBanner(session: String, request: String?, approve: Bool) async -> String? {
+        guard let askDesk else { return SessionOpener.notAnswering }
+        guard let ask = NotificationBridge.liveAsk(session: session, request: request, in: core.openAsks) else {
+            return NotificationBridge.replacedLine
+        }
+        let outcome = await askDesk.answer(ask, approve ? .approve : .deny)
+        return outcome.ok ? nil : outcome.line
+    }
+
+    /// An ask's banner offers Approve and Deny only while Approve would
+    /// land — `AskVerbs.approves` on the live ask. A held question, an ask
+    /// that wants a typed reply, or one the daemon cannot answer from here
+    /// gets a plain banner, whose click opens the session.
+    nonisolated static func bannerCategory(for ask: CoreAsk?) -> EventDelivery.Notification.Category {
+        ask.map(AskVerbs.approves) == true ? .ask : .plain
+    }
+
+    /// Posts an ask banner once the state carrying its ask has landed (or
+    /// `askBannerWait` has passed), in the category that ask's verbs
+    /// allow and pinned to its request. Time-sensitive either way: the
+    /// category drops the actions, never the urgency of "X needs you".
+    private func deliverAskBanner(_ notification: EventDelivery.Notification, session: String, request: String?) {
+        let token = UUID()
+        waitingAskBanners[notification.identifier] = token
+        Task { [weak self] in
+            var ask = self.flatMap { NotificationBridge.liveAsk(session: session, request: request, in: $0.core.openAsks) }
+            let step = Duration.milliseconds(50)
+            var waited = Duration.zero
+            while ask == nil, waited < Self.askBannerWait {
+                try? await Task.sleep(for: step)
+                waited += step
+                ask = self.flatMap { NotificationBridge.liveAsk(session: session, request: request, in: $0.core.openAsks) }
+            }
+            guard let self, self.waitingAskBanners[notification.identifier] == token else { return }
+            self.waitingAskBanners[notification.identifier] = nil
+            var banner = notification
+            banner.category = Self.bannerCategory(for: ask)
+            self.notifications.deliver(banner, request: ask?.request ?? request, timeSensitive: true)
+        }
+    }
+
     /// Re-arms an observation of the applied state after every document
     /// and hands it to the confetti toy: the banked-credits and
     /// all-clear triggers are document edges, not events — no `event`
@@ -100,10 +183,39 @@ final class EventCoordinator {
                     // announces in the notch pill.
                     self.hud.announcements.noteDaemonFocus(mode: state.focus?.mode,
                                                            source: state.focus?.source)
+                    self.noteClosedLid(state.power?.closedLid)
                 }
                 self.trackState()
             }
         }
+    }
+
+    /// `closed_lid.sleep_error`: the daemon asked the lid-shut Mac to
+    /// sleep and macOS refused. Said once per distinct (error,
+    /// last_sleep_at) — a notice on the panel and a local banner, nothing
+    /// off the Mac — with a way to the Power rows.
+    func noteClosedLid(_ lid: CoreClosedLid?) {
+        guard let error = lid?.sleepError?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty else { return }
+        let identity = Self.sleepErrorIdentity(error: error, lastSleepAt: lid?.lastSleepAt)
+        guard sleepErrorDefaults.string(forKey: Self.sleepErrorKey) != identity else { return }
+        sleepErrorDefaults.set(identity, forKey: Self.sleepErrorKey)
+        let text = Self.sleepErrorText(error)
+        notices.say(.init(key: "sleep-error", text: text, actionTitle: "Power") {
+            AppCommandRouter.shared.perform(.settings(page: SettingsStore.Page.notifications.rawValue))
+        })
+        notices.deliverBanner("sleep-error", "The Mac did not sleep", text)
+    }
+
+    nonisolated static func sleepErrorIdentity(error: String, lastSleepAt: Double?) -> String {
+        "\(error)|\(lastSleepAt.map { String(Int($0)) } ?? "never")"
+    }
+
+    /// "The Mac didn't sleep when the closed-lid hold let go: …", the
+    /// error cut to a line.
+    nonisolated static func sleepErrorText(_ error: String) -> String {
+        let line = error.split(whereSeparator: \.isNewline).first.map(String.init) ?? error
+        let cut = line.count > 120 ? String(line.prefix(119)) + "…" : line
+        return "The Mac didn't sleep when the closed-lid hold let go: \(cut)"
     }
 
     func handle(_ event: CoreEvent) {
@@ -112,6 +224,9 @@ final class EventCoordinator {
         let delivery = deliveryRules(EventPolicy.delivery(for: event, state: core.state, settings: settings,
                                                           askingFrontmost: watching), event)
         if event.kind == "escalation_stage" { lastEscalation = event }
+        // The ask the stage was about is answered: an app switch has no
+        // noise left to re-decide for it.
+        if event.kind == "ask_resolved", lastEscalation?.session == event.session { lastEscalation = nil }
         apply(delivery, for: event)
         confirmWatching(event, decidedWatching: watching)
         var summary = "event \(event.kind)"
@@ -137,8 +252,17 @@ final class EventCoordinator {
 
     func apply(_ delivery: EventDelivery, for event: CoreEvent) {
         if let sound = delivery.sound { sounds.play(sound, repeats: delivery.soundRepeats) }
-        if let identifier = delivery.withdrawNotification { notifications.withdraw(identifier: identifier) }
-        if let notification = delivery.notification { notifications.deliver(notification) }
+        if let identifier = delivery.withdrawNotification {
+            waitingAskBanners[identifier] = nil
+            notifications.withdraw(identifier: identifier)
+        }
+        if let notification = delivery.notification {
+            if notification.category == .ask, let session = notification.session {
+                deliverAskBanner(notification, session: session, request: event.request)
+            } else {
+                notifications.deliver(notification)
+            }
+        }
         if let toast = delivery.toast {
             let symbol = event.kind == "device_disconnected" ? "cable.connector.slash" : (event.kind.hasPrefix("peer") ? "person.2.wave.2" : "cable.connector")
             hud.show(toast, symbol: symbol)
@@ -211,6 +335,9 @@ final class EventCoordinator {
               inFrontAsking != sessionID else { return }
         let front = frontmostApp().pid
         if let verdict = inFrontVerdict, verdict.speaks(for: sessionID, frontmostPID: front, now: Date()) { return }
+        // Another app is in front of a session whose process is known:
+        // the daemon could only say no, and the app's rule already does.
+        if AskingPane.frontmostElsewhere(sessionPID: session.pid, frontmostPID: front, parentPID: parentPID) { return }
         inFrontAsking = sessionID
         Task { [weak self] in
             guard let self else { return }
@@ -266,11 +393,13 @@ final class EventCoordinator {
         (core.state?.asks.isEmpty == false) || (core.state?.mainSessions.contains { $0.ask != nil } ?? false)
     }
 
-    /// The daemon went away: nothing is escalating any more.
+    /// The daemon went away: nothing is escalating any more, and a
+    /// takeover card's Approve would answer a daemon that is gone.
     func reset() {
         lastEscalation = nil
         inFrontVerdict = nil
         sounds.stopChime()
+        toys?.notch.releaseTakeover()
         if isPulsing {
             isPulsing = false
             onStatusPulse?(false)

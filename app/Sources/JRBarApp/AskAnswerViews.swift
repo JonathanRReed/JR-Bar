@@ -2,8 +2,8 @@ import JRBarCore
 import SwiftUI
 
 /// The pieces every ask row shares, whatever surface draws it: the
-/// destructive mark, the preview line, and the menu a held question's
-/// options live in when they do not fit as buttons. Each surface keeps
+/// destructive mark, the preview line, the hold's ring, and the menu a
+/// held question's options live in when they do not fit as buttons. Each surface keeps
 /// its own buttons and its own type; these only say the same thing the
 /// same way.
 
@@ -20,6 +20,31 @@ struct AskRiskMark: View {
             .foregroundStyle(Color.red)
             .help(Self.help)
             .accessibilityLabel("Destructive")
+    }
+}
+
+/// The decide lane's hold, drawn: a ring that drains as the window the
+/// hook holds the ask for runs out (`AskHold`). A second's step glides;
+/// under Reduce Motion it steps in ninths and never animates. The
+/// seconds live in the tooltip, not on the ring.
+struct AskHoldRing: View {
+    /// What is left of the hold, 1 → 0.
+    let fraction: Double
+    let reduced: Bool
+    var size: CGFloat = 12
+
+    var body: some View {
+        let shown = reduced ? AskHold.stepped(fraction) : fraction
+        ZStack {
+            Circle()
+                .stroke(Color.primary.opacity(0.12), lineWidth: 1.5)
+            Circle()
+                .trim(from: 0, to: shown)
+                .stroke(Color.orange, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: size, height: size)
+        .animation(reduced ? nil : .linear(duration: 1), value: shown)
     }
 }
 

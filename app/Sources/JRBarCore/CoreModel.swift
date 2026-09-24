@@ -111,26 +111,23 @@ public final class CoreModel {
         return try await client.send(name: name, args: args, timeout: timeout)
     }
 
-    /// Sends and forgets; failures land in `lastDecodeFailure` for the log view.
+    /// Sends and forgets; failures land in `lastDecodeFailure` for the log
+    /// view, and a refusal (`ok: false`) in the log tail as well — a
+    /// forgotten send the daemon turned down is still worth a line.
     public func post(_ name: String, args: [String: JSONValue] = [:]) {
         Task { [weak self] in
-            do { _ = try await self?.send(name, args: args) }
-            catch { await MainActor.run { self?.lastDecodeFailure = "\(name): \(error)" } }
+            do {
+                guard let reply = try await self?.send(name, args: args), !reply.ok else { return }
+                let why = reply.error?.message ?? reply.error?.code ?? "refused"
+                self?.lastDecodeFailure = "\(name): \(why)"
+                self?.appendLocalLog(level: "warn", "\(name) refused: \(why)")
+            } catch {
+                self?.lastDecodeFailure = "\(name): \(error)"
+            }
         }
     }
 
     public func openSession(_ id: String) { post("open_session", args: ["session": .string(id)]) }
-
-    public func answerAsk(session: String, approve: Bool, onlyIfFrontmost: Bool = false,
-                          request: String? = nil) {
-        var args: [String: JSONValue] = [
-            "session": .string(session),
-            "decision": .string(approve ? "approve" : "deny"),
-            "only_if_frontmost": .bool(onlyIfFrontmost),
-        ]
-        if let request { args["request"] = .string(request) }
-        post("answer_ask", args: args)
-    }
 
     /// `answer_ask` awaited: the reply carries the daemon's verdict —
     /// `ok: false` with `error.message` naming the refusal
@@ -924,16 +921,25 @@ public final class CoreModel {
 
     // MARK: Inbound
 
-    private func handle(_ event: CoreClient.Event) {
+    /// A dropped socket takes the daemon's facts with it: the next daemon
+    /// may be a restart that has not refreshed yet, and its asks, rows and
+    /// lights are not the dead one's. `settings` and `usageSamples` stay —
+    /// the document is re-sent on connect and the samples are history.
+    /// `hello` clears on connect, so a new socket says who it is afresh.
+    func handle(_ event: CoreClient.Event) {
         switch event {
         case .connecting(let attempt):
             connection = .connecting(attempt: attempt)
         case .connected:
             connection = .connected
             connectedAt = Date()
+            hello = nil
         case .disconnected(let reason):
             connection = .disconnected(reason: reason)
             connectedAt = nil
+            state = nil
+            lights = nil
+            lastStateAt = nil
         case .decodeFailure(let why):
             lastDecodeFailure = why
         case .message(let message):

@@ -29,8 +29,10 @@ struct PresenceReporterTests {
                          })
     }
 
-    /// Lets the send tasks run.
-    private func settle(within seconds: TimeInterval = 5, _ until: @escaping () -> Bool) async {
+    /// Lets the send tasks run. The deadline is generous because a full
+    /// parallel run can keep the main actor busy for seconds at a time;
+    /// a passing wait returns as soon as the condition does.
+    private func settle(within seconds: TimeInterval = 30, _ until: @escaping () -> Bool) async {
         let deadline = Date().addingTimeInterval(seconds)
         while !until(), Date() < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -101,6 +103,31 @@ struct PresenceReporterTests {
         await settle { daemon.sent.count == 2 }
         #expect(daemon.sent.count == 2)
         #expect(daemon.sent.filter { !$0.mic }.isEmpty)
+    }
+
+    @Test("the Focus rides the first report, and a Focus edge goes at once")
+    func focusEdges() async {
+        let daemon = FakeDaemon()
+        final class Focus { var on: Bool? = true }
+        let focus = Focus()
+        let presence = PresenceReporter(isConnected: { daemon.connected }, presence: { nil },
+                                        send: { daemon.sent.append($0); return true },
+                                        readFocus: { focus.on })
+        daemon.connected = true
+        presence.coreChanged()
+        await settle { daemon.sent.count == 1 }
+        #expect(daemon.sent == [CorePresenceReport(focus: true)])
+        presence.focusMayHaveChanged()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        #expect(daemon.sent.count == 1, "an unchanged Focus owes nothing inside the minute")
+        focus.on = false
+        presence.focusMayHaveChanged()
+        await settle { daemon.sent.count == 2 }
+        #expect(daemon.sent.last == CorePresenceReport(focus: false))
+        focus.on = nil
+        presence.focusMayHaveChanged()
+        await settle { daemon.sent.count == 3 }
+        #expect(daemon.sent.last?.arguments["focus"] == nil, "access withdrawn: the key goes, the daemon reads its own")
     }
 
     @Test("a reconnect sends the reading again, even a quiet one")

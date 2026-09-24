@@ -4,7 +4,8 @@ import Observation
 
 /// Answering an ask, the same everywhere it can be answered — the
 /// panel's ask rows, the notch's capsule and card rows, the palette,
-/// the Dock preview and the Rail's pill. What each surface may offer
+/// the Dock preview, the Rail's pill and a banner's Approve or Deny.
+/// What each surface may offer
 /// is read off the ask alone (`AskVerbs`), what a click sends is one
 /// `AskVerdict`, and what the person is told afterwards is one line
 /// (`AskAnswerLine`) that says how the answer went: through the agent's
@@ -23,11 +24,14 @@ enum AskVerdict: Equatable, Sendable {
     /// A held question's picks, as `answer_ask` takes them: the question
     /// text → one label, or a list of labels for a multi-select.
     case choose([String: JSONValue])
+    /// Words for an ask that wants them (`wantsTextReply`), typed into
+    /// the session as `reply_text` on an approving `answer_ask`.
+    case reply(String)
 
     /// The `answer_ask` decision word.
     var decision: String {
         switch self {
-        case .approve: return "approve"
+        case .approve, .reply: return "approve"
         case .deny: return "deny"
         case .always: return "always"
         case .choose: return "answer"
@@ -43,31 +47,44 @@ enum AskVerdict: Equatable, Sendable {
 
 /// Which verbs an ask can take from outside its own window — read off
 /// the daemon's flags, never guessed. A peer's ask takes none of them;
-/// callers check `CoreSession.isRemoteID` before this.
+/// callers check `CoreSession.isRemoteID` before this. The hold's verbs
+/// (Always allow, a question's options, a question's Deny) end at its
+/// `hold_until` (`CoreAsk.isHeld(at:)`): after that the agent's own
+/// prompt carries on and the hook can no longer take them.
 enum AskVerbs {
-    /// Approve where the daemon can deliver a yes. Never on a held
-    /// question: a bare allow answers nothing there — its options do.
+    /// Approve where the daemon can deliver a yes. Never on a question:
+    /// a bare allow answers nothing there — its options do.
     static func approves(_ ask: CoreAsk) -> Bool {
         ask.canAnswer && !ask.wantsTextReply && !ask.canChoose
     }
 
     /// Deny wherever Approve is, and on a held question too: the hook
     /// declines it the way Esc does, whatever hosts the session.
-    static func denies(_ ask: CoreAsk) -> Bool {
-        (ask.canAnswer && !ask.wantsTextReply) || ask.canChoose
+    static func denies(_ ask: CoreAsk) -> Bool { denies(ask, at: Date()) }
+
+    static func denies(_ ask: CoreAsk, at now: Date) -> Bool {
+        (ask.canAnswer && !ask.wantsTextReply) || chooses(ask, at: now)
     }
 
     /// Always allow, only while the hook holds an ask that offers it.
-    static func alwaysAllows(_ ask: CoreAsk) -> Bool {
-        ask.canAlwaysAllow && !ask.canChoose
+    static func alwaysAllows(_ ask: CoreAsk) -> Bool { alwaysAllows(ask, at: Date()) }
+
+    static func alwaysAllows(_ ask: CoreAsk, at now: Date) -> Bool {
+        ask.canAlwaysAllow && ask.isHeld(at: now) && !ask.canChoose
     }
 
-    /// A held question's options can be picked.
-    static func chooses(_ ask: CoreAsk) -> Bool { ask.canChoose }
+    /// A held question's options can be picked while the hold stands.
+    static func chooses(_ ask: CoreAsk) -> Bool { chooses(ask, at: Date()) }
+
+    static func chooses(_ ask: CoreAsk, at now: Date) -> Bool { ask.canChoose && ask.isHeld(at: now) }
+
+    /// A typed reply, where the ask wants words and the daemon can take
+    /// them.
+    static func replies(_ ask: CoreAsk) -> Bool { ask.canAnswer && ask.wantsTextReply }
 
     /// Whether `verdict` may be sent for `ask` at all — the desk's gate,
     /// the same one the buttons are drawn behind. A pick must name every
-    /// question with labels the agent offered.
+    /// question with labels the agent offered; a reply must say something.
     static func allows(_ verdict: AskVerdict, on ask: CoreAsk) -> Bool {
         switch verdict {
         case .approve: return approves(ask)
@@ -76,12 +93,71 @@ enum AskVerbs {
         case .choose(let answers):
             guard chooses(ask), let choices = ask.decision?.choices else { return false }
             return AskChoicePicks(answers: answers, choices: choices)?.isComplete(choices) ?? false
+        case .reply(let text):
+            return replies(ask) && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+    }
+
+    /// Why `allows` said no, in the words of the button that was clicked:
+    /// a held question wants one of its options, an Always allow needs a
+    /// rule the agent offered, a reply needs words. Anything else is the
+    /// session's own window.
+    static func refusal(_ verdict: AskVerdict, on ask: CoreAsk) -> String {
+        switch verdict {
+        case .approve, .always:
+            if chooses(ask) { return "Pick one of its options" }
+            if case .always = verdict, approves(ask) {
+                return "This one has no rule to remember — approve it once instead"
+            }
+        case .choose:
+            if chooses(ask) { return "Pick an answer for every question first" }
+        case .reply:
+            if replies(ask) { return "Type a reply first" }
+        case .deny:
+            break
+        }
+        return "Answer this one in the session's window"
     }
 
     /// Any verb at all to draw beside the ask.
     static func any(_ ask: CoreAsk) -> Bool {
         approves(ask) || denies(ask) || alwaysAllows(ask) || chooses(ask)
+    }
+}
+
+/// The decide lane's hold as the verbs' ring: how much of the window the
+/// hook holds an ask for is left. The daemon holds for `span` seconds
+/// (`DECISION_HOLD_SECONDS`); at `hold_until` the agent's own prompt
+/// carries on, and Always and the choices go with the hold.
+enum AskHold {
+    static let span: TimeInterval = 45
+
+    /// 1 → 0 across the hold's last `span` seconds; nil when the ask is
+    /// not held at `now` or its hold names no end.
+    static func remaining(_ ask: CoreAsk, at now: Date) -> Double? {
+        guard ask.isHeld(at: now), let until = ask.decision?.holdUntil else { return nil }
+        return min(1, max(0, (until - now.timeIntervalSince1970) / span))
+    }
+
+    /// Under Reduce Motion the ring steps in ninths — five seconds at the
+    /// daemon's hold — rather than draining every second; it only reads
+    /// empty once the hold is over.
+    static func stepped(_ fraction: Double, steps: Int = 9) -> Double {
+        (min(1, max(0, fraction)) * Double(steps)).rounded(.up) / Double(steps)
+    }
+
+    /// When the hold lapses, for the one-shot re-render that takes its
+    /// verbs away; nil when there is nothing to lapse.
+    static func end(_ ask: CoreAsk, at now: Date) -> Date? {
+        guard ask.isHeld(at: now), let until = ask.decision?.holdUntil else { return nil }
+        return Date(timeIntervalSince1970: until)
+    }
+
+    /// The ring's tooltip: how long JR-Bar still holds the ask.
+    static func help(_ ask: CoreAsk, at now: Date) -> String? {
+        guard let end = end(ask, at: now) else { return nil }
+        let seconds = max(1, Int(end.timeIntervalSince(now).rounded(.up)))
+        return "JR-Bar holds this ask for \(seconds) s more — then the agent's own prompt takes over"
     }
 }
 
@@ -221,6 +297,7 @@ enum AskAnswerLine {
             } else {
                 what = "Answered"
             }
+        case .reply: return replied(reply)
         }
         return how(reply).map { "\(what) · \($0)" } ?? what
     }
@@ -231,12 +308,13 @@ enum AskAnswerLine {
     }
 }
 
-/// The answer desk the surfaces outside the panel share — the notch,
-/// the Dock preview and the Rail send their Always allow and their
-/// picks here, and so does the panel, so one pending set dims every
-/// copy of an ask's buttons while its answer is on the wire and a
-/// multi-question pick started in one place finishes in another.
-/// The panel owns it; the app delegate publishes it as `shared`.
+/// The answer desk every surface shares — the panel's verbs and its
+/// reply field and a banner's Approve and Deny send here, and so do the
+/// notch, the Dock preview and the Rail's Always allow and picks — so
+/// one pending set dims every copy of an ask's buttons while its answer
+/// is on the wire and a multi-question pick started in one place
+/// finishes in another. The panel owns it; the app delegate publishes
+/// it as `shared`.
 @MainActor
 @Observable
 final class AskAnswerDesk {
@@ -257,6 +335,9 @@ final class AskAnswerDesk {
     struct Outcome: Equatable {
         let ok: Bool
         let line: String
+        /// The daemon's refusal code, for a surface that can offer the
+        /// fix (the panel's "Open Settings" on `accessibility_required`).
+        var code: String? = nil
     }
 
     /// The daemon call — `CoreModel.answerAskNow(session:decision:…)` in
@@ -279,9 +360,15 @@ final class AskAnswerDesk {
         self.send = send
     }
 
+    /// A reply rides `reply_text` on an approving `answer_ask`; every
+    /// other verdict is its decision word.
     convenience init(core: CoreModel) {
         self.init(send: { [weak core] session, verdict, request in
             guard let core else { throw CoreClientError.notConnected }
+            if case .reply(let text) = verdict {
+                return try await core.answerAskNow(session: session, approve: true, replyText: text,
+                                                   request: request)
+            }
             return try await core.answerAskNow(session: session, decision: verdict.decision,
                                                answers: verdict.answers, request: request)
         })
@@ -313,21 +400,28 @@ final class AskAnswerDesk {
         return await answer(ask, .choose(answers))
     }
 
+    /// Why `verdict` would be refused before anything is sent — no
+    /// session, a peer's ask, a verb the ask cannot take here, or an
+    /// answer for the session already on its way; nil when it may go.
+    /// A surface can say it at once, without waiting on a send.
+    func refusal(_ ask: CoreAsk, _ verdict: AskVerdict) -> String? {
+        guard let session = ask.session, !session.isEmpty else { return Self.noSession }
+        if CoreSession.isRemoteID(session) {
+            return "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there"
+        }
+        guard AskVerbs.allows(verdict, on: ask) else { return AskVerbs.refusal(verdict, on: ask) }
+        return pending.contains(session) ? "An answer is already on its way" : nil
+    }
+
+    static let noSession = "This ask has no session left to answer"
+
     /// One verdict, from a click. Refused before any send when the ask
     /// cannot take it here or an answer for the session is already on
     /// its way; the daemon's refusal otherwise, never a guessed success.
     @discardableResult
     func answer(_ ask: CoreAsk, _ verdict: AskVerdict) async -> Outcome {
-        guard let session = ask.session, !session.isEmpty else {
-            return Outcome(ok: false, line: "This ask has no session left to answer")
-        }
-        if CoreSession.isRemoteID(session) {
-            return Outcome(ok: false, line: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
-        }
-        guard AskVerbs.allows(verdict, on: ask) else {
-            return Outcome(ok: false, line: "Answer this one in the session's window")
-        }
-        guard !pending.contains(session) else { return Outcome(ok: false, line: "An answer is already on its way") }
+        if let line = refusal(ask, verdict) { return Outcome(ok: false, line: line) }
+        guard let session = ask.session else { return Outcome(ok: false, line: Self.noSession) }
         pending.insert(session)
         defer { pending.remove(session) }
         clearNote(for: session)
@@ -342,7 +436,7 @@ final class AskAnswerDesk {
             }
             let line = NotchAskRefusal.line(for: reply.error)
             setNote(Note(text: line, refused: true), for: session)
-            return Outcome(ok: false, line: line)
+            return Outcome(ok: false, line: line, code: reply.error?.code)
         } catch {
             setNote(Note(text: NotchAskRefusal.unreachable, refused: true), for: session)
             return Outcome(ok: false, line: NotchAskRefusal.unreachable)

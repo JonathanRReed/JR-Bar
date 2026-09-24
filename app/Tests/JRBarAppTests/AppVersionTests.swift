@@ -62,4 +62,13 @@ import Testing
                 == [URL(fileURLWithPath: "/Applications/Utilities/JR-Bar.app")])
         #expect(InstalledCopies.stale(among: [running], running: running, home: home).isEmpty)
     }
+
+    @Test("the notice names the copy's own bundle, so a backup reads as one")
+    func theNoticeNamesTheBundle() {
+        let backup = URL(fileURLWithPath: "/Applications/JR-Bar.app.bak-20260921-105351")
+        #expect(InstalledCopies.noticeText(for: backup, home: home)
+                == "JR-Bar.app.bak-20260921-105351 in /Applications is another JR-Bar — updates replace only this one")
+        #expect(InstalledCopies.noticeText(for: running, home: home)
+                == "JR-Bar.app in ~/Applications is another JR-Bar — updates replace only this one")
+    }
 }

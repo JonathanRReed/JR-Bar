@@ -23,6 +23,13 @@ import JRBarUI
         #expect(SessionRow.tail(of: "a/b/c") == "b/c")
     }
 
+    @Test("the worker count is said in words, never a bare number")
+    func workersAreSaidInWords() {
+        #expect(Self.row(CoreSession(id: "claude:a", provider: "claude", mode: "working")).workersText == nil)
+        #expect(Self.row(CoreSession(id: "claude:a", provider: "claude", mode: "working", workers: 1)).workersText == "1 worker")
+        #expect(Self.row(CoreSession(id: "claude:a", provider: "claude", mode: "working", workers: 10)).workersText == "10 workers")
+    }
+
     @Test func shortFactCollapsesWhitespaceAndBoundsTheLength() {
         #expect(SessionRow.shortFact(nil) == nil)
         #expect(SessionRow.shortFact("   \n  ") == nil)

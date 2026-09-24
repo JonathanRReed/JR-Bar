@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Testing
+import UserNotifications
 @testable import JRBarApp
 @testable import JRBarCore
 
@@ -296,6 +297,28 @@ struct AskSurfacesTests {
         #expect(store.toast == "This one has no rule to remember — approve it once instead")
     }
 
+    @Test("with the panel closed, the light's why counts the wait on the wall clock, not the panel's")
+    func whyLineClockWhileClosed() throws {
+        let core = CoreModel()
+        core.handle(.connected)
+        let opened = Date().timeIntervalSince1970 - 150
+        let surface = CoreLightSurface(program: "#FF3A00 1.6s pulse\nrepeat", ledCount: 8, motion: "beat",
+                                       staticFallback: "#FF3A00", why: "needs_you")
+        core.apply(.lights(CoreLights(surfaces: ["hardware": surface, "screen_bar": surface])))
+        core.apply(.state(CoreState(
+            sessions: [CoreSession(id: "codex:1", provider: "codex", label: "sidepulse-core", mode: "waiting",
+                                   lifecycle: "active", since: opened,
+                                   ask: CoreAsk(kind: "permission", openedAt: opened, summary: "Run"))],
+            asks: [CoreAsk(session: "codex:1", kind: "permission", openedAt: opened, summary: "Run")])))
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+                               screenBarShown: false)
+        // The panel last closed an hour ago: its clock stopped there.
+        store.now = Date().addingTimeInterval(-3_600)
+        let reason = try #require(store.lightExplanation?.reason)
+        #expect(reason.hasSuffix("(permission, 2 min)"), "\(reason)")
+        #expect(store.screenBarFocus.explanation == reason, "the notch card reads the same line")
+    }
+
     @Test("the notch card's Open falls back to the window locator only for a running session")
     func notchCardOpenFallback() async {
         let presenter = NotchCardPresenter(model: makeTestCardModel())
@@ -448,7 +471,11 @@ struct AskSurfacesTests {
         #expect(!verdict.speaks(for: "s", frontmostPID: 7, now: now.addingTimeInterval(AskingPane.verdictLife)))
     }
 
-    private func watchedCoordinator(inFront: Bool?, frontmostIsHost: Bool) -> EventCoordinator {
+    /// `frontmostIsHost: false` is a host the app's bundle rule does not
+    /// know — its pid still on the session's ancestry, so the daemon is
+    /// the one who can tell. `elsewhere` puts an unrelated app in front.
+    private func watchedCoordinator(inFront: Bool?, frontmostIsHost: Bool, elsewhere: Bool = false,
+                                    asked: Log = Log()) -> EventCoordinator {
         let core = CoreModel()
         let session = "claude:session:w"
         core.apply(.state(CoreState(
@@ -457,9 +484,42 @@ struct AskSurfacesTests {
             asks: [CoreAsk(session: session, summary: "Run")])))
         let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
         let parent = AskingPane.parentPID(getpid())
-        coordinator.frontmostApp = { frontmostIsHost ? ("dev.jr.tests", parent) : ("com.apple.Safari", 4242) }
-        coordinator.sessionInFront = { _ in inFront }
+        coordinator.frontmostApp = {
+            if elsewhere { return ("com.apple.Safari", 4242) }
+            return frontmostIsHost ? ("dev.jr.tests", parent) : ("com.apple.Safari", parent)
+        }
+        coordinator.sessionInFront = { session in
+            asked.calls.append(session)
+            return inFront
+        }
         return coordinator
+    }
+
+    @Test("an unrelated app in front of a known process skips session_in_front: the daemon could only say no")
+    func elsewhereSkipsTheRoundTrip() async throws {
+        let asked = Log()
+        let coordinator = watchedCoordinator(inFront: true, frontmostIsHost: false, elsewhere: true, asked: asked)
+        coordinator.handle(CoreEvent(id: "e1", kind: "escalation_stage", session: "claude:session:w", stage: 2))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(asked.calls.isEmpty)
+        #expect(coordinator.isPulsing, "not watching: the stage keeps its noise")
+        #expect(AskingPane.frontmostElsewhere(sessionPID: Int(getpid()), frontmostPID: 4242))
+        #expect(!AskingPane.frontmostElsewhere(sessionPID: Int(getpid()), frontmostPID: getpid()))
+        #expect(!AskingPane.frontmostElsewhere(sessionPID: Int(getpid()),
+                                               frontmostPID: AskingPane.parentPID(getpid())))
+        #expect(!AskingPane.frontmostElsewhere(sessionPID: nil, frontmostPID: 4242), "no process: ask")
+        #expect(!AskingPane.frontmostElsewhere(sessionPID: Int(getpid()), frontmostPID: nil))
+    }
+
+    @Test("an answered ask forgets the stage it was escalating")
+    func resolvedForgetsTheStage() {
+        let coordinator = watchedCoordinator(inFront: nil, frontmostIsHost: true)
+        coordinator.handle(CoreEvent(id: "e1", kind: "escalation_stage", session: "claude:session:w", stage: 2))
+        #expect(coordinator.lastEscalation?.session == "claude:session:w")
+        coordinator.handle(CoreEvent(id: "e2", kind: "ask_resolved", session: "claude:session:other"))
+        #expect(coordinator.lastEscalation != nil, "another session's answer leaves it")
+        coordinator.handle(CoreEvent(id: "e3", kind: "ask_resolved", session: "claude:session:w"))
+        #expect(coordinator.lastEscalation == nil)
     }
 
     private func settle(_ coordinator: EventCoordinator, until: () -> Bool) async {
@@ -488,5 +548,74 @@ struct AskSurfacesTests {
         await settle(unknown) { unknown.inFrontVerdict != nil }
         #expect(unknown.inFrontVerdict?.inFront == nil)
         #expect(!unknown.isPulsing, "cannot be told: the app's rule stands")
+    }
+
+    // MARK: Banners
+
+    @Test("a banner answers only the ask it was posted for, and through the desk")
+    func bannerAnswersThroughDesk() async {
+        let core = CoreModel()
+        let session = "claude:session:b"
+        core.apply(.state(CoreState(
+            sessions: [CoreSession(id: session, provider: "claude", mode: "waiting")],
+            asks: [CoreAsk(session: session, summary: "Run", answerable: true, request: "r2")])))
+        let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
+        let log = Log()
+        coordinator.askDesk = AskAnswerDesk(send: { _, verdict, request in
+            log.calls.append("\(verdict)|\(request ?? "")")
+            return CoreReply(id: "1", ok: true)
+        })
+        let replaced = await coordinator.answerFromBanner(session: session, request: "r1", approve: true)
+        #expect(replaced == NotificationBridge.replacedLine)
+        #expect(log.calls.isEmpty, "the banner's ask was replaced: nothing is sent")
+        let landed = await coordinator.answerFromBanner(session: session, request: "r2", approve: false)
+        #expect(landed == nil)
+        #expect(log.calls == ["\(AskVerdict.deny)|r2"], "pinned to the live request")
+        let gone = await coordinator.answerFromBanner(session: "claude:session:none", request: nil, approve: true)
+        #expect(gone == NotificationBridge.replacedLine)
+    }
+
+    @Test("an ask banner offers Approve and Deny only where Approve would land")
+    func bannerCategory() {
+        #expect(EventCoordinator.bannerCategory(for: CoreAsk(session: "s", summary: "Run", answerable: true)) == .ask)
+        #expect(EventCoordinator.bannerCategory(for: held(choices: [Self.single])) == .plain, "a held question")
+        #expect(EventCoordinator.bannerCategory(
+            for: CoreAsk(session: "s", summary: "?", answerable: true, replyable: true)) == .plain, "wants words")
+        #expect(EventCoordinator.bannerCategory(for: CoreAsk(session: "s", summary: "Run", answerable: false)) == .plain)
+        #expect(EventCoordinator.bannerCategory(for: nil) == .plain, "an ask never seen")
+        let asks = [CoreAsk(session: "s", summary: "Run", request: "r1")]
+        #expect(NotificationBridge.liveAsk(session: "s", request: "r1", in: asks) != nil)
+        #expect(NotificationBridge.liveAsk(session: "s", request: "r0", in: asks) == nil)
+        #expect(NotificationBridge.liveAsk(session: "s", request: nil, in: asks) != nil, "an unpinned banner")
+    }
+
+    @Test("an ask banner stays time-sensitive when its category drops Approve and Deny")
+    func askBannerUrgency() {
+        let plainAsk = NotificationBridge.interruptionLevel(category: .plain, timeSensitive: true)
+        #expect(plainAsk == UNNotificationInterruptionLevel.timeSensitive, "a held question still breaks through Focus")
+        let actionable = NotificationBridge.interruptionLevel(category: .ask, timeSensitive: nil)
+        #expect(actionable == UNNotificationInterruptionLevel.timeSensitive)
+        let quiet = NotificationBridge.interruptionLevel(category: .plain, timeSensitive: nil)
+        #expect(quiet == UNNotificationInterruptionLevel.active, "every other banner stays active")
+    }
+
+    @Test("the daemon going away shrinks a takeover card back to its capsule")
+    func resetReleasesTakeover() {
+        var toysState = ToysState()
+        toysState.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
+        let core = CoreModel()
+        let session = "claude:session:t"
+        core.apply(.state(CoreState(
+            sessions: [CoreSession(id: session, provider: "claude", ask: CoreAsk(summary: "Run"))],
+            asks: [CoreAsk(session: session, openedAt: 1, summary: "Run", answerable: true, request: "r1")])))
+        let toys = ToysStore(core: core, settings: SettingsStore(core: core), state: toysState,
+                             cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        toys.notch.islandVisible = true
+        let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
+        coordinator.toys = toys
+        toys.notch.noteTakeover(CoreEvent(id: "e", kind: "escalation_stage", session: session, stage: 3))
+        #expect(toys.notch.activeCapsule?.takeover == true)
+        coordinator.reset()
+        #expect(toys.notch.activeCapsule?.takeover == false)
     }
 }

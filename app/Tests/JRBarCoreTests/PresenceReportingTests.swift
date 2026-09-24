@@ -18,8 +18,39 @@ struct PresenceReportingTests {
         #expect(report.mic && report.camera && !report.screenShared)
         #expect(report.sensingCall)
         #expect(report.arguments == ["mic": .bool(true), "camera": .bool(true), "screen_shared": .bool(false)],
-                "no lock, idle, Focus or calendar keys: those stay the daemon's own readings")
+                "no lock, idle or calendar keys, and no Focus the app did not read: those stay the daemon's")
         #expect(!PresenceReporting.report(for: quiet).sensingCall)
+    }
+
+    @Test("a Focus the app can read rides the report; one it cannot leaves the key out")
+    func focusShape() {
+        let focused = PresenceReporting.report(for: quiet, focus: true)
+        #expect(focused.arguments["focus"] == .bool(true))
+        #expect(!focused.sensingCall, "a Focus is not a call")
+        #expect(PresenceReporting.report(for: quiet, focus: false).arguments["focus"] == .bool(false))
+        #expect(PresenceReporting.report(for: quiet).arguments["focus"] == nil,
+                "unread: the daemon keeps its own reading")
+    }
+
+    @Test("a Focus-only report is renewed every minute, and its end is said once")
+    func focusRenews() throws {
+        var reporting = PresenceReporting()
+        reporting.sent(PresenceReporting.report(for: quiet, focus: false), at: t0)
+        let started = try #require(reporting.due(reading: quiet, focus: true, connected: true,
+                                                 now: t0.addingTimeInterval(3)), "the Focus coming on is an edge")
+        reporting.sent(started, at: t0.addingTimeInterval(3))
+        #expect(reporting.due(reading: quiet, focus: true, connected: true, now: t0.addingTimeInterval(40)) == nil)
+        #expect(reporting.nextCheck(connected: true) == t0.addingTimeInterval(63))
+        let renewed = try #require(reporting.due(reading: quiet, focus: true, connected: true,
+                                                 now: t0.addingTimeInterval(63)))
+        #expect(renewed == started)
+        reporting.sent(renewed, at: t0.addingTimeInterval(63))
+        let ended = try #require(reporting.due(reading: quiet, focus: false, connected: true,
+                                             now: t0.addingTimeInterval(70)))
+        #expect(ended.focus == false)
+        reporting.sent(ended, at: t0.addingTimeInterval(70))
+        #expect(reporting.nextCheck(connected: true) == nil, "a Focus that is off is not renewed")
+        #expect(reporting.due(reading: quiet, focus: false, connected: true, now: t0.addingTimeInterval(500)) == nil)
     }
 
     @Test("nothing goes while the daemon is away")

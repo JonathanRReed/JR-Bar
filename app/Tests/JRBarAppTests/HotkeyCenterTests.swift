@@ -204,7 +204,7 @@ import Testing
     @MainActor
     @Test func theCompatibilityInitMapsTheOldSignaturesToRegistryIDs() {
         let panel = PanelHotkey()
-        let shelf = PanelHotkey(signature: OSType(0x6A726273), keyCode: UInt32(kVK_ANSI_D), hotKeyID: 1)
+        let shelf = PanelHotkey(signature: OSType(0x6A726273), keyCode: UInt32(kVK_ANSI_D))
         #expect(panel.id == PanelHotkey.panelID)
         #expect(panel.defaultChord == PanelHotkey.panelDefault)
         #expect(shelf.id == PanelHotkey.shelfID)

@@ -176,18 +176,28 @@ struct ActivityMark: View {
     }
 }
 
+/// A small count in a capsule. `symbol` names what is counted, so a bare
+/// "10" beside a session's name never reads as a version or a score.
 struct CountBadge: View {
     let text: String
+    var symbol: String? = nil
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1.5)
-            .background(Capsule().fill(.primary.opacity(0.08)))
+        HStack(spacing: 2.5) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .imageScale(.small)
+            }
+            Text(text)
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1.5)
+        .background(Capsule().fill(.primary.opacity(0.08)))
     }
 }
 
@@ -615,12 +625,16 @@ struct SessionRowView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                        if row.workers > 0 { CountBadge(text: "\(row.workers)").help("\(row.workers) workers") }
+                        if row.workers > 0 {
+                            CountBadge(text: "\(row.workers)", symbol: "square.stack")
+                                .help(row.workersText ?? "")
+                        }
                         if row.activity == .done, store.unseenCompletionIDs.contains(row.id) {
-                            // `state.unseen_completions`: the same accent
+                            // `state.unseen_completions`: the one unseen
                             // dot History gives a row newer than the last
-                            // visit.
-                            Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                            // visit, a fixed blue — never the accent, which
+                            // a red accent would turn into a failure.
+                            UnseenDot()
                                 .help("Finished since you last looked")
                         }
                         if row.isSnoozed(now: store.now) {
@@ -716,17 +730,22 @@ struct SessionRowView: View {
         .help(row.help(now: store.now) ?? "")
         .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel([
-            row.label, row.style.name, row.activity.word,
-            PanelStore.elapsed(since: row.since, now: store.now) ?? "just started",
-            row.isRemote
-                ? "on \(row.remoteMachine ?? "a peer")"
-                : (row.cwdTail.map { "in \($0)" } ?? "no folder on record"),
-        ].joined(separator: ", "))
+        .accessibilityLabel(spokenLabel)
         .accessibilityHint(row.isRemote
             ? "Remote session — manage it on \(row.remoteMachine ?? "the machine it runs on")"
             : "Opens the session in its terminal")
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// "sidepulse, 10 workers, Claude, Working, 4m, in sidepulse": the
+    /// worker count said in words, never a bare number after the name.
+    private var spokenLabel: String {
+        let elapsed: String = PanelStore.elapsed(since: row.since, now: store.now) ?? "just started"
+        let place: String = row.isRemote
+            ? "on \(row.remoteMachine ?? "a peer")"
+            : (row.cwdTail.map { "in \($0)" } ?? "no folder on record")
+        let parts: [String?] = [row.label, row.workersText, row.style.name, row.activity.word, elapsed, place]
+        return parts.compactMap { $0 }.joined(separator: ", ")
     }
 }
 
@@ -939,12 +958,30 @@ struct AskRow: View {
         .frame(height: 30, alignment: .topLeading)
     }
 
+    /// When the hook's hold on this ask lapses: the verbs are drawn again
+    /// at that moment, not a clock tick later, so Always and the choices
+    /// leave with the hold.
+    private var holdEnd: Date? { row.ask.flatMap { AskHold.end($0, at: store.now) } }
+
+    /// The card's verbs, re-drawn once more at the hold's end.
+    private var verbRow: some View {
+        TimelineView(.explicit(holdEnd.map { [$0] } ?? [])) { context in
+            verbs(now: max(store.now, context.date))
+        }
+    }
+
     /// The card's verbs: a reply field, a held question's options, or
     /// Deny · Always Allow · Approve — each only where the daemon says
     /// it can land — else the honest way to the session's own window.
-    private var verbRow: some View {
+    /// A held ask's verbs sit beside a ring draining with its hold.
+    private func verbs(now: Date) -> some View {
         HStack(spacing: 6) {
             Spacer()
+            if let ask = row.ask, !row.isRemote, let left = AskHold.remaining(ask, at: now) {
+                AskHoldRing(fraction: left, reduced: store.reduceMotion)
+                    .help(AskHold.help(ask, at: now) ?? "")
+                    .accessibilityLabel(AskHold.help(ask, at: now) ?? "")
+            }
             if let ask = row.ask, ask.wantsTextReply, ask.canAnswer, ask.session != nil, !row.isRemote {
                 // A reply-kind ask wants words, not a verdict: a field
                 // and Send; `reply_text` rides the same answer_ask. A
@@ -963,7 +1000,7 @@ struct AskRow: View {
                     .buttonStyle(PillButtonStyle(prominent: true))
                     .disabled(replyText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
                     .help("Type this reply into \(row.terminalApp ?? "the session's terminal")")
-            } else if let ask = row.ask, ask.session != nil, !row.isRemote, AskVerbs.chooses(ask) {
+            } else if let ask = row.ask, ask.session != nil, !row.isRemote, AskVerbs.chooses(ask, at: now) {
                 // A held question: its options are the answer, sent
                 // through the agent's own hook — Deny declines it.
                 Button("Deny") { store.deny(ask) }
@@ -982,7 +1019,7 @@ struct AskRow: View {
                     .buttonStyle(PillButtonStyle(prominent: false))
                     .disabled(store.isAnswerPending(ask))
                     .help("Answer no (⌘D)")
-                if AskVerbs.alwaysAllows(ask) {
+                if AskVerbs.alwaysAllows(ask, at: now) {
                     // Its own button, never a chord: the agent will
                     // remember this rule and stop asking.
                     Button("Always Allow") { store.alwaysAllow(ask) }
@@ -993,9 +1030,7 @@ struct AskRow: View {
                 Button("Approve") { store.approve(ask) }
                     .buttonStyle(PillButtonStyle(prominent: true))
                     .disabled(store.isAnswerPending(ask))
-                    .help(ask.isHeldForDecision
-                          ? "Approve through \(row.style.name)'s own permission hook (⌘↩)"
-                          : "Bring \(row.terminalApp ?? "the terminal") forward and approve there (⌘↩)")
+                    .help(approveHelp(ask, now: now))
             } else if row.isRemote {
                 // A peer's ask: nothing local can type into it.
                 Text("on \(row.remoteMachine ?? "a peer")")
@@ -1015,6 +1050,13 @@ struct AskRow: View {
                     .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
             }
         }
+    }
+
+    /// Approve's route: the agent's own hook while it holds the ask, else
+    /// the terminal the daemon brings forward.
+    private func approveHelp(_ ask: CoreAsk, now: Date) -> String {
+        if ask.isHeld(at: now) { return "Approve through \(row.style.name)'s own permission hook (⌘↩)" }
+        return "Bring \(row.terminalApp ?? "the terminal") forward and approve there (⌘↩)"
     }
 
     private var accessibilityHint: String {
@@ -1099,7 +1141,7 @@ struct UsageSection: View {
     var body: some View {
         VStack(spacing: 0) {
             SectionLabel(text: "Usage", trailing: refreshed, detailTitle: store.isLive ? "Usage Center" : nil, onDetail: { store.openUsageCenter() })
-            if store.usage.isEmpty && store.windowlessUsage.isEmpty {
+            if store.usage.isEmpty && store.quietUsage.isEmpty {
                 Text(store.isLive ? "No usage reported yet." : "Usage comes from the monitor.")
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
@@ -1116,17 +1158,16 @@ struct UsageSection: View {
                             UsageRow(usage: usage, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
-                        // A provider that reports in with no window is a
-                        // setup state, not a quiet zero: it gets a row that
-                        // says so and opens the Usage Center on it.
-                        ForEach(store.windowlessUsage, id: \.identity) { usage in
-                            UsageSetupRow(usage: usage, store: store)
+                        // The providers with nothing to say share one
+                        // trailing row that names them.
+                        if !store.quietUsage.isEmpty {
+                            UsageQuietRow(providers: store.quietUsage, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                     }
                     .padding(.horizontal, 6)
                     .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed),
-                               value: store.usage.map(\.identity) + store.windowlessUsage.map(\.identity))
+                               value: store.usage.map(\.identity) + store.quietUsage.map(\.identity))
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.usageHeight))
@@ -1144,25 +1185,43 @@ struct UsageSection: View {
     }
 }
 
-/// A provider that reports in but carries no window — signed out, or no
-/// reader configured. One compact row (name + the daemon's state word +
-/// chevron) that opens the Usage Center on it; a silent absence used to
-/// pass for "not tracked".
-struct UsageSetupRow: View {
-    let usage: CoreProviderUsage
+/// The providers with nothing to say — every window at 0 %, no window
+/// at all, the source not found or off — as one row: a neutral tile in
+/// the tile column, so the names line up with the rows above, their
+/// names, and why ("2 at 0% · 1 not found"). A click opens the Usage
+/// Center, on the provider when there is only one.
+struct UsageQuietRow: View {
+    let providers: [CoreProviderUsage]
     @Bindable var store: PanelStore
     @ViewState private var hovering = false
 
-    private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
+    private var providerNames: [String] {
+        providers.map { ProviderStyle.style(for: $0.id, document: store.settingsDocument).name }
+    }
 
     var body: some View {
+        let names = providerNames
         HStack(spacing: 9) {
-            ProviderTile(style: style, size: 20)
-            Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-            Text(usage.state?.replacingOccurrences(of: "_", with: " ") ?? "setup needed")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
+            ZStack {
+                RoundedRectangle(cornerRadius: 20 * 0.28, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2]))
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(width: 20, height: 20)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(names.joined(separator: ", "))
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(PanelStore.quietSummary(providers))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 4)
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
@@ -1177,11 +1236,17 @@ struct UsageSetupRow: View {
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { store.openUsageCenter(provider: usage.id) }
-        .help("\(style.name) reports no usage windows — the Usage Center can set it up")
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens \(style.name) in the Usage Center")
+        .onTapGesture { store.openUsageCenter(provider: providers.count == 1 ? providers.first?.id : nil) }
+        .help(tooltip(names))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(tooltip(names))
+        .accessibilityHint("Opens the Usage Center")
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// "Gemini: at 0%", one line per provider.
+    private func tooltip(_ names: [String]) -> String {
+        zip(names, providers).map { "\($0): \(PanelStore.quietWord($1))" }.joined(separator: "\n")
     }
 }
 
@@ -1208,43 +1273,9 @@ struct UsageRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                    if isStale {
-                        // The reading is old, not current: "Stale", the
-                        // Usage Center's own word, beside the name — never
-                        // a number quietly trusted anyway.
-                        Text("Stale")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.orange)
-                            .lineLimit(1)
-                            .help("This reading is old — the last refresh did not land")
-                    } else if usage.isDerived {
-                        // `derived`/`estimated` fidelity spelled out; the
-                        // bare "~" it used to hide behind was invisible.
-                        Text("est.")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .help("Derived estimate (\(usage.fidelity ?? "derived")), not the provider's own figure")
-                    }
-                    if let incident = usage.incident, !incident.isEmpty {
-                        // The vendor's status feed says so — amber, never
-                        // the quota bar's red: an outage is not a limit.
-                        Text("incident")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.orange)
-                            .lineLimit(1)
-                            .help(incident)
-                    }
-                    if paceForecast?.heldIdle == true {
-                        // Nothing of this provider is working here: the
-                        // last slope is history, not a run-out.
-                        Text("holding")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                            .help(paceForecast.map { $0.headline(now: store.now) } ?? "")
-                    } else if let hint = PanelStore.paceHint(usage.forecast?.pace,
-                                                           exhaustsAt: usage.forecast?.exhaustsAt,
-                                                           resetsAt: primary?.resetsAt, now: store.now) {
-                        Text(hint).font(.system(size: 10)).foregroundStyle(paceColor(usage.forecast?.pace)).lineLimit(1)
+                    if let tag {
+                        UsageTagText(tag: tag)
+                            .help(tagHelp(tag))
                     }
                     Spacer(minLength: 4)
                     Text(primary?.percentText ?? "")
@@ -1293,28 +1324,34 @@ struct UsageRow: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The daemon's `state`/`fidelity` say the reading is old — what the
-    /// row's "Stale" tag shows.
-    private var isStale: Bool {
-        usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale"
+    /// The one thing the row's tag says: Stale, Used up, Runs out in X
+    /// (or a vendor incident); nothing when the provider is on track.
+    private var tag: PanelStore.UsageTag? {
+        PanelStore.usageTag(for: usage, primary: windows.primary,
+                            heldIdle: paceForecast?.heldIdle == true, now: store.now)
     }
 
-    /// "5h resets in 1h 02m · 7d resets in 3d 5h · runs out in 2h", one
-    /// line. With no reset to name, the daemon's own fix-it (`action`,
-    /// "Retry later", "Run grok login") beats the bare state word.
+    private func tagHelp(_ tag: PanelStore.UsageTag) -> String {
+        switch tag {
+        case .stale: return "This reading is old — the last refresh did not land"
+        case .usedUp: return "The \(windows.primary?.longName ?? "leading") window is used up until it resets"
+        case .runsOut: return paceForecast.map { $0.headline(now: store.now) } ?? "The forecast runs dry before the reset"
+        case .incident(let text): return text
+        }
+    }
+
+    /// "5h resets in 1h 02m · 7d resets in 3d 5h", one line: the resets
+    /// only, plus "no room for +1" when one more agent would not fit
+    /// before the reset. With no reset to name, the daemon's own fix-it
+    /// (`action`, "Retry later", "Run grok login") beats the bare state word.
     private func resetLine(primary: CoreUsageWindow?, secondary: CoreUsageWindow?) -> String {
         var parts: [String] = []
         if let primary, let text = PanelStore.countdown(to: primary.resetsAt, now: store.now) { parts.append("\(primary.shortName) \(text)") }
         if let secondary, let text = PanelStore.countdown(to: secondary.resetsAt, now: store.now) { parts.append("\(secondary.shortName) \(text)") }
-        let forecast = paceForecast
-        if let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > store.now.timeIntervalSince1970,
-           forecast?.heldIdle != true {
-            parts.append("runs out \(UsageForecast.relative(to: exhaustsAt, now: store.now))")
-        }
-        // The decision the panel is opened for: is there room for one
-        // more agent before the reset, at what each one burns now?
-        if let forecast, let room = SessionAwarePace.roomForOneMore(forecast, now: store.now.timeIntervalSince1970) {
-            parts.append(room ? "room for +1" : "no room for +1")
+        // The decision the panel is opened for, said only when the answer
+        // is no: one more agent at today's burn would not fit.
+        if let forecast = paceForecast, SessionAwarePace.roomForOneMore(forecast, now: store.now.timeIntervalSince1970) == false {
+            parts.append("no room for +1")
         }
         if parts.isEmpty {
             if let action = usage.action, !action.isEmpty { return action }
@@ -1331,14 +1368,18 @@ struct UsageRow: View {
         if pct >= 80 { return .orange }
         return .primary
     }
+}
 
-    private func paceColor(_ pace: String?) -> Color {
-        switch pace?.lowercased() {
-        case "ahead": return .orange
-        case "exhausted": return .red
-        case "behind", "under": return .secondary
-        default: return Color.secondary.opacity(0.7)
-        }
+/// A usage row's tag: red when the window is used up, amber otherwise.
+struct UsageTagText: View {
+    let tag: PanelStore.UsageTag
+
+    var body: some View {
+        Text(tag.text)
+            .font(.system(size: 10, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(tag == .usedUp ? Color.red : Color.orange)
+            .lineLimit(1)
     }
 }
 
@@ -1567,23 +1608,32 @@ struct DevicesSection: View {
                 .controlSize(.mini)
                 .disabled(!store.isLive || !hasTarget)
                 .accessibilityLabel("Brightness")
-                .accessibilityValue("\(Int((store.brightness * 100).rounded())) percent")
+                .accessibilityValue(brightnessWords)
                 Image(systemName: "sun.max").font(.system(size: 11)).foregroundStyle(.tertiary)
-                Text("\(Int((store.brightness * 100).rounded()))%")
+                Text(store.brightnessIsMixed ? "Mixed" : "\(Int((store.brightness * 100).rounded()))%")
                     .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                    .frame(width: 34, alignment: .trailing)
+                    .frame(width: 38, alignment: .trailing)
                     .contentTransition(.numericText())
             }
             .padding(.horizontal, 14)
             .frame(height: 18)
             .padding(.bottom, 10)
-            .help(store.isLive
-                  ? (store.hasHardware ? "Brightness — strip, Dot and Screen Bar"
-                                       : "Screen Bar brightness — no strip connected")
-                  : "Brightness needs the monitor")
+            .help(brightnessHelp)
         }
         .frame(height: CGFloat(PanelLayout.devicesHeight), alignment: .top)
         .clipped()
+    }
+
+    /// One brightness story: while the devices disagree the tooltip
+    /// names each, and says the slider sets them all.
+    private var brightnessHelp: String {
+        guard store.isLive else { return "Brightness needs the monitor" }
+        if store.brightnessIsMixed { return "\(store.brightnessBreakdown) — dragging sets them all" }
+        return store.hasHardware ? "Brightness — strip, Dot and Screen Bar" : "Screen Bar brightness — no strip connected"
+    }
+
+    private var brightnessWords: String {
+        store.brightnessIsMixed ? "Mixed: \(store.brightnessBreakdown)" : "\(Int((store.brightness * 100).rounded())) percent"
     }
 
     private func deviceHelp(_ device: CoreDevice) -> String {
@@ -1628,26 +1678,69 @@ struct DeviceChip: View {
 
 // MARK: - Footer
 
+/// The panel's footer: the verbs that act on the list on the left —
+/// Clear finished (with its Undo) and Quiet — and the ways out on the
+/// right, as marks with tooltips: the awake hold, History, More and
+/// Settings. Quit lives at the bottom of More; ⌘Q still works while the
+/// panel is key. When the left side runs long the whole row tightens
+/// rather than clip, so the footer fits `PanelLayout.width` with every
+/// optional piece showing.
 struct PanelFooter: View {
     @Bindable var store: PanelStore
 
     var body: some View {
-        HStack(spacing: 2) {
+        ViewThatFits(in: .horizontal) {
+            PanelFooterRow(store: store, compact: false)
+            PanelFooterRow(store: store, compact: true)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: CGFloat(PanelLayout.footerHeight))
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.undoCountdown == nil)
+    }
+}
+
+/// One way to lay the footer out: `compact` trims every button's padding
+/// and the Undo link to its word — its countdown stays in the tooltip.
+struct PanelFooterRow: View {
+    @Bindable var store: PanelStore
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: compact ? 0 : 2) {
+            PanelFooterLeading(store: store, compact: compact)
+            Spacer(minLength: 4)
+            PanelFooterTrailing(store: store, compact: compact)
+        }
+    }
+}
+
+/// Clear finished, its Undo while the offer stands, and the Quiet menu.
+struct PanelFooterLeading: View {
+    @Bindable var store: PanelStore
+    var compact = false
+
+    private var padding: CGFloat { compact ? 4 : 7 }
+
+    var body: some View {
+        HStack(spacing: compact ? 0 : 2) {
             // "Clear finished" never leaves: while an undo offer stands it
             // shrinks to a small inline link beside the button rather than
             // replacing it — a footer that swaps its verb out from under
             // the pointer is a trap.
-            FooterButton(title: "Clear finished", dimmed: store.completedCount == 0, active: store.isOpen) { store.clearCompleted() }
+            FooterButton(title: "Clear finished", dimmed: store.completedCount == 0, active: store.isOpen,
+                         horizontalPadding: padding) { store.clearCompleted() }
                 .help(store.completedCount == 0
                       ? "Nothing finished to acknowledge"
                       : "Acknowledge the \(store.completedCount) finished, ended and stale sessions; Undo stays here for 5 minutes")
             if let countdown = store.undoCountdown {
-                Button("Undo (\(countdown))") { store.undoClear() }
+                Button(compact ? "Undo" : "Undo \(countdown)") { store.undoClear() }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
                     .foregroundStyle(Color.accentColor)
                     .lineLimit(1)
-                    .padding(.leading, 4)
+                    .fixedSize()
+                    .padding(.horizontal, 3)
                     .help("Put the sessions you just cleared back (\(countdown) left)")
                     .transition(.opacity)
             }
@@ -1684,99 +1777,127 @@ struct PanelFooter: View {
                     .foregroundStyle(store.quiet != nil ? SessionActivity.waiting.tint : .primary)
             }
             .menuStyle(.button)
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
             .menuIndicator(.hidden)
             .fixedSize()
-            .help(store.quietLabel.map { "Quiet: \($0) · from \((store.quiet?.source).map { PanelStore.quietSourceWord($0) } ?? "this menu")" }
-                  ?? "Quiet the lights and sounds for a while")
+            .help(quietHelp)
             .accessibilityLabel(store.quietLabel.map { "Quiet: \($0)" } ?? "Quiet")
-            Spacer()
+        }
+    }
+
+    private var quietHelp: String {
+        guard let label = store.quietLabel else { return "Quiet the lights and sounds for a while" }
+        let source = (store.quiet?.source).map { PanelStore.quietSourceWord($0) } ?? "this menu"
+        return "Quiet: \(label) · from \(source)"
+    }
+}
+
+/// The footer's marks: the awake hold, History, More and Settings, each
+/// an icon whose words are its tooltip.
+struct PanelFooterTrailing: View {
+    @Bindable var store: PanelStore
+    var compact = false
+
+    private var padding: CGFloat { compact ? 4 : 7 }
+
+    var body: some View {
+        HStack(spacing: compact ? 0 : 2) {
             if let hold = store.awakeHold {
                 // The hold on sleep is a mark, not a sentence: the words
                 // live in the tooltip, and a click opens the Power rows.
                 Button { store.openSettings(page: .notifications) } label: {
                     Image(systemName: hold.symbol).font(.system(size: 11, weight: .medium))
                 }
-                .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen))
+                .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
                 .help(hold.text)
                 .accessibilityLabel(hold.text)
             }
-            // While a quiet is in effect its label needs the room the
-            // shortcut hints take; the shortcuts themselves still work
-            // and the .help texts keep naming them.
-            FooterButton(title: "History", dimmed: !store.isLive,
-                         shortcut: store.quiet == nil ? "⌘Y" : nil, active: store.isOpen) { store.openHistory() }
-                .help("Activity history (⌘Y)")
+            Button { store.openHistory() } label: {
+                Image(systemName: "clock.arrow.circlepath").font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
+            .help("History (⌘Y)")
+            .accessibilityLabel("History")
             Menu {
-                Button { store.openControlCenter() } label: { Text("Control Center…") }
-                    .keyboardShortcut("k", modifiers: .command)
-                Button { store.openEffects() } label: { Text("Effect Studio…") }
-                Button { store.openHistory() } label: { Text("History…") }
-                    .keyboardShortcut("y", modifiers: .command)
-                Button { store.openOverview() } label: { Text("Overview…") }
-                    .keyboardShortcut("o", modifiers: .command)
-                Button { store.openUsageCenter() } label: { Text("Usage Center…") }
-                    .keyboardShortcut("u", modifiers: .command)
-                Divider()
-                Button { store.checkForUpdates() } label: { Text("Check for Updates…") }
-                Button { store.openSettings() } label: { Text("Settings…") }
-                    .keyboardShortcut(",", modifiers: .command)
+                PanelMoreMenuItems(store: store)
             } label: {
                 Image(systemName: "ellipsis.circle").font(.system(size: 12, weight: .medium))
             }
             .menuStyle(.button)
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More: Control Center (⌘K), Effects, History (⌘Y), Usage Center (⌘U), Check for Updates, Settings (⌘,)")
+            .help("More: the palette (⇧⌘K), History (⌘Y), Events (⌘R), Overview (⌘O), Usage Center (⌘U), Settings (⌘,), Quit (⌘Q)")
             .accessibilityLabel("More")
             Button { store.openSettings() } label: {
                 Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen))
+            .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
             .help("Settings… (⌘,)")
             .accessibilityLabel("Settings")
-            FooterButton(title: "Quit", dimmed: false,
-                         shortcut: store.quiet == nil ? "⌘Q" : nil, active: store.isOpen) { store.quit() }
         }
-        .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.footerHeight))
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.undoCountdown == nil)
+        .fixedSize()
+    }
+}
+
+/// The footer's More menu: the catalog the status item's right-click
+/// menu shares (`AppMenuCatalog`), section by section.
+struct PanelMoreMenuItems: View {
+    @Bindable var store: PanelStore
+
+    var body: some View {
+        let sections = AppMenuCatalog.sections(creatorMicro: store.hasCreatorMicro)
+        ForEach(Array(sections.enumerated()), id: \.offset) { index, verbs in
+            if index > 0 { Divider() }
+            ForEach(verbs) { verb in
+                PanelMoreMenuItem(verb: verb, store: store)
+            }
+        }
+    }
+}
+
+struct PanelMoreMenuItem: View {
+    let verb: AppMenuVerb
+    @Bindable var store: PanelStore
+
+    var body: some View {
+        if let shortcut = verb.shortcut {
+            Button(verb.title) { store.perform(verb) }
+                .keyboardShortcut(shortcut)
+        } else {
+            Button(verb.title) { store.perform(verb) }
+        }
     }
 }
 
 struct FooterButton: View {
     let title: String
     let dimmed: Bool
-    var shortcut: String? = nil
     var active: Bool = true
+    var horizontalPadding: CGFloat = 7
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Text(title)
-                if let shortcut {
-                    Text(shortcut).font(.system(size: 10)).foregroundStyle(.tertiary)
-                }
-            }
-            .lineLimit(1)
-            .fixedSize()
+            Text(title)
+                .lineLimit(1)
+                .fixedSize()
         }
-        .buttonStyle(FooterButtonStyle(dimmed: dimmed, active: active))
+        .buttonStyle(FooterButtonStyle(dimmed: dimmed, active: active, horizontalPadding: horizontalPadding))
     }
 }
 
 struct FooterButtonStyle: ButtonStyle {
     let dimmed: Bool
     var active: Bool = true
+    var horizontalPadding: CGFloat = 7
     @ViewState private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12))
             .foregroundStyle(dimmed ? Color.secondary.opacity(0.7) : Color.primary.opacity(0.85))
-            .padding(.horizontal, 7)
+            .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -1798,26 +1919,36 @@ struct ToastView: View {
     let reduced: Bool
     var armed: Bool = true
 
+    /// One line's height of rounding: a capsule on one line, a soft
+    /// card when a toast with a button wraps to two.
+    static let cornerRadius: CGFloat = 12
+
     var body: some View {
         ZStack {
             if let text {
                 HStack(spacing: 8) {
+                    // A toast with a button says why the button is there;
+                    // it wraps to a second line rather than cut the why.
                     Text(text)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        .lineLimit(action == nil ? 1 : 2)
+                        .fixedSize(horizontal: false, vertical: true)
                     if let action {
                         Button(action.title) { action.run() }
                             .buttonStyle(.plain)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Color.accentColor)
                             .lineLimit(1)
+                            .fixedSize()
                     }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(.regularMaterial))
-                .overlay(Capsule().strokeBorder(.primary.opacity(0.10), lineWidth: 0.5))
+                .background(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous).fill(.regularMaterial))
+                .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                    .strokeBorder(.primary.opacity(0.10), lineWidth: 0.5))
+                .padding(.horizontal, 14)
                 .padding(.bottom, 40)
                 .transition(reduced ? .opacity : .opacity.combined(with: .offset(y: 6)))
                 .id(text)

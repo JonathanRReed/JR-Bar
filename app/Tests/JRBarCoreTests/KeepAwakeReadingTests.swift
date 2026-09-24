@@ -105,4 +105,79 @@ struct KeepAwakeReadingTests {
         #expect(timed.showsCountdown)
         #expect(!KeepAwakeReading(state: .lease(.until(end)), suspended: "thermal").showsCountdown)
     }
+
+    // MARK: The power facts
+
+    private func pinned(_ reading: KeepAwakeReading) -> KeepAwakeReading {
+        var reading = reading
+        reading.locale = Locale(identifier: "en_GB")
+        reading.timeZone = TimeZone(identifier: "UTC")!
+        return reading
+    }
+
+    private func power(_ json: String) throws -> CorePower {
+        try JSONDecoder().decode(CorePower.self, from: Data(json.utf8))
+    }
+
+    @Test("the agents' grace names the time it lets go, in the Mac's clock")
+    func grace() throws {
+        let end = now.addingTimeInterval(4 * 60)
+        let reading = pinned(KeepAwakeReading(hold: try hold(
+            #"{"state":"agents","agents":0,"grace_until":\#(end.timeIntervalSince1970)}"#)))
+        #expect(reading.graceUntil == end)
+        #expect(reading.footerLine(now: now)?.full == "Awake · lets go at 08:04")
+        #expect(reading.footerLine(now: now)?.short == "08:04")
+        #expect(reading.chipHelp(now: now).hasPrefix("Held awake until 08:04"))
+        #expect(reading.footerLine(now: end.addingTimeInterval(1))?.full == "Awake · a few minutes more",
+                "past its end the grace waits for the daemon's word")
+        var american = reading
+        american.locale = Locale(identifier: "en_US")
+        #expect(american.footerLine(now: now)?.full == "Awake · lets go at 8:04\u{202F}AM"
+                || american.footerLine(now: now)?.full == "Awake · lets go at 8:04 AM")
+    }
+
+    @Test("a battery that will not outlast the run, and a charger that cannot carry it, take the line")
+    func runway() throws {
+        let short = pinned(KeepAwakeReading(power: try power(
+            #"{"hold":{"state":"agents","agents":3},"battery":{"percent":18,"runway":{"agents":3,"minutes_left":25,"short":true}}}"#)))
+        #expect(short.footerLine(now: now)?.full == "Awake · battery ~25 min left")
+        #expect(short.facts() == ["On battery with 3 agents working: about 25 min left"])
+        #expect(short.chipHelp(now: now).hasSuffix("\nOn battery with 3 agents working: about 25 min left"))
+        let charger = pinned(KeepAwakeReading(power: try power(
+            #"{"hold":{"state":"agents","agents":2},"battery":{"runway":{"agents":2,"adapter_short":true,"full_speed_watts":96}}}"#)))
+        #expect(charger.footerLine(now: now)?.short == "Charger short")
+        #expect(charger.facts() == ["The charger can't keep up — the battery still falls under the agents' load; this Mac charges at full speed on 96 W"])
+        let fine = KeepAwakeReading(power: try power(#"{"hold":{"state":"agents","agents":2},"battery":{"runway":{"agents":2,"short":false}}}"#))
+        #expect(fine.facts().isEmpty)
+        #expect(fine.footerLine(now: now)?.full == "Awake · 2 agents working")
+    }
+
+    @Test("a charger falling behind never says Awake while nothing holds the Mac")
+    func runwayNeedsAHold() throws {
+        let released = pinned(KeepAwakeReading(power: try power(
+            #"{"hold":{"state":"off"},"battery":{"runway":{"agents":2,"adapter_short":true}}}"#)))
+        #expect(released.footerLine(now: now) == nil)
+        #expect(released.facts().contains { $0.hasPrefix("The charger can't keep up") }, "the fact stays in the tooltip")
+        let lid = pinned(KeepAwakeReading(power: try power(
+            #"{"hold":{"state":"off"},"closed_lid":{"holding":true},"battery":{"runway":{"agents":2,"adapter_short":true}}}"#)))
+        #expect(lid.footerLine(now: now)?.short == "Charger short", "the closed-lid hold holds the Mac")
+    }
+
+    @Test("the last release says when and why; a closed-lid stretch reads as one story")
+    func lastRelease() throws {
+        let at = now.timeIntervalSince1970 - 10 * 60
+        let expired = pinned(KeepAwakeReading(power: try power(
+            #"{"hold":{"state":"off"},"last_release":{"kind":"lease_ended","reason":"expired","at":\#(at)}}"#)))
+        #expect(expired.facts() == ["Last let go at 07:50 — time up"])
+        #expect(expired.footerLine(now: now)?.full == "Let go at 07:50 · time up", "recent news while nothing holds")
+        #expect(expired.footerLine(now: now.addingTimeInterval(3600)) == nil, "old news stays in the tooltip")
+        #expect(expired.chipHelp(now: now).hasSuffix("\nLast let go at 07:50 — time up"))
+        let slept = pinned(KeepAwakeReading(power: try power(
+            #"{"last_release":{"kind":"slept","reason":"agents_idle","at":\#(at),"duration":9600,"finished":3,"slept_at":\#(at)}}"#)))
+        #expect(slept.facts() == ["Ran 2 h 40 min with the lid closed, 3 finished, slept at 07:50"])
+        #expect(slept.footerLine(now: now)?.full == "Slept at 07:50")
+        let warm = pinned(KeepAwakeReading(power: try power(
+            #"{"last_release":{"kind":"suspended","reason":"thermal","at":\#(at)}}"#)))
+        #expect(warm.facts() == ["Last let go at 07:50 — too warm"])
+    }
 }
