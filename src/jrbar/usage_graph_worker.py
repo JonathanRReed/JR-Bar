@@ -465,6 +465,8 @@ def _build_payload(
 
     labels = {descriptor.provider_id: descriptor.label for descriptor in provider_descriptors()}
     labels["t3code"] = "T3 Code"
+    labels["pi"] = "Pi"
+    labels["openclaw"] = "OpenClaw"
     if mode == "sessions":
         parts = [
             f"{labels.get(series['provider_id'], series['provider_id'])} "
@@ -662,6 +664,22 @@ def _usage_doc_cache_write(entries: dict) -> None:
         pass
 
 
+#: Agents with a local token history but no provider card (and so no
+#: place in the stored provider set): charted when their files exist.
+AGENT_HISTORY_PROVIDERS = ("pi", "openclaw")
+
+
+def _agent_histories_found() -> tuple[str, ...]:
+    from .local_token_history import roots as local_history_roots
+
+    found = local_history_roots()
+    return tuple(
+        provider_id
+        for provider_id in AGENT_HISTORY_PROVIDERS
+        if found.get(provider_id) is not None and found[provider_id].is_dir()
+    )
+
+
 def usage_graph_document(
     settings,
     *,
@@ -714,6 +732,19 @@ def usage_graph_document(
     )
     if not resolved_providers:
         raise ValueError("providers must be a nonempty tuple")
+    if provider_ids is None and resolved_metric != "percent":
+        # Pi and OpenClaw have no provider card, so the registry the
+        # picker lists never names them. When their session folders are
+        # on this Mac the default chart includes them; the reply then
+        # names them, the picker offers them, and a click takes them out.
+        resolved_providers = (
+            *resolved_providers,
+            *(
+                provider_id
+                for provider_id in _agent_histories_found()
+                if provider_id not in resolved_providers
+            ),
+        )
     resolved_snapshot = _UsageGraphSettingsSnapshot(
         usage_graph_days=resolved_days,
         usage_display_mode=resolved_metric,

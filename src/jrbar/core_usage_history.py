@@ -20,12 +20,17 @@ from pathlib import Path
 from typing import Any, Final
 
 from . import usage_stats
+from .local_token_history import LOCAL_HISTORY_PROVIDERS
 from .state_paths import default_state_dir
 
 RANGE_DAYS: Final = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 HOURS_SHOWN: Final = 7 * 24
 #: Providers whose transcripts ``scan_usage`` reads.
 SCANNED_PROVIDERS: Final = ("claude", "codex")
+#: Every provider with a local token history: Claude and Codex, plus Pi,
+#: Grok, Gemini CLI and OpenClaw, whose own session files
+#: ``local_token_history`` reads.
+HISTORY_PROVIDERS: Final = (*SCANNED_PROVIDERS, *LOCAL_HISTORY_PROVIDERS)
 #: Codex transcripts record the model as the literal ``codex``; the price
 #: is the configured default model's (``~/.codex/config.toml``).
 CODEX_RECORD_MODEL: Final = "codex"
@@ -283,7 +288,7 @@ def usage_history_document(
 
 def scan_provider_records(provider: str, *, days: int, home: Path | None = None) -> list[tuple]:
     """The local transcript records for one provider over the last ``days``."""
-    from .local_token_history import LOCAL_HISTORY_PROVIDERS, scan_local_records
+    from .local_token_history import scan_local_records
 
     start = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
     if provider in LOCAL_HISTORY_PROVIDERS:
@@ -383,7 +388,7 @@ class UsageHistoryService:
         days = range_days(range_name)
         if days is None:
             raise ValueError("range must be one of " + ", ".join(RANGE_DAYS))
-        if provider not in SCANNED_PROVIDERS:
+        if provider not in HISTORY_PROVIDERS:
             return self._finish(
                 usage_history_document([], provider=provider, range_name=range_name, codex_default_model=self._codex_default_model()),
                 account, state, pending=False, stale=False, scanned_at=self._clock(),
@@ -415,7 +420,7 @@ class UsageHistoryService:
         now = self._clock()
         with self._state_lock:
             for provider in providers:
-                if provider in SCANNED_PROVIDERS:
+                if provider in HISTORY_PROVIDERS:
                     key = (provider, days)
                     self._start_locked(key, self._entries.setdefault(key, _Entry()), now)
 
@@ -502,6 +507,7 @@ class UsageHistoryService:
 __all__ = [
     "CODEX_RECORD_MODEL",
     "FRESH_SECONDS",
+    "HISTORY_PROVIDERS",
     "HOURS_SHOWN",
     "RANGE_DAYS",
     "READY_EVENT",

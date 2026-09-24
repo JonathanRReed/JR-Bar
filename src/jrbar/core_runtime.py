@@ -2173,7 +2173,7 @@ def _cmd_usage_history(self, args):
     if (
         account is None
         and source_state is None
-        and provider not in core_usage_history.SCANNED_PROVIDERS
+        and provider not in core_usage_history.HISTORY_PROVIDERS
         and provider not in core_usage_history.REFERENCE_MODEL
     ):
         raise CommandError("not_found", f"no usage source for {provider}")

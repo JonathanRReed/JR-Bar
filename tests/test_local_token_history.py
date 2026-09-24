@@ -12,6 +12,7 @@ import json
 import shutil
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -137,3 +138,54 @@ def test_the_usage_center_history_reads_them(monkeypatch) -> None:
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(FIXTURES / "pi"))
     records = history.scan_provider_records("pi", days=3650)
     assert len(records) == 2
+
+
+@pytest.mark.parametrize("provider", ["pi", "grok", "gemini", "openclaw"])
+def test_the_usage_center_asks_for_their_history_and_gets_it(provider: str) -> None:
+    """The history service used to answer an empty document for anything
+    but Claude and Codex without ever scanning, so none of this reached a
+    card."""
+    scanned: list[tuple[str, int]] = []
+
+    def scan(name: str, days: int) -> list[tuple]:
+        scanned.append((name, days))
+        return [(name, "s1", "claude-sonnet-5", 1_789_900_000.0, 100, 0, 0, 50, f"{name}:1")]
+
+    service = history.UsageHistoryService(scan)
+    # A bounded wait on the scan's own completion event, not the clock.
+    document = service.document(provider, "30d", budget=30.0)
+
+    assert scanned == [(provider, 30)]
+    assert document["records"] == 1 and document["pending"] is False
+    service.warm((provider,))
+    assert provider in history.HISTORY_PROVIDERS
+
+
+def test_the_default_graph_charts_pi_and_openclaw_when_their_files_exist(tmp_path: Path, monkeypatch) -> None:
+    from jrbar import usage_graph_worker
+
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(FIXTURES / "pi"))
+    monkeypatch.setenv("OPENCLAW_DIR", str(tmp_path / "no-openclaw-here"))
+    assert usage_graph_worker._agent_histories_found() == ("pi",)
+
+    seen: dict[str, tuple[str, ...]] = {}
+
+    def build(snapshot, **_kwargs):
+        seen["providers"] = tuple(snapshot.usage_graph_providers)
+        return {}, None
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
+    monkeypatch.setattr(usage_graph_worker, "_corpus_fingerprint", lambda _snapshot, **_kwargs: {})
+    monkeypatch.setattr(usage_graph_worker, "_usage_doc_cache_read", lambda: {})
+    monkeypatch.setattr(usage_graph_worker, "_usage_doc_cache_store", lambda *_args: None)
+    monkeypatch.setattr(
+        usage_graph_worker, "_project_graph_document", lambda _model, _summary, providers: {"providers": providers}
+    )
+    settings = SimpleNamespace(usage_graph_days=30, usage_display_mode="tokens", usage_graph_providers=("claude",))
+
+    assert usage_graph_worker.usage_graph_document(settings)["providers"] == ("claude", "pi")
+    assert seen["providers"] == ("claude", "pi")
+    # An explicit pick from the picker is taken as it is, and the percent
+    # chart has nothing to say about them.
+    assert usage_graph_worker.usage_graph_document(settings, provider_ids=["claude"])["providers"] == ("claude",)
+    assert usage_graph_worker.usage_graph_document(settings, metric="percent")["providers"] == ("claude",)
