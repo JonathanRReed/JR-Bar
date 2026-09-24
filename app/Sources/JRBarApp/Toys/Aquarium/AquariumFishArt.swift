@@ -225,9 +225,11 @@ enum CartoonFish {
         }
         p.addLine(to: left[left.count - 1])
         // A rounded cap at the tail's tip.
-        p.addQuadCurve(to: right[right.count - 1],
-                       control: CGPoint(x: spine[spine.count - 1].x * 2 - (left[left.count - 1].x + right[right.count - 1].x) / 2,
-                                        y: spine[spine.count - 1].y * 2 - (left[left.count - 1].y + right[right.count - 1].y) / 2))
+        let tip = spine[spine.count - 1]
+        let leftEnd = left[left.count - 1], rightEnd = right[right.count - 1]
+        let capX: CGFloat = tip.x * 2 - (leftEnd.x + rightEnd.x) / 2
+        let capY: CGFloat = tip.y * 2 - (leftEnd.y + rightEnd.y) / 2
+        p.addQuadCurve(to: rightEnd, control: CGPoint(x: capX, y: capY))
         for i in stride(from: right.count - 2, through: 0, by: -1) {
             let mid = CGPoint(x: (right[i + 1].x + right[i].x) / 2, y: (right[i + 1].y + right[i].y) / 2)
             p.addQuadCurve(to: mid, control: right[i + 1])
