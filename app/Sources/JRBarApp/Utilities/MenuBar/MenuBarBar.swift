@@ -573,6 +573,8 @@ struct MenuBarBarView: View {
     var onUpdateWatch: @MainActor (MenuBarItem, Bool) -> Void = { _, _ in }
     /// The tile under the pointer, for its plate.
     @ViewState private var hoveredID: String?
+    /// Reduce Motion keeps a pressed tile still; its plate still darkens.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var items: [MenuBarItem] { model.visibleItems }
 
@@ -608,7 +610,8 @@ struct MenuBarBarView: View {
                                         tileLabel(for: item, width: width)
                                     }
                                     .buttonStyle(MenuBarTileStyle(selected: item.id == selectedID,
-                                                                  hovered: item.id == hoveredID))
+                                                                  hovered: item.id == hoveredID,
+                                                                  dips: !reduceMotion))
                                     .onHover { inside in
                                         if inside {
                                             hoveredID = item.id
@@ -751,6 +754,8 @@ struct MenuBarBarView: View {
 private struct MenuBarTileStyle: ButtonStyle {
     var selected: Bool
     var hovered: Bool
+    /// A press dips the tile a touch — off under Reduce Motion.
+    var dips = true
 
     func makeBody(configuration: Configuration) -> some View {
         let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -763,7 +768,7 @@ private struct MenuBarTileStyle: ButtonStyle {
                     shape.strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
                 }
             }
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .scaleEffect(configuration.isPressed && dips ? 0.94 : 1)
             .animation(.easeOut(duration: 0.12), value: hovered)
             .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
     }
