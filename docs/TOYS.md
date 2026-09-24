@@ -70,15 +70,23 @@ public struct BuddyCare { lastInteractionAt: Double; lastTreatAt: Double; lastCr
                           /* epoch seconds; 0 = never */
                           petCount: Int; treatsGiven: Int; crumbsEaten: Int }
 public struct ConfettiSettings { enabled: Bool = false; landing: ConfettiLanding = .rest;
-                                 density: Double = 1.0; duration: Double = 1.0;
+                                 density: Double = 1.0 /* Amount, 0.5…2 */;
+                                 duration: Double = 1.0 /* Hang time, 0.7…1.5 */;
                                  palette: ConfettiPalette = .provider; shapes: ConfettiShapes = .mixed;
-                                 triggers: ConfettiTriggers; firedKeys: [String] /* dedup ring, 64 deep */ }
+                                 triggers: ConfettiTriggers; firedKeys: [String] /* dedup ring, 64 deep */;
+                                 whenHeld: ConfettiHeldBurst = .later; sound: Bool = false;
+                                 origin: ConfettiOrigin = .notch; intensity: ConfettiIntensity = .standard;
+                                 seasonal: Bool = false; screens: ConfettiScreens = .all;
+                                 momentStyles: Bool = false }
 public struct ConfettiTriggers { sessionCompleted: Bool = false; weeklyReset: Bool = true;
                                  perProviderReset: Set<String> /* provider ids, lowercase */;
                                  codexBankedReset: Bool = false; allClear: Bool = false }
-public enum ConfettiLanding: String { case rest, fall, fade }   // rest on the band / rain to the bottom / dissolve mid-air
-public enum ConfettiPalette: String { case provider, toys, rainbow }
-public enum ConfettiShapes: String { case mixed, streamers, flecks }
+public enum ConfettiLanding: String { case rest, fall, fade }   // lie on window tops & the Dock / shower off the bottom / dissolve mid-air
+public enum ConfettiPalette: String { case provider, toys, party, gold, pastel, mono, everyone }  // "rainbow" decodes as party
+public enum ConfettiShapes: String { case mixed, streamers, flecks, glyphs, stars }
+public enum ConfettiOrigin: String { case notch, icon, corners, rain }
+public enum ConfettiIntensity: String { case subtle, standard, big }
+public enum ConfettiScreens: String { case all, main }
 public struct NotchSettings { enabled: Bool = false; provider: NotchProvider = .jrbar;
                               islandEnabled: Bool = true; showUsage: Bool = true;
                               expandOnHover: Bool = true; capsuleNotifications: Bool = true;
@@ -518,57 +526,109 @@ carry: no dangle, no landing squash. Off by default.
 
 ## Confetti (native)
 
-When a provider's **weekly** quota resets, a confetti cannon pops at the
-top centre of every attached screen — one overlay window per display,
-each on its own timer — at the notch/Screen Bar's spot: a flash &
-starburst at the muzzle with three
-hot spark streaks inside the cone's first 0.15 s, then ~140 pieces in
-that provider's colours burst up & out in a cone (a few fired sideways,
-like spray), arc under gravity & quadratic air drag, and tumble down —
-cards twinkle (a scaleX oscillation standing in for a spin about the
-vertical axis), streamers corkscrew, ~8% are tiny provider glyph flecks
-(rounded diamonds & pac-dots, 3–4pt, spinning on their axis in the
-provider colour or a pale step of it). A couple of streamers drag a
-faint colour streak for their first 0.3 s. Every piece reads as paper:
-a light face and a darker back that swap as the twirl flips it, a thin
-lighter rim, a whisper of a shadow while it passes over the top strip,
-and a slight stretch along its travel while it's still fast.
+When one of the person's triggers lands — by default a provider's
+**weekly** quota reset — the notch pops: light spills out of its lower
+lip, a puff flares at each lower corner, and a burst of confetti in that
+provider's colours sprays out from under it, wide and fast, then
+flutters down. Nothing is fired up into the notch, so the burst is seen
+from its first frame (on a notched Mac the notch is a hole in the
+screen). One overlay per free screen, the whole screen, each on its own
+timer.
 
-Where the pieces end up is the **Landing** setting: Rest (the default —
-streamers that reach the bottom of the band get one small squash-bounce
-and rest there as litter while cards & dots ease out near the edge),
-Fall (the overlay spans the whole screen and pieces rain to the bottom
-edge, fading over the last ~8% of the drop), or Fade (pieces dissolve
-between 40% and 60% of the screen's height with a little shrink, and
-never land). The window's frame follows the mode, and its life is
-derived — the slowest piece's travel in that mode on that screen,
-stretched by the Duration setting, plus a 0.4 s tail — so nothing is
-ever vanished mid-air. The card also offers Palette (Provider / Toys
-tint / Rainbow, a six-colour spectrum in the app's saturation range),
-Shapes (Mixed / Streamers / Flecks), Density (0.5–2× the piece count)
-and Duration (0.7–1.5× the timeline). Motion is closed-form
-(`ConfettiPhysics`, including `fallTime` — the inverse fall — and
-`floorBounce`); piece constants are fixed at fire time.
+**Motion** is closed form (`ConfettiPhysics`): a *spray* under linear
+drag (`v0·τ·(1 − e^(−t/τ))`, so the spread grows with the launch speed
+and scales with the screen's width) and a *settle* whose fall ramps up to
+a flutter speed (`vt·(t − tf·(1 − e^(−t/tf)))`), with a falling-leaf
+sway, a dip at each end of the swing and a lean into the drift. The lip
+fires a mix of sub-bursts (`ConfettiEmitter`): a flat wide volley from
+the lip's corners, a mid volley out and down, a drop that leads the
+shower, and a slow puff that lingers near the top — so no hollow cone and
+no single sheet. Flutter speeds overlap across shapes, so a falling burst
+never sorts into layers. The whole burst is worked out when it fires
+(`ConfettiBurst`): each piece's end is known, a piece too slow to finish
+inside the landing's deadline is nudged just fast enough, and the window
+closes the moment the last piece is gone.
 
-What earns a burst is the **Triggers** section, judged by
-`ConfettiTriggerPolicy` in JRBarCore: a session completing
-(`completed` events), any provider's weekly lane resetting
-(`quota_reset` on a `weekly` / `*-weekly` lane — on by default),
-picked providers' EVERY lane resetting (the five-hour window
-included), Codex's banked-credit balance growing (a state edge the
-daemon's `credits_remaining` exposes), or the last open ask clearing.
-Event triggers dedup on `event:<id>` against the persisted `firedKeys`
-ring (64 deep — a restart can't re-celebrate); state edges are folded
-by `ConfettiEdgeTracker`, and the first document only seeds the
-baseline, so nothing fires on facts older than the app. Events arrive
-through `EventCoordinator.handle`, state documents through its
-`trackState` observation loop; the burst's colour still comes from
-`ProviderStyle` with the event's session fallback. A "Test burst"
-button fires one on demand with the current settings. Honors Reduce
-Motion (a gentle radial bloom at the notch instead, in every mode).
-Off by default. `ConfettiSettings { enabled; landing; density;
-duration; palette; shapes; triggers; firedKeys }` — every key decodes
-tolerantly to the shipped look.
+**Look.** Each piece is a paper plane tumbling in 3D: a random axis
+through Rodrigues' rotation, drawn through the rotation's top-left 2×2
+(the exact orthographic projection, whose determinant is R22), lit by a
+Lambert shade from the upper left (0.7–1, never muddy) with a specular
+glint, its back a deeper, richer shade of its front. About 30% sit on a
+far layer drawn first: smaller, slower, a little hazy, no blur. Rects
+(9–15 pt), dots, diamonds, stars, twisted ribbon streamers whose ripple
+runs along them, and the provider's real glyph (Claude's asterisk,
+Gemini's sparkle, Codex's `</>`, set in heavy type so it reads). The
+colours are resolved once per burst in eight steps of light, so a frame
+never mixes one; 60 fps at most.
+
+**The card** (`ConfettiCard.swift`) has three runs. **Look**: a live
+preview (the top middle of the screen at half size, with the notch over
+it) that plays one burst for about two seconds after any pick or on
+hover, then holds still; Try it (the focused session's colour, the same
+one `jrbar://confetti` picks); **Origin** — Notch (the lip; the menu
+bar's bottom centre on a screen without one), Icon (under JR-Bar's
+menu-bar icon, only on its screen), Corners (two cannons crossing over
+the middle, Raycast's look) or Rain (a curtain from the top edge, the
+calmest); **Size** — Subtle, Standard or Big (about 90 / 180 / 300
+pieces on a 1512 × 982 screen, scaled by each screen's area, 0.8–1.8×;
+Big throws a second volley and a softer second pop); **Palette** —
+Provider (base, a lighter step, a gold- or cyan-leaning accent, white,
+gold, pale), Toys tint, Everyone working (each working provider's colour
+and glyph), Party, Gold, Pastel, Mono (the tint alone); an older file's
+Rainbow reads as Party; **Shapes** — Mixed, Streamers, Flecks, Glyphs,
+Stars; **Landing** (below); **Seasonal** (off: on New Year, Valentine's,
+Lunar New Year, Easter, Halloween and Christmas, that day's colours and
+fleck, read off the Mac's calendar); and under **Adjust**, Amount
+(density, 0.5–2× on top of the Size) and Hang time (0.7–1.5×: how slowly
+pieces fall and how long they rest — never the pop or the spray).
+**When**: the triggers, and **Moment styles** (off: a milestone bursts
+gold, big and from the corners; "All caught up" is a gentle rain).
+**Manners**: the quiet switch and the held burst, Sound, and **Screens**
+(every free screen, or the main one only).
+
+**Landing.** Rest (the default) lands every piece on something real:
+the top edge of the frontmost window under it that no window in front
+hides (read once from the window list — bounds only, no permission —
+through `OnScreenWindows`, shared with the buddy), else the Dock's top,
+else the bottom edge. A piece squash-bounces, eases flat onto its ledge,
+lies about 1.2 s and fades; the window list is read again once a second,
+and a piece whose window moved or closed fades early. Fall is a quick
+shower off the bottom, fading over the last 12% of the screen and done
+in about 4.3 s (it used to drizzle for 9.6 s). Fade dissolves pieces
+between 35% and 55% of the screen's height, with a little shrink. A
+Standard burst is gone within 5 s in every landing on screens 900–1329
+pt tall.
+
+**Triggers** are judged by `ConfettiTriggerPolicy` in JRBarCore: a
+session completing (`completed` events), any provider's weekly lane
+resetting (`quota_reset` on a `weekly` / `*-weekly` lane — on by
+default), picked providers' EVERY lane resetting (the five-hour window
+included), Codex's banked-credit balance growing, the last open ask
+clearing, and Milestones (an Aquarium achievement or tank level, or the
+daemon's odometer). Event triggers dedup on `event:<cursor or id>`
+against the persisted `firedKeys` ring (64 deep); state edges are folded
+by `ConfettiEdgeTracker`, whose first document only seeds the baseline.
+A burst no provider owns — All caught up, a completed event without one,
+an unknown provider — wears the Toys tint (`burstTint`), never the
+unknown-provider grey; a colour set in `colors.agent_colors` wins. From
+outside, `jrbar confetti` (a daemon `confetti` event: the toy must be
+on, one per 3 s) and `jrbar://confetti?provider=|session=` (an explicit
+ask, like Try it and the palette's Fire Confetti) both fire a burst.
+
+**Manners.** While JR-Bar is quiet, a Focus is on or a call has the mic
+or camera, a burst is held and replayed smaller once the room clears (a
+half-density replay, floored at a quarter, so it is smaller even at the
+lowest Amount) or let go; anything held over 30 minutes is let go, and a
+screen a fullscreen app owns is skipped. The overlay is invisible to
+screen capture and sharing. Reduce Motion gets one soft glow at the lip
+(or the icon) and nothing moving. The optional pop and rustle is
+synthesized once, cached as a WAV in the caches folder and played
+through `SoundPlayer.playSynthesized`: Settings › Sounds' volume, the
+alert device when that's picked, held while another app has the
+microphone, a touch higher or lower each burst (±6%), and panned toward
+the icon when it fires from there. The card's cost line quotes the last
+burst's measured frame time (an `os_signpost` interval wraps each draw).
+Off by default; every key decodes tolerantly to its default.
 
 Blurb: "A burst in the provider's colours when the moment earns it."
 

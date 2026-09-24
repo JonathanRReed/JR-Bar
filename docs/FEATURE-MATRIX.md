@@ -77,7 +77,7 @@ at the end so nobody claims them.
 | Fold: the desktop folds into the screen as the lid closes — the portal room (lid-angle sensor, two ScreenCaptureKit streams, Metal overlay); Bendy or Lid Plane can render it instead | Ships | Off; needs Screen Recording |
 | Aquarium: every live session is a fish in a resizable tank window; idle game (pearls, shop, level, streaks, achievements, residents, fry schools) | Ships | Off |
 | Notch Buddy: a creature by the notch that lives by agent state; ten characters, draggable off the notch, Tamagotchi-lite care log | Ships | Off |
-| Confetti: a burst in the provider's colours at the notch — weekly reset by default; session-completion, per-provider, banked-credits and all-clear triggers opt in | Ships | Off |
+| Confetti: a burst in the provider's colours out of the notch's lip (or the icon, the corners, or rain), landing on window tops and the Dock — weekly reset by default; session-completion, per-provider, banked-credits, all-clear and milestone triggers opt in; sizes, palettes, shapes, seasonal and moment styles | Ships | Off |
 
 ## Utilities (the Utilities page)
 
