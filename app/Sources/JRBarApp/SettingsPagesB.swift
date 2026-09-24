@@ -600,7 +600,6 @@ struct AutoDimSection: View {
                 Provided(store, AutoDimSettings.ambientLuxFloorPath.description, AutoDimSettings.ambientLuxCeilingPath.description) {
                     SettingRow("Marks from room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.") {
                         Button("Use current light") { useRoomLight() }
-                            .controlSize(.small)
                             .disabled(roomMarks == nil)
                             .help(roomMarks.map { "Writes “Dark below” \(Int($0.floor)) lux and “Bright above” \(Int($0.ceiling)) lux" }
                                   ?? "Needs a live ambient reading; the monitor is not reporting one")
@@ -1276,7 +1275,6 @@ struct RemotePage: View {
             Provided(store, "serve_enabled") {
                 SettingRow("Bearer token") {
                     Button("Copy token") { store.copyServeToken() }
-                        .controlSize(.small)
                         .disabled(!(store.document.bool("serve_enabled") ?? false) || !store.core.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
@@ -1299,7 +1297,6 @@ struct RemotePage: View {
                             let url = URL(fileURLWithPath: path.expandingTildeInPath)
                             NSWorkspace.shared.activateFileViewerSelecting([url])
                         }
-                        .controlSize(.small)
                     }
                 }
             }
@@ -1414,7 +1411,6 @@ struct StreamDeckCard: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                     Button("Copy token") { store.copyServeToken() }
-                        .controlSize(.small)
                         .disabled(!enabled || !store.core.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
@@ -1483,7 +1479,6 @@ struct AdvancedPage: View {
                 ForEach(SettingsStore.Page.allCases.filter { $0 != .advanced && $0.catalogue != nil }) { page in
                     LabeledContent(page.title) {
                         Button("Reset…") { store.resetTarget = page }
-                            .controlSize(.small)
                             .disabled(!store.core.isLive)
                     }
                 }

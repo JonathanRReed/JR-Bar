@@ -16,7 +16,6 @@ struct GeneralPage: View {
             .settingRowStyle()
             SettingRow("Setup", subtitle: "The first-run walkthrough — agents, permissions, menu bar.") {
                 Button("Run Setup Again…") { SetupWindowController.show() }
-                    .controlSize(.small)
             }
         }
 

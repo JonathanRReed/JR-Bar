@@ -84,7 +84,6 @@ struct SoundsPage: View {
                     try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                     NSWorkspace.shared.activateFileViewerSelecting([folder])
                 }
-                .controlSize(.small)
             }
         }
     }
@@ -103,7 +102,6 @@ struct DiagnosticsCopyGroup: View {
             SettingRow("Copy diagnostics",
                        subtitle: "Version, build and commit beside the monitor's, the Doctor's checks, every permission and the last \(DiagnosticsReport.logLines) log lines — home folder, tokens, addresses and webhook paths taken out.") {
                 Button(store.diagnosticsCopying ? "Copying…" : "Copy") { store.copyDiagnostics() }
-                    .controlSize(.small)
                     .disabled(store.diagnosticsCopying)
             }
         }
@@ -121,11 +119,9 @@ struct SettingsTransferGroup: View {
         SettingGroup("Transfer", note: "Import writes only what you tick; the monitor checks every setting as it lands.") {
             SettingRow("Export settings", subtitle: "The monitor's settings, devices, Utilities, Toys, shortcuts and sounds, as one JSON file.") {
                 Button("Export…") { store.exportSettings() }
-                    .controlSize(.small)
             }
             SettingRow("Import settings", subtitle: "Open an export and choose which parts to take.") {
                 Button(store.importing ? "Importing…" : "Import…") { store.chooseImport() }
-                    .controlSize(.small)
                     .disabled(store.importing)
             }
         }
@@ -301,10 +297,8 @@ private struct CommandLineGroup: View {
                 switch state {
                 case .notInstalled, .stale:
                     Button("Install") { run { try CommandLineTool.install(link: link, bundled: $0) } }
-                        .controlSize(.small)
                 case .installed:
                     Button("Remove") { run { _ in try CommandLineTool.uninstall(link: link, bundled: bundled) } }
-                        .controlSize(.small)
                 case .unavailable, .occupied:
                     EmptyView()
                 }
