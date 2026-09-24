@@ -733,9 +733,17 @@ enum CartoonFish {
             let mid = max(0.12, min(1, swim.thin))
             sx = (0.55 + 0.45 * mid) / mid * face.turn + (1 - face.turn)
         }
+        // Nearly head-on the eyes part further than a squashed side view
+        // is wide — more so while the head leads, turned further round
+        // than the middle: each eye stops at the silhouette, bulging at
+        // it, never floating off the head (a puffer is short enough for
+        // both to).
+        let inset = art.eyeR * sx * 0.9
+        let near = min(warp(art.eye.x + face.spread), warp(art.bounds.maxX) - inset)
+        let far = max(warp(art.eye.x - face.spread), warp(art.bounds.minX) + inset)
         return (face,
-                CGPoint(x: warp(art.eye.x + face.spread), y: art.eye.y),
-                CGPoint(x: warp(art.eye.x - face.spread), y: art.eye.y),
+                CGPoint(x: max(near, far), y: art.eye.y),
+                CGPoint(x: far, y: art.eye.y),
                 CGPoint(x: warp(art.mouth.x), y: art.mouth.y),
                 sx)
     }
