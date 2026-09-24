@@ -130,16 +130,21 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func makeWindow() -> NSWindow {
+    /// Builds the window without showing it. Internal for the lifecycle
+    /// test.
+    func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        attachContent(to: window)
+        // The titlebar's style, the size and its limits are settled before
+        // the content goes in, so the SwiftUI toolbar is laid out once, in
+        // the titlebar it will live in.
         window.toolbarStyle = .unified
         window.titlebarAppearsTransparent = false
         window.setContentSize(NSSize(width: 960, height: 540))
         window.minSize = NSSize(width: 720, height: 380)
+        attachContent(to: window)
         window.setFrameAutosaveName("JRBarOverview")
         window.isReleasedWhenClosed = false
         window.delegate = self
