@@ -305,9 +305,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             try? await core?.send("open_session", args: ["session": .string(session)])
         }
         notchCard.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
-        // The glass card's waiting rows answer through the island's own
-        // answerer — one pending set, one refusal line per session.
-        notchCard.model.answerer = toysStore.notch.answerer
         // …and its calendar and reminders glances follow the Notch
         // settings' switches, the same as the grown island's.
         notchCard.model.calendarEnabled = { [weak toysStore] in toysStore?.state.notch.calendar ?? true }

@@ -410,13 +410,15 @@ struct NotchIslandView: View {
     /// under the notch, above a live Screen Bar's housing, inside the
     /// notice frame the toy sized.
     private func lineFace(_ notice: AlcoveNotice) -> some View {
-        HStack(spacing: 7) {
+        // A tap that could not open the session says why in the line.
+        let refusal = notice.session.flatMap { toy.cardModel.openRefusals[$0] }
+        return HStack(spacing: 7) {
             Image(systemName: notice.symbol)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(noticeTint(notice))
-            Text(notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)")
+            Text(refusal ?? (notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)"))
                 .font(.system(size: 11.5))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(refusal != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(Color.white.opacity(0.85)))
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -489,19 +491,21 @@ struct NotchIslandView: View {
     /// The ask, where it can be answered: who (the glyph, "Claude ·
     /// rename-the-fish" and how long it has waited), what they ask (the
     /// summary — one line on the capsule, up to three on the takeover
-    /// card), and the verbs. Approve and Deny exist only where the
-    /// daemon can deliver the answer (`NotchAskVerbs`); every other ask
-    /// offers Open with its reason. A refusal takes the reason's place
-    /// in orange and the ask stays. A tap anywhere off the buttons opens
-    /// the session.
+    /// card), and the verbs. Each verb exists only where `AskVerbs` says
+    /// the daemon can deliver it, and every one goes through the shared
+    /// desk; every other ask offers Open with its reason
+    /// (`NotchAskVerbs`). A refused answer or open takes the reason's
+    /// place in orange and the ask stays. A tap anywhere off the buttons
+    /// opens the session.
     private func askFace(_ notice: AlcoveNotice) -> some View {
         let verbs = toy.askVerbs(for: notice)
         let session = notice.session ?? ""
         let live = toy.liveAsk(for: notice)
-        let desk = AskAnswerDesk.shared
-        let pending = toy.answerer.isPending(session) || (desk?.isPending(session) ?? false)
+        let desk = toy.cardModel.askDesk()
+        let pending = desk?.isPending(session) ?? false
         let deskNote = desk?.note(for: session)
-        let refusal = toy.answerer.note(for: session) ?? deskNote.flatMap { $0.refused ? $0.text : nil }
+        let refusal = toy.cardModel.openRefusals[session] ?? deskNote.flatMap { $0.refused ? $0.text : nil }
+        let local = verbs.answers
         let lines = toy.askSummaryLines
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
@@ -558,11 +562,11 @@ struct NotchIslandView: View {
                         Task { await desk.answer(live, .deny) }
                     }
                     NotchAskChoices(ask: live, desk: desk, style: .island, busy: pending)
-                } else if verbs.answers {
+                } else if local, let live, let desk, AskVerbs.approves(live) {
                     NotchVerbButton(title: "Deny", style: .island, busy: pending) {
                         toy.answerCapsule(approve: false)
                     }
-                    if let live, let desk, AskVerbs.alwaysAllows(live) {
+                    if AskVerbs.alwaysAllows(live) {
                         NotchVerbButton(title: "Always", style: .island, busy: pending) {
                             Task { await desk.answer(live, .always) }
                         }

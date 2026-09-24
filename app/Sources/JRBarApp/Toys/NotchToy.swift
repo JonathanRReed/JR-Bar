@@ -68,9 +68,6 @@ final class NotchToy: Toy {
     /// for its short beat and never covers a latched ask.
     private(set) var activeOverlay: AlcoveNotice?
     @ObservationIgnored private var overlayWork: DispatchWorkItem?
-    /// The ask capsule's Approve / Deny / Open — the same answerer the
-    /// grown card's rows use.
-    let answerer: NotchAskAnswerer
     /// Per ask notice id: when it was offered and whether its ask has
     /// shown up in the state yet — `NotchIsland.askStillOpen`'s inputs.
     @ObservationIgnored private var askTrack: [String: (offered: Date, seen: Bool)] = [:]
@@ -200,24 +197,21 @@ final class NotchToy: Toy {
         self.cardModel = cardModel
         self.mediaFeed = mediaFeed ?? MediaFeed.shared
         self.runtimeEnabled = runtimeEnabled
-        answerer = NotchAskAnswerer(core: core)
         sensorIndicatorsEnabled = UserDefaults.standard.object(
             forKey: Self.sensorIndicatorsDefaultsKey) as? Bool ?? true
-        // An answer the daemon took steps the capsule down at once — the
-        // `ask_resolved` that follows finds nothing left to close.
-        answerer.onAnswered = { [weak self] session, request in
-            self?.resolveAsk(session: session, request: request)
-        }
-        cardModel.answerer = answerer
         // The queue only ever runs on the main actor, inside the toy's
         // own calls — its eviction report lands back here in turn.
         capsuleQueue.onEvict = { [weak self] notice in
             MainActor.assumeIsolated { self?.onCapsuleEvicted(notice) }
         }
+        // The card folds once the session is in front; a refusal stays
+        // on the row that was clicked.
         cardModel.onOpenRow = { [weak self] session in
             guard let self else { return }
-            self.collapseIsland()
-            self.answerer.open(session: session)
+            self.openInFlight = Task { [weak self] in
+                guard let self, await self.open(session: session) else { return }
+                self.collapseIsland()
+            }
         }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
         cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }
@@ -1536,27 +1530,57 @@ final class NotchToy: Toy {
     }
 
     /// Approve or Deny on the ask face — only ever from a click on a
-    /// button `askVerbs` allowed. The pin is the episode the capsule
-    /// shows; answerability is the live ask's. The returned task is the
-    /// answer in flight — the button forgets it, tests await it.
+    /// button `AskVerbs` drew, sent through the shared desk, which gates
+    /// it again. The pin is the episode the capsule shows; answerability
+    /// is the live ask's, so an ask not yet in the state sends nothing.
+    /// The desk's `onAnswered` steps the capsule down. The returned task
+    /// is the answer in flight — the button forgets it, tests await it.
     @discardableResult
     func answerCapsule(approve: Bool) -> Task<Void, Never>? {
         guard let capsule = activeCapsule, capsule.kind == .ask,
-              let session = capsule.session else { return nil }
-        var ask = liveAsk(for: capsule) ?? capsule.ask
-        if let pinned = capsule.ask?.request { ask?.request = pinned }
-        return Task { [weak self] in
-            await self?.answerer.answer(session: session, ask: ask, approve: approve)
-        }
+              let session = capsule.session, let desk = cardModel.askDesk(),
+              var ask = liveAsk(for: capsule) else { return nil }
+        if let pinned = capsule.ask?.request { ask.request = pinned }
+        if ask.session == nil { ask.session = session }
+        let pinned = ask
+        return Task { _ = await desk.answer(pinned, approve ? .approve : .deny) }
     }
 
     /// Open on the ask face, or a tap on any capsule about a session:
-    /// news you tap takes you to the thing. The capsule steps down — the
-    /// person acted on it.
-    func openCapsuleSession() {
-        guard let capsule = activeCapsule, let session = capsule.session else { return }
-        answerer.open(session: session)
-        dismissCapsule()
+    /// news you tap takes you to the thing. The capsule steps down once
+    /// the session is in front — the person acted on it; a refusal
+    /// stays on the capsule instead. The returned task is the open in
+    /// flight.
+    @discardableResult
+    func openCapsuleSession() -> Task<Void, Never>? {
+        guard let capsule = activeCapsule, let session = capsule.session else { return nil }
+        let task = Task { [weak self] in
+            guard let self, await self.open(session: session),
+                  self.activeCapsule?.id == capsule.id else { return }
+            self.dismissCapsule()
+        }
+        openInFlight = task
+        return task
+    }
+
+    // MARK: Opening
+
+    /// The one way the notch opens a session (`SessionOpener`): the
+    /// daemon's raise, and the Dock's window locator when the daemon
+    /// cannot find a session still running here. Tests swap it.
+    @ObservationIgnored var openSession: @MainActor (_ session: String) async -> String? = { id in
+        await SessionOpener.open(id)
+    }
+    /// The last click's open, still on its way — tests await it.
+    @ObservationIgnored private(set) var openInFlight: Task<Void, Never>?
+
+    /// Open `session`'s own window. True once it is in front; a refusal
+    /// is kept on the card model for the row and the ask face to show.
+    @discardableResult
+    func open(session: String) async -> Bool {
+        guard let refusal = await openSession(session) else { return true }
+        cardModel.noteOpenRefused(refusal, session: session)
+        return false
     }
 
     // MARK: Quiet hold
@@ -2195,7 +2219,7 @@ final class NotchToy: Toy {
             islandTapped()
             return
         }
-        answerer.open(session: session)
+        openInFlight = Task { [weak self] in _ = await self?.open(session: session) }
     }
 
     // MARK: Pull

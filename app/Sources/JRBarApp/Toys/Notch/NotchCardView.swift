@@ -186,9 +186,17 @@ final class NotchCardModel {
     var onOpenSession: (() -> Void)?
     /// A click on a session row — that session's own window.
     var onOpenRow: ((String) -> Void)?
-    /// Approve / Deny on a waiting row. nil draws no verbs: a card
-    /// without an answer path only ever offers the click-to-open.
-    var answerer: NotchAskAnswerer?
+    /// The answer desk every ask surface shares — the panel's, published
+    /// as `AskAnswerDesk.shared`. nil draws no verbs: a card without an
+    /// answer path only ever offers the click-to-open. Tests hand in
+    /// their own.
+    @ObservationIgnored var askDesk: @MainActor () -> AskAnswerDesk? = { AskAnswerDesk.shared }
+    /// How long an open's refusal stays under its row.
+    static let openNoteLife: TimeInterval = 4
+    /// Session → why its last open did not land, drawn where the ask's
+    /// refusal would be. The row stays; the person can try again.
+    private(set) var openRefusals: [String: String] = [:]
+    @ObservationIgnored private var openRefusalTokens: [String: UUID] = [:]
     var onClose: (() -> Void)?
     /// The roster affordance — the Overview window.
     var onOpenOverview: (() -> Void)?
@@ -209,6 +217,21 @@ final class NotchCardModel {
             targets.append((row.id, row.label))
         }
         return Array(targets.prefix(5))
+    }
+
+    /// An open that did not land says why for a few seconds; a newer
+    /// line for the same session outlives an older one's expiry.
+    func noteOpenRefused(_ line: String, session: String) {
+        openRefusals[session] = line
+        let token = UUID()
+        openRefusalTokens[session] = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.openNoteLife) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.openRefusalTokens[session] == token else { return }
+                self.openRefusals[session] = nil
+                self.openRefusalTokens[session] = nil
+            }
+        }
     }
 
     /// The shelf's hand-to-agent verb: the entry's `@path` references go
@@ -635,18 +658,16 @@ struct NotchCardView: View {
 
     /// One live session under the header: the provider's dot, its label,
     /// and the same activity word the island would say. A click opens
-    /// the session. A waiting row the daemon can answer carries Deny and
-    /// Approve inline instead of the word (`NotchAskVerbs` — hidden
-    /// where the answer chain cannot deliver), with the question itself
-    /// on a faint second line; a refused answer takes that line and
-    /// says why, and the ask stays open.
+    /// the session. A waiting row carries its verbs inline instead of
+    /// the word — each drawn only where `AskVerbs` says the daemon can
+    /// deliver it, and every one sent through the shared desk — with
+    /// the question itself on a faint second line; a refused answer or
+    /// open takes that line and says why, and the ask stays open.
     private func sessionRow(_ row: NotchIslandRow) -> some View {
-        let verbs = row.activity == .waiting
-            ? NotchAskVerbs.resolve(live: row.ask, session: row.id) : .none
-        let answerer = model.answerer
-        let desk = AskAnswerDesk.shared
-        let pending = (answerer?.isPending(row.id) ?? false) || (desk?.isPending(row.id) ?? false)
-        let refusal = answerer?.note(for: row.id) ?? desk?.note(for: row.id)?.text
+        let desk = model.askDesk()
+        let pending = desk?.isPending(row.id) ?? false
+        let openRefusal = model.openRefusals[row.id]
+        let refusal = openRefusal ?? desk?.note(for: row.id)?.text
         let summary = row.ask?.summary.flatMap { $0.isEmpty ? nil : $0 }
         let opens = !CoreSession.isRemoteID(row.id) && model.onOpenRow != nil
         // The ask as the desk answers it: the row's own, with its id.
@@ -655,8 +676,9 @@ struct NotchCardView: View {
             if ask.session == nil { ask.session = row.id }
             return ask
         }
-        let choosing = row.activity == .waiting && !CoreSession.isRemoteID(row.id)
-            && ask.map(AskVerbs.chooses) == true && desk != nil
+        let answerable = row.activity == .waiting && !CoreSession.isRemoteID(row.id) && desk != nil
+        let choosing = answerable && ask.map(AskVerbs.chooses) == true
+        let answering = answerable && ask.map(AskVerbs.approves) == true
         return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 Circle()
@@ -678,12 +700,12 @@ struct NotchCardView: View {
                         Task { await desk.answer(ask, .deny) }
                     }
                     NotchAskChoices(ask: ask, desk: desk, style: style, busy: pending)
-                } else if verbs.answers, let answerer {
+                } else if answering, let ask, let desk {
                     NotchVerbButton(title: "Deny", style: style, prominent: false,
                                     busy: pending) {
-                        Task { await answerer.answer(session: row.id, ask: row.ask, approve: false) }
+                        Task { await desk.answer(ask, .deny) }
                     }
-                    if let ask, let desk, AskVerbs.alwaysAllows(ask) {
+                    if AskVerbs.alwaysAllows(ask) {
                         NotchVerbButton(title: "Always", style: style, prominent: false, busy: pending) {
                             Task { await desk.answer(ask, .always) }
                         }
@@ -691,7 +713,7 @@ struct NotchCardView: View {
                     }
                     NotchVerbButton(title: "Approve", style: style, prominent: true,
                                     busy: pending) {
-                        Task { await answerer.answer(session: row.id, ask: row.ask, approve: true) }
+                        Task { await desk.answer(ask, .approve) }
                     }
                 } else {
                     Text(row.activity.word)
@@ -702,7 +724,7 @@ struct NotchCardView: View {
             if let refusal {
                 Text(refusal)
                     .font(.system(size: 9.5))
-                    .foregroundStyle(desk?.note(for: row.id)?.refused == false && answerer?.note(for: row.id) == nil
+                    .foregroundStyle(openRefusal == nil && desk?.note(for: row.id)?.refused == false
                                      ? AnyShapeStyle(style.faintColor) : AnyShapeStyle(Color.orange))
                     .lineLimit(1)
                     .truncationMode(.tail)
