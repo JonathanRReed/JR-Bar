@@ -348,6 +348,49 @@ struct AquariumTurnRenderProofTests {
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write the turn proof PNGs"))
+    func frontStaysPut() throws {
+        // Every frame of a slow idle turn, each way round, in a monocle
+        // and in a scarf: the head-on frames keep one mirror, so the
+        // monocle and the scarf's end stay on their side until the cut.
+        let cast: [(String, ShopItem, Double)] = [("steady-mono", .monocle, 1), ("steady-scarf", .scarf, 1),
+                                                  ("steady-mono-l", .monocle, -1), ("steady-scarf-l", .scarf, -1)]
+        var pets: [String: FishCare] = [:]
+        var accessories: [String: String] = [:]
+        var fishes: [Fish] = []
+        for (id, item, _) in cast {
+            fishes.append(Self.makeFish(id, .clownfish))
+            pets[id] = FishCare(stage: 2)
+            accessories[id] = item.rawValue
+        }
+        let view = AquariumView(fixture: AquariumView.Fixture(
+            fish: fishes, game: AquariumGame(pets: pets, accessories: accessories), night: 0))
+        let n = 36
+        let start = 12, count = 13
+        let cellW = 78.0, cellH = 96.0
+        let sheet = Self.sheet(width: cellW * Double(count), height: cellH * Double(cast.count) + 24) { c, _ in
+            Self.label(&c, "the middle of an idle turn each way round, a frame apiece: head-on keeps one mirror",
+                       at: CGPoint(x: cellW * Double(count) / 2, y: 12), size: 10)
+            for (row, item) in cast.enumerated() {
+                for k in 0..<count {
+                    let p = Double(start + k) / Double(n)
+                    var l = AquariumView.Layout()
+                    l.apply(AquariumTurn.pose(p: p, dir0: item.2, arc: 1))
+                    l.x = cellW * (Double(k) + 0.5)
+                    l.y = 24 + cellH * (Double(row) + 0.5)
+                    l.scale = 1.3
+                    l.wag = 0.8
+                    view.drawFish(canvas: &c, size: CGSize(width: 2000, height: 5000), t: 10 + p,
+                                  now: Date(), fish: fishes[row], layout: l, parent: nil, showLabels: false)
+                    Self.label(&c, String(format: "%+.2f", l.yawCos),
+                               at: CGPoint(x: l.x, y: 24 + cellH * Double(row + 1) - 8), size: 8)
+                }
+            }
+        }
+        try Self.write(sheet, "fish-turn-front-steady")
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the turn proof PNGs"))
     func states() throws {
         let cols = 14, cellW = 104.0, cellH = 130.0
         var rows: [(title: String, view: AquariumView, shots: [Shot], parents: [(Fish, AquariumView.Layout)?])] = []

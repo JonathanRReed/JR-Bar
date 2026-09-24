@@ -77,11 +77,15 @@ struct AquariumFishRenderProofTests {
     }
 
     /// The swim of a turn at `p` (`AquariumTurn.pose`): the side-on
-    /// share, the head lead and the tail's kick.
+    /// share, the head lead and the tail's kick, and the mirror the tank
+    /// draws it with (head-on, the facing the turn came in with).
     private static func turning(_ p: Double) -> (swim: CartoonFish.Swim, facing: Double) {
         let pose = AquariumTurn.pose(p: p, dir0: 1, arc: 1)
+        var l = AquariumView.Layout()
+        l.apply(pose)
         return (CartoonFish.Swim(phase: 0.9 + p * 4, amplitude: 0.2 * pose.ampMul,
-                                 thin: max(0.001, abs(pose.c)), lead: pose.lead), pose.facing)
+                                 thin: max(0.001, abs(pose.c)), lead: pose.lead),
+                l.front ? l.frontFacing : l.facing)
     }
 
     private static func label(_ c: inout GraphicsContext, _ text: String, at p: CGPoint) {

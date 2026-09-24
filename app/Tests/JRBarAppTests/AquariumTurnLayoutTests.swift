@@ -67,6 +67,14 @@ struct AquariumTurnLayoutTests {
         }
     }
 
+    /// The head-on frame keeps one mirror from the cut in to the cut out:
+    /// nothing worn or drawn on it hops sides mid-face.
+    private func expectSteadyFront(_ frames: [AquariumView.Layout], _ what: String) {
+        for (i, pair) in zip(frames, frames.dropFirst()).enumerated() where pair.0.front && pair.1.front {
+            #expect(pair.0.frontFacing == pair.1.frontFacing, "\(what): frame \(i) mirrored head-on")
+        }
+    }
+
     @Test("a U-turn never pops and flips only head-on")
     func uTurn() {
         let fish = makeFish("turner", since: t0 - 100)
@@ -89,6 +97,7 @@ struct AquariumTurnLayoutTests {
         let b = tank.motion.bodies[fish.id]!
         let speed = b.speed * b.energy * size.width * 1.1 + 6
         expectSmooth(frames, speed: speed, "U-turn")
+        expectSteadyFront(frames, "U-turn")
         #expect(sawFront, "the turn passes through the head-on frame")
         #expect(zip(frames, frames.dropFirst()).contains { $0.facing != $1.facing }, "it turned round")
         // Anchors off the nose slide round rather than jump.
@@ -174,6 +183,7 @@ struct AquariumTurnLayoutTests {
         fish.stateSince = Date(timeIntervalSince1970: t)
         for _ in 0..<(30 * 2) { t += dt; frames.append(frame(tank, [fish], fish, t: t)) }
         expectSmooth(frames, speed: nil, "leaving")
+        expectSteadyFront(frames, "leaving")
         #expect(frames[frames.count - 1].facing == 1, "it heads out facing right")
     }
 
@@ -290,6 +300,7 @@ struct AquariumTurnLayoutTests {
             let run = frames[fish.id] ?? []
             let b = tank.motion.bodies[fish.id]!
             expectSmooth(run, speed: b.speed * b.energy * size.width * 2 + 8, fish.id)
+            expectSteadyFront(run, fish.id)
             let flips = zip(run, run.dropFirst()).filter { $0.facing != $1.facing }.count
             #expect(flips <= 8, "\(fish.id) reversed \(flips) times in two minutes")
             #expect(flips >= 1, "\(fish.id) still crosses the tank")

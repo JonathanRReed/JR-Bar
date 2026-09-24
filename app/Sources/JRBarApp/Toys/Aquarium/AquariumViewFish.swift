@@ -64,6 +64,17 @@ extension AquariumView {
         /// The head-on frame draws instead of the side view.
         var front: Bool { abs(yawCos) < AquariumTurn.frontCut }
 
+        /// The mirror the head-on frame draws with: the facing the turn
+        /// came in with, held for the whole head-on stretch — the head
+        /// leads going in and trails coming out, so the facing times the
+        /// lead's sign never changes mid-turn. The monocle, the scarf's
+        /// end and the tail tips swap sides at the cut back to the side
+        /// view, where the drawing changes anyway, never mid-face.
+        var frontFacing: Double {
+            guard abs(lead) > 1e-9 else { return facing }
+            return lead > 0 ? facing : -facing
+        }
+
         /// Take a turn's pose: its yaw, head lead, pitch and tail.
         mutating func apply(_ pose: AquariumTurn.Pose) {
             yawCos = pose.c
@@ -650,7 +661,7 @@ extension AquariumView {
             // squares up a touch as it comes fully round.
             if sway != 0 { f.rotate(by: .radians(sway * 0.5)) }
             let square = 0.9 + 0.1 * smooth(1 - abs(l.yawCos) / AquariumTurn.frontCut)
-            f.scaleBy(x: l.facing * length * square * squashX, y: across)
+            f.scaleBy(x: l.frontFacing * length * square * squashX, y: across)
             CartoonFish.drawFront(into: &f, species: fish.species, palette: palette, swim: swim,
                                   mouth: mouth, blink: blink, dead: dead, pointSize: length)
             if !fish.isFry {
