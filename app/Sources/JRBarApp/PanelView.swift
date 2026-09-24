@@ -1192,24 +1192,36 @@ struct AskRowChoices: View {
 /// under the pointer and fade while they cannot be clicked.
 struct PillButtonStyle: ButtonStyle {
     let prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        PillButtonBody(label: configuration.label, prominent: prominent, pressed: configuration.isPressed)
+    }
+}
+
+/// A pill button as drawn: the view owns the hover, so each button
+/// keeps its own.
+private struct PillButtonBody: View {
+    let label: ButtonStyleConfiguration.Label
+    let prominent: Bool
+    let pressed: Bool
     @ViewState private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+    var body: some View {
+        label
             .font(.system(size: 12, weight: prominent ? .semibold : .medium))
             .lineLimit(1)
             .foregroundStyle(prominent ? Color.white : Color.primary)
             .padding(.horizontal, 11)
             .padding(.vertical, 3.5)
-            .background { plate(pressed: configuration.isPressed) }
+            .background { plate }
             .contentShape(Capsule())
             .opacity(isEnabled ? 1 : 0.45)
             .onHover { hovering = $0 }
     }
 
     @ViewBuilder
-    private func plate(pressed: Bool) -> some View {
+    private var plate: some View {
         if prominent {
             let amber = SessionActivity.waiting.tint
             let top = amber.opacity(pressed ? 0.8 : 1)
