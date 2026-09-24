@@ -113,4 +113,14 @@ struct DockUtilityTests {
         #expect(menu.map(\.bundleID) == ["dev.zed"])
         #expect(DockInstalledApps.notListed(apps, excluded: [], running: ["dev.zed"]).map(\.bundleID) == ["com.beta"])
     }
+
+    @Test("the Never preview group names what it holds, and says what it is for while empty")
+    func neverPreviewLine() {
+        #expect(DockUtilityControls.exclusionSummary([]).contains("no preview opens"))
+        #expect(DockUtilityControls.exclusionSummary(["Safari"]) == "Safari never opens a preview.")
+        #expect(DockUtilityControls.exclusionSummary(["Safari", "Mail"])
+                == "Safari and Mail never open a preview.")
+        #expect(DockUtilityControls.exclusionSummary(["Safari", "Mail", "Notes", "Music"])
+                == "Safari, Mail and 2 more never open a preview.")
+    }
 }
