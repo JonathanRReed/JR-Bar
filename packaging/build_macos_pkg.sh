@@ -290,6 +290,26 @@ fi
 
 /bin/rm -rf "$BUILD_DIR"
 /bin/mkdir -p "$BUILD_DIR" "$DIST_DIR"
+
+# Launch Services registers the bundles a build leaves behind, and a
+# registered intermediate can win a jrbar:// link over the installed app.
+# The one JR-Bar is the copy in ~/Applications (scripts/install-agents.sh
+# --pkg registers it), so the build's own copies come out of the database
+# (they stay on disk) whenever the script exits: a failed notary or
+# appcast step leaves the same copies behind as a made package does.
+# Best-effort, and the trap keeps the script's own exit status.
+unregister_build_copies() {
+    if [ -x "$LSREGISTER_TOOL" ]; then
+        echo "==> Launch Services: unregistering the build's JR-Bar.app copies"
+        for bundle in "$APP_PATH" "$SWIFT_APP"; do
+            "$LSREGISTER_TOOL" -u "$bundle" >/dev/null 2>&1 || true
+        done
+    else
+        echo "note: no lsregister at $LSREGISTER_TOOL; the build's JR-Bar.app copies stay registered"
+    fi
+}
+trap unregister_build_copies EXIT
+
 /bin/mkdir -m 700 "$RAW_EVIDENCE_DIR"
 export PIP_CACHE_DIR="$BUILD_DIR/pip-cache"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -618,20 +638,6 @@ else
         echo "appcast not signed: no keychain account holds the Sparkle key for $SPARKLE_PUBLIC_ED_KEY" >&2
         echo "  (tried: ${SPARKLE_KEY_ACCOUNT:-<SPARKLE_KEY_ACCOUNT unset>}, ed25519, io.jrbar.app, com.jonathanreed.jrbar)" >&2
     fi
-fi
-
-# Launch Services registers the bundles a build leaves behind, and a
-# registered intermediate can win a jrbar:// link over the installed app.
-# The one JR-Bar is the copy in ~/Applications (scripts/install-agents.sh
-# --pkg registers it), so the build's own copies come out of the database;
-# they stay on disk. Best-effort: the package is already made.
-if [ -x "$LSREGISTER_TOOL" ]; then
-    echo "==> Launch Services: unregistering the build's JR-Bar.app copies"
-    for bundle in "$APP_PATH" "$SWIFT_APP"; do
-        "$LSREGISTER_TOOL" -u "$bundle" >/dev/null 2>&1 || true
-    done
-else
-    echo "note: no lsregister at $LSREGISTER_TOOL; the build's JR-Bar.app copies stay registered"
 fi
 
 echo

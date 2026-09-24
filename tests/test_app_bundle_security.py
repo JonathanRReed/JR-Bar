@@ -689,6 +689,10 @@ if [ "${1:-}" = "-m" ]; then
 fi
 script="$(/usr/bin/basename "${1:-}")"
 echo "$script" >> "$PACKAGE_TEST_EVENT_LOG"
+# The failure seam: the named step fails the way a real one would.
+if [ "$script" = "${PACKAGE_TEST_FAIL_AT:-}" ]; then
+    exit 97
+fi
 case "$script" in
     prepare_sparkle.py)
         output=""
@@ -928,9 +932,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert (app / "Contents" / "Resources" / "ThirdPartyLicenses" / "Sparkle.txt").read_text() == "fixture license\n"
 
     # Build order: Sparkle (the app links it), app, shim, sign, three
-    # verifiers, archive, PKG, and last the build's own JR-Bar.app copies
-    # leave Launch Services, so a jrbar:// link can only reach the one in
-    # ~/Applications. They stay on disk.
+    # verifiers, archive, PKG, and as the script exits the build's own
+    # JR-Bar.app copies leave Launch Services, so a jrbar:// link can only
+    # reach the one in ~/Applications. They stay on disk.
     assert event_log.read_text().splitlines() == [
         "prepare_sparkle.py",
         "build-app.sh 0.5.0",
@@ -976,6 +980,25 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     )
     assert ignored.returncode == 0, ignored.stderr
     assert "JR-Bar 0.5.0 (build 1801, " in ignored.stdout
+
+    # A build that fails after the app is made (a notary or appcast step,
+    # here a verifier) still takes its copies out of Launch Services, and
+    # keeps its own exit status.
+    event_log.write_text("")
+    broken = subprocess.run(
+        ["/bin/bash", str(packaging_dir / "build_macos_pkg.sh")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=dict(environment, PACKAGE_TEST_FAIL_AT="verify_sparkle_bundle.py"),
+    )
+    assert broken.returncode == 97, broken.stderr
+    assert event_log.read_text().splitlines()[-3:] == [
+        "verify_sparkle_bundle.py",
+        f"lsregister -u {app}",
+        f"lsregister -u {build_root / 'swift' / 'JR-Bar.app'}",
+    ]
+    assert "JR-Bar 0.5.0 (build 1801, " not in broken.stdout
 
     # No history to count and no override: the builder refuses rather than
     # stamp a build number that could sort behind a shipped one. A marketing

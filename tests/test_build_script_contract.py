@@ -259,12 +259,17 @@ def test_package_builder_leaves_no_registered_jrbar_copy__and_1_more() -> None:
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert f'LSREGISTER_TOOL="${{LSREGISTER_TOOL:-{LSREGISTER}}}"' in text
+    function = text.index("unregister_build_copies() {")
     unregister = text.index('"$LSREGISTER_TOOL" -u "$bundle" >/dev/null 2>&1 || true')
-    assert text.index('for bundle in "$APP_PATH" "$SWIFT_APP"; do') < unregister
-    # Guarded, and only once the package and appcast are made.
-    assert text.index('if [ -x "$LSREGISTER_TOOL" ]; then') < unregister
-    assert text.index('"$ROOT_DIR/scripts/package_macos_artifact.py"') < unregister
-    assert text.index('echo "==> appcast"') < unregister
+    trap = text.index("trap unregister_build_copies EXIT")
+    assert function < text.index('for bundle in "$APP_PATH" "$SWIFT_APP"; do') < unregister < trap
+    # Guarded, and armed on every exit once the build directory is made,
+    # before the first JR-Bar.app exists: a failed notary or appcast step
+    # leaves the same copies behind as a made package.
+    assert function < text.index('if [ -x "$LSREGISTER_TOOL" ]; then') < unregister
+    assert text.index('/bin/mkdir -p "$BUILD_DIR" "$DIST_DIR"') < trap
+    assert trap < text.index('JRBAR_BUNDLE="$SWIFT_APP"')
+    assert text.count("\ntrap ") == 1
 
     # --- scenario: pkg_install_registers_the_home_applications_copy
     text = INSTALL_SCRIPT.read_text(encoding="utf-8")
