@@ -584,7 +584,7 @@ struct NotchSurfaceRenderProofTests {
         model.utility.start()
         monitor.onChange?(media())
         model.timers.add(label: "Tea", duration: 240)
-        model.timers.add(label: "Standup", duration: 1500)
+        model.timers.add(label: "Standup with the design team", duration: 1500)
         let dir = FileManager.default.temporaryDirectory.appending(path: "jrbar-proof-tray")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var urls: [URL] = []

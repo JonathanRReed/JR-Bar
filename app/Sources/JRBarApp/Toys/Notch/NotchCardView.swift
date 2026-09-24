@@ -451,32 +451,39 @@ struct NotchCardView: View {
     /// The smallest target a card control offers, in points.
     static let hitSide: CGFloat = 24
 
-    /// The header row: who the bar is about — provider tile, label,
-    /// word — with the light's reason underneath. Pinned adds the
-    /// card's controls on the trailing edge: the timer menu, the Mirror,
-    /// Open for the named session, and close — quiet round marks, Open
-    /// the one word among them.
+    /// The header: who the bar is about — provider tile, label, then
+    /// the word and the light's reason underneath. Pinned adds the
+    /// card's controls on the label's line — the timer menu, the Mirror,
+    /// Open for the named session, and close: quiet round marks, Open
+    /// the one word among them — so the reason under them runs the
+    /// card's full width rather than losing its file to them.
     private func focusHeader(pinned: Bool) -> some View {
-        HStack(alignment: .center, spacing: 9) {
+        let tileSide: CGFloat = pinned ? 26 : 20
+        let tile = RoundedRectangle(cornerRadius: tileSide * 0.28, style: .continuous)
+        return HStack(alignment: .center, spacing: 9) {
             if let style = model.focus.style {
-                ProviderTile(style: style, size: pinned ? 26 : 20)
+                ProviderTile(style: style, size: tileSide)
             } else {
                 // Nobody in focus: JR-Bar's own mark on a quiet tile the
                 // provider's would fill.
                 Image(nsImage: StatusItemController.glyph())
                     .renderingMode(.template)
                     .foregroundStyle(style.subColor)
-                    .frame(width: pinned ? 26 : 20, height: pinned ? 26 : 20)
-                    .background(RoundedRectangle(cornerRadius: (pinned ? 26 : 20) * 0.28, style: .continuous)
-                        .fill(style.chipFaint))
-                    .overlay(RoundedRectangle(cornerRadius: (pinned ? 26 : 20) * 0.28, style: .continuous)
-                        .strokeBorder(style.hairline, lineWidth: 0.5))
+                    .frame(width: tileSide, height: tileSide)
+                    .background(tile.fill(style.chipFaint))
+                    .overlay(tile.strokeBorder(style.hairline, lineWidth: 0.5))
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(model.focus.label)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(style.titleColor)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: pinned ? -2 : 1) {
+                HStack(spacing: 4) {
+                    Text(model.focus.label)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(style.titleColor)
+                        .lineLimit(1)
+                    if pinned {
+                        Spacer(minLength: 4)
+                        headerControls
+                    }
+                }
                 // An Open that did not land says why where the word and
                 // the light's reason sit, for a few seconds.
                 if let refusal = model.focus.clickSession.flatMap({ model.openRefusals[$0] }) {
@@ -490,76 +497,75 @@ struct NotchCardView: View {
                         .lineLimit(1)
                 }
             }
-            .layoutPriority(-1)
-            if pinned {
-                Spacer(minLength: 4)
-                // The deliberate-focus controls: the timer menu keeps the
-                // row hidden when empty reachable, the Mirror peeks, Open
-                // raises the session's terminal, ✕ lets the card go.
-                HStack(spacing: 4) {
-                    Menu {
-                        ForEach(Self.timerPresets, id: \.seconds) { preset in
-                            Button(preset.name) {
-                                model.timers.add(label: preset.name, duration: preset.seconds)
-                            }
-                        }
-                        Divider()
-                        Button("Custom…") { timerEntryShown = true }
-                    } label: {
-                        headerMark("timer")
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .menuIndicator(.hidden)
-                    // An AppKit pop-up: its frame is its hit area, so the
-                    // frame itself is the 24-point target.
-                    .frame(width: Self.hitSide, height: Self.hitSide)
-                    .contentShape(Rectangle())
-                    .help("Add a timer")
-                    .popover(isPresented: $timerEntryShown, arrowEdge: .bottom) {
-                        timerEntry
-                    }
-                    // The Mirror is a peek on demand, never a standing
-                    // row: the lens opens here (or on ⌥-click at the
-                    // notch) and closes with the card.
-                    if model.mirrorEnabled() {
-                        Button { model.toggleMirror() } label: {
-                            headerMark(model.mirrorSummoned ? "camera.fill" : "camera",
-                                       lit: model.mirrorSummoned)
-                                .notchHitArea(horizontal: 2, vertical: 2)
-                        }
-                        .help(model.mirrorSummoned ? "Close the mirror" : "Mirror — a quick look through the camera")
-                        .accessibilityLabel(model.mirrorSummoned ? "Close the mirror" : "Open the mirror")
-                    }
-                    if model.focus.clickSession != nil {
-                        // A quiet chip, not the accent: on a red-accent
-                        // Mac an accent "Open" read as a warning.
-                        Button { model.onOpenSession?() } label: {
-                            Text("Open")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(style.titleColor)
-                                .fixedSize()
-                                .padding(.horizontal, 10)
-                                .frame(height: 22)
-                                .background(Capsule(style: .continuous).fill(style.chipFill))
-                                .overlay(Capsule(style: .continuous)
-                                    .strokeBorder(style.hairline, lineWidth: 0.5))
-                                .notchHitArea(horizontal: 2, vertical: 2)
-                        }
-                        .help("Bring this session's window forward")
-                    }
-                    Button { model.onClose?() } label: {
-                        headerMark("xmark")
-                            .notchHitArea(horizontal: 2, vertical: 2)
-                    }
-                    .accessibilityLabel("Close pinned card")
-                }
-                // Plain, so each label's own shape is its hit area: the
-                // marks stay 22 points, the targets reach 26 and stop
-                // halfway to their neighbours.
-                .buttonStyle(.plain)
-            }
         }
+    }
+
+    /// The deliberate-focus controls: the timer menu keeps the row
+    /// hidden when empty reachable, the Mirror peeks, Open raises the
+    /// session's terminal, ✕ lets the card go.
+    private var headerControls: some View {
+        HStack(spacing: 4) {
+            Menu {
+                ForEach(Self.timerPresets, id: \.seconds) { preset in
+                    Button(preset.name) {
+                        model.timers.add(label: preset.name, duration: preset.seconds)
+                    }
+                }
+                Divider()
+                Button("Custom…") { timerEntryShown = true }
+            } label: {
+                headerMark("timer")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            // An AppKit pop-up: its frame is its hit area, so the
+            // frame itself is the 24-point target.
+            .frame(width: Self.hitSide, height: Self.hitSide)
+            .contentShape(Rectangle())
+            .help("Add a timer")
+            .popover(isPresented: $timerEntryShown, arrowEdge: .bottom) {
+                timerEntry
+            }
+            // The Mirror is a peek on demand, never a standing row: the
+            // lens opens here (or on ⌥-click at the notch) and closes
+            // with the card.
+            if model.mirrorEnabled() {
+                Button { model.toggleMirror() } label: {
+                    headerMark(model.mirrorSummoned ? "camera.fill" : "camera",
+                               lit: model.mirrorSummoned)
+                        .notchHitArea(horizontal: 2, vertical: 2)
+                }
+                .help(model.mirrorSummoned ? "Close the mirror" : "Mirror — a quick look through the camera")
+                .accessibilityLabel(model.mirrorSummoned ? "Close the mirror" : "Open the mirror")
+            }
+            if model.focus.clickSession != nil {
+                // A quiet chip, not the accent: on a red-accent Mac an
+                // accent "Open" read as a warning.
+                Button { model.onOpenSession?() } label: {
+                    Text("Open")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(style.titleColor)
+                        .fixedSize()
+                        .padding(.horizontal, 10)
+                        .frame(height: 22)
+                        .background(Capsule(style: .continuous).fill(style.chipFill))
+                        .overlay(Capsule(style: .continuous)
+                            .strokeBorder(style.hairline, lineWidth: 0.5))
+                        .notchHitArea(horizontal: 2, vertical: 2)
+                }
+                .help("Bring this session's window forward")
+            }
+            Button { model.onClose?() } label: {
+                headerMark("xmark")
+                    .notchHitArea(horizontal: 2, vertical: 2)
+            }
+            .accessibilityLabel("Close pinned card")
+        }
+        // Plain, so each label's own shape is its hit area: the marks
+        // stay 22 points, the targets reach 26 and stop halfway to
+        // their neighbours.
+        .buttonStyle(.plain)
     }
 
     /// The header's second line: the activity word, then why the light
@@ -1139,7 +1145,7 @@ private struct MediaArtwork: View {
         }
         .frame(width: side, height: side)
         .clipShape(shape)
-        .overlay(shape.strokeBorder(style.hairline.opacity(1.5), lineWidth: 0.5))
+        .overlay(shape.strokeBorder(style.hairline, lineWidth: 0.5))
         .shadow(color: glow.opacity(style == .island ? 0.6 : 0.35), radius: side * 0.3, y: side * 0.1)
         .contentShape(shape)
     }
@@ -1307,7 +1313,7 @@ private struct ShelfTogglesRow: View {
                 Array(chips[$0..<min($0 + Self.perRow, chips.count)])
             }
             ForEach(rows.indices, id: \.self) { index in
-                HStack(spacing: 2) {
+                HStack(spacing: 0) {
                     ForEach(rows[index], id: \.rawValue) { toggle in
                         chip(toggle)
                     }
@@ -1338,18 +1344,22 @@ private struct ShelfTogglesRow: View {
         return Button {
             toggles.apply(toggle)
         } label: {
+            // Eight share the card's width: each name keeps a little air
+            // at its column's edges, so two long neighbours never read
+            // as one phrase — the longest gives up a few percent instead.
             VStack(spacing: 5) {
                 Image(systemName: toggle.symbol)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(on ? style.inverseInk : AnyShapeStyle(style.subColor))
-                    .frame(width: 32, height: 32)
+                    .frame(width: 30, height: 30)
                     .background(Circle().fill(on ? style.ink : AnyShapeStyle(style.chipFill)))
                     .overlay(Circle().strokeBorder(style.hairline, lineWidth: 0.5))
                 Text(title)
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(on ? style.titleColor : style.faintColor)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.75)
+                    .padding(.horizontal, 1.5)
             }
             .frame(maxWidth: .infinity)
             .opacity(busy ? 0.5 : 1)
@@ -1885,6 +1895,9 @@ private struct ShelfTimersRow: View {
                             .lineLimit(1)
                             .frame(maxWidth: 76, alignment: .leading)
                     }
+                    // The chip hugs its words; a long label stops at 76
+                    // points rather than every chip stretching to it.
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -1946,7 +1959,7 @@ private struct ShelfTimersRow: View {
 }
 
 /// The card's calendar glance: the next few timed events, soonest
-/// first, each on a thin accent rule like the day view's — the first
+/// first, each on a thin rule like the day view's — the first
 /// carries Join when it has an http(s) link, the rest whisper under it.
 /// No access or the switch off, no row: the ask lives in Setup and the
 /// Notch settings, never here. `state` is the model's, handed in so the
@@ -1975,8 +1988,10 @@ struct ShelfCalendarRow: View {
 
     private func eventLine(_ event: ShelfCalendarModel.Event, lead: Bool) -> some View {
         HStack(spacing: 9) {
+            // The meeting blue the island's heads-up wears — never the
+            // accent, which on a red Mac turns the next event into an alarm.
             Capsule(style: .continuous)
-                .fill(lead ? Color.accentColor : style.faintColor)
+                .fill(lead ? Color.blue : style.faintColor)
                 .frame(width: 3, height: lead ? 26 : 18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(event.title)
@@ -2011,15 +2026,20 @@ struct ShelfCalendarRow: View {
 }
 
 /// The card's reminders rows: a check-off circle, the title, the due
-/// time — overdue reads "Overdue", dueless rows carry no time. Drawn
-/// only while the state has something to say; asking for access is
-/// Setup's and the Notch settings' job, never a button here.
+/// time — overdue reads "Overdue", dueless rows carry no time — then a
+/// New reminder line in the circles' column, as Reminders ends a list.
+/// Drawn only while the state has something to say; asking for access
+/// is Setup's and the Notch settings' job, never a button here.
 struct ShelfRemindersRow: View {
     let reminders: ShelfRemindersModel
     let state: ShelfRemindersModel.State
     let style: NotchCardStyle
     @ViewState private var adding = false
     @ViewState private var draft = ""
+
+    /// The check-off circles' column: they sit on the card's leading
+    /// edge, where the calendar's rules do.
+    private static let checkColumn: CGFloat = 15
 
     var body: some View {
         switch state {
@@ -2031,7 +2051,7 @@ struct ShelfRemindersRow: View {
                     .font(.system(size: 11))
                     .foregroundStyle(style.faintColor)
                 Spacer(minLength: 4)
-                addButton
+                addButton(line: false)
             }
         case .items(let items):
             VStack(alignment: .leading, spacing: 5) {
@@ -2039,14 +2059,13 @@ struct ShelfRemindersRow: View {
                     row(entry)
                 }
                 HStack(spacing: 6) {
+                    addButton(line: true)
+                    Spacer(minLength: 4)
                     if items.count > ShelfRemindersModel.rowLimit {
                         Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
                             .font(.system(size: 10))
                             .foregroundStyle(style.faintColor)
-                            .padding(.leading, 22)
                     }
-                    Spacer(minLength: 4)
-                    addButton
                 }
             }
         }
@@ -2055,14 +2074,23 @@ struct ShelfRemindersRow: View {
     /// Quick add: one typed line, its date read out of the words ("Call
     /// Sam tomorrow at 3pm"), saved to the default Reminders list. The
     /// field lives in a popover — the card's panel never takes keys.
-    private var addButton: some View {
+    /// Under a list it is a line of its own, a plus in the circles'
+    /// column; beside "No reminders due" it is the plus alone.
+    private func addButton(line: Bool) -> some View {
         Button { adding = true } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(style.subColor)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(style.chipFaint))
-                .contentShape(Circle())
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: line ? 10 : 9.5, weight: .semibold))
+                    .foregroundStyle(style.subColor)
+                    .frame(width: line ? Self.checkColumn : 20, height: 20)
+                    .background(Circle().fill(line ? Color.clear : style.chipFaint))
+                if line {
+                    Text("New reminder")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(style.faintColor)
+                }
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Add a reminder")
@@ -2108,15 +2136,15 @@ struct ShelfRemindersRow: View {
     }
 
     private func row(_ entry: ShelfRemindersModel.Entry) -> some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             Button {
                 reminders.complete(entry)
             } label: {
                 Circle()
                     .strokeBorder(style.subColor, lineWidth: 1.2)
                     .frame(width: 13, height: 13)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Circle())
+                    .frame(width: Self.checkColumn, height: 20)
+                    .notchHitArea(horizontal: 4, vertical: 2)
             }
             .buttonStyle(.plain)
             .help("Mark done")
