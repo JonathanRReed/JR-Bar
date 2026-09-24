@@ -53,7 +53,7 @@ struct WindowsRenderProofTests {
 
         func color(dark: Bool) -> Color {
             switch self {
-            case .window: return Color(white: dark ? 0.165 : 0.965)
+            case .window: return Color(nsColor: .windowBackgroundColor)
             case .glass: return Color(white: dark ? 0.13 : 0.93)
             }
         }
@@ -354,5 +354,38 @@ struct WindowsRenderProofTests {
             try Self.write("setup-\(step + 1)-\(store.step.rawValue)", size: size, plate: .glass) { SetupView(store: store) }
             store.goNext()
         }
+    }
+
+    // MARK: Overview
+
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func overview() async throws {
+        let (core, process) = try await Self.mock(startAt: 3)
+        defer { process.terminate(); core.stop() }
+        let store = OverviewStore(core: core)
+        store.windowDidOpen()
+        // The mock keeps no roster: the state's sessions stand in for it.
+        store.roster = core.sessions.map { session in
+            CoreRosterEntry(session: session, pinned: session.ask != nil,
+                            axes: CoreSessionAxes(outcome: session.mode == "failed" ? "failed" : nil,
+                                                  review: "unreviewed", freshness: "live"))
+        }
+        try #require(!store.roster.isEmpty)
+        try Self.write("overview-connections", size: CGSize(width: 320, height: 640)) {
+            OverviewConnectionsBrowser(store: store)
+        }
+        if let link = store.links.first {
+            try Self.write("overview-link", size: CGSize(width: 320, height: 400)) {
+                OverviewConnectionInspector(link: link)
+            }
+        }
+        let asking = store.roster.first { $0.session.ask != nil } ?? store.roster[0]
+        store.selectionChanged(to: [asking.id])
+        await store.loadTimeline(for: asking.id)
+        try await Self.settle { store.timelinePage != nil }
+        try Self.write("overview-inspector", size: CGSize(width: 340, height: 900)) {
+            OverviewSessionInspector(store: store, entry: asking) { _ in }
+        }
+        store.windowDidClose()
     }
 }
