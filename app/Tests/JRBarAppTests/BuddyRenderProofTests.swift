@@ -182,6 +182,44 @@ struct BuddyRenderProofTests {
             }
         }
         try Self.writeSheet(wardrobeSheet, name: "buddy-sheet-wardrobe")
+
+        // The pieces up close, on four bodies: every outfit, the
+        // nightcap and the ask's badge at three times the docked size.
+        let closeUp = VStack(spacing: 8) {
+            ForEach([BuddyCharacter.dot, .cat, .crab, .ufo], id: \.self) { character in
+                HStack(spacing: 8) {
+                    ForEach(outfits.indices, id: \.self) { i in
+                        Self.zoomTile(BuddyFigure(character: character, mood: .pacing,
+                                                  tint: ProviderStyle.style(for: "codex").accent,
+                                                  phase: 2.35, hopProgress: nil, waveAge: nil,
+                                                  slumpAge: nil, leans: false, still: true, askCount: 0,
+                                                  care: .content, trick: nil, treatAge: nil,
+                                                  crumbAge: nil, wearing: outfits[i]))
+                    }
+                    Self.zoomTile(BuddyFigure(character: character, mood: .asleep,
+                                              tint: Color(nsColor: .tertiaryLabelColor),
+                                              phase: 2.35, hopProgress: nil, waveAge: nil,
+                                              slumpAge: nil, leans: false, still: true, askCount: 0,
+                                              care: .content, trick: nil, treatAge: nil, crumbAge: nil))
+                    Self.zoomTile(BuddyFigure(character: character, mood: .waving, tint: .orange,
+                                              phase: 2.35, hopProgress: nil, waveAge: 1.1,
+                                              slumpAge: nil, leans: false, still: true, askCount: 3,
+                                              care: .content, trick: nil, treatAge: nil, crumbAge: nil))
+                }
+            }
+        }
+        try Self.writeSheet(closeUp, name: "buddy-sheet-closeup")
+    }
+
+    /// One figure three times over, on the pill's dark ground.
+    private static func zoomTile(_ figure: BuddyFigure) -> some View {
+        figure
+            .frame(width: 18, height: 18)
+            .scaleEffect(3)
+            .frame(width: 54, height: 60)
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(white: 0.11)))
     }
 
     /// One figure on the docked pill's dark ground.

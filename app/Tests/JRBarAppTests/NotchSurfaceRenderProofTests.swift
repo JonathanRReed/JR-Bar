@@ -3,6 +3,8 @@ import Foundation
 import SwiftUI
 import Testing
 import JRBarCore
+import JRBarLEDS
+import JRBarUI
 @testable import JRBarApp
 
 /// Render proof for every face the notch shows a person: the resting
@@ -238,6 +240,61 @@ struct NotchSurfaceRenderProofTests {
         try ProofRender.write(Self.scene(NotchIslandView(toy: toy), size: size, depth: depth,
                                          canvas: CGSize(width: 520, height: size.height + 30)),
                               size: CGSize(width: 520, height: size.height + 30), name: "notch-meeting")
+    }
+
+    /// The faces as Jonathan runs them: the Screen Bar up, its housing
+    /// coupled under the island and climbing its bottom corners. The
+    /// island renders at its housed size, then the bar's own view is
+    /// composited over it, as the desktop orders the two windows.
+    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write PNGs"))
+    func housedFaces() throws {
+        let (toy, store, _) = Self.makeToy()
+        defer { withExtendedLifetime(store) {} }
+        toy.screenBarShown = { true }
+        let depth = max(toy.notchDepth, 32)
+        let corner = toy.notchCornerRadius
+        let ask = CoreAsk(session: "claude:ask", openedAt: Self.now - 190,
+                          summary: "Run the migration against the staging database?",
+                          answerable: true, request: "r1", preview: "make migrate ENV=staging")
+        let faces: [(String, AlcoveNotice, Bool)] = [
+            ("completed", AlcoveNotice(id: "c", kind: .completed, title: "Claude · review-patch",
+                                       subtitle: "finished", provider: "claude", key: "c"), false),
+            ("volume", AlcoveNotice(id: "v", kind: .level, title: "Volume", subtitle: "", key: "v",
+                                    glyph: "speaker.wave.3.fill", fraction: 0.62), true),
+            ("ask", AlcoveNotice(id: "a", kind: .ask, title: "Claude · rename-the-fish",
+                                 subtitle: "needs you", provider: "claude", session: "claude:ask",
+                                 key: "ask:claude:ask|r1", ask: ask), false),
+        ]
+        for (name, notice, overlay) in faces {
+            if overlay { toy.activeOverlay = notice } else { toy.activeCapsule = notice }
+            let size = notice.kind.hasVerbs
+                ? NotchIslandLayout.askSize(slotWidth: Self.slotWidth, notchDepth: depth,
+                                            summaryLines: 1, takeover: false, underHousing: corner)
+                : NotchIslandLayout.noticeSize(slotWidth: Self.slotWidth, notchDepth: depth,
+                                               underHousing: corner)
+            let canvas = CGSize(width: 520, height: size.height + ScreenBarDesign.bandHeight
+                                + ScreenBarGeometry.coupledChin + ScreenBarGeometry.coupledSlack + 30)
+            let islandFrame = CGRect(x: (canvas.width - size.width) / 2, y: canvas.height - size.height,
+                                     width: size.width, height: size.height)
+            let scene = ZStack(alignment: .top) {
+                ProofDesktop(dark: true)
+                Rectangle().fill(Color.black.opacity(0.22)).frame(height: depth)
+                NotchIslandView(toy: toy).frame(width: size.width, height: size.height)
+            }
+            .frame(width: canvas.width, height: canvas.height)
+            let bar = ScreenBarView(frame: CGRect(origin: .zero, size: canvas))
+            bar.wingGeometry = ScreenBarWingGeometry(notchWidth: Self.slotWidth, notchDepth: depth,
+                                                     bandSpan: size.width, leftExtent: 40, rightExtent: 40)
+            bar.wings = ScreenBarWings(left: ScreenBarWingSlot(text: "Working", provider: "claude"),
+                                       right: ScreenBarWingSlot(text: "Codex", provider: "codex"))
+            bar.notchCornerRadius = corner
+            bar.islandFrame = islandFrame
+            bar.relayout()
+            bar.display(colors: Array(repeating: RGB(r: 0.25, g: 0.65, b: 1), count: 8))
+            try ProofRender.write(scene, size: canvas, name: "notch-housed-\(name)", overlay: bar)
+            toy.activeCapsule = nil
+            toy.activeOverlay = nil
+        }
     }
 
     /// The grown card on black, both pages, fed like a real afternoon.
@@ -502,7 +559,8 @@ enum ProofRender {
     }
 
     static func write<V: View>(_ view: V, size: CGSize, name: String, dark: Bool = true,
-                               scale: CGFloat = 2, settle: TimeInterval = 0.45) throws {
+                               scale: CGFloat = 2, settle: TimeInterval = 0.45,
+                               overlay: NSView? = nil) throws {
         let hosting = NSHostingView(rootView: view.environment(\.colorScheme, dark ? .dark : .light))
         hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         hosting.frame = CGRect(origin: .zero, size: size)
@@ -520,6 +578,22 @@ enum ProofRender {
             bytesPerRow: 0, bitsPerPixel: 0))
         bitmap.size = size
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        // A native view drawn over the scene — the Screen Bar's panel sits
+        // above the island on the desktop.
+        if let overlay {
+            overlay.layoutSubtreeIfNeeded()
+            let top = try #require(NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: bitmap.pixelsWide, pixelsHigh: bitmap.pixelsHigh,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            top.size = size
+            overlay.cacheDisplay(in: overlay.bounds, to: top)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+            top.draw(in: CGRect(origin: .zero, size: size), from: .zero, operation: .sourceOver,
+                     fraction: 1, respectFlipped: true, hints: nil)
+            NSGraphicsContext.restoreGraphicsState()
+        }
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try png.write(to: directory.appendingPathComponent("\(name).png"))
