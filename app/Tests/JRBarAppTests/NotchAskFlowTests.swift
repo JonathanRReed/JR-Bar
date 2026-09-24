@@ -4,16 +4,30 @@ import JRBarCore
 @testable import JRBarApp
 
 /// The ask at the notch, end to end against the toy: the capsule that
-/// holds until the ask is acted on, the answer path with its request
-/// pin, the tap that opens, the band click that yields, the takeover,
-/// and key feedback that never covers an ask's buttons. The daemon is a
-/// staged `send`; `islandVisible` stands in for a notched screen.
+/// holds until the ask is acted on, the answer path through the shared
+/// desk with its request pin, the tap that opens through the one opener,
+/// the band click that yields, the takeover, and key feedback that never
+/// covers an ask's buttons. The daemon is a staged `send` on the toy's
+/// own desk, wired the way the app delegate wires the shared one;
+/// `islandVisible` stands in for a notched screen.
 @Suite("Notch ask flow")
 @MainActor
 struct NotchAskFlowTests {
     private static let session = "claude:s1"
 
+    /// What the staged daemon was asked: session, verdict, request pin.
+    private final class Sent {
+        var answers: [(String, AskVerdict, String?)] = []
+        var reply = CoreReply(id: "1", ok: true)
+    }
+
     private func makeToy(state: CoreState? = nil) -> (NotchToy, ToysStore, CoreModel) {
+        let (toy, store, core, _, _) = makeToyWithDesk(state: state)
+        return (toy, store, core)
+    }
+
+    private func makeToyWithDesk(state: CoreState? = nil)
+        -> (NotchToy, ToysStore, CoreModel, AskAnswerDesk, Sent) {
         var toys = ToysState()
         toys.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
         let core = CoreModel()
@@ -23,14 +37,26 @@ struct NotchAskFlowTests {
                               notchRuntimeEnabled: false)
         let toy: NotchToy = store.notch
         toy.islandVisible = true
-        return (toy, store, core)
+        let sent = Sent()
+        let desk = AskAnswerDesk(send: { session, verdict, request in
+            sent.answers.append((session, verdict, request))
+            return sent.reply
+        })
+        // As the app delegate wires the shared desk: an answer it lands
+        // steps the capsule down.
+        desk.onAnswered = { [weak toy] session, request in toy?.resolveAsk(session: session, request: request) }
+        toy.cardModel.askDesk = { desk }
+        return (toy, store, core, desk, sent)
     }
 
-    private func liveState(answerable: Bool = true, request: String = "r1") -> CoreState {
-        CoreState(sessions: [CoreSession(id: Self.session, provider: "claude", label: "rename-the-fish",
-                                         ask: CoreAsk(summary: "Run tests"))],
-                  asks: [CoreAsk(session: Self.session, openedAt: 1, summary: "Run tests",
-                                 answerable: answerable, request: request)])
+    private func liveState(answerable: Bool = true, request: String = "r1",
+                           choices: [CoreAskChoice]? = nil) -> CoreState {
+        var ask = CoreAsk(session: Self.session, openedAt: 1, summary: "Run tests",
+                          answerable: answerable, request: request)
+        if let choices { ask.decision = CoreAskDecision(choices: choices) }
+        return CoreState(sessions: [CoreSession(id: Self.session, provider: "claude", label: "rename-the-fish",
+                                                ask: CoreAsk(summary: "Run tests"))],
+                         asks: [ask])
     }
 
     private func askNotice(id: String = "a", session: String = NotchAskFlowTests.session,
@@ -102,81 +128,139 @@ struct NotchAskFlowTests {
                 "no live ask yet: Open only, never a guessed Approve")
     }
 
-    @Test("Approve sends the pinned request and steps the ask down on ok")
+    @Test("Approve goes through the desk with the pinned request and steps the ask down on ok")
     func approveSendsPin() async throws {
-        let (toy, store, _) = makeToy(state: liveState())
+        let (toy, store, _, desk, sent) = makeToyWithDesk(state: liveState())
         defer { withExtendedLifetime(store) {} }
-        var sent: [(String, Bool, String?)] = []
-        toy.answerer.send = { session, approve, request in
-            sent.append((session, approve, request))
-            return CoreReply(id: "1", ok: true)
-        }
         toy.offer(askNotice())
         #expect(toy.askVerbs(for: toy.activeCapsule!) == .answer)
         // The answer is awaited, not polled: a congested main queue in
         // the parallel suite can outlast any fixed wait.
         await toy.answerCapsule(approve: true)?.value
         #expect(toy.activeCapsule == nil)
-        #expect(sent.count == 1)
-        #expect(sent.first?.0 == Self.session)
-        #expect(sent.first?.1 == true)
-        #expect(sent.first?.2 == "r1")
+        #expect(sent.answers.count == 1)
+        #expect(sent.answers.first?.0 == Self.session)
+        #expect(sent.answers.first?.1 == .approve)
+        #expect(sent.answers.first?.2 == "r1")
+        #expect(!desk.isPending(Self.session))
+    }
+
+    @Test("the capsule answers the episode it shows, never the live ask that replaced it")
+    func pinOutlivesAReplacement() async throws {
+        let (toy, store, core, _, sent) = makeToyWithDesk(state: liveState(request: "r1"))
+        defer { withExtendedLifetime(store) {} }
+        toy.offer(askNotice(request: "r1"))
+        // A replacement lands before the capsule's next state pass.
+        core.apply(.state(liveState(request: "r2")))
+        #expect(toy.activeCapsule?.id == "a")
+        await toy.answerCapsule(approve: false)?.value
+        #expect(sent.answers.first?.1 == .deny)
+        #expect(sent.answers.first?.2 == "r1", "the daemon refuses a stale pin rather than deny r2")
     }
 
     @Test("a refused answer keeps the ask up and says why")
     func refusalKeepsAsk() async throws {
-        let (toy, store, _) = makeToy(state: liveState())
+        let (toy, store, _, desk, sent) = makeToyWithDesk(state: liveState())
         defer { withExtendedLifetime(store) {} }
-        toy.answerer.send = { _, _, _ in
-            CoreReply(id: "1", ok: false, error: CoreReplyError(code: "stale_request"))
-        }
+        sent.reply = CoreReply(id: "1", ok: false, error: CoreReplyError(code: "stale_request"))
         toy.offer(askNotice())
         await toy.answerCapsule(approve: false)?.value
         #expect(toy.activeCapsule?.id == "a")
-        #expect(toy.answerer.note(for: Self.session) == "That request changed — nothing was sent")
+        #expect(desk.note(for: Self.session)?.text == "That request changed — nothing was sent")
+        #expect(desk.note(for: Self.session)?.refused == true)
     }
 
     @Test("an ask the daemon can't type into never sends")
     func unanswerableNeverSends() async throws {
-        let (toy, store, _) = makeToy(state: liveState(answerable: false))
+        let (toy, store, _, desk, sent) = makeToyWithDesk(state: liveState(answerable: false))
         defer { withExtendedLifetime(store) {} }
-        var sends = 0
-        toy.answerer.send = { _, _, _ in
-            sends += 1
-            return CoreReply(id: "1", ok: true)
-        }
         toy.offer(askNotice())
         #expect(!toy.askVerbs(for: toy.activeCapsule!).answers)
-        let took = await toy.answerer.answer(session: Self.session,
-                                             ask: toy.liveAsk(for: toy.activeCapsule!),
-                                             approve: true)
-        #expect(!took)
-        #expect(sends == 0)
+        await toy.answerCapsule(approve: true)?.value
+        let live = try #require(toy.liveAsk(for: toy.activeCapsule!))
+        let outcome = await desk.answer(live, .approve)
+        #expect(!outcome.ok)
+        #expect(sent.answers.isEmpty)
+    }
+
+    @Test("a held question takes no bare Approve from the capsule — its options answer it")
+    func heldQuestionRefusesApprove() async throws {
+        let choice = CoreAskChoice(question: "Which?", options: ["A", "B"])
+        let (toy, store, _, _, sent) = makeToyWithDesk(state: liveState(choices: [choice]))
+        defer { withExtendedLifetime(store) {} }
+        toy.offer(askNotice())
+        let live = try #require(toy.liveAsk(for: toy.activeCapsule!))
+        #expect(!AskVerbs.approves(live), "no Approve button is drawn")
+        #expect(AskVerbs.denies(live) && AskVerbs.chooses(live))
+        await toy.answerCapsule(approve: true)?.value
+        #expect(sent.answers.isEmpty, "the desk refuses what the buttons would not offer")
+        #expect(toy.activeCapsule?.id == "a")
+    }
+
+    @Test("with no desk the capsule sends nothing")
+    func noDeskNoAnswer() {
+        let (toy, store, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store) {} }
+        toy.cardModel.askDesk = { nil }
+        toy.offer(askNotice())
+        #expect(toy.answerCapsule(approve: true) == nil)
     }
 
     @Test("a tap on an ask opens its session and puts the capsule away")
-    func tapOpens() {
+    func tapOpens() async {
         let (toy, store, _) = makeToy(state: liveState())
         defer { withExtendedLifetime(store) {} }
         var opened: [String] = []
-        toy.answerer.openSession = { opened.append($0) }
+        toy.openSession = { opened.append($0); return nil }
         toy.offer(askNotice())
         toy.islandTapped()
+        await toy.openInFlight?.value
         #expect(opened == [Self.session])
         #expect(toy.activeCapsule == nil)
         #expect(!toy.islandExpanded)
     }
 
+    @Test("an open that did not land keeps the capsule and says why")
+    func refusedOpenStays() async {
+        let (toy, store, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store) {} }
+        toy.openSession = { _ in "That session is gone" }
+        toy.offer(askNotice())
+        await toy.openCapsuleSession()?.value
+        #expect(toy.activeCapsule?.id == "a", "nothing opened: the ask is still the person's to act on")
+        #expect(toy.cardModel.openRefusals[Self.session] == "That session is gone")
+    }
+
+    @Test("a card row folds the card only once its session is in front")
+    func rowOpenWaitsForTheWindow() async {
+        let (toy, store, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store) {} }
+        toy.expandFromBand()
+        toy.openSession = { _ in "Could not open rename-the-fish" }
+        toy.cardModel.onOpenRow?(Self.session)
+        await toy.openInFlight?.value
+        #expect(toy.islandExpanded, "a refusal leaves the card up with its line")
+        #expect(toy.cardModel.openRefusals[Self.session] == "Could not open rename-the-fish")
+
+        var opened: [String] = []
+        toy.openSession = { opened.append($0); return nil }
+        toy.cardModel.onOpenRow?(Self.session)
+        await toy.openInFlight?.value
+        #expect(opened == [Self.session])
+        #expect(!toy.islandExpanded)
+    }
+
     @Test("a tap on news about a session opens it; news about nothing just goes")
-    func tapOnNews() {
+    func tapOnNews() async {
         let (toy, store, _) = makeToy()
         defer { withExtendedLifetime(store) {} }
         var opened: [String] = []
-        toy.answerer.openSession = { opened.append($0) }
+        toy.openSession = { opened.append($0); return nil }
         var failed = news(.failed, id: "f")
         failed.session = "codex:s9"
         toy.offer(failed)
         toy.islandTapped()
+        await toy.openInFlight?.value
         #expect(opened == ["codex:s9"])
         #expect(toy.activeCapsule == nil)
     }
@@ -327,7 +411,7 @@ struct NotchAskFlowTests {
     }
 
     @Test("the amber count opens the longest-waiting session")
-    func oldestAsk() {
+    func oldestAsk() async {
         let older = CoreSession(id: "claude:old", provider: "claude", since: 1,
                                 ask: CoreAsk(openedAt: 10))
         let newer = CoreSession(id: "claude:new", provider: "claude", since: 2,
@@ -335,8 +419,9 @@ struct NotchAskFlowTests {
         let (toy, store, _) = makeToy(state: CoreState(sessions: [newer, older]))
         defer { withExtendedLifetime(store) {} }
         var opened: [String] = []
-        toy.answerer.openSession = { opened.append($0) }
+        toy.openSession = { opened.append($0); return nil }
         toy.openOldestAsk()
+        await toy.openInFlight?.value
         #expect(opened == ["claude:old"])
     }
 }

@@ -191,9 +191,10 @@ final class AquariumToy: Toy {
 
     /// Off still watches: `observeSessions` and `noteEvent` keep the
     /// game's accrual alive while the tank is closed (the away summary
-    /// needs it), so the chip never claims a fully-off state. The card's
-    /// switch is the tank window; the live wallpaper and the screensaver
-    /// have their own, and the chip says when one of them still draws.
+    /// needs it), so the chip never claims a fully-off state — it says so
+    /// in a quiet neutral note, not a warning. The card's switch is the
+    /// tank window; the live wallpaper and the screensaver have their
+    /// own, and the chip says when one of them still draws.
     var status: ToyStatus {
         guard !isOn else { return .on }
         let settings = store?.state.aquarium ?? AquariumSettings()
@@ -208,10 +209,10 @@ final class AquariumToy: Toy {
     static func closedStatus(wallpaper: String?, connected: [String],
                              saverMinutes: Int) -> ToyStatus {
         if let wallpaper, connected.contains(wallpaper) {
-            return .paused("Live wallpaper on \(wallpaper)")
+            return .note("Live wallpaper on \(wallpaper)")
         }
-        if saverMinutes > 0 { return .paused("Screensaver after \(saverMinutes) min") }
-        return .paused("Watching quietly")
+        if saverMinutes > 0 { return .note("Screensaver after \(saverMinutes) min") }
+        return .note("Watching quietly")
     }
 
     var controls: AnyView {

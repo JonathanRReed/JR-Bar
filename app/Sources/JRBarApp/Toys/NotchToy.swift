@@ -62,15 +62,12 @@ final class NotchToy: Toy {
     var islandVisible = false
     /// The notification capsule on screen, if any — Alcove's instant
     /// notification: the island's only face besides idle.
-    private(set) var activeCapsule: AlcoveNotice?
+    var activeCapsule: AlcoveNotice?
     /// Key feedback drawn over the face — a level, Caps Lock
     /// (`AlcoveCapsuleQueue.present`). It outranks a transient capsule
     /// for its short beat and never covers a latched ask.
-    private(set) var activeOverlay: AlcoveNotice?
-    @ObservationIgnored private var overlayWork: DispatchWorkItem?
-    /// The ask capsule's Approve / Deny / Open — the same answerer the
-    /// grown card's rows use.
-    let answerer: NotchAskAnswerer
+    var activeOverlay: AlcoveNotice?
+    @ObservationIgnored var overlayWork: DispatchWorkItem?
     /// Per ask notice id: when it was offered and whether its ask has
     /// shown up in the state yet — `NotchIsland.askStillOpen`'s inputs.
     @ObservationIgnored private var askTrack: [String: (offered: Date, seen: Bool)] = [:]
@@ -80,33 +77,33 @@ final class NotchToy: Toy {
     /// The raw hover state: the island's `.onHover` writes it; the card
     /// it may grow drops when the hover — and any capsule in the way —
     /// is done.
-    private var hoverHeld = false
+    var hoverHeld = false
     /// The hover wink: a cursor ON the island earns a few points of
     /// grow — proof of life — while the intent debounce decides whether
     /// this was a pause that meant the card. The view swells the dots
     /// on it; `islandFrame` grows the idle frame on it.
-    private(set) var islandHoverPeek = false
+    var islandHoverPeek = false
     /// The intent debounce — a cursor pausing this long on the resting
     /// island meant it; a pointer cutting across only ever earns the
     /// wink. Armed in `setHovered`, fires `hoverExpandFired`.
-    @ObservationIgnored private var expandWork: DispatchWorkItem?
+    @ObservationIgnored var expandWork: DispatchWorkItem?
     /// The breath's own intent delay — `NotchMotion.hoverDelay` of a
     /// resting cursor earns the few-points grow; a sweep past never
     /// arms it.
-    @ObservationIgnored private var peekWork: DispatchWorkItem?
+    @ObservationIgnored var peekWork: DispatchWorkItem?
     /// The press-and-pull is live — the finger owns the frame, so the
     /// hover debounce must not fold the card the finger is holding and
     /// a mid-pull morph calls `cancelPull` rather than fight it.
-    private(set) var pullActive = false
+    var pullActive = false
     /// The island is grown into the card right now.
     private(set) var islandExpanded = false
     /// A band click's deliberate expand — survives pointer-leave until
     /// an outside click, a swipe-down or Esc lets it go; a hover's own
     /// expand answers to the leave debounce alone.
-    private var expandHeld = false
+    var expandHeld = false
     /// A band click landed mid-capsule — the capsule owns the island
     /// until it steps down, then the expand lands.
-    private var bandExpandPending = false
+    var bandExpandPending = false
     /// Esc lets the card go — the island never becomes key, so the toy
     /// watches for it while grown.
     @ObservationIgnored private var cardKeyMonitors: [Any] = []
@@ -114,12 +111,12 @@ final class NotchToy: Toy {
     /// sessions doc, and a no-change applyFrame would snap an in-flight
     /// morph (the capsule slide-in dies on the doc that follows its
     /// event). Same target, no re-apply.
-    @ObservationIgnored private var desiredFrame: NSRect?
+    @ObservationIgnored var desiredFrame: NSRect?
     /// The capsule decisions — pure, in `AlcoveCapsuleQueue`; the toy
     /// only owns the timers that run them.
-    @ObservationIgnored private(set) var capsuleQueue = AlcoveCapsuleQueue()
+    @ObservationIgnored var capsuleQueue = AlcoveCapsuleQueue()
     /// The pending capsule timer — the show-delay gap or the 2.4 s life.
-    @ObservationIgnored private var capsuleWork: DispatchWorkItem?
+    @ObservationIgnored var capsuleWork: DispatchWorkItem?
     /// Where the line's timers are armed — a shown capsule's life and
     /// the gap before the next — and the clock the line runs on: the
     /// queue's gaps and cooldowns, a shelved capsule's freshness. The
@@ -139,7 +136,7 @@ final class NotchToy: Toy {
     /// A capsule promoted into its show-gap the moment the island grew:
     /// it could never draw over the card, so `expand` shelves it here
     /// and `collapseIsland` re-shows it while it is still fresh.
-    @ObservationIgnored private(set) var shelvedCapsule: (notice: AlcoveNotice, at: Date)?
+    @ObservationIgnored var shelvedCapsule: (notice: AlcoveNotice, at: Date)?
     /// The Now Playing reader's token on the shared feed; held only
     /// while the island is ours, shown, and `mediaEnabled`. A parked
     /// island holds no listener.
@@ -180,18 +177,18 @@ final class NotchToy: Toy {
     }
     /// The hover-leave timer — a short delay so a cursor grazing the
     /// island's edge doesn't flap the card.
-    @ObservationIgnored private var collapseWork: DispatchWorkItem?
-    @ObservationIgnored private var island: NotchIslandWindow?
+    @ObservationIgnored var collapseWork: DispatchWorkItem?
+    @ObservationIgnored var island: NotchIslandWindow?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// Production owns AppKit windows and system readers. State-machine
     /// tests opt out before observation starts, so no later settings
     /// change can accidentally reconcile a real surface into the test.
-    @ObservationIgnored private var runtimeEnabled: Bool
+    @ObservationIgnored var runtimeEnabled: Bool
 
     /// The island's faces on the same window — idle capsule, the
     /// one-line notice capsule, the ask (a two-line capsule with its
     /// verbs, or the takeover card), the grown card.
-    private enum NotchIslandFace { case idle, notice, ask, expanded }
+    enum NotchIslandFace { case idle, notice, ask, expanded }
 
     init(core: CoreModel, store: ToysStore, cardModel: NotchCardModel,
          mediaFeed: MediaFeed? = nil, runtimeEnabled: Bool = true) {
@@ -200,39 +197,27 @@ final class NotchToy: Toy {
         self.cardModel = cardModel
         self.mediaFeed = mediaFeed ?? MediaFeed.shared
         self.runtimeEnabled = runtimeEnabled
-        answerer = NotchAskAnswerer(core: core)
         sensorIndicatorsEnabled = UserDefaults.standard.object(
             forKey: Self.sensorIndicatorsDefaultsKey) as? Bool ?? true
-        // An answer the daemon took steps the capsule down at once — the
-        // `ask_resolved` that follows finds nothing left to close.
-        answerer.onAnswered = { [weak self] session, request in
-            self?.resolveAsk(session: session, request: request)
-        }
-        cardModel.answerer = answerer
         // The queue only ever runs on the main actor, inside the toy's
         // own calls — its eviction report lands back here in turn.
         capsuleQueue.onEvict = { [weak self] notice in
             MainActor.assumeIsolated { self?.onCapsuleEvicted(notice) }
         }
-        cardModel.onOpenRow = { [weak self] session in
-            guard let self else { return }
-            self.collapseIsland()
-            self.answerer.open(session: session)
-        }
+        cardModel.onOpenRow = { [weak self] session in self?.openFromCard(session) }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
         cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }
         cardModel.onDropLanded = { [weak self] in self?.shelfDragLanded() }
         cardModel.onOpenSession = { [weak self] in
             guard let self, let session = self.cardModel.focus.clickSession else { return }
-            self.collapseIsland()
-            self.core.openSession(session)
+            self.openFromCard(session)
         }
         cardModel.onOpenOverview = { [weak self] in self?.onOpenOverview() }
         cardModel.mirrorEnabled = { [weak self] in self?.settings.mirror ?? false }
         cardModel.utility.weather.allowIPLocation = { [weak self] in
             self?.settings.weatherUseIPLocation ?? false
         }
-        cardModel.utility.lyrics.enabled = { [weak self] in self?.settings.lyrics ?? true }
+        wireLyrics(cardModel.utility.lyrics)
         cardModel.heldAwake = { [weak self] in self?.core.state?.power?.keepAwake == true }
         // A due timer morphs the island into its capsule, and a nudge
         // about a run only speaks while that run is still working.
@@ -253,6 +238,13 @@ final class NotchToy: Toy {
         meetingWatch.onLiveChange = { [weak self] _ in self?.noteQuietChange() }
         audioTap.onLevels = { [weak self] bands in
             self?.cardModel.utility.audioLevels = bands
+        }
+        // The row follows the tap's own edges: the start lands after
+        // `sync` returns, and a dead tap must drop its bars at once.
+        audioTap.onLiveChange = { [weak self] live in
+            guard let utility = self?.cardModel.utility else { return }
+            utility.audioTapLive = live
+            if !live { utility.audioLevels = [Float](repeating: 0, count: utility.audioLevels.count) }
         }
         guard runtimeEnabled else { return }
         let workspace = NSWorkspace.shared.notificationCenter
@@ -702,7 +694,7 @@ final class NotchToy: Toy {
 
     /// The leave debounce a hover-grown card folds on — shared by the
     /// hover's exit and the pull's let-go.
-    private func scheduleCollapseCheck() {
+    func scheduleCollapseCheck() {
         collapseWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.collapseTimerFired() }
@@ -822,9 +814,9 @@ final class NotchToy: Toy {
 
     /// The drag is over the hosting view itself — the notch strip, or
     /// any part of the island the card's own targets do not cover.
-    @ObservationIgnored private var shelfDragOverIsland = false
+    @ObservationIgnored var shelfDragOverIsland = false
     /// The beat before a drag that left every target folds the card.
-    @ObservationIgnored private var shelfDragLeaveWork: DispatchWorkItem?
+    @ObservationIgnored var shelfDragLeaveWork: DispatchWorkItem?
     /// Long enough for the target the drag crossed onto to say so —
     /// the hosting view hears the exit first — and short enough that a
     /// drag carried away still folds the card at once.
@@ -896,87 +888,17 @@ final class NotchToy: Toy {
     /// only while the island is up and the setting allows. A shake
     /// during any left-button drag pulls the card open as a drop
     /// target; nothing here inspects what is being dragged.
-    @ObservationIgnored private var shakeDragMonitor: Any?
-    @ObservationIgnored private var shakeUpMonitor: Any?
-    @ObservationIgnored private var shakeSamples: [ShelfShakeDetector.Sample] = []
+    @ObservationIgnored var shakeDragMonitor: Any?
+    @ObservationIgnored var shakeUpMonitor: Any?
+    @ObservationIgnored var shakeSamples: [ShelfShakeDetector.Sample] = []
     /// The fold-back timer after a shake-summon — a card nobody
     /// dropped on folds itself rather than standing open forever.
-    @ObservationIgnored private var shelfSummonExpiry: DispatchWorkItem?
-
-    /// Shake-summon rides the island's own lifecycle: the monitors
-    /// stand while the island is drawn, visible, enabled, and the
-    /// setting is on — and die the moment any of those go.
-    private func syncShakeMonitor() {
-        let wanted = runtimeEnabled && settings.enabled
-            && settings.shelfShakeToSummon && isDrawingIsland && islandVisible
-        if wanted, shakeDragMonitor == nil {
-            shakeDragMonitor = NSEvent.addGlobalMonitorForEvents(
-                matching: .leftMouseDragged
-            ) { [weak self] event in
-                let x = NSEvent.mouseLocation.x
-                let at = event.timestamp
-                Task { @MainActor [weak self] in
-                    self?.noteDragSample(x: x, at: at)
-                }
-            }
-            shakeUpMonitor = NSEvent.addGlobalMonitorForEvents(
-                matching: .leftMouseUp
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.shakeSamples.removeAll()
-                }
-            }
-        } else if !wanted {
-            if let monitor = shakeDragMonitor { NSEvent.removeMonitor(monitor) }
-            if let monitor = shakeUpMonitor { NSEvent.removeMonitor(monitor) }
-            shakeDragMonitor = nil
-            shakeUpMonitor = nil
-            shakeSamples.removeAll()
-        }
-    }
-
-    /// One dragged-pointer sample: keep the buffer bounded, ask the
-    /// recognizer, and on a shake pull the card open — with a fold
-    /// timer, because a shake is not a promise to drop.
-    private func noteDragSample(x: CGFloat, at time: TimeInterval) {
-        shakeSamples.append(ShelfShakeDetector.Sample(x: x, at: time))
-        if shakeSamples.count > 240 {
-            shakeSamples.removeFirst(shakeSamples.count - 240)
-        }
-        guard ShelfShakeDetector.isShake(shakeSamples) else { return }
-        shakeSamples.removeAll()
-        shelfSummon()
-        armSummonExpiry()
-    }
-
-    /// A shake-summoned card nobody drops on folds after five
-    /// seconds — the same `shelfDragAbandoned` fold a drag exit takes.
-    private func armSummonExpiry() {
-        shelfSummonExpiry?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.shelfSummonExpiry = nil
-            self?.shelfDragAbandoned()
-        }
-        shelfSummonExpiry = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
-    }
-
-    /// A real drag reaching the island — the summon is now backed by
-    /// the hovering drag itself, so the shake expiry stands down and
-    /// `draggingExited`/`Ended` own the fold from here.
-    func shelfDragAtIsland() {
-        shelfSummonExpiry?.cancel()
-        shelfSummonExpiry = nil
-        shelfDragLeaveWork?.cancel()
-        shelfDragLeaveWork = nil
-        shelfDragOverIsland = true
-        shelfSummon()
-    }
+    @ObservationIgnored var shelfSummonExpiry: DispatchWorkItem?
 
     /// Grow the island into the card — `held` is the band click's
     /// deliberate pin, surviving pointer-leave; a hover's expand
     /// answers to the leave debounce alone.
-    private func expand(held: Bool) {
+    func expand(held: Bool) {
         guard isDrawingIsland, !foldEngaged else { return }
         if held { expandHeld = true }
         guard !islandExpanded else { return }
@@ -1013,7 +935,7 @@ final class NotchToy: Toy {
     /// pointer still sitting on the island (Esc, the close button, a
     /// swipe) must not re-grow the card the next time a capsule
     /// settles and re-reads the hover.
-    private func collapseIsland() {
+    func collapseIsland() {
         guard islandExpanded else { return }
         islandExpanded = false
         // A quiet stretch that ended under the card says its summary as
@@ -1116,7 +1038,7 @@ final class NotchToy: Toy {
     /// app is frontmost) the pointer at the top edge is reaching for a
     /// bar that is not there, not for us — the grow stays down; the
     /// wink still answers, it is only a tell.
-    private func applyHover() {
+    func applyHover() {
         guard hoverHeld, settings.expandOnHover, activeCapsule == nil, activeOverlay == nil,
               !menuBarHidden() else { return }
         expand(held: false)
@@ -1125,7 +1047,7 @@ final class NotchToy: Toy {
     /// The face the window should wear right now — key feedback
     /// outranks a capsule, a capsule outranks the card, the card
     /// outranks idle. An ask capsule wears the ask face.
-    private var currentFace: NotchIslandFace {
+    var currentFace: NotchIslandFace {
         if activeOverlay != nil { return .notice }
         if let capsule = activeCapsule { return capsule.kind.hasVerbs ? .ask : .notice }
         return islandExpanded ? .expanded : .idle
@@ -1139,7 +1061,7 @@ final class NotchToy: Toy {
     /// without animation — animating a sub-2 pt delta reads as jitter.
     /// A morph landing mid-pull owns the frame: the pull lets go
     /// without a verdict rather than fight the spring.
-    private func reframe(_ face: NotchIslandFace, animated: Bool) {
+    func reframe(_ face: NotchIslandFace, animated: Bool) {
         guard let frame = islandFrame(face: face) else { return }
         guard frame != desiredFrame else { return }
         if pullActive {
@@ -1158,14 +1080,14 @@ final class NotchToy: Toy {
         island?.applyFrame(frame, animated: animated)
     }
 
-    private func reframeCurrent(animated: Bool) {
+    func reframeCurrent(animated: Bool) {
         reframe(currentFace, animated: animated)
     }
 
     /// The island's frame for a face: centred on the notch slot, top
     /// edge pinned to the screen's top (or floating a few points under
     /// it on a notch-less screen).
-    private func islandFrame(face: NotchIslandFace) -> NSRect? {
+    func islandFrame(face: NotchIslandFace) -> NSRect? {
         _ = displayVersion
         guard let screen = ScreenBarGeometry.preferredScreen() else { return nil }
         let slot = ScreenBarGeometry.islandSlot(on: screen)
@@ -1439,7 +1361,7 @@ final class NotchToy: Toy {
     /// rows — a capsule queued before the grow simply does not draw. An
     /// ask whose question has already gone (answered while it waited
     /// its turn) steps straight down instead of asking again.
-    private func showCurrentCapsule() {
+    func showCurrentCapsule() {
         guard let current = capsuleQueue.current, islandVisible, !islandExpanded else { return }
         if current.kind == .ask, !askHolds(current) {
             finishCapsule()
@@ -1529,27 +1451,66 @@ final class NotchToy: Toy {
     }
 
     /// Approve or Deny on the ask face — only ever from a click on a
-    /// button `askVerbs` allowed. The pin is the episode the capsule
-    /// shows; answerability is the live ask's. The returned task is the
-    /// answer in flight — the button forgets it, tests await it.
+    /// button `AskVerbs` drew, sent through the shared desk, which gates
+    /// it again. The pin is the episode the capsule shows; answerability
+    /// is the live ask's, so an ask not yet in the state sends nothing.
+    /// The desk's `onAnswered` steps the capsule down. The returned task
+    /// is the answer in flight — the button forgets it, tests await it.
     @discardableResult
     func answerCapsule(approve: Bool) -> Task<Void, Never>? {
         guard let capsule = activeCapsule, capsule.kind == .ask,
-              let session = capsule.session else { return nil }
-        var ask = liveAsk(for: capsule) ?? capsule.ask
-        if let pinned = capsule.ask?.request { ask?.request = pinned }
-        return Task { [weak self] in
-            await self?.answerer.answer(session: session, ask: ask, approve: approve)
-        }
+              let session = capsule.session, let desk = cardModel.askDesk(),
+              var ask = liveAsk(for: capsule) else { return nil }
+        if let pinned = capsule.ask?.request { ask.request = pinned }
+        if ask.session == nil { ask.session = session }
+        let pinned = ask
+        return Task { _ = await desk.answer(pinned, approve ? .approve : .deny) }
     }
 
     /// Open on the ask face, or a tap on any capsule about a session:
-    /// news you tap takes you to the thing. The capsule steps down — the
-    /// person acted on it.
-    func openCapsuleSession() {
-        guard let capsule = activeCapsule, let session = capsule.session else { return }
-        answerer.open(session: session)
-        dismissCapsule()
+    /// news you tap takes you to the thing. The capsule steps down once
+    /// the session is in front — the person acted on it; a refusal
+    /// stays on the capsule instead. The returned task is the open in
+    /// flight.
+    @discardableResult
+    func openCapsuleSession() -> Task<Void, Never>? {
+        guard let capsule = activeCapsule, let session = capsule.session else { return nil }
+        let task = Task { [weak self] in
+            guard let self, await self.open(session: session),
+                  self.activeCapsule?.id == capsule.id else { return }
+            self.dismissCapsule()
+        }
+        openInFlight = task
+        return task
+    }
+
+    // MARK: Opening
+
+    /// The one way the notch opens a session (`SessionOpener`): the
+    /// daemon's raise, and the Dock's window locator when the daemon
+    /// cannot find a session still running here. Tests swap it.
+    @ObservationIgnored var openSession: @MainActor (_ session: String) async -> String? = { id in
+        await SessionOpener.open(id)
+    }
+    /// The last click's open, still on its way — tests await it.
+    @ObservationIgnored var openInFlight: Task<Void, Never>?
+
+    /// Open `session`'s own window. True once it is in front; a refusal
+    /// is kept on the card model for the row and the ask face to show.
+    @discardableResult
+    func open(session: String) async -> Bool {
+        guard let refusal = await openSession(session) else { return true }
+        cardModel.noteOpenRefused(refusal, session: session)
+        return false
+    }
+
+    /// A row or the header's Open on the grown card: the card folds once
+    /// the session is in front; a refusal stays on the card to be read.
+    private func openFromCard(_ session: String) {
+        openInFlight = Task { [weak self] in
+            guard let self, await self.open(session: session) else { return }
+            self.collapseIsland()
+        }
     }
 
     // MARK: Quiet hold
@@ -1733,56 +1694,6 @@ final class NotchToy: Toy {
         reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
-    // MARK: Feedback overlay
-
-    /// The Mac's own announcements (`NotchHUD`): the level keys, Caps
-    /// Lock, Focus, devices, displays and the app's toasts. True when
-    /// the island will say it — ours, shown, not grown, not under Fold,
-    /// and the line open to it — so the HUD's glass pill stays down and
-    /// nothing is said twice. Key feedback overlays at once; news joins
-    /// the capsule line. False sends it to the pill: "SidePulse
-    /// disconnected" must never vanish between the two.
-    @discardableResult
-    func presentSystemNotice(_ notice: AlcoveNotice) -> Bool {
-        let s = settings
-        guard s.enabled, s.provider == .jrbar, s.islandEnabled, islandVisible,
-              !islandExpanded, !foldEngaged else { return false }
-        if notice.kind.isFeedback { return presentFeedback(notice) }
-        // A latched ask holds the line for as long as it is open: news
-        // offered behind it would wait there and go stale unsaid. The
-        // pill speaks now instead, the same as for key feedback.
-        guard capsuleQueue.acceptsOverlay else { return false }
-        return offer(Self.focusPolicyNotice(notice,
-                                            holding: s.holdNewsWhileQuiet && s.capsuleNotifications))
-    }
-
-    /// Draw key feedback over the island for its beat. A latched ask
-    /// refuses it (`acceptsOverlay`) — its buttons are why the island
-    /// is open — and the caller falls back to the pill.
-    @discardableResult
-    private func presentFeedback(_ notice: AlcoveNotice) -> Bool {
-        guard islandVisible, !islandExpanded, capsuleQueue.present(notice) else { return false }
-        let wasUp = activeOverlay != nil
-        activeOverlay = notice
-        overlayWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.endOverlay(settle: true) }
-        }
-        overlayWork = work
-        // A level holds for the person's HUD duration; Caps Lock keeps
-        // the system's own beat.
-        let life = notice.kind == .level
-            ? settings.hudDuration
-            : (notice.kind.life ?? AlcoveCapsuleQueue.feedbackLife)
-        DispatchQueue.main.asyncAfter(deadline: .now() + life, execute: work)
-        // A held key updates the fill in place — the face is already
-        // the notice, so only a first press morphs.
-        if !wasUp {
-            reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        }
-        return true
-    }
-
     /// Writes a level the scroll asked for — the system's own paths, the
     /// same ones the consuming key tap drives. False when the Mac said
     /// no (no settable volume on this output, no built-in panel). The
@@ -1795,151 +1706,6 @@ final class NotchToy: Toy {
         case .brightness: return SystemLevelReader.setDisplayBrightness(value)
         case .keyboard: return false
         }
-    }
-
-    /// A scroll over the level capsule: while a volume or brightness
-    /// level is up it is a slider — the fill follows the fingers, the
-    /// Mac's level follows the fill, and the capsule holds for another
-    /// beat. False when no settable level is up, so the scroll stays a
-    /// swipe.
-    func scrubLevel(fingerDelta: CGFloat, precise: Bool) -> Bool {
-        guard let shown = activeOverlay, shown.kind == .level,
-              let target = NotchLevelScrub.target(ofKey: shown.key),
-              NotchLevelScrub.settable(target) else { return false }
-        let before = shown.fraction ?? 0
-        let next = NotchLevelScrub.step(before, fingerDelta: fingerDelta, precise: precise)
-        guard next != before else {
-            _ = presentFeedback(shown)   // pressed at the stop: hold the beat
-            return true
-        }
-        guard levelWriter(target, Float(next)) else { return true }
-        var moved = shown
-        moved.fraction = next
-        if target == .volume {
-            moved.muted = shown.muted && next <= 0
-            // The device the sound goes to, read again as the key does;
-            // a headless toy (the tests) draws the plain speaker.
-            let route = runtimeEnabled ? SystemLevelReader.outputRoute() : nil
-            moved.glyph = NotchLevelGlyph.volume(level: Float(next), muted: moved.muted,
-                                                 transport: route?.transport, name: route?.name)
-        } else {
-            moved.glyph = NotchLevelGlyph.brightness(level: Float(next))
-        }
-        _ = presentFeedback(moved)
-        return true
-    }
-
-    /// The feedback's beat ended: the face under it shows again — the
-    /// capsule it covered, or whatever the cursor wants.
-    func endOverlay(settle: Bool) {
-        overlayWork?.cancel()
-        overlayWork = nil
-        guard activeOverlay != nil else { return }
-        activeOverlay = nil
-        capsuleQueue.endOverlay()
-        guard settle else { return }
-        if activeCapsule == nil {
-            settleToRest()
-        } else {
-            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        }
-    }
-
-    /// The gap between two capsules: nothing drawn yet, `current` already
-    /// picked — this is the timer that draws it.
-    private func scheduleCapsuleShow(after delay: TimeInterval) {
-        capsuleWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.showCurrentCapsule() }
-        }
-        capsuleWork = work
-        capsuleTimer(delay, work)
-    }
-
-    /// The shown capsule's life ended: the queue promotes whatever was
-    /// waiting (after the minimum gap), or the island settles back to
-    /// whatever the cursor currently wants — idle, or the card a
-    /// mid-capsule hover earned.
-    /// Internal so tests can end a capsule's run without sleeping out
-    /// its whole life.
-    func finishCapsule() {
-        // The firing work item cancels itself cleanly; a direct call
-        // (tests, dismiss paths) must not leave the life timer armed.
-        capsuleWork?.cancel()
-        capsuleWork = nil
-        switch capsuleQueue.finish(at: capsuleClock()) {
-        case .idle:
-            activeCapsule = nil
-            settleToRest()
-        case .now:
-            activeCapsule = nil
-            showCurrentCapsule()
-        case .after(let delay, _):
-            activeCapsule = nil
-            settleToRest()
-            // The settle may have grown the card — `expand` shelved the
-            // promoted capsule (it stays `current`; the shelf IS the
-            // queue's slot) — so the gap timer only arms when the
-            // island settled to rest with a capsule still waiting to
-            // be drawn. Firing it under the card would just land in
-            // `showCurrentCapsule`'s early return.
-            if !islandExpanded, capsuleQueue.current != nil {
-                scheduleCapsuleShow(after: delay)
-            }
-        }
-    }
-
-    /// A swipe down on the island. "Stop" rather than "next": the shown
-    /// capsule AND anything waiting behind it are dropped. The swipe is
-    /// a dismissal — the held cursor must not pop the card right back
-    /// open where the capsule was.
-    func dismissCapsule() {
-        if activeOverlay != nil, activeCapsule == nil, capsuleQueue.current == nil {
-            endOverlay(settle: true)
-            return
-        }
-        guard activeCapsule != nil || capsuleQueue.current != nil else { return }
-        endOverlay(settle: false)
-        capsuleWork?.cancel()
-        capsuleWork = nil
-        capsuleQueue.cancel(at: capsuleClock())
-        activeCapsule = nil
-        shelvedCapsule = nil
-        hoverHeld = false
-        peekWork?.cancel()
-        peekWork = nil
-        islandHoverPeek = false
-        // A dismissal eats a remembered band click too — the swipe is
-        // "go away", so the card must not pop open off the back of it.
-        bandExpandPending = false
-        settleToRest()
-    }
-
-    /// Back to the face the cursor wants: a remembered band click grows
-    /// the card, a remembered hover grows it too, or nothing — the
-    /// capsule just stepped down. The grow runs INSTEAD of the idle
-    /// reframe, not after it: easing to idle and then straight back out
-    /// reads as the island dipping under the capsule's feet.
-    private func settleToRest() {
-        if bandExpandPending {
-            bandExpandPending = false
-            expand(held: true)
-            return
-        }
-        // The face that just stepped down is wider than idle — the
-        // notice carries a line of copy. A cursor over its shoulder is
-        // already outside the resting capsule, and the tracking-area
-        // exit lands a tick after this pass. Re-check the real pointer
-        // against the resting frame before trusting the remembered
-        // hover: the card must never grow out from under a cursor that
-        // already left.
-        if hoverHeld, let resting = islandFrame(face: .idle),
-           !resting.contains(NSEvent.mouseLocation) {
-            hoverHeld = false
-        }
-        islandHoverPeek = hoverHeld
-        if hoverHeld { applyHover() }
-        reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
     // MARK: Now Playing
@@ -1986,7 +1752,7 @@ final class NotchToy: Toy {
     /// Owned here so its lifecycle rides the island's — a parked
     /// island holds no tap. `runtimeEnabled` is folded into the gate,
     /// so state-machine tests never build a Core Audio object.
-    @ObservationIgnored private let audioTap = AudioLevelTap()
+    @ObservationIgnored let audioTap = AudioLevelTap()
 
     /// Push the gating facts. The media row is on screen only while
     /// the card is grown (no notice kind carries media today — the
@@ -1998,7 +1764,6 @@ final class NotchToy: Toy {
                       playing: islandMedia?.playing == true,
                       enabled: runtimeEnabled && settings.audioVisualizer,
                       clientBundleID: islandMedia?.bundleIdentifier)
-        cardModel.utility.audioTapLive = audioTap.live
     }
 
     // MARK: Power
@@ -2129,243 +1894,6 @@ final class NotchToy: Toy {
         }
     }
 
-    // MARK: Tap
-
-    /// A tap on the island itself — the view's tap gesture. The card
-    /// toggles: grown folds, resting grows (the same deliberate pin a
-    /// band click earns — a tap is a click, so outside-click and Esc
-    /// still let it go). A capsule about a session opens that session —
-    /// news you tap takes you to the thing, and a tap on "failed" no
-    /// longer throws away the only pointer to the broken run — and steps
-    /// down; one about nothing in particular (power, a device) just puts
-    /// itself away. Key feedback is only ever put away. None of them
-    /// re-opens the card.
-    func islandTapped() {
-        guard isDrawingIsland, !foldEngaged else { return }
-        if islandExpanded {
-            collapseIsland()
-        } else if activeOverlay != nil {
-            endOverlay(settle: true)
-        } else if let capsule = activeCapsule {
-            if let session = capsule.session, !CoreSession.isRemoteID(session) {
-                openCapsuleSession()
-            } else {
-                dismissCapsule()
-            }
-        } else if NSEvent.modifierFlags.contains(.option), settings.mirror {
-            summonMirror()
-        } else {
-            expandFromBand()
-        }
-    }
-
-    /// ⌃⌥D: the card opens straight onto the shelf, or folds when it is
-    /// already up — the Yoink key, which is about the shelf, not the
-    /// sessions.
-    func toggleShelfFromHotkey() {
-        if islandExpanded {
-            collapseFromBand()
-        } else {
-            cardModel.show(.shelf)
-            expandFromBand()
-        }
-    }
-
-    /// ⌥-click on the resting island: the card opens straight onto the
-    /// Mirror. The camera only ever runs when asked for like this (or
-    /// from the card header's camera button), and closes with the card.
-    func summonMirror() {
-        guard settings.mirror, isDrawingIsland, !foldEngaged else { return }
-        cardModel.summonMirror()
-        if !islandExpanded { expandFromBand() }
-    }
-
-    /// A click on the resting island's amber count — straight to the
-    /// session that has waited longest, rather than the card: one click
-    /// from "someone needs me" to the terminal that does.
-    func openOldestAsk() {
-        guard isDrawingIsland, !foldEngaged,
-              let session = islandSummary.oldestWaiting else {
-            islandTapped()
-            return
-        }
-        answerer.open(session: session)
-    }
-
-    // MARK: Pull
-
-    /// The press-and-pull engaged — the window's finger-following
-    /// stretch is live. While it runs, `pullActive` keeps the hover
-    /// debounce from folding the card the finger is holding; the
-    /// pending hover-expand cancels too — the pull IS the intent.
-    func islandPullBegan() {
-        pullActive = true
-        collapseWork?.cancel()
-        collapseWork = nil
-        expandWork?.cancel()
-        expandWork = nil
-    }
-
-    /// The pull let go — `verdict` is the pure machine's call. A commit
-    /// is the surface's act: the resting island's pull-down is the
-    /// swipe-down's own truth (open on idle, dismiss on a capsule,
-    /// fold on the card — `islandSwipe(.down)` already says it). A
-    /// retreat springs the frame back to wherever the island's face
-    /// wants it; a pull that never engaged stays the click it was.
-    func islandPullEnded(_ verdict: NotchPullGesture.Verdict) {
-        pullActive = false
-        switch verdict {
-        case .commit:
-            islandSwipe(.down)
-        case .retreat:
-            // A pull that ended off the island is a leave the debounce
-            // never saw — re-check the real pointer against the frame
-            // the face actually wants before it stays grown.
-            if islandExpanded, !expandHeld,
-               let resting = desiredFrame ?? islandFrame(face: currentFace),
-               !resting.contains(NSEvent.mouseLocation) {
-                hoverHeld = false
-                peekWork?.cancel()
-                peekWork = nil
-                islandHoverPeek = false
-                scheduleCollapseCheck()
-            }
-        case .click:
-            break
-        }
-        // Either way the window lands on its face's frame — the
-        // verdict's own path reframed when it acted; a refused commit
-        // (gestures switched off mid-pull) still settles.
-        if let frame = desiredFrame {
-            island?.applyFrame(frame,
-                               animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        }
-    }
-
-    // MARK: Swipe
-
-    /// A two-finger swipe on the island, read off the hosting view's
-    /// scroll events — or the pull's commit verdict, which means the
-    /// same thing. Horizontal rides the media transport — only while
-    /// the island is actually showing a track, so a stray swipe never
-    /// pokes a player we aren't displaying. Down folds the open card
-    /// back under the notch, dismisses the capsule, and — on the plain
-    /// resting island — is the pull-open: the same deliberate grow a
-    /// band click earns.
-    func islandSwipe(_ swipe: NotchIslandSwipe) {
-        guard settings.pullGestures else { return }
-        switch swipe {
-        case .left:
-            // Across the grown card a sideways swipe turns its page; on
-            // the resting island it is the transport.
-            if islandExpanded {
-                cardModel.flipPage(toShelf: true)
-            } else if islandMedia != nil {
-                mediaNextTrack()
-            }
-        case .right:
-            if islandExpanded {
-                cardModel.flipPage(toShelf: false)
-            } else if islandMedia != nil {
-                mediaPreviousTrack()
-            }
-        case .down:
-            if islandExpanded {
-                foldExpandedCard()
-            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
-                dismissCapsule()
-            } else {
-                // The pull-open: a down swipe on the resting island
-                // grows the card, deliberately — it holds like a band
-                // click, not like a hover.
-                expand(held: true)
-            }
-        case .up:
-            if islandExpanded {
-                // Fingers up tuck the card back into the notch —
-                // Alcove's dismiss flick, the same fold a down-swipe
-                // earns.
-                foldExpandedCard()
-            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
-                dismissCapsule()
-            }
-            // On a resting island an up-flick means nothing — the
-            // notch cannot be pushed into the screen.
-        }
-    }
-
-    /// A pinch on the island: spreading two fingers grows the resting
-    /// island into the card (deliberately, like a band click);
-    /// squeezing folds the card back into the notch, or puts a capsule
-    /// away. Behind the same gestures switch as pull and swipe.
-    func islandPinch(_ verdict: NotchPinch.Verdict) {
-        guard settings.pullGestures, isDrawingIsland, !foldEngaged else { return }
-        switch verdict {
-        case .grow:
-            guard !islandExpanded else { return }
-            expandFromBand()
-        case .fold:
-            if islandExpanded {
-                foldExpandedCard()
-            } else if activeCapsule != nil || activeOverlay != nil || capsuleQueue.current != nil {
-                dismissCapsule()
-            }
-        }
-    }
-
-    // MARK: ⌘-drag timer
-
-    /// Whether a ⌘-press on the island starts a timer drag: the resting
-    /// island (or news on it), never the card or an ask's buttons, and
-    /// behind the same gestures switch as pull and pinch.
-    var timerDragAllowed: Bool {
-        guard settings.pullGestures, isDrawingIsland, !foldEngaged, !islandExpanded else { return false }
-        return !(activeCapsule?.kind.hasVerbs ?? false)
-    }
-
-    /// The readout while the drag runs, and its word when it lands: the
-    /// level face's continuous fill toward three hours, the minutes in
-    /// place of a percent. Never a scrub target — its key names no level.
-    static func timerDragNotice(minutes: Int?, set: Bool) -> AlcoveNotice {
-        let words = minutes.map(NotchTimerDrag.label)
-        return AlcoveNotice(id: "timer-drag", kind: .level, title: "Timer",
-                            subtitle: words.map { set ? "\($0) set" : $0 } ?? "Drag right",
-                            key: "timer-drag", glyph: set ? "timer.circle.fill" : "timer",
-                            fraction: NotchTimerDrag.fraction(minutes))
-    }
-
-    func timerDragChanged(travel: CGFloat) {
-        guard timerDragAllowed else { return }
-        presentFeedback(Self.timerDragNotice(minutes: NotchTimerDrag.minutes(forTravel: travel), set: false))
-    }
-
-    /// Let go: a drag that reached a minute starts that timer (the card's
-    /// own timer model — the chip, the capsule and the strips follow); one
-    /// that didn't puts the readout away.
-    func timerDragEnded(travel: CGFloat) {
-        guard let minutes = NotchTimerDrag.minutes(forTravel: travel) else {
-            endOverlay(settle: true)
-            return
-        }
-        cardModel.timers.add(label: "\(NotchTimerDrag.label(minutes)) timer",
-                             duration: TimeInterval(minutes) * 60)
-        presentFeedback(Self.timerDragNotice(minutes: minutes, set: true))
-    }
-
-    /// The swipe's fold of the grown card — and it is a dismissal, so
-    /// a capsule shelved beneath it goes with it: collapsing alone
-    /// would only replay the shelf as a fresh notice where the card
-    /// just was.
-    private func foldExpandedCard() {
-        if capsuleQueue.current != nil || shelvedCapsule != nil {
-            capsuleWork?.cancel()
-            capsuleWork = nil
-            capsuleQueue.cancel(at: capsuleClock())
-            shelvedCapsule = nil
-        }
-        collapseIsland()
-    }
-
     /// One observation pass over every input, re-armed on each change —
     /// the same pattern `NotchBuddyToy.observeSessions` uses.
     private func observe() {
@@ -2386,315 +1914,6 @@ final class NotchToy: Toy {
                 guard let self, self.runtimeEnabled else { return }
                 self.reconcile()
                 self.observe()
-            }
-        }
-    }
-
-    // MARK: Controls
-
-    /// A binding into `store.state.notch`; the store's `didSet`
-    /// debounces the write.
-    func bind<T>(_ keyPath: WritableKeyPath<NotchSettings, T>) -> Binding<T> {
-        Binding(
-            get: { self.store?.state.notch[keyPath: keyPath] ?? NotchSettings()[keyPath: keyPath] },
-            set: { self.store?.state.notch[keyPath: keyPath] = $0 })
-    }
-
-    var providerBinding: Binding<NotchProvider> {
-        Binding(
-            get: { self.settings.provider },
-            set: { self.setProvider($0) })
-    }
-
-    /// The Calendar switch. Turning it on is the explicit ask the card's
-    /// old "Show calendar" button made — through Setup's own request
-    /// path (a denied Mac deep-links to System Settings instead) — and
-    /// a pinned card re-reads on the spot.
-    var calendarBinding: Binding<Bool> {
-        Binding(
-            get: { self.settings.calendar },
-            set: { on in
-                self.store?.state.notch.calendar = on
-                let calendar = self.cardModel.calendar
-                let card = self.cardModel
-                Task { @MainActor in
-                    if on { await SetupModel.requestCalendar() }
-                    calendar.sync(enabled: on && card.pinned)
-                }
-            })
-    }
-
-    /// The Reminders switch — the same ask-on-enable as `calendarBinding`.
-    var remindersBinding: Binding<Bool> {
-        Binding(
-            get: { self.settings.reminders },
-            set: { on in
-                self.store?.state.notch.reminders = on
-                let reminders = self.cardModel.reminders
-                let card = self.cardModel
-                Task { @MainActor in
-                    if on { await SetupModel.requestReminders() }
-                    reminders.sync(enabled: on && card.pinned)
-                }
-            })
-    }
-
-    /// What the follower sees — the Capsule row under the Alcove provider.
-    var capsuleFact: String {
-        _ = workspaceVersion
-        guard alcoveURL != nil else { return "not installed" }
-        guard isAlcoveRunning else { return "Alcove isn't running" }
-        if let capsule = store?.alcoveCapsule { return "following: \(Int(capsule.width.rounded())) pt wide" }
-        return "running, no capsule seen"
-    }
-
-    var controls: AnyView {
-        AnyView(NotchControlsView(toy: self))
-    }
-}
-
-/// The card's disclosure body. Every toggle writes `store.state.notch`
-/// (which persists itself) except the provider picker, which goes
-/// through `setProvider` so the swap can park our island and open theirs.
-private struct NotchControlsView: View {
-    let toy: NotchToy
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Picker(selection: toy.providerBinding) {
-                Text("JR-Bar").tag(NotchProvider.jrbar)
-                Text("Alcove").tag(NotchProvider.alcove)
-                Text("Boring Notch").tag(NotchProvider.boringNotch)
-            } label: {
-                SettingLabel(title: "Render with",
-                             subtitle: "Let Alcove or Boring Notch draw the island instead.")
-            }
-            .pickerStyle(.menu)
-            .fixedSize()
-
-            providerNote
-            providerControls
-        }
-    }
-
-    /// The rows that belong to whoever renders: ours get the island's
-    /// knobs, Alcove's keep the capsule-following that already existed,
-    /// Boring Notch's get nothing — there is nothing of ours to set.
-    @ViewBuilder
-    private var providerControls: some View {
-        switch toy.settings.provider {
-        case .jrbar:
-            Toggle(isOn: toy.bind(\.islandEnabled)) {
-                SettingLabel(title: "Show the island",
-                             subtitle: toy.earsDrawn
-                                ? "The housing under the notch — hover or click it for the card. The Screen Bar's ears are drawing the HUD beside it, so the island itself stays bare."
-                                : "The housing under the notch: working agents in the left shoulder, asks or the track in the right. Hover or click it for the card.")
-            }
-            Toggle(isOn: toy.bind(\.simulateNotch)) {
-                SettingLabel(title: "Simulate notch",
-                             subtitle: "On a display with no hardware notch, the island hugs the top as a synthetic housing instead of floating as a pill.")
-            }
-            Toggle(isOn: toy.bind(\.expandOnHover)) {
-                SettingLabel(title: "Card on hover",
-                             subtitle: "A pointer resting on the notch or an ear grows the card — a third of a second arriving down from the menu bar, a touch quicker straight onto the island. Off, only a click or a pull opens it.")
-            }
-            Toggle(isOn: toy.bind(\.hapticTick)) {
-                SettingLabel(title: "Haptic tick",
-                             subtitle: "A soft trackpad tap as the island grows open. Nothing happens on a Mac without haptics.")
-            }
-            Toggle(isOn: toy.bind(\.pullGestures)) {
-                SettingLabel(title: "Pull & swipe gestures",
-                             subtitle: "Pull the island down (or spread two fingers) to open it; push up or squeeze to fold it. ⌘-drag sideways on the notch sets a timer.")
-            }
-            Toggle(isOn: toy.bind(\.showUsage)) {
-                SettingLabel(title: "Usage meters",
-                             subtitle: "Per-provider quota bars inside the card.")
-            }
-            Toggle(isOn: toy.bind(\.capsuleNotifications)) {
-                SettingLabel(title: "Event capsules",
-                             subtitle: "The island briefly morphs into a notice when an ask opens, a run ends or a quota resets.")
-            }
-            if toy.settings.capsuleNotifications {
-                Toggle(isOn: toy.bind(\.capsuleKinds.ask)) {
-                    SettingLabel(title: "Asks", subtitle: "A session opens a question.")
-                }
-                Toggle(isOn: toy.bind(\.capsuleKinds.completed)) {
-                    SettingLabel(title: "Completions", subtitle: "An agent finishes a run.")
-                }
-                Toggle(isOn: toy.bind(\.capsuleKinds.failed)) {
-                    SettingLabel(title: "Failures", subtitle: "A session stops on an error.")
-                }
-                Toggle(isOn: toy.bind(\.capsuleKinds.quotaReset)) {
-                    SettingLabel(title: "Quota resets", subtitle: "A provider's usage window refills.")
-                }
-                Toggle(isOn: toy.bind(\.capsuleKinds.charging)) {
-                    SettingLabel(title: "Power", subtitle: "Plugging in, switching to battery, fully charged.")
-                }
-                Toggle(isOn: toy.bind(\.holdNewsWhileQuiet)) {
-                    SettingLabel(title: "Hold news while quiet",
-                                 subtitle: "During a Focus or a quiet mode, finished runs and quota resets wait and come back as one summary when it ends. Asks and failures still show.")
-                }
-            }
-            Toggle(isOn: Binding(
-                get: { toy.sensorIndicatorsEnabled },
-                set: { toy.sensorIndicatorsEnabled = $0 })) {
-                SettingLabel(title: "Mic & camera indicators",
-                             subtitle: toy.sensorsDrawable
-                                ? "The right shoulder carries a green dot while a camera is rolling, an orange one while a microphone is live — the same dots macOS puts beside Control Center. Read-only: JR-Bar listens for the system saying they started; it never opens the mic or camera itself."
-                                : "The Screen Bar's ears are drawing the notch's shoulders, so the island has no room for the dots.")
-            }
-            Toggle(isOn: toy.bind(\.mediaEnabled)) {
-                SettingLabel(title: "Now Playing",
-                             subtitle: toy.earsDrawn
-                                ? "The card carries the track and transport buttons. (The island's own strip is off while the Screen Bar's ears draw.)"
-                                : "The right shoulder carries the track when nothing needs a hand; the card gains transport buttons.")
-            }
-            if toy.settings.mediaEnabled {
-                Toggle(isOn: toy.bind(\.audioVisualizer)) {
-                    SettingLabel(title: "Audio visualizer (reacts to what's playing)",
-                                 subtitle: "Six live bands on the media row, tapped from the playing app's own audio — asks for the system-audio permission once. Off or denied keeps the decorative animation.")
-                }
-                Toggle(isOn: toy.bind(\.lyrics)) {
-                    SettingLabel(title: "Synced lyrics",
-                                 subtitle: "The current line and the next under the track, swept in time. Looks the song up on LRCLIB (title, artist, album, length — nothing else) and remembers the answer. Off, nothing is sent.")
-                }
-            }
-            Toggle(isOn: toy.bind(\.mediaHUD)) {
-                SettingLabel(title: "Volume & brightness capsules",
-                             subtitle: "The level keys grow the level out of the notch as one continuous fill, with the device the sound is going to — the Alcove HUD. The key still does its job; we only draw it. While it shows, scroll over it to fine-tune the volume or brightness.")
-            }
-            if toy.settings.mediaHUD {
-                Stepper(value: toy.bind(\.hudDuration),
-                        in: NotchSettings.hudDurationRange, step: 0.5) {
-                    SettingLabel(title: "Show for \(toy.settings.hudDuration.formatted(.number.precision(.fractionLength(0...1)))) s",
-                                 subtitle: "How long a level and a system notice hold at the notch.")
-                }
-                .padding(.leading, 28)
-                Toggle(isOn: toy.bind(\.replaceSystemHUD)) {
-                    SettingLabel(title: "Replace the system volume & brightness overlay",
-                                 subtitle: "The volume and brightness keys get our capsule instead of Apple's — needs the Accessibility permission. Changes made from Control Center still show Apple's overlay; JR-Bar never touches OSDUIHelper.")
-                }
-            }
-            Toggle(isOn: toy.bind(\.timerLights)) {
-                SettingLabel(title: "Timers flash the lights",
-                             subtitle: "A timer coming due breathes the SidePulse strips orange three times, then the live light returns. Only with a strip connected, and never while the Mac is quiet.")
-            }
-            Toggle(isOn: toy.bind(\.shelfShakeToSummon)) {
-                SettingLabel(title: "Shake to summon the shelf",
-                             subtitle: "While dragging files, shake the pointer and the card opens under the notch as a drop target.")
-            }
-            if let settings = toy.store?.settings {
-                // The same switch as General's, where a shelf person
-                // looks for it: beside the other way to summon the shelf.
-                Toggle(isOn: Binding(get: { settings.shelfHotkeyEnabled },
-                                     set: { settings.shelfHotkeyEnabled = $0 })) {
-                    SettingLabel(title: "Shelf hotkey",
-                                 subtitle: settings.shelfHotkeyRegistrationFailed
-                                    ? "⌃⌥D is taken by another app."
-                                    : "⌃⌥D opens or folds the card from any app. Anything you copied waits there as a Paste chip.")
-                }
-            }
-            Toggle(isOn: toy.bind(\.alerts)) {
-                SettingLabel(title: "System alerts",
-                             subtitle: "A Focus mode, a Bluetooth device joining or leaving, Caps Lock and displays speak in the island, one at a time with the agents' news. Headphones the Screen Bar's ear already names stay quiet here.")
-            }
-            Toggle(isOn: toy.bind(\.soundEffects)) {
-                SettingLabel(title: "Capsule tick",
-                             subtitle: "A quiet sound when a capsule shows.")
-            }
-            Toggle(isOn: toy.bind(\.weather)) {
-                SettingLabel(title: "Weather",
-                             subtitle: "Conditions, today's high and low and rain in the next two hours — keyless Open-Meteo for the city below.")
-            }
-            if toy.settings.weather {
-                TextField("City, e.g. London", text: toy.bind(\.weatherCity))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.callout)
-                    .padding(.leading, 28)
-                Toggle(isOn: toy.bind(\.weatherUseIPLocation)) {
-                    SettingLabel(title: "Locate by IP when no city is set",
-                                 subtitle: "Sends your IP address to ipapi.co for a city-level guess. Off, an empty city just means no weather row.")
-                }
-                .padding(.leading, 28)
-            }
-            Toggle(isOn: toy.calendarBinding) {
-                SettingLabel(title: "Calendar",
-                             subtitle: Self.accessNote(SetupModel.calendarStatus(), app: "Calendar",
-                                                       granted: "The next three events in the card, the first with Join."))
-            }
-            if toy.settings.calendar {
-                Toggle(isOn: toy.bind(\.meetingAlerts)) {
-                    SettingLabel(title: "Meeting heads-up",
-                                 subtitle: "Two minutes before an event with a join link, the island says so with Join (and the Mirror, when it is on). While the meeting runs, finished runs wait like in a Focus. Reads the calendar in the background, on this Mac only.")
-                }
-                .padding(.leading, 28)
-            }
-            Toggle(isOn: toy.remindersBinding) {
-                SettingLabel(title: "Reminders",
-                             subtitle: Self.accessNote(SetupModel.reminderStatus(), app: "Reminders",
-                                                       granted: "What's due by tomorrow, with a check-off circle that writes back."))
-            }
-            Toggle(isOn: toy.bind(\.mirror)) {
-                SettingLabel(title: "Mirror",
-                             subtitle: "A quick look through the camera — boring.notch's Mirror, on demand: ⌥-click the notch, or the camera button in the card. It is never a standing row; the lens closes when the card folds away. The camera's consent is asked the first time it opens.")
-            }
-        case .alcove:
-            if let settings = toy.store?.settings {
-                SettingToggle(settings, "Follow Alcove's capsule",
-                              subtitle: "The Screen Bar matches the capsule's width while Alcove draws the notch. It never runs while JR-Bar draws it.",
-                              path: "screen_bar_follow_alcove", default: true)
-            }
-            LabeledContent {
-                Text(toy.capsuleFact)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } label: {
-                SettingLabel(title: "Capsule", subtitle: "What the follower sees right now.")
-            }
-        case .boringNotch:
-            EmptyView()
-        }
-    }
-
-    /// A glance switch's subtitle: what it shows once access exists, or
-    /// the honest word on why it can't yet — the card itself never asks.
-    private static func accessNote(_ status: SetupPermissionStatus, app: String,
-                                   granted: String) -> String {
-        switch status {
-        case .granted: return granted
-        case .denied, .unavailable:
-            return "\(app) access is off — turning this on opens System Settings, or allow it in Setup."
-        default:
-            return "Turning this on asks for \(app) access once; Setup has the same row."
-        }
-    }
-
-    /// What the chosen external renderer is doing — installed and
-    /// launched, or a link to get it.
-    @ViewBuilder
-    private var providerNote: some View {
-        switch toy.settings.provider {
-        case .jrbar:
-            EmptyView()
-        case .alcove:
-            externalNote(installed: toy.alcoveURL != nil, name: "Alcove",
-                         link: URL(string: "https://tryalcove.com")!)
-        case .boringNotch:
-            externalNote(installed: toy.boringNotchURL != nil, name: "Boring Notch",
-                         link: URL(string: "https://github.com/TheBoredTeam/boring.notch")!)
-        }
-    }
-
-    private func externalNote(installed: Bool, name: String, link: URL) -> some View {
-        HStack(spacing: 8) {
-            Text(installed ? "\(name) is installed" : "\(name) isn't installed")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            if installed {
-                Button("Open \(name)") { toy.openExternal() }
-            } else {
-                Link("Get \(name)", destination: link)
-                    .font(.callout)
             }
         }
     }

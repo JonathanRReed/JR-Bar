@@ -644,6 +644,12 @@ public enum NotchMotion {
     /// Reduce Motion's whole vocabulary: a quiet crossfade, no travel.
     public static let reduceMotionFade: TimeInterval = 0.15
 
+    /// The curve every panel hung from the notch fades on — the glass
+    /// card, the HUD pill, their settles: a quick start and a long, soft
+    /// landing. A cubic Bézier's control points; `NotchSurfaceMotion`
+    /// hands it to Core Animation.
+    public static let panelCurve: (x1: Float, y1: Float, x2: Float, y2: Float) = (0.2, 0.9, 0.3, 1.0)
+
     /// How a face change moves: the spring morph normally, the quiet
     /// crossfade under Reduce Motion.
     public enum FaceTransition: Equatable, Sendable {
@@ -1004,6 +1010,43 @@ public enum NotchAskVerbs: Equatable, Sendable {
         case .openOnly(let reason): return reason
         case .remote(let machine): return "Runs on \(machine ?? "another Mac") — answer it there"
         case .answer, .none: return nil
+        }
+    }
+}
+
+/// The decide lane's hold, as the notch draws it: a ring on a held ask's
+/// verbs that empties while the agent's hook waits for JR-Bar's answer
+/// and is gone the moment the hold lapses and the agent's own prompt
+/// carries on. A mark, never a count.
+public enum NotchHold {
+    /// The daemon's `DECISION_HOLD_SECONDS` — the whole ring when the ask
+    /// does not say when it opened.
+    public static let window: TimeInterval = 45
+
+    /// How much of the hold is left at `now`, 1 → 0 — nil when there is
+    /// no ring to draw: not held, decided, no deadline, or lapsed.
+    public static func remaining(_ ask: CoreAsk, now: Date) -> Double? {
+        guard ask.isHeld(at: now), let until = ask.decision?.holdUntil else { return nil }
+        // The hold starts with the ask; an opening stamp that cannot be
+        // the hold's (after it, or far before) falls back to the window.
+        var span = window
+        if let opened = ask.openedAt, until > opened, until - opened <= 4 * window {
+            span = until - opened
+        }
+        return min(1, max(0, (until - now.timeIntervalSince1970) / span))
+    }
+
+    /// When the ring redraws: every `step` seconds from `start`, one
+    /// last tick on the deadline itself so the ring goes the moment the
+    /// hold lapses, then nothing. A start at or past the deadline is a
+    /// single tick that draws no ring.
+    public static func ticks(from start: Date, until deadline: Date,
+                             every step: TimeInterval) -> UnfoldSequence<Date, Date?> {
+        let step = max(0.25, step)
+        return sequence(state: Optional(start)) { next -> Date? in
+            guard let date = next else { return nil }
+            next = date < deadline ? min(deadline, date.addingTimeInterval(step)) : nil
+            return date
         }
     }
 }

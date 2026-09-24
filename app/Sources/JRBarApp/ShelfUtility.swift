@@ -81,6 +81,13 @@ final class ShelfUtilityModel {
         toggles.refresh()
     }
 
+    /// The card's lyrics offer, clicked: the yes is kept and the playing
+    /// track is looked up on the spot.
+    func agreeToLyrics() {
+        lyrics.consent()
+        lyrics.note(media: media)
+    }
+
     /// The default output's volume as the card opened, 0…1 — nil hides
     /// the slider (no hardware volume on this output).
     private(set) var outputVolume: Double?

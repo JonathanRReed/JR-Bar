@@ -297,18 +297,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.clearance = { [weak self] in
             self?.events?.hud.panelClearance ?? 0
         }
-        notchCard.onOpenSession = { [weak self] session in
-            self?.core?.openSession(session)
-        }
-        // …awaited, so a live session the daemon cannot find still comes
-        // up through the Dock's window locator.
-        notchCard.openSessionNow = { [weak core] session in
-            try? await core?.send("open_session", args: ["session": .string(session)])
-        }
-        notchCard.raiseSessionWindow = { [weak utilitiesStore] id in utilitiesStore?.raiseSessionWindow(id) ?? false }
-        // The glass card's waiting rows answer through the island's own
-        // answerer — one pending set, one refusal line per session.
-        notchCard.model.answerer = toysStore.notch.answerer
         // …and its calendar and reminders glances follow the Notch
         // settings' switches, the same as the grown island's.
         notchCard.model.calendarEnabled = { [weak toysStore] in toysStore?.state.notch.calendar ?? true }
@@ -317,9 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.model.utility.weather.allowIPLocation = { [weak toysStore] in
             toysStore?.state.notch.weatherUseIPLocation ?? false
         }
-        notchCard.model.utility.lyrics.enabled = { [weak toysStore] in
-            toysStore?.state.notch.lyrics ?? true
-        }
+        // Lyrics ask LRCLIB only once the switch is on and agreed to.
+        toysStore.notch.wireLyrics(notchCard.model.utility.lyrics)
         notchCard.model.heldAwake = { [weak self] in self?.core?.state?.power?.keepAwake == true }
         // A reminder left from the glass card's session row says where
         // the run worked, as the island's does.
@@ -400,6 +387,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // swipe on the band summons dismissed wings back. The pull wires
         // make the ear ride the finger until the flick commits.
         interaction.wingSideAt = { [weak screenBar] point in screenBar?.wingSide(atScreenPoint: point) }
+        // Nobody can see the band — asleep, or stepped aside for a video:
+        // the hover poll parks with the band's own clocks.
+        screenBar.onLiveChange = { [weak interaction] live in interaction?.setParked(!live) }
         interaction.onWingDismiss = { [weak screenBar] side in screenBar?.dismissWing(side) }
         interaction.onWingRestore = { [weak screenBar] in screenBar?.restoreWings() }
         interaction.onWingPull = { [weak screenBar] side, dx in screenBar?.pullWing(side, to: dx) }

@@ -16,6 +16,10 @@ enum ToyStatus: Equatable {
     /// Working, but a missing permission holds back part of it —
     /// "Wallpaper only".
     case limited(String)
+    /// Off by its switch, with one quiet fact still true — the tank's
+    /// game keeps count while its window is closed. Neutral, not a
+    /// warning.
+    case note(String)
 
     var text: String {
         switch self {
@@ -26,6 +30,7 @@ enum ToyStatus: Equatable {
         case .external(let what): return what
         case .unavailable(let why): return why
         case .limited(let what): return what
+        case .note(let what): return what
         }
     }
 
@@ -35,7 +40,16 @@ enum ToyStatus: Equatable {
         case .on: return .green
         case .paused, .external, .limited: return Color(nsColor: .systemOrange)
         case .needsPermission: return .red
-        case .unavailable: return Color(nsColor: .secondaryLabelColor)
+        case .unavailable, .note: return Color(nsColor: .secondaryLabelColor)
+        }
+    }
+
+    /// Whether the card draws a chip at all: plain on and off are the
+    /// switch's to say, so only a state with words of its own gets one.
+    var showsChip: Bool {
+        switch self {
+        case .on, .off: return false
+        default: return true
         }
     }
 }
@@ -61,6 +75,9 @@ protocol Toy: AnyObject, Observable {
     /// 30 fps · none when covered". nil hides the line. `now` is system
     /// uptime, the clock `ToyMeter` stamps with.
     func cost(at now: TimeInterval) -> String?
+    /// The titled rows inside `controls` that Settings search can land
+    /// on (`ToySearchCatalog`).
+    var searchRows: [ToySearchRow] { get }
 }
 
 extension Toy {
@@ -109,12 +126,39 @@ final class ToyMeter {
 /// One toy on the page: the symbol tile in the page tint, name, blurb,
 /// status chip, the on/off toggle, and a disclosure with the toy's
 /// `controls`.
+///
+/// Inside the Settings window the card's disclosure is the store's
+/// (`SettingsStore.expandedCards`), so a search hit can open it; the
+/// card carries its scroll anchor and lights up while it is the hit.
 struct ToyCard: View {
     let toy: any Toy
     let tint: Color
-    @ViewState private var expanded = false
+    @Environment(SettingsStore.self) private var settings: SettingsStore?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewState private var localExpanded = false
+
+    private var expanded: Bool {
+        settings.map { $0.expandedCards.contains(toy.id) } ?? localExpanded
+    }
+
+    private func setExpanded(_ open: Bool) {
+        if let settings { settings.setCard(toy.id, expanded: open) } else { localExpanded = open }
+    }
 
     var body: some View {
+        let lit = settings?.highlightedCard == toy.id
+        card
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(tint.opacity(lit ? 0.14 : 0))
+                    .padding(.horizontal, -6)
+                    .padding(.vertical, -3)
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: lit)
+            .id(SettingsStore.cardAnchor(toy.id))
+    }
+
+    @ViewBuilder private var card: some View {
         // Read the observable surface here so the card re-renders on any
         // change; the binding's get returns the value tracked in this
         // body, so the switch can never sit stale.
@@ -125,7 +169,7 @@ struct ToyCard: View {
         // in a DisclosureGroup label can replace its expansion action.
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
-                Button { expanded.toggle() } label: {
+                Button { setExpanded(!expanded) } label: {
                     HStack(alignment: .center, spacing: 10) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 9, weight: .semibold))
@@ -150,7 +194,9 @@ struct ToyCard: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
-                        StatusChip(status: status)
+                        if status.showsChip {
+                            StatusChip(status: status)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -195,30 +241,22 @@ private struct ToyCostLine: View {
     }
 }
 
-/// The card's status chip. On the live "On" state the capsule breathes —
-/// a slow opacity pulse on a timeline that pauses for every other state
-/// and under Reduce Motion — and long status text truncates instead of
+/// The card's status chip, drawn only when the state has words the
+/// switch beside it cannot say (`ToyStatus.showsChip`). It holds still —
+/// no clock runs for it — and long status text truncates instead of
 /// pushing the toggle out.
 private struct StatusChip: View {
     let status: ToyStatus
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var live: Bool { status == .on && !reduceMotion }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !live)) { context in
-            let breath = live
-                ? (1 - cos(context.date.timeIntervalSinceReferenceDate * .pi * 2 / 2.6)) / 2
-                : 0
-            Text(status.text)
-                .font(.caption)
-                .foregroundStyle(status.tint)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(status.tint.opacity(0.14 + 0.10 * breath), in: Capsule())
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
+        Text(status.text)
+            .font(.caption)
+            .foregroundStyle(status.tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(status.tint.opacity(0.14), in: Capsule())
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 }
 

@@ -15,6 +15,47 @@ struct ShelfTimerUpgradeTests {
             + "jrbar-test-timers-\(UUID().uuidString).json"))
     }
 
+    @Test("no timers arm nothing; the wake follows the soonest running deadline through every change")
+    func oneWakeForTheSoonest() throws {
+        let model = makeModel()
+        #expect(model.armedFor == nil, "an empty shelf wakes for nothing")
+
+        let tea = model.add(label: "Tea", duration: 300)
+        #expect(model.armedFor == tea.deadline)
+        let egg = model.add(label: "Egg", duration: 60)
+        #expect(model.armedFor == egg.deadline, "the sooner one arms")
+
+        model.pause(egg)
+        #expect(model.armedFor == tea.deadline, "a paused timer is not waited on")
+        let paused = try #require(model.entries.first { $0.id == egg.id })
+        model.resume(paused)
+        let resumed = try #require(model.entries.first { $0.id == egg.id })
+        #expect(model.armedFor == resumed.deadline)
+
+        model.extend(resumed, by: 600)
+        #expect(model.armedFor == tea.deadline, "extended past the tea")
+
+        model.remove(tea)
+        let extended = try #require(model.entries.first { $0.id == egg.id })
+        #expect(model.armedFor == extended.deadline)
+        model.remove(extended)
+        #expect(model.armedFor == nil)
+    }
+
+    @Test("a sweep that fires the due timer re-arms for the next and leaves the fired one alone")
+    func sweepRearms() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory() + "jrbar-test-timers-\(UUID().uuidString).json")
+        let due = ShelfTimerModel.Entry(id: "due", label: "Due", deadline: Date().addingTimeInterval(-5), fired: false)
+        let later = ShelfTimerModel.Entry(id: "later", label: "Later", deadline: Date().addingTimeInterval(120),
+                                          fired: false)
+        try JSONEncoder().encode([due, later]).write(to: url)
+        let model = ShelfTimerModel(storeURL: url)
+        #expect(model.entries.first { $0.id == "due" }?.fired == true, "the recovery sweep fired it once")
+        #expect(model.armedFor == later.deadline)
+        #expect(ShelfTimerModel.nextDeadline([due]) == due.deadline)
+        #expect(ShelfTimerModel.nextDeadline([]) == nil)
+    }
+
     @Test("pause banks the time left and fires nothing; resume carries on from there")
     func pauseResume() throws {
         let model = makeModel()

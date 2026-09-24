@@ -165,39 +165,13 @@ final class ScreenBarAudioMonitor {
     }
 
     /// The current default output device, or 0 when CoreAudio cannot say.
-    private static func outputDevice() -> AudioDeviceID {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
-                                         &address, 0, nil, &size, &device) == noErr else { return 0 }
-        return device
-    }
+    private static func outputDevice() -> AudioDeviceID { CoreAudioDefaults.defaultOutput ?? 0 }
 
     private static func deviceName(_ device: AudioDeviceID) -> String {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioObjectPropertyName,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var name = "" as CFString
-        var size = UInt32(MemoryLayout<CFString>.size)
-        guard withUnsafeMutablePointer(to: &name, {
-            AudioObjectGetPropertyData(device, &address, 0, nil, &size, $0)
-        }) == noErr else { return "Audio Output" }
-        return name as String
+        CoreAudioDefaults.name(of: device) ?? "Audio Output"
     }
 
     private static func transportType(_ device: AudioDeviceID) -> UInt32 {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyTransportType,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var transport = UInt32(0)
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport) == noErr else { return 0 }
-        return transport
+        CoreAudioDefaults.transport(of: device) ?? 0
     }
 }

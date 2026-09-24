@@ -255,4 +255,16 @@ struct ScreenBarPeekTests {
         #expect(!ScreenBarInteraction.scrollOpensPeek(precise: true, beganOnPeek: false, onPeekZone: true,
                                                       accumX: 0, accumY: 30))
     }
+
+    @Test func aChangedTileWearsTheOneUnseenDot() throws {
+        // The fixed blue dot History and the Overview draw, not the
+        // accent colour: with a red accent a changed glyph read as a
+        // failure.
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Sources/JRBarApp/ScreenBarPeek.swift")
+        let text = try String(contentsOf: source, encoding: .utf8)
+        #expect(text.contains("UnseenDot()"))
+        #expect(!text.contains("Circle().fill(Color.accentColor)"))
+    }
 }

@@ -350,15 +350,14 @@ struct NotchIslandView: View {
         .padding(.trailing, 6)
     }
 
-    /// Three bars bouncing on their own phases while the track plays —
-    /// set dressing, not a spectrum; paused or Reduce Motion draws them
-    /// still, and an ordered-out island's timeline never runs. A live
-    /// audio tap swaps them for the real band levels — the tap's gate
-    /// only ever runs it with the card grown, so the strip falls back
-    /// to the decorative dance whenever the pipeline is down.
+    /// The shared decorative bars while the track plays — set dressing,
+    /// not a spectrum; paused, Reduce Motion or an ordered-out island
+    /// draws them still. A live audio tap swaps them for the real band
+    /// levels — the tap's gate only ever runs it with the card grown, so
+    /// the strip falls back to the decorative dance whenever the
+    /// pipeline is down.
     private func visualizer(playing: Bool) -> some View {
         let utility = toy.cardModel.utility
-        let live = playing && toy.islandVisible && !reduceMotion
         return Group {
             if utility.audioTapLive {
                 HStack(alignment: .bottom, spacing: 1.5) {
@@ -371,20 +370,7 @@ struct NotchIslandView: View {
                 }
                 .frame(height: 10, alignment: .bottom)
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: !live)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    HStack(alignment: .bottom, spacing: 1.5) {
-                        ForEach(0..<3, id: \.self) { index in
-                            let height: CGFloat = live
-                                ? 3 + 6 * abs(sin(t * 3.2 + Double(index) * 1.9))
-                                : 3 + CGFloat(index) * 1.5
-                            RoundedRectangle(cornerRadius: 1, style: .continuous)
-                                .fill(.white.opacity(0.75))
-                                .frame(width: 2.5, height: height)
-                        }
-                    }
-                    .frame(height: 10, alignment: .bottom)
-                }
+                DecorativeBars(live: playing && toy.islandVisible, color: .white.opacity(0.75), barWidth: 2.5)
             }
         }
     }
@@ -410,13 +396,15 @@ struct NotchIslandView: View {
     /// under the notch, above a live Screen Bar's housing, inside the
     /// notice frame the toy sized.
     private func lineFace(_ notice: AlcoveNotice) -> some View {
-        HStack(spacing: 7) {
+        // A tap that could not open the session says why in the line.
+        let refusal = notice.session.flatMap { toy.cardModel.openRefusals[$0] }
+        return HStack(spacing: 7) {
             Image(systemName: notice.symbol)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(noticeTint(notice))
-            Text(notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)")
+            Text(refusal ?? (notice.subtitle.isEmpty ? notice.title : "\(notice.title) · \(notice.subtitle)"))
                 .font(.system(size: 11.5))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(refusal != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(Color.white.opacity(0.85)))
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -489,19 +477,21 @@ struct NotchIslandView: View {
     /// The ask, where it can be answered: who (the glyph, "Claude ·
     /// rename-the-fish" and how long it has waited), what they ask (the
     /// summary — one line on the capsule, up to three on the takeover
-    /// card), and the verbs. Approve and Deny exist only where the
-    /// daemon can deliver the answer (`NotchAskVerbs`); every other ask
-    /// offers Open with its reason. A refusal takes the reason's place
-    /// in orange and the ask stays. A tap anywhere off the buttons opens
-    /// the session.
+    /// card), and the verbs. Each verb exists only where `AskVerbs` says
+    /// the daemon can deliver it, and every one goes through the shared
+    /// desk; every other ask offers Open with its reason
+    /// (`NotchAskVerbs`). A refused answer or open takes the reason's
+    /// place in orange and the ask stays. A tap anywhere off the buttons
+    /// opens the session.
     private func askFace(_ notice: AlcoveNotice) -> some View {
         let verbs = toy.askVerbs(for: notice)
         let session = notice.session ?? ""
         let live = toy.liveAsk(for: notice)
-        let desk = AskAnswerDesk.shared
-        let pending = toy.answerer.isPending(session) || (desk?.isPending(session) ?? false)
+        let desk = toy.cardModel.askDesk()
+        let pending = desk?.isPending(session) ?? false
         let deskNote = desk?.note(for: session)
-        let refusal = toy.answerer.note(for: session) ?? deskNote.flatMap { $0.refused ? $0.text : nil }
+        let refusal = toy.cardModel.openRefusals[session] ?? deskNote.flatMap { $0.refused ? $0.text : nil }
+        let local = verbs.answers
         let lines = toy.askSummaryLines
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
@@ -551,6 +541,10 @@ struct NotchIslandView: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 4)
+                if let live, desk != nil, !CoreSession.isRemoteID(session),
+                   AskVerbs.chooses(live) || (local && AskVerbs.approves(live)) {
+                    NotchHoldRing(ask: live, style: .island)
+                }
                 if let live, let desk, !CoreSession.isRemoteID(session), AskVerbs.chooses(live) {
                     // A held question: Deny declines it through its hook,
                     // and its options are the answer.
@@ -558,11 +552,11 @@ struct NotchIslandView: View {
                         Task { await desk.answer(live, .deny) }
                     }
                     NotchAskChoices(ask: live, desk: desk, style: .island, busy: pending)
-                } else if verbs.answers {
+                } else if local, let live, let desk, AskVerbs.approves(live) {
                     NotchVerbButton(title: "Deny", style: .island, busy: pending) {
                         toy.answerCapsule(approve: false)
                     }
-                    if let live, let desk, AskVerbs.alwaysAllows(live) {
+                    if AskVerbs.alwaysAllows(live) {
                         NotchVerbButton(title: "Always", style: .island, busy: pending) {
                             Task { await desk.answer(live, .always) }
                         }

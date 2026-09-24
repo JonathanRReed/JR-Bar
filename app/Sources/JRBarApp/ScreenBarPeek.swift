@@ -175,7 +175,7 @@ final class ScreenBarPeekModel {
     @ObservationIgnored var onOpen: @MainActor (String) -> Void = { _ in }
     /// A nudge's answer was clicked — the only way one is ever answered.
     @ObservationIgnored var onChoose: @MainActor (MenuBarEarChoice, String) -> Void = { _, _ in }
-    /// The keep-awake hold the ear's cup or moon stands for — its words
+    /// The keep-awake hold the ear's cup or laptop stands for — its words
     /// at the peek's foot, since the ear itself never spells them.
     var awake: ScreenBarEarMarks.Awake?
 
@@ -312,8 +312,8 @@ struct ScreenBarPeekNudge: View {
     }
 }
 
-/// One glyph in the peek: its face, a light wash under the pointer, the
-/// change dot the Item Bar draws too.
+/// One glyph in the peek: its face, a light wash under the pointer, and
+/// the one unseen dot (`UnseenDot`) while it changed since you looked.
 struct ScreenBarPeekTile: View {
     let tile: MenuBarEarFeed.Tile
     /// The app's icon when the glyph was never photographed — read once
@@ -334,7 +334,7 @@ struct ScreenBarPeekTile: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     if tile.changed {
-                        Circle().fill(Color.accentColor).frame(width: 5, height: 5).padding(2)
+                        UnseenDot().padding(2)
                     }
                 }
                 .contentShape(Rectangle())
@@ -430,10 +430,9 @@ final class ScreenBarPeek {
     /// The panel's frame while it hangs.
     var frame: NSRect? { isShown ? panel?.frame : nil }
 
-    /// The peek eases in and out like the band (0.18 s); Reduce Motion
-    /// keeps the instant swap.
+    /// The peek eases in and out like the band (0.18 s, the context's
+    /// own curve); Reduce Motion keeps the instant swap.
     private static let fadeSeconds: TimeInterval = 0.18
-    private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     func show(pinned: Bool) {
         guard anchor() != nil else { return }
@@ -444,17 +443,7 @@ final class ScreenBarPeek {
         isShown = true
         panel.ignoresMouseEvents = false
         relayout()
-        if Self.reduceMotion {
-            panel.alphaValue = 1
-            panel.orderFrontRegardless()
-        } else {
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = Self.fadeSeconds
-                panel.animator().alphaValue = 1
-            }
-        }
+        NotchSurfaceMotion.present(panel, from: 0, duration: Self.fadeSeconds, reducedDuration: nil, curve: nil)
     }
 
     func hide() {
@@ -466,19 +455,8 @@ final class ScreenBarPeek {
         // click on a glyph lands on a fading panel and must not open the
         // item twice.
         panel.ignoresMouseEvents = true
-        if Self.reduceMotion {
-            panel.orderOut(nil)
-        } else {
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = Self.fadeSeconds
-                panel.animator().alphaValue = 0
-            }, completionHandler: { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, !self.isShown else { return }
-                    self.panel?.orderOut(nil)
-                }
-            })
-        }
+        NotchSurfaceMotion.dismiss(panel, duration: Self.fadeSeconds, reducedDuration: nil, curve: nil,
+                                   stillGone: { [weak self] in self.map { !$0.isShown } ?? false })
     }
 
     /// Fit the panel to its content and hang it under the ear — after a

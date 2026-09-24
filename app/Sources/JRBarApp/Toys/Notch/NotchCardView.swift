@@ -186,9 +186,18 @@ final class NotchCardModel {
     var onOpenSession: (() -> Void)?
     /// A click on a session row — that session's own window.
     var onOpenRow: ((String) -> Void)?
-    /// Approve / Deny on a waiting row. nil draws no verbs: a card
-    /// without an answer path only ever offers the click-to-open.
-    var answerer: NotchAskAnswerer?
+    /// The answer desk every ask surface shares — the panel's, published
+    /// as `AskAnswerDesk.shared`. nil draws no verbs: a card without an
+    /// answer path only ever offers the click-to-open. Tests hand in
+    /// their own.
+    @ObservationIgnored var askDesk: @MainActor () -> AskAnswerDesk? = { AskAnswerDesk.shared }
+    /// How long an open's refusal stays under its row; tests hold it
+    /// longer than a loaded run can take.
+    @ObservationIgnored var openNoteLife: TimeInterval = 4
+    /// Session → why its last open did not land, drawn where the ask's
+    /// refusal would be. The row stays; the person can try again.
+    private(set) var openRefusals: [String: String] = [:]
+    @ObservationIgnored private var openRefusalTokens: [String: UUID] = [:]
     var onClose: (() -> Void)?
     /// The roster affordance — the Overview window.
     var onOpenOverview: (() -> Void)?
@@ -211,6 +220,21 @@ final class NotchCardModel {
         return Array(targets.prefix(5))
     }
 
+    /// An open that did not land says why for a few seconds; a newer
+    /// line for the same session outlives an older one's expiry.
+    func noteOpenRefused(_ line: String, session: String) {
+        openRefusals[session] = line
+        let token = UUID()
+        openRefusalTokens[session] = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + openNoteLife) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.openRefusalTokens[session] == token else { return }
+                self.openRefusals[session] = nil
+                self.openRefusalTokens[session] = nil
+            }
+        }
+    }
+
     /// The shelf's hand-to-agent verb: the entry's `@path` references go
     /// on the pasteboard and the session's window comes forward, ready
     /// for the person's paste. Nothing is ever typed for them.
@@ -224,8 +248,8 @@ final class NotchCardModel {
     func handFiles(_ urls: [URL], session: String) {
         let files = urls.filter(\.isFileURL)
         guard !files.isEmpty, !CoreSession.isRemoteID(session) else { return }
-        ShelfTrayModel.copyForAgent(files, attachImage: files.count == 1
-                                    && ShelfTrayModel.withinAttachBound(files[0]))
+        tray.copyForAgent(files, attachImage: files.count == 1
+                          && ShelfTrayModel.withinAttachBound(files[0]))
         onOpenRow?(session)
     }
 
@@ -392,11 +416,16 @@ struct NotchCardView: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(style.faintColor)
+                    .frame(width: 12, height: 12)
+                    .notchHitArea(horizontal: 6, vertical: 6)
             }
             .buttonStyle(.plain)
             .help("Don't show this hint again")
         }
     }
+
+    /// The smallest target a card control offers, in points.
+    static let hitSide: CGFloat = 24
 
     /// The header row: who the bar is about — provider tile, label,
     /// word — with the light's reason underneath. Pinned adds the
@@ -423,7 +452,14 @@ struct NotchCardView: View {
                         .foregroundStyle(style.subColor)
                         .lineLimit(1)
                 }
-                if let explanation = model.focus.explanation {
+                // An Open that did not land says why where the light's
+                // reason sits, for a few seconds.
+                if let refusal = model.focus.clickSession.flatMap({ model.openRefusals[$0] }) {
+                    Text(refusal)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                } else if let explanation = model.focus.explanation {
                     Text(explanation)
                         .font(.system(size: 10.5))
                         .foregroundStyle(style.faintColor)
@@ -452,7 +488,10 @@ struct NotchCardView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
-                    .frame(width: 20)
+                    // An AppKit pop-up: its frame is its hit area, so the
+                    // frame itself is the 24-point target.
+                    .frame(width: Self.hitSide, height: Self.hitSide)
+                    .contentShape(Rectangle())
                     .help("Add a timer")
                     .popover(isPresented: $timerEntryShown, arrowEdge: .bottom) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -493,22 +532,40 @@ struct NotchCardView: View {
                             Image(systemName: model.mirrorSummoned ? "camera.fill" : "camera")
                                 .font(.system(size: 9))
                                 .foregroundStyle(model.mirrorSummoned ? style.titleColor : style.faintColor)
-                                .frame(width: 16, height: 16)
+                                .frame(width: 20, height: 20)
+                                .notchHitArea(horizontal: 2, vertical: 4)
                         }
                         .help(model.mirrorSummoned ? "Close the mirror" : "Mirror — a quick look through the camera")
                         .accessibilityLabel(model.mirrorSummoned ? "Close the mirror" : "Open the mirror")
                     }
                     if model.focus.clickSession != nil {
-                        Button("Open") { model.onOpenSession?() }
-                            .controlSize(.mini)
+                        // A quiet chip, not the accent: on a red-accent
+                        // Mac an accent "Open" read as a warning.
+                        Button { model.onOpenSession?() } label: {
+                            Text("Open")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(style.titleColor)
+                                .padding(.horizontal, 7)
+                                .frame(minHeight: 18)
+                                .background(Capsule(style: .continuous).fill(style.chipFill))
+                                .frame(minWidth: Self.hitSide - 4, minHeight: 20)
+                                .notchHitArea(horizontal: 2, vertical: 4)
+                        }
+                        .help("Bring this session's window forward")
                     }
                     Button { model.onClose?() } label: {
                         Image(systemName: "xmark")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(style.faintColor)
+                            .frame(width: 20, height: 20)
+                            .notchHitArea(horizontal: 2, vertical: 4)
                     }
-                    .controlSize(.mini)
                     .accessibilityLabel("Close pinned card")
                 }
-                .buttonStyle(.borderless)
+                // Plain, so each label's own shape is its hit area: the
+                // marks stay 20 points, the targets reach 24 and stop
+                // halfway to their neighbours.
+                .buttonStyle(.plain)
             }
         }
     }
@@ -602,7 +659,9 @@ struct NotchCardView: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
                 .background(Capsule(style: .continuous).fill(selected ? style.chipFill : .clear))
-                .contentShape(Capsule())
+                // The capsule draws 18 points tall; the target is 26,
+                // and stops halfway to the next tab.
+                .notchHitArea(horizontal: 2, vertical: 4)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -635,18 +694,16 @@ struct NotchCardView: View {
 
     /// One live session under the header: the provider's dot, its label,
     /// and the same activity word the island would say. A click opens
-    /// the session. A waiting row the daemon can answer carries Deny and
-    /// Approve inline instead of the word (`NotchAskVerbs` — hidden
-    /// where the answer chain cannot deliver), with the question itself
-    /// on a faint second line; a refused answer takes that line and
-    /// says why, and the ask stays open.
+    /// the session. A waiting row carries its verbs inline instead of
+    /// the word — each drawn only where `AskVerbs` says the daemon can
+    /// deliver it, and every one sent through the shared desk — with
+    /// the question itself on a faint second line; a refused answer or
+    /// open takes that line and says why, and the ask stays open.
     private func sessionRow(_ row: NotchIslandRow) -> some View {
-        let verbs = row.activity == .waiting
-            ? NotchAskVerbs.resolve(live: row.ask, session: row.id) : .none
-        let answerer = model.answerer
-        let desk = AskAnswerDesk.shared
-        let pending = (answerer?.isPending(row.id) ?? false) || (desk?.isPending(row.id) ?? false)
-        let refusal = answerer?.note(for: row.id) ?? desk?.note(for: row.id)?.text
+        let desk = model.askDesk()
+        let pending = desk?.isPending(row.id) ?? false
+        let openRefusal = model.openRefusals[row.id]
+        let refusal = openRefusal ?? desk?.note(for: row.id)?.text
         let summary = row.ask?.summary.flatMap { $0.isEmpty ? nil : $0 }
         let opens = !CoreSession.isRemoteID(row.id) && model.onOpenRow != nil
         // The ask as the desk answers it: the row's own, with its id.
@@ -655,8 +712,9 @@ struct NotchCardView: View {
             if ask.session == nil { ask.session = row.id }
             return ask
         }
-        let choosing = row.activity == .waiting && !CoreSession.isRemoteID(row.id)
-            && ask.map(AskVerbs.chooses) == true && desk != nil
+        let answerable = row.activity == .waiting && !CoreSession.isRemoteID(row.id) && desk != nil
+        let choosing = answerable && ask.map(AskVerbs.chooses) == true
+        let answering = answerable && ask.map(AskVerbs.approves) == true
         return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 Circle()
@@ -671,6 +729,9 @@ struct NotchCardView: View {
                 if row.activity == .waiting, ask?.isDestructive == true {
                     AskRiskMark(size: 8.5)
                 }
+                if (choosing || answering), let ask {
+                    NotchHoldRing(ask: ask, style: style)
+                }
                 if choosing, let ask, let desk {
                     // A held question: Deny declines it through its
                     // hook, and its options are the answer.
@@ -678,12 +739,12 @@ struct NotchCardView: View {
                         Task { await desk.answer(ask, .deny) }
                     }
                     NotchAskChoices(ask: ask, desk: desk, style: style, busy: pending)
-                } else if verbs.answers, let answerer {
+                } else if answering, let ask, let desk {
                     NotchVerbButton(title: "Deny", style: style, prominent: false,
                                     busy: pending) {
-                        Task { await answerer.answer(session: row.id, ask: row.ask, approve: false) }
+                        Task { await desk.answer(ask, .deny) }
                     }
-                    if let ask, let desk, AskVerbs.alwaysAllows(ask) {
+                    if AskVerbs.alwaysAllows(ask) {
                         NotchVerbButton(title: "Always", style: style, prominent: false, busy: pending) {
                             Task { await desk.answer(ask, .always) }
                         }
@@ -691,7 +752,7 @@ struct NotchCardView: View {
                     }
                     NotchVerbButton(title: "Approve", style: style, prominent: true,
                                     busy: pending) {
-                        Task { await answerer.answer(session: row.id, ask: row.ask, approve: true) }
+                        Task { await desk.answer(ask, .approve) }
                     }
                 } else {
                     Text(row.activity.word)
@@ -702,7 +763,7 @@ struct NotchCardView: View {
             if let refusal {
                 Text(refusal)
                     .font(.system(size: 9.5))
-                    .foregroundStyle(desk?.note(for: row.id)?.refused == false && answerer?.note(for: row.id) == nil
+                    .foregroundStyle(openRefusal == nil && desk?.note(for: row.id)?.refused == false
                                      ? AnyShapeStyle(style.faintColor) : AnyShapeStyle(Color.orange))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -754,7 +815,7 @@ struct NotchCardView: View {
                 Menu("Remind Me About This") {
                     ForEach(ShelfRemindersModel.Later.allCases, id: \.self) { later in
                         Button(later.title) {
-                            model.reminders.remind(about: row.label, provider: row.provider,
+                            model.reminders.remind(about: row.label, session: row.id, provider: row.provider,
                                                    cwd: model.sessionCwd(row.id), later: later)
                         }
                     }
@@ -870,7 +931,7 @@ private struct ShelfMediaRow: View {
                         if utility.audioTapLive {
                             LiveEqualizer(levels: utility.audioLevels, color: bars)
                         } else {
-                            ShelfEqualizer(color: bars)
+                            DecorativeBars(live: media.playing, color: bars)
                         }
                     }
                     Spacer(minLength: 4)
@@ -909,6 +970,8 @@ private struct ShelfMediaRow: View {
                 }
                 if let synced = utility.lyrics.lyrics {
                     LyricLines(lyrics: synced, utility: utility, playing: media.playing, style: style)
+                } else if utility.lyrics.offersConsent(), LyricsQuery(media: media) != nil {
+                    lyricsOffer
                 }
                 if let volume = utility.outputVolume {
                     // Fine adjustment without the keys — the same
@@ -930,6 +993,25 @@ private struct ShelfMediaRow: View {
             }
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// Lyrics stay off until asked for: while the switch is on from
+    /// before but never agreed to, one quiet line offers it. A click is
+    /// the yes; nothing about the track is sent before it.
+    private var lyricsOffer: some View {
+        Button { utility.agreeToLyrics() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "quote.bubble")
+                    .font(.system(size: 8))
+                Text("Show synced lyrics — looks the song up on LRCLIB")
+                    .font(.system(size: 9))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(style.faintColor)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Sends the title, artist, album and length to lrclib.net")
     }
 
     private static func clock(_ seconds: Double) -> String {
@@ -1099,31 +1181,6 @@ private struct ShelfTogglesRow: View {
         .help(toggles.help(for: toggle))
         .accessibilityLabel("\(title) toggle")
         .accessibilityValue(toggle.isMomentary ? "action" : (on ? "on" : "off"))
-    }
-}
-
-/// The playing tell: five bars breathing on staggered phases — the
-/// honest version of the notch apps' visualizer when no audio tap is
-/// running (the setting off, consent not granted, the pipeline down):
-/// it marks "something is playing", not a real spectrum.
-private struct ShelfEqualizer: View {
-    let color: Color
-    private let phases: [Double] = [0.0, 0.35, 0.7, 0.25, 0.55]
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.22)) { context in
-            HStack(alignment: .bottom, spacing: 1.5) {
-                ForEach(phases.indices, id: \.self) { i in
-                    let t = context.date.timeIntervalSinceReferenceDate * 3 + phases[i] * .pi * 2
-                    let h = 4 + 6 * abs(sin(t))
-                    RoundedRectangle(cornerRadius: 0.8, style: .continuous)
-                        .fill(color)
-                        .frame(width: 2.2, height: h)
-                }
-            }
-            .frame(height: 10, alignment: .bottom)
-        }
-        .accessibilityHidden(true)
     }
 }
 
@@ -1428,16 +1485,14 @@ private struct ShelfTrayRow: View {
         }
     }
 
-    /// Native share targets for the entry's files; a canceled sheet
-    /// delivers nothing and claims nothing.
+    /// The system's own share menu for the entry's files; a canceled
+    /// share delivers nothing and claims nothing. A shelf whose files
+    /// all moved offers nothing to share.
+    @ViewBuilder
     private func shareMenu(for entry: ShelfTrayModel.ShelfEntry) -> some View {
-        Menu("Share…") {
-            ForEach(tray.sharingServices(for: entry), id: \.title) { service in
-                Button(service.title) {
-                    service.perform(withItems: entry.items
-                        .filter { !$0.missing }.map(\.url))
-                }
-            }
+        let urls = tray.shareableURLs(for: entry)
+        if !urls.isEmpty {
+            ShareLink(items: urls) { Text("Share…") }
         }
     }
 }
@@ -1900,6 +1955,53 @@ struct NotchVerbButton: View {
     }
 }
 
+/// The decide lane's hold beside a held ask's verbs: a thin ring that
+/// empties while the agent's hook waits (`NotchHold`), gone the moment
+/// the hold lapses. A mark, never a count. It sweeps on a once-a-second
+/// tick; under Reduce Motion it steps every five seconds instead, and
+/// it ticks only while a hold with a deadline is on screen: the clock
+/// stops on the deadline rather than waiting for the daemon to drop it.
+struct NotchHoldRing: View {
+    let ask: CoreAsk
+    let style: NotchCardStyle
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if ask.isHeldForDecision, let until = ask.decision?.holdUntil {
+            TimelineView(NotchHoldSchedule(until: Date(timeIntervalSince1970: until),
+                                           step: reduceMotion ? 5 : 1)) { context in
+                if let left = NotchHold.remaining(ask, now: context.date) {
+                    ZStack {
+                        Circle()
+                            .stroke(style.chipFill, lineWidth: 1.5)
+                        Circle()
+                            .trim(from: 0, to: left)
+                            .stroke(style.subColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .animation(reduceMotion ? nil : .linear(duration: 1), value: left)
+                    }
+                    .frame(width: 10, height: 10)
+                    .help("The agent is waiting for this answer; when the ring empties it asks in its own window")
+                    .accessibilityElement()
+                    .accessibilityLabel("Held for your answer")
+                    .accessibilityValue("\(Int((left * 100).rounded())) percent left")
+                }
+            }
+        }
+    }
+}
+
+/// The hold ring's clock (`NotchHold.ticks`): it runs to the deadline
+/// and stops there.
+struct NotchHoldSchedule: TimelineSchedule {
+    let until: Date
+    let step: TimeInterval
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> UnfoldSequence<Date, Date?> {
+        NotchHold.ticks(from: startDate, until: until, every: step)
+    }
+}
+
 /// An ask's words at the notch: the question, then — monospaced, after
 /// a dot — what the agent wants to run, red when it is destructive. One
 /// `Text`, so the ask face's measured lines still hold it; a preview
@@ -1968,4 +2070,17 @@ private struct MirrorPreview: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MirrorPreviewView { view }
     func updateNSView(_ nsView: MirrorPreviewView, context: Context) {}
+}
+
+extension View {
+    /// Grows a small control's hit area without moving anything: the
+    /// padding is taken back, the shape stays. Keep `horizontal` within
+    /// half the row's spacing so two neighbours never claim one point.
+    func notchHitArea(horizontal: CGFloat = 8, vertical: CGFloat = 8) -> some View {
+        padding(.horizontal, horizontal)
+            .padding(.vertical, vertical)
+            .contentShape(Rectangle())
+            .padding(.horizontal, -horizontal)
+            .padding(.vertical, -vertical)
+    }
 }

@@ -148,10 +148,10 @@ final class NotchCardPanel: NSPanel {
                 self.model.onClose?()
             } else {
                 // Short or slow — the card springs back onto its anchor.
-                let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                let reduced = NotchSurfaceMotion.reduceMotion
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = reduced ? 0.08 : 0.24
-                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+                    context.timingFunction = NotchSurfaceMotion.panelCurve
                     self.animator().setFrameOrigin(restFrame.origin)
                 }
             }
@@ -190,46 +190,21 @@ final class NotchCardPanel: NSPanel {
                              y: (anchor.minY - Self.anchorGap - height - clearance).rounded())
         let frame = NSRect(origin: origin, size: NSSize(width: width, height: height))
         restFrame = frame
-        let wasVisible = isVisible && alphaValue > 0.01
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         // The card settles 4 pt down into place — it arrives from the
-        // notch, it does not pop. The raised frame goes on before the
-        // order so the rest position never flashes first.
-        let enters = !wasVisible && !reduced
-        if enters {
-            setFrame(NSRect(origin: NSPoint(x: origin.x, y: origin.y + 4),
-                            size: frame.size),
-                     display: true)
-        }
-        orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduced ? 0.1 : 0.18
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
-            animator().alphaValue = 1
-            if enters {
-                animator().setFrameOrigin(origin)
-            } else if frame != self.frame {
-                // A live card resizing under new rows eases to the new
-                // frame inside the same group — one coalesced setFrame,
-                // never a snap per refresh.
-                animator().setFrame(frame, display: true)
-            }
+        // notch, it does not pop.
+        let enters = !(isVisible && alphaValue > 0.01)
+        if enters { setFrame(frame, display: true) }
+        NotchSurfaceMotion.present(self, settle: enters ? 4 : 0, duration: 0.18, reducedDuration: 0.1) { target in
+            // A live card resizing under new rows eases to the new frame
+            // inside the same group — one coalesced setFrame, never a
+            // snap per refresh.
+            if !enters, frame != self.frame { target.setFrame(frame, display: true) }
         }
     }
 
     func dismiss() {
         hosting.abortPull()
         restFrame = nil
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = reduced ? 0.06 : 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.alphaValue < 0.01 else { return }
-                self.orderOut(nil)
-            }
-        })
+        NotchSurfaceMotion.dismiss(self, duration: 0.12, reducedDuration: 0.06)
     }
 }

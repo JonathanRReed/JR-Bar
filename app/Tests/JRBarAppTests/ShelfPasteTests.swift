@@ -58,4 +58,37 @@ struct ShelfPasteTests {
         tray.notePasteboard(board)
         #expect(!tray.pasteOffered, "an image with no file is not the shelf's")
     }
+
+    @Test("a file handed to an agent is not offered back as Paste; the next real copy is")
+    func handOffIsNotACopy() {
+        let tray = ShelfTrayModel()
+        let board = privatePasteboard()
+        defer { board.releaseGlobally() }
+        let shot = URL(fileURLWithPath: "/tmp/jrbar-paste/shot.png")
+        board.clearContents()
+        board.writeObjects([URL(fileURLWithPath: "/tmp/jrbar-paste/a.txt") as NSURL])
+        tray.notePasteboard(board)
+        #expect(tray.pasteOffered, "someone else's copy is offered")
+
+        tray.copyForAgent([shot], attachImage: false, to: board)
+        #expect(tray.pastedChangeCount == board.changeCount, "the write's own generation is kept")
+        #expect(!tray.pasteOffered)
+        tray.notePasteboard(board)
+        #expect(!tray.pasteOffered, "the @path JR-Bar wrote is not the person's copy")
+        #expect(board.string(forType: .string) == ShelfTrayModel.agentReferences([shot.path]))
+
+        board.clearContents()
+        board.writeObjects([URL(fileURLWithPath: "/tmp/jrbar-paste/b.txt") as NSURL])
+        tray.notePasteboard(board)
+        #expect(tray.pasteOffered, "a later copy is offered again")
+    }
+
+    @Test("an empty hand-off writes nothing and returns no generation")
+    func emptyHandOff() {
+        let board = privatePasteboard()
+        defer { board.releaseGlobally() }
+        let before = board.changeCount
+        #expect(ShelfTrayModel.copyForAgent([], attachImage: false, to: board) == nil)
+        #expect(board.changeCount == before)
+    }
 }

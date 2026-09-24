@@ -44,7 +44,7 @@ struct ScreenBarWingSlot: Equatable {
     var sensors: NotchSensorState?
     var tone: Tone = .neutral
     /// A second, smaller mark at the ear's outer end — the keep-awake
-    /// cup or the closed-lid moon riding beside whatever the ear shows,
+    /// cup or the closed-lid laptop riding beside whatever the ear shows,
     /// so a hold that lasts all afternoon never takes the meter's place.
     /// nil draws none.
     var accessory: ScreenBarWingAccessory?
@@ -273,9 +273,11 @@ struct ScreenBarEarMarks: Equatable {
     }
 
     /// The daemon's hold on sleep, as the right ear shows it: the cup
-    /// while the person's own lease holds, the moon while the closed-lid
-    /// hold runs; the words for the peek and VoiceOver ("Held awake
-    /// until 14:30"). Amber when heat or the battery floor made it yield.
+    /// while the person's own lease holds, the laptop while the
+    /// closed-lid hold keeps a shut lid running, an amber battery or
+    /// charger mark while the battery cannot carry the run; the words
+    /// for the peek and VoiceOver ("Held awake until 14:30"). Amber when
+    /// heat or the battery floor made the hold yield.
     struct Awake: Equatable {
         var symbol: String
         var text: String
@@ -288,22 +290,59 @@ struct ScreenBarEarMarks: Equatable {
 
     /// The lease's cup — Amphetamine's mark, the notch chip's glyph.
     static let leaseSymbol = "cup.and.saucer.fill"
-    /// The closed-lid hold's moon — the stars keep it apart from the
-    /// quiet's plain moon on the other ear.
-    static let lidSymbol = "moon.stars.fill"
+    /// The closed-lid hold's mark — the laptop itself, since the moon
+    /// on the other ear means quiet and only quiet.
+    static let lidSymbol = "laptopcomputer"
 
-    /// The mark for `state.power`, or nil while neither hold runs. The
-    /// agents' own automatic hold is not shown: it comes and goes with
-    /// every run, and the band already says the agents are working. The
-    /// closed-lid hold outranks a lease — it is the one that keeps a
-    /// shut laptop running. A lease's end reads as a clock time, so the
-    /// words only move when the lease does.
+    /// The battery's runway marks, amber: the run holding the Mac awake
+    /// will not outlast the battery, or the charger cannot keep up with
+    /// the agents' load.
+    static let runwaySymbol = "battery.25percent"
+    static let adapterSymbol = "bolt.trianglebadge.exclamationmark.fill"
+
+    /// The right ear's power mark for `state.power`: the runway's warning
+    /// when the battery cannot carry the run, else the hold's own mark,
+    /// else nil. The warning outranks the hold's mark on the ear; the
+    /// peek and VoiceOver hear both.
     static func awake(power: CorePower?, calendar: Calendar = .current) -> Awake? {
         guard let power else { return nil }
-        if let lid = power.closedLid, lid.holding == true {
-            return Awake(symbol: lidSymbol,
-                         text: lid.lidClosed == true ? "Running with the lid closed"
-                             : "Keeps running if the lid closes")
+        let held = hold(power: power, calendar: calendar)
+        guard let runway = runway(battery: power.battery) else { return held }
+        guard let held else { return runway }
+        return Awake(symbol: runway.symbol, text: runway.text + " · " + held.text, tone: .attention)
+    }
+
+    /// `state.power.battery.runway` as a mark, or nil while the battery
+    /// can carry the run. The words never count minutes down — they move
+    /// only when the warning does, so the ear is not repainted every
+    /// minute.
+    static func runway(battery: CoreBattery?) -> Awake? {
+        guard let runway = battery?.runway else { return nil }
+        if runway.short == true {
+            return Awake(symbol: runwaySymbol,
+                         text: "The battery won't outlast the agents — under half an hour left",
+                         tone: .attention)
+        }
+        if runway.adapterShort == true {
+            let fix = runway.fullSpeedWatts.map { " — a \(Int($0.rounded())) W adapter keeps up" } ?? ""
+            return Awake(symbol: adapterSymbol,
+                         text: "The charger can't keep up with the agents" + fix,
+                         tone: .attention)
+        }
+        return nil
+    }
+
+    /// The hold's own mark, or nil while neither hold runs. The agents'
+    /// own automatic hold is not shown: it comes and goes with every
+    /// run, and the band already says the agents are working. The
+    /// closed-lid hold shows only while the lid really is shut, and then
+    /// outranks a lease — it is the one keeping a shut laptop running.
+    /// With the lid open it is only armed, which is not news: the ear
+    /// shows the lease's cup, or nothing. A lease's end reads as a clock
+    /// time, so the words only move when the lease does.
+    private static func hold(power: CorePower, calendar: Calendar) -> Awake? {
+        if let lid = power.closedLid, lid.holding == true, lid.lidClosed == true {
+            return Awake(symbol: lidSymbol, text: "Running with the lid closed")
         }
         guard let hold = power.hold, hold.isManual, let lease = hold.lease else { return nil }
         if let yielded = hold.suspended {
@@ -453,6 +492,9 @@ final class ScreenBarWingsModel {
     /// notch is alive while the intent debounce decides on the card.
     var leftSwell = false
     var rightSwell = false
+    /// Somebody can see the band — shown, the display awake, not stepped
+    /// aside for a video. The media ear's bars stand still while false.
+    var live = false
 }
 
 /// The wing lobes. The drawn ear is a fixed-size complication hugging
@@ -541,23 +583,13 @@ struct ScreenBarWingsView: View {
                     .foregroundStyle(slot.textColor)
                     .frame(maxWidth: ScreenBarWingGlyph.maxWidth, maxHeight: ScreenBarWingGlyph.maxHeight)
             } else if slot.visualizer {
-                // The media ear: three bars bouncing on their own
-                // phases — the island strip's grammar, not a spectrum.
-                // The slot only exists while the track plays; Reduce
-                // Motion pins them still. 12 fps is plenty at 13 pt.
-                TimelineView(.animation(minimumInterval: 1.0 / 12.0,
-                                        paused: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    HStack(alignment: .bottom, spacing: 1.5) {
-                        ForEach(0..<3, id: \.self) { index in
-                            RoundedRectangle(cornerRadius: 1, style: .continuous)
-                                .fill(slot.textColor)
-                                .frame(width: 2.5,
-                                       height: 3 + 7 * abs(sin(t * 3.2 + Double(index) * 1.9)))
-                        }
-                    }
-                    .frame(height: 13, alignment: .bottom)
-                }
+                // The media ear: the island strip's shared bars, not a
+                // spectrum. The slot only exists while the track plays;
+                // Reduce Motion pins them still, and so does a band
+                // nobody can see. Narrow bars keep six inside the
+                // artwork tile's width.
+                DecorativeBars(live: model.live, color: slot.textColor,
+                               barWidth: 2, spacing: 1.2, height: 13)
             } else if let symbol = slot.symbol {
                 Image(systemName: symbol)
                     .font(.system(size: 13, weight: .semibold))

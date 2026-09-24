@@ -124,8 +124,36 @@ struct SidebarIcon: View {
 struct SettingsPageContainer: View {
     @Bindable var store: SettingsStore
     let page: SettingsStore.Page
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        // The store rides the environment so a toy or utility card can
+        // read its own disclosure and light from it; a search hit into a
+        // card scrolls the page to that card.
+        ScrollViewReader { proxy in
+            form
+                .task(id: store.revealRequest) { await scrollToHit(proxy) }
+        }
+        .environment(store)
+        .id(page)
+    }
+
+    /// Scroll to the card a search hit opened, once the new page has
+    /// laid its rows out, and let its light go after a beat — unless a
+    /// newer hit took it.
+    private func scrollToHit(_ proxy: ScrollViewProxy) async {
+        guard let card = store.highlightedCard, store.searchHit?.page == page else { return }
+        try? await Task.sleep(for: .milliseconds(120))
+        guard !Task.isCancelled else { return }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+            proxy.scrollTo(SettingsStore.cardAnchor(card), anchor: .top)
+        }
+        try? await Task.sleep(for: .seconds(2.4))
+        guard !Task.isCancelled, store.highlightedCard == card else { return }
+        store.highlightedCard = nil
+    }
+
+    private var form: some View {
         Form {
             if !store.hasDocument {
                 Section {
@@ -201,7 +229,6 @@ struct SettingsPageContainer: View {
         .formStyle(.grouped)
         .animation(.easeInOut(duration: 0.15), value: store.lastError == nil)
         .animation(.easeInOut(duration: 0.15), value: store.status == nil)
-        .id(page)
     }
 }
 
