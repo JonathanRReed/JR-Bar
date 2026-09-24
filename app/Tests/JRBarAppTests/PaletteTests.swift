@@ -665,4 +665,12 @@ struct PaletteTests {
         controller.close()
         #expect(!controller.isOpen)
     }
+
+    @Test("a tag that only repeats its section's header is left off; under Results it stays")
+    func tagsDoNotRepeatTheHeader() {
+        let tags = [PaletteTag(text: "Needs You", tone: .attention), PaletteTag(text: "2m")]
+        #expect(PaletteRowView.shownTags(tags, under: PaletteSection.needsYou.title) == [PaletteTag(text: "2m")])
+        #expect(PaletteRowView.shownTags(tags, under: PaletteSection.results.title) == tags)
+        #expect(PaletteRowView.shownTags(tags, under: nil) == tags)
+    }
 }
