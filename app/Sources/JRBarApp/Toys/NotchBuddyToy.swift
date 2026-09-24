@@ -824,9 +824,10 @@ final class NotchBuddyToy: Toy {
     func summary(at now: Date = Date()) -> BuddySummary {
         // Several readers ask — the animation timeline, the floating
         // caption's slow one, the hover line — and a slow timeline's
-        // date can be seconds behind. The wave, slump and mood clocks
-        // only ever take the latest time seen, so a stale reader can't
-        // start an ask's entrance in the past and skip it.
+        // date can be seconds behind. Every reader is answered at the
+        // latest time any of them has seen, so a stale one can neither
+        // start an ask's entrance in the past and skip it, nor call a
+        // hop that already landed back for a frame.
         let stamp = max(now, latestSummaryAt ?? now)
         latestSummaryAt = stamp
         let d = sessionDigest()
@@ -844,10 +845,10 @@ final class NotchBuddyToy: Toy {
         else if s.working > 0 { s.mood = .pacing }
         // Goodnight: the lid on its way down puts the nightcap on,
         // whatever the fleet is up to — unless something asks or failed.
-        if s.mood == .pacing || s.mood == .gathering, store?.lidClosing(at: now) == true {
+        if s.mood == .pacing || s.mood == .gathering, store?.lidClosing(at: stamp) == true {
             s.mood = .asleep
         }
-        if let hopUntil, now < hopUntil { s.mood = .celebrating }
+        if let hopUntil, stamp < hopUntil { s.mood = .celebrating }
         if s.mood == .waving {
             if wavingSince == nil { wavingSince = stamp; waveOrdinal += 1 }
         } else if wavingSince != nil {
@@ -862,7 +863,7 @@ final class NotchBuddyToy: Toy {
             moodChange = (shown, stamp)
         }
         shownMood = s.mood
-        s.care = store?.state.notchBuddy.care.mood(at: now) ?? .content
+        s.care = store?.state.notchBuddy.care.mood(at: stamp) ?? .content
         s.name = buddyName
         s.focus = d.focus
         var parts: [String] = []

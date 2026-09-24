@@ -193,6 +193,32 @@ struct BuddyTurnTests {
         withExtendedLifetime(store) {}
     }
 
+    @Test("a stale reader can't replay a landed hop or start an ask in the past")
+    func staleReaders() {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        toy.giveTreat(at: t0)
+        let hops = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #expect(toy.summary(at: t0.addingTimeInterval(0.5)).mood == (hops ? .celebrating : .asleep))
+        #expect(toy.summary(at: t0.addingTimeInterval(2)).mood == .asleep, "landed")
+        // The caption's slow timeline answers with a date from before the
+        // hop; it gets the latest time instead, so the mood doesn't flip back.
+        #expect(toy.summary(at: t0.addingTimeInterval(-3)).mood == .asleep)
+        #expect(toy.handoff(at: t0.addingTimeInterval(2.5)) == nil)
+
+        // An ask lands; the first reader to see it is a stale one.
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "ask", provider: "claude", mode: "waiting_for_input", lifecycle: "active"),
+        ])))
+        #expect(toy.summary(at: t0).mood == .waving)
+        #expect(toy.wavingSince == t0.addingTimeInterval(2), "stamped at the latest time seen, not the stale one")
+    }
+
     @Test("the dangle's lag is finite-safe")
     func followIsSafe() {
         #expect(BuddyTurn.follow(3, toward: 10, dt: 0) == 3)

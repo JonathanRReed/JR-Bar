@@ -232,14 +232,14 @@ struct NotchBuddyView: View {
     /// jump and the "!" key off this so they play once per ask.
     private func waveAge(at now: Date, mood: NotchBuddyToy.Mood) -> TimeInterval? {
         guard mood == .waving, let since = toy.wavingSince else { return nil }
-        return now.timeIntervalSince(since)
+        return max(0, now.timeIntervalSince(since))
     }
 
     /// Seconds into the slump; nil unless the mood is slumped. The
     /// tumble-in plays once from here.
     private func slumpAge(at now: Date, mood: NotchBuddyToy.Mood) -> TimeInterval? {
         guard mood == .slumped, let since = toy.slumpedSince else { return nil }
-        return now.timeIntervalSince(since)
+        return max(0, now.timeIntervalSince(since))
     }
 
     /// The tap trick mid-flight, or nil. Reduce Motion gets no tricks —
