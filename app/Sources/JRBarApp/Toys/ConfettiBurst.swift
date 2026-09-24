@@ -31,7 +31,8 @@ struct ConfettiBurst {
         /// How likely each palette slot is; the view owns the colours.
         var slotWeights: [Double] = [1]
         /// How many provider glyphs the view can draw; with none, a glyph
-        /// fleck is drawn as a star.
+        /// fleck is drawn as a star. With more than one (Everyone), glyph
+        /// `i` belongs to palette slot `i`.
         var glyphs: Int = 0
         /// The holiday's own fleck in place of the stars, if any.
         var special: ConfettiPieceShape = .star
@@ -266,6 +267,13 @@ struct ConfettiBurst {
         ay /= norm
         az /= norm
         let turn = Double.random(in: spin, using: &rng) * (far ? 0.8 : 1)
+        var slot = Self.slot(recipe.slotWeights, using: &rng)
+        var glyph = recipe.glyphs > 0 ? Int.random(in: 0..<recipe.glyphs, using: &rng) : 0
+        // Everyone: each provider's glyph sits on that provider's slot, so
+        // a mark always wears its own provider's colour.
+        if shape == .glyph, recipe.glyphs > 1 {
+            if slot < recipe.glyphs { glyph = slot } else { slot = glyph }
+        }
         return Piece(
             shape: shape, far: far, launch: launch,
             vt: flutter, tf: Double.random(in: 0.38...0.52, using: &rng),
@@ -277,8 +285,7 @@ struct ConfettiBurst {
             swayPhase: Double.random(in: 0...(2 * .pi), using: &rng),
             bob: Double.random(in: 1.5...3.5, using: &rng),
             size: size, aspect: aspect,
-            slot: Self.slot(recipe.slotWeights, using: &rng),
-            glyph: recipe.glyphs > 0 ? Int.random(in: 0..<recipe.glyphs, using: &rng) : 0,
+            slot: slot, glyph: glyph,
             ripple: Double.random(in: 3...6, using: &rng),
             landing: nil, fadeFrom: 0, end: 0)
     }

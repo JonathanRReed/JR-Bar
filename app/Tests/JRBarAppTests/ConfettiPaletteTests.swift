@@ -70,6 +70,22 @@ struct ConfettiPaletteTests {
         #expect(same(alone.slots[0], ProviderStyle.style(for: "codex").accent))
     }
 
+    @Test("in Everyone, each provider's glyph wears that provider's colour")
+    func everyoneGlyphsWearTheirOwnColour() {
+        let working = ["claude", "codex", "gemini"].map { (id: $0, color: ProviderStyle.style(for: $0).accent) }
+        let look = ConfettiView.look(.everyone, tint: ConfettiView.toysTint, provider: nil, everyone: working)
+        for shapes in [ConfettiShapes.glyphs, .mixed] {
+            let recipe = ConfettiBurst.Recipe(shapes: shapes, slotWeights: look.weights, glyphs: look.glyphs.count)
+            let burst = ConfettiBurst(stage: .reference, recipe: recipe, seed: 9)
+            let marks = burst.pieces.filter { $0.shape == .glyph }
+            #expect(!marks.isEmpty)
+            for piece in marks {
+                #expect(piece.slot == piece.glyph, "glyph \(piece.glyph) in slot \(piece.slot)'s colour")
+            }
+            #expect(Set(marks.map(\.glyph)).count == 3, "every working provider's mark is thrown")
+        }
+    }
+
     @Test("the provider palette leads with the tint and keeps its deep shade for the backs")
     func providerSteps() {
         let tint = ProviderStyle.style(for: "claude").accent
