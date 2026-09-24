@@ -130,8 +130,10 @@ extension AquariumView {
         case .whale:
             let y = size.height * 0.24 + sin(p * .pi * 3) * 8
             var c = canvas
-            c.opacity = 0.38 * sin(p * .pi)
-            // A huge slate silhouette: long back, fluke, a fin.
+            c.opacity = 0.62 * sin(p * .pi)
+            // A huge humpback far off in the blue: slate back, a pale
+            // grooved throat, a long pectoral, the fluke — hazed by the
+            // water between us.
             var body = Path()
             body.move(to: CGPoint(x: -110, y: 0))
             body.addQuadCurve(to: CGPoint(x: 40, y: -30),
@@ -144,25 +146,54 @@ extension AquariumView {
                               control: CGPoint(x: -40, y: 30))
             body.closeSubpath()
             c.translateBy(x: x, y: y)
-            c.fill(body, with: .color(Color(red: 0.05, green: 0.10, blue: 0.18)))
-            // The fluke.
+            let slate = Color(red: 0.10, green: 0.20, blue: 0.32)
+            let slateDark = Color(red: 0.03, green: 0.08, blue: 0.15)
+            let belly = Color(red: 0.46, green: 0.60, blue: 0.70)
+            // The fluke, behind.
             var fluke = Path()
-            fluke.move(to: CGPoint(x: -108, y: 0))
-            fluke.addQuadCurve(to: CGPoint(x: -136, y: -14),
-                               control: CGPoint(x: -120, y: -8))
-            fluke.addQuadCurve(to: CGPoint(x: -136, y: 12),
-                               control: CGPoint(x: -126, y: 4))
+            fluke.move(to: CGPoint(x: -104, y: 0))
+            fluke.addQuadCurve(to: CGPoint(x: -140, y: -16), control: CGPoint(x: -118, y: -10))
+            fluke.addQuadCurve(to: CGPoint(x: -128, y: 0), control: CGPoint(x: -134, y: -4))
+            fluke.addQuadCurve(to: CGPoint(x: -140, y: 14), control: CGPoint(x: -134, y: 4))
+            fluke.addQuadCurve(to: CGPoint(x: -104, y: 0), control: CGPoint(x: -118, y: 8))
             fluke.closeSubpath()
-            c.fill(fluke, with: .color(Color(red: 0.05, green: 0.10, blue: 0.18)))
-            // A pectoral fin.
+            c.fill(fluke, with: .linearGradient(Gradient(colors: [slate, slateDark]),
+                                                startPoint: CGPoint(x: -120, y: -14), endPoint: CGPoint(x: -120, y: 14)))
+            c.fill(body, with: .linearGradient(
+                Gradient(stops: [.init(color: slate, location: 0), .init(color: slateDark, location: 0.55),
+                                 .init(color: belly.opacity(0.9), location: 1)]),
+                startPoint: CGPoint(x: 0, y: -30), endPoint: CGPoint(x: 0, y: 26)))
+            var inner = c
+            inner.clip(to: body)
+            // Throat grooves along the pale underside.
+            var grooves = Path()
+            for k in 0..<5 {
+                let gy = 8.0 + Double(k) * 3
+                grooves.move(to: CGPoint(x: 90 - Double(k) * 6, y: gy - 10))
+                grooves.addQuadCurve(to: CGPoint(x: -10, y: gy + 4), control: CGPoint(x: 40, y: gy + 8))
+            }
+            inner.stroke(grooves, with: .color(slateDark.opacity(0.55)), lineWidth: 0.8)
+            // The knobbed head and a lit back.
+            var knobs = Path()
+            for k in 0..<5 {
+                knobs.addEllipse(in: CGRect(x: 58 + Double(k) * 6, y: -22 + Double(k) * 3.2, width: 2.6, height: 2.2))
+            }
+            inner.fill(knobs, with: .color(belly.opacity(0.35)))
+            inner.fill(Path(ellipseIn: CGRect(x: -60, y: -34, width: 140, height: 16)),
+                       with: .radialGradient(Gradient(colors: [Color(red: 0.55, green: 0.75, blue: 0.85).opacity(0.35), .clear]),
+                                             center: CGPoint(x: 10, y: -26), startRadius: 0, endRadius: 70))
+            // A small, old eye.
+            c.fill(Path(ellipseIn: CGRect(x: 54, y: 2, width: 3.4, height: 2.6)), with: .color(.black.opacity(0.8)))
+            // The long pectoral, pale-edged.
             var fin = Path()
-            fin.move(to: CGPoint(x: 20, y: 14))
-            fin.addQuadCurve(to: CGPoint(x: 44, y: 30),
-                             control: CGPoint(x: 30, y: 24))
-            fin.addQuadCurve(to: CGPoint(x: 16, y: 20),
-                             control: CGPoint(x: 24, y: 20))
+            fin.move(to: CGPoint(x: 26, y: 12))
+            fin.addQuadCurve(to: CGPoint(x: -24, y: 40), control: CGPoint(x: 10, y: 34))
+            fin.addQuadCurve(to: CGPoint(x: 14, y: 20), control: CGPoint(x: -2, y: 28))
             fin.closeSubpath()
-            c.fill(fin, with: .color(Color(red: 0.04, green: 0.08, blue: 0.15)))
+            c.fill(fin, with: .linearGradient(Gradient(colors: [slateDark, belly]),
+                                              startPoint: CGPoint(x: 20, y: 14), endPoint: CGPoint(x: -24, y: 40)))
+            // The water between: a haze over the whole animal.
+            c.fill(body, with: .color(floorColor.opacity(0.22)))
             // The spout: a white puff off the back while it's high.
             if y < size.height * 0.20 && !reduceMotion {
                 for k in 0..<3 {
@@ -180,22 +211,42 @@ extension AquariumView {
             let y = size.height * 0.34 + sin(p * .pi * 4) * 10
             var c = canvas
             c.translateBy(x: x, y: y)
-            c.opacity = 0.75 * sin(p * .pi)
-            // Kick fins trailing, a tank on the back, a round head.
-            c.fill(Path(ellipseIn: CGRect(x: -12, y: -5, width: 24, height: 10)),
-                   with: .color(Color(red: 0.85, green: 0.80, blue: 0.20)))
-            c.fill(Path(ellipseIn: CGRect(x: -16, y: -8, width: 8, height: 8)),
-                   with: .color(Color(red: 0.80, green: 0.60, blue: 0.45)))
-            c.fill(Path(CGRect(x: -4, y: -9, width: 9, height: 4)),
-                   with: .color(Color(red: 0.60, green: 0.62, blue: 0.65)))
+            c.opacity = 0.88 * sin(p * .pi)
+            let suit = Color(red: 0.14, green: 0.16, blue: 0.22)
+            let suitLit = Color(red: 0.34, green: 0.40, blue: 0.52)
+            let line = Color.black.opacity(0.6)
+            // Kick fins trailing, scissoring.
             let kick = reduceMotion ? 0 : sin(t * 6) * 4
             for k in [-1.0, 1.0] {
+                var leg = Path()
+                leg.move(to: CGPoint(x: 8, y: k * 2))
+                leg.addLine(to: CGPoint(x: 16, y: k * 3 + kick * k * 0.5))
+                c.stroke(leg, with: .color(suit), style: StrokeStyle(lineWidth: 3.2, lineCap: .round))
                 var fin = Path()
-                fin.move(to: CGPoint(x: 12, y: k * 2))
-                fin.addLine(to: CGPoint(x: 22, y: k * 4 + kick))
-                c.stroke(fin, with: .color(Color(red: 0.15, green: 0.15, blue: 0.18)),
-                         lineWidth: 2)
+                fin.move(to: CGPoint(x: 15, y: k * 3 + kick * k * 0.5 - 1.5))
+                fin.addLine(to: CGPoint(x: 26, y: k * 5 + kick * k))
+                fin.addLine(to: CGPoint(x: 25, y: k * 5 + kick * k + 3))
+                fin.addLine(to: CGPoint(x: 15, y: k * 3 + kick * k * 0.5 + 1.5))
+                fin.closeSubpath()
+                c.fill(fin, with: .color(Color(red: 0.95, green: 0.72, blue: 0.10)))
+                c.stroke(fin, with: .color(line), lineWidth: 0.4)
             }
+            // The tank on the back.
+            let tank = Path(roundedRect: CGRect(x: -6, y: -10, width: 14, height: 5), cornerRadius: 2.5)
+            TankPaint.cylinder(&c, tank, lit: Color(red: 0.95, green: 0.95, blue: 0.95),
+                               base: Color(red: 0.70, green: 0.72, blue: 0.76), shade: Color(red: 0.36, green: 0.38, blue: 0.44),
+                               outline: line, lineWidth: 0.4)
+            // The body in its suit.
+            let torso = Path(ellipseIn: CGRect(x: -12, y: -5, width: 22, height: 10))
+            TankPaint.solid(&c, torso, lit: suitLit, base: suit, shade: .black, outline: line, lineWidth: 0.5)
+            // Head, hood and mask with a glint.
+            let head = Path(ellipseIn: CGRect(x: -18, y: -8, width: 9, height: 9))
+            TankPaint.solid(&c, head, lit: suitLit, base: suit, shade: .black, outline: line, lineWidth: 0.5)
+            let mask = Path(roundedRect: CGRect(x: -18.6, y: -6, width: 4.6, height: 3.6), cornerRadius: 1.2)
+            c.fill(mask, with: .linearGradient(Gradient(colors: [Color(red: 0.55, green: 0.85, blue: 0.95), Color(red: 0.10, green: 0.30, blue: 0.40)]),
+                                               startPoint: CGPoint(x: -18, y: -6), endPoint: CGPoint(x: -15, y: -2.4)))
+            c.stroke(mask, with: .color(Color(red: 0.95, green: 0.72, blue: 0.10)), lineWidth: 0.6)
+            c.fill(Path(ellipseIn: CGRect(x: -17.8, y: -5.6, width: 1.4, height: 0.8)), with: .color(.white.opacity(0.9)))
             // The torch: a cone of light sweeping ahead.
             var torch = c
             torch.blendMode = .plusLighter
@@ -222,43 +273,84 @@ extension AquariumView {
             let y = size.height * 0.30
             var c = canvas
             c.translateBy(x: x, y: y)
-            c.opacity = 0.65 * sin(p * .pi)
-            // The hull: a cigar with a conning tower and tail fins.
-            c.fill(Path(ellipseIn: CGRect(x: -46, y: -12, width: 92, height: 24)),
-                   with: .color(Color(red: 0.72, green: 0.60, blue: 0.20)))
-            c.fill(Path(roundedRect: CGRect(x: -10, y: -22, width: 20, height: 12),
-                        cornerRadius: 4),
-                   with: .color(Color(red: 0.66, green: 0.54, blue: 0.18)))
-            // Periscope.
-            c.stroke(Path(CGRect(x: -1, y: -30, width: 2, height: 9)),
-                     with: .color(Color(red: 0.40, green: 0.34, blue: 0.14)),
-                     lineWidth: 2)
-            c.fill(Path(CGRect(x: -1, y: -31, width: 7, height: 3)),
-                   with: .color(Color(red: 0.40, green: 0.34, blue: 0.14)))
-            // Tail cross.
+            c.opacity = 0.88 * sin(p * .pi)
+            let yellowLit = Color(red: 1.0, green: 0.90, blue: 0.46)
+            let yellow = Color(red: 0.92, green: 0.72, blue: 0.18)
+            let yellowDark = Color(red: 0.46, green: 0.32, blue: 0.06)
+            let line = Color(red: 0.22, green: 0.14, blue: 0.02).opacity(0.85)
+            // The headlight's beam, ahead and down.
+            var beam = c
+            beam.blendMode = .plusLighter
+            var cone = Path()
+            cone.move(to: CGPoint(x: -44, y: 2))
+            cone.addLine(to: CGPoint(x: -150, y: -14))
+            cone.addLine(to: CGPoint(x: -150, y: 46))
+            cone.closeSubpath()
+            beam.fill(cone, with: .linearGradient(
+                Gradient(colors: [Color(red: 1.0, green: 0.95, blue: 0.75).opacity(0.28), .clear]),
+                startPoint: CGPoint(x: -44, y: 2), endPoint: CGPoint(x: -150, y: 14)))
+            // Tail cross and the propeller behind the hull.
             for k in [-1.0, 1.0] {
                 var fin = Path()
-                fin.move(to: CGPoint(x: -44, y: 0))
-                fin.addLine(to: CGPoint(x: -56, y: k * 12))
-                c.stroke(fin, with: .color(Color(red: 0.60, green: 0.50, blue: 0.16)),
-                         lineWidth: 3)
+                fin.move(to: CGPoint(x: 38, y: k * 3))
+                fin.addLine(to: CGPoint(x: 54, y: k * 15))
+                fin.addLine(to: CGPoint(x: 58, y: k * 15))
+                fin.addLine(to: CGPoint(x: 52, y: k * 2))
+                fin.closeSubpath()
+                TankPaint.solid(&c, fin, lit: yellowLit, base: yellow, shade: yellowDark, outline: line, lineWidth: 0.7)
             }
-            // Portholes glowing warm.
-            var g = c
-            g.blendMode = .plusLighter
+            let spin = reduceMotion ? 0 : t * 14
+            for k in 0..<3 {
+                let a = spin + Double(k) * 2.1
+                let blade = Path(ellipseIn: CGRect(x: 56, y: -2 + sin(a) * 4 - 2, width: 4, height: 4 + abs(cos(a)) * 5))
+                c.fill(blade, with: .color(Color(red: 0.55, green: 0.50, blue: 0.40).opacity(0.85)))
+            }
+            // The hull: a cigar, bow to the left, lit from above.
+            let hull = Path(ellipseIn: CGRect(x: -46, y: -13, width: 96, height: 26))
+            TankPaint.solid(&c, hull, lit: yellowLit, base: yellow, shade: yellowDark, outline: line, lineWidth: 0.9, rim: 0.5)
+            var plating = c
+            plating.clip(to: hull)
+            var seams = Path()
+            for sx in [-24.0, 0.0, 24.0] {
+                seams.move(to: CGPoint(x: sx, y: -14)); seams.addQuadCurve(to: CGPoint(x: sx, y: 14), control: CGPoint(x: sx - 3, y: 0))
+            }
+            seams.move(to: CGPoint(x: -46, y: 5)); seams.addLine(to: CGPoint(x: 50, y: 5))
+            plating.stroke(seams, with: .color(yellowDark.opacity(0.55)), lineWidth: 0.6)
+            var rivets = Path()
+            for k in 0..<14 {
+                rivets.addEllipse(in: CGRect(x: -40 + Double(k) * 6.4, y: 6.6, width: 1.1, height: 1.1))
+            }
+            plating.fill(rivets, with: .color(yellowDark.opacity(0.7)))
+            // The conning tower and periscope.
+            let tower = Path(roundedRect: CGRect(x: -8, y: -24, width: 20, height: 13), cornerRadius: 4)
+            TankPaint.solid(&c, tower, lit: yellowLit, base: yellow, shade: yellowDark, outline: line, lineWidth: 0.7)
+            var scope = Path()
+            scope.move(to: CGPoint(x: 4, y: -24)); scope.addLine(to: CGPoint(x: 4, y: -33)); scope.addLine(to: CGPoint(x: -3, y: -33))
+            c.stroke(scope, with: .color(line), style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
+            c.stroke(scope, with: .color(Color(red: 0.62, green: 0.58, blue: 0.50)),
+                     style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+            // Portholes: brass rims, warm light inside.
             for k in 0..<4 {
-                g.fill(Path(ellipseIn: CGRect(x: -28 + Double(k) * 16, y: -4,
-                                              width: 7, height: 7)),
-                       with: .color(Color(red: 1.0, green: 0.85, blue: 0.45)
-                                    .opacity(0.9)))
+                let px = -26 + Double(k) * 15
+                let rim = CGRect(x: px - 4.2, y: -5.2, width: 8.4, height: 8.4)
+                c.fill(Path(ellipseIn: rim), with: .linearGradient(
+                    Gradient(colors: [Color(red: 1.0, green: 0.86, blue: 0.50), Color(red: 0.52, green: 0.34, blue: 0.10)]),
+                    startPoint: CGPoint(x: rim.minX, y: rim.minY), endPoint: CGPoint(x: rim.maxX, y: rim.maxY)))
+                let glass = rim.insetBy(dx: 1.4, dy: 1.4)
+                c.fill(Path(ellipseIn: glass), with: .radialGradient(
+                    Gradient(colors: [Color(red: 1.0, green: 0.92, blue: 0.62), Color(red: 0.95, green: 0.62, blue: 0.20)]),
+                    center: CGPoint(x: glass.midX - 1, y: glass.midY - 1), startRadius: 0, endRadius: 4))
+                TankPaint.glow(&c, at: CGPoint(x: px, y: -1), radius: 9, color: Color(red: 1.0, green: 0.85, blue: 0.45).opacity(0.3))
             }
+            // The lamp at the bow.
+            c.fill(Path(ellipseIn: CGRect(x: -47, y: -1, width: 5, height: 5)), with: .color(Color(red: 1.0, green: 0.97, blue: 0.85)))
             // Prop wash: a faint churn behind.
             var churn = c
             churn.blendMode = .plusLighter
-            churn.fill(Path(ellipseIn: CGRect(x: -80, y: -10, width: 30, height: 20)),
+            churn.fill(Path(ellipseIn: CGRect(x: 58, y: -10, width: 30, height: 20)),
                        with: .radialGradient(
                            Gradient(colors: [.white.opacity(0.14), .clear]),
-                           center: CGPoint(x: -58, y: 0), startRadius: 0,
+                           center: CGPoint(x: 66, y: 0), startRadius: 0,
                            endRadius: 20))
         }
     }
