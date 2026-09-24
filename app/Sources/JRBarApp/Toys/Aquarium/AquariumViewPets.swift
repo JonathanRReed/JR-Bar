@@ -2,30 +2,82 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
+/// Where a pet is this frame and how far round it is turned: `c` is the
+/// signed side-on share, +1 facing right, -1 left — the pets turn round
+/// by squashing through zero, never by mirroring in one frame.
+struct PetPose: Equatable {
+    var x: Double
+    var y: Double
+    var c: Double
+}
+
 /// The pets bought in the shop.
 extension AquariumView {
     // MARK: Shop pets
+
+    /// How long the turtle takes to come round at each end, seconds.
+    static let turtleTurn = 1.4
+
+    /// The sea turtle's path: across the tank one way and back the next
+    /// on a 90-second sweep, easing to a stop at each end and coming
+    /// round there over 1.4 s with a small dip, rising for a breath near
+    /// the end of each leg.
+    func seaTurtlePose(size: CGSize, t: Double) -> PetPose {
+        let period = 90.0
+        let legTime = period / 2
+        let tau = frac(t / period) * period
+        let speed = size.width / legTime
+        let half = Self.turtleTurn / 2
+        // Seconds from the nearest end of a leg: the right end at 45,
+        // the left at 0 (and 90).
+        let fromRight = tau - legTime
+        let fromLeft = tau < legTime ? tau : tau - period
+        let x: Double
+        var c: Double
+        var dip = 0.0
+        if abs(fromRight) < half {
+            // The triangle's corner, rounded: it slows, stops, comes back.
+            x = size.width - speed * (fromRight * fromRight + half * half) / (2 * half)
+            let k = (fromRight + half) / Self.turtleTurn
+            c = cos(.pi * k)
+            dip = sin(.pi * k)
+        } else if abs(fromLeft) < half {
+            x = speed * (fromLeft * fromLeft + half * half) / (2 * half)
+            let k = (fromLeft + half) / Self.turtleTurn
+            c = -cos(.pi * k)
+            dip = sin(.pi * k)
+        } else if tau < legTime {
+            x = speed * tau
+            c = 1
+        } else {
+            x = size.width - speed * (tau - legTime)
+            c = -1
+        }
+        if reduceMotion { c = c >= 0 ? 1 : -1 }
+        // Mostly mid-depth; the last stretch of each leg climbs to sip
+        // the surface and sinks back.
+        let leg = (tau < legTime ? tau : tau - legTime) / legTime
+        let breathe = smooth(clamp01((leg - 0.72) / 0.10))
+            * smooth(clamp01((0.98 - leg) / 0.10))
+        let baseY = size.height * 0.42
+        let y = reduceMotion ? baseY
+            : baseY + sin(t * 0.4) * 14 - breathe * (baseY - 46) + dip * 10
+        return PetPose(x: x, y: y, c: c)
+    }
 
     /// The sea turtle: a slow glide across midwater on a long lazy
     /// sweep, rising for a breath every minute or so — a patient
     /// silhouette behind the fish lane.
     func drawSeaTurtle(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let pose = seaTurtlePose(size: size, t: t)
+        let x = pose.x, y = pose.y
         let period = 90.0
-        let phase = frac(t / period)
-        // The glide: across the tank one way, back the next.
-        let leg = frac(phase * 2)
-        let dir = phase < 0.5 ? 1.0 : -1.0
-        let x = size.width * (phase < 0.5 ? leg : 1 - leg)
-        // Mostly mid-depth; the last stretch of each leg climbs to
-        // sip the surface and sinks back.
+        let leg = frac(frac(t / period) * 2)
         let breathe = smooth(clamp01((leg - 0.72) / 0.10))
             * smooth(clamp01((0.98 - leg) / 0.10))
-        let baseY = size.height * 0.42
-        let y = reduceMotion ? baseY
-            : baseY + sin(t * 0.4) * 14 - breathe * (baseY - 46)
         var c = canvas
         c.translateBy(x: x, y: y)
-        c.scaleBy(x: dir, y: 1)
+        c.scaleBy(x: pose.c, y: 1)
         c.opacity = 0.92
         PetArt.seaTurtle(&c, flap: reduceMotion ? 0 : sin(t * 2.4))
         // The breath: two bubbles off the nose on the way down.
@@ -34,7 +86,7 @@ extension AquariumView {
                 let bp = frac(t * 0.9 + Double(k) * 0.5)
                 var b = canvas
                 b.opacity = (1 - bp) * 0.5
-                b.stroke(Path(ellipseIn: CGRect(x: x + dir * 40 - 2 - bp * 4,
+                b.stroke(Path(ellipseIn: CGRect(x: x + pose.c * 40 - 2 - bp * 4,
                                                 y: y - 8 - bp * 30,
                                                 width: 3 + bp * 3, height: 3 + bp * 3)),
                          with: .color(.white), lineWidth: 0.7)
@@ -118,21 +170,47 @@ extension AquariumView {
         }
     }
 
+    /// How long the axolotl takes to turn round at each end, seconds.
+    static let axolotlTurn = 2.0
+
+    /// The axolotl's patrol: a lazy amble along the sand one way over
+    /// most of 80 seconds, a kick-hop halfway, then it turns round where
+    /// it stopped and ambles back — so the loop comes home to where it
+    /// began instead of jumping there.
+    func axolotlPose(size: CGSize, t: Double) -> (pose: PetPose, kick: Double, baseY: Double) {
+        let period = 160.0
+        let legTime = period / 2
+        let amble = legTime - Self.axolotlTurn
+        let tau = frac(t / period) * period
+        let home = size.width * 0.30
+        let out = tau < legTime
+        let local = out ? tau : tau - legTime
+        let q = clamp01(local / amble)
+        let along = smooth(q)
+        let x = out ? home - 15 + 60 * along : home + 45 - 60 * along
+        var c: Double = out ? 1 : -1
+        if local > amble {
+            let k = (local - amble) / Self.axolotlTurn
+            c = (out ? 1 : -1) * cos(.pi * k)
+        }
+        if reduceMotion { c = c >= 0 ? 1 : -1 }
+        // The kick-hop halfway along each leg.
+        let kick = smooth(clamp01((q - 0.46) / 0.04)) * smooth(clamp01((0.54 - q) / 0.04))
+        let baseY = sandTop(atX: x, in: size) - 7
+        let y = reduceMotion ? baseY : baseY - kick * 26
+        return (PetPose(x: x, y: y, c: c), kick, baseY)
+    }
+
     /// The axolotl: a wide pink smile on legs, three gill fronds a
     /// cheek waving as it ambles the sand on a long seeded patrol;
     /// every so often it kicks up and settles a body-width over.
     func drawAxolotl(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        let period = 160.0
-        let p = frac(t / period)
-        // Amble mostly in place; a kick-hop at p .5 moves the yard.
-        let home = size.width * 0.30
-        let kick = smooth(clamp01((p - 0.48) / 0.03))
-            * smooth(clamp01((0.56 - p) / 0.03))
-        let x = home + 30 * smooth(clamp01(p / 0.5)) * 2 - 15
-        let baseY = sandTop(atX: x, in: size) - 7
-        let y = reduceMotion ? baseY : baseY - kick * 26
+        let placed = axolotlPose(size: size, t: t)
+        let x = placed.pose.x, y = placed.pose.y
+        let kick = placed.kick, baseY = placed.baseY
         var c = canvas
         c.translateBy(x: x, y: y)
+        c.scaleBy(x: placed.pose.c, y: 1)
         c.opacity = 0.95
         PetArt.axolotl(&c, swish: reduceMotion ? 0 : sin(t * 1.8) * 2,
                        step: reduceMotion ? 0 : sin(t * 3) * 1.5,
@@ -151,15 +229,19 @@ extension AquariumView {
         }
     }
 
-    /// The tetra school: seven little neons sharing one wander
-    /// target, each orbiting the pack on its own phase — cohesion as
-    /// a swarm, not a queue.
-    func drawTetraSchool(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+    /// How long a tetra takes to come round, seconds.
+    static let tetraTurn = 0.5
+
+    /// The tetra school's seven places: one shared wander target, each
+    /// fish orbiting the pack on its own phase. When the pack reverses,
+    /// each tetra turns round on its own beat — up to 0.4 s either side
+    /// of the others, by its place in the orbit — squashing through zero
+    /// rather than the whole school mirroring in one frame.
+    func tetraPoses(size: CGSize, t: Double) -> [PetPose] {
         // The pack's shared target sweeps the midwater slowly.
         let cx = size.width * (0.5 + 0.28 * sin(t * 0.09))
         let cy = size.height * (0.42 + 0.10 * sin(t * 0.13 + 1.7))
-        let heading = cos(t * 0.09) >= 0 ? 1.0 : -1.0
-        for i in 0..<7 {
+        return (0..<7).map { i in
             let h = scatter(AquariumModel.stableHash("tetra"), i)
             let orbit = 12 + Double(h & 0xFF) / 0xFF * 26
             let phase = Double((h >> 8) & 0xFF) / 0xFF * .pi * 2
@@ -167,9 +249,27 @@ extension AquariumView {
             let wobble = reduceMotion ? 0.0 : t * speed
             let fx = cx + cos(wobble + phase) * orbit
             let fy = cy + sin(wobble * 1.3 + phase) * orbit * 0.45
+            // This tetra's own clock for the pack's reversals.
+            let stagger = sin(phase) * 0.4
+            let tau = (t - stagger) * 0.09 - .pi / 2
+            let k = (tau / .pi).rounded()
+            let since = (tau - k * .pi) / 0.09
+            let dir0: Double = abs(k.truncatingRemainder(dividingBy: 2)) < 0.5 ? 1 : -1
+            let p = clamp01((since + Self.tetraTurn / 2) / Self.tetraTurn)
+            var c = dir0 * cos(.pi * p)
+            if reduceMotion { c = c >= 0 ? 1 : -1 }
+            return PetPose(x: fx, y: fy, c: c)
+        }
+    }
+
+    /// The tetra school: seven little neons sharing one wander
+    /// target, each orbiting the pack on its own phase — cohesion as
+    /// a swarm, not a queue.
+    func drawTetraSchool(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        for pose in tetraPoses(size: size, t: t) {
             var c = canvas
-            c.translateBy(x: fx, y: fy)
-            c.scaleBy(x: heading, y: 1)
+            c.translateBy(x: pose.x, y: pose.y)
+            c.scaleBy(x: pose.c, y: 1)
             c.opacity = 0.92
             PetArt.neonTetra(&c, length: 15)
         }
