@@ -36,7 +36,12 @@ _HEADER_FIELDS: Final = frozenset({"version", "provider", "log_path"})
 # process itself instead of forking `ps` inside the hook. ``decide_ms`` is
 # the decide lane's: the shim runs as ``--decide`` on a PermissionRequest
 # hook and will wait that long for the daemon's verdict line.
-_OPTIONAL_HEADER_FIELDS: Final = frozenset({"ppid", "ppid_start", "decide_ms"})
+_OPTIONAL_HEADER_FIELDS: Final = frozenset({"ppid", "ppid_start", "decide_ms", "kind"})
+#: ``kind`` on a frame that is not a hook event. ``statusline`` is Claude
+#: Code's statusLine JSON from ``jrbar-hook --statusline``: the daemon keeps
+#: its rate limits and never treats it as agent activity.
+HOOK_INGRESS_KIND_STATUSLINE: Final = "statusline"
+_HOOK_INGRESS_KINDS: Final = frozenset({HOOK_INGRESS_KIND_STATUSLINE})
 MAX_HOOK_PPID: Final = 2**31 - 1
 # How long a ``--decide`` hook waits for the verdict after its payload is in
 # hand. The hook entries are installed with a 60 s provider timeout, so the
@@ -90,11 +95,16 @@ class HookIngressRequest:
     # How long the sender will wait for a verdict line, when it is a
     # ``--decide`` hook. ``None`` is every other hook: one disposition line.
     decide_ms: int | None = None
+    # ``statusline`` for a frame that is not a hook event (see
+    # ``HOOK_INGRESS_KIND_STATUSLINE``); ``None`` for every hook.
+    kind: str | None = None
 
     def __post_init__(self) -> None:
         if self.ppid is not None and (
             type(self.ppid) is not int or self.ppid <= 1 or self.ppid > MAX_HOOK_PPID
         ):
+            raise ValueError("invalid hook ingress request")
+        if self.kind is not None and (self.kind not in _HOOK_INGRESS_KINDS or self.decide_ms is not None):
             raise ValueError("invalid hook ingress request")
         if self.decide_ms is not None and (
             type(self.decide_ms) is not int
@@ -169,6 +179,8 @@ def encode_hook_ingress_request(request: HookIngressRequest) -> bytes:
         document["ppid_start"] = float(request.ppid_start)
     if request.decide_ms is not None:
         document["decide_ms"] = request.decide_ms
+    if request.kind is not None:
+        document["kind"] = request.kind
     header = json.dumps(
         document,
         ensure_ascii=False,
@@ -234,6 +246,9 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
         return None
     if decide_ms is not None and type(decide_ms) is not int:
         return None
+    kind = document.get("kind")
+    if kind is not None and type(kind) is not str:
+        return None
     try:
         return HookIngressRequest(
             document["provider"],
@@ -242,6 +257,7 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
             ppid=ppid,
             ppid_start=None if ppid_start is None else float(ppid_start),
             decide_ms=decide_ms,
+            kind=kind,
         )
     except ValueError:
         return None
@@ -447,6 +463,7 @@ def submit_hook_ingress_for_decision(
 
 __all__ = [
     "HOOK_DECISION_WAIT_MS",
+    "HOOK_INGRESS_KIND_STATUSLINE",
     "HOOK_INGRESS_PROTOCOL_VERSION",
     "HOOK_INGRESS_SEND_TIMEOUT_SECONDS",
     "HOOK_INGRESS_SOCKET_NAME",

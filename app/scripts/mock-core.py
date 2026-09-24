@@ -3265,6 +3265,15 @@ class World:
                                        for layer, scope in sorted(self.deck_layer_map.items())]
                 result["scopes"] = list(self.deck_scopes_extra)
             self.push_state()
+        elif name in ("claude_statusline_install", "claude_statusline_uninstall"):
+            # The mock has no ~/.claude to write: it flips the setting the
+            # real command sets after a successful install or removal.
+            installing = name == "claude_statusline_install"
+            with self.lock:
+                self.document["claude_statusline_source"] = installing
+            self.push_settings()
+            result = ({"installed": True, "wrapped": bool(args.get("wrap")), "needs_wrap": False, "message": None}
+                      if installing else {"removed": True, "restored": False})
         elif name == "usage_hooks_status":
             with self.lock:
                 result = usage_hooks_status(self.document, self.hook_results)

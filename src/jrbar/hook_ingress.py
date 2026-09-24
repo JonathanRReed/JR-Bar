@@ -18,6 +18,7 @@ from typing import Final
 
 from . import audit
 from .hook_ingress_protocol import (
+    HOOK_INGRESS_KIND_STATUSLINE,
     MAX_HOOK_INGRESS_WIRE_BYTES,
     HookIngressDisposition,
     HookIngressRequest,
@@ -890,6 +891,11 @@ class HookIngressService:
         if request is None:
             self.refuse_invalid()
             disposition = HookIngressDisposition.REFUSED_INVALID
+        elif request.kind == HOOK_INGRESS_KIND_STATUSLINE:
+            # Claude Code's statusLine (jrbar-hook --statusline): rate
+            # limits for the quota source, and never a hook event, so it
+            # can never keep a session alive (claude_statusline_source).
+            disposition = self._accept_statusline(request)
         else:
             self._observe_for_decisions(request)
             parked = self._park_decision(request)
@@ -905,6 +911,15 @@ class HookIngressService:
             self._unpark(parked)
             parked = None
         return parked
+
+    def _accept_statusline(self, request: HookIngressRequest) -> HookIngressDisposition:
+        try:
+            from .claude_statusline_source import ingest
+
+            ingest(request.payload_text)
+        except Exception:
+            pass
+        return HookIngressDisposition.ACCEPTED
 
     @staticmethod
     def _send_response(

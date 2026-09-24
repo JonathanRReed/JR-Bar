@@ -2230,6 +2230,22 @@ def _cmd_usage_hooks_test(self, args):
     return core_test_command(self, args)
 
 
+# The Claude statusLine switch (lane oss): writes ~/.claude/settings.json,
+# never over someone else's statusLine.
+@command("claude_statusline_install")
+def _cmd_claude_statusline_install(self, args):
+    from .claude_statusline_source import core_install_command
+
+    return core_install_command(self, args)
+
+
+@command("claude_statusline_uninstall")
+def _cmd_claude_statusline_uninstall(self, args):
+    from .claude_statusline_source import core_uninstall_command
+
+    return core_uninstall_command(self, args)
+
+
 def _provider_credentials(self):
     from .provider_credential_store import ProviderCredentialStore
 
@@ -5726,6 +5742,10 @@ def build_headless_controller_class() -> type:
             server.publish_state(document)
             self._core_note_frame(self._core_state_frame_times)
             self._core_publish_widget_snapshot(document)
+            # Claude statusLine text (lane oss): the shim prints this line.
+            from .claude_statusline_source import publish_statusline_text
+
+            publish_statusline_text(self, document)
 
         def _core_publish_widget_snapshot(self, document) -> None:
             """The desktop glance file: a redacted counts-and-tiles view a

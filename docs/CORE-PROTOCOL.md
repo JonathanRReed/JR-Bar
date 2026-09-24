@@ -1263,6 +1263,34 @@ the decide lane is installed (`decide=installed|missing|not_installed`).
 An install from before the lane existed keeps working and reads `missing`
 until Settings › Agents reinstalls the hooks.
 
+### Claude Code's status line (`--statusline`)
+
+`jrbar-hook --statusline [--then <command>]` is Claude Code's `statusLine`
+command when the person turns on Settings › Usage › Claude Code status line
+(or runs `jrbar agent-monitor install claude-statusline [--wrap]`). It sends
+the statusLine JSON as one frame whose header carries `"kind":"statusline"`
+(provider `claude`). The daemon never treats that frame as a hook event:
+it keeps only `session_id`, `model.id` and `rate_limits.five_hour` /
+`rate_limits.seven_day` (`used_percentage`, `resets_at`), drops a window
+whose reset has passed, and never touches session liveness, because the
+status line re-renders while Claude is idle (`claude_statusline_source`).
+The Claude collector uses that reading only when the OAuth usage endpoint
+is rate limited, signed out, unavailable or not connected; its lanes carry
+`source: "claude-statusline"`, and after an OAuth failure the endpoint
+rests (10 min after a 429) while the status line covers for it. Nothing
+is spooled when the daemon is down. The shim then prints
+`$XDG_STATE_HOME/jrbar/statusline.txt` (one line, at most 256 bytes, e.g.
+`JR-Bar · 2 working · 1 needs you · 5h 58% left`; empty while
+`statusline_text_enabled` is off), and with `--then` runs the person's
+previous statusLine command through `/bin/sh` with the same stdin and
+prints its output after JR-Bar's line (3 s and 4 KiB at most). Install
+never replaces an existing `statusLine`: without `--wrap` it is refused;
+with it, the old command moves into `--then`, and uninstall puts the old
+value back exactly. `claude_statusline_install {wrap}` and
+`claude_statusline_uninstall` are the Settings switch's commands; the
+first answers `{installed, wrapped, needs_wrap, message}` and asks before
+wrapping.
+
 ### Pi and Gemini CLI
 
 Pi (`@mariozechner/pi-coding-agent`) runs TypeScript extensions in-process

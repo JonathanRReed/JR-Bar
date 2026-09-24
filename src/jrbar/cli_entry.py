@@ -15,6 +15,10 @@ def jrbar_main(argv: list[str] | None = None) -> int:
         return integration_main(args[1:])
     if args[:1] == ["providers"]:
         return provider_main(args[1:])
+    if args[:1] == ["agent-monitor"] and args[2:3] == ["claude-statusline"]:
+        from .claude_statusline_source import main as statusline_main
+
+        return statusline_main(args[1:])
     if args[:1] == ["usage"]:
         from .usage_cli import main as usage_main
 

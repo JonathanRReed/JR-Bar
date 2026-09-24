@@ -411,3 +411,65 @@ def test_shim_spools_a_hook_that_arrives_past_every_ingress_slot(
     assert processed == []
     rows = [json.loads(line) for line in pending.read_text().splitlines()]
     assert [row["payload"] for row in rows] == [payload]
+
+
+# --- --statusline (lane oss): Claude Code's statusLine command ---------------
+
+
+def _run_statusline(shim: Path, state_dir: Path, payload: str, *extra: str) -> subprocess.CompletedProcess:
+    env = dict(os.environ, JRBAR_STATE_DIR=str(state_dir))
+    return subprocess.run(
+        [str(shim), "--statusline", *extra],
+        input=payload.encode("utf-8"),
+        capture_output=True,
+        env=env,
+        timeout=10,
+    )
+
+
+def test_statusline_sends_a_statusline_frame_and_prints_the_daemons_line(shim: Path, sock_dir: Path) -> None:
+    (sock_dir / "statusline.txt").write_text("JR-Bar · 2 working · 5h 58% left\nignored second line\n")
+    ingress = _FakeIngress(sock_dir)
+    payload = json.dumps({"session_id": "s", "rate_limits": {"five_hour": {"used_percentage": 42}}})
+    try:
+        result = _run_statusline(shim, sock_dir, payload)
+        assert ingress.wait_for_request()
+    finally:
+        ingress.close()
+    assert result.returncode == 0
+    assert result.stdout.decode() == "JR-Bar · 2 working · 5h 58% left\n"
+    request = ingress.requests[0]
+    assert request is not None and request.kind == "statusline"
+    assert request.provider == "claude"
+    assert request.payload_text == payload
+
+
+def test_statusline_with_no_text_file_prints_nothing_and_never_spools(shim: Path, sock_dir: Path) -> None:
+    # No daemon listening and no statusline.txt.
+    result = _run_statusline(shim, sock_dir, json.dumps({"session_id": "s"}))
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert not list(sock_dir.glob("*.pending.jsonl")), "a status line is never spooled as a hook"
+    # An empty file prints nothing either.
+    (sock_dir / "statusline.txt").write_text("")
+    assert _run_statusline(shim, sock_dir, "{}").stdout == b""
+
+
+def test_statusline_then_passes_stdin_to_the_wrapped_command(shim: Path, sock_dir: Path) -> None:
+    (sock_dir / "statusline.txt").write_text("JR-Bar · idle\n")
+    wrapped = sock_dir / "previous-statusline.sh"
+    # Builtins only, so a busy machine cannot push it past the shim's budget.
+    wrapped.write_text('#!/bin/sh\nIFS= read -r line || true\nprintf "mine: %s\\n" "${#line}"\n')
+    wrapped.chmod(0o755)
+    payload = json.dumps({"session_id": "abc"})
+    result = _run_statusline(shim, sock_dir, payload, "--then", f"{wrapped}")
+    assert result.returncode == 0
+    lines = result.stdout.decode().splitlines()
+    assert lines == ["JR-Bar · idle", f"mine: {len(payload.encode())}"]
+
+
+def test_statusline_then_is_bounded(shim: Path, sock_dir: Path) -> None:
+    started = time.monotonic()
+    result = _run_statusline(shim, sock_dir, "{}", "--then", "/bin/sleep 20")
+    assert result.returncode == 0
+    assert time.monotonic() - started < 8.0

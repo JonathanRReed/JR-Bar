@@ -31,6 +31,21 @@
  * "no decision" for both agents: their own prompt carries on. The wait is
  * bounded here, not by the daemon, and the installed hook timeout (60 s) is
  * longer, so the agent never has to kill the shim.
+ *
+ *   jrbar-hook --statusline [--then <command>]
+ *
+ * --statusline is Claude Code's statusLine command (opt-in, installed by
+ * `jrbar agent-monitor install claude-statusline`). It hands the statusLine
+ * JSON to the daemon as a frame of kind "statusline", which the daemon keeps
+ * only the session id, the model and the rate limits of and which never
+ * counts as a hook event, so it never keeps a session alive. Nothing is
+ * spooled when the daemon is down: a status line is only worth its moment.
+ * It then prints <state>/statusline.txt, the daemon's one line (at most
+ * STATUSLINE_TEXT_BYTES; nothing when the file is missing or empty).
+ * --then runs the person's previous statusLine command, the one it wrapped,
+ * with the same stdin through /bin/sh (as Claude Code runs it) and prints
+ * its output after JR-Bar's line, bounded by THEN_BUDGET_MS and
+ * THEN_OUTPUT_BYTES.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -45,6 +60,8 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/un.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 
 #define MAX_PAYLOAD (1024 * 1024)
@@ -65,6 +82,10 @@
 #define MAX_REPLY_BYTES (64 + 64 * 1024)
 #define DECISION_PREFIX "{\"hookSpecificOutput\":"
 #define MAGIC "JRBARHOOK\x01"
+/* --statusline: the daemon's line, and the wrapped command's bounds. */
+#define STATUSLINE_TEXT_BYTES 256
+#define THEN_BUDGET_MS 3000
+#define THEN_OUTPUT_BYTES 4096
 
 static uint64_t now_ms(void) {
     struct timeval tv;
@@ -304,16 +325,89 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
     free(escaped);
 }
 
+/* Print <dir>/statusline.txt: one line, at most STATUSLINE_TEXT_BYTES, with
+ * nothing past its first newline and no control characters. */
+static void print_statusline_text(const char *dir) {
+    char path[4096];
+    if ((size_t)snprintf(path, sizeof path, "%s/statusline.txt", dir) >= sizeof path) return;
+    int fd = open(path, O_RDONLY | O_NOFOLLOW);
+    if (fd < 0) return;
+    char text[STATUSLINE_TEXT_BYTES + 1];
+    ssize_t n = read(fd, text, STATUSLINE_TEXT_BYTES);
+    close(fd);
+    if (n <= 0) return;
+    size_t len = 0;
+    while (len < (size_t)n && text[len] != '\n' && text[len] != '\r') {
+        if ((unsigned char)text[len] < 0x20) text[len] = ' ';
+        len++;
+    }
+    if (len == 0) return;
+    fwrite(text, 1, len, stdout);
+    fputc('\n', stdout);
+    fflush(stdout);
+}
+
+/* Run the wrapped statusLine command with the payload on its stdin and
+ * copy what it prints, within THEN_BUDGET_MS; a command still running at
+ * the deadline is killed with its process group. */
+static void run_then(const char *command, const char *payload, size_t len) {
+    int in[2], out[2];
+    if (pipe(in) != 0) return;
+    if (pipe(out) != 0) { close(in[0]); close(in[1]); return; }
+    pid_t pid = fork();
+    if (pid < 0) { close(in[0]); close(in[1]); close(out[0]); close(out[1]); return; }
+    if (pid == 0) {
+        setpgid(0, 0);
+        dup2(in[0], STDIN_FILENO);
+        dup2(out[1], STDOUT_FILENO);
+        close(in[0]); close(in[1]); close(out[0]); close(out[1]);
+        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+        _exit(127);
+    }
+    close(in[0]);
+    close(out[1]);
+    signal(SIGPIPE, SIG_IGN);
+    uint64_t deadline = now_ms() + THEN_BUDGET_MS;
+    size_t sent = 0;
+    while (sent < len && now_ms() < deadline) {
+        ssize_t n = write(in[1], payload + sent, len - sent);
+        if (n <= 0) break;
+        sent += (size_t)n;
+    }
+    close(in[1]);
+    char buffer[THEN_OUTPUT_BYTES];
+    size_t got = 0;
+    struct pollfd pfd = { out[0], POLLIN, 0 };
+    while (got < sizeof buffer) {
+        int64_t left = (int64_t)deadline - (int64_t)now_ms();
+        if (left <= 0 || poll(&pfd, 1, (int)left) <= 0) break;
+        ssize_t n = read(out[0], buffer + got, sizeof buffer - got);
+        if (n <= 0) break;
+        got += (size_t)n;
+    }
+    close(out[0]);
+    if (waitpid(pid, NULL, WNOHANG) == 0) {
+        kill(-pid, SIGKILL);
+        kill(pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+    }
+    if (got) { fwrite(buffer, 1, got, stdout); fflush(stdout); }
+}
+
 int main(int argc, char **argv) {
     uint64_t started = now_ms();
-    const char *provider = NULL, *log = NULL;
-    int emit_empty = 0, decide = 0;
+    const char *provider = NULL, *log = NULL, *then = NULL;
+    int emit_empty = 0, decide = 0, statusline = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--provider") && i + 1 < argc) provider = argv[++i];
         else if (!strcmp(argv[i], "--log") && i + 1 < argc) log = argv[++i];
         else if (!strcmp(argv[i], "--emit-empty-json")) emit_empty = 1;
         else if (!strcmp(argv[i], "--decide")) decide = 1;
+        else if (!strcmp(argv[i], "--statusline")) statusline = 1;
+        else if (!strcmp(argv[i], "--then") && i + 1 < argc) then = argv[++i];
     }
+    if (statusline) { provider = "claude"; decide = 0; emit_empty = 0; }
+    else then = NULL;
     if (!provider || !*provider || strlen(provider) > 32) return 0;
     for (const char *c = provider; *c; c++) if (!((*c >= 'a' && *c <= 'z') || *c == '_')) return 0;
     int cursor = emit_empty || !strcmp(provider, "cursor") || !strcmp(provider, "gemini");
@@ -327,7 +421,15 @@ int main(int argc, char **argv) {
             len += (size_t)n;
         }
     }
-    if (!payload || len > MAX_PAYLOAD) { if (cursor) puts("{}"); return 0; }
+    if (!payload || len > MAX_PAYLOAD) {
+        if (statusline) {
+            char quick[2048];
+            state_dir(quick, sizeof quick);
+            print_statusline_text(quick);
+        }
+        if (cursor) puts("{}");
+        return 0;
+    }
     /* The budget starts once the payload is in hand. The time an agent
      * takes to write and close stdin is its own; counting it left a shim
      * spawned well before its payload arrived no time to wait out another
@@ -349,6 +451,7 @@ int main(int argc, char **argv) {
     char header[8192];
     char decide_field[32] = "";
     if (decide) snprintf(decide_field, sizeof decide_field, ",\"decide_ms\":%d", DECIDE_WAIT_MS);
+    else if (statusline) snprintf(decide_field, sizeof decide_field, ",\"kind\":\"statusline\"");
     int header_len = ppid_start >= 0
         ? snprintf(header, sizeof header, "{\"version\":1,\"provider\":\"%s\",\"log_path\":\"%s\",\"ppid\":%d,\"ppid_start\":%.6f%s}",
                    provider, escaped_log, (int)ppid, ppid_start, decide_field)
@@ -371,6 +474,15 @@ int main(int argc, char **argv) {
     size_t reply_len = 0;
     int result = deliver(dir, frame, prefix + (size_t)header_len + len, deadline - SPOOL_RESERVE_MS,
                          reply, reply ? MAX_REPLY_BYTES : 0, &reply_len, received + DECIDE_WAIT_MS);
+    if (statusline) {
+        /* Never spooled: a status line replayed later would be stale, and
+         * it is not a hook event. */
+        free(frame);
+        print_statusline_text(dir);
+        if (then && *then) run_then(then, payload, len);
+        free(payload);
+        return 0;
+    }
     if (result != 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len, deadline);
     if (reply) {
         const char *verdict = NULL;
