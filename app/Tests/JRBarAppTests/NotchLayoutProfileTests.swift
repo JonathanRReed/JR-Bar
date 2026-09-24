@@ -141,5 +141,11 @@ struct NotchLayoutProfileTests {
         ]
         #expect(Geometry.preferredIndex(in: air, pick: .builtIn, seat: nil) == 1)
         #expect(Geometry.preferredIndex(in: [], pick: .main, seat: nil) == nil)
+        // Picking Pointer seats afresh each time, never on an old seat;
+        // any other settings pass keeps the seat it has.
+        #expect(Geometry.seatsPointer(from: .builtIn, to: .pointer, seat: 9))
+        #expect(Geometry.seatsPointer(from: .pointer, to: .pointer, seat: nil))
+        #expect(!Geometry.seatsPointer(from: .pointer, to: .pointer, seat: 9))
+        #expect(!Geometry.seatsPointer(from: .pointer, to: .main, seat: 9))
     }
 }

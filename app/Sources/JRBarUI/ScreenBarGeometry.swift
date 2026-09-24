@@ -257,11 +257,21 @@ public enum ScreenBarGeometry {
     @MainActor
     public static func applyDisplayPick(_ pick: NotchDisplay, pointer: NSPoint = NSEvent.mouseLocation) {
         let before = preferredScreen().map(displayID(of:))
+        let seat = seatsPointer(from: displayPick, to: pick, seat: pointerSeat)
         displayPick = pick
-        if pick == .pointer, pointerSeat == nil { seatPointer(at: pointer) }
+        if seat { seatPointer(at: pointer) }
         if preferredScreen().map(displayID(of:)) != before {
             NotificationCenter.default.post(name: preferredScreenDidChange, object: nil)
         }
+    }
+
+    /// Whether applying `new` over `old` seats the pointer afresh: each
+    /// time "Where the pointer is" is picked, so a seat from hours before
+    /// (then Built-in, then Pointer again) is never reused, and on the
+    /// first pass with no seat yet. Every other settings pass keeps it.
+    public static func seatsPointer(from old: NotchDisplay, to new: NotchDisplay,
+                                    seat: CGDirectDisplayID?) -> Bool {
+        new == .pointer && (old != .pointer || seat == nil)
     }
 
     /// Re-seat "Where the pointer is" on the display under the pointer —
