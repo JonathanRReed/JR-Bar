@@ -924,16 +924,25 @@ public final class CoreModel {
 
     // MARK: Inbound
 
-    private func handle(_ event: CoreClient.Event) {
+    /// A dropped socket takes the daemon's facts with it: the next daemon
+    /// may be a restart that has not refreshed yet, and its asks, rows and
+    /// lights are not the dead one's. `settings` and `usageSamples` stay —
+    /// the document is re-sent on connect and the samples are history.
+    /// `hello` clears on connect, so a new socket says who it is afresh.
+    func handle(_ event: CoreClient.Event) {
         switch event {
         case .connecting(let attempt):
             connection = .connecting(attempt: attempt)
         case .connected:
             connection = .connected
             connectedAt = Date()
+            hello = nil
         case .disconnected(let reason):
             connection = .disconnected(reason: reason)
             connectedAt = nil
+            state = nil
+            lights = nil
+            lastStateAt = nil
         case .decodeFailure(let why):
             lastDecodeFailure = why
         case .message(let message):

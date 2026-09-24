@@ -489,4 +489,24 @@ struct AskSurfacesTests {
         #expect(unknown.inFrontVerdict?.inFront == nil)
         #expect(!unknown.isPulsing, "cannot be told: the app's rule stands")
     }
+
+    @Test("the daemon going away shrinks a takeover card back to its capsule")
+    func resetReleasesTakeover() {
+        var toysState = ToysState()
+        toysState.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
+        let core = CoreModel()
+        let session = "claude:session:t"
+        core.apply(.state(CoreState(
+            sessions: [CoreSession(id: session, provider: "claude", ask: CoreAsk(summary: "Run"))],
+            asks: [CoreAsk(session: session, openedAt: 1, summary: "Run", answerable: true, request: "r1")])))
+        let toys = ToysStore(core: core, settings: SettingsStore(core: core), state: toysState,
+                             cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        toys.notch.islandVisible = true
+        let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
+        coordinator.toys = toys
+        toys.notch.noteTakeover(CoreEvent(id: "e", kind: "escalation_stage", session: session, stage: 3))
+        #expect(toys.notch.activeCapsule?.takeover == true)
+        coordinator.reset()
+        #expect(toys.notch.activeCapsule?.takeover == false)
+    }
 }

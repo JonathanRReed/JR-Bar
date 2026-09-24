@@ -266,11 +266,13 @@ final class EventCoordinator {
         (core.state?.asks.isEmpty == false) || (core.state?.mainSessions.contains { $0.ask != nil } ?? false)
     }
 
-    /// The daemon went away: nothing is escalating any more.
+    /// The daemon went away: nothing is escalating any more, and a
+    /// takeover card's Approve would answer a daemon that is gone.
     func reset() {
         lastEscalation = nil
         inFrontVerdict = nil
         sounds.stopChime()
+        toys?.notch.releaseTakeover()
         if isPulsing {
             isPulsing = false
             onStatusPulse?(false)
