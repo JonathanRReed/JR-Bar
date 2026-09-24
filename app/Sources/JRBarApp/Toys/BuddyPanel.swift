@@ -452,7 +452,13 @@ final class BuddyPanel: NSPanel {
         } else {
             walk.release(at: now)
         }
-        // Once a second: still nothing asking, and the edge still there.
+        // Once a second: Reduce Motion still off (turned on mid-walk, the
+        // buddy is simply home — a plain reposition), nothing asking, and
+        // the edge still there.
+        if now - lastLedgeLook >= 1, NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            endStroll()
+            return
+        }
         if now - lastLedgeLook >= 1, walk.plan.legs.count > 1 {
             lastLedgeLook = now
             let digest = toy.sessionDigest()
