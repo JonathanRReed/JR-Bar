@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import Intents
 import JRBarCore
 import Observation
 
@@ -6,7 +8,11 @@ import Observation
 /// `presence`): the mic and camera reading goes to the daemon — which
 /// takes the sounds off the headset, holds escalation at the light, holds
 /// celebrations and turns a `call` Dot red — and the call fact comes back
-/// for the toys. The reading is the notch's sensor monitor
+/// for the toys. The Mac's Focus goes with it once Focus access is
+/// granted: the daemon's helper cannot read Focus, and Follow Focus
+/// follows this. macOS posts no Focus change, so it is read again every
+/// `focusCheckInterval` while the daemon is connected and whenever
+/// another app comes forward. The reading is the notch's sensor monitor
 /// (`NotchToy.onSensorsChanged`), which runs for this report while the
 /// daemon is connected, whether or not anything draws the dots: a call is
 /// a call with the island off.
@@ -18,8 +24,9 @@ import Observation
 /// own process out — one rule everywhere.
 ///
 /// Nothing leaves the Mac — the report goes over the daemon's local
-/// socket — and nothing is read that the dots do not already read: running
-/// state, never a sample or a frame.
+/// socket — and nothing is read beyond the dots' running state (never a
+/// sample or a frame) and whether a Focus is on, the same bit the Menu
+/// Bar's rules read.
 @MainActor
 final class PresenceReporter {
     private let isConnected: @MainActor () -> Bool
@@ -36,9 +43,16 @@ final class PresenceReporter {
     /// a beat. Ending it on a guess of "now" would report a call the
     /// length of that beat on every close.
     private let ownCameraGrace: TimeInterval
+    /// The Mac's Focus, or nil while it cannot be read.
+    private let readFocus: @MainActor () -> Bool?
+    /// How often the Focus is read again while connected; nil reads it
+    /// only on the reporter's own edges (the tests).
+    private let focusCheckInterval: TimeInterval?
 
     /// The monitor's latest reading, as the notch hands it over.
     private(set) var reading = NotchSensorState()
+    /// The Focus as last read; nil while it cannot be read.
+    private(set) var focus: Bool?
     private(set) var reporting = PresenceReporting()
     /// The toys' call fact (`PresenceReporting.onCall`).
     private(set) var onCall = false
@@ -62,19 +76,37 @@ final class PresenceReporter {
     /// closed while the camera is still counted as its own.
     private var ownCamera = false
     private var ownCameraSettling: Task<Void, Never>?
+    /// The Focus re-read while connected, and the app-switch observer.
+    private var focusPoll: Task<Void, Never>?
+    private var activationObserver: (any NSObjectProtocol)?
 
     init(isConnected: @escaping @MainActor () -> Bool,
          presence: @escaping @MainActor () -> CorePresence?,
          send: @escaping @MainActor (CorePresenceReport) async -> Bool,
          clock: @escaping @MainActor () -> Date = { Date() },
          ownCameraLive: @escaping @MainActor () -> Bool = { false },
-         ownCameraGrace: TimeInterval = PresenceReporter.mirrorWindDown) {
+         ownCameraGrace: TimeInterval = PresenceReporter.mirrorWindDown,
+         readFocus: @escaping @MainActor () -> Bool? = { nil },
+         focusCheckInterval: TimeInterval? = nil) {
         self.isConnected = isConnected
         self.presence = presence
         self.send = send
         self.clock = clock
         self.ownCameraLive = ownCameraLive
         self.ownCameraGrace = ownCameraGrace
+        self.readFocus = readFocus
+        self.focusCheckInterval = focusCheckInterval
+    }
+
+    /// The Focus re-read's cadence: the same 15 s the menu bar's triggers
+    /// poll it on — an edge lands well inside the daemon's 180 s.
+    static let focusCheckEvery: TimeInterval = 15
+
+    /// `INFocusStatusCenter`'s `isFocused`, only once Focus access is
+    /// granted — reading it must never be what raises the prompt.
+    static func systemFocus() -> Bool? {
+        guard INFocusStatusCenter.default.authorizationStatus == .authorized else { return nil }
+        return INFocusStatusCenter.default.focusStatus.isFocused
     }
 
     /// The Mirror's beat after it closes: long enough for its session's
@@ -91,14 +123,47 @@ final class PresenceReporter {
                       guard let core else { return false }
                       return (try? await core.reportPresence(report))?.ok == true
                   },
-                  ownCameraLive: { cards().contains(where: Self.mirrorHasCamera) })
+                  ownCameraLive: { cards().contains(where: Self.mirrorHasCamera) },
+                  readFocus: { Self.systemFocus() },
+                  focusCheckInterval: Self.focusCheckEvery)
         observe(core)
         observeMirrors(cards)
+        // A Focus often follows an app coming forward (a Focus filter, a
+        // schedule the person just noticed): read it then too.
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.focusMayHaveChanged() }
+        }
     }
 
     isolated deinit {
         check?.cancel()
         ownCameraSettling?.cancel()
+        focusPoll?.cancel()
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+    }
+
+    /// The Focus is read again; a change is an edge the daemon hears now.
+    func focusMayHaveChanged() {
+        let now = readFocus()
+        guard now != focus else { return }
+        focus = now
+        refresh()
+    }
+
+    /// The Focus re-read runs while the daemon is there to hear it.
+    private func syncFocusPoll(connected: Bool) {
+        focusPoll?.cancel()
+        focusPoll = nil
+        guard connected, let interval = focusCheckInterval else { return }
+        focusPoll = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled, let self else { return }
+                self.focusMayHaveChanged()
+            }
+        }
     }
 
     /// A card's Mirror has the camera: live, or asked for on a pinned
@@ -149,6 +214,9 @@ final class PresenceReporter {
                 reporting.reset()
                 generation += 1
             }
+            // A connection's first report carries the Focus as it is now.
+            if connected { focus = readFocus() }
+            syncFocusPoll(connected: connected)
             onDemandChanged?()
         }
         refresh()
@@ -213,7 +281,8 @@ final class PresenceReporter {
     private func pump() {
         guard !sending else { return }
         let connected = isConnected()
-        guard let report = reporting.due(reading: callReading, connected: connected, now: clock()) else {
+        guard let report = reporting.due(reading: callReading, focus: focus, connected: connected,
+                                         now: clock()) else {
             schedule(at: reporting.nextCheck(connected: connected))
             return
         }
