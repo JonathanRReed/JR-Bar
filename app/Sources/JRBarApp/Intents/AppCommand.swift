@@ -2,10 +2,10 @@ import Foundation
 import JRBarCore
 
 /// A verb JR-Bar performs on request from outside its own surfaces: a
-/// `jrbar://` link (Raycast Quicklinks, Alfred, Shortcuts' Open URL, a
-/// deck key, `open` in a script), a global shortcut bound on Settings ›
-/// Shortcuts, or a Shortcuts action. One vocabulary for all of them, so
-/// every route does exactly what the others do.
+/// `jrbar://` link (Raycast Quicklinks, Alfred, Shortcuts' Open URLs, a
+/// deck key, `open` in a script) or a global shortcut bound on Settings ›
+/// Shortcuts. One vocabulary for both, so every route does exactly what
+/// the others do.
 ///
 /// Deliberately absent: answering an ask. Approve and Deny stay on the
 /// panel, the banner and the island, where the ask itself is on screen —

@@ -1661,15 +1661,6 @@ extension AppDelegate {
         // Shortcuts send it, `state.power.hold` is what the chip shows.
         if let core { SystemTogglesStore.shared.state.attachLease(to: core) }
         wireCommandRouter()
-        // Shortcuts' "Open Agent Session" picks from the live list.
-        JRBarIntentBridge.sessions = { [weak self] in
-            (self?.core?.sessions ?? []).map { session in
-                (session.id,
-                 SessionLabel.display(label: session.label, shortId: session.shortId,
-                                      id: session.id, provider: session.provider),
-                 SessionLabel.providerName(session.provider))
-            }
-        }
         // App actions bound on Settings › Shortcuts, and the one key the
         // daemon's retired registry held, adopted when its settings land.
         AppHotkeys.shared.start()

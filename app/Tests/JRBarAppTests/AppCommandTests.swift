@@ -4,9 +4,9 @@ import JRBarCore
 import Testing
 @testable import JRBarApp
 
-/// The `jrbar://` vocabulary and the router behind links, shortcuts and
-/// Shortcuts actions: every link parses whole or not at all, and a
-/// command that cannot run is refused out loud.
+/// The `jrbar://` vocabulary and the router behind links and shortcuts:
+/// every link parses whole or not at all, and a command that cannot run
+/// is refused out loud.
 @Suite struct AppCommandTests {
     private func parse(_ text: String) -> AppCommand? {
         URL(string: text).flatMap(AppCommand.parse)
@@ -351,23 +351,6 @@ import Testing
         other.setChord(nil, for: AppShortcutCatalog.revealAskID)
         other.adoptLegacy(shortcuts: shortcuts)
         #expect(other.chord(for: AppShortcutCatalog.revealAskID) == nil)
-    }
-
-    @Test func theShortcutsParametersCoverTheVocabulary() {
-        // Every chip is pickable in Shortcuts, and every pick is a chip.
-        #expect(Set(QuickToggleOption.allCases.compactMap(\.toggle)) == Set(SystemToggle.allCases))
-        #expect(QuickToggleOption.allCases.count == SystemToggle.allCases.count)
-        // Every quiet mode Shortcuts offers is one the daemon takes.
-        #expect(Set(QuietModeOption.allCases.map(\.rawValue)) == AppCommand.quietModes)
-    }
-
-    @MainActor
-    @Test func aShortcutsActionThrowsTheRoutersRefusal() {
-        let router = AppCommandRouter.shared
-        let saved = router.revealAsk
-        defer { router.revealAsk = saved }
-        router.revealAsk = { "No agent is waiting on you." }
-        #expect(throws: JRBarIntentError.self) { try JRBarIntentBridge.run(.revealAsk) }
     }
 
     @Test func everyChipHasAnActionAndEveryIDIsUnique() {
