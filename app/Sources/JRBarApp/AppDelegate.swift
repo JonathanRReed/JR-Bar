@@ -762,7 +762,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         wireShell()
 
         // The first-run walkthrough: agents, permissions, menu bar.
-        // `shouldPresentOnLaunch` gates the auto-show; Settings ›
+        // `shouldPresentOnLaunch` gates the auto-show, which asks to come
+        // active but never forces it (`showOnLaunch`); Settings ›
         // General's "Run Setup Again" opens the same window.
         let setup = SetupWindowController.shared
         setup.store.model = .live(core: core)
@@ -774,7 +775,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         setup.store.model.setIconStyle = { [weak settingsStore] in settingsStore?.menuBarIconStyle = $0 }
         setup.store.onOpenToys = { [weak settingsWindow] in settingsWindow?.show(page: .toys) }
         let setupShown = setup.store.shouldPresentOnLaunch
-        if setupShown { setup.show() }
+        if setupShown { setup.showOnLaunch() }
 
         // What's New: once per release, after Setup has run to its end
         // and never in the launch that shows it, at the first moment the

@@ -5,8 +5,8 @@ import Testing
 
 /// The one way a JR-Bar window comes in front of the app you're in.
 /// Nothing here is shown or activated: the Space pull runs on windows
-/// that are never ordered in, and the Launch Services fallback runs on
-/// a stand-in clock.
+/// that are never ordered in, the Launch Services fallback runs on a
+/// stand-in clock, and the activation watch listens on its own center.
 @MainActor
 @Suite("Window front")
 struct WindowFrontTests {
@@ -68,31 +68,77 @@ struct WindowFrontTests {
     @Test("the fallback waits a quarter second and asks nothing up front")
     func fallbackWaits() {
         let probe = FallbackProbe()
-        WindowFront.armFallback(probe.fallback)
+        WindowFront.armFallback(probe.fallback, isShowing: { true })
         #expect(WindowFront.fallbackDelay == 0.25)
         #expect(probe.delays == [WindowFront.fallbackDelay])
+        #expect(probe.watches == 1, "the activation watch starts with the wait")
+        #expect(probe.ended == 0)
         #expect(probe.opens == 0, "nothing is asked before the wait ends")
     }
 
     @Test("an app that came active during the wait is not opened again")
     func activeAppSkipsTheFallback() {
         let probe = FallbackProbe()
-        WindowFront.armFallback(probe.fallback)
-        probe.active = true
+        WindowFront.armFallback(probe.fallback, isShowing: { true })
+        probe.cameActive = true
         probe.elapse()
         #expect(probe.opens == 0)
+        #expect(probe.ended == 1)
     }
 
-    @Test("an app still inactive when the wait ends opens itself through Launch Services")
+    @Test("an app never active while the window stayed up opens itself through Launch Services")
     func inactiveAppFallsBack() {
         let probe = FallbackProbe()
-        // Active as the window came up, then another app took it back:
-        // the flag is read when the wait ends, not when it starts.
-        probe.active = true
-        WindowFront.armFallback(probe.fallback)
-        probe.active = false
+        WindowFront.armFallback(probe.fallback, isShowing: { true })
         probe.elapse()
         #expect(probe.opens == 1)
+        #expect(probe.ended == 1)
+    }
+
+    @Test("a window closed during the wait is not brought back")
+    func closedWindowSkipsTheFallback() {
+        let probe = FallbackProbe()
+        WindowFront.armFallback(probe.fallback, isShowing: { probe.showing })
+        // Closing the last window hides and unhides the app, which
+        // leaves it inactive: that is no reason to open it.
+        probe.showing = false
+        probe.elapse()
+        #expect(probe.opens == 0)
+        #expect(probe.ended == 1, "the watch still ends")
+    }
+
+    @Test("active for a moment on the way counts, though another app has it when the wait ends")
+    func watchHearsTheWay() {
+        let center = NotificationCenter()
+        let flag = ActiveFlag()
+        let seen = WindowFront.ActivationWatch(center: center, isActive: { flag.isActive })
+        center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        // ⌘-Tab away inside the quarter second: inactive again at the
+        // end, and your pick stands.
+        #expect(seen.end())
+    }
+
+    @Test("the watch says no only for an app inactive from its start to its end")
+    func watchAnswers() {
+        let center = NotificationCenter()
+        let flag = ActiveFlag()
+        let quiet = WindowFront.ActivationWatch(center: center, isActive: { flag.isActive })
+        #expect(!quiet.end())
+        // Active already when the window was brought.
+        flag.isActive = true
+        let already = WindowFront.ActivationWatch(center: center, isActive: { flag.isActive })
+        flag.isActive = false
+        #expect(already.end())
+        // Active just as the wait ends.
+        let late = WindowFront.ActivationWatch(center: center, isActive: { flag.isActive })
+        flag.isActive = true
+        #expect(late.end())
+        // An ended watch hears nothing more.
+        flag.isActive = false
+        let over = WindowFront.ActivationWatch(center: center, isActive: { flag.isActive })
+        #expect(!over.end())
+        center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        #expect(!over.end())
     }
 
     // MARK: The call sites
@@ -140,23 +186,45 @@ struct WindowFrontTests {
         #expect(!body.contains("WindowFront"))
         #expect(!body.contains("activate"))
     }
+
+    @Test("Setup's launch showing asks to come active but never forces past the app you're in")
+    func setupLaunchShowingNeverForces() throws {
+        let file = Self.sources.appending(path: "Setup/SetupWindowController.swift")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let start = try #require(text.range(of: "func showOnLaunch() {"))
+        let end = try #require(text.range(of: "\n    }\n", range: start.upperBound..<text.endIndex))
+        let body = String(text[start.upperBound..<end.lowerBound])
+        #expect(body.contains("fallback: nil"))
+        let delegate = try String(contentsOf: Self.sources.appending(path: "AppDelegate.swift"), encoding: .utf8)
+        #expect(delegate.contains("if setupShown { setup.showOnLaunch() }"))
+        #expect(!delegate.contains("if setupShown { setup.show() }"))
+    }
 }
 
 /// A stand-in for the fallback's clock and facts: records each wait and
-/// runs it on demand, and counts the opens it was asked for.
+/// runs it on demand, answers the activation watch from `cameActive`,
+/// holds whether the window is still up, and counts the watches, their
+/// ends and the opens it was asked for.
 @MainActor
 private final class FallbackProbe {
     var delays: [TimeInterval] = []
     var waiting: [@MainActor () -> Void] = []
-    var active = false
+    var cameActive = false
+    var showing = true
+    var watches = 0
+    var ended = 0
     var opens = 0
 
     var fallback: WindowFront.Fallback {
         WindowFront.Fallback(wait: { [unowned self] delay, then in
             self.delays.append(delay)
             self.waiting.append(then)
-        }, isActive: { [unowned self] in
-            self.active
+        }, watchActivation: { [unowned self] in
+            self.watches += 1
+            return { [unowned self] in
+                self.ended += 1
+                return self.cameActive
+            }
         }, openSelf: { [unowned self] in
             self.opens += 1
         })
@@ -167,4 +235,10 @@ private final class FallbackProbe {
         waiting = []
         for work in due { work() }
     }
+}
+
+/// The app's active flag, for the live watch.
+@MainActor
+private final class ActiveFlag {
+    var isActive = false
 }

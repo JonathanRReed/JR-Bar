@@ -7,7 +7,9 @@ import AppKit
 /// report. Every window a click, a key or a link opens comes forward
 /// through `bring`. One that comes up on its own (What's New's launch
 /// showing, the tank left on at quit) orders in without it and leaves
-/// the app you're in active.
+/// the app you're in active. Setup's first-run showing is the one in
+/// between: it asks to come active, as it always has, but with no
+/// fallback, so a login launch never forces it past the app you're in.
 @MainActor
 enum WindowFront {
     /// How long the frontmost app has to yield before Launch Services
@@ -15,8 +17,9 @@ enum WindowFront {
     static let fallbackDelay: TimeInterval = 0.25
 
     /// Activates the app and puts `window` in front and key on the
-    /// Space you're on, out of the Dock if it was minimised.
-    static func bring(_ window: NSWindow, fallback: Fallback = .live) {
+    /// Space you're on, out of the Dock if it was minimised. A nil
+    /// `fallback` only asks: no Launch Services step follows.
+    static func bring(_ window: NSWindow, fallback: Fallback? = .live) {
         // Both calls: the pairing that reliably forces it on macOS 26/27.
         NSRunningApplication.current.activate()
         NSApp.activate()
@@ -25,7 +28,8 @@ enum WindowFront {
             front.makeKeyAndOrderFront(nil)
             front.makeKey()
         }
-        armFallback(fallback)
+        guard let fallback else { return }
+        armFallback(fallback, isShowing: { [weak window] in window?.isVisible ?? false })
     }
 
     /// Runs `order` with `window` pulled onto the active Space. A window
@@ -49,12 +53,15 @@ enum WindowFront {
     /// app does not yield, the activation request is dropped and the
     /// window opens inactive (grey controls, no key focus) or behind it;
     /// opening ourselves through Launch Services is the sanctioned way
-    /// through anyway. The live one waits on the main queue, reads
-    /// `NSApp.isActive` when it fires, and opens this bundle; the tests
-    /// hand in their own.
+    /// through anyway. The live one waits on the main queue, watches
+    /// for the app coming active (`ActivationWatch`), and opens this
+    /// bundle; the tests hand in their own.
     struct Fallback {
         var wait: @MainActor (_ delay: TimeInterval, _ then: @escaping @MainActor () -> Void) -> Void
-        var isActive: @MainActor () -> Bool
+        /// Starts a watch on the app's activation. The closure it hands
+        /// back ends the watch and says whether the app was active at
+        /// any point since.
+        var watchActivation: @MainActor () -> (@MainActor () -> Bool)
         var openSelf: @MainActor () -> Void
 
         static var live: Fallback {
@@ -62,8 +69,9 @@ enum WindowFront {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                     MainActor.assumeIsolated { then() }
                 }
-            }, isActive: {
-                NSApp.isActive
+            }, watchActivation: {
+                let activation = ActivationWatch()
+                return { activation.end() }
             }, openSelf: {
                 let configuration = NSWorkspace.OpenConfiguration()
                 configuration.activates = true
@@ -74,13 +82,51 @@ enum WindowFront {
     }
 
     /// `fallbackDelay` after the order-in, asks Launch Services to open
-    /// us unless the app has come active by then. The check is made
-    /// when the wait ends, not when it starts: activation lands a beat
-    /// after the request. Internal for the test.
-    static func armFallback(_ fallback: Fallback) {
+    /// us, but only for an app that never came active in the meantime
+    /// and a window still up. Active at any point, the request landed,
+    /// and whatever is in front when the wait ends is your own pick (a
+    /// ⌘-Tab away inside the quarter second); a window closed inside
+    /// it leaves nothing to bring. Internal for the test.
+    static func armFallback(_ fallback: Fallback, isShowing: @escaping @MainActor () -> Bool) {
+        let cameActive = fallback.watchActivation()
         fallback.wait(fallbackDelay) {
-            guard !fallback.isActive() else { return }
+            // Always asked first: it ends the watch.
+            guard !cameActive(), isShowing() else { return }
             fallback.openSelf()
+        }
+    }
+
+    /// Whether the app was active at any point from the watch's start
+    /// to its `end`: at the start, on `didBecomeActiveNotification` in
+    /// between, or at the end. A moment's activation is enough: a read
+    /// when the wait ends can't tell "never came" from "came, then you
+    /// moved on". Internal for the test, which hands in its own center
+    /// and flag.
+    @MainActor
+    final class ActivationWatch {
+        private let center: NotificationCenter
+        private let isActive: @MainActor () -> Bool
+        private var cameActive: Bool
+        private var observer: NSObjectProtocol?
+
+        init(center: NotificationCenter = .default,
+             isActive: @escaping @MainActor () -> Bool = { NSApp.isActive }) {
+            self.center = center
+            self.isActive = isActive
+            cameActive = isActive()
+            // No queue: AppKit posts it on the main thread, and the
+            // note lands the moment it does.
+            observer = center.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                          object: nil, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.cameActive = true }
+            }
+        }
+
+        /// Stops listening and answers; a later activation is not heard.
+        func end() -> Bool {
+            if let observer { center.removeObserver(observer) }
+            observer = nil
+            return cameActive || isActive()
         }
     }
 }

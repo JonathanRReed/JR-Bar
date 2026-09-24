@@ -24,16 +24,29 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         store.onFinished = { [weak self] in self?.close() }
     }
 
-    /// `SetupWindowController.show()` — the call site the launch gate and
-    /// the Settings row share.
+    /// `SetupWindowController.show()` — the call site the Settings row
+    /// and `jrbar://window/setup` share.
     static func show() { shared.show() }
 
+    /// Opened by hand — Run Setup Again, the link, the permission
+    /// notice's Open Setup: in front and key (`WindowFront`).
     func show() {
+        open(fallback: .live)
+    }
+
+    /// The launch gate's showing: asks to come active, as the first run
+    /// always has, but with no Launch Services fallback, so a login
+    /// launch never forces JR-Bar past the app you're in.
+    func showOnLaunch() {
+        open(fallback: nil)
+    }
+
+    private func open(fallback: WindowFront.Fallback?) {
         store.present()
         let window = self.window ?? makeWindow()
         self.window = window
         attachContent(to: window)
-        WindowFront.bring(window)
+        WindowFront.bring(window, fallback: fallback)
     }
 
     /// Presents and lands on `step` — a lost grant opens on Permissions.
