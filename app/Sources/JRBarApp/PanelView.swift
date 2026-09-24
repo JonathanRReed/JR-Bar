@@ -1375,7 +1375,10 @@ struct UsageQuietRow: View {
 
     var body: some View {
         let names = providerNames
-        HStack(spacing: 9) {
+        // Laid out as a `UsageRow` is: the tile on the name's line and the
+        // lines hung from the row's top, so its tile and name sit where
+        // every row above puts them.
+        HStack(alignment: .top, spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 20 * 0.28, style: .continuous)
                     .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2]))
@@ -1384,26 +1387,31 @@ struct UsageQuietRow: View {
                     .foregroundStyle(.tertiary)
             }
             .frame(width: 20, height: 20)
+            .alignmentGuide(.top) { $0[.top] + UsageRow.tileLift }
             VStack(alignment: .leading, spacing: 3) {
-                Text(names.joined(separator: ", "))
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                // The chevron rides the name's line, where the rows above
+                // put their percent.
+                HStack(spacing: 4) {
+                    Text(names.joined(separator: ", "))
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .opacity(hovering && store.isOpen ? 1 : 0.5)
+                }
                 Text(PanelStore.quietSummary(providers))
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.tertiary)
-                .opacity(hovering && store.isOpen ? 1 : 0.5)
         }
         .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.usageRowHeight))
+        .frame(height: CGFloat(PanelLayout.usageRowHeight), alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(hovering && store.isOpen ? 0.05 : 0))
@@ -1490,7 +1498,9 @@ struct UsageRow: View {
             }
         }
         .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.usageRowHeight))
+        // Hung from the top, as `UsageQuietRow` is, so every name in the
+        // list sits the same distance below its row's top.
+        .frame(height: CGFloat(PanelLayout.usageRowHeight), alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(hovering ? 0.05 : 0))
