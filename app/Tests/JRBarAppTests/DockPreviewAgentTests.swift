@@ -5,7 +5,8 @@ import Testing
 @testable import JRBarCore
 
 /// The Dock preview's agent half: which card hosts which session, what
-/// Close all may touch, and the answer path's refusals.
+/// Close all may touch, and the refusals of the desk its ask rows
+/// answer through.
 @MainActor
 struct DockPreviewAgentTests {
     static let ghostty = "com.mitchellh.ghostty"
@@ -61,25 +62,27 @@ struct DockPreviewAgentTests {
         #expect(withPin.ask?.request == "request:v1:x")
     }
 
-    @Test("Approve reports the daemon's verdict, never a guessed success")
+    @Test("a preview's Approve reports the desk's verdict from the daemon, never a guessed success")
     func answerPath() async {
         let ask = CoreAsk(session: "claude:session:a", summary: "?", request: "r1")
-        var sent: [(String, Bool, String?)] = []
-        let ok = await DockUtility.answer(ask, approve: true) { session, approve, request in
-            sent.append((session, approve, request))
+        var sent: [(String, AskVerdict, String?)] = []
+        let desk = AskAnswerDesk(send: { session, verdict, request in
+            sent.append((session, verdict, request))
             return CoreReply(id: "1", ok: true)
-        }
-        #expect(ok == "Approved")
-        #expect(sent.count == 1 && sent[0].0 == "claude:session:a" && sent[0].2 == "r1")
-        let refused = await DockUtility.answer(ask, approve: false) { _, _, _ in
+        })
+        let ok = await desk.answer(ask, .approve)
+        #expect(ok.ok && ok.line == "Approved")
+        #expect(sent.count == 1 && sent[0].0 == "claude:session:a" && sent[0].1 == .approve && sent[0].2 == "r1")
+        desk.send = { _, _, _ in
             CoreReply(id: "2", ok: false, error: CoreReplyError(code: "stale_request", message: "The ask moved on"))
         }
-        #expect(refused == "Couldn't answer: The ask moved on")
-        let down = await DockUtility.answer(ask, approve: true) { _, _, _ in
-            throw CoreClientError.notConnected
-        }
-        #expect(down == "No answer from the monitor — the ask is still open")
-        #expect(await DockUtility.answer(ask, approve: true, send: nil) == "The monitor is not answering")
+        let refused = await desk.answer(ask, .deny)
+        #expect(!refused.ok && refused.line == "That request changed — nothing was sent")
+        desk.send = { _, _, _ in throw CoreClientError.notConnected }
+        let down = await desk.answer(ask, .approve)
+        #expect(!down.ok && down.line == NotchAskRefusal.unreachable)
+        #expect(desk.note(for: "claude:session:a")?.refused == true,
+                "the row's line says the ask is still open")
     }
 
     @Test("the locator finds the one window hosting a session, and nothing when two claim it")
@@ -220,15 +223,16 @@ struct DockPreviewAgentTests {
     @Test("an ask the daemon can't type into, or one with no session, never sends")
     func answerRefusals() async {
         var calls = 0
-        let send: @MainActor (String, Bool, String?) async throws -> CoreReply = { _, _, _ in
+        let desk = AskAnswerDesk(send: { _, _, _ in
             calls += 1
             return CoreReply(id: "x", ok: true)
-        }
+        })
         let sealed = CoreAsk(session: "claude:session:a", answerable: false)
-        #expect(await DockUtility.answer(sealed, approve: true, send: send) == "Answer this one in the session's window")
-        #expect(await DockUtility.answer(CoreAsk(), approve: true, send: send) == "This ask has no session left to answer")
+        #expect(await desk.answer(sealed, .approve).line == "Answer this one in the session's window")
+        #expect(await desk.answer(sealed, .deny).line == "Answer this one in the session's window")
+        #expect(await desk.answer(CoreAsk(), .approve).line == "This ask has no session left to answer")
         let remote = CoreAsk(session: "remote:studio:claude:session:a")
-        #expect(await DockUtility.answer(remote, approve: true, send: send) == "Runs on studio — answer it there")
+        #expect(await desk.answer(remote, .approve).line == "Runs on studio — answer it there")
         #expect(calls == 0)
     }
 

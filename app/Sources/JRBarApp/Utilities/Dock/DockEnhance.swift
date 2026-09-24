@@ -1457,10 +1457,6 @@ final class DockPreviewContent {
     /// Every live session this app hosts, matched to a card or not — the
     /// header's count, the ask rows and Quit's guard read it.
     var appAgents: [DockAgentMark] = []
-    /// Session id → the daemon's verdict on an ask answered from here.
-    var askNotes: [String: String] = [:]
-    /// Asks with an answer in flight — their buttons disable.
-    var answering: Set<String> = []
     /// Cards a shake or flick just moved — they dip for a beat.
     var pulsedWindowIDs: Set<Int> = []
     /// A guarded close's first press: the card that rings and its line.
@@ -1619,10 +1615,6 @@ final class DockEnhanceController {
     /// the app delegate; the player row shows its current line.
     @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil } {
         didSet { panel?.actions.lyrics = lyrics }
-    }
-    /// A preview ask row's Approve / Deny; returns the line to show.
-    @ObservationIgnored var answerAsk: @MainActor (CoreAsk, Bool) async -> String = { _, _ in
-        "The monitor is not answering"
     }
     /// × / Quit on a window or app hosting a live agent needs a second press.
     @ObservationIgnored private var agentGuard = DockAgentGuard()
@@ -2431,7 +2423,7 @@ final class DockEnhanceController {
             NSWorkspace.shared.open(url)
         }
         panel.actions.onDocumentDrop = { [weak self] url in self?.openDocumentInPreview(url) ?? false }
-        panel.actions.onAnswer = { [weak self] ask, approve in self?.answer(ask, approve: approve) }
+        panel.actions.onAnswered = { [weak self] in self?.reframe(onlyIfResized: true) }
         panel.actions.onMoveToDisplay = { [weak self] window, display in
             self?.move(window, toDisplay: display)
         }
@@ -2471,8 +2463,6 @@ final class DockEnhanceController {
         content.calendarFreeUntil = nil
         content.calendarNeedsAuth = false
         content.badge = item.badge
-        content.askNotes = [:]
-        content.answering = []
         content.armedWindowID = nil
         content.armedNote = nil
         content.pulsedWindowIDs = []
@@ -2898,23 +2888,6 @@ final class DockEnhanceController {
                 self.preview.headerNote = nil
                 self.reframe()
             }
-        }
-    }
-
-    /// An ask row's Approve / Deny: the answer goes through the daemon
-    /// (which raises the session's terminal first) and its verdict stays
-    /// on the row while the panel is up.
-    private func answer(_ ask: CoreAsk, approve: Bool) {
-        guard let session = ask.session, !preview.answering.contains(session) else { return }
-        preview.answering.insert(session)
-        let generationAtAsk = generation
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let note = await self.answerAsk(ask, approve)
-            guard self.generation == generationAtAsk else { return }
-            self.preview.answering.remove(session)
-            self.preview.askNotes[session] = note
-            self.reframe()
         }
     }
 

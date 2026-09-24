@@ -97,8 +97,9 @@ final class DockPreviewActions {
     /// drag-between-previews handoff. False means the drop fell
     /// through (a non-document, or an app that can't take it).
     var onDocumentDrop: (@MainActor (URL) -> Bool)?
-    /// An ask row's Approve (true) / Deny (false).
-    var onAnswer: (@MainActor (CoreAsk, Bool) -> Void)?
+    /// An ask row's answer came back from the shared desk — the panel
+    /// refits around the line that now stands where its buttons were.
+    var onAnswered: (@MainActor () -> Void)?
     /// The context menu's Move To — the window to another display.
     var onMoveToDisplay: (@MainActor (DockPreviewWindow, CGDirectDisplayID) -> Void)?
     /// The pointer landed on a card — the controller re-takes its still
@@ -470,9 +471,7 @@ struct DockPreviewView: View {
             if !content.askRows.isEmpty {
                 Divider()
                 ForEach(content.askRows) { mark in
-                    DockAskRow(mark: mark, note: content.askNotes[mark.sessionID],
-                               answering: content.answering.contains(mark.sessionID),
-                               actions: actions)
+                    DockAskRow(mark: mark, actions: actions)
                 }
             }
             if let media = content.media {
@@ -1219,18 +1218,17 @@ private struct DockPreviewCompactRow: View {
 
 /// A waiting agent this app hosts, answerable from the Dock: the mark,
 /// the session and what it asks — what it would run, and the red mark
-/// when that is destructive — then Deny / Approve through the same
-/// `answer_ask` the panel sends (the daemon raises the terminal first,
-/// or the agent's own hook takes it). Where the hook holds the ask,
-/// Always Allow sits between them, and a held question offers its
-/// options instead of Approve; both go through the shared answer desk.
-/// Where the daemon says the ask can't be answered from outside, the
-/// buttons disable and say where it can be; once answered, the row
-/// shows the daemon's verdict instead of guessing success.
+/// when that is destructive — then Deny / Approve. Where the hook holds
+/// the ask, Always Allow sits between them, and a held question offers
+/// its options instead of Approve. Every verb goes through the shared
+/// answer desk the panel and the notch answer through, so one pending
+/// set dims every copy of the buttons and the line under the ask is the
+/// desk's. Where the daemon says the ask can't be answered from
+/// outside, the buttons disable and say where it can be; once answered,
+/// the row shows the daemon's verdict instead of guessing success. With
+/// no desk published the row draws no verbs.
 private struct DockAskRow: View {
     let mark: DockAgentMark
-    let note: String?
-    let answering: Bool
     let actions: DockPreviewActions
 
     /// The mark's ask with its session filled in, for the desk.
@@ -1244,7 +1242,7 @@ private struct DockAskRow: View {
 
     var body: some View {
         let desk = AskAnswerDesk.shared
-        let busy = answering || (desk?.isPending(mark.sessionID) ?? false)
+        let busy = desk?.isPending(mark.sessionID) ?? false
         HStack(spacing: 8) {
             DockAgentDot(mark: mark)
             VStack(alignment: .leading, spacing: 1) {
@@ -1267,28 +1265,28 @@ private struct DockAskRow: View {
             }
             .frame(maxWidth: 260, alignment: .leading)
             Spacer(minLength: 8)
-            if let line = note ?? desk?.note(for: mark.sessionID)?.text {
+            if let line = desk?.note(for: mark.sessionID)?.text {
                 Text(line)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             } else if let ask, let desk, AskVerbs.chooses(ask) {
-                Button("Deny") { Task { await desk.answer(ask, .deny) } }
+                Button("Deny") { answer(ask, .deny, on: desk) }
                     .controlSize(.small)
                     .disabled(busy)
                 DockAskChoices(ask: ask, desk: desk, accent: mark.accent, busy: busy)
-            } else if let ask {
+            } else if let ask, let desk {
                 let answerable = ask.canAnswer && !ask.wantsTextReply
-                Button("Deny") { actions.onAnswer?(ask, false) }
+                Button("Deny") { answer(ask, .deny, on: desk) }
                     .controlSize(.small)
                     .disabled(!answerable || busy)
-                if let desk, answerable, AskVerbs.alwaysAllows(ask) {
-                    Button("Always Allow") { Task { await desk.answer(ask, .always) } }
+                if answerable, AskVerbs.alwaysAllows(ask) {
+                    Button("Always Allow") { answer(ask, .always, on: desk) }
                         .controlSize(.small)
                         .disabled(busy)
                         .help("Approve, and let \(mark.providerName) remember the rule it offered")
                 }
-                Button("Approve") { actions.onAnswer?(ask, true) }
+                Button("Approve") { answer(ask, .approve, on: desk) }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
                     .tint(mark.accent)
@@ -1299,6 +1297,15 @@ private struct DockAskRow: View {
         }
         .padding(.vertical, 2)
         .help("\(mark.providerName) · \(mark.label)\n\(mark.cwd ?? "")")
+    }
+
+    /// One click's verdict, through the desk; once it has answered, the
+    /// panel refits around the desk's line.
+    private func answer(_ ask: CoreAsk, _ verdict: AskVerdict, on desk: AskAnswerDesk) {
+        Task {
+            await desk.answer(ask, verdict)
+            actions.onAnswered?()
+        }
     }
 }
 
