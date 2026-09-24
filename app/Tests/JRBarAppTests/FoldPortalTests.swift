@@ -574,4 +574,27 @@ struct FoldPortalTests {
         #expect(abs(p.blurStrength - 0.4) < 1e-6)
         #expect(p.delta == 0.5)
     }
+
+    @Test("the Hold slider reaches the Room shader as it reads, not tied to Perspective")
+    func holdMapping() {
+        // 1 is the front-view hold, 0 the picture glued to the glass; the
+        // old switch sent `perspective` when on, so a 40 % Perspective
+        // quietly held the picture only 40 % of the way.
+        let held = FoldPortalModel.params(delta: 0.5, perspective: 0.4, blur: 0.5,
+                                          shade: 0.7, frost: 0, hold: 1,
+                                          usedBuckets: 0, reduceMotion: false)
+        #expect(held.hold == 1)
+        let riding = FoldPortalModel.params(delta: 0.5, perspective: 0.4, blur: 0.5,
+                                            shade: 0.7, frost: 0, hold: 0,
+                                            usedBuckets: 0, reduceMotion: false)
+        #expect(riding.hold == 0)
+        let part = FoldPortalModel.params(delta: 0.5, perspective: 0.9, blur: 0.5,
+                                          shade: 0.7, frost: 0, hold: 0.8,
+                                          usedBuckets: 0, reduceMotion: false)
+        #expect(abs(part.hold - 0.8) < 1e-6, "the hold no longer follows Perspective")
+        let wild = FoldPortalModel.params(delta: 0.5, perspective: 0.6, blur: 0.5,
+                                          shade: 0.7, frost: 0, hold: 3,
+                                          usedBuckets: 0, reduceMotion: false)
+        #expect(wild.hold == 1, "the hold clamps")
+    }
 }

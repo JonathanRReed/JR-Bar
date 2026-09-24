@@ -534,15 +534,15 @@ enum FoldPortalModel {
     /// and the cover fit.)
     static func apply(to p: inout FoldRenderer.Params, delta: Double,
                       perspective: Double, blur: Double, shade: Double,
-                      frost: Double, holdPicture: Bool = false,
+                      frost: Double, hold: Double = 1,
                       usedBuckets: Int, reduceMotion: Bool) {
         p.delta = Float(delta)
         p.persp = Float(min(1, max(0, perspective)))
-        // Hold-in-place counter-rotates the content plane by delta·k —
-        // the Perspective knob IS k, so a fixed eye sees the desktop
-        // stay put while the glass tilts over it (off = 0, the picture
-        // rides the lid).
-        p.hold = holdPicture ? Float(min(1, max(0, perspective))) : 0
+        // The Hold slider, as it reads: 1 keeps the desktop where a
+        // fixed eye saw it while the glass tilts over it, 0 glues the
+        // picture to the lid. (It used to be `perspective` when on and
+        // 0 when off, which the shader read backwards.)
+        p.hold = Float(min(1, max(0, hold.isFinite ? hold : 1)))
         p.blurStrength = Float(min(1, max(0, blur)))
         p.dimStrength = Float(min(1, max(0, shade)))
         p.frost = Float(min(1, max(0, frost)))
@@ -558,11 +558,11 @@ enum FoldPortalModel {
     /// depth buckets actually hold cards this frame — the shader skips
     /// the rest, so an empty desktop costs the far wall only.
     static func params(delta: Double, perspective: Double, blur: Double,
-                       shade: Double, frost: Double, holdPicture: Bool = false,
+                       shade: Double, frost: Double, hold: Double = 1,
                        usedBuckets: Int, reduceMotion: Bool) -> FoldRenderer.Params {
         var p = FoldRenderer.Params()
         apply(to: &p, delta: delta, perspective: perspective, blur: blur,
-              shade: shade, frost: frost, holdPicture: holdPicture,
+              shade: shade, frost: frost, hold: hold,
               usedBuckets: usedBuckets, reduceMotion: reduceMotion)
         return p
     }

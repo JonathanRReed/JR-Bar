@@ -89,10 +89,13 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     /// How milky the cover is: 0 is the bare dark portal room, 1 a
     /// fully frosted-polypropylene sheet over the room.
     public var frost: Double
-    /// Bendy's hold-in-place: the content plane counter-rotates against
-    /// the lid so a fixed eye sees the desktop stay put while the glass
-    /// tilts over it. Off keeps the picture glued to the lid.
-    public var holdPicture: Bool
+    /// How still the picture holds while the glass tilts over it, 0…1:
+    /// 1 keeps the desktop where a seated eye saw it (the iPhone Duo's
+    /// "stays put in space"), 0 glues it to the lid, and between drifts
+    /// part way. Replaces the old `holdPicture` switch, which read true
+    /// as "hold" but drove the picture toward the lid; a stored switch
+    /// migrates by what its label meant (on → 1, off → 0).
+    public var holdStrength: Double
     /// Mac Duo's pause-at-angle: a lid parked mid-fold hands the
     /// desktop back after this many seconds until the hinge moves
     /// again. 0 keeps the fold however long the lid sits.
@@ -111,7 +114,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
                 activationAngle: Double = 65,
                 perspective: Double = 0.6, blur: Double = 0.5, shade: Double = 0.7,
                 jitterTolerance: Double = 1.5, provider: FoldProvider = .jrbar,
-                frost: Double = 0, holdPicture: Bool = true, dwellTimeout: Double = 0,
+                frost: Double = 0, holdStrength: Double = 1, dwellTimeout: Double = 0,
                 restoreSound: Bool = false) {
         self.enabled = enabled
         self.anchor = anchor
@@ -122,7 +125,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         self.jitterTolerance = jitterTolerance
         self.provider = provider
         self.frost = frost
-        self.holdPicture = holdPicture
+        self.holdStrength = holdStrength
         self.dwellTimeout = dwellTimeout
         self.restoreSound = restoreSound
     }
@@ -134,6 +137,9 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         case enabled, anchor, activationAngle, style, perspective, blur, shade, jitterTolerance
         case provider, frost, holdPicture, dwellTimeout, restoreSound
         case wallpaperFallback, hingeVoice
+        // `holdPicture` above is decode-only now: the retired switch,
+        // read once to seed `holdStrength`.
+        case holdStrength
     }
 
     public init(from decoder: any Decoder) throws {
@@ -158,7 +164,7 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         let jitterUntouched = storedJitter == nil || storedJitter == 0
         provider = (try? c.decodeIfPresent(FoldProvider.self, forKey: .provider)) ?? .jrbar
         frost = (try? c.decodeIfPresent(Double.self, forKey: .frost)) ?? 0
-        holdPicture = (try? c.decodeIfPresent(Bool.self, forKey: .holdPicture)) ?? true
+        holdStrength = Self.decodeHold(c)
         dwellTimeout = (try? c.decodeIfPresent(Double.self, forKey: .dwellTimeout)) ?? 0
         restoreSound = (try? c.decodeIfPresent(Bool.self, forKey: .restoreSound)) ?? false
         wallpaperFallback = (try? c.decodeIfPresent(Bool.self, forKey: .wallpaperFallback)) ?? true
@@ -197,11 +203,25 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         try c.encode(jitterTolerance, forKey: .jitterTolerance)
         try c.encode(provider, forKey: .provider)
         try c.encode(frost, forKey: .frost)
-        try c.encode(holdPicture, forKey: .holdPicture)
         try c.encode(dwellTimeout, forKey: .dwellTimeout)
         try c.encode(restoreSound, forKey: .restoreSound)
         try c.encode(wallpaperFallback, forKey: .wallpaperFallback)
         try c.encode(hingeVoice, forKey: .hingeVoice)
+        try c.encode(holdStrength, forKey: .holdStrength)
+    }
+
+    /// The hold, read tolerantly: a stored strength wins (clamped to
+    /// 0…1), else the retired switch by its label's meaning — on holds
+    /// the picture (1), off rides the lid (0) — else a full hold.
+    private static func decodeHold(_ c: KeyedDecodingContainer<CodingKeys>) -> Double {
+        if let stored = try? c.decodeIfPresent(Double.self, forKey: .holdStrength),
+           stored.isFinite {
+            return min(1, max(0, stored))
+        }
+        if let legacy = try? c.decodeIfPresent(Bool.self, forKey: .holdPicture) {
+            return legacy ? 1 : 0
+        }
+        return 1
     }
 }
 

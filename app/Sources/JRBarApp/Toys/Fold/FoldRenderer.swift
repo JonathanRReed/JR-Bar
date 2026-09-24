@@ -94,9 +94,9 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         var bucketCount: Float = 0
         var frost: Float = 0.65
         /// The viewer-compensation fraction: 0 the picture rides the
-        /// lid, 1 the content plane counter-rotates the full delta so a
-        /// fixed eye sees it hold its place.
-        var hold: Float = 0
+        /// lid, 1 the content plane takes the full front-view mapping so
+        /// a fixed eye sees it hold its place.
+        var hold: Float = 1
     }
 
     let device: MTLDevice
@@ -456,11 +456,12 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
     }
 
     float a = clamp(p.delta, 0.0, 1.25);
-    // Hold-in-place: the content plane counter-rotates against the lid
-    // by delta·hold, so a fixed eye sees the picture stay put while the
-    // room's own terms (fog, shade, dissolve, sheen) still read the
-    // real delta. hold == 0 keeps the picture glued to the glass.
-    float aL = a * (1.0 - clamp(p.hold, 0.0, 1.0));
+    // Hold-in-place: `foldLayerUV` at the full delta IS the front-view
+    // mapping (a fixed eye sees the picture stay put), and at 0 it is
+    // the identity (the picture glued to the glass). So the content
+    // plane takes delta·hold: 1 holds, 0 rides the lid, and the room's
+    // own terms (fog, shade, dissolve, sheen) still read the real delta.
+    float aL = a * clamp(p.hold, 0.0, 1.0);
     float h = 1.0 - in.uv.y;
     float sa = sin(a);
     // The sheet itself: frosted polypropylene. `milk` is the plastic's

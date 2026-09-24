@@ -731,7 +731,7 @@ final class FoldToy: Toy {
                                   blur: reduceMotion ? 0 : settings.blur,
                                   shade: settings.shade,
                                   frost: settings.frost,
-                                  holdPicture: settings.holdPicture,
+                                  hold: settings.holdStrength,
                                   usedBuckets: overlay.renderer.usedBucketCount,
                                   reduceMotion: reduceMotion)
             // The activation-edge fade is the window's own alpha — a
@@ -1295,9 +1295,10 @@ private struct FoldControlsView: View {
                                    subtitle: "How milky the cover is — 0 is a black room, higher reads as frosted plastic."),
                       value: toy.bind(\.frost), range: 0...1, readout: percent(toy.settings.frost))
 
-            Toggle(isOn: toy.bind(\.holdPicture)) {
-                SettingLabel(title: "Hold picture in place", subtitle: "The desktop stays put while the lid tilts over it; off keeps the picture glued to the glass.")
-            }
+            sliderRow(SettingLabel(title: "Hold picture in place",
+                                   subtitle: "How still the desktop stays while the lid tilts over it: 100% keeps it where you saw it, 0% glues it to the glass."),
+                      value: toy.bind(\.holdStrength), range: 0...1,
+                      readout: percent(toy.settings.holdStrength))
 
             Divider().padding(.vertical, 6)
 

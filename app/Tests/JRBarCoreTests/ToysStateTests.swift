@@ -24,7 +24,7 @@ struct ToysStateTests {
         #expect(state.fold.anchor == .angle)
         #expect(state.fold.activationAngle == 65)
         #expect(state.fold.provider == .jrbar)
-        #expect(state.fold.holdPicture == true)
+        #expect(state.fold.holdStrength == 1)
         #expect(state.aquarium == AquariumSettings())
         #expect(state.notchBuddy == NotchBuddySettings())
         #expect(state.confetti == ConfettiSettings())
@@ -35,7 +35,7 @@ struct ToysStateTests {
         var state = ToysState()
         state.fold = FoldSettings(enabled: true, anchor: .movement, activationAngle: 95,
                                   perspective: 0.8, blur: 0.2, shade: 0.7, jitterTolerance: 2,
-                                  provider: .bendy, holdPicture: false)
+                                  provider: .bendy, holdStrength: 0.4)
         state.aquarium = AquariumSettings(enabled: true, showLabels: false, density: 0.4)
         state.notchBuddy = NotchBuddySettings(enabled: true, character: "dot")
         state.confetti = ConfettiSettings(enabled: true)
@@ -56,7 +56,7 @@ struct ToysStateTests {
         #expect(state.fold.anchor == .angle, "an unknown anchor reads as a set angle")
         #expect(state.fold.activationAngle == 65, "a string is not an angle")
         #expect(state.fold.provider == .jrbar, "an unknown renderer is jrbar")
-        #expect(state.fold.holdPicture == true, "a string is not a flag")
+        #expect(state.fold.holdStrength == 1, "a string is not a flag")
         #expect(state.confetti.enabled == false, "a string is not a flag")
         #expect(state.aquarium == AquariumSettings())
     }
@@ -149,5 +149,25 @@ struct ToysStateTests {
         let mistyped = try decode(AquariumSettings.self,
                                   #"{"dayNight": 4}"#)
         #expect(mistyped.dayNight == .realTime)
+    }
+
+    // MARK: lane fold
+
+    @Test("the old Hold switch migrates by what its label meant, and the strength clamps")
+    func foldHoldMigration() throws {
+        // `holdPicture: true` read as "hold" but drove the picture toward
+        // the lid; the strength takes the label's meaning.
+        #expect(try decode(FoldSettings.self, #"{"holdPicture": true}"#).holdStrength == 1)
+        #expect(try decode(FoldSettings.self, #"{"holdPicture": false}"#).holdStrength == 0)
+        #expect(try decode(FoldSettings.self, "{}").holdStrength == 1)
+        // A stored strength wins over a stale switch and is kept in 0…1.
+        #expect(try decode(FoldSettings.self, #"{"holdStrength": 0.8, "holdPicture": false}"#).holdStrength == 0.8)
+        #expect(try decode(FoldSettings.self, #"{"holdStrength": 7}"#).holdStrength == 1)
+        #expect(try decode(FoldSettings.self, #"{"holdStrength": -2}"#).holdStrength == 0)
+        #expect(try decode(FoldSettings.self, #"{"holdStrength": "most"}"#).holdStrength == 1)
+        // The encoder writes the strength and never the retired switch.
+        let written = try encode(FoldSettings(holdStrength: 0.25))
+        #expect(written.contains("\"holdStrength\":0.25"))
+        #expect(!written.contains("holdPicture"))
     }
 }

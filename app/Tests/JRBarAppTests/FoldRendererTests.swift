@@ -99,9 +99,9 @@ import Testing
 
     @Test func holdInPlaceCounterRotatesTheContentPlane() throws {
         // The viewer-compensation term must actually reach the GPU: at
-        // Perspective 1 + hold, the content plane counter-rotates the
-        // full delta, so a mid-fold render can't match the same render
-        // with hold off — the far wall's pixels have to move.
+        // a full hold the content plane takes the front-view mapping,
+        // so a mid-fold render can't match the same render with the
+        // hold at 0 — the far wall's pixels have to move.
         let renderer = try FoldRenderer(pixelFormat: .bgra8Unorm)
         let width = 128, height = 128
         var maybeBuffer: CVPixelBuffer?
@@ -137,10 +137,10 @@ import Testing
         desc.storageMode = .shared
         let target = try #require(renderer.device.makeTexture(descriptor: desc))
 
-        func pixels(hold: Bool) -> [UInt8]? {
+        func pixels(hold: Double) -> [UInt8]? {
             FoldPortalModel.apply(to: &renderer.params, delta: 1.0,
                                   perspective: 1.0, blur: 0, shade: 0.7,
-                                  frost: 0, holdPicture: hold,
+                                  frost: 0, hold: hold,
                                   usedBuckets: 0, reduceMotion: false)
             guard renderer.render(to: target, size: CGSize(width: 256, height: 160)) else {
                 return nil
@@ -151,8 +151,8 @@ import Testing
             return px
         }
 
-        let riding = try #require(pixels(hold: false))
-        let held = try #require(pixels(hold: true))
+        let riding = try #require(pixels(hold: 0))
+        let held = try #require(pixels(hold: 1))
         var differ = 0
         for i in stride(from: 0, to: riding.count, by: 4) {
             if abs(Int(riding[i]) - Int(held[i])) > 12 { differ += 1 }
