@@ -29,7 +29,7 @@ extension AquariumView {
     }
 
     func drawAlien(canvas: inout GraphicsContext, size: CGSize, t: Double, x: Double,
-                   p: Double, presence: Double) {
+                   presence: Double) {
         let m = motion
         let now = Date(timeIntervalSince1970: t)
         // A new visit forgets the last one's taps and shoo.

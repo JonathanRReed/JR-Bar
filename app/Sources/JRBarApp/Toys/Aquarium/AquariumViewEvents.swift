@@ -201,7 +201,7 @@ extension AquariumView {
         case .whale: drawWhale(canvas: &canvas, size: size, t: t, x: x, p: p, presence: presence)
         case .diver: drawDiver(canvas: &canvas, size: size, t: t, x: x, p: p, presence: presence)
         case .submarine: drawSubmarine(canvas: &canvas, size: size, t: t, x: x, presence: presence)
-        case .alien: drawAlien(canvas: &canvas, size: size, t: t, x: x, p: p, presence: presence)
+        case .alien: drawAlien(canvas: &canvas, size: size, t: t, x: x, presence: presence)
         }
     }
 
