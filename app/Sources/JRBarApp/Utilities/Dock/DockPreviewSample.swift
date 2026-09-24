@@ -27,9 +27,11 @@ struct DockPreviewSample: View {
     /// proof's, off on the card.
     var showsMeasure = false
 
-    /// The desk's real size: room for the widest spacing's panel, the
-    /// farthest gap and the name band over a Dock of 55 pt tiles.
-    static let desk = CGSize(width: 600, height: 364)
+    /// The desk's real size, fixed so the card's row never jumps under
+    /// a slider: room for the roomiest spacing's panel at the farthest
+    /// gap with the name band kept, over a Dock of 55 pt tiles
+    /// (`UtilitySurfacesRenderProofTests` measures it).
+    static let desk = CGSize(width: 600, height: 380)
     /// Jonathan's `tilesize`, and a tile's reach off the Dock's glass.
     static let tile: CGFloat = 55
     static let dockPad: CGFloat = 6
@@ -95,7 +97,7 @@ private struct DockSampleDesk: View {
                     .background(DockSampleGlass(radius: content.metrics.panelRadius, dark: dark))
                 Color.clear
                     .frame(width: 1, height: air)
-                    .overlay(alignment: .leading) { if showsMeasure { measure } }
+                    .overlay(alignment: .topLeading) { if showsMeasure { measure } }
                 icons
             }
             .padding(.bottom, pad * 2)
@@ -146,18 +148,41 @@ private struct DockSampleDesk: View {
             .frame(width: width, height: DockPreviewSample.tile + DockPreviewSample.dockPad * 2)
     }
 
-    /// The placement proof's ruler: a bracket down the air and its size.
+    /// The placement proof's ruler: a bar down the air in the gap
+    /// between the hovered icon and the next, and its size. Air too
+    /// short to hold the label (the Dock's glass rises 6 pt past the
+    /// tiles) leads it out past the Dock's end.
     private var measure: some View {
-        HStack(spacing: 4) {
+        let rulerX = DockPreviewSample.tile / 2 + Self.tileGap / 2
+        let roomy = air / 2 - 8 >= DockPreviewSample.dockPad
+        let lead = roomy ? 4 : max(4, dockHalfWidth - rulerX + 8)
+        let band = max(air, 1)
+        return HStack(alignment: .top, spacing: 0) {
             Rectangle()
                 .fill(Color.orange)
-                .frame(width: 1.5, height: air)
+                .frame(width: 1.5, height: band)
+            Rectangle()
+                .fill(Color.orange.opacity(roomy ? 0 : 0.7))
+                .frame(width: lead, height: 1)
+                .frame(height: band)
+            // Roomy air centres the label on the bar; a thin band hangs
+            // it from the glass's foot, clear of the Dock.
             Text("\(Int(air.rounded())) pt")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.orange)
+                .padding(.leading, 3)
                 .fixedSize()
+                .frame(height: roomy ? band : nil)
         }
-        .offset(x: DockPreviewSample.tile / 2 + 8)
+        // The overlay's leading edge is the 1 pt spacer's, half a point
+        // left of the icon's centre; the bar centres on the gap.
+        .offset(x: rulerX - 0.25)
+    }
+
+    /// Half the Dock glass's run, from the hovered icon's centre.
+    private var dockHalfWidth: CGFloat {
+        let count = CGFloat(DockPreviewSamples.dockIcons.count)
+        return (count * DockPreviewSample.tile + (count - 1) * Self.tileGap) / 2 + DockPreviewSample.dockPad
     }
 }
 
@@ -219,9 +244,13 @@ enum DockPreviewSamples {
             ? icon("/Applications/Ghostty.app") : icon("/System/Applications/Utilities/Terminal.app")
     }
 
+    /// Safari's icon, looked up once: the card's sample rebuilds its
+    /// content on every slider tick.
+    static let safariIcon = appIcon("com.apple.Safari")
+
     /// The sample Dock's five tiles, Safari in the middle.
     static let dockIcons: [NSImage] = [
-        appIcon("com.apple.finder"), appIcon("com.apple.mail"), appIcon("com.apple.Safari"),
+        appIcon("com.apple.finder"), appIcon("com.apple.mail"), safariIcon,
         terminalIcon, appIcon("com.apple.Music"),
     ]
 
@@ -265,7 +294,7 @@ enum DockPreviewSamples {
         let content = DockPreviewContent()
         content.metrics = DockPreviewMetrics.scaled(spacing)
         content.appName = "Safari"
-        content.icon = appIcon("com.apple.Safari")
+        content.icon = safariIcon
         content.bundleID = "com.apple.Safari"
         content.isRunning = true
         content.badge = "3"
@@ -341,7 +370,7 @@ enum DockPreviewSamples {
         content.metrics = DockPreviewMetrics.scaled(spacing)
         content.hugWindows = hug
         content.appName = "Safari"
-        content.icon = appIcon("com.apple.Safari")
+        content.icon = safariIcon
         content.bundleID = "com.apple.Safari"
         content.isRunning = true
         content.windows = [

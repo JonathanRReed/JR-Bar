@@ -97,6 +97,19 @@ struct UtilitySurfacesRenderProofTests {
         #expect(terminalTight == CGSize(width: 472, height: 247), "Tight terminal \(terminalTight)")
     }
 
+    /// The card's sample draws its desk at one fixed size, so the row
+    /// never jumps under a slider: the roomiest panel at the farthest
+    /// gap, with the name band kept, still fits under its top edge.
+    @Test("the Settings sample's desk holds its roomiest, farthest panel")
+    func sampleDeskHoldsEverySetting() {
+        let panel = DockPreviewPanel(content: DockPreviewSamples.browser(spacing: 1.6)).fittingSize()
+        let air = DockPreviewSample.air(dockGap: 40, coversLabel: false)
+        let dock = DockPreviewSample.tile + DockPreviewSample.dockPad * 2
+        let needed = panel.height + air + dock + 8
+        #expect(needed <= DockPreviewSample.desk.height, "needs \(needed), desk \(DockPreviewSample.desk.height)")
+        #expect(panel.width + 16 <= DockPreviewSample.desk.width, "panel \(panel)")
+    }
+
     /// Pointing at a card brings up its verbs, and never widens it: a
     /// portrait window's narrow still stacks them down its edge instead,
     /// so the strip can't reflow under the pointer.
