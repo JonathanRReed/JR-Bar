@@ -715,6 +715,18 @@ struct StatusCompactPercentTests {
         #expect(StatusIconRenderer.compactColor(stale) == nil, "no pace, warning or accent colour for an old figure")
         #expect(StatusIconRenderer().image(for: staleOnly).isTemplate)
         #expect(StatusIconRenderer.accessibilityLabel(staleOnly) == "JR-Bar · Grok 10% left (stale)")
+        // Under the agents' tint (working, needs you, done) the old figure
+        // keeps the tint's hue and still draws faint.
+        var old = Self.meter("claude", 0.38)
+        old.stale = true
+        let renderer = StatusIconRenderer()
+        for tint in ["#00E5FF", "#FF3A00"] {
+            let fresh = renderer.image(for: StatusIconSpec(style: .compactPercent, tintHex: tint, meters: [Self.meter("claude", 0.38)]))
+            let faint = renderer.image(for: StatusIconSpec(style: .compactPercent, tintHex: tint, meters: [old]))
+            #expect(!faint.isTemplate, "the tint still shows")
+            #expect(Self.pixels(faint) != Self.pixels(fresh))
+            #expect(StatusMetersTests.ink(faint) < StatusMetersTests.ink(fresh), "\(tint): a stale figure draws lighter")
+        }
     }
 
     @Test("the strip draws glyph plus figure, tinted by the pace verdict")

@@ -67,6 +67,55 @@ struct StatusMeterStalenessTests {
         #expect(windowless == AppDelegate.MeterReading(fraction: nil, stale: false, current: true))
     }
 
+    // MARK: The ring
+
+    /// A stale meter at 90 % with its window still open: the ring styles
+    /// get no ring from it, since the ring has no faint form.
+    static func staleLead() -> StatusMeter {
+        var lead = StatusItemController.meter(for: "claude", fraction: 0.9, approximate: false)
+        lead.stale = true
+        return lead
+    }
+
+    @Test func aStaleLeadDrawsNoRing() {
+        for style in [StatusIconStyle.glyphRing, .orbit] {
+            let plan = StatusItemController.plan(style: style, ringFraction: nil, meters: [Self.staleLead()])
+            #expect(plan.spec.ringFraction == nil, "\(style.rawValue)")
+            #expect(plan.spec.ringWarning == .none, "\(style.rawValue)")
+        }
+        let orbit = StatusItemController.plan(style: .orbit, ringFraction: nil, meters: [Self.staleLead()])
+        #expect(!StatusIconRenderer.accessibilityLabel(orbit.spec).contains("used"))
+    }
+
+    @Test func aFreshLeadStillFillsTheRing() {
+        let fresh = StatusItemController.meter(for: "claude", fraction: 0.9, approximate: false)
+        let plan = StatusItemController.plan(style: .glyphRing, ringFraction: 0.3, meters: [fresh])
+        #expect(plan.spec.ringFraction == 0.9)
+        #expect(plan.spec.ringWarning == .amber)
+        // A stale lead leaves a ring the caller measured alone.
+        let kept = StatusItemController.plan(style: .glyphRing, ringFraction: 0.3, meters: [Self.staleLead()])
+        #expect(kept.spec.ringFraction == 0.3)
+    }
+
+    // MARK: The previews
+
+    @Test func thePreviewsDrawWhatTheBarDraws() {
+        // Settings' style picker and Setup's icon step use this meter, so
+        // they show the live-check case unread and a stale figure faint.
+        let lapsed = StatusItemController.previewMeter(
+            for: Self.claude(state: "stale", used: 19, resetsIn: -37 * 60), document: nil, now: Self.now)
+        #expect(lapsed.isUnknown)
+        #expect(lapsed.stale)
+        let stillOpen = StatusItemController.previewMeter(
+            for: Self.claude(state: "stale", used: 62, resetsIn: 2 * 3600), document: nil, now: Self.now)
+        #expect(stillOpen.fraction == 0.62)
+        #expect(stillOpen.stale)
+        #expect(stillOpen.warning == .none)
+        let fresh = StatusItemController.previewMeter(for: Self.claude(), document: nil, now: Self.now)
+        #expect(fresh.fraction == 0.4)
+        #expect(!fresh.stale)
+    }
+
     // MARK: Render proof
 
     /// Off by default; set `JRBAR_RENDER_PROOF=1` to write the strips,

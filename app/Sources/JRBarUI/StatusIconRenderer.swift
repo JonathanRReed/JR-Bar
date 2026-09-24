@@ -794,8 +794,12 @@ public final class StatusIconRenderer: @unchecked Sendable {
             }
             x += glyphBox + glyphGap
             let text = compactText(meter) as NSString
-            let faint = meter?.stale == true
-            let textColor = colour ?? (faint ? ink.withAlphaComponent(staleAlpha) : ink)
+            // A stale figure keeps the readout's hue, the agents' tint
+            // included, and loses its strength. The glyph keeps its
+            // colour, as the percent strip's does: it says whose figure
+            // it is, which is still true.
+            let base = colour ?? ink
+            let textColor = meter?.stale == true ? base.withAlphaComponent(staleAlpha) : base
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: percentFont, .foregroundColor: textColor,
             ]
