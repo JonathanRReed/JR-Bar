@@ -969,10 +969,12 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     # The linked Dot write hands the Dot the Pro's program bytes through the
     # Dot's own controller; stub that path so the timing fixture holds.
     handed = []
+    options = []
 
     class FakeDotController:
-        def sync_program(self, program, state):
+        def sync_program(self, program, state, **kwargs):
             handed.append((program, state))
+            options.append(kwargs)
             return LedStatusWrite(state, dot.device.target, program, True)
 
     controller.agent_controller_for_device = lambda device: FakeDotController()
@@ -985,6 +987,12 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     # narrowed line -- a band painted once and never again is a band that
     # holds a colour from a finished program forever.
     assert handed == [("brightness 149\n0:#000000; 1:#000000", result.write.state)]
+    # The strip restarted, so the Dot restarts with it past its deduper,
+    # timed from the strip's recorded start (here the worker's stamp: the
+    # fake write carries no fsync time) for the Dot's own clock.
+    assert options[0]["force"] is True and options[0]["trim_on_reassert"] is False
+    assert options[0]["timing"].anchor == completed["pro"]
+    assert options[0]["timing"].rate == pytest.approx(0.9734)
     # The Dot plays the strip's program NARROWED, not the strip's bytes: the
     # Pro's `0:#000000` says nothing about the Dot's second LED, and a line
     # that says nothing about an LED is how one gets stranded.
@@ -1004,13 +1012,13 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     assert controller._core_linked_companion is None
 
 
-def test_the_skew_median_reanchors_the_dots_next_program(headless) -> None:
-    """The write gap between Pro and Dot is measured, medianed over the
-    last eight coupled writes, and baked into the Dot's NEXT program as a
-    phase shift -- the Dot still restarts late, but it restarts into the
-    phase the strip is on. The lights document reports the correction."""
-    from collections import deque
-
+def test_the_skew_is_a_diagnostic_and_never_rotates_the_dot(headless) -> None:
+    """The write gap between Pro and Dot used to be medianed and baked into
+    the Dot's next program as a rotation; each new sample changed the text,
+    and the changed text rewrote the Dot within a second of every coupled
+    write (79 times in one day's log). The gap is still measured and
+    published for old apps, from the writes' own I/O stamps -- and nothing
+    reads it to plan anything."""
     from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
     from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
@@ -1020,43 +1028,39 @@ def test_the_skew_median_reanchors_the_dots_next_program(headless) -> None:
     controller.settings = controller.settings.with_devices_linked(True)
     controller._hardware_write_generation = 1
     controller._hardware_write_active = True
+    submitted: list = []
     controller._hardware_write_worker = SimpleNamespace(
-        submit=lambda command: None,
+        submit=lambda command: submitted.append(command),
         discard_pending_prefix=lambda prefix: None,
     )
-
     nominal = "#FF0000 500ms\noff 500ms\nrepeat"
-    handed: list[str] = []
+    handed: list[tuple[str, dict]] = []
 
     class FakeDotController:
         brightness = 255
 
-        def sync_program(self, program, state):
-            handed.append(program)
-            return LedStatusWrite(state, dot.target, program, True)
+        def sync_program(self, program, state, **kwargs):
+            handed.append((program, kwargs))
+            return LedStatusWrite(state, dot.target, program, True, applied_at=100.030)
 
     controller.agent_controller_for_device = lambda device: FakeDotController()
     pro_request = HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)
     dot_request = HardwareWriteRequest(dot, AgentMode.WORKING, None, (), None, 0.5)
-
-    completed = {"pro": 100.0, "dot": 100.5}
-    controller._runtime_worker_monotonic = lambda: completed["dot"]
+    controller._runtime_worker_monotonic = lambda: 100.5
 
     def fake_sync(request):
         return HardwareWriteResult(
             request=request,
             write=LedStatusWrite(
                 LedDisplayState.WORKING, request.device.target, "0:#000000", True,
-                nominal_program=nominal,
+                nominal_program=nominal, applied_at=100.010,
             ),
             label=f"{request.device.name} Working",
             agent_display_rendered=True,
-            completed_at=completed["pro"],
+            completed_at=100.4,
         )
 
     controller._sync_hardware_device = fake_sync
-    submitted: list = []
-    controller._hardware_write_worker.submit = lambda command: submitted.append(command)
 
     def coupled_write() -> None:
         submitted.clear()
@@ -1064,49 +1068,19 @@ def test_the_skew_median_reanchors_the_dots_next_program(headless) -> None:
         result = controller._execute_hardware_write_command(submitted[0])
         controller._apply_hardware_write_result(submitted[0], result)
 
-    # No samples yet: the first coupled write plays the loop unshifted.
     coupled_write()
-    assert handed == ["brightness 149\n#FF0000 500ms\noff 500ms\nrepeat"]
-    assert controller._core_linked_skew_ms == 500.0
-    assert controller._core_linked_skew_median_ms == 500.0
-
-    # The median lands past the 250 ms cap, so the next write is re-anchored
-    # by the CLAMPED shift: the rotated body starts a quarter-cycle in --
-    # the second half of the first step, the other step, the first half back.
-    handed.clear()
     coupled_write()
-    assert handed == [
-        "brightness 149\n"
-        "0:#FF0000 250ms; 1:#FF0000 250ms\n"
-        "off 500ms\n"
-        "0:#800000 250ms; 1:#800000 250ms\n"
-        "repeat"
+    # The same plan both times: no rotation is baked into the text.
+    assert [program for program, _options in handed] == [
+        "brightness 149\n#FF0000 500ms\noff 500ms\nrepeat",
+        "brightness 149\n#FF0000 500ms\noff 500ms\nrepeat",
     ]
-    assert controller._core_linked_corrected_ms == 250.0
-    # The rotated program's true on-device start is the DOT's write
-    # completion pulled back by the shift it baked in -- the strip's
-    # anchor has nothing to do with it.
-    assert controller._core_hardware_anchor[dot.device_id] == pytest.approx(
-        mono_to_epoch(completed["dot"]) - 0.25
-    )
+    # The skew is the I/O gap (fsync to fsync), not the worker's stamps.
+    assert controller._core_linked_skew_ms == 20.0
+    assert controller._core_linked_skew_median_ms is None
     lights = controller._core_build_lights()
-    assert lights["linked_skew_ms"] == 500.0
-    assert lights["linked_skew_corrected_ms"] == 250.0
-
-    # The correction is the MEDIAN of the last eight, not the latest gap:
-    # one 600 ms outlier in a history of ~11 ms writes shifts by 11.5.
-    pair = (pro.device_id, dot.device_id)
-    controller._core_linked_skew_samples[pair] = deque(
-        [10.0, 12.0, 11.0, 13.0, 11.0, 12.0, 10.0], maxlen=8
-    )
-    completed["dot"] = 100.6
-    coupled_write()
-    assert controller._core_linked_skew_ms == 600.0
-    assert controller._core_linked_skew_median_ms == 11.5
-    handed.clear()
-    coupled_write()
-    assert controller._core_linked_corrected_ms == 11.5
-    assert handed[0] != "brightness 149\n#FF0000 500ms\noff 500ms\nrepeat"
+    assert lights["linked_skew_ms"] == 20.0
+    assert "linked_skew_corrected_ms" not in lights
 
 
 def test_quitting_turns_every_mounted_strip_off_pro_and_dot(headless, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1187,7 +1161,7 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
     handed = []
 
     class FakeDotController:
-        def sync_program(self, program, state):
+        def sync_program(self, program, state, **kwargs):
             handed.append((program, state))
             return LedStatusWrite(state, dot_device.target, program, True)
 
@@ -1221,19 +1195,29 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
 
 
 def test_linked_dot_program_folds_brightness_lines(headless) -> None:
+    """Following the strip (the default), the Dot takes the strip's own
+    brightness line scaled by ``linked_dot_scale`` in LIGHT (100 -> 71 at
+    half), capped by the Dot's manual brightness by the shared rule
+    (71 * 200 / 255 = 56) -- and its auto-brightness is ignored. The strip's
+    line is folded in, so the Dot never carries two."""
     controller = headless
-    controller.settings = controller.settings.with_linked_dot_scale(0.5)
-    dot = SimpleNamespace(brightness=200)
-    out = controller._core_dot_plan(dot, "brightness 100\n#112233 500ms\nrepeat")
-    # The cap is min(strip 100, dot 200) = 100, and the scale is half the
-    # LIGHT that code means, re-encoded: 71. The strip's own line is folded in
-    # so the Dot never carries two.
-    assert out.program == "brightness 71\n#112233 500ms\nrepeat"
+    pro, dot = _pro_and_dot(controller)
+    controller.settings = controller.settings.with_linked_dot_scale(0.5).with_device_brightness(
+        dot.device_id, 200, name=dot.name, path=str(dot.root)
+    )
+    auto_dimmed = SimpleNamespace(brightness=40)
+    out = controller._core_dot_plan(auto_dimmed, "brightness 100\n#112233 500ms\nrepeat", device=dot)
+    assert out.program == "brightness 56\n#112233 500ms\nrepeat"
     assert out.program.count("brightness") == 1
     assert (
         controller._core_dot_plan(SimpleNamespace(brightness=255), "#FFFFFF").program
         == "brightness 188\n#FFFFFF"
     )
+
+    # --- not following: the Dot's own policy (auto included) is the cap
+    controller.settings = controller.settings.with_linked_sync(follow_brightness=False)
+    out = controller._core_dot_plan(auto_dimmed, "brightness 100\n#112233 500ms\nrepeat", device=dot)
+    assert out.program == "brightness 11\n#112233 500ms\nrepeat"
 
 
 def test_a_finished_finite_cue_re_arms_the_live_program_on_either_device(headless) -> None:
@@ -1565,7 +1549,8 @@ def test_the_dot_rides_only_the_followed_strip__and_2_more(headless) -> None:
     controller.settings = controller.settings.with_devices_linked(True).with_dot_role("extend")
 
     def link_state() -> dict:
-        return controller._core_build_lights()["dot_link"]
+        link = controller._core_build_lights()["dot_link"]
+        return {key: link[key] for key in ("state", "role", "error")}
 
     assert link_state() == {"state": "linked", "role": "extend", "error": None}
 
@@ -1704,7 +1689,7 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
         lift_program_luminance,
         relative_luminance,
     )
-    from jrbar.dot_role import apply_brightness_line
+    from jrbar.dot_role import replace_brightness_line as apply_brightness_line
     from jrbar.status_bar_legacy import StatusBarDevice
 
     controller = headless
@@ -1860,7 +1845,7 @@ def test_linked_screen_bar_keeps_a_signals_cut_through(headless) -> None:
 
     from jrbar._led_status_legacy import style_to_program
     from jrbar.colors import lift_program_luminance
-    from jrbar.dot_role import apply_brightness_line
+    from jrbar.dot_role import replace_brightness_line as apply_brightness_line
     from jrbar.signals import PATTERN_BREATHE, SignalStyle
     from jrbar.status_bar_legacy import (
         LED_DISPLAY_AGENT,
@@ -3569,3 +3554,206 @@ def test_quiet_this_run_snoozes_one_row_not_its_family(headless) -> None:
     with pytest.raises(CommandError) as keyless:
         controller._core_dispatch("snooze", {"session": "gemini:session:keyless", "seconds": 60, "scope": "run"})
     assert keyless.value.code == "unsupported"
+
+
+# --- lane led-link: the Dot on the strip's recorded start ---------------------
+
+
+def _tmp_pair(controller, tmp_path: Path):
+    """A real Pro and a real Dot on scratch volumes: the controllers write
+    through the whole boundary (gate, timing, firmware check, fsync)."""
+    from jrbar._led_status_legacy import AgentLedController
+    from jrbar.status_bar_legacy import StatusBarDevice
+
+    devices = []
+    for device_id, name, volume in (
+        ("sidepulse:pro:1", "SidePulse Pro", "SidePulsePro"),
+        ("sidepulse:dot:1", "SidePulse Dot", "PulseDot"),
+    ):
+        root = tmp_path / volume
+        root.mkdir()
+        (root / "LEDS.LED").write_text("off\n", encoding="utf-8")
+        devices.append(StatusBarDevice(device_id, name, root, root / "LEDS.LED", True, "agent"))
+    pro, dot = devices
+    controllers = {device.device_id: AgentLedController(device_path=device.target) for device in devices}
+    controller.status_bar_devices = lambda *, remember=True: list(devices)
+    controller.agent_led_controllers_by_device = controllers
+    controller.agent_controller_for_device = lambda device: controllers[device.device_id]
+    controller.settings = controller.settings.with_devices_linked(True).with_dot_role("extend")
+    controller._hardware_write_generation = 1
+    controller._hardware_write_active = True
+    submitted: list = []
+    controller._hardware_write_worker = SimpleNamespace(
+        submit=lambda command: submitted.append(command),
+        discard_pending_prefix=lambda prefix: None,
+    )
+    return pro, dot, controllers, submitted
+
+
+def _coupled(controller, submitted, pro, dot, write):
+    """One coupled batch whose strip write is ``write``."""
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
+
+    pro_request = HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)
+    dot_request = HardwareWriteRequest(dot, AgentMode.WORKING, None, (), None, 0.5)
+    original = type(controller)._sync_hardware_device
+
+    def strip_only(request):
+        if request is pro_request:
+            return HardwareWriteResult(
+                request=request, write=write, label="SidePulse Working",
+                agent_display_rendered=True, completed_at=time.monotonic(),
+            )
+        return original(controller, request)
+
+    controller._sync_hardware_device = strip_only
+    submitted.clear()
+    controller._submit_hardware_write_requests([pro_request, dot_request], 100.0)
+    result = controller._execute_hardware_write_command(submitted[0])
+    _dot_command, dot_result = controller._core_linked_results[submitted[0].key]
+    controller._apply_hardware_write_result(submitted[0], result)
+    del controller._sync_hardware_device
+    return dot_result, dot_request
+
+
+def test_every_strip_restart_rewrites_the_dot_and_nothing_else_does__and_2_more(headless, tmp_path: Path) -> None:
+    # --- scenario: a_changed_strip_write_with_an_identical_narrowed_dot_still_writes_the_dot
+    """The strip restarts on every write, identical or not; the Dot's
+    narrowed text deduped, so the Dot kept the old start (116 strip-only
+    restarts in 8.7 h of one day's log). Now every strip restart forces the
+    Dot, phased from the strip's new start."""
+    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.linked_sync import phase_ms
+
+    controller = headless
+    pro, dot, controllers, submitted = _tmp_pair(controller, tmp_path)
+    nominal = "#FF0000 500ms cosine\n#000000 500ms cosine\nrepeat"
+    first_start = time.monotonic()
+    strip_write = LedStatusWrite(
+        LedDisplayState.WORKING, pro.target, nominal, True, nominal_program=nominal, applied_at=first_start
+    )
+    dot_result, dot_request = _coupled(controller, submitted, pro, dot, strip_write)
+    assert dot_result.write.changed is True
+    assert controller._core_linked.epoch.anchor == first_start
+    second = LedStatusWrite(
+        LedDisplayState.WORKING, pro.target, nominal, True, nominal_program=nominal, applied_at=first_start + 0.5
+    )
+    dot_result, dot_request = _coupled(controller, submitted, pro, dot, second)
+    assert dot_result.write.changed is True
+    assert controller._core_linked.epoch.anchor == first_start + 0.5
+
+    # --- scenario: a_skew_change_alone_never_rewrites_the_dot
+    controller._core_linked_skew_ms = 233.0
+    controller._core_linked_skew_median_ms = 57.0
+    again = controller._sync_hardware_device(dot_request)
+    assert again.write.changed is False
+
+    # --- scenario: a_dot_only_write_is_phased_from_the_strips_recorded_start
+    """A Dot-only write (here the closed loop's re-anchor) rotates to where
+    the strip's loop is at the moment the Dot parses, from the strip's
+    recorded start -- never on the theory that the strip just restarted."""
+    controller._core_linked.request_force("reanchor")
+    anchored = controller._sync_hardware_device(dot_request)
+    timed = anchored.write.timed
+    assert anchored.write.changed is True and timed is not None
+    expected = phase_ms(timed.predicted_at, first_start + 0.5, timed.lap_ms)
+    assert timed.rotation == "exact"
+    assert abs(timed.phase_ms - expected) < 0.5
+    assert controller._core_linked.dot_write.reason == "reanchor"
+    # The lights document puts the Dot on the strip's start, not its own.
+    assert controller._core_hardware_anchor[dot.device_id] == controller._core_linked.epoch.anchor_epoch
+
+
+def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tmp_path: Path) -> None:
+    # --- scenario: the_dot_derives_from_the_trimmed_program_the_strip_runs
+    """A reassert drops the approach frame, so the strip loops a shorter
+    lap; the Dot used to be re-planned from the untrimmed text and ran the
+    longer one. Now both run the trimmed loop."""
+    from jrbar._led_status_legacy import LedDisplayState
+    from jrbar.animation import loop_duration_ms, read_program
+    from jrbar.presentation_compiler import compile_presentation_program
+
+    controller = headless
+    pro, dot, controllers, submitted = _tmp_pair(controller, tmp_path)
+    program = "#101010 160ms\n#FF0000 1s cosine\n#000000 1s cosine\nrepeat"
+    strip = controllers[pro.device_id]
+    first = strip.sync_program(program, LedDisplayState.WORKING)
+    _coupled(controller, submitted, pro, dot, first)
+    strip.last_attempt_monotonic -= strip.reassert_after_seconds + 1
+    reassert = strip.sync_program(program, LedDisplayState.WORKING)
+    assert reassert.changed and reassert.program != first.program
+    assert reassert.nominal_program == "#FF0000 1s cosine\n#000000 1s cosine\nrepeat"
+    dot_result, _request = _coupled(controller, submitted, pro, dot, reassert)
+    strip_lap = loop_duration_ms(
+        read_program(compile_presentation_program(reassert.nominal_program, led_count=8).program)[0]
+    )
+    assert dot_result.write.timed.lap_ms == strip_lap == 2000
+    assert controller._core_linked.epoch.anchor == reassert.applied_at
+
+    # --- scenario: the_screen_bar_shares_the_strips_start_and_ignores_dot_reanchors
+    """Pro, Dot and Screen Bar share one start: the bar's anchor is the
+    strip's write, reasserts included, and a Dot-only re-anchor leaves it
+    alone."""
+    controller.settings = controller.settings.with_screen_bar_phase_offset_ms(0)
+    bar_anchor = controller._core_build_lights()["surfaces"]["screen_bar"]["anchor"]
+    assert bar_anchor == pytest.approx(mono_to_epoch(reassert.applied_at))
+    controller._core_linked.request_force("reanchor")
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest
+
+    controller._sync_hardware_device(HardwareWriteRequest(dot, AgentMode.WORKING, None, (), None, 0.5))
+    assert controller._core_build_lights()["surfaces"]["screen_bar"]["anchor"] == bar_anchor
+
+
+def test_the_sync_tick_reanchors_at_most_once_in_twenty_seconds(headless, tmp_path: Path) -> None:
+    """The closed loop at the runtime: fresh reads of a Dot drifting with an
+    uncorrected program, a re-anchor request once the error passes the
+    tolerance, then nothing for 20 s however far it drifts."""
+    from jrbar.device_clock import DeviceClocks, DeviceStatus
+    from jrbar.linked_runtime import LinkedEpoch, LinkedSync
+
+    controller = headless
+    pro, dot, _controllers, _submitted = _tmp_pair(controller, tmp_path)
+    clock = [500.0]
+
+    def reader(_root):
+        return DeviceStatus(clock[0], {"ticks": f"{(clock[0] - 500.0) * 973.4 + 10_000:.0f}"})
+
+    link = LinkedSync(DeviceClocks(None), reader=reader, spawn=lambda work: work(), now=lambda: clock[0])
+    controller._core_linked = link
+    link.note_epoch(LinkedEpoch(500.0, 1.0, "#FF0000 500ms\noff 500ms\nrepeat", None, 8, pro.device_id))
+    link.note_dot_write(
+        dot_id=dot.device_id,
+        write=SimpleNamespace(
+            timed=SimpleNamespace(phase_ms=0.0, rate=1.0, effective_rate=1.0, lap_ms=100_000, rotation="exact"),
+            applied_at=500.0,
+        ),
+        epoch=link.epoch,
+        trim_ms=0.0,
+        reason="coupled",
+        sample=reader(None),
+    )
+    asked: list[float] = []
+    controller._core_linked_request_dot_write = lambda reason: asked.append(clock[0]) or True
+    for second in range(1, 70):
+        clock[0] = 500.0 + second
+        controller._core_linked_sync_tick(clock[0])
+    assert asked, "the loop never re-anchored a Dot drifting 27 ms a second"
+    from itertools import pairwise
+
+    assert all(later - earlier >= 20.0 for earlier, later in pairwise(asked))
+    link_doc = controller._core_build_lights()["dot_link"]
+    assert link_doc["sync_writes_hour"] == len(asked)
+    assert link_doc["clock_rate"] is not None and link_doc["tolerance_ms"] == 40.0
+
+
+def test_the_keepalive_touches_only_sd_reader_devices(headless, tmp_path: Path) -> None:
+    """The card reader powers the Pro off when idle; the Dot on USB-C has
+    no reader, and touching it once hung its I/O for more than two seconds."""
+    controller = headless
+    pro, dot, _controllers, _submitted = _tmp_pair(controller, tmp_path)
+    controller.current_led_targets = lambda: [pro.target, dot.target]
+    assert controller.status_keepalive_targets() == [pro.target]
+    controller.current_led_targets = lambda: []
+    assert controller.status_keepalive_targets() == [pro.target]

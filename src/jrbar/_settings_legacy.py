@@ -282,6 +282,32 @@ def _clamp_linked_dot_scale(value: object) -> float:
     return min(1.0, max(0.05, scale))
 
 
+def _clamp_phase_trim(value: object) -> float:
+    """``linked_dot_phase_trim_ms``: ms in [-250, 250]; unreadable is 0."""
+    from .linked_sync import clamp_trim
+
+    return clamp_trim(value)
+
+
+def _clamp_sync_tolerance(value: object) -> float:
+    """``linked_sync_tolerance_ms``: ms in [20, 200]; unreadable is 40."""
+    from .linked_sync import clamp_tolerance
+
+    return clamp_tolerance(value)
+
+
+def _extend_style(value: object) -> str:
+    from .dot_role import normalize_extend_style
+
+    return normalize_extend_style(value)
+
+
+def _extend_side(value: object) -> str:
+    from .dot_role import normalize_extend_side
+
+    return normalize_extend_side(value)
+
+
 def _clamp_screen_bar_phase_offset(value: object) -> float:
     """Milliseconds in [-1000, 1000]; anything unreadable means no nudge."""
     try:
@@ -633,6 +659,29 @@ class AgentMonitorSettings:
     # back to idle_dim_fraction, the pre-per-Focus behavior. Only
     # meaningful while focus_sync_enabled is on.
     focus_dim_rules: dict[str, float] = field(default_factory=dict)
+    # Linked Pro + Dot timing (jrbar.linked_sync). Clock correction retimes
+    # the Dot for its own measured clock (about 2.7% slow on the first Dot)
+    # and closes the loop from fresh reads of its ``ticks``; off, the Dot is
+    # still phased from the strip's start but never retimed or re-anchored.
+    linked_dot_clock_correction: bool = True
+    # A constant nudge of the Dot against the strip, ms in [-250, 250]: the
+    # pair's analogue of ``screen_bar_phase_offset_ms``. Positive runs the
+    # Dot ahead.
+    linked_dot_phase_trim_ms: float = 0.0
+    # How far the Dot may drift, in ms [20, 200], before a Dot-only
+    # re-anchor (at most one every 20 s). Higher means fewer Dot writes.
+    linked_sync_tolerance_ms: float = 40.0
+    # "mirror" folds the strip's eight LEDs into the Dot's two; "continue"
+    # lets light run off the end of the strip into the Dot (travelling
+    # effects only; anything else mirrors).
+    dot_extend_style: str = "mirror"
+    # Continue only: the Dot sits past LED 7 ("after_last") or before
+    # LED 0 ("before_first").
+    dot_extend_side: str = "after_last"
+    # A linked Dot takes the strip's brightness policy times
+    # ``linked_dot_scale`` and ignores its own auto-brightness, which used
+    # to cap it (and restart it on every auto step).
+    linked_follow_brightness: bool = True
 
     def transcript_enabled(self, provider: str) -> bool:
         if provider == "codex":
@@ -1214,6 +1263,40 @@ class AgentMonitorSettings:
 
     def with_dot_role_include_completions(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, dot_role_include_completions=bool(enabled))
+
+    def with_linked_sync(
+        self,
+        *,
+        clock_correction: bool | None = None,
+        phase_trim_ms: object = None,
+        tolerance_ms: object = None,
+        follow_brightness: bool | None = None,
+    ) -> AgentMonitorSettings:
+        """The linked pair's timing keys, each clamped; ``None`` keeps one."""
+        return replace(
+            self,
+            linked_dot_clock_correction=(
+                self.linked_dot_clock_correction if clock_correction is None else bool(clock_correction)
+            ),
+            linked_dot_phase_trim_ms=(
+                self.linked_dot_phase_trim_ms if phase_trim_ms is None else _clamp_phase_trim(phase_trim_ms)
+            ),
+            linked_sync_tolerance_ms=(
+                self.linked_sync_tolerance_ms
+                if tolerance_ms is None
+                else _clamp_sync_tolerance(tolerance_ms)
+            ),
+            linked_follow_brightness=(
+                self.linked_follow_brightness if follow_brightness is None else bool(follow_brightness)
+            ),
+        )
+
+    def with_dot_extend(self, style: object = None, side: object = None) -> AgentMonitorSettings:
+        return replace(
+            self,
+            dot_extend_style=self.dot_extend_style if style is None else _extend_style(style),
+            dot_extend_side=self.dot_extend_side if side is None else _extend_side(side),
+        )
 
     def with_screen_bar_gauges_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, screen_bar_gauges_enabled=bool(enabled))
@@ -1847,6 +1930,12 @@ class AgentMonitorSettings:
             "alert_burst": normalize_alert_burst(self.alert_burst),
             "dismissed_tips": list(self.dismissed_tips),
             "focus_dim_rules": dict(sorted(self.focus_dim_rules.items())),
+            "linked_dot_clock_correction": self.linked_dot_clock_correction,
+            "linked_dot_phase_trim_ms": _clamp_phase_trim(self.linked_dot_phase_trim_ms),
+            "linked_sync_tolerance_ms": _clamp_sync_tolerance(self.linked_sync_tolerance_ms),
+            "dot_extend_style": _extend_style(self.dot_extend_style),
+            "dot_extend_side": _extend_side(self.dot_extend_side),
+            "linked_follow_brightness": self.linked_follow_brightness,
         }
 
 
@@ -2364,6 +2453,14 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             if isinstance(item, str) and item.strip()
         ),
         focus_dim_rules=_focus_dim_rules(data.get("focus_dim_rules")),
+        linked_dot_clock_correction=_bool_setting(
+            data.get("linked_dot_clock_correction"), True
+        ),
+        linked_dot_phase_trim_ms=_clamp_phase_trim(data.get("linked_dot_phase_trim_ms")),
+        linked_sync_tolerance_ms=_clamp_sync_tolerance(data.get("linked_sync_tolerance_ms")),
+        dot_extend_style=_extend_style(data.get("dot_extend_style")),
+        dot_extend_side=_extend_side(data.get("dot_extend_side")),
+        linked_follow_brightness=_bool_setting(data.get("linked_follow_brightness"), True),
     )
 
 
