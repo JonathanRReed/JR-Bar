@@ -33,13 +33,7 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         let window = self.window ?? makeWindow()
         self.window = window
         attachContent(to: window)
-        // An accessory app is never frontmost on its own; the window
-        // needs the app active to draw its controls as key. The same two
-        // calls the Settings window uses.
-        NSRunningApplication.current.activate()
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
-        window.makeKey()
+        WindowFront.bring(window)
     }
 
     /// Presents and lands on `step` — a lost grant opens on Permissions.

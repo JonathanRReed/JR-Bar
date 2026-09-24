@@ -23,28 +23,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let window = self.window ?? makeWindow()
         self.window = window
         attachSettingsContent(to: window)
-        // An accessory app is never frontmost on its own; the window needs the
-        // app active to draw its controls as key. The double activate is the
-        // pairing that reliably forces it on macOS 26/27.
-        NSRunningApplication.current.activate()
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
-        window.makeKey()
+        WindowFront.bring(window)
         // Focus starts on the sidebar, as in System Settings, not on whichever
         // text field happens to come first in the key loop.
         DispatchQueue.main.async {
             window.makeFirstResponder(Self.sidebarTable(in: window.contentView) ?? nil)
-        }
-        // Activation is cooperative on macOS 14+: when the frontmost app does
-        // not yield, the request above is dropped and the window opens
-        // inactive (grey controls, no key focus). Asking Launch Services to
-        // "open" ourselves is the sanctioned way to get it anyway.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            guard !NSApp.isActive else { return }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            configuration.createsNewApplicationInstance = false
-            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in }
         }
         store.refreshLaunchAtLogin()
     }

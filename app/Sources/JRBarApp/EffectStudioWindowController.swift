@@ -20,9 +20,7 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         attachContent(to: window)
         if let effect { store.selectedID = effect }
         store.windowDidOpen()
-        NSRunningApplication.current.activate()
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
+        WindowFront.bring(window)
         noteOcclusion(of: window)
     }
 
