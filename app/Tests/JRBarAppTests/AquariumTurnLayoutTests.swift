@@ -392,4 +392,30 @@ struct AquariumTurnLayoutTests {
             expectSteadyFront(run, eater.id)
         }
     }
+
+    @Test("at the biggest Fish size no fin pokes out of the top of the tank")
+    func bigFishStayInTheWater() {
+        for species in [FishSpecies.shark, .angelfish, .clownfish] {
+            var fish = Fish(id: "big-\(species.rawValue)", label: "big", providerID: "claude", state: .swimming,
+                            lane: 0, speed: 0.1, direction: 1, stateSince: Date(timeIntervalSince1970: t0 - 100),
+                            enteredAt: .distantPast, species: species)
+            var settings = AquariumSettings()
+            settings.fishScale = AquariumSettings.fishScaleRange.upperBound
+            let tank = AquariumView(fixture: AquariumView.Fixture(
+                fish: [fish], game: AquariumGame(pets: [fish.id: FishCare(stage: 2)]), night: 0,
+                swimSettings: settings))
+            var t = t0
+            var top = Double.infinity
+            for i in 0..<(30 * 24) {
+                t += dt
+                if i == 30 * 20 {
+                    fish.state = .surfacing
+                    fish.stateSince = Date(timeIntervalSince1970: t)
+                }
+                let l = frame(tank, [fish], fish, t: t)
+                top = min(top, l.y - tank.drawnSize(of: fish, layout: l).above)
+            }
+            #expect(top >= -0.5, "\(species): the fins reached \(top) pt")
+        }
+    }
 }

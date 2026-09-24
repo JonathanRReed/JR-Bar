@@ -757,13 +757,13 @@ struct AquariumView: View {
             if m.curiousID != nil { pointerUnit = pu }
         }
 
-        let bounds = SwimBounds(
-            minX: 0.05, minY: 30 / max(1, size.height),
-            maxX: 0.95, maxY: (size.height - 100) / max(1, size.height),
-            margin: 0.10)
+        let maxY = (size.height - 100) / max(1, size.height)
 
         for fish in swimmers {
             guard var body = m.bodies[fish.id] else { continue }
+            // Its tallest fin stays under the surface at its size.
+            let top = min(maxY - 0.05, surfaceClearance(of: fish) / max(1, size.height))
+            let bounds = SwimBounds(minX: 0.05, minY: top, maxX: 0.95, maxY: maxY, margin: 0.10)
             var context = SwimContext(bounds: bounds, pace: tuning.swimPace, tempo: tempo)
             // The body sees the glass by its drawn length.
             body.length = drawnSize(of: fish, layout: steeringLayout(of: fish)).length

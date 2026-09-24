@@ -28,6 +28,9 @@ extension AquariumView {
         /// Where a surfacing fish started its rise; the bubble trail
         /// climbs from there.
         var riseFrom: Double = 0
+        /// Where it rises to: just under the surface, lower for a fish
+        /// whose fins would otherwise poke out of the tank.
+        var riseTo: Double = 24
         /// The glass-tap ring's phase (0 just emitted … 1 faded) while a
         /// waiting fish pulses; -1 means no ring this frame.
         var tapRing: Double = -1
@@ -239,7 +242,7 @@ extension AquariumView {
                         : smooth(clamp01(sip / 0.07)) * smooth(clamp01((0.18 - sip) / 0.07)))
                         * (1 - doze)
                     l.y = py + bob * 0.6 * (1 - l.turn * 0.5)
-                        - sipping * max(0, py - 34)
+                        - sipping * max(0, py - max(34, surfaceClearance(of: fish)))
                     // A sleeper sinks to just off the sand under it.
                     let floorY = sandTop(atX: px, in: size) - 44
                     l.y += max(0, floorY - l.y) * doze * 0.9
@@ -290,8 +293,9 @@ extension AquariumView {
             let age = now.timeIntervalSince(fish.stateSince)
             let rise = smooth(clamp01(age / 1.15))
             l.riseFrom = home.y
+            l.riseTo = askTop(of: fish, layout: l)
             l.x = home.x + (reduceMotion ? 0 : sin(t * 0.7 + phase) * 6 * rise)
-            l.y = l.riseFrom + (24 - l.riseFrom) * rise
+            l.y = l.riseFrom + (l.riseTo - l.riseFrom) * rise
                 + (reduceMotion ? 0 : sin(t * 2.3 + phase) * 3.5 * rise)
             let facing = entryFacing(of: fish, body: body, patrol: p.pose)
             let held = AquariumTurn.pose(p: AquariumTurn.askHold, dir0: facing, arc: 0)
@@ -417,6 +421,23 @@ extension AquariumView {
         l.roll += handoff.droll * k
         l.turn = max(l.turn, 1 - abs(l.yawCos))
         return l
+    }
+
+    /// How far under the surface a fish's middle keeps, points: deep
+    /// enough that its tallest fin stays in the water at its size, its
+    /// bob included.
+    func surfaceClearance(of fish: Fish) -> Double {
+        max(30, drawnSize(of: fish, layout: steeringLayout(of: fish)).above + 11)
+    }
+
+    /// Where an asking fish rises to: just under the surface, with room
+    /// for its fins once the ask has drawn it a touch bigger — so at a
+    /// large Fish size it waits a little lower instead of poking out of
+    /// the top of the tank.
+    private func askTop(of fish: Fish, layout l: Layout) -> Double {
+        var swollen = l
+        swollen.scale *= 1.18
+        return max(24, drawnSize(of: fish, layout: swollen).above + 6)
     }
 
     /// A fry's place in its school (docs/TOYS.md): a loose orbit
@@ -716,7 +737,7 @@ extension AquariumView {
                 let age = since - birth
                 guard age > 0, age < 2.6 else { continue }
                 let release = smooth(clamp01(birth / 1.15))
-                let startY = l.riseFrom + (24 - l.riseFrom) * release
+                let startY = l.riseFrom + (l.riseTo - l.riseFrom) * release
                 let r = 1.4 + Double(k) * 0.5
                 let bx = l.x - l.yawCos * 6 + Double(k - 1) * 4 + sin(age * 3 + Double(k) * 2.1) * 4
                 let by = startY - 4 - age * 30
