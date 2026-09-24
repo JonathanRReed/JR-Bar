@@ -1,0 +1,9 @@
+{
+  "billingCycleStart": "2026-09-01T00:00:00Z",
+  "billingCycleEnd": "2026-10-01T00:00:00Z",
+  "planUsage": {"used": 120, "limit": 500},
+  "autoComposerUsage": {"usedPercent": 40.5},
+  "apiUsage": {"used": 0, "limit": 100},
+  "extraUsageCents": 250,
+  "account": {"email": "user@example.com", "membershipType": "pro"}
+}

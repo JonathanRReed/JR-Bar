@@ -1,0 +1,15 @@
+{
+  "usage": {
+    "data": [
+      {"start_time": 1788998400, "results": [
+        {"input_tokens": 1000, "output_tokens": 200, "model": "gpt-5.1"},
+        {"input_tokens": 50, "output_tokens": 10, "model": "gpt-5.1-mini"}
+      ]}
+    ]
+  },
+  "costs": {
+    "data": [
+      {"start_time": 1788998400, "results": [{"amount": {"value": 0.42, "currency": "usd"}}]}
+    ]
+  }
+}
