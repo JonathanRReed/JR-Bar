@@ -44,6 +44,10 @@ struct ProviderStyle: Hashable, Sendable {
         // A usage source the daemon appends to the usage graph when its
         // T3 coverage exists — matches the daemon's own "T3 Code" label.
         ProviderStyle(id: "t3code", name: "T3 Code", accentHex: "#00B8D9", glyph: .symbol("cube")),
+        // JR-Bar's own rows: the daemon bundles orphaned workers of mixed
+        // providers into one "Background agents" row under this id
+        // (`mailbox._candidate_for_orphan_workers`).
+        ProviderStyle(id: "jrbar", name: "JR-Bar", accentHex: "#5E5CE6", glyph: .symbol("square.stack.3d.up.fill")),
     ].map { ($0.id, $0) })
 
     static func style(for provider: String) -> ProviderStyle {
