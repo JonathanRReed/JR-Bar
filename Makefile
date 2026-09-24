@@ -1,4 +1,4 @@
-.PHONY: bootstrap fast fast-fix final-test format lint test test-portable swift-test package package-python clean-install install-pkg verify verify-portable release install-user clean
+.PHONY: bootstrap fast fast-fix final-test format lint test test-serial test-portable swift-test package package-python clean-install install-pkg verify verify-portable release install-user clean
 
 # The packaged app: build/macos-pkg/app/JR-Bar.app plus dist/JR-Bar-<version>.pkg,
 # dist/JR-Bar-<version>.zip and, with the Sparkle key in the keychain,
@@ -24,7 +24,13 @@ format: bootstrap
 lint: bootstrap
 	.venv/bin/python -m ruff check src tests packaging scripts
 
+# One worker per core, each taking whole files: a file's tests share its
+# fixtures and module state, and the conftest sandbox is per process.
+# test-serial is the one-process run, for a failure that only shows there.
 test: bootstrap
+	.venv/bin/python -m pytest tests -q -n auto --dist loadfile
+
+test-serial: bootstrap
 	.venv/bin/python -m pytest tests -q
 
 test-portable: bootstrap

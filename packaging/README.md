@@ -98,8 +98,7 @@ in the login keychain: on this Mac it is under account
 --account com.jonathanreed.jrbar -p` prints the public half,
 `HOglzj7oHy/NF0HMxpSkOzP036QpoaD+6YzwAGr5iIg=`). A new key means committing
 its public half to `packaging/sparkle_public_ed_key.txt`,
-`EXPECTED_PUBLIC_KEY` in `scripts/generate_sparkle_channel.py`,
-`EXPECTED_PUBLIC_ED_KEY` in `src/jrbar/sparkle_updater.py` and the tests
+`EXPECTED_PUBLIC_KEY` in `scripts/generate_sparkle_channel.py` and the tests
 (`tests/test_sparkle_channel.py` pins the key and its SHA-256 fingerprint,
 `tests/test_app_bundle_security.py` the key); nothing published yet trusts
 the old one.

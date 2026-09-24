@@ -104,31 +104,33 @@ def publish_deck_frame(target) -> None:
     snapshot = getattr(target, "last_snapshot", None)
     if runtime is not None and snapshot is not None:
         runtime.publish_creator_output(target.display_aggregate_mode(snapshot))
-    window = getattr(target, "_deck_control_center_window", None)
-    if window is not None:
-        window.refresh_(None)
 
 
-def open_control_center(target, *, input_check: bool = False) -> None:
-    from .deck_control_center_window import DeckControlCenterWindow
-    if getattr(target, "_runtime_termination_started", False):
-        return
-    ensure_deck_board(target)
-    window = getattr(target, "_deck_control_center_window", None)
-    if window is None:
-        window = DeckControlCenterWindow.alloc().initWithTarget_(target)
-        target._deck_control_center_window = window
-    if input_check:
-        runner = getattr(target, "_deck_automation_runner", None)
-        if runner is not None:
-            target._deck_automation_runner = None
-            runner.close()
-        target._deck_input_check_active = True
-        runtime = getattr(target, "_jrbar_optional_integration_runtime", None)
-        dispatch = getattr(runtime, "_deck_dispatch", None)
-        if dispatch is not None:
-            dispatch.reset_connection()
-    window.show()
+# The deck's window keys, by the name the app's `open_window` takes (the
+# link names of `AppCommand.AppWindow`). The daemon has no windows of its
+# own; the Agent Browser key opens the app's Overview.
+APP_WINDOW_FOR_ACTION = {
+    "open_agent_browser": "overview",
+    "open_usage": "usage",
+    "open_control_center": "control-center",
+}
+
+
+def request_app(target, kind: str, success_code: str, **fields) -> DeckActionReceipt:
+    """Ask the connected app to run a deck key's window or ask request.
+
+    The app runs it the way it runs a `jrbar://` link: a URL-style open,
+    never synthetic input, and revealing the waiting ask never answers it.
+    With no app connected the receipt says so instead of claiming a window
+    opened."""
+    request = getattr(target, "_core_request_app", None)
+    try:
+        delivered = callable(request) and bool(request(kind, **fields))
+    except Exception:
+        delivered = False
+    if not delivered:
+        return DeckActionReceipt("app_not_connected", False)
+    return DeckActionReceipt(success_code, True)
 
 
 def deck_executor(target) -> MacDeckActionExecutor:
@@ -149,11 +151,15 @@ def deck_executor(target) -> MacDeckActionExecutor:
             runner = DeckAutomationRunner(completed)
             target._deck_automation_runner = runner
         return runner.submit(name)
+    def open_window(action_kind: str, success_code: str):
+        window = APP_WINDOW_FOR_ACTION[action_kind]
+        return lambda: request_app(target, "open_window", success_code, window=window)
+
     return MacDeckActionExecutor(
-        reveal_current_ask=lambda: on_main(lambda: target.performRevealCurrentAsk_(None)),
-        open_agent_browser=lambda: on_main(lambda: target.openAgentBrowser_(None)),
-        open_usage=lambda: on_main(lambda: target.openProviderUsageCenter_(None)),
-        open_control_center=lambda: on_main(lambda: open_control_center(target)),
+        reveal_current_ask=lambda: request_app(target, "reveal_ask", "revealed_current_ask"),
+        open_agent_browser=open_window("open_agent_browser", "opened_agent_browser"),
+        open_usage=open_window("open_usage", "opened_usage"),
+        open_control_center=open_window("open_control_center", "opened_control_center"),
         next_bank=lambda: on_main(lambda: change_deck_bank(target, 1)),
         previous_bank=lambda: on_main(lambda: change_deck_bank(target, -1)),
         next_scope=lambda: on_main(lambda: _cycle_scope(target, 1)),

@@ -175,13 +175,13 @@ class IdleIsThreeDifferentThingsTests(unittest.TestCase):
         self.controller.current_intake_report = report([probe("claude", "Claude")])
         self.controller.set_status(self.status_bar.STATE_IDLE)
         self.assertEqual(self.button.tooltip, "JR-Bar Agent Monitor: Idle")
-        self.assertIsNone(
-            intake_health.intake_alert_title(self.controller.current_intake_report)
-        )
+        current = self.controller.current_intake_report
+        self.assertEqual(current.stuck_providers, ())
+        self.assertIsNot(current.source_health.code, DiagnosticCode.UNAVAILABLE)
 
     def test_one_stuck_provider_beside_one_live_one_does_not_claim_deafness(self) -> None:
         """SidePulse can hear Claude. Saying it hears nothing would be a lie
-        in the other direction -- the dropdown names Codex instead."""
+        in the other direction -- the report names Codex instead."""
         current = report(
             [probe("claude", "Claude", wire=NOW - 60.0), probe("codex", "Codex", wire=NOW - 5.0)],
             {"claude": NOW - 60.0},
@@ -189,7 +189,9 @@ class IdleIsThreeDifferentThingsTests(unittest.TestCase):
         self.controller.current_intake_report = current
         self.controller.set_status(self.status_bar.STATE_IDLE)
         self.assertEqual(self.button.tooltip, "JR-Bar Agent Monitor: Idle")
-        self.assertIn("Codex", intake_health.intake_alert_title(current))
+        self.assertEqual(
+            [item.provider for item in current.stuck_providers], ["codex"]
+        )
 
     def test_an_unavailable_symbol_never_blanks_the_menu_bar(self) -> None:
         """A status item whose image resolves to None disappears from the
@@ -263,10 +265,8 @@ class IntakeVerdictTests(unittest.TestCase):
     def test_an_unlanded_write_from_last_week_is_silence_not_activity(self) -> None:
         current = report([probe("claude", "Claude", wire=NOW - 8 * 86_400.0)])
         self.assertIs(current.providers[0].code, DiagnosticCode.UNAVAILABLE)
-        self.assertIn(
-            "No agent event has ever arrived",
-            intake_health.intake_alert_title(current),
-        )
+        self.assertIs(current.source_health.code, DiagnosticCode.UNAVAILABLE)
+        self.assertIsNone(current.providers[0].heard_age_seconds)
 
     def test_a_clock_from_the_future_convicts_nobody(self) -> None:
         current = report(
@@ -282,7 +282,7 @@ class IntakeVerdictTests(unittest.TestCase):
         )
         self.assertIs(current.providers[0].code, DiagnosticCode.UNAVAILABLE)
         self.assertEqual(intake_health.idle_disclosure(current), "Not hearing agents")
-        self.assertIn("No agent events for 3d", intake_health.intake_alert_title(current))
+        self.assertEqual(int(current.providers[0].heard_age_seconds // 86_400.0), 3)
 
     def test_installed_and_never_spoken_is_configured_not_broken(self) -> None:
         current = report([probe("claude", "Claude")])
@@ -313,43 +313,6 @@ class IntakeVerdictTests(unittest.TestCase):
 class LastHeardFromTests(unittest.TestCase):
     """A dead hook must be visible instead of looking like an idle agent."""
 
-    def test_every_provider_this_mac_has_reports_when_it_was_last_heard(self) -> None:
-        current = report(
-            [
-                probe("claude", "Claude", wire=NOW - 240.0),
-                probe("codex", "Codex", wire=NOW - 200_000.0),
-                probe("grok", "Grok"),
-            ],
-            {"claude": NOW - 240.0, "codex": NOW - 200_000.0},
-        )
-        rows = intake_health.last_heard_rows(current)
-        self.assertEqual(
-            rows,
-            (
-                "Claude · 4m ago",
-                "⚠ Codex · 2d ago",
-                "Grok · connected, nothing yet",
-            ),
-        )
-        self.assertEqual(intake_health.last_heard_summary(current), "Last heard from · 4m ago")
-
-    def test_a_provider_that_was_never_installed_and_never_spoke_gets_no_row(self) -> None:
-        current = report(
-            [probe("claude", "Claude"), probe("hermes", "Hermes Agent", installed=False)]
-        )
-        self.assertEqual(
-            intake_health.last_heard_rows(current), ("Claude · connected, nothing yet",)
-        )
-
-    def test_a_provider_heard_after_its_hook_was_removed_still_reports(self) -> None:
-        current = report(
-            [probe("codex", "Codex", installed=False)],
-            {"codex": NOW - 3_600.0},
-        )
-        self.assertEqual(
-            intake_health.last_heard_rows(current),
-            ("Codex · not connected · last heard 1h ago",),
-        )
 
     def test_the_wire_is_read_from_the_last_record_not_the_files_mtime(self) -> None:
         """Hook logs are compacted in place. mtime says "a janitor rewrote
@@ -393,160 +356,6 @@ class LastHeardFromTests(unittest.TestCase):
             empty.write_text("", encoding="utf-8")
             self.assertIsNone(intake_health._newest_record_epoch(missing, tail_bytes=512))
             self.assertIsNone(intake_health._newest_record_epoch(empty, tail_bytes=512))
-
-
-class IntakeMenuTests(unittest.TestCase):
-    """The dropdown half: the fault, the one click, and the ledger."""
-
-    def _menu(self, current):
-        from jrbar import status_bar
-        from AppKit import NSMenu
-
-        menu = NSMenu.alloc().init()
-        status_bar.add_intake_menu_items(
-            menu, SimpleNamespace(current_intake_report=current)
-        )
-        return menu, [
-            menu.itemAtIndex_(index) for index in range(menu.numberOfItems())
-        ]
-
-    def test_an_unconnected_mac_gets_the_one_click_that_fixes_it(self) -> None:
-        _menu, items = self._menu(report([probe("claude", "Claude", installed=False)]))
-        titles = [item.title() for item in items]
-        self.assertIn("⚠ Not set up — connect your agents in Setup…", titles)
-        self.assertEqual(items[0].action(), "openSetup:")
-
-    def test_a_stuck_hook_gets_the_same_one_click(self) -> None:
-        _menu, items = self._menu(report([probe("claude", "Claude", wire=NOW - 30.0)]))
-        self.assertIn("nothing arriving", items[0].title())
-        self.assertEqual(items[0].action(), "openSetup:")
-
-    def test_a_healthy_mac_is_never_given_an_alarm_row(self) -> None:
-        current = report([probe("claude", "Claude", wire=NOW - 60.0)], {"claude": NOW - 60.0})
-        _menu, items = self._menu(current)
-        titles = [item.title() for item in items]
-        self.assertFalse([title for title in titles if title.startswith("⚠")])
-        self.assertIn("Last heard from · 1m ago", titles)
-
-    def test_every_provider_row_is_reachable_from_the_dropdown(self) -> None:
-        current = report(
-            [probe("claude", "Claude", wire=NOW - 60.0), probe("codex", "Codex")],
-            {"claude": NOW - 60.0},
-        )
-        _menu, items = self._menu(current)
-        parent = next(item for item in items if item.title().startswith("Last heard from"))
-        submenu = parent.submenu()
-        rows = [
-            submenu.itemAtIndex_(index).title() for index in range(submenu.numberOfItems())
-        ]
-        self.assertEqual(rows, ["Claude · 1m ago", "Codex · connected, nothing yet"])
-
-    def test_a_menu_built_without_a_report_never_probes_the_machine(self) -> None:
-        """Rendering must not depend on the filesystem of whoever opens it."""
-        _menu, items = self._menu(None)
-        self.assertEqual(items, [])
-
-    def test_connecting_an_agent_changes_what_the_dropdown_would_render(self) -> None:
-        """The menu only rebuilds when its signature changes. If intake is
-        not in that signature, "Not set up" survives Setup for 30 seconds
-        -- the worst possible half-minute to still be calling the user
-        unconnected."""
-        unconnected = intake_health.intake_content_signature(
-            report([probe("claude", "Claude", installed=False)])
-        )
-        connected = intake_health.intake_content_signature(
-            report([probe("claude", "Claude")])
-        )
-        self.assertNotEqual(unconnected, connected)
-        self.assertEqual(
-            connected,
-            intake_health.intake_content_signature(report([probe("claude", "Claude")])),
-        )
-
-    def test_a_second_of_ageing_is_not_a_menu_rebuild(self) -> None:
-        rows = [probe("claude", "Claude", wire=NOW - 60.0)]
-        self.assertEqual(
-            intake_health.intake_content_signature(report(rows, {"claude": NOW - 60.0})),
-            intake_health.intake_content_signature(
-                report(rows, {"claude": NOW - 61.0}, now=NOW + 1.0)
-            ),
-        )
-
-    def _build_menu(self, current=None):
-        from jrbar import status_bar
-        from jrbar.settings import AgentMonitorSettings
-
-        snapshot = SimpleNamespace(
-            statuses=[],
-            stale_statuses=[],
-            collected_at=datetime.now(timezone.utc),
-        )
-        target = SimpleNamespace(
-            settings=AgentMonitorSettings(),
-            closed_lid_awake=SimpleNamespace(last_error=None),
-            status_bar_devices=list,
-            _menu_hooks_probe=(float("inf"), True),
-            current_intake_report=current,
-        )
-        return status_bar.build_menu(snapshot, status_bar.STATE_IDLE, target)
-
-    def test_the_real_dropdown_carries_the_alarm_and_the_ledger(self) -> None:
-        """Wiring, not just rendering: build_menu must actually call it."""
-        menu = self._build_menu(report([probe("claude", "Claude", installed=False)]))
-        titles = [
-            menu.itemAtIndex_(index).title() for index in range(menu.numberOfItems())
-        ]
-        self.assertIn("⚠ Not set up — connect your agents in Setup…", titles)
-
-    def test_the_real_dropdown_stays_clean_when_there_is_nothing_to_say(self) -> None:
-        menu = self._build_menu(
-            report([probe("claude", "Claude", wire=NOW - 60.0)], {"claude": NOW - 60.0})
-        )
-        titles = [
-            menu.itemAtIndex_(index).title() for index in range(menu.numberOfItems())
-        ]
-        self.assertFalse([title for title in titles if title.startswith("⚠")])
-        self.assertIn("Last heard from · 1m ago", titles)
-
-    def test_connecting_an_agent_forces_the_dropdown_to_rebuild(self) -> None:
-        """menu_content_signature decides whether the menu is rebuilt at
-        all. Intake has to be in it, or the alarm outlives its cause."""
-        from jrbar import status_bar
-        from jrbar.settings import AgentMonitorSettings
-
-        snapshot = SimpleNamespace(
-            statuses=[],
-            stale_statuses=[],
-            collected_at=datetime.now(timezone.utc),
-        )
-
-        def signature(current):
-            target = SimpleNamespace(
-                settings=AgentMonitorSettings(),
-                closed_lid_awake=SimpleNamespace(last_error=None),
-                status_bar_devices=lambda remember=True: [],
-                current_intake_report=current,
-            )
-            return status_bar.menu_content_signature(
-                snapshot, status_bar.STATE_IDLE, target
-            )
-
-        self.assertNotEqual(
-            signature(report([probe("claude", "Claude", installed=False)])),
-            signature(report([probe("claude", "Claude")])),
-        )
-
-    def test_the_dropdown_offers_the_why_panel(self) -> None:
-        # The compact menu carries the panel under "Diagnostics…"; the
-        # window itself still bears decision_trace.PANEL_TITLE.
-        menu = self._build_menu()
-        item = next(
-            menu.itemAtIndex_(index)
-            for index in range(menu.numberOfItems())
-            if menu.itemAtIndex_(index).title()
-            in ("Diagnostics…", decision_trace.MENU_ITEM_TITLE)
-        )
-        self.assertEqual(item.action(), "openWhyPanel:")
 
 
 class RuleLadderTests(unittest.TestCase):
@@ -774,20 +583,6 @@ class WhyPanelTests(unittest.TestCase):
         self.assertIn("Rest ·", written[0])
         self.assertIn("Ask ·", written[1])
 
-    def test_the_panel_window_actually_builds_and_shows_the_body(self) -> None:
-        window = self.status_bar.build_why_panel_window(self.controller)
-        self.assertEqual(window.title(), decision_trace.PANEL_TITLE)
-        self.controller.why_panel_window = window
-        self.controller._current_resolved_glance = self._glance(GlanceSemantic.REST)
-        self.controller.current_intake_report = report([probe("claude", "Claude")])
-        self.status_bar.set_text_control_value(
-            self.controller.why_panel_text_view, self.controller.why_panel_body()
-        )
-        body = self.status_bar.text_control_value(self.controller.why_panel_text_view)
-        self.assertIn("THE RULE THAT PRODUCED IT", body)
-        # Copyable into a bug report in one gesture.
-        self.assertTrue(self.controller.why_panel_text_view.isSelectable())
-        self.assertFalse(self.controller.why_panel_text_view.isEditable())
 
     def test_a_closed_panel_is_never_repainted(self) -> None:
         self.controller.why_panel_window = SimpleNamespace(isVisible=lambda: False)
@@ -868,10 +663,15 @@ class IntakeRefreshTests(unittest.TestCase):
             "set_settings_message",
         ):
             setattr(self.controller, name, lambda *_args, **_kwargs: None)
+        # The daemon's hooksUpdated_ is the one the install thread lands on.
+        from jrbar import core_runtime
+
+        hooks_updated = core_runtime.build_headless_controller_class().hooksUpdated_.callable
         with patch.object(self.status_bar, "probe_providers", side_effect=_probe):
             self.controller.refresh_intake_report()
-            self.controller.hooksUpdated_(
-                {"ok": True, "changed": True, "provider": "claude", "install": True}
+            hooks_updated(
+                self.controller,
+                {"ok": True, "changed": True, "provider": "claude", "install": True},
             )
             self.assertTrue(reprobed.wait(1.0))
         self.assertEqual(len(calls), 2)
@@ -916,16 +716,6 @@ class IntakeRefreshTests(unittest.TestCase):
         order: list[str] = []
         self._run_refresh(order)
         self.assertEqual(order[:2], ["intake", "status"])
-
-    def test_every_refresh_repaints_an_open_why_panel(self) -> None:
-        """The panel is only honest if the tick that changes the light also
-        changes the explanation."""
-        written: list[str] = []
-        self.controller.why_panel_window = SimpleNamespace(isVisible=lambda: True)
-        self.controller.why_panel_text_view = SimpleNamespace(setString_=written.append)
-        self._run_refresh()
-        self.assertEqual(len(written), 1)
-        self.assertIn("THE LIGHT RIGHT NOW", written[0])
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -737,6 +737,12 @@ banner posts nothing headless, so the app's `EventPolicy` banners this
 and History lists it); `peer_arrived` / `peer_departed`
 (`label` is the machine name; the reachable-set diff after the first
 applied refresh, never on daemon start).
+`open_window` (`window`: `overview`, `usage` or `control-center`) and
+`reveal_ask` go out when a Creator Micro key asks for one of the app's
+windows or for the waiting ask, and only while an app is connected; with
+none, the key's receipt is `app_not_connected`. The app runs them through
+its command router the way it runs a `jrbar://` link and drops one older
+than 10 s. Revealing an ask puts it on the panel; it never answers it.
 `power` goes out once per power-log entry worth a line: `power` is the
 entry's kind (`lease_ended`, `suspended`, `lid_hold_ended`, `slept`),
 `detail` its reason (`expired`, `finished`, `thermal`, `battery`,
@@ -983,7 +989,6 @@ the main thread). Unknown args are ignored.
 | `import_scene_pack` | path, update? | Validates the pack file first (`preview_source`, so nothing writes before the plan exists — a version-1 pack is migrated in memory, `invalid_pack` when the validator refuses it), then `ScenePackStore.install` (or `update` with `update: true`). `{pack_id, name, scenes[], installed, migrated, status}`; `conflict` when the pack id is installed and no update was asked for. Scene packs are data-only, network-free and bounded, must declare reduced-motion / high-contrast / non-colour-cue support, and may only name the known scenes (`focus`, `calm`, `night`, `demo`, `travel`, `dnd`). |
 | `preview_scene_pack` | pack_id, led_count? | `not_found` when no installed pack has that id. Else renders the pack's scene-by-scene policy tour — one step per overridden scene, the scene's colour dimmed by its brightness policy, the motion policy choosing step length and interpolation — through the presentation safety compiler at the requested LED count (clamped 2–24). `{pack_id, led_count, program}` — an `EffectPreview` with a `pack_id` extra the app ignores. |
 | `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. The same server carries `GET /asks.json` and `POST /answer` (see "Answering from serve" below), which act only while `serve_answer_enabled` is on. |
-| `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
 | `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask the decide lane holds -- in any terminal, frontmost or not -- or a live ask whose terminal or origin app is frontmost, the press approves it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this control in the Creator Micro window."; `input_check` while input check is on. |
 | `deck_answer` | index 0…12, decision (`approve`, `deny`, `always`, `answer`), answers? (with `answer`), request?, command_id? | An explicit answer from a session key -- the Rail's Deny, Always allow (from its own button) or a picked choice, a Stream Deck key through serve's `/answer` -- where a press can only approve. The key's session is answered through `answer_ask` with `only_if_frontmost: true`: the same fences, command journal and decide lane (`always` and `answer` only while the lane holds the agent's own prompt), so a key can never do what the panel's own buttons could not. Never falls back to revealing: a key whose session has no live ask refuses `not_found`. `{index, identity, session, action: "answer_ask", …the answer_ask receipt}`. `invalid_args` for another decision or an index past the session keys; `not_found` for an empty or reserved key; `input_check` while input check is on. Runs on the socket thread. |
 | `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |
@@ -1011,16 +1016,12 @@ daemon's `REQUIRED_COMMANDS` registration test). None is reachable from the
 - `apply_effect` — the protocol-1 spelling of `set_assignment`/`clear_assignment`
   (`effect: null` removes). Kept for older clients that predate the assignment
   pair; the app only sends the newer names.
-- `set_device_display` — no app caller; the legacy PyObjC device menu calls the
-  controller method directly. It remains the only socket-level way to switch a
-  device's display mode (`agent`/`battery`/`studio`/`quota_runway`) on the
+- `set_device_display` — no app caller. It remains the only socket-level way
+  to switch a device's display mode (`agent`/`battery`/`studio`/`quota_runway`) on the
   headless `jrbar core` daemon, which has no menu.
 - `set_closed_lid_policy` — no app caller; a typed, validated spelling of the
   `closed_lid_awake_policy` write that `set_setting` already covers. Kept as a
   stable contract for headless clients.
-- `open_legacy_window` — the migration bridge to the Python windows the app is
-  retiring one at a time (see `docs/ROADMAP.md`); still the manual escape
-  hatch for opening a Python window against a headless daemon.
 - `quit` — the app stops the daemon with SIGTERM (the daemon's signal handler
   runs the same orderly `coreQuit:` path); the command remains so a socket
   client can ask for a graceful shutdown in-band.
@@ -1285,8 +1286,12 @@ fallback (`transcript_monitoring.gemini`) reads
 python -m jrbar core                    # headless daemon on ~/.local/state/jrbar/core.sock
 python -m jrbar core --socket /tmp/x    # elsewhere (tests; AF_UNIX paths are capped at 104 bytes)
 JRBAR_TRACEMALLOC=1 python -m jrbar core   # + a tracemalloc report in the log every 60 s (a number = seconds)
-jrbar status-bar start                  # the old Python UI; refuses to run beside the daemon
 ```
+
+The old Python menu bar (`jrbar status-bar start`) is gone. The daemon
+unloads and deletes its LaunchAgent (`com.jonathanreed.jrbar.app`, and the
+pre-rename `io.sidepulse.agentstatus`/`com.sidepulse.agentstatus`) at
+startup; `jrbar status-bar stop` does the same by hand.
 
 On this Mac the running pair is the packaged app, `~/Applications/JR-Bar.app`
 (installed from `dist/JR-Bar-<version>.pkg` by `make clean-install`, which

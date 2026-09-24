@@ -15,7 +15,6 @@ from jrbar.install import (
     install_openclaw_hooks,
     install_provider_hooks,
 )
-from jrbar.status_bar_launch import install_launch_agent
 
 MAX_CONFIG_BYTES = 1024 * 1024
 
@@ -449,39 +448,3 @@ def test_each_provider_post_verify_failure_rolls_back_only_its_owned_files(
     if provider == "openclaw":
         assert not (target.parent / "hooks" / "sidepulse-status").exists()
     assert log.read_text() == ""
-
-
-def test_launch_agent_trust_refresh_failure_restores_and_restarts_previous_job(
-    tmp_path: Path,
-) -> None:
-    """A rejected new job must restore both the old plist and its running state."""
-    plist = tmp_path / "LaunchAgents" / "com.jonathanreed.jrbar.app.plist"
-    legacy = tmp_path / "LaunchAgents" / "com.sidepulse.agentstatus.plist"
-    original = b"last-known-working-plist\n"
-    _private_file(plist, original.decode("utf-8"))
-    restart_payloads: list[bytes] = []
-
-    def restart(candidate: Path) -> None:
-        restart_payloads.append(candidate.read_bytes())
-        if len(restart_payloads) == 1:
-            raise OSError("trust refresh")
-
-    with (
-        patch("jrbar._status_bar_launch_legacy.default_state_dir", return_value=tmp_path / "state"),
-        patch("jrbar._status_bar_launch_legacy.launch_agent_running", return_value=True),
-        patch("jrbar._status_bar_launch_legacy.restart_launch_agent", side_effect=restart),
-        pytest.raises(OSError, match="trust refresh"),
-    ):
-        install_launch_agent(
-            start=True,
-            plist_path=plist,
-            python_executable=Path(os.sys.executable),
-            legacy_plist_path=legacy,
-        )
-
-    assert plist.read_bytes() == original
-    assert len(restart_payloads) == 2
-    assert restart_payloads[0] != original
-    assert restart_payloads[1] == original
-    assert not legacy.exists()
-    _assert_no_installer_scratch(tmp_path)

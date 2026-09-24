@@ -15,7 +15,6 @@ from jrbar.deck_input_dispatch import DeckInputDispatch
 from jrbar.deck_session_board import DeckSessionBoard, session_identity
 from jrbar.models import AgentMode, AgentStatus
 from jrbar.provider_facts import SourceKey, WorkIdentifier, WorkKey
-from jrbar.surface_placement import SurfacePlacement
 
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 
@@ -68,7 +67,6 @@ def test_slot_identity_is_account_scoped_and_never_silently_reassigned__and_2_mo
     restored = DeckSessionBoard(clock=lambda: NOW)
     restored.restore(raw)
     assert restored.resolve_slot(0)[1] == session_identity(a)
-
 
 
 def test_provider_scope_filters_the_board_restarts_banking_and_revokes_context__and_2_more() -> None:
@@ -139,7 +137,6 @@ def test_provider_scope_filters_the_board_restarts_banking_and_revokes_context__
     assert DeckInputRouter().normalize(message(0, .8)) is None
 
 
-
 def test_normalized_user_inputs_are_fifo_and_reset_revokes_pending_work__and_2_more() -> None:
     # --- scenario: normalized_user_inputs_are_fifo_and_reset_revokes_pending_work
     calls, executed = [], []
@@ -169,19 +166,6 @@ def test_normalized_user_inputs_are_fifo_and_reset_revokes_pending_work__and_2_m
     bt = {"serial_number": "CM-1", "bus_type": 2, "path": "bt"}
     assert preferred_endpoints([bt, usb]) == [usb]
     assert len(preferred_endpoints([usb, {**usb, "path": "ambiguous"}])) == 2
-
-
-
-def test_single_edge_transform_includes_inward_hit_regions():
-    for edge in ["left", "right", "top", "bottom"]:
-        placement = SurfacePlacement(edge, 420, 34)
-        (x, y), (width, height) = placement.rect(40, 2, 30, 28)
-        along, across = placement.inverse(x + width / 2, y + height / 2)
-        assert (along, across) == (55, 16)
-        (_, _), size = placement.frame(((0, 0), (1920, 1080)))
-        assert size == placement.size
-        with pytest.raises(ValueError):
-            placement.rect(419, 0, 10, 5)
 
 
 def test_composite_bluetooth_promotion_never_reclassifies_usb_keyboard(monkeypatch):

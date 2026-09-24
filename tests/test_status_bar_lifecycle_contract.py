@@ -5,7 +5,6 @@ from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -114,32 +113,6 @@ def _lifecycle(settings, events, *, save_error=None, save_errors=None):
     return lifecycle, registry, holder
 
 
-class _TimerAPI:
-    calls: ClassVar[list[tuple[float, str, bool]]] = []
-
-    @classmethod
-    def scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-        cls,
-        interval,
-        _target,
-        selector,
-        _user_info,
-        repeats,
-    ):
-        cls.calls.append((interval, selector, repeats))
-        return SimpleNamespace(invalidate=lambda: None)
-
-
-class _Thread:
-    def __init__(self, *, target, daemon):
-        self.target = target
-        self.daemon = daemon
-        self.started = False
-
-    def start(self) -> None:
-        self.started = True
-
-
 @pytest.fixture
 def controller(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(
@@ -173,64 +146,6 @@ def controller(monkeypatch: pytest.MonkeyPatch, tmp_path):
         ),
     )
     yield status_bar.StatusBarController.alloc().init(), status_bar
-
-
-def _prepare_launch_controller(controller, status_bar_module, monkeypatch):
-    _TimerAPI.calls.clear()
-    controller.settings = SimpleNamespace(
-        remote_peers=SimpleNamespace(enabled=False),
-        virtual_status_device_enabled=False,
-    )
-    controller.notification_client = SimpleNamespace(
-        set_delegate=MagicMock(name="set_delegate"),
-        close=MagicMock(name="close"),
-    )
-    controller.virtual_status_device = SimpleNamespace(
-        show=MagicMock(name="show"),
-        hide=MagicMock(name="hide"),
-        terminate=MagicMock(name="terminate"),
-    )
-    for name in (
-        "start_notification_authorization_refresh",
-        "load_operator_local_state",
-        "trim_oversized_state_logs",
-        "start_event_server",
-        "start_cloud_ingest_server",
-        "replay_debug_logs",
-        "refresh_installed_agent_inventory",
-        "_install_accessibility_display_observer",
-        "reconcile_lid_observation",
-        "refresh_",
-        "start_remote_peer_timer",
-        "start_remote_peer_refresh",
-        "show_setup_window_if_needed",
-    ):
-        monkeypatch.setattr(controller, name, MagicMock(name=name))
-
-    monkeypatch.setattr(status_bar_module, "NSTimer", _TimerAPI)
-    monkeypatch.setattr(
-        status_bar_module,
-        "NSStatusBar",
-        SimpleNamespace(
-            systemStatusBar=lambda: SimpleNamespace(
-                statusItemWithLength_=lambda _length: SimpleNamespace(
-                    button=lambda: SimpleNamespace(
-                        setTitle_=lambda _value: None,
-                        setImage_=lambda _value: None,
-                        setToolTip_=lambda _value: None,
-                    )
-                )
-            )
-        ),
-    )
-    monkeypatch.setattr(
-        status_bar_module,
-        "NSApp",
-        SimpleNamespace(setActivationPolicy_=lambda _policy: None),
-    )
-    monkeypatch.setattr(status_bar_module, "image_for_symbol", lambda *_args: None)
-    monkeypatch.setattr(status_bar_module.threading, "Thread", _Thread)
-    monkeypatch.setattr("jrbar.main_menu.install_main_menu", lambda: None)
 
 
 def _prepare_terminate_controller(controller, monkeypatch):
@@ -355,7 +270,6 @@ def test_global_action_launch_and_refresh_register_persisted_binding_once__and_2
     assert registry.active_bindings == {ACTION: COMMAND_K}
     assert holder["settings"].global_action_shortcuts == raw
     assert [event[0] for event in events] == ["prepare", "commit"]
-
 
 
 def test_global_action_edit_is_prepare_save_commit_and_updates_settings(
@@ -551,92 +465,6 @@ def test_commit_and_rollback_cleanup_failure_remains_bounded_and_retryable__and_
     assert invoked == []
 
 
-
-def test_application_did_finish_launching_only_arms_plain_timers_once(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    target, status_bar_module = controller
-    _prepare_launch_controller(target, status_bar_module, monkeypatch)
-
-    target.applicationDidFinishLaunching_(None)
-    target.applicationDidFinishLaunching_(None)
-
-    assert [selector for _, selector, _ in _TimerAPI.calls] == [
-        "refresh:",
-        "pollLid:",
-        "pollLiveness:",
-    ]
-    assert target.start_event_server.call_count == 1
-    assert target.start_cloud_ingest_server.call_count == 1
-    assert target.start_notification_authorization_refresh.call_count == 1
-    assert target.start_remote_peer_timer.call_count == 1
-    assert target.start_remote_peer_refresh.call_count == 0
-    target.load_operator_local_state.assert_called_once_with()
-    target.trim_oversized_state_logs.assert_called_once_with()
-    target.replay_debug_logs.assert_called_once_with()
-    target.refresh_installed_agent_inventory.assert_called_once_with()
-    target._install_accessibility_display_observer.assert_called_once_with()
-    target.reconcile_lid_observation.assert_called_once_with()
-    target.refresh_.assert_called_once_with(None)
-    target.show_setup_window_if_needed.assert_called_once_with()
-    target.notification_client.set_delegate.assert_called_once_with(target)
-
-
-def test_application_launches_global_actions_once_after_main_menu_installation(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    target, status_bar_module = controller
-    _prepare_launch_controller(target, status_bar_module, monkeypatch)
-    order = []
-    target.global_action_lifecycle = SimpleNamespace(
-        launch=MagicMock(side_effect=lambda: order.append("global-actions"))
-    )
-    monkeypatch.setattr(
-        "jrbar.main_menu.install_main_menu",
-        lambda: order.append("main-menu"),
-    )
-
-    target.applicationDidFinishLaunching_(None)
-    target.applicationDidFinishLaunching_(None)
-
-    assert order == ["main-menu", "global-actions"]
-    target.global_action_lifecycle.launch.assert_called_once_with()
-
-
-def test_application_starts_dnd_once_after_menu_lifecycle_and_status_item(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    target, status_bar_module = controller
-    _prepare_launch_controller(target, status_bar_module, monkeypatch)
-    order: list[str] = []
-    target.global_action_lifecycle = SimpleNamespace(
-        launch=MagicMock(side_effect=lambda: order.append("global-actions"))
-    )
-
-    def start_dnd():
-        assert target.status_item is not None
-        assert target._runtime_started is True
-        order.append("dnd")
-
-    target.dnd_controller = SimpleNamespace(
-        start=MagicMock(side_effect=start_dnd),
-        projection=target.current_dnd_projection(),
-    )
-    monkeypatch.setattr(
-        "jrbar.main_menu.install_main_menu",
-        lambda: order.append("main-menu"),
-    )
-
-    target.applicationDidFinishLaunching_(None)
-    target.applicationDidFinishLaunching_(None)
-
-    assert order == ["main-menu", "global-actions", "dnd"]
-    target.dnd_controller.start.assert_called_once_with()
-
-
 def test_application_will_terminate_only_closes_once_when_called_twice(
     controller,
     monkeypatch: pytest.MonkeyPatch,
@@ -733,7 +561,9 @@ def test_application_closes_dnd_before_other_lifecycle_and_native_surfaces(
     target.dnd_controller.close.assert_called_once_with()
 
 
-def test_clear_agents_state_restore_and_async_results_are_generation_fenced() -> None:
+def test_clear_agents_state_is_restored_at_launch() -> None:
+    # The commit and undo paths are the daemon's (core_runtime
+    # _apply_clear_agents_plan); the controller owns the state and its restore.
     source = STATUS_BAR_LEGACY.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(STATUS_BAR_LEGACY))
     controller = next(
@@ -752,36 +582,16 @@ def test_clear_agents_state_restore_and_async_results_are_generation_fenced() ->
         source,
         methods["load_operator_local_state"],
     )
-    submit_source = ast.get_source_segment(
-        source,
-        methods["_submit_clear_agents_plan"],
-    )
-    apply_source = ast.get_source_segment(
-        source,
-        methods["applyClearAgentsPersistenceResult_"],
-    )
 
     assert init_source is not None
     assert restore_source is not None
-    assert submit_source is not None
-    assert apply_source is not None
     for field in (
         "self.clear_agents_state = ClearAgentsState()",
         "self.clear_agents_path = default_clear_agents_path()",
         "self._clear_agents_preview",
-        "self._clear_agents_presenter",
         "self._clear_agents_commit_plan",
-        "self._clear_agents_operation_generation = 0",
         "self._clear_agents_operation_pending = False",
     ):
         assert field in init_source
     assert "load_clear_agents_state(self.clear_agents_path)" in restore_source
     assert "self.clear_agents_state = clear_restore.state" in restore_source
-    assert "self._clear_agents_operation_generation += 1" in submit_source
-    assert '"clear-agents-state"' in submit_source
-    assert "receipt_handler=_apply" in submit_source
-    assert "payload[0] == self._clear_agents_operation_generation" in apply_source
-    assert "if not receipt.succeeded:" in apply_source
-    assert apply_source.index("if not receipt.succeeded:") < apply_source.index(
-        "self.clear_agents_state = plan.next_state"
-    )

@@ -24,8 +24,10 @@ the `auto_dim` setting).
 
 ## Delete
 
-iOS app and its Mac half, Agent Deck, Waybar client, weather, timebox/timer,
-operator export, architecture-policing meta-tests, dead code.
+iOS app and its Mac half, Agent Deck, Waybar client, severe-weather alerts,
+the timebox timer, operator export, architecture-policing meta-tests, dead
+code. Kept, and not the same features: the notch card's opt-in Weather row
+and the shelf's agent timers (quota-reset countdowns and session nudges).
 
 ## Phases
 

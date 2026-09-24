@@ -127,15 +127,6 @@ _TRANSIENT_KIND_DEADLINE: Final = {
     "peek": "peek_until",
     "signal_test": "test_signal_until",
 }
-LEGACY_WINDOWS: Final = {
-    "settings": "show_settings_window",
-    "setup": "show_setup_window",
-    "agent_browser": "openAgentBrowser_",
-    "effect_studio": "openEffectStudio_",
-    "usage_center": "openProviderUsageCenter_",
-    "control_center": "openDeckControlCenter_",
-    "why": "openWhyPanel_",
-}
 _APP_OWNED_DIAGNOSTICS: Final = frozenset({"alcove_follow_state"})
 _HEALTHY_DIAGNOSTIC_CODES: Final = frozenset(
     {
@@ -3350,28 +3341,6 @@ def _cmd_hooks_doctor(self, args):
     return hook_doctor_report()
 
 
-@command("open_legacy_window")
-def _cmd_open_legacy_window(self, args):
-    name = str(args.get("name") or "")
-    selector = LEGACY_WINDOWS.get(name)
-    if selector is None:
-        raise CommandError("not_found", f"no legacy window named {name!r}")
-    method = getattr(self, selector, None)
-    if not callable(method):
-        raise CommandError("unsupported", f"{name} is unavailable in this build")
-    if selector.endswith("_"):
-        method(None)
-    else:
-        method()
-    from .window_presentation import activate_app
-
-    try:
-        activate_app()
-    except Exception:
-        pass
-    return {"window": name}
-
-
 @command("quit")
 def _cmd_quit(self, args):
     self.performSelector_withObject_afterDelay_("coreQuit:", None, 0.15)
@@ -5831,6 +5800,27 @@ def build_headless_controller_class() -> type:
             document = {"kind": kind}
             document.update({key: value for key, value in fields.items() if value is not None})
             server.publish_event(document)
+
+        def _core_request_app(self, kind: str, **fields: Any) -> bool:
+            """Ask the connected app for one of its own commands on behalf of
+            a deck key: ``open_window {window}`` or ``reveal_ask``. The app
+            runs it through its command router, as it runs a ``jrbar://``
+            link. False when no app is connected, so the key's receipt says
+            so rather than claiming a window opened."""
+            server = getattr(self, "_core", None)
+            try:
+                connected = server is not None and server.client_count() > 0
+            except Exception:
+                connected = False
+            if not connected:
+                return False
+            self._core_publish_event(kind, **fields)
+            return True
+
+        def _show_provider_usage_feedback(self, message: str) -> None:
+            # The Usage Center that asked shows the reply's message; the
+            # daemon has no window of its own to put it in.
+            legacy.log_status_bar(f"provider action: {message}")
 
         def _core_after_settings_change(self, touched: list[str]) -> None:
             joined = " ".join(touched)

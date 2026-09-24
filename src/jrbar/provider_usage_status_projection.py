@@ -69,31 +69,6 @@ def active_usage_providers(controller, legacy) -> frozenset[str]:
     return frozenset(status.provider for status in snapshot.statuses if not status.is_subagent and status.mode in busy)
 
 
-def active_usage_instances(controller, legacy) -> frozenset[tuple[str, str]]:
-    snapshot = getattr(controller, "last_snapshot", None)
-    if snapshot is None:
-        return frozenset()
-    busy = {
-        legacy.AgentMode.WORKING,
-        legacy.AgentMode.TOOL_RUNNING,
-        legacy.AgentMode.LONG_TASK_PROGRESS,
-    }
-    available = {item.identity for item in controller.provider_usage_state.snapshots}
-    active = set()
-    for status in snapshot.statuses:
-        if status.is_subagent or status.mode not in busy:
-            continue
-        work_key = getattr(status, "work_key", None)
-        source_key = getattr(work_key, "source_key", None)
-        identity = (
-            status.provider,
-            str(getattr(source_key, "source_instance_id", "default")),
-        )
-        if identity in available:
-            active.add(identity)
-    return frozenset(active)
-
-
 def append_quota_to_status_title(controller, *, wall_clock=time.time) -> None:
     from .provider_usage_menu import menu_bar_quota_glance
 
@@ -172,7 +147,6 @@ def provider_usage_why_panel_body(controller, body: str, *, wall_clock=time.time
 
 
 __all__ = [
-    "active_usage_instances",
     "active_usage_providers",
     "append_quota_to_status_title",
     "capacity_settings_text",

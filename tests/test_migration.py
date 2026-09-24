@@ -256,26 +256,21 @@ def test_startup_migration_never_raises(monkeypatch: pytest.MonkeyPatch) -> None
     assert migration.run_startup_migration() is None
 
 
-def test_foreground_main_migrates_before_composing_the_application() -> None:
-    """The one retained foreground main runs the migration first; the
-    packaged entry stays a pure delegate to it."""
+def test_the_daemon_migrates_before_composing_the_application() -> None:
+    """The daemon's start runs the migration (and the retired LaunchAgent
+    cleanup inside it) before composition reads any settings."""
     import ast
 
     root = Path(__file__).resolve().parents[1] / "src" / "jrbar"
+    tree = ast.parse((root / "core_runtime.py").read_text(encoding="utf-8"))
+    run_core = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run_core")
+    names = []
+    for node in ast.walk(run_core):
+        if isinstance(node, ast.Call):
+            func = node.func
+            names.append(func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "?"))
 
-    def calls_in_main(path: Path) -> list[str]:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
-        names = []
-        for node in ast.walk(main):
-            if isinstance(node, ast.Call):
-                func = node.func
-                names.append(func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "?"))
-        return names
-
-    legacy_calls = calls_in_main(root / "status_bar_legacy.py")
-    assert legacy_calls.index("run_startup_migration") < legacy_calls.index("compose_status_bar_application")
-    assert calls_in_main(root / "provider_usage_status_bar.py") == ["main"]
+    assert names.index("run_startup_migration") < names.index("compose_status_bar_application")
 
 
 def test_cli_setup_runs_the_migration_first(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -298,7 +293,6 @@ def test_cli_setup_runs_the_migration_first(monkeypatch: pytest.MonkeyPatch, cap
     monkeypatch.setattr(cli, "print_install_results", lambda results, dry_run: None)
     args = argparse.Namespace(
         dry_run=True,
-        no_status_bar=True,
         no_sd_eject_guard=True,
         sd_eject_guard=False,
         sd_eject_guard_scope="auto",

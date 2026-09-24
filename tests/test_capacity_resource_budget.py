@@ -87,7 +87,6 @@ def test_disabled_remote_capacity_never_owns_a_timer_or_healthy_state(
 
     with (
         patch("jrbar.status_bar.threading.Thread") as thread_type,
-        patch.object(target, "update_usage_menu_fields"),
     ):
         assert target.request_usage_refresh((CLAUDE_QUOTA,), reason="menu-open") == ()
 

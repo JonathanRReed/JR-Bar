@@ -53,12 +53,15 @@ Upstream = "https://github.com/inteliwear/sidepulse"
 status-bar = []
 test = [
     "pytest==9.1.1",
+    # `make test` runs the suite across every core, one file per worker.
+    "pytest-xdist==3.8.0",
     "ruff==0.16.3",
     "tomli==2.4.1; python_version < '3.11'",
 ]
 dev = [
     "build==1.5.0",
     "pytest==9.1.1",
+    "pytest-xdist==3.8.0",
     "ruff==0.16.3",
     "setuptools==83.0.0",
     "tomli==2.4.1; python_version < '3.11'",
@@ -69,15 +72,10 @@ dev = [
 [project.scripts]
 jrbar = "jrbar.cli_entry:jrbar_main"
 jrbar-integrations = "jrbar.integration_cli:main"
-# Transitional alias for one release: shells and docs that still call
-# `sidepulse` keep working while installs are re-pointed at `jrbar`.
-sidepulse = "jrbar.cli_entry:jrbar_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-# `sidepulse*` is the import-compat shim (src/sidepulse) that aliases
-# `sidepulse.*` -> `jrbar.*` for hook commands registered before the rename.
-include = ["jrbar*", "sidepulse*"]
+include = ["jrbar*"]
 
 [tool.setuptools.package-data]
 "jrbar.resources" = [
@@ -121,7 +119,6 @@ ignore = [
 "src/jrbar/settings.py" = ["I001"]
 "src/jrbar/_settings_legacy.py" = ["I001"]
 "src/jrbar/settings_window.py" = ["F821"]
-"src/jrbar/usage_card.py" = ["RUF022"]
 "src/jrbar/virtual_device.py" = ["I001"]
 "tests/test_capacity_authority.py" = ["I001"]
 "tests/test_claude_limits_reachable.py" = ["I001"]

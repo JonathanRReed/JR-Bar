@@ -14,8 +14,10 @@ def _tree(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
-def test_direct_module_execution_delegates_to_runtime_main__and_2_more() -> None:
-    # --- scenario: direct_module_execution_delegates_to_runtime_main
+def test_the_facade_starts_nothing_when_run__and_2_more() -> None:
+    # --- scenario: the_facade_starts_nothing_when_run
+    # `python -m jrbar.status_bar` ran the retired PyObjC menu bar; the
+    # Swift app is the UI, so the facade has no entry point of its own.
     guards = [
         node
         for node in _tree(FACADE).body
@@ -24,20 +26,7 @@ def test_direct_module_execution_delegates_to_runtime_main__and_2_more() -> None
         and isinstance(node.test.left, ast.Name)
         and node.test.left.id == "__name__"
     ]
-    assert guards, "status-bar facade lost its python -m entrypoint guard"
-    calls = [
-        node
-        for guard in guards
-        for node in ast.walk(guard)
-        if isinstance(node, ast.Call)
-    ]
-    assert any(
-        isinstance(call.func, ast.Attribute)
-        and isinstance(call.func.value, ast.Name)
-        and call.func.value.id == "_legacy"
-        and call.func.attr == "main"
-        for call in calls
-    ), "status-bar facade does not delegate direct execution to runtime main"
+    assert guards == [], "the retired menu bar must not start from python -m"
 
     # --- scenario: only_production_module_defines_a_controller_subclass
     production_tree = _tree(PRODUCTION_FACADE)

@@ -2184,11 +2184,21 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     public var count: Int?
     public static let milestoneKind = "milestone"
 
+    /// `open_window`: the app window a deck key asked for, by its link
+    /// name (`overview`, `usage`, `control-center`).
+    public var window: String?
+    /// `open_window {window}` and `reveal_ask`: a Creator Micro key asked
+    /// the app for one of its windows or for the waiting ask. The app runs
+    /// them the way it runs a `jrbar://` link; revealing an ask never
+    /// answers it.
+    public static let openWindowKind = "open_window"
+    public static let revealAskKind = "reveal_ask"
+
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
                 input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil,
                 lane: String? = nil, duration: Double? = nil, cursor: String? = nil, request: String? = nil,
-                count: Int? = nil) {
+                count: Int? = nil, window: String? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -2208,11 +2218,13 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.cursor = cursor
         self.request = request
         self.count = count
+        self.window = window
     }
 
     enum CodingKeys: String, CodingKey {
         case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor, request
         case count
+        case window
     }
 
     public init(from decoder: Decoder) throws {
@@ -2242,6 +2254,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         cursor = try? c.decodeIfPresent(String.self, forKey: .cursor)
         request = try? c.decodeIfPresent(String.self, forKey: .request)
         count = try? c.decodeIfPresent(Int.self, forKey: .count)
+        window = try? c.decodeIfPresent(String.self, forKey: .window)
     }
 
     /// `deck_receipt` as a receipt value.

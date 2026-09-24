@@ -651,9 +651,6 @@ def _alcove_device(monkeypatch, *, granted, alcove_running=True, window=(99, 444
     )
     monkeypatch.setattr(virtual_device, "is_alcove_running", lambda: alcove_running)
     monkeypatch.setattr(
-        virtual_device, "measured_notch_silhouette", lambda *_a, **_k: None
-    )
-    monkeypatch.setattr(
         virtual_device, "_alcove_window_values", lambda *_a: window
     )
     device._alcove_window_probe = SimpleNamespace(
@@ -1035,10 +1032,10 @@ def test_the_alcove_finding_is_in_the_manifest_and_encodes__and_1_more(monkeypat
 
 
 
-def test_doctor_manifest_is_version_five_and_allows_seven_codes() -> None:
+def test_doctor_manifest_is_version_six_and_allows_seven_codes() -> None:
     from jrbar import doctor
 
-    assert doctor.DOCTOR_VERSION == 5
+    assert doctor.DOCTOR_VERSION == 6
     field = next(
         field
         for field in doctor.DIAGNOSTIC_MANIFEST.fields

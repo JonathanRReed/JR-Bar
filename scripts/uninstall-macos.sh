@@ -2,7 +2,11 @@
 set -euo pipefail
 
 APP_PATH="${JRBAR_APP_PATH:-${SIDEPULSE_APP_PATH:-/Applications/JR-Bar.app}}"
+# The Swift app takes no arguments; the command line is the bundled daemon.
 APP_BINARY="$APP_PATH/Contents/MacOS/JR-Bar"
+CORE_BINARY="$APP_PATH/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core"
+# The retired Python menu bar's LaunchAgent, and its pre-rename labels.
+RETIRED_AGENT_LABELS="com.jonathanreed.jrbar.app io.sidepulse.agentstatus com.sidepulse.agentstatus"
 CLI_LINK="${JRBAR_CLI_LINK:-${SIDEPULSE_CLI_LINK:-/usr/local/bin/jrbar}}"
 # Link and receipts written by the pre-rename package; removed when ours.
 LEGACY_CLI_LINK="/usr/local/bin/sidepulse"
@@ -59,8 +63,8 @@ if [ -z "$TARGET_HOME" ] || [ ! -d "$TARGET_HOME" ]; then
     exit 2
 fi
 
-if [ ! -x "$APP_BINARY" ]; then
-    echo "JR-Bar application executable is missing: $APP_BINARY" >&2
+if [ ! -x "$CORE_BINARY" ]; then
+    echo "JR-Bar's bundled daemon is missing: $CORE_BINARY" >&2
     exit 2
 fi
 
@@ -75,10 +79,17 @@ run_as_user() {
 }
 
 # Remove only JR-Bar-owned integrations. Provider installers preserve every
-# unrelated hook entry, and the status-bar command removes only its own plist.
-run_as_user "$APP_BINARY" status-bar stop
-run_as_user "$APP_BINARY" agent-monitor uninstall all
-run_as_user "$APP_BINARY" sdejectguard uninstall --scope user
+# unrelated hook entry. An install from before the Swift app may still hold
+# the retired menu bar's LaunchAgent: boot it out and unlink its plist.
+for label in $RETIRED_AGENT_LABELS; do
+    plist="$TARGET_HOME/Library/LaunchAgents/$label.plist"
+    if [ -f "$plist" ] || [ -L "$plist" ]; then
+        /bin/launchctl bootout "gui/$TARGET_UID" "$plist" >/dev/null 2>&1 || true
+        /bin/rm -f "$plist"
+    fi
+done
+run_as_user "$CORE_BINARY" agent-monitor uninstall all
+run_as_user "$CORE_BINARY" sdejectguard uninstall --scope user
 
 # System-owned helpers are removed only through their reviewed commands.
 /usr/bin/env \
@@ -86,11 +97,11 @@ run_as_user "$APP_BINARY" sdejectguard uninstall --scope user
     USER="$TARGET_USER" \
     LOGNAME="$TARGET_USER" \
     HOME="$TARGET_HOME" \
-    "$APP_BINARY" status-bar uninstall-sleep-helper
-"$APP_BINARY" sdejectguard uninstall --scope system
+    "$CORE_BINARY" status-bar uninstall-sleep-helper
+"$CORE_BINARY" sdejectguard uninstall --scope system
 
-# Remove a CLI link only if it is the exact link created by the package
-# (current name, or the pre-rename name pointing at our executable).
+# Remove a CLI link only if it is the exact link an older package created
+# (current name, or the pre-rename name, pointing at the app executable).
 for link in "$CLI_LINK" "$LEGACY_CLI_LINK"; do
     if [ -L "$link" ] && [ "$(/usr/bin/readlink "$link")" = "$APP_BINARY" ]; then
         /bin/rm -f "$link"

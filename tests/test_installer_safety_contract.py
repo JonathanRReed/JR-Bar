@@ -36,13 +36,21 @@ def test_package_installs_payload_without_mutating_external_integrations__and_2_
     text = (ROOT / "scripts" / "uninstall-macos.sh").read_text()
 
     for command in (
-        "status-bar stop",
         "agent-monitor uninstall all",
         "sdejectguard uninstall --scope user",
         "status-bar uninstall-sleep-helper",
         "sdejectguard uninstall --scope system",
     ):
-        assert command in text
+        assert f'"$CORE_BINARY" {command}' in text
+    # Contents/MacOS/JR-Bar is the Swift app and takes no arguments; every
+    # command runs on the bundled daemon.
+    assert 'CORE_BINARY="$APP_PATH/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core"' in text
+    assert '"$APP_BINARY" status-bar' not in text
+    assert '"$APP_BINARY" agent-monitor' not in text
+    # The retired menu bar's LaunchAgent is booted out and unlinked directly.
+    assert "status-bar stop" not in text
+    assert "com.jonathanreed.jrbar.app io.sidepulse.agentstatus com.sidepulse.agentstatus" in text
+    assert '/bin/launchctl bootout "gui/$TARGET_UID" "$plist"' in text
     # Both the current and the pre-rename CLI link are removed only when they
     # point at our executable.
     assert 'for link in "$CLI_LINK" "$LEGACY_CLI_LINK"' in text

@@ -9,16 +9,9 @@ from .freshness import bounded_age_seconds
 from .models import AgentMode, AgentStatus
 from .operator_state import (
     COMPLETED_RECENT_SECONDS,
-    CanonicalOperatorEvent,
-    CanonicalOperatorState,
-    RequestPhase,
     SemanticEventKey,
-    TransitionKind,
-    active_work_went_silent,
-    completed_work_no_longer_recent,
-    projection_now_epoch,
 )
-from .provider_facts import NextActor, RequestKey, WorkKey, WorkLifecycle
+from .provider_facts import RequestKey, WorkKey
 from .settings import AgentMonitorSettings
 
 
@@ -247,178 +240,6 @@ def project_attention(
     )
 
 
-def project_attention_from_operator_state(
-    state: CanonicalOperatorState,
-    events: tuple[CanonicalOperatorEvent, ...],
-    settings: AgentMonitorSettings,
-) -> AttentionProjection:
-    """Project canonical truth without reclassifying status text or modes."""
-    if type(state) is not CanonicalOperatorState:
-        raise ValueError("invalid canonical operator state")
-    if type(events) is not tuple or not all(
-        type(event) is CanonicalOperatorEvent for event in events
-    ):
-        raise ValueError("invalid canonical operator events")
-    request_by_key = {request.key: request for request in state.requests}
-    now_epoch = projection_now_epoch(state)
-    # A main whose own thread paused while its sub-agents carry the work
-    # is still WORKING: Claude fires Stop the moment the main turn ends,
-    # even mid-delegation, and a live ledger showed a session "completed"
-    # for 30+ minutes while its workers streamed tool events under it
-    # (2026-08-27, owner report: three mains running, count said one).
-    # Freshness gates the promotion -- children finishing or going
-    # silent ends it, the mirror of the silence demotion below.
-    delegating_parents = {
-        work.parent_key
-        for work in state.works
-        if work.parent_key is not None
-        and work.lifecycle is WorkLifecycle.ACTIVE
-        and not active_work_went_silent(work, now_epoch)
-    }
-    rows: list[ProjectedAgentRow] = []
-    for work in state.works:
-        requests = tuple(
-            request_by_key[key]
-            for key in work.request_keys
-            if key in request_by_key
-        )
-        actionable_requests = tuple(
-            request
-            for request in requests
-            if request.phase
-            in {
-                RequestPhase.LIVE_UNACKNOWLEDGED,
-                RequestPhase.LIVE_ACKNOWLEDGED,
-            }
-            and request.next_actor is NextActor.USER
-        )
-        actionable = bool(actionable_requests)
-        if work.parent_key is not None and not settings.subagent_asks_alert:
-            actionable = False
-        request_key = (
-            min(actionable_requests, key=lambda request: request.key).key
-            if actionable
-            else None
-        )
-        lifecycle = {
-            WorkLifecycle.IDLE: LifecycleMode.IDLE,
-            WorkLifecycle.ACTIVE: LifecycleMode.ACTIVE,
-            WorkLifecycle.WAITING: (
-                LifecycleMode.WAITING if actionable else LifecycleMode.UNKNOWN
-            ),
-            WorkLifecycle.COMPLETED: LifecycleMode.COMPLETED_RECENTLY,
-            WorkLifecycle.FAILED: LifecycleMode.FAILED_VISIBLE,
-            WorkLifecycle.UNKNOWN: LifecycleMode.UNKNOWN,
-        }[work.lifecycle]
-        # ACTIVE means HEARD FROM: a dead session's work stays
-        # lifecycle-ACTIVE forever, and this projection drives the
-        # LIGHTS -- the strip pulsed "working" long after the owner
-        # watched the session finish. Silent-past-the-line demotes to
-        # the idle whisper; the next real event resurrects it.
-        if lifecycle is LifecycleMode.ACTIVE and active_work_went_silent(
-            work, now_epoch
-        ):
-            lifecycle = LifecycleMode.IDLE
-        # COMPLETED is a moment: after the recent window the row settles
-        # back to the idle whisper instead of holding the done green (and
-        # the COMPLETED aggregate) until the presence horizon drops it.
-        if (
-            lifecycle is LifecycleMode.COMPLETED_RECENTLY
-            and completed_work_no_longer_recent(work, now_epoch)
-        ):
-            lifecycle = LifecycleMode.IDLE
-        # The delegation promotion. Never touches WAITING or FAILED --
-        # an ask must keep asking and a failure must stay named.
-        if (
-            work.key in delegating_parents
-            and lifecycle
-            in {
-                LifecycleMode.IDLE,
-                LifecycleMode.COMPLETED_RECENTLY,
-                LifecycleMode.UNKNOWN,
-            }
-        ):
-            lifecycle = LifecycleMode.ACTIVE
-        source_status = AgentStatus(
-            provider=work.key.source_key.provider_id,
-            agent_id=(
-                f"{work.key.source_key.provider_id}:"
-                f"{'agent' if work.parent_key is not None else 'session'}:"
-                f"{work.key.work_id.value}"
-            ),
-            display_name=work.safe_label,
-            mode=AgentMode.UNKNOWN,
-            updated_at=datetime.fromtimestamp(
-                work.watermark.occurred_at_epoch,
-                timezone.utc,
-            ),
-            event_name="Canonical",
-            session_id=(
-                work.parent_key.work_id.value
-                if work.parent_key is not None
-                else work.key.work_id.value
-            ),
-            work_key=work.key,
-            request_key=request_key,
-        )
-        rows.append(
-            ProjectedAgentRow(
-                agent_id=source_status.agent_id,
-                provider=source_status.provider,
-                display_name=work.safe_label,
-                lifecycle_mode=lifecycle,
-                actionable=actionable,
-                is_subagent=work.parent_key is not None,
-                updated_at=source_status.updated_at,
-                source_status=source_status,
-                work_key=work.key,
-                request_key=request_key,
-            )
-        )
-    ordered_rows = tuple(
-        sorted(rows, key=lambda row: (row.updated_at, row.work_key))
-    )
-    actionable_rows = tuple(row for row in ordered_rows if row.actionable)
-    failure_signals = tuple(
-        TransientSignal(
-            event_key=event.key,
-            kind=SignalKind.FAILURE,
-            repetitions=2,
-            source_agent_id=None,
-        )
-        for event in events
-        if event.kind is TransitionKind.FAILED
-    )
-    primary_rows = tuple(row for row in ordered_rows if not row.is_subagent)
-    worker_rows = tuple(row for row in ordered_rows if row.is_subagent)
-    representative = min(
-        _light_driver_candidates(primary_rows, worker_rows),
-        key=lambda row: (
-            _LIFECYCLE_PRIORITY[row.lifecycle_mode],
-            -row.updated_at.timestamp(),
-            row.work_key,
-        ),
-        default=None,
-    )
-    return AttentionProjection(
-        lifecycle_mode=(
-            LifecycleMode.IDLE
-            if representative is None
-            else representative.lifecycle_mode
-        ),
-        actionable_attention=actionable_rows,
-        visible_rows=primary_rows,
-        worker_rows=worker_rows,
-        transient_signals=failure_signals,
-        dominant_provider=(
-            actionable_rows[0].provider
-            if actionable_rows
-            else representative.provider if representative is not None else None
-        ),
-        click_target_agent_id=None,
-    )
-
-
 def regate_actionable_attention(
     projection: AttentionProjection,
     live_request_keys: frozenset,
@@ -607,10 +428,9 @@ def _lifecycle_mode(
             return LifecycleMode.IDLE
         return LifecycleMode.FAILED_VISIBLE
     if status.mode == AgentMode.COMPLETED:
-        # Done is a MOMENT (this is the LIVE path -- the canonical
-        # variant below has the same rule): past the recent window the
-        # row settles to the idle whisper instead of holding the done
-        # green until collector staleness or the presence horizon.
+        # Done is a MOMENT: past the recent window the row settles to
+        # the idle whisper instead of holding the done green until
+        # collector staleness or the presence horizon.
         if (
             now is not None
             and (now - status.updated_at).total_seconds()

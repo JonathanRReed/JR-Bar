@@ -5,7 +5,6 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from jrbar.global_actions import (
-    GlobalActionBindingState,
     GlobalActionID,
     ShortcutChord,
     ShortcutModifier,
@@ -13,7 +12,6 @@ from jrbar.global_actions import (
     ShortcutValidationError,
     format_shortcut,
     parse_global_action_shortcuts,
-    project_global_action_status,
     serialize_global_action_shortcuts,
     validate_global_action_bindings,
     validate_shortcut,
@@ -51,7 +49,6 @@ def test_action_and_modifier_identifiers_are_exact__and_2_more() -> None:
     for key_label in ["", "x" * 17, "line\nbreak", 42]:
         with pytest.raises(ValueError, match="key label"):
             chord(key_label=key_label)  # type: ignore[arg-type]
-
 
 
 def test_chord_is_immutable_and_requires_exact_modifier_values__and_2_more() -> None:
@@ -100,7 +97,6 @@ def test_chord_is_immutable_and_requires_exact_modifier_values__and_2_more() -> 
             validate_shortcut(chord(key_code, key_label, *modifiers))
 
         assert raised.value.code is ShortcutValidationCode.RESERVED_MENU_EQUIVALENT
-
 
 
 def test_binding_validation_detects_duplicate_normalized_chords__and_2_more() -> None:
@@ -162,7 +158,6 @@ def test_binding_validation_detects_duplicate_normalized_chords__and_2_more() ->
             "modifiers": ["control", "shift"],
         }
     }
-
 
 
 def test_unknown_or_malformed_persisted_entry_is_refused_individually__and_2_more() -> None:
@@ -249,38 +244,3 @@ def test_unknown_or_malformed_persisted_entry_is_refused_individually__and_2_mor
     assert tuple(refusal.action_key for refusal in parsed.refusals) == (
         "unknown_action",
     )
-
-    # --- scenario: binding_state_projection_is_bounded_and_truthful
-    for state, value_text in [
-        (GlobalActionBindingState.UNASSIGNED, "Not set"),
-        (GlobalActionBindingState.ACTIVE, "⌃K"),
-        (GlobalActionBindingState.LOCAL_CONFLICT, "Already used by JR-Bar"),
-        (GlobalActionBindingState.UNSUPPORTED, "Shortcut not supported"),
-        (
-            GlobalActionBindingState.REGISTRATION_REFUSED,
-            "macOS refused shortcut",
-        ),
-        (GlobalActionBindingState.CLOSED, "Unavailable"),
-    ]:
-        projection = project_global_action_status(
-            GlobalActionID.REVEAL_CURRENT_ASK,
-            state,
-            chord=chord(40, "K", ShortcutModifier.CONTROL)
-            if state is GlobalActionBindingState.ACTIVE
-            else None,
-        )
-
-        assert projection.state is state
-        assert projection.value_text == value_text
-        assert "current ask or Agent Browser" in projection.help_text
-        assert len(projection.value_text) <= 64
-        assert len(projection.help_text) <= 256
-
-
-
-def test_active_projection_refuses_to_claim_success_without_a_chord() -> None:
-    with pytest.raises(ValueError, match="active status requires"):
-        project_global_action_status(
-            GlobalActionID.REVEAL_CURRENT_ASK,
-            GlobalActionBindingState.ACTIVE,
-        )

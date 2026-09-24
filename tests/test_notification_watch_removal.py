@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
@@ -77,97 +76,28 @@ def test_private_usernoted_watcher_is_not_packaged() -> None:
     assert importlib.util.find_spec("jrbar.notification_watch") is None
 
 
-def test_application_launch_schedules_no_foreign_notification_poll(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    from jrbar import status_bar
+def test_the_daemon_launch_schedules_no_foreign_notification_poll() -> None:
+    """The only launch is the daemon's (core_runtime _core_launch). Every
+    repeating timer it arms is named here; a notification poll is not one."""
+    import re
 
-    selectors: list[str] = []
+    from jrbar import core_runtime
 
-    class TimerAPI:
-        @staticmethod
-        def scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            _interval,
-            _target,
-            selector,
-            _user_info,
-            _repeats,
-        ):
-            selectors.append(selector)
-            return SimpleNamespace(invalidate=lambda: None)
+    source = Path(core_runtime.__file__).read_text(encoding="utf-8")
+    launch = source.split("def _core_launch(self)", 1)[1].split("\n        def ", 1)[0]
+    selectors = re.findall(r'_schedule_timer\([^,]+, self, "([A-Za-z]+:)", True\)', launch)
 
-    class ThreadAPI:
-        def __init__(self, *, target, daemon):
-            self.target = target
-            self.daemon = daemon
-
-        def start(self) -> None:
-            return None
-
-    button = SimpleNamespace(
-        setTitle_=lambda _value: None,
-        setImage_=lambda _value: None,
-        setToolTip_=lambda _value: None,
-    )
-    status_item = SimpleNamespace(button=lambda: button)
-    system_bar = SimpleNamespace(
-        statusItemWithLength_=lambda _length: status_item,
-    )
-    class NotificationClient:
-        def __init__(self) -> None:
-            self.delegates: list[object] = []
-            self.authorization_requests = 0
-
-        def set_delegate(self, delegate) -> bool:
-            self.delegates.append(delegate)
-            return True
-
-        def request_authorization(self, _completion=None) -> bool:
-            self.authorization_requests += 1
-            return True
-
-    notification_client = NotificationClient()
-
-    monkeypatch.setattr(
-        status_bar,
-        "default_settings_path",
-        lambda: tmp_path / "settings.json",
-    )
-    monkeypatch.setattr(status_bar, "NSTimer", TimerAPI)
-    monkeypatch.setattr(
-        status_bar,
-        "NSStatusBar",
-        SimpleNamespace(systemStatusBar=lambda: system_bar),
-    )
-    monkeypatch.setattr(
-        status_bar,
-        "NSApp",
-        SimpleNamespace(setActivationPolicy_=lambda _policy: None),
-    )
-    monkeypatch.setattr(status_bar, "image_for_symbol", lambda _symbol, _label: None)
-    monkeypatch.setattr(status_bar.threading, "Thread", ThreadAPI)
-    controller = status_bar.StatusBarController.alloc().init()
-    controller.notification_client = notification_client
-    controller.start_event_server = lambda: None
-    controller.replay_debug_logs = lambda: None
-    controller.refresh_ = lambda _sender: None
-    controller.show_setup_window_if_needed = lambda: None
-    controller.virtual_status_device = SimpleNamespace(
-        show=lambda: None,
-        hide=lambda: None,
-    )
-
-    controller.applicationDidFinishLaunching_(None)
-
-    assert "pollNotifications:" not in selectors
-    # Every repeating timer launch arms, named. The peer timer joined this
-    # list deliberately: it is the ONLY thing that fetches other Macs, and
-    # it is here rather than on the refresh tick because that fetch is
-    # bounded subprocess I/O measured in seconds, not milliseconds.
-    assert selectors == ["refresh:", "pollLid:", "pollLiveness:", "refreshRemotePeers:"]
-    assert notification_client.delegates == [controller]
-    assert notification_client.authorization_requests == 0
+    assert "pollNotifications" not in source
+    assert selectors == [
+        "refresh:",
+        "pollLid:",
+        "pollLiveness:",
+        "coreHousekeepingTick:",
+        "coreSupervisionTick:",
+    ]
+    # The peer timer is the only thing that fetches other Macs; it arms
+    # itself rather than riding the refresh tick.
+    assert "self.start_remote_peer_timer()" in launch
 
 
 def test_sidepulse_owned_completion_notifications_remain_configurable(

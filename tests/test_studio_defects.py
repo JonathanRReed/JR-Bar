@@ -654,9 +654,9 @@ class StudioChromeTests(unittest.TestCase):
         self.assertIn("Color & Animation Studio", titles)
 
     def test_a_tip_anchor_reveals_its_own_section_before_being_flashed(self) -> None:
-        """openTipPane_ scrolls the anchor into view and flashes it. With the
-        Studio left on Animations, the brand-colors anchor was scrolled to and
-        flashed while hidden -- the tip silently landed on nothing."""
+        """Scrolling a tip anchor into view reveals its section first. With the
+        Studio left on Animations, the brand-colors anchor was scrolled to
+        while hidden -- the tip silently landed on nothing."""
         self.actions.select_section("animations")
         anchor = self.controller.tip_anchor_views["brand_colors"]
         self.assertTrue(self.actions.section_views["colors"].isHidden())

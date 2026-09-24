@@ -16,8 +16,6 @@ ROOT: Final = Path(__file__).resolve().parents[1]
 CHECK_PATHS: Final = ("src", "tests", "packaging", "scripts")
 IMPORT_MODULES: Final = (
     "jrbar",
-    # The one-release import-compat shim must keep resolving.
-    "sidepulse",
     "jrbar.adaptive_refresh",
     "jrbar.hook_client",
     "jrbar.settings",

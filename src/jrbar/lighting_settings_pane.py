@@ -7,17 +7,6 @@ def build_effects_page(target):
     from . import native_ui as ui
 
     stack = ui.make_fill_stack(spacing=ui.SPACE_L)
-    outer, inner = ui.make_card("Effect Studio")
-    inner.addArrangedSubview_(
-        ui.make_wrapping_label(
-            "Build and preview live lighting effects in the same Lighting workspace as colors and lid programs.",
-            secondary=True,
-            size=12.0,
-            max_width=560.0,
-        )
-    )
-    inner.addArrangedSubview_(ui.make_button("Open Effect Studio…", target, "openEffectStudio:"))
-    stack.addArrangedSubview_(outer)
 
     behavior_outer, behavior_inner = ui.make_card("Brightness Behavior")
     sleep_row, sleep_switch = ui.make_switch_row(

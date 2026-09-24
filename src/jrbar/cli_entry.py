@@ -24,14 +24,6 @@ def jrbar_main(argv: list[str] | None = None) -> int:
         from .cli_control import main as control_main
 
         return control_main(args)
-    # The source-checkout LaunchAgent and `jrbar status-bar --foreground`
-    # both enter through this router. Load the native provider wrapper before
-    # starting AppKit so the menu, Usage Center, reset cues, and background
-    # accounting service are present in development as well as packaged runs.
-    if args[:1] == ["status-bar"] and "--foreground" in args:
-        from .provider_usage_status_bar import main as status_bar_main
-
-        return status_bar_main()
     return _legacy_jrbar_main(args)
 
 

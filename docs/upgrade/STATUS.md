@@ -194,9 +194,12 @@ slot chips flanking the band.
   behaviour — not code gaps. Onboarding presets and deep-link
   preservation ride the existing Settings document.
 
-## W26 slice — OpenCode capability bridge — LANDED
+## W26 slice — OpenCode capability bridge — REMOVED
 
-- `src/jrbar/opencode_bridge.py` (new): probes a running `opencode
+- Removed 2026-09-24: nothing ever called it. Restore it with
+  `git show 50fdc2c0:src/jrbar/opencode_bridge.py` when provider
+  management needs it.
+- `src/jrbar/opencode_bridge.py` (was new): probes a running `opencode
   serve` instance's `/doc` OpenAPI surface and reports a closed
   `supported`/`missing` set for the six operations JR-Bar could drive
   (interrupt, permission reply, question reply, session list, session
@@ -212,9 +215,12 @@ slot chips flanking the band.
   proof (T3 reads stay read-only today), and the no-duplicate-owner
   check when native and T3 observations correlate.
 
-## W25 slice — coordinator policy — LANDED
+## W25 slice — coordinator policy — REMOVED
 
-- `src/jrbar/coordinator_policy.py` (new): the assistant layer's
+- Removed 2026-09-24: nothing ever called it. Restore it with
+  `git show 50fdc2c0:src/jrbar/coordinator_policy.py` when the composer
+  lands.
+- `src/jrbar/coordinator_policy.py` (was new): the assistant layer's
   contract — `bounded_evidence` redacts a session to the glance fields
   a question may cite (provider/mode/stale/label/cwd/attention/outcome;
   transcript bodies and token fields never leave the roster projection);
@@ -228,9 +234,12 @@ slot chips flanking the band.
   the W19/W20 execution contract), the Mini/Overview composer UI,
   push-to-talk capture/cancel indicators, and quota-failure surfacing.
 
-## W24 slice — utility-generation policy — LANDED
+## W24 slice — utility-generation policy — REMOVED
 
-- `src/jrbar/utility_generation.py` (new): the decision layer a
+- Removed 2026-09-24: nothing ever called it. Restore it with
+  `git show 50fdc2c0:src/jrbar/utility_generation.py` when the adapter
+  lands.
+- `src/jrbar/utility_generation.py` (was new): the decision layer a
   title/summary adapter drives — `should_generate` enforces the
   precedence (user title > provider title > generated), once-per-thread
   with explicit-regeneration override, and no-evidence refusal;
@@ -243,9 +252,12 @@ slot chips flanking the band.
   W19/W20 execution contract — plus cancellation, usage-category
   surfacing, and fish/notification exclusion for utility work.
 
-## W21 slice — shared JSON-RPC stdio transport — LANDED
+## W21 slice — shared JSON-RPC stdio transport — REMOVED
 
-- `src/jrbar/acp_transport.py` (new): the bounded transport every
+- Removed 2026-09-24: nothing ever called it. Restore it (and
+  tests/test_acp_transport.py) with `git show 50fdc2c0:<path>` when the
+  first adapter lands.
+- `src/jrbar/acp_transport.py` (was new): the bounded transport every
   managed-session adapter (W20 Codex/Claude, W22 Grok/Gemini, W23
   Devin/Antigravity) sits on — newline-delimited JSON-RPC with
   monotonic request ids, id-matched response routing, a notification

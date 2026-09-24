@@ -124,11 +124,13 @@ listed is a helper of the row it sits next to alphabetically.
 | Creator Micro 2 | `creator_micro_*.py` (HID, discovery, keymap, setup, lighting), `deck_*.py` (board, controls, dispatch, actions, session board) |
 | Settings and persistence | `settings.py` → `_settings_legacy.py`, `settings_installation.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
 | Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
-| Legacy AppKit UI (kept for `open_legacy_window`, retired one window at a time) | `status_bar_legacy.py`, `_status_bar_production.py`, `settings_window*.py`, `*_pane.py`, `agent_browser*.py`, `effect_studio_window.py`, `deck_control_center_window.py`, `why_panel.py`, `usage_view.py`, `main_menu.py`, `native_ui.py`, `window_presentation.py` |
+| Retained controller (live: `application_composition.py` composes it and `core_runtime.build_headless_controller_class` subclasses it, running its refresh, escalation and keep-awake methods through `objc.super`) | `application_composition.py`, `status_bar_legacy.py`, `_status_bar_production.py`, `status_bar.py`, `provider_usage_status_bar.py`, `usage_view.py`, `agent_browser.py`, `agent_browser_window.py` (payload types), `window_presentation.py` |
+| Legacy AppKit windows (still imported, but no socket command opens them since `open_legacy_window` went; removed with the settings-window removal, SP-10 in `docs/UPGRADE-PLAN-2026-09-24.md`) | `settings_window*.py`, `*_pane.py`, `why_panel.py` (the window half; `panel_body` feeds the controller's Why text), `native_ui.py` |
 
-`sidepulse` (in `src/sidepulse`) is a one-release import shim that aliases
-`sidepulse.*` to `jrbar.*` so hook commands registered before the rename
-keep working until the first launch rewrites them.
+The one-release `sidepulse` import shim and console alias are gone. Hook
+commands registered before the rename (`python -m sidepulse.hook_client`
+and the rest) are still recognised by `providers.py` and `install.py`, and
+the first launch rewrites them to the bundled shim.
 
 ## The Swift package
 

@@ -4,38 +4,20 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from jrbar.agent_browser import (
-    AgentBrowserDocument,
-    ApprovedSearchLabel,
-    SearchLabelSource,
-)
 from jrbar.capacity_types import SourceKey
-from jrbar.mailbox import MailboxRow
-from jrbar.navigation_policy import (
-    OperatorActionDescriptor,
-    OperatorActionKind,
-)
 from jrbar.operator_accessibility import (
     MAX_ACCESSIBILITY_HELP_LENGTH,
     MAX_ACCESSIBILITY_LABEL_LENGTH,
     MAX_ACCESSIBILITY_VALUE_LENGTH,
-    AccessibilityAnnouncement,
     AccessibilityText,
-    AnnouncementPriority,
     FocusSnapshot,
-    action_accessibility,
-    announcement_for_transition,
-    browser_row_accessibility,
-    mailbox_row_accessibility,
     normalize_semantic_text_scale,
     status_item_accessibility,
 )
 from jrbar.operator_state import (
     AcknowledgementEligibility,
-    CanonicalOperatorEvent,
     CanonicalRequestTruth,
     CanonicalWorkTruth,
-    InterruptionClass,
     RequestPhase,
     SemanticEventKey,
     TransitionKind,
@@ -171,97 +153,6 @@ def _glance(
     )
 
 
-def _mailbox_row(
-    work: CanonicalWorkTruth,
-    request: CanonicalRequestTruth | None = None,
-    *,
-    worker_count: int = 0,
-    safe_label: str | None = None,
-) -> MailboxRow:
-    return MailboxRow(
-        work_key=work.key,
-        request_key=None if request is None else request.key,
-        safe_label=work.safe_label if safe_label is None else safe_label,
-        lifecycle=work.lifecycle,
-        next_actor=work.next_actor,
-        source_freshness=work.source_freshness,
-        request_keys=work.request_keys,
-        actionable=(
-            request is not None
-            and request.phase
-            in {
-                RequestPhase.LIVE_UNACKNOWLEDGED,
-                RequestPhase.LIVE_ACKNOWLEDGED,
-                RequestPhase.STALE_HOLD,
-            }
-        ),
-        worker_count=worker_count,
-        updated_at_epoch=1_800_000_001.0,
-        stable_order=0,
-        timing_uncertain=work.timing_uncertain,
-    )
-
-
-def _browser_row(
-    work: CanonicalWorkTruth,
-    request: CanonicalRequestTruth | None = None,
-    *,
-    safe_label: str | None = None,
-    worker_count: int = 0,
-    pinned: bool = False,
-    watched: bool = False,
-    snoozed: bool = False,
-    woke: bool = False,
-    acknowledged: bool = False,
-) -> AgentBrowserDocument:
-    provider = ApprovedSearchLabel("Codex", SearchLabelSource.PROVIDER)
-    return AgentBrowserDocument(
-        work_key=work.key,
-        provider_label=provider,
-        safe_family_label=work.safe_label if safe_label is None else safe_label,
-        search_labels=(provider,),
-        lifecycle_label=("needs you" if request is not None else work.lifecycle.value),
-        actionable=request is not None,
-        request_phase=None if request is None else request.phase,
-        source_freshness=work.source_freshness,
-        worker_count=worker_count,
-        pinned=pinned,
-        watched=watched,
-        snoozed=snoozed,
-        woke=woke,
-        acknowledged=acknowledged,
-        timing_uncertain=work.timing_uncertain,
-    )
-
-
-def _event(
-    kind: TransitionKind,
-    *,
-    interruption: InterruptionClass,
-    rank: int = 1,
-    freshness: SourceFreshness = SourceFreshness.FRESH,
-    private_identity: bool = False,
-) -> CanonicalOperatorEvent:
-    source = _source(instance="prompt:delete-files" if private_identity else "local.01")
-    work_key = WorkKey(
-        source,
-        WorkIdentifier("raw-error:permission-denied" if private_identity else "work:01"),
-    )
-    watermark = _watermark(source, rank=rank)
-    subject_key: WorkKey | RequestKey = work_key
-    if kind in {TransitionKind.REQUEST_OPENED, TransitionKind.REQUEST_RESOLVED}:
-        subject_key = RequestKey(work_key, RequestIdentifier(f"request:{rank}"))
-    semantic_key = SemanticEventKey(subject_key, kind, watermark)
-    return CanonicalOperatorEvent(
-        key=semantic_key,
-        subject_key=subject_key,
-        kind=kind,
-        interruption_class=interruption,
-        occurred_at_epoch=watermark.occurred_at_epoch,
-        source_freshness=freshness,
-    )
-
-
 def _all_text(text: AccessibilityText) -> str:
     return " ".join((text.label, text.value, text.help))
 
@@ -270,28 +161,15 @@ def test_accessibility_records_are_frozen_and_reject_blank_or_unbounded_text__an
     # --- scenario: accessibility_records_are_frozen_and_reject_blank_or_unbounded_text
     text = AccessibilityText("JR-Bar", "No agents need attention", "Open JR-Bar status")
     focus = FocusSnapshot("agent-browser", "search", None, (3, 2), "agents")
-    announcement = AccessibilityAnnouncement(
-        "announcement:abc",
-        "An agent completed",
-        AnnouncementPriority.SUCCESS,
-    )
 
     with pytest.raises(FrozenInstanceError):
         text.value = ""  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         focus.control_key = None  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
-        announcement.text = ""  # type: ignore[misc]
     with pytest.raises(ValueError):
         AccessibilityText("", "value", "help")
     with pytest.raises(ValueError):
         AccessibilityText("x" * (MAX_ACCESSIBILITY_LABEL_LENGTH + 1), "value", "help")
-    with pytest.raises(ValueError):
-        AccessibilityAnnouncement(
-            "announcement:private",
-            "Bearer secret-token",
-            AnnouncementPriority.ERROR,
-        )
 
     # --- scenario: semantic_text_scale_accepts_only_the_five_exact_percentage_choices
     for choice, expected in ((100, 1.0), (125, 1.25), (150, 1.5), (175, 1.75), (200, 2.0)):
@@ -300,7 +178,6 @@ def test_accessibility_records_are_frozen_and_reject_blank_or_unbounded_text__an
     # --- scenario: invalid_semantic_text_scale_normalizes_to_one_hundred_percent
     for invalid in (None, True, False, 0, 99, 201, 125.0, 1.25, "125", float("nan"), object()):
         assert normalize_semantic_text_scale(invalid) == 1.0
-
 
 
 def test_status_item_has_stable_role_text_and_nonblank_value_for_every_glance__and_2_more() -> None:
@@ -353,279 +230,8 @@ def test_status_item_has_stable_role_text_and_nonblank_value_for_every_glance__a
     assert "Additional updates waiting" in result.value
     assert result.value.strip()
 
-    # --- scenario: mailbox_row_names_every_lifecycle_without_color
-    for lifecycle, expected in (
-        (WorkLifecycle.IDLE, "Idle"),
-        (WorkLifecycle.ACTIVE, "Active"),
-        (WorkLifecycle.WAITING, "Waiting"),
-        (WorkLifecycle.COMPLETED, "Completed"),
-        (WorkLifecycle.FAILED, "Failed"),
-        (WorkLifecycle.UNKNOWN, "Unknown"),
-    ):
-        state, work, _ = _operator_state(lifecycle=lifecycle)
-        del state
 
-        result = mailbox_row_accessibility(_mailbox_row(work, worker_count=2))
-
-        assert result.label == "Codex work:01"
-        assert expected in result.value
-        assert "Source fresh" in result.value
-        assert "2 workers" in result.value
-        assert "Open actions" in result.help
-        assert "red" not in _all_text(result).casefold()
-        assert "green" not in _all_text(result).casefold()
-
-
-
-def test_mailbox_row_names_every_source_freshness_state__and_2_more() -> None:
-    # --- scenario: mailbox_row_names_every_source_freshness_state
-    for freshness, expected in (
-        (SourceFreshness.FRESH, "Source fresh"),
-        (SourceFreshness.STALE, "Source stale"),
-        (SourceFreshness.TIMING_UNCERTAIN, "Source timing uncertain"),
-        (SourceFreshness.PARTIAL, "Source partially available"),
-        (SourceFreshness.UNAVAILABLE, "Source unavailable"),
-        (SourceFreshness.RESTORED, "Source restored"),
-    ):
-        _, work, _ = _operator_state(freshness=freshness)
-
-        result = mailbox_row_accessibility(_mailbox_row(work))
-
-        assert expected in result.value
-
-    # --- scenario: mailbox_local_states_augment_instead_of_replace_lifecycle_truth
-    _, work, request = _operator_state(
-        lifecycle=WorkLifecycle.WAITING,
-        request_phase=RequestPhase.STALE_HOLD,
-        freshness=SourceFreshness.STALE,
-    )
-
-    result = mailbox_row_accessibility(
-        _mailbox_row(work, request, worker_count=1),
-        pinned=True,
-        watched=True,
-        snoozed_until=0.0,
-        woke=True,
-        acknowledged_locally=True,
-    )
-
-    assert result.value == (
-        "Waiting, Needs you, Pinned, Watching, Snoozed until 1970-01-01 00:00 UTC, "
-        "Woke, Acknowledged locally, Source stale, 1 worker"
-    )
-
-    # --- scenario: mailbox_row_replaces_missing_or_private_shaped_family_copy
-    for unsafe_label in (
-        "",
-        "/Users/alice/private/project",
-        "Codex person@example.com",
-        "Codex https://example.com/private",
-        "Codex prompt:delete-files",
-        "Codex Bearer secret-token",
-        "Codex Traceback: PermissionError",
-        "Codex session_01HZX5BX8J8DG6YF7JMV2J0E2G",
-        "Codex 123e4567-e89b-12d3-a456-426614174000",
-    ):
-        _, work, _ = _operator_state()
-
-        result = mailbox_row_accessibility(_mailbox_row(work, safe_label=unsafe_label))
-
-        assert result.label == "Codex agent family"
-        if unsafe_label:
-            assert unsafe_label not in _all_text(result)
-        assert len(result.label) <= MAX_ACCESSIBILITY_LABEL_LENGTH
-        assert len(result.help) <= MAX_ACCESSIBILITY_HELP_LENGTH
-
-
-
-def test_browser_row_exposes_provider_family_lifecycle_triage_freshness_and_workers__and_2_more() -> None:
-    # --- scenario: browser_row_exposes_provider_family_lifecycle_triage_freshness_and_workers
-    _, work, request = _operator_state(
-        lifecycle=WorkLifecycle.ACTIVE,
-        request_phase=RequestPhase.LIVE_ACKNOWLEDGED,
-        timing_uncertain=True,
-    )
-    row = _browser_row(
-        work,
-        request,
-        worker_count=3,
-        pinned=True,
-        watched=True,
-        snoozed=True,
-        woke=True,
-        acknowledged=True,
-    )
-
-    result = browser_row_accessibility(
-        row,
-        lifecycle=work.lifecycle,
-        snoozed_until=0.0,
-    )
-
-    assert result.label == "Codex work:01"
-    assert result.value == (
-        "Active, Needs you, Pinned, Watching, Snoozed until 1970-01-01 00:00 UTC, "
-        "Woke, Acknowledged locally, Source timing uncertain, 3 workers"
-    )
-    assert "Open actions" in result.help
-
-    # --- scenario: actionable_browser_row_requires_explicit_canonical_lifecycle
-    _, work, request = _operator_state(
-        lifecycle=WorkLifecycle.ACTIVE,
-        request_phase=RequestPhase.LIVE_UNACKNOWLEDGED,
-    )
-    row = _browser_row(work, request)
-
-    with pytest.raises(TypeError):
-        browser_row_accessibility(row)  # type: ignore[call-arg]
-
-    # --- scenario: browser_row_keeps_full_semantics_when_navigation_is_disabled
-    _, work, _ = _operator_state(lifecycle=WorkLifecycle.COMPLETED)
-
-    result = browser_row_accessibility(
-        _browser_row(work, safe_label=""),
-        lifecycle=work.lifecycle,
-        disabled_reason="Source is stale",
-    )
-
-    assert result.label == "Codex agent family"
-    assert "Completed" in result.value
-    assert "Source fresh" in result.value
-    assert result.help == "Open unavailable. Source is stale"
-
-
-
-def test_action_accessibility_exposes_enabled_state_reason_and_key_equivalent__and_2_more() -> None:
-    # --- scenario: action_accessibility_exposes_enabled_state_reason_and_key_equivalent
-    enabled = OperatorActionDescriptor(
-        OperatorActionKind.OPEN,
-        "Open",
-        True,
-        None,
-        "o",
-    )
-    disabled = OperatorActionDescriptor(
-        OperatorActionKind.OPEN,
-        "Open",
-        False,
-        "Source is stale",
-        "",
-    )
-
-    assert action_accessibility(enabled) == AccessibilityText(
-        "Open",
-        "Available, keyboard shortcut O",
-        "Activate Open",
-    )
-    assert action_accessibility(disabled) == AccessibilityText(
-        "Open",
-        "Unavailable",
-        "Source is stale",
-    )
-
-    # --- scenario: fresh_actionable_and_terminal_edges_announce_once
-    for kind, interruption, text, priority in (
-        (
-            TransitionKind.REQUEST_OPENED,
-            InterruptionClass.ACTION_REQUIRED,
-            "An agent needs your attention",
-            AnnouncementPriority.ACTIONABLE,
-        ),
-        (
-            TransitionKind.FAILED,
-            InterruptionClass.IMPORTANT_OUTCOME,
-            "An agent failed",
-            AnnouncementPriority.ERROR,
-        ),
-        (
-            TransitionKind.REQUEST_RESOLVED,
-            InterruptionClass.IMPORTANT_OUTCOME,
-            "An agent request was resolved",
-            AnnouncementPriority.OUTCOME,
-        ),
-        (
-            TransitionKind.COMPLETED,
-            InterruptionClass.COURTESY,
-            "An agent completed",
-            AnnouncementPriority.SUCCESS,
-        ),
-    ):
-        event = _event(kind, interruption=interruption)
-
-        announcement = announcement_for_transition(event)
-
-        assert announcement is not None
-        assert announcement.text == text
-        assert announcement.priority is priority
-        assert announcement.key.startswith("announcement:")
-        assert len(announcement.key) <= 128
-        assert (
-            announcement_for_transition(
-                event,
-                announced_event_keys=frozenset({event.key}),
-            )
-            is None
-        )
-
-    # --- scenario: poll_and_ambient_edges_do_not_announce
-    for kind in (
-        TransitionKind.BECAME_ACTIVE,
-        TransitionKind.BECAME_IDLE,
-        TransitionKind.SOURCE_DEGRADED,
-        TransitionKind.SOURCE_RECOVERED,
-    ):
-        event = _event(kind, interruption=InterruptionClass.AMBIENT)
-        assert announcement_for_transition(event) is None
-
-
-
-def test_stale_quiet_and_locally_acknowledged_transitions_do_not_announce__and_2_more() -> None:
-    # --- scenario: stale_quiet_and_locally_acknowledged_transitions_do_not_announce
-    stale = _event(
-        TransitionKind.FAILED,
-        interruption=InterruptionClass.IMPORTANT_OUTCOME,
-        freshness=SourceFreshness.STALE,
-    )
-    actionable = _event(
-        TransitionKind.REQUEST_OPENED,
-        interruption=InterruptionClass.ACTION_REQUIRED,
-    )
-
-    assert announcement_for_transition(stale) is None
-    assert announcement_for_transition(actionable, quiet=True) is None
-    assert announcement_for_transition(actionable, acknowledged_locally=True) is None
-
-    # --- scenario: announcement_key_is_exact_but_does_not_echo_private_identity
-    first = _event(
-        TransitionKind.COMPLETED,
-        interruption=InterruptionClass.COURTESY,
-        rank=1,
-        private_identity=True,
-    )
-    second = _event(
-        TransitionKind.COMPLETED,
-        interruption=InterruptionClass.COURTESY,
-        rank=2,
-        private_identity=True,
-    )
-
-    first_announcement = announcement_for_transition(first)
-    second_announcement = announcement_for_transition(second)
-
-    assert first_announcement is not None
-    assert second_announcement is not None
-    assert first_announcement.key != second_announcement.key
-    rendered = " ".join(
-        (
-            first_announcement.key,
-            first_announcement.text,
-            second_announcement.key,
-            second_announcement.text,
-        )
-    ).casefold()
-    for forbidden in ("prompt", "delete-files", "raw-error", "permission-denied"):
-        assert forbidden not in rendered
-
+def test_focus_snapshot_rejects_invalid_text_selection() -> None:
     # --- scenario: focus_snapshot_rejects_invalid_text_selection
     for invalid_selection in ((-1, 0), (0, -1), (True, 0), (0, 1.5), (0,), [0, 0]):
         with pytest.raises(ValueError):
@@ -638,29 +244,9 @@ def test_stale_quiet_and_locally_acknowledged_transitions_do_not_announce__and_2
             )
 
 
-
 def test_all_public_helpers_return_nonempty_bounded_privacy_safe_text() -> None:
-    _, work, request = _operator_state(
-        lifecycle=WorkLifecycle.ACTIVE,
-        request_phase=RequestPhase.LIVE_UNACKNOWLEDGED,
-    )
-    unsafe = "Project Nightingale /Users/alice sk-live-secret prompt:delete-files"
     texts = (
         status_item_accessibility(empty_operator_state(), _glance(GlanceSemantic.REST)),
-        mailbox_row_accessibility(_mailbox_row(work, request, safe_label=unsafe)),
-        browser_row_accessibility(
-            _browser_row(work, request, safe_label=unsafe),
-            lifecycle=work.lifecycle,
-        ),
-        action_accessibility(
-            OperatorActionDescriptor(
-                OperatorActionKind.OPEN,
-                "Open",
-                False,
-                "Not available",
-                "",
-            )
-        ),
     )
 
     for semantic_text in texts:

@@ -24,9 +24,7 @@ try:
         NSAlert,
         NSAlertFirstButtonReturn,
         NSApp,
-        NSApplication,
         NSApplicationActivationPolicyAccessory,
-        NSBackingStoreBuffered,
         NSBezelStyleRounded,
         NSBezierPath,
         NSButton,
@@ -50,18 +48,12 @@ try:
         NSPopover,
         NSPopoverBehaviorTransient,
         NSScreen,
-        NSScrollView,
         NSSlider,
         NSStatusBar,
-        NSSwitch,
         NSTextField,
-        NSTextView,
         NSVariableStatusItemLength,
         NSView,
         NSViewController,
-        NSWindow,
-        NSWindowStyleMaskClosable,
-        NSWindowStyleMaskTitled,
         NSWorkspace,
         NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
         NSWorkspaceDidWakeNotification,
@@ -100,23 +92,13 @@ from . import (
     focus_sync,
     native_ui,
     reminders_watch,
-    usage_card,
     usage_percent_history,
     usage_stats,
 )
 
-# `NSStringDrawingUsesLineFragmentOrigin`. PyObjC exposes the enum under
-# several spellings across framework versions; the value is stable and the
-# card's whole height depends on measuring with it, so it is named once here
-# rather than imported and silently missing.
-_NS_STRING_DRAWING_USES_LINE_FRAGMENT_ORIGIN = 1 << 0
 from . import colors as colors_module
 from . import signals as signals_module
 from .draw_guard import guard_draw
-from .setup_window import build_setup_window
-from .mailbox_menu import build_agent_mailbox_menu_item
-from .device_menu import build_device_menu_item
-from .activity_ledger_menu import build_activity_ledger_menu_item
 from .accessibility_display import (
     AccessibilityDisplayPreferences,
     refresh_accessibility_display_preferences,
@@ -325,12 +307,6 @@ from .clear_agents import (
     plan_clear_agents_undo,
     project_clear_agents_preview,
 )
-from .clear_agents_popover import (
-    ClearAgentsPopoverAction,
-    ClearAgentsPopoverPresentation,
-    ClearAgentsPopoverPresenter,
-    ClearAgentsPopoverState,
-)
 from .clear_agents_store import (
     ClearAgentsRestoreHealth,
     default_clear_agents_path,
@@ -350,9 +326,6 @@ from .credentials import (
 )
 from .decision_trace import (
     MENU_ITEM_TITLE as WHY_PANEL_MENU_TITLE,
-)
-from .decision_trace import (
-    PANEL_TITLE as WHY_PANEL_TITLE,
 )
 from .decision_trace import (
     build_decision_trace,
@@ -396,10 +369,6 @@ from .intake_health import (
     accepted_epochs_by_provider,
     build_intake_report,
     idle_disclosure,
-    intake_alert_title,
-    intake_content_signature,
-    last_heard_rows,
-    last_heard_summary,
     probe_providers,
 )
 from .interruption_policy import (
@@ -419,7 +388,6 @@ from .hook_ingress import (
 from .ipc import (
     HookEventServer,
     ProviderRefreshHint,
-    another_instance_alive,
     default_event_socket_path,
     default_latest_state_path,
 )
@@ -625,10 +593,8 @@ from .runtime_scheduler import (
     SubmissionDisposition,
 )
 from .sd_eject_guard_launch import (
-    SD_EJECT_GUARD_DISPLAY_NAME,
     install_sd_eject_guard,
     sd_eject_guard_installed,
-    uninstall_sd_eject_guard,
 )
 from .session_actions import (
     SESSION_OPEN_APP,
@@ -679,10 +645,7 @@ from .signal_coordinator import (
     FiniteSignalCoordinator,
 )
 from .status_bar_launch import (
-    LAUNCH_AGENT_LABEL,
     TerminalLaunchPlan,
-    install_launch_agent,
-    launch_agent_installed,
     resolve_terminal_launch,
     terminal_launch_arguments,
 )
@@ -1470,10 +1433,6 @@ _WEBHOOK_EVENT_BY_ACTIVITY_KIND = {
 BATTERY_SNAPSHOT_CACHE_SECONDS = 5.0
 # One /Volumes scan per second instead of 4-6 per refresh.
 DEVICE_DISCOVERY_CACHE_SECONDS = 1.0
-# Full dropdown rebuilds are main-thread AppKit work measured in whole
-# seconds; a CLOSED menu tolerates this much staleness before the next
-# rebuild (session-row copy still patches live in between).
-MENU_REBUILD_MIN_INTERVAL_SECONDS = 12.0
 # Green unseen-done tip: shorter than the menu badge's window.
 GAUGE_UNSEEN_COMPLETION_SECONDS = 300.0
 SCREEN_BAR_FEATURE_ENABLED = True
@@ -1491,20 +1450,6 @@ CLOSED_LID_AWAKE_LABELS = {
     CLOSED_LID_AWAKE_AGENTS: "When Agents Work",
     CLOSED_LID_AWAKE_ALWAYS: "Always",
 }
-
-
-def state_for_mode(mode: AgentMode) -> StatusBarState:
-    if mode in {AgentMode.WAITING_FOR_INPUT, AgentMode.BLOCKED_ERROR}:
-        return STATE_ASK
-    if mode in {
-        AgentMode.WORKING,
-        AgentMode.TOOL_RUNNING,
-        AgentMode.LONG_TASK_PROGRESS,
-    }:
-        return STATE_WORKING
-    if mode == AgentMode.COMPLETED:
-        return STATE_DONE
-    return STATE_IDLE
 
 
 def displayed_state(state: StatusBarState, report) -> StatusBarState:
@@ -1746,35 +1691,6 @@ def clear_agents_state_for_target(target) -> ClearAgentsState:
     return state if type(state) is ClearAgentsState else ClearAgentsState()
 
 
-def clear_agents_preview(snapshot, target) -> ClearAgentsPreview:
-    """Project the exact main-session receipts owned by Clear Agents.
-
-    Worker rows remain presentation context for their parent family. They are
-    fenced as protected state and are never independently acknowledged.
-    """
-    candidates = eligible_mailbox_completion_statuses(snapshot)
-    presentation_statuses = mailbox_attention_statuses(snapshot)
-    protected = tuple(
-        status
-        for status in presentation_statuses
-        if status not in candidates
-    )
-    return project_clear_agents_preview(
-        candidates,
-        state=clear_agents_state_for_target(target),
-        now_epoch=time.time(),
-        protected_statuses=protected,
-    )
-
-
-def clearable_presented_count(snapshot, target) -> int:
-    """Return the exact source-bound completion count for the root action."""
-    try:
-        return clear_agents_preview(snapshot, target).clearable_count
-    except (ClearAgentsPlanError, TypeError, ValueError):
-        return 0
-
-
 def replay_recent_debug_logs(
     monitor: LiveAgentMonitor,
     *,
@@ -1814,6 +1730,49 @@ def replay_recent_debug_logs(
     for record in selected:
         monitor.ingest_record(record)
     return len(selected)
+
+
+def refresh_timing_line(
+    *,
+    start: float,
+    dnd: float,
+    transcript_fallback: float,
+    liveness: float,
+    ingest: float,
+    snapshot: float,
+    pipeline: float,
+    leds: float,
+    led_write_seconds: float,
+    end: float,
+) -> str:
+    """refresh_'s slow-tick line from its monotonic stage stamps.
+
+    ``ingest`` and ``leds`` keep their totals, so older log reading still
+    works, and name their parts: ingest is the Focus/DND read, the
+    transcript fallback, the liveness sweep and T3; leds is computing the
+    frames and handing the device writes over. ``rest`` is whatever runs
+    after the lights (the menu rebuild used to).
+    """
+
+    def ms(seconds: float) -> int:
+        return round(max(0.0, seconds) * 1000)
+
+    led_write = min(max(0.0, led_write_seconds), max(0.0, leds - pipeline))
+    return (
+        "refresh timing: "
+        f"total={ms(end - start)}ms "
+        f"ingest={ms(ingest - start)} "
+        f"ingest.dnd={ms(dnd - start)} "
+        f"ingest.transcript_fallback={ms(transcript_fallback - dnd)} "
+        f"ingest.liveness={ms(liveness - transcript_fallback)} "
+        f"ingest.t3={ms(ingest - liveness)} "
+        f"snapshot={ms(snapshot - ingest)} "
+        f"pipeline={ms(pipeline - snapshot)} "
+        f"leds={ms(leds - pipeline)} "
+        f"leds.compute={ms(leds - pipeline - led_write)} "
+        f"leds.device_write={ms(led_write)} "
+        f"rest={ms(end - leds)}"
+    )
 
 
 class StatusBarController(NSObject):
@@ -2017,10 +1976,8 @@ class StatusBarController(NSObject):
         self.clear_agents_state = ClearAgentsState()
         self.clear_agents_restore_health = ClearAgentsRestoreHealth.MISSING
         self.clear_agents_path = default_clear_agents_path()
-        self._clear_agents_presenter: ClearAgentsPopoverPresenter | None = None
         self._clear_agents_preview: ClearAgentsPreview | None = None
         self._clear_agents_commit_plan: ClearAgentsCommitPlan | None = None
-        self._clear_agents_operation_generation = 0
         self._clear_agents_operation_pending = False
         self.failure_signal_coordinator = FiniteSignalCoordinator()
         self.failure_signal_watermark_established = False
@@ -2228,14 +2185,6 @@ class StatusBarController(NSObject):
         self._capacity_refresh_retry_timers = {}
         self._usage_provider_models: dict[str, ProviderUsageViewModel] = {}
         self._usage_local_scan_complete = False
-        self._usage_menu_item = None
-        self._usage_menu_view = None
-        self._usage_menu_header = None
-        self._usage_menu_fields = {}
-        self._usage_menu_labels = {}
-        self._usage_menu_secondary_labels = {}
-        self._usage_menu_window_labels = {}
-        self._usage_menu_layout = None
         self._capacity_reset_timer = None
         self._capacity_reset_plan = ResetBoundaryPlan(None, (), ())
         self._capacity_reset_retry_deadline: float | None = None
@@ -2718,89 +2667,6 @@ class StatusBarController(NSObject):
         )
         self.set_settings_message("Notifications are unavailable in this runtime.")
 
-    def applicationDidFinishLaunching_(self, _notification):
-        if self._runtime_started or self._runtime_termination_started:
-            return None
-        self._notification_client_for_use().set_delegate(self)
-        self.start_notification_authorization_refresh()
-        NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-        # An accessory app never shows a main menu, but AppKit still
-        # routes Cmd-C/V/W/Z through one -- without it, every shortcut
-        # in every window this app owns was dead.
-        from .main_menu import install_main_menu
-
-        install_main_menu()
-        self.global_action_lifecycle.launch()
-        self.load_operator_local_state()
-        self.trim_oversized_state_logs()
-        log_status_bar("launching status item")
-        self.start_event_server()
-        self.start_cloud_ingest_server()
-        self.replay_debug_logs()
-
-        self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
-            NSVariableStatusItemLength
-        )
-        button = self.status_item.button()
-        button.setTitle_(" Idle")
-        button.setImage_(image_for_symbol(STATE_IDLE.symbol, STATE_IDLE.label))
-        button.setToolTip_(f"{PRODUCT_DISPLAY_NAME} Agent Monitor: Idle")
-        log_status_bar("status item created")
-
-        self._runtime_started = True
-        self._install_dnd_environment_observers()
-        self._refresh_dnd_environment("start")
-        # CPU-bound worker threads (the Screen Bar sampler above all)
-        # hold the GIL for the interpreter's default 5ms switch interval,
-        # so every main-thread Python step can wait a full slice behind
-        # them -- measured as UNIFORM slowness across menu construction
-        # (~300ms for a dozen plain NSMenuItems). 1ms caps that wait;
-        # background renders trade a little throughput for a UI thread
-        # that stops losing whole frames.
-        sys.setswitchinterval(0.001)
-        self.refresh_installed_agent_inventory()
-        self._install_accessibility_display_observer()
-        self.reconcile_lid_observation()
-        self.refresh_(None)
-        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            STATUS_BAR_REFRESH_SECONDS,
-            self,
-            "refresh:",
-            None,
-            True,
-        )
-        if not hasattr(self.virtual_status_device, "presentation_scheduler_inputs"):
-            self.lid_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                LID_POLL_SECONDS,
-                self,
-                "pollLid:",
-                None,
-                True,
-            )
-        # A killed agent should read as ended within seconds, not at the
-        # next heartbeat. The sweep is one ps fork plus a stat per live
-        # session, run off the main thread.
-        self.liveness_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            LIVENESS_POLL_SECONDS,
-            self,
-            "pollLiveness:",
-            None,
-            True,
-        )
-        # Remote peers: own minute timer; the fetch checks the setting.
-        self.start_remote_peer_timer()
-        if self.settings.remote_peers.enabled:
-            self.start_remote_peer_refresh()
-        # Rotate oversized hook/event logs off the main thread.
-        threading.Thread(
-            target=lambda: trim_oversized_logs(default_state_dir()),
-            daemon=True,
-        ).start()
-        self.show_setup_window_if_needed()
-        if SCREEN_BAR_FEATURE_ENABLED and self.settings.virtual_status_device_enabled:
-            self.virtual_status_device.show()
-        else:
-            self.virtual_status_device.hide()
 
     @objc.IBAction
     def failureSignalExpired_(self, _timer):
@@ -3182,14 +3048,18 @@ class StatusBarController(NSObject):
         _t_start = time.monotonic()
         _t_ingest = _t_snapshot = _t_start
         self._refresh_dnd_environment("handle_environment_refresh")
+        # Ingest's own stages, so a slow tick names which one it was.
+        _t_dnd = _t_transcripts = _t_liveness = time.monotonic()
         try:
             self.ingest_transcript_fallback()
+            _t_transcripts = time.monotonic()
             # The worker already sweeps every LIVENESS_POLL_SECONDS; a tick
             # that lands right behind it would fork a second ``ps`` for the
             # same answer.
             last_sweep = self._liveness_worker_sweep_at
             if last_sweep is None or time.monotonic() - last_sweep >= LIVENESS_POLL_SECONDS:
                 self.reap_dead_agent_processes()
+            _t_liveness = time.monotonic()
             try:
                 from .integration_settings import load_integration_settings
                 from .t3_compat import update_t3_snapshot_runtime
@@ -3209,12 +3079,6 @@ class StatusBarController(NSObject):
             self.set_status(STATE_ASK)
             self.sync_keep_awake(AgentMode.BLOCKED_ERROR)
             self.sync_leds(AgentMode.BLOCKED_ERROR, None, LED_DISPLAY_AGENT, ())
-            # status_item is None before applicationDidFinishLaunching_ has
-            # run (e.g. a settings action invoked in a headless/test
-            # context) -- everything else above is still meaningful to do,
-            # only the actual menu bar UI needs the real status item.
-            if self.status_item is not None:
-                self.status_item.setMenu_(build_error_menu(exc))
             return
 
         self.last_snapshot = snapshot
@@ -3293,6 +3157,7 @@ class StatusBarController(NSObject):
         )
         self.sync_keep_awake(display_mode)
         _t_pipeline = time.monotonic()
+        self._refresh_led_write_seconds = 0.0
         led_display_kind = self.active_led_display_kind(battery_snapshot)
         # A Quota Runway strip shows the number without anyone opening a
         # menu, so it counts as attention for the refresh cadence.
@@ -3316,10 +3181,6 @@ class StatusBarController(NSObject):
             resolved_glance=resolved_glance,
         )
         _t_leds = time.monotonic()
-        # A panel explaining the current light must follow the current
-        # light. Left alone it would answer for whichever light was on
-        # when it opened, which is the exact failure it exists to end.
-        self.refresh_why_panel()
         # A watched Profile pane must not freeze at menu-open vintage:
         # replan transcript scans on the tick while it is visible. The
         # planner's freshness gates and the JR plane's 120s opportunistic
@@ -3335,8 +3196,6 @@ class StatusBarController(NSObject):
                 self.maybe_refresh_usage_summary()
             except Exception as exc:
                 log_status_bar(f"profile liveness replan failed: {exc}")
-        if self.status_item is not None:
-            self.update_status_menu(snapshot, state)
         # The settings-lag flight recorder: every refresh_ runs on the
         # MAIN thread, and settings toggles call it synchronously -- so
         # whichever stage is slow here IS the lag under the pointer.
@@ -3344,13 +3203,18 @@ class StatusBarController(NSObject):
         _t_end = time.monotonic()
         if _t_end - _t_start > 0.12:
             log_status_bar(
-                "refresh timing: "
-                f"total={int((_t_end - _t_start) * 1000)}ms "
-                f"ingest={int((_t_ingest - _t_start) * 1000)} "
-                f"snapshot={int((_t_snapshot - _t_ingest) * 1000)} "
-                f"pipeline={int((_t_pipeline - _t_snapshot) * 1000)} "
-                f"leds={int((_t_leds - _t_pipeline) * 1000)} "
-                f"menu={int((_t_end - _t_leds) * 1000)}"
+                refresh_timing_line(
+                    start=_t_start,
+                    dnd=_t_dnd,
+                    transcript_fallback=_t_transcripts,
+                    liveness=_t_liveness,
+                    ingest=_t_ingest,
+                    snapshot=_t_snapshot,
+                    pipeline=_t_pipeline,
+                    leds=_t_leds,
+                    led_write_seconds=getattr(self, "_refresh_led_write_seconds", 0.0),
+                    end=_t_end,
+                )
             )
 
     # --- The second Mac -------------------------------------------------
@@ -3517,86 +3381,6 @@ class StatusBarController(NSObject):
     def refresh_why_panel(self) -> bool:
         return why_panel_module.refresh_visible_panel(self, self.why_panel_body())
 
-    def update_status_menu(self, snapshot, state) -> None:
-        """Rebuild the dropdown only when its CONTENT changed, and never
-        while it is open. Rebuilding on every hook event re-ran icon
-        composites and row construction dozens of times a minute, and
-        re-sorting under an open menu made rows jump beneath the cursor
-        (T3's inbox keeps ordering static; signals carry the changes)."""
-        if getattr(self, "status_menu_open", False):
-            native = _canonical_agent_root_snapshot(snapshot, self)
-            if native is not None:
-                states, _items = native
-                self.native_agent_menu_registry.publish(states, tracking=True)
-            self._menu_rebuild_pending = (snapshot, state)
-            return
-        _t0 = time.monotonic()
-        signature = menu_content_signature(snapshot, state, self)
-        _t1 = time.monotonic()
-        previous_signature = getattr(self, "_menu_signature", None)
-        if signature == previous_signature:
-            if getattr(self, "_runtime_started", False):
-                native = _canonical_agent_root_snapshot(snapshot, self)
-                if native is not None:
-                    states, _items = native
-                    self.native_agent_menu_registry.publish(
-                        states,
-                        tracking=False,
-                    )
-            if _t1 - _t0 > 0.3:
-                log_status_bar(
-                    f"menu timing: signature={int((_t1 - _t0) * 1000)}ms (unchanged)"
-                )
-            return
-        # A full rebuild is AppKit item construction on the main thread --
-        # measured at 0.6-2.5s with real session rows -- and during active
-        # agent work the signature changes on most ticks. A closed menu
-        # nobody is looking at does not need that immediately: live
-        # session-row copy still flows to the existing tree through the
-        # registry patch path, and the full rebuild happens on the first
-        # tick after the window passes. Live app only (_runtime_started);
-        # tests keep deterministic rebuild-per-change behavior.
-        if getattr(self, "_runtime_started", False):
-            native = _canonical_agent_root_snapshot(snapshot, self)
-            publication = None
-            if native is not None:
-                states, _items = native
-                publication = self.native_agent_menu_registry.publish(
-                    states,
-                    tracking=False,
-                )
-            if (
-                publication is not None
-                and publication.kind is not MenuPublicationKind.DEFER_REBUILD
-            ):
-                self._menu_signature = signature
-                return
-            since_last = _t1 - getattr(self, "_menu_last_rebuild_at", 0.0)
-            if since_last < MENU_REBUILD_MIN_INTERVAL_SECONDS:
-                return
-        self._menu_signature = signature
-        self._menu_last_rebuild_at = _t1
-        menu = build_menu(snapshot, state, self)
-        _t2 = time.monotonic()
-        menu.setDelegate_(self)
-        self.status_item.setMenu_(menu)
-        native = _canonical_agent_root_snapshot(snapshot, self, menu=menu)
-        if native is not None:
-            states, items = native
-            self.native_agent_menu_registry.install(states, items)
-        # Menu construction updates a few generation-bearing projections.
-        # Capture the post-build document so the next timer tick does not
-        # rebuild solely because it is comparing against pre-build state.
-        self._menu_signature = menu_content_signature(snapshot, state, self)
-        _t3 = time.monotonic()
-        if _t3 - _t0 > 0.5:
-            log_status_bar(
-                "menu timing: "
-                f"signature={int((_t1 - _t0) * 1000)}ms "
-                f"build={int((_t2 - _t1) * 1000)}ms "
-                f"install={int((_t3 - _t2) * 1000)}ms"
-            )
-
     def maybe_refresh_usage_summary(self, *, reason: str | None = None) -> None:
         """Plan due provider work without putting transcript IO on AppKit."""
         now = time.monotonic()
@@ -3712,7 +3496,6 @@ class StatusBarController(NSObject):
             return ()
         self._usage_provider_states = states
         self._usage_transcript_states = transcript_states
-        self.update_usage_menu_fields()
         if not self._usage_refresh_workers.start(self._usage_refresh_worker, requests):
             return ()
         return tuple(requests)
@@ -3801,7 +3584,6 @@ class StatusBarController(NSObject):
             generation,
             now=now,
         )
-        self.update_usage_menu_fields(monotonic_now=now)
         self._usage_refresh_workers.start(
             self._usage_refresh_worker,
             {refresh_key.source: generation},
@@ -3853,7 +3635,6 @@ class StatusBarController(NSObject):
                 error_text=error_text,
             )
         self._usage_provider_models = models
-        self.update_usage_menu_fields(monotonic_now=commit.committed_at)
         self.schedule_capacity_timers()
 
     def _capacity_refresh_state(self, refresh_key, *, now):
@@ -3953,14 +3734,6 @@ class StatusBarController(NSObject):
         for a JR-owned provider. Base: None (legacy text applies)."""
         del provider_id
         return None
-
-    def jr_plane_owns_usage_menu_item(self) -> bool:
-        """Overridden by the JR provider-usage controller. When True, the
-        menu build skips constructing the legacy usage card entirely --
-        the facade used to build it, remove it, and build its own row,
-        paying full card construction (layout measure + a view of text
-        fields) as pure dead weight in every rebuild."""
-        return False
 
     def _capacity_row_enabled(self, provider_id: str) -> bool:
         """Whether this provider's capacity row is one the user asked to see.
@@ -4073,10 +3846,6 @@ class StatusBarController(NSObject):
                 models.pop(provider_id, None)
         self._usage_provider_states = states
         self._usage_provider_models = models
-        self.update_usage_menu_fields(
-            monotonic_now=now,
-            epoch_now=time.time(),
-        )
         fields = getattr(self, "settings_fields", None) or {}
         if "codex" in provider_ids:
             codex = models.get("codex")
@@ -4350,12 +4119,7 @@ class StatusBarController(NSObject):
             return
         self._capacity_countdown_timer = None
         self._capacity_countdown_deadline = None
-        epoch_now = time.time()
-        self.update_usage_menu_fields(
-            monotonic_now=time.monotonic(),
-            epoch_now=epoch_now,
-        )
-        self.schedule_capacity_timers(epoch_now=epoch_now)
+        self.schedule_capacity_timers(epoch_now=time.time())
 
     def _usage_refresh_worker(self, requests: dict[SourceKey, int]) -> None:
         """Build one frozen local snapshot, then start every source independently."""
@@ -5122,21 +4886,7 @@ class StatusBarController(NSObject):
                 or self.claude_plan_text
                 or ""
             )
-        self.update_usage_menu_fields(monotonic_now=now, epoch_now=reset_now)
         self.schedule_capacity_timers(epoch_now=reset_now)
-
-    def update_usage_menu_fields(
-        self,
-        *,
-        monotonic_now: float | None = None,
-        epoch_now: float | None = None,
-    ) -> None:
-        now = time.monotonic() if monotonic_now is None else float(monotonic_now)
-        reset_now = time.time() if epoch_now is None else float(epoch_now)
-        # Setting new text on frames that were measured for the old text is the
-        # whole defect in miniature, so the refresh re-measures and re-applies
-        # the geometry rather than only the strings.
-        refresh_usage_menu_card(self, now=now, reset_now=reset_now)
 
     def trim_oversized_state_logs(self) -> int:
         """Bound every state log at launch, not just the ones being written.
@@ -5282,14 +5032,6 @@ class StatusBarController(NSObject):
                 "refresh:", None, False
             )
 
-    @objc.IBAction
-    def openSessionPrimary_(self, sender):
-        self.open_session(
-            sender.representedObject(),
-            None,
-            remember=False,
-        )
-        self.close_status_menu()
 
     @objc.IBAction
     def setProviderOpenPreference_(self, sender):
@@ -5313,26 +5055,6 @@ class StatusBarController(NSObject):
             f"{provider.title()} sessions: {provider_open_action_label(provider, action)}."
         )
 
-    @objc.IBAction
-    def setClosedLidAwakePolicy_(self, sender):
-        self.set_closed_lid_awake_policy(sender.representedObject())
-
-    @objc.IBAction
-    def setGlobalBrightness_(self, sender):
-        """The master dial, one click from the dropdown: scales BOTH the
-        strip and the Screen Bar ("last night it was really bright")."""
-        try:
-            value = float(sender.representedObject())
-        except (TypeError, ValueError):
-            return
-        try:
-            self.settings = self.settings.with_global_brightness_scale(value)
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save brightness: {exc}")
-            self.settings = load_settings()
-            return
-        self.refresh_(None)
 
     @objc.IBAction
     def setClosedLidAwakePolicyFromPopup_(self, sender):
@@ -5550,25 +5272,6 @@ class StatusBarController(NSObject):
             return
         self._set_dnd_for_one_hour(mode)
 
-    @objc.IBAction
-    def setDndMuteForHour_(self, _sender):
-        self._set_dnd_for_one_hour(DndMode.MUTE)
-
-    @objc.IBAction
-    def setDndDimForHour_(self, _sender):
-        self._set_dnd_for_one_hour(DndMode.DIM)
-
-    @objc.IBAction
-    def setDndPauseForHour_(self, _sender):
-        self._set_dnd_for_one_hour(DndMode.PAUSE)
-
-    @objc.IBAction
-    def setDndAsksOnlyForHour_(self, _sender):
-        self._set_dnd_for_one_hour(DndMode.ASKS_ONLY)
-
-    @objc.IBAction
-    def setDndDarkForHour_(self, _sender):
-        self._set_dnd_for_one_hour(DndMode.DARK)
 
     @objc.IBAction
     def resumeDndUntilNextChange_(self, _sender):
@@ -5602,11 +5305,6 @@ class StatusBarController(NSObject):
             success_message="Temporary DND override ended.",
         )
 
-    @objc.IBAction
-    def openDndSettings_(self, _sender):
-        self.show_settings_window()
-        self.select_settings_pane("focus")
-        self._refresh_dnd_settings_controls()
 
     @objc.IBAction
     def setFocusDimRule_(self, sender):
@@ -6672,43 +6370,6 @@ class StatusBarController(NSObject):
             f"{device_id} blend: {item.title() if item is not None else 'Global default'}."
         )
 
-    @objc.IBAction
-    def saveCalibrationProfile_(self, sender):
-        slot = str(sender.representedObject() or "")
-        if slot not in CALIBRATION_PROFILE_SLOTS:
-            return
-        self.settings = self.settings.with_saved_calibration_profile(slot)
-        save_settings(self.settings)
-        self.set_settings_message(f"Saved current calibration as {slot}.")
-
-    @objc.IBAction
-    def applyCalibrationProfile_(self, sender):
-        slot = str(sender.representedObject() or "")
-        if slot not in CALIBRATION_PROFILE_SLOTS:
-            return
-        profile = self.settings.calibration_profiles.get(slot)
-        known_ids = {device.device_id for device in self.settings.devices}
-        matched = (
-            sum(1 for device_id in profile if device_id in known_ids)
-            if isinstance(profile, dict)
-            else 0
-        )
-        self.settings = self.settings.with_applied_calibration_profile(slot)
-        save_settings(self.settings)
-        self.refresh_settings_window()
-        self.refresh_(None)
-        if matched:
-            plural = "device" if matched == 1 else "devices"
-            self.set_settings_message(
-                f"Applied the {slot} profile to {matched} {plural}."
-            )
-        else:
-            # "Applied" with zero matches was a silent no-op that still
-            # claimed success -- say what actually happened.
-            self.set_settings_message(
-                f"The {slot} profile has no devices matching this Mac's -- "
-                "nothing changed."
-            )
 
     @objc.IBAction
     def toggleCapacityHistory_(self, sender):
@@ -6824,54 +6485,6 @@ class StatusBarController(NSObject):
             "Completion sweep on." if enabled else "Completion sweep off."
         )
 
-    @objc.IBAction
-    def openTipPane_(self, sender):
-        """Show Me lands on the exact pane -- and when the tip has a
-        registered anchor, scrolls to it and flashes it so there is
-        never a "took me somewhere but I couldn't find it" moment."""
-        payload = sender.representedObject()
-        if isinstance(payload, dict):
-            pane = str(payload.get("pane") or "")
-            anchor_key = str(payload.get("anchor") or "")
-        else:
-            pane, anchor_key = str(payload or ""), ""
-        self.show_settings_window()
-        if pane:
-            self.select_settings_pane(pane)
-        anchor = getattr(self, "tip_anchor_views", {}).get(anchor_key)
-        if anchor is not None:
-            anchor.scrollRectToVisible_(anchor.bounds())
-            self.flash_view(anchor)
-
-    def flash_view(self, view) -> None:
-        """A brief highlight pulse so the eye lands on the right card."""
-        try:
-            view.setWantsLayer_(True)
-            layer = view.layer()
-            if layer is None:
-                return
-            from AppKit import NSColor
-
-            accent = NSColor.controlAccentColor().colorWithAlphaComponent_(0.28)
-            layer.setBackgroundColor_(accent.CGColor())
-            prior_view = self._tip_highlight_view
-            if prior_view is not None and prior_view is not view:
-                self._clear_tip_highlight()
-            self._tip_highlight_view = view
-            self._tip_highlight_until = time.monotonic() + 0.9
-            self._reconcile_current_presentation_inputs()
-        except Exception:
-            pass
-
-    @objc.IBAction
-    def dismissTip_(self, sender):
-        text = str(sender.representedObject() or "").strip()
-        if not text:
-            return
-        self.settings = self.settings.with_dismissed_tip(text)
-        save_settings(self.settings)
-        self._menu_signature = None
-        self.refresh_(None)
 
     @objc.IBAction
     def applyPalette_(self, sender):
@@ -7069,49 +6682,10 @@ class StatusBarController(NSObject):
         self.set_status(self.current_state, ask_count=self.current_ask_count)
         self.refresh_(None)
 
-    @objc.IBAction
-    def disableTips_(self, _sender):
-        self.settings = self.settings.with_tips_enabled(False)
-        save_settings(self.settings)
-        self.set_settings_message("Daily tips are off.")
-        self._menu_signature = None
-        self.refresh_(None)
-
-    @objc.IBAction
-    def openSettings_(self, _sender):
-        self.show_settings_window()
-
-    @objc.IBAction
-    def openSetup_(self, _sender):
-        self.show_setup_window()
-
-    @objc.IBAction
-    def openWhyPanel_(self, _sender):
-        self.show_why_panel()
 
     def why_panel_body(self, *, why_context=None) -> str:
         return why_panel_module.panel_body(self, why_context=why_context)
 
-    def show_why_panel(self) -> None:
-        why_panel_module.present_panel(
-            self,
-            self.why_panel_body(),
-            window_builder=build_why_panel_window,
-            presenter=present_window,
-            activator=activate_app,
-        )
-
-    @objc.IBAction
-    def runFirstLaunchSetup_(self, _sender):
-        self.run_first_launch_setup()
-
-    @objc.IBAction
-    def skipFirstLaunchSetup_(self, _sender):
-        self.complete_first_launch_setup("Setup skipped.")
-
-    @objc.IBAction
-    def uninstallSdEjectGuard_(self, _sender):
-        self.uninstall_sd_eject_guard_from_setup()
 
     @objc.IBAction
     def installCodexHooks_(self, _sender):
@@ -7291,13 +6865,6 @@ class StatusBarController(NSObject):
         )
         self.refresh_(None)
 
-    @objc.IBAction
-    def setDeviceDisplayAgent_(self, sender):
-        self.set_device_display(sender.representedObject(), LED_DISPLAY_AGENT)
-
-    @objc.IBAction
-    def setDeviceDisplayBattery_(self, sender):
-        self.set_device_display(sender.representedObject(), LED_DISPLAY_BATTERY)
 
     @objc.IBAction
     def setDeviceBrightness_(self, sender):
@@ -7593,38 +7160,6 @@ class StatusBarController(NSObject):
     def resetLidOpenAnimation_(self, _sender):
         self.reset_lid_animation(LID_ANIMATION_OPEN)
 
-    @objc.IBAction
-    def removeRememberedDevice_(self, sender):
-        self.remove_remembered_device(sender.representedObject())
-
-    @objc.IBAction
-    def quit_(self, _sender):
-        self.closed_lid_awake.release()
-        self.keep_awake.release()
-        # Under launchd (parent pid 1) the job has KeepAlive, so a plain
-        # terminate would be resurrected instantly; boot the job out
-        # instead -- launchd stops us and stays stopped until the next
-        # login or explicit start. Anywhere else (dev --foreground run),
-        # a normal terminate is correct.
-        if os.getppid() == 1:
-            # bootout kills by signal, so applicationWillTerminate_ never
-            # runs on THIS path -- state flush, ledger publish and server
-            # teardown were silently skipped on every production quit.
-            try:
-                self.applicationWillTerminate_(None)
-            except Exception:
-                pass
-            subprocess.Popen(
-                [
-                    str(trusted_system_tool("launchctl")),
-                    "bootout",
-                    f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        else:
-            NSApp.terminate_(self)
 
     def _record_persistence_receipt(self, receipt: PersistenceReceipt) -> None:
         if (
@@ -7977,9 +7512,11 @@ class StatusBarController(NSObject):
         rule (display-name first, the short id dropped). `session_title_parts`
         is not used here on purpose: it stats the filesystem looking for a
         `.git` directory, which is not something a per-refresh recorder may
-        do. The row's `detail` is the pure ``core_projection.session_label``
-        instead -- the same projected name the daemon's ``state.sessions``
-        rows carry, minus the extras cache.
+        do. The row's `detail` is ``core_projection.session_label``: the
+        same projected name the daemon's ``state.sessions`` rows carry,
+        including the provider's own session title from the daemon's
+        extras cache when it has one, so History names the row when it is
+        recorded rather than only when it is shown.
 
         `duration_seconds` is filled only when ``_session_active_since``
         saw this session live before the transition: a run the monitor
@@ -7987,6 +7524,7 @@ class StatusBarController(NSObject):
         stays null rather than reporting "0 seconds".
         """
         active_since = getattr(self, "_session_active_since", None) or {}
+        extras_for = getattr(self, "_core_extras_for", None)
         entries: list[ActivityEntry] = []
         for status in statuses:
             if getattr(status, "is_subagent", False):
@@ -8003,6 +7541,15 @@ class StatusBarController(NSObject):
             # import path and the label costs nothing until a row exists.
             from . import core_projection
 
+            # The daemon's cached registry read (TTL-bounded, one record
+            # file per session); a bare controller has no cache and keeps
+            # the pure label.
+            extras = None
+            if callable(extras_for):
+                try:
+                    extras = extras_for(status)
+                except Exception:
+                    extras = None
             detail = safe_activity_text(
                 core_projection.session_label(
                     provider=status.provider,
@@ -8010,7 +7557,7 @@ class StatusBarController(NSObject):
                     agent_id=status.agent_id,
                     display_name=status.display_name,
                     cwd=status.cwd,
-                    extras=None,
+                    extras=extras,
                     is_worker=False,
                     parent_label=None,
                 ),
@@ -8521,348 +8068,6 @@ class StatusBarController(NSObject):
         """Whether the retained policy holds routine visual cues."""
         return not self.may_interrupt(signals_module.SIGNAL_COMPLETION)
 
-    @objc.IBAction
-    def toggleQuietHour_(self, _sender):
-        if self.quiet_active():
-            self._finish_dnd_change(
-                self.dnd_controller.set_override(None),
-                success_message="DND Mute ended.",
-            )
-        else:
-            self._set_dnd_for_one_hour(DndMode.MUTE)
-
-    @objc.IBAction
-    def resetStripDevice_(self, sender):
-        """Eject the strip so the owner can reseat it -- the recovery
-        for a firmware that stopped honoring writes (2026-08-20). Pauses
-        the sd-eject-guard daemon (it dissents ejects by design), ejects
-        the volume, and restores the guard; discovery re-adopts the
-        device on replug. Everything reports through the settings
-        message and the log."""
-        mount = str(sender.representedObject() or "")
-        if not mount:
-            return
-
-        def _ritual() -> None:
-            import subprocess
-
-            guard = "io.sidepulse.sdejectguard"
-            domain = f"gui/{os.getuid()}"
-            guard_plist = (
-                Path.home() / "Library" / "LaunchAgents" / f"{guard}.plist"
-            )
-            paused = False
-            try:
-                if guard_plist.exists():
-                    paused = (
-                        subprocess.run(
-                            ["launchctl", "bootout", f"{domain}/{guard}"],
-                            capture_output=True,
-                            timeout=10,
-                        ).returncode
-                        == 0
-                    )
-                ejected = subprocess.run(
-                    ["diskutil", "eject", mount],
-                    capture_output=True,
-                    text=True,
-                    timeout=20,
-                )
-                message = (
-                    "Strip ejected — unplug it, then plug it back in."
-                    if ejected.returncode == 0
-                    else (
-                        "Could not eject the strip: "
-                        f"{(ejected.stderr or ejected.stdout).strip()[:120]}"
-                    )
-                )
-            except Exception as exc:
-                message = f"Could not eject the strip: {exc}"
-            finally:
-                if paused:
-                    try:
-                        subprocess.run(
-                            ["launchctl", "bootstrap", domain, str(guard_plist)],
-                            capture_output=True,
-                            timeout=10,
-                        )
-                    except Exception:
-                        pass
-            log_status_bar(f"reset strip: {message}")
-
-            try:
-                self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                    "showSettingsMessage:", message, False
-                )
-            except Exception:
-                pass
-
-        threading.Thread(
-            target=_ritual, name="JRBarStripReset", daemon=True
-        ).start()
-
-    @objc.IBAction
-    def showSettingsMessage_(self, message):
-        """Main-thread landing pad for background threads' messages."""
-        try:
-            self.set_settings_message(str(message))
-        except Exception:
-            pass
-
-    @objc.IBAction
-    def startQuiet_(self, sender):
-        """Compatibility action for the durable manual Mute override."""
-        try:
-            seconds = float(sender.representedObject())
-        except (TypeError, ValueError):
-            seconds = 3600.0
-        self._set_dnd_for_duration(DndMode.MUTE, seconds)
-
-    @objc.IBAction
-    def clearAgents_(self, sender):
-        """Preview exact local completion receipts before changing them."""
-        snapshot = getattr(self, "last_snapshot", None)
-        if snapshot is None or self._clear_agents_operation_pending:
-            return
-        try:
-            preview = clear_agents_preview(snapshot, self)
-        except (ClearAgentsPlanError, TypeError, ValueError):
-            return
-        if preview.clearable_count <= 0:
-            return
-        status_item = getattr(self, "status_item", None)
-        anchor = status_item.button() if status_item is not None else None
-        if anchor is None and callable(getattr(sender, "bounds", None)):
-            anchor = sender
-        if anchor is None:
-            return
-
-        existing = self._clear_agents_presenter
-        if existing is not None:
-            existing.dismiss()
-        self._clear_agents_preview = preview
-        self._clear_agents_commit_plan = None
-        presenter = ClearAgentsPopoverPresenter(
-            ClearAgentsPopoverPresentation.from_preview(preview),
-            on_action=self._handle_clear_agents_popover_action,
-            on_close=self._clear_agents_popover_closed,
-        )
-        self._clear_agents_presenter = presenter
-        try:
-            presenter.show(anchor)
-        except Exception:
-            self._clear_agents_presenter = None
-            self._clear_agents_preview = None
-
-    def _clear_agents_popover_closed(self) -> None:
-        """Dedicated close path, intentionally unrelated to calibration."""
-        self._clear_agents_presenter = None
-        if not self._clear_agents_operation_pending:
-            self._clear_agents_preview = None
-            self._clear_agents_commit_plan = None
-
-    def _handle_clear_agents_popover_action(
-        self,
-        action: ClearAgentsPopoverAction,
-    ) -> None:
-        if type(action) is not ClearAgentsPopoverAction:
-            return
-        if action is ClearAgentsPopoverAction.CONFIRM:
-            self._confirm_clear_agents_preview()
-        elif action is ClearAgentsPopoverAction.REFRESH:
-            self._refresh_clear_agents_preview()
-        elif action is ClearAgentsPopoverAction.RETRY:
-            self._confirm_clear_agents_preview()
-        elif action is ClearAgentsPopoverAction.UNDO:
-            self._start_clear_agents_undo()
-
-    def _refresh_clear_agents_preview(self) -> None:
-        snapshot = getattr(self, "last_snapshot", None)
-        presenter = self._clear_agents_presenter
-        if snapshot is None or presenter is None:
-            return
-        try:
-            preview = clear_agents_preview(snapshot, self)
-        except (ClearAgentsPlanError, TypeError, ValueError):
-            presenter.dismiss()
-            return
-        if preview.clearable_count <= 0:
-            presenter.dismiss()
-            self._menu_signature = None
-            return
-        self._clear_agents_preview = preview
-        presenter.refresh(ClearAgentsPopoverPresentation.from_preview(preview))
-
-    def _show_clear_agents_preview_state(
-        self,
-        state: ClearAgentsPopoverState,
-        *,
-        preview: ClearAgentsPreview | None = None,
-    ) -> None:
-        presenter = self._clear_agents_presenter
-        selected = preview or self._clear_agents_preview
-        if presenter is None or type(selected) is not ClearAgentsPreview:
-            return
-        presenter.refresh(
-            ClearAgentsPopoverPresentation.from_preview(selected, state=state)
-        )
-
-    def _confirm_clear_agents_preview(self) -> None:
-        if self._clear_agents_operation_pending:
-            return
-        preview = self._clear_agents_preview
-        snapshot = getattr(self, "last_snapshot", None)
-        if type(preview) is not ClearAgentsPreview or snapshot is None:
-            return
-        try:
-            fresh = clear_agents_preview(snapshot, self)
-            plan = plan_clear_agents_commit(
-                preview,
-                fresh,
-                self.clear_agents_state,
-                batch_id=secrets.token_hex(16),
-                committed_at_epoch=time.time(),
-            )
-        except ClearAgentsPlanError as error:
-            if error.reason is ClearAgentsRefusal.STALE_PREVIEW:
-                self._clear_agents_preview = fresh
-                self._show_clear_agents_preview_state(
-                    ClearAgentsPopoverState.STALE,
-                    preview=fresh,
-                )
-            elif error.reason is ClearAgentsRefusal.EMPTY:
-                presenter = self._clear_agents_presenter
-                if presenter is not None:
-                    presenter.dismiss()
-            else:
-                self._show_clear_agents_preview_state(
-                    ClearAgentsPopoverState.FAILURE
-                )
-            return
-        except (TypeError, ValueError):
-            self._show_clear_agents_preview_state(ClearAgentsPopoverState.FAILURE)
-            return
-        self._submit_clear_agents_plan("commit", plan)
-
-    def _start_clear_agents_undo(self) -> None:
-        if self._clear_agents_operation_pending:
-            return
-        commit_plan = self._clear_agents_commit_plan
-        if type(commit_plan) is not ClearAgentsCommitPlan:
-            return
-        try:
-            plan = plan_clear_agents_undo(
-                self.clear_agents_state,
-                batch_id=commit_plan.batch_receipt.batch_id,
-                now_epoch=time.time(),
-            )
-        except ClearAgentsPlanError as error:
-            presenter = self._clear_agents_presenter
-            if (
-                presenter is not None
-                and error.reason is ClearAgentsRefusal.EXPIRED
-            ):
-                presenter.refresh(
-                    ClearAgentsPopoverPresentation.from_commit_plan(
-                        commit_plan,
-                        state=ClearAgentsPopoverState.EXPIRED_UNDO,
-                    )
-                )
-            return
-        self._submit_clear_agents_plan("undo", plan)
-
-    def _submit_clear_agents_plan(
-        self,
-        operation_kind: str,
-        plan: ClearAgentsCommitPlan | ClearAgentsUndoPlan,
-    ) -> None:
-        if operation_kind not in {"commit", "undo"} or not isinstance(
-            plan,
-            (ClearAgentsCommitPlan, ClearAgentsUndoPlan),
-        ):
-            return
-        self._clear_agents_operation_generation += 1
-        generation = self._clear_agents_operation_generation
-        self._clear_agents_operation_pending = True
-        self._show_clear_agents_preview_state(ClearAgentsPopoverState.SAVING)
-
-        def _save() -> object:
-            return save_clear_agents_state(
-                self.clear_agents_path,
-                plan.next_state,
-            )
-
-        def _apply(receipt: PersistenceReceipt) -> None:
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "applyClearAgentsPersistenceResult:",
-                (generation, operation_kind, plan, receipt),
-                False,
-            )
-
-        try:
-            disposition = self._persistence_writer.submit(
-                "clear-agents-state",
-                _save,
-                receipt_handler=_apply,
-            )
-        except Exception:
-            disposition = PersistenceDisposition.REFUSED_FULL
-        if disposition in {
-            PersistenceDisposition.REFUSED_FULL,
-            PersistenceDisposition.REFUSED_CLOSED,
-        }:
-            self._clear_agents_operation_pending = False
-            self._show_clear_agents_preview_state(ClearAgentsPopoverState.FAILURE)
-
-    @objc.IBAction
-    def applyClearAgentsPersistenceResult_(self, payload) -> None:
-        if not (
-            type(payload) is tuple
-            and len(payload) == 4
-            and type(payload[0]) is int
-            and payload[1] in {"commit", "undo"}
-            and (
-                (
-                    payload[1] == "commit"
-                    and type(payload[2]) is ClearAgentsCommitPlan
-                )
-                or (
-                    payload[1] == "undo"
-                    and type(payload[2]) is ClearAgentsUndoPlan
-                )
-            )
-            and type(payload[3]) is PersistenceReceipt
-            and payload[0] == self._clear_agents_operation_generation
-        ):
-            return
-        _generation, operation_kind, plan, receipt = payload
-        self._clear_agents_operation_pending = False
-        if not receipt.succeeded:
-            self._show_clear_agents_preview_state(ClearAgentsPopoverState.FAILURE)
-            return
-        if self.clear_agents_state != plan.previous_state:
-            self._show_clear_agents_preview_state(ClearAgentsPopoverState.FAILURE)
-            return
-
-        self.clear_agents_state = plan.next_state
-        self.current_mailbox_projection = None
-        self._menu_signature = None
-        presenter = self._clear_agents_presenter
-        if operation_kind == "commit" and type(plan) is ClearAgentsCommitPlan:
-            self._clear_agents_commit_plan = plan
-            if presenter is not None:
-                presenter.refresh(
-                    ClearAgentsPopoverPresentation.from_commit_plan(plan)
-                )
-        elif operation_kind == "undo" and type(plan) is ClearAgentsUndoPlan:
-            if presenter is not None:
-                presenter.refresh(
-                    ClearAgentsPopoverPresentation.from_undo_plan(plan)
-                )
-        if presenter is None:
-            self._clear_agents_preview = None
-            self._clear_agents_commit_plan = None
-        self.refresh_(None)
 
     def current_escalation_stage(self) -> int:
         elapsed = (
@@ -10380,9 +9585,6 @@ class StatusBarController(NSObject):
                     ),
                     error_message=self.operator_action_error,
                 )
-        self._menu_signature = None
-        if self.status_item is not None:
-            self.update_status_menu(snapshot, self.current_state)
 
     def schedule_mailbox_boundary(self, deadline_epoch) -> None:
         if deadline_epoch is None:
@@ -10421,9 +9623,6 @@ class StatusBarController(NSObject):
         if snapshot is None:
             return
         _canonical_agent_browser_projection(snapshot, self)
-        self._menu_signature = None
-        if self.status_item is not None:
-            self.update_status_menu(snapshot, self.current_state)
 
     def load_operator_local_state(self) -> None:
         state_dir = default_state_dir()
@@ -11523,17 +10722,6 @@ class StatusBarController(NSObject):
         )
         self.virtual_status_device.reposition()
 
-    def show_setup_window_if_needed(self) -> None:
-        if should_show_setup_window(self.settings):
-            self.show_setup_window()
-
-    def show_setup_window(self) -> None:
-        if self.setup_window is None:
-            self.setup_window = build_setup_window(self)
-        self.refresh_setup_window()
-        present_window(self.setup_window)
-        self._reconcile_current_presentation_inputs()
-        activate_app()
 
     @objc.IBAction
     def redrawSetupDemo_(self, _sender):
@@ -11542,67 +10730,6 @@ class StatusBarController(NSObject):
         demo_view = self.setup_fields.get("demo_view")
         if demo_view is not None:
             demo_view.setNeedsDisplay_(True)
-
-    def refresh_setup_window(self) -> None:
-        if self.setup_window is None:
-            return
-
-        launch_installed = launch_agent_installed()
-        eject_installed = sd_eject_guard_installed()
-        sleep_installed = sleep_helper_installed()
-
-        set_field_value(
-            self.setup_fields.get("launch_status"),
-            "Installed" if launch_installed else "Not installed",
-        )
-        set_field_value(
-            self.setup_fields.get("eject_status"),
-            "Installed" if eject_installed else "Not installed",
-        )
-        set_field_value(
-            self.setup_fields.get("sleep_status"),
-            "Installed" if sleep_installed else "Needs administrator setup",
-        )
-        # Enablement only -- never the checked STATE. Refresh runs after
-        # every provider Install click, and forcing these back to
-        # checked overrode a user's explicit opt-out (the sleep helper
-        # opens a sudo Terminal; re-checking it behind their back is the
-        # worst possible surprise). The initial checked state is set
-        # once, at window build.
-        self.set_setup_checkbox("launch", None, enabled=not launch_installed)
-        self.set_setup_checkbox("eject_guard", None, enabled=not eject_installed)
-        self.set_setup_checkbox("sleep_helper", None, enabled=not sleep_installed)
-        eject_uninstall = self.setup_buttons.get("eject_guard_uninstall")
-        if eject_uninstall is not None:
-            eject_uninstall.setEnabled_(eject_installed)
-            eject_uninstall.setHidden_(not eject_installed)
-
-        fda_status = self.setup_fields.get("fda_status")
-        fda_button = self.setup_buttons.get("fda_grant")
-        if fda_status is not None or fda_button is not None:
-            try:
-                focus_sync.configured_focus_modes()
-                fda_granted = True
-            except focus_sync.FocusSyncUnavailableError:
-                fda_granted = False
-            if fda_status is not None:
-                set_field_value(fda_status, "Granted ✓" if fda_granted else "Not granted")
-            if fda_button is not None:
-                fda_button.setHidden_(fda_granted)
-
-        # The welcome window's provider rows mirror the Settings Agents
-        # pane: one contextual action, honest status.
-        for provider in HOOK_PROVIDERS:
-            status_label = self.setup_fields.get(f"setup_{provider}_status")
-            install_button = self.setup_buttons.get(f"setup_{provider}_install")
-            if status_label is None and install_button is None:
-                continue
-            config = provider_spec(provider).detector(None)
-            installed = provider_hooks_installed(config)
-            if status_label is not None:
-                set_field_value(status_label, "Connected ✓" if installed else "")
-            if install_button is not None:
-                install_button.setHidden_(installed)
 
     def set_setup_checkbox(self, key: str, checked: bool | None, *, enabled: bool) -> None:
         """checked=None leaves the user's current choice alone (the
@@ -11614,94 +10741,6 @@ class StatusBarController(NSObject):
             set_checkbox_state(button, checked)
         button.setEnabled_(enabled)
 
-    def run_first_launch_setup(self) -> None:
-        messages: list[str] = []
-        errors: list[str] = []
-        opened_sleep_installer = False
-
-        if checkbox_is_on(self.setup_buttons.get("launch")) and not launch_agent_installed():
-            try:
-                result = install_launch_agent(start=False)
-                messages.append("Run at Login installed." if result.changed else "Run at Login already installed.")
-            except Exception as exc:
-                errors.append(f"Run at Login failed: {exc}")
-
-        if checkbox_is_on(self.setup_buttons.get("eject_guard")) and not sd_eject_guard_installed():
-            try:
-                result = install_sd_eject_guard(scope="auto", start=True)
-                scope_label = "system" if result.scope == "system" else "user"
-                messages.append(f"{SD_EJECT_GUARD_DISPLAY_NAME} installed ({scope_label}).")
-            except Exception as exc:
-                errors.append(f"{SD_EJECT_GUARD_DISPLAY_NAME} failed: {exc}")
-
-        if checkbox_is_on(self.setup_buttons.get("sleep_helper")) and not sleep_helper_installed():
-            try:
-                path = open_terminal_setup_command(sleep_helper_install_command())
-                messages.append(f"Sleep prevention installer opened: {path}")
-                opened_sleep_installer = True
-            except Exception as exc:
-                errors.append(f"Sleep prevention installer failed: {exc}")
-
-        if errors:
-            set_field_value(self.setup_fields.get("message"), "  ".join(errors))
-            log_status_bar(f"setup errors: {'; '.join(errors)}")
-            self.refresh_setup_window()
-            return
-
-        if opened_sleep_installer:
-            message = "Finish the Terminal setup, then click Set Up again."
-            set_field_value(self.setup_fields.get("message"), message)
-            log_status_bar(f"setup waiting: {message}")
-            self.refresh_setup_window()
-            return
-
-        # Agent monitoring is the whole point: pressing the default
-        # Set Up button with zero provider hooks installed used to mark
-        # setup complete and close the window anyway. Hold the window
-        # open ONCE with a plain explanation; a second press respects
-        # the user's choice.
-        try:
-            any_hooks = any(
-                provider_hooks_installed(provider_spec(provider).detector(None))
-                for provider in HOOK_PROVIDERS
-            )
-        except Exception:
-            any_hooks = True
-        if not any_hooks and not getattr(self, "_setup_no_hooks_warned", False):
-            self._setup_no_hooks_warned = True
-            set_field_value(
-                self.setup_fields.get("message"),
-                "No agents connected yet -- sessions won't appear until "
-                "you install a hook above. Set Up again to finish anyway.",
-            )
-            self.refresh_setup_window()
-            return
-        if not messages:
-            messages.append("Nothing to install.")
-        self.complete_first_launch_setup("  ".join(messages))
-
-    def uninstall_sd_eject_guard_from_setup(self) -> None:
-        try:
-            results = uninstall_sd_eject_guard(scope="auto")
-        except Exception as exc:
-            set_field_value(
-                self.setup_fields.get("message"),
-                f"Could not uninstall {SD_EJECT_GUARD_DISPLAY_NAME}: {exc}",
-            )
-            self.refresh_setup_window()
-            return
-
-        removed = [path for result in results for path in result.removed_paths]
-        skipped = [result.skipped for result in results if result.skipped]
-        if skipped:
-            message = "  ".join(str(item) for item in skipped)
-        elif removed:
-            message = f"{SD_EJECT_GUARD_DISPLAY_NAME} uninstalled."
-        else:
-            message = f"{SD_EJECT_GUARD_DISPLAY_NAME} is not installed."
-        set_field_value(self.setup_fields.get("message"), message)
-        log_status_bar(f"setup: {message}")
-        self.refresh_setup_window()
 
     def complete_first_launch_setup(self, message: str) -> None:
         try:
@@ -12204,32 +11243,6 @@ class StatusBarController(NSObject):
 
         threading.Thread(target=_work, daemon=True).start()
 
-    @objc.IBAction
-    def hooksUpdated_(self, payload):
-        self.hooks_update_in_flight = False
-        provider = str(payload.get("provider") or "")
-        install = bool(payload.get("install"))
-        if not payload.get("ok"):
-            self.set_settings_message(
-                f"{provider.title()} hooks failed: {payload.get('error')}"
-            )
-            self.refresh_settings_window()
-            # The Welcome window's Install button must not just sit
-            # there after a failure -- refresh its row status too.
-            self.refresh_setup_window()
-            return
-        action = "installed" if install else "removed"
-        if not payload.get("changed"):
-            action = "already installed" if install else "already removed"
-        self.set_settings_message(f"{provider.title()} hooks {action}.")
-        # The user just changed the exact fact the intake probe caches.
-        # Waiting out its TTL would leave "Not set up" on screen for half
-        # a minute after they connected an agent.
-        self.refresh_intake_report(force=True)
-        self.reload_monitor()
-        self.refresh_settings_window()
-        self.refresh_setup_window()
-        self.refresh_(None)
 
     def set_transcript_monitoring(self, provider: str, enabled: bool) -> None:
         try:
@@ -12551,29 +11564,6 @@ class StatusBarController(NSObject):
         self.set_settings_message(f"{LID_ANIMATION_LABELS[kind]} reset.")
         self.refresh_settings_window()
 
-    def remove_remembered_device(self, device_id: str | None) -> None:
-        if not device_id:
-            return
-        device = next(
-            (
-                entry
-                for entry in self.status_bar_devices(remember=False)
-                if entry.device_id == str(device_id)
-            ),
-            None,
-        )
-        try:
-            self.settings = self.settings.without_device(str(device_id))
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not remove device: {exc}")
-            self.settings = load_settings()
-            return
-
-        self.reset_led_controllers_for_device(str(device_id))
-        self.set_settings_message(f"{device.name if device else device_id}: removed.")
-        self.refresh_settings_window()
-        self.refresh_(None)
 
     def _answering_invocations(self) -> tuple[object, ...]:
         """Every distinct ANSWERING invocation the negotiated contracts declare.
@@ -12720,13 +11710,6 @@ class StatusBarController(NSObject):
                 self.set_settings_message(f"Could not save open preference: {exc}")
                 self.settings = load_settings()
 
-    def close_status_menu(self) -> None:
-        try:
-            menu = self.status_item.menu()
-            if menu is not None:
-                menu.cancelTracking()
-        except Exception:
-            pass
 
     def set_battery_power_preview(self, enabled: bool) -> None:
         try:
@@ -13489,7 +12472,11 @@ class StatusBarController(NSObject):
                     coalesce_identity=policy.coalesce_identity,
                 )
             )
+        # The device write stage of refresh_'s timing line: submitting is
+        # meant to be a queue hand-off, and this says when it is not.
+        _t_write = time.monotonic()
         self._submit_hardware_write_requests(requests, now)
+        self._refresh_led_write_seconds = time.monotonic() - _t_write
 
     def _hardware_write_command(
         self,
@@ -16660,24 +15647,6 @@ class StatusBarController(NSObject):
         ]
 
 
-from .daily_tips import DAILY_TIPS, daily_tip  # noqa: E402
-
-
-def quiet_seconds_until_tomorrow(now: datetime | None = None) -> float:
-    """Seconds until tomorrow 8am local -- "Until Tomorrow" means "when
-    I next sit down," not a fixed duration."""
-    current = datetime.now().astimezone() if now is None else now
-    tomorrow = (current + timedelta(days=1)).replace(
-        hour=8, minute=0, second=0, microsecond=0
-    )
-    return max(3600.0, (tomorrow - current).total_seconds())
-
-
-def target_quiet_active(target) -> bool:
-    quiet = getattr(target, "quiet_active", None)
-    return bool(quiet()) if callable(quiet) else False
-
-
 # `usage_window_payloads` lived here: it flattened a typed model back into
 # untyped `{"label", "used_percent", ...}` dicts so a failed refresh could
 # re-adapt them as legacy windows. Nothing needs it now -- a failed refresh
@@ -16801,237 +15770,6 @@ def capacity_menu_lines(
     return primary, " · ".join(secondary_parts)
 
 
-def _usage_menu_font(style: usage_card.CardRowStyle):
-    return (
-        NSFont.boldSystemFontOfSize_(style.font_size)
-        if style.bold
-        else NSFont.systemFontOfSize_(style.font_size)
-    )
-
-
-def usage_card_text_metrics(
-    text: str,
-    style: usage_card.CardRowStyle,
-    width: float,
-) -> usage_card.TextMetrics:
-    """Measure one card row the way AppKit will actually draw it.
-
-    This is the only measurement in the card. The layout sizes each row from
-    what this returns and the renderer applies those rectangles verbatim, so
-    there is no second opinion left to disagree with the first -- which is
-    exactly how the claimed height and the drawn height drifted apart before.
-    """
-    font = _usage_menu_font(style)
-    attributes = {NSFontAttributeName: font}
-    string = NSAttributedString.alloc().initWithString_attributes_(
-        str(text) or " ",
-        attributes,
-    )
-    natural = string.size()
-    wrapped = string.boundingRectWithSize_options_(
-        (max(1.0, float(width)), 0.0),
-        _NS_STRING_DRAWING_USES_LINE_FRAGMENT_ORIGIN,
-    ).size
-    line_height = float(natural.height) or (float(style.font_size) + 3.0)
-    return usage_card.TextMetrics(
-        natural_width=float(natural.width),
-        wrapped_height=max(float(wrapped.height), line_height),
-        line_height=line_height,
-    )
-
-
-def _configure_usage_menu_label(field, style: usage_card.CardRowStyle) -> None:
-    """Make the label draw the way the layout measured it.
-
-    An NSTextField wraps by default and has no line bound, so a string wider
-    than its frame silently spilled lines past the bottom edge and AppKit
-    clipped them -- the sliver of a clipped line is what "rows overlap" looked
-    like. Bounding the line count and truncating the tail means a row that
-    outgrows even its measured box says so with an ellipsis instead.
-    """
-    field.setBezeled_(False)
-    field.setDrawsBackground_(False)
-    field.setEditable_(False)
-    field.setSelectable_(False)
-    field.setFont_(_usage_menu_font(style))
-    single = style.max_lines <= 1
-    # Word wrapping plus a line bound plus "truncate the last visible line" is
-    # the combination that wraps to exactly the number of lines the layout
-    # measured and then ellipsises, rather than clipping. Setting the break
-    # mode to truncating-tail directly would collapse the field to one line and
-    # throw away the rest, which is a different lie.
-    mode = NSLineBreakByTruncatingTail if single else NSLineBreakByWordWrapping
-    field.setUsesSingleLineMode_(single)
-    field.setMaximumNumberOfLines_(int(style.max_lines))
-    field.setLineBreakMode_(mode)
-    cell = field.cell()
-    if cell is not None:
-        cell.setWraps_(not single)
-        cell.setScrollable_(False)
-        cell.setLineBreakMode_(mode)
-        cell.setTruncatesLastVisibleLine_(True)
-    field.setTextColor_(
-        NSColor.secondaryLabelColor() if style.secondary else NSColor.labelColor()
-    )
-
-
-USAGE_MENU_PROVIDERS = ("codex", "claude")
-# One provider can publish several ceilings; the card grows for them, but not
-# without limit -- a menu taller than the screen is worse than a truncated one.
-MAX_USAGE_MENU_WINDOW_ROWS = 6
-
-
-def usage_menu_model(target, provider_id: str, *, now: float, reset_now: float):
-    """Resolve the one model a Capacity row should render right now."""
-    models = getattr(target, "_usage_provider_models", {}) or {}
-    states = getattr(target, "_usage_provider_states", {}) or {}
-    model = models.get(provider_id)
-    state = states.get(provider_id)
-    if model is None:
-        return build_provider_usage_view(
-            provider_id,
-            provider_id.title(),
-            (),
-            now=now,
-            reset_now=reset_now,
-            refreshing=bool(state and state.in_flight),
-            error_text=getattr(state, "error_text", None),
-        )
-    if state is not None and model.refreshing != state.in_flight:
-        return dataclass_replace(model, refreshing=state.in_flight)
-    return model
-
-
-def usage_menu_card_rows(target, *, now: float, reset_now: float):
-    """The card's rows, in reading order, with the copy they will draw."""
-    blocks = []
-    for provider_id in USAGE_MENU_PROVIDERS:
-        model = usage_menu_model(target, provider_id, now=now, reset_now=reset_now)
-        primary, secondary = capacity_menu_lines(
-            model,
-            monotonic_now=now,
-            epoch_now=reset_now,
-        )
-        windows = capacity_window_lines(model, epoch_now=reset_now)
-        if len(windows) > MAX_USAGE_MENU_WINDOW_ROWS:
-            # Never drop a ceiling silently: the surplus folds into the last
-            # row, which the layout then sizes for the lines it really needs.
-            windows = (
-                *windows[: MAX_USAGE_MENU_WINDOW_ROWS - 1],
-                " · ".join(windows[MAX_USAGE_MENU_WINDOW_ROWS - 1 :]),
-            )
-        blocks.append((provider_id, primary, secondary, windows))
-    return usage_card.capacity_card_rows(tuple(blocks))
-
-
-def usage_menu_layout(target, *, now: float, reset_now: float) -> usage_card.CardLayout:
-    """Measure the card that would be drawn for the state `target` holds now."""
-    return usage_card.usage_card_layout(
-        usage_menu_card_rows(target, now=now, reset_now=reset_now),
-        measure=usage_card_text_metrics,
-    )
-
-
-def _apply_usage_card_layout(target, layout: usage_card.CardLayout) -> None:
-    """Push one measured layout onto the view and every label it owns."""
-    view = getattr(target, "_usage_menu_view", None)
-    if view is None:
-        return
-    view.setFrameSize_((layout.width, layout.height))
-    fields = getattr(target, "_usage_menu_fields", {}) or {}
-    for placed in layout.rows:
-        field = fields.get(placed.key)
-        if field is None:
-            continue
-        field.setFrame_(
-            (
-                (placed.rect.x, placed.rect.y),
-                (placed.rect.width, placed.rect.height),
-            )
-        )
-        field.setStringValue_(placed.text)
-    target._usage_menu_layout = layout
-
-
-def build_usage_menu_item(target) -> NSMenuItem:
-    """Host stable Capacity labels so publications never rebuild the menu."""
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", None, "")
-    now = time.monotonic()
-    reset_now = time.time()
-    layout = usage_menu_layout(target, now=now, reset_now=reset_now)
-    view = NSView.alloc().initWithFrame_(((0, 0), (layout.width, layout.height)))
-
-    fields: dict[str, object] = {}
-    labels: dict[str, object] = {}
-    secondary_labels: dict[str, object] = {}
-    window_labels: dict[str, list] = {
-        provider_id: [] for provider_id in USAGE_MENU_PROVIDERS
-    }
-    header = None
-    for placed in layout.rows:
-        field = NSTextField.alloc().initWithFrame_(
-            (
-                (placed.rect.x, placed.rect.y),
-                (placed.rect.width, placed.rect.height),
-            )
-        )
-        _configure_usage_menu_label(field, placed.style)
-        field.setStringValue_(placed.text)
-        view.addSubview_(field)
-        fields[placed.key] = field
-        if placed.key == "header":
-            header = field
-            continue
-        provider_id, _, suffix = placed.key.partition(":")
-        if suffix == "primary":
-            labels[provider_id] = field
-        elif suffix == "secondary":
-            secondary_labels[provider_id] = field
-        elif suffix.startswith("window:"):
-            window_labels.setdefault(provider_id, []).append(field)
-
-    item.setView_(view)
-    target._usage_menu_item = item
-    target._usage_menu_view = view
-    target._usage_menu_header = header
-    target._usage_menu_fields = fields
-    target._usage_menu_labels = labels
-    target._usage_menu_secondary_labels = secondary_labels
-    target._usage_menu_window_labels = {
-        provider_id: tuple(rows) for provider_id, rows in window_labels.items()
-    }
-    target._usage_menu_layout = layout
-    return item
-
-
-def refresh_usage_menu_card(target, *, now: float, reset_now: float) -> None:
-    """Re-measure the card in place, and rebuild it when its shape changed.
-
-    Setting new text on frames measured for the old text is how a card ends up
-    claiming a height its content no longer fits, so the geometry is recomputed
-    on every refresh and applied. A row count that changed cannot be fixed in
-    place -- there is no field to put the new row in -- so that asks the menu
-    for a rebuild instead.
-    """
-    if getattr(target, "_usage_menu_view", None) is None:
-        return
-    layout = usage_menu_layout(target, now=now, reset_now=reset_now)
-    fields = getattr(target, "_usage_menu_fields", {}) or {}
-    if {placed.key for placed in layout.rows} != set(fields):
-        target._menu_signature = None
-        return
-    _apply_usage_card_layout(target, layout)
-
-
-_MAILBOX_SECTION_TITLES = {
-    MailboxSectionKind.NEEDS_YOU: "Needs You",
-    MailboxSectionKind.IN_PROGRESS: "In Progress",
-    MailboxSectionKind.READY_FOR_REVIEW: "Ready for Review",
-    MailboxSectionKind.RECENT: "Recent",
-}
-_MAILBOX_MAX_WORKERS_PER_ROLLUP = 12
-
-
 def mailbox_projection_rows(
     projection: AttentionProjection,
     target,
@@ -17079,346 +15817,6 @@ def project_mailbox_for_target(
         previous_order=getattr(target, "mailbox_retained_order", None),
         seen_completion_ids=getattr(target, "mailbox_seen_completion_ids", set()),
     )
-
-
-def mailbox_projection_for_menu(snapshot, target) -> AgentMailboxProjection:
-    """Return the controller-owned projection, with a legacy test fallback."""
-    current = getattr(target, "current_mailbox_projection", None)
-    if isinstance(current, AgentMailboxProjection):
-        return current
-    attention = getattr(target, "current_attention_projection", None)
-    if not isinstance(attention, AttentionProjection):
-        attention = project_attention(
-            SimpleNamespace(
-                statuses=mailbox_attention_statuses(snapshot),
-                collected_at=snapshot.collected_at,
-            ),
-            target.settings,
-        )
-    mailbox = project_mailbox_for_target(attention, target)
-    target.current_attention_projection = attention
-    target.current_mailbox_projection = mailbox
-    target.mailbox_retained_order = dict(mailbox.retained_order)
-    if not hasattr(target, "mailbox_seen_completion_ids"):
-        target.mailbox_seen_completion_ids = set()
-    return mailbox
-
-
-def mailbox_content_signature(mailbox: AgentMailboxProjection) -> tuple:
-    return (
-        mailbox.active_count,
-        mailbox.needs_you_count,
-        mailbox.ready_count,
-        tuple(
-            (
-                section.kind.value,
-                tuple(_mailbox_row_content_signature(row) for row in section.rows),
-                section.overflow_count,
-            )
-            for section in mailbox.sections
-        ),
-    )
-
-
-def _mailbox_row_content_signature(row) -> tuple:
-    if type(row) is MailboxRow:
-        return (
-            _work_key_menu_identity(row.work_key),
-            row.safe_label,
-            row.lifecycle.value,
-            row.next_actor.value,
-            row.source_freshness.value,
-            row.actionable,
-            row.worker_count,
-            row.stable_order,
-            row.timing_uncertain,
-        )
-    return (
-        row.agent_id,
-        row.provider,
-        row.display_name,
-        row.lifecycle_mode.value,
-        row.activity_label,
-        row.actionable,
-        row.navigation_agent_id,
-        row.worker_count,
-        row.stable_order,
-    )
-
-
-def menu_content_signature(snapshot, state, target) -> tuple:
-    """Everything the dropdown renders, hashed coarsely.
-
-    There is deliberately NO time bucket in here (the 30s "safety valve"
-    was deleted 2026-08-26): it forced a measured 799ms-average AppKit
-    rebuild every 30 seconds forever, idle or not, which the owner felt
-    as menu lag. Every section that once leaned on the valve has since
-    had its content added explicitly -- the intake report, the remote
-    ledger, both activity-ledger halves -- and each addition is marked
-    below. The contract stands: if a section can change on screen, its
-    content belongs IN this signature, not on a timer."""
-    mailbox = mailbox_projection_for_menu(snapshot, target)
-    devices = tuple(
-        (
-            device.device_id,
-            device.connected,
-            device.display,
-            round(float(device.brightness), 1),
-        )
-        for device in target.status_bar_devices(remember=False)
-    )
-    return (
-        state.label,
-        mailbox_content_signature(mailbox),
-        devices,
-        target.settings.closed_lid_awake_policy,
-        target.closed_lid_awake.last_error,
-        target_quiet_active(target),
-        (
-            target.active_focus_summary()
-            if callable(getattr(target, "active_focus_summary", None))
-            else None
-        ),
-        clear_agents_state_for_target(target).generation,
-        tuple(sorted(u.agent_id for u in unseen_completions(snapshot, target))),
-        # Both halves, not just the revision: closing the menu changes only
-        # the seen watermark, and without it the "Since you left" heading
-        # would still read the old count the next time the menu was opened.
-        getattr(target, "_activity_ledger_revision", 0),
-        round(getattr(target, "activity_ledger", ActivityLedger()).last_seen_epoch, 3),
-        # The ages those rows RENDER, minute-bucketed -- without them
-        # "4m ago" could sit wrong until some other section changed.
-        _activity_age_signature(target),
-        getattr(target.settings, "tips_enabled", True),
-        len(getattr(target.settings, "dismissed_tips", ()) or ()),
-        # First-run honesty rows: "you are not set up" must disappear the
-        # moment the user IS set up, not when the 30s valve below fires.
-        intake_content_signature(getattr(target, "current_intake_report", None)),
-        # The other Mac's rows are drawn straight from the merged ledger,
-        # not from the mailbox projection, so nothing above this line can
-        # see them change. Without this the "Other Macs" section would
-        # never repaint on its own.
-        remote_ledger_content_signature(target),
-    )
-
-
-def remote_ledger_content_signature(target) -> tuple:
-    """What the "Other Macs" section is currently saying."""
-    ledger = getattr(target, "current_merged_ledger", None)
-    if type(ledger) is not MergedLedger:
-        return ()
-    now = datetime.now(timezone.utc)
-    return (
-        tuple(
-            (
-                row.machine,
-                row.status.agent_id,
-                row.status.mode.value,
-                row.status.display_name,
-                row.status.stale,
-                # The rendered age ("12m ago") IS screen content; it
-                # buckets at minute granularity, so this costs one
-                # rebuild per minute per aging row, never a timer.
-                relative_age_label(row.status.age_seconds(now)),
-            )
-            for row in remote_ledger_menu_rows(target)
-        ),
-        ledger.dropped_remote_rows,
-        tuple(
-            (item.machine, item.failure or "")
-            for item in ledger.health
-            if not item.reachable
-        ),
-    )
-
-
-def _mailbox_source_rows(projection: AttentionProjection) -> dict[str, AgentStatus]:
-    # all_rows: the caller splits these into display rows (mains) and the
-    # per-parent worker rollup, and needs both halves.
-    sources: dict[str, AgentStatus] = {}
-    for projected in projection.all_rows:
-        current = sources.get(projected.agent_id)
-        if current is None or projected.updated_at >= current.updated_at:
-            sources[projected.agent_id] = projected.source_status
-    return sources
-
-
-def _mailbox_workers_by_parent(
-    sources: dict[str, AgentStatus],
-) -> tuple[dict[str, list[AgentStatus]], list[AgentStatus]]:
-    groups: dict[str, list[AgentStatus]] = {}
-    orphans: list[AgentStatus] = []
-    for status in sources.values():
-        if not status.is_subagent:
-            continue
-        parent_id = status.parent_agent_id
-        if parent_id is None or parent_id not in sources:
-            orphans.append(status)
-        else:
-            groups.setdefault(parent_id, []).append(status)
-    return groups, orphans
-
-
-def _mailbox_row_suffix(row: MailboxRow) -> str:
-    facts = []
-    if row.activity_label:
-        facts.append(row.activity_label)
-    if row.worker_count == 1:
-        facts.append("1 worker")
-    elif row.worker_count > 1:
-        facts.append(f"{row.worker_count} workers")
-    return f" · {' · '.join(facts)}" if facts else ""
-
-
-def _mailbox_display_status(
-    row: MailboxRow,
-    display_source: AgentStatus,
-    navigation_source: AgentStatus,
-) -> AgentStatus:
-    mode_by_lifecycle = {
-        LifecycleMode.IDLE: AgentMode.IDLE_READY,
-        LifecycleMode.ACTIVE: AgentMode.WORKING,
-        LifecycleMode.WAITING: AgentMode.WAITING_FOR_INPUT,
-        LifecycleMode.COMPLETED_RECENTLY: AgentMode.COMPLETED,
-        LifecycleMode.FAILED_VISIBLE: AgentMode.BLOCKED_ERROR,
-        LifecycleMode.UNKNOWN: AgentMode.UNKNOWN,
-    }
-    return dataclass_replace(
-        display_source,
-        display_name=row.display_name,
-        mode=mode_by_lifecycle[row.lifecycle_mode],
-        event_name=(
-            navigation_source.event_name if row.actionable else display_source.event_name
-        ),
-        cwd=None,
-    )
-
-
-def _add_mailbox_empty_teaching(menu: NSMenu, target) -> None:
-    menu.addItem_(disabled_menu_item("No agents yet"))
-    hooks_probe = getattr(target, "_menu_hooks_probe", None)
-    now_probe = time.monotonic()
-    if hooks_probe is None or now_probe - hooks_probe[0] > 30.0:
-        try:
-            any_hooks = any(
-                provider_hooks_installed(provider_spec(provider).detector(None))
-                for provider in HOOK_PROVIDERS
-            )
-        except Exception:
-            any_hooks = True
-        target._menu_hooks_probe = (now_probe, any_hooks)
-    else:
-        any_hooks = hooks_probe[1]
-    if any_hooks:
-        menu.addItem_(
-            disabled_menu_item("Start Claude Code or Codex — sessions appear here")
-        )
-        return
-    connect_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        "Connect your agents in Setup…", "openSetup:", ""
-    )
-    connect_item.setTarget_(target)
-    menu.addItem_(connect_item)
-
-
-
-
-MAX_ACTIVITY_MENU_ROWS = 8
-
-
-def _activity_statuses_by_agent(snapshot) -> dict[str, AgentStatus]:
-    """Main sessions the dropdown could still open, newest row per agent.
-
-    Both lists, for the same reason `unseen_completions` reads both: with any
-    session active the collector demotes every completed one to
-    `stale_statuses` instantly, and a finished session is exactly the row a
-    ledger entry wants to click through to.
-    """
-    rows: dict[str, AgentStatus] = {}
-    for status in (
-        *getattr(snapshot, "statuses", ()),
-        *getattr(snapshot, "stale_statuses", ()),
-    ):
-        if status.is_subagent or not status.agent_id:
-            continue
-        current = rows.get(status.agent_id)
-        if current is None or status.updated_at >= current.updated_at:
-            rows[status.agent_id] = status
-    return rows
-
-
-def _activity_age_signature(target) -> tuple:
-    """The rendered ages of exactly the rows the ledger submenu shows.
-
-    Same minute-bucketed labels the rows draw, so the menu signature
-    changes precisely when the visible text would (the signature's own
-    contract: content in the signature, never a time bucket). Reads the
-    ledger PASSIVELY -- calling ensure_activity_ledger here would
-    restore-and-bump the revision as a side effect of hashing, making
-    two identical signatures differ."""
-    ledger = getattr(target, "activity_ledger", None)
-    if type(ledger) is not ActivityLedger or not ledger.entries:
-        return ()
-    now_epoch = time.time()
-    unseen = ledger.unseen
-    seen = tuple(entry for entry in ledger.entries if entry not in unseen)
-    visible_unseen = unseen[:MAX_ACTIVITY_MENU_ROWS]
-    remaining = MAX_ACTIVITY_MENU_ROWS - len(visible_unseen)
-    visible_seen = seen[:remaining] if remaining > 0 else ()
-    return (
-        _activity_boundary_text(ledger, now_epoch),
-        tuple(
-            relative_age_label(
-                max(0.0, now_epoch - entry.occurred_at_epoch)
-            )
-            for entry in (*visible_unseen, *visible_seen)
-        ),
-    )
-
-
-def _activity_boundary_text(ledger: ActivityLedger, now_epoch: float) -> str:
-    """Say which window is being shown, rather than letting the owner guess."""
-    if ledger.last_seen_epoch <= 0.0:
-        return "Menu not opened yet · showing everything kept"
-    age = relative_age_label(max(0.0, float(now_epoch) - ledger.last_seen_epoch))
-    if age == "just now":
-        return "Menu last opened just now"
-    return f"Menu last opened {age}"
-
-
-
-
-def _activity_row_item(
-    entry: ActivityEntry,
-    now_epoch: float,
-    statuses_by_agent: dict[str, AgentStatus],
-    target,
-) -> NSMenuItem:
-    """One ledger row, clickable when the session it names still exists.
-
-    Reuses `openSessionPrimary:` -- the exact action every other session row
-    in this dropdown already carries -- rather than inventing a second way to
-    reveal a session. A row whose session is gone stays visible and disabled:
-    it is still the answer to "what did I miss", it just has nothing left to
-    open.
-    """
-    text = activity_row_text(entry, now_epoch)
-    status = (
-        statuses_by_agent.get(entry.subject_id)
-        if entry.subject_id is not None
-        else None
-    )
-    if status is None:
-        return disabled_menu_item(text)
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        text,
-        "openSessionPrimary:",
-        "",
-    )
-    item.setTarget_(target)
-    item.setRepresentedObject_(status)
-    item.setEnabled_(True)
-    return item
 
 
 def _canonical_agent_browser_projection(
@@ -17656,840 +16054,7 @@ def _canonical_operator_actions(state, target):
     return result
 
 
-def _work_key_menu_identity(work_key) -> str:
-    source = work_key.source_key
-    return ":".join(
-        (
-            source.provider_id,
-            source.adapter_id,
-            source.source_instance_id,
-            source.capability_id,
-            work_key.work_id.value,
-        )
-    )
-
-
-def _menu_copy_size(title: str) -> tuple[int, int]:
-    bounded = title[:256]
-    size = NSString.stringWithString_(bounded).sizeWithAttributes_(
-        {NSFontAttributeName: NSFont.menuFontOfSize_(0.0)}
-    )
-    return math.ceil(size.width), math.ceil(size.height)
-
-
-def _native_item_state(
-    item,
-    *,
-    item_key: str,
-    parent_key: str | None,
-    order: int,
-    submenu_key: str | None,
-    action_kind: OperatorActionKind | None,
-) -> MenuItemState:
-    title = str(item.title())
-    return _menu_item_state(
-        title=title,
-        item_key=item_key,
-        parent_key=parent_key,
-        order=order,
-        submenu_key=submenu_key,
-        action_kind=action_kind,
-        key_equivalent=str(item.keyEquivalent() or ""),
-        enabled=bool(item.isEnabled()),
-        state=int(item.state()),
-    )
-
-
-def _menu_item_state(
-    *,
-    title: str,
-    item_key: str,
-    parent_key: str | None,
-    order: int,
-    submenu_key: str | None,
-    action_kind: OperatorActionKind | None,
-    key_equivalent: str,
-    enabled: bool,
-    state: int = 0,
-) -> MenuItemState:
-    width, height = _menu_copy_size(title)
-
-    if ":action:" in item_key:
-        accessibility_label = "Agent action"
-    elif ":urgent:" in item_key:
-        accessibility_label = "Urgent agent row"
-    elif ":overflow:" in item_key:
-        accessibility_label = "More agents"
-    elif ":browser:" in item_key:
-        accessibility_label = "Open Agent Browser"
-    else:
-        accessibility_label = "Agent Mailbox summary"
-
-    return MenuItemState(
-        item_key=item_key,
-        parent_key=parent_key,
-        order=order,
-        submenu_key=submenu_key,
-        action_kind=action_kind,
-        key_equivalent=key_equivalent,
-        title=title,
-        enabled=enabled,
-        state=state,
-        measured_width=width,
-        measured_height=height,
-        # DESIRED state, computed. Never read back off the NSMenuItem.
-        #
-        # AppKit answers -[NSMenuItem accessibilityLabel] through the
-        # legacy accessibility bridge, which services the query by
-        # SIMULATING OPENING THE MENU: _openForInspection: ->
-        # _simulateOpening: -> _sendMenuOpeningNotification: -> this app's
-        # own menuWillOpen_, then _sendMenuClosedNotification: ->
-        # menuDidClose_. Per phantom open that runs an activity-ledger
-        # write, a full mailbox projection, capacity timer scheduling and
-        # the usage-refresh planner -- and menuDidClose_ can
-        # performSelectorOnMainThread_("refresh:"), re-entering
-        # update_status_menu and phantom-opening again.
-        #
-        # Measured on the live app with `sample`: 422 of 4503 main-thread
-        # samples inside accessibilityLabel, and 15 fsync calls in an 8
-        # second window on the main thread, to USB mass storage, all
-        # between the opening and closing notifications. Called once per
-        # root item, from a timer.
-        #
-        # The read-back was never worth anything either: this app is the
-        # only writer of these three fields (StableNativeMenuRegistry
-        # patches them from this same state), so reading them back asks
-        # AppKit to tell us what we last told it -- and it answered
-        # differently depending on whether the item was attached to a
-        # menu yet, which made the prepared and live snapshots compare
-        # unequal and forced a DEFER_REBUILD on every pass.
-        accessibility_label=accessibility_label,
-        accessibility_value="",
-        accessibility_help="",
-    )
-
-
-def _canonical_agent_root_states(projection, actions) -> tuple[MenuItemState, ...]:
-    states: list[MenuItemState] = []
-    actionable = tuple(row for row in projection.rows if row.actionable)
-    urgent = actionable[:3]
-    states.append(
-        _menu_item_state(
-            title=(
-                f"Agent Mailbox · {projection.active_count} active · "
-                f"{len(actionable)} need you"
-            ),
-            item_key="agent-mailbox:summary",
-            parent_key=None,
-            order=0,
-            submenu_key=None,
-            action_kind=None,
-            key_equivalent="",
-            enabled=False,
-        )
-    )
-    for root_order, row in enumerate(urgent, start=1):
-        identity = _work_key_menu_identity(row.work_key)
-        item_key = f"agent-mailbox:urgent:{identity}"
-        submenu_key = f"{item_key}:actions:g{projection.generation}"
-        states.append(
-            _menu_item_state(
-                title=f"{row.safe_family_label} · {row.lifecycle_label}",
-                item_key=item_key,
-                parent_key=None,
-                order=root_order,
-                submenu_key=submenu_key,
-                action_kind=None,
-                key_equivalent="",
-                enabled=True,
-            )
-        )
-        action_order = 0
-        for descriptor in actions.get(row.work_key, ()):
-            variants = (
-                tuple((preset, title) for preset, title in SNOOZE_PRESETS)
-                if descriptor.kind is OperatorActionKind.SNOOZE and descriptor.enabled
-                else ((None, descriptor.title),)
-            )
-            for preset, title in variants:
-                suffix = f":{preset}" if preset else ""
-                states.append(
-                    _menu_item_state(
-                        title=title,
-                        item_key=(
-                            f"{item_key}:action:{descriptor.kind.value}{suffix}"
-                        ),
-                        parent_key=item_key,
-                        order=action_order,
-                        submenu_key=None,
-                        action_kind=descriptor.kind,
-                        key_equivalent=descriptor.key_equivalent,
-                        enabled=descriptor.enabled,
-                    )
-                )
-                action_order += 1
-    root_order = 1 + len(urgent)
-    overflow_count = len(actionable) - len(urgent)
-    if overflow_count > 0:
-        states.append(
-            _menu_item_state(
-                title=f"{overflow_count} more…",
-                item_key=f"agent-mailbox:overflow:g{projection.generation}",
-                parent_key=None,
-                order=root_order,
-                submenu_key=None,
-                action_kind=None,
-                key_equivalent="",
-                enabled=True,
-            )
-        )
-        root_order += 1
-    states.append(
-        _menu_item_state(
-            title="Open Agent Browser…",
-            item_key=f"agent-mailbox:browser:g{projection.generation}",
-            parent_key=None,
-            order=root_order,
-            submenu_key=None,
-            action_kind=None,
-            key_equivalent="",
-            enabled=True,
-        )
-    )
-    return tuple(states)
-
-
-def _canonical_agent_root_snapshot(snapshot, target, *, menu=None):
-    projection = _canonical_agent_browser_projection(snapshot, target)
-    if projection is None:
-        return None
-    actions = _canonical_operator_actions(target.current_operator_state, target)
-    desired = _canonical_agent_root_states(projection, actions)
-    if menu is None:
-        return desired, {}
-    items = {}
-    installed = []
-    roots = tuple(state for state in desired if state.parent_key is None)
-    children_by_parent = {
-        root.item_key: tuple(
-            state for state in desired if state.parent_key == root.item_key
-        )
-        for root in roots
-    }
-    for root in roots:
-        item = menu.itemAtIndex_(root.order)
-        items[root.item_key] = item
-        installed.append(
-            _native_item_state(
-                item,
-                item_key=root.item_key,
-                parent_key=None,
-                order=root.order,
-                submenu_key=root.submenu_key,
-                action_kind=None,
-            )
-        )
-        submenu = item.submenu()
-        for child in children_by_parent[root.item_key]:
-            action = submenu.itemAtIndex_(child.order)
-            items[child.item_key] = action
-            installed.append(
-                _native_item_state(
-                    action,
-                    item_key=child.item_key,
-                    parent_key=root.item_key,
-                    order=child.order,
-                    submenu_key=None,
-                    action_kind=child.action_kind,
-                )
-            )
-    return tuple(installed), items
-
-
-#: How many peer rows the dropdown will list before saying "and N more".
-#: The ledger is a glance, not an inventory: 1-5 main agents per machine
-#: is the real scale, and a peer that publishes 64 rows is having a bad
-#: day that this menu is not the place to read about.
-MAX_REMOTE_LEDGER_MENU_ROWS = 8
-
-
-def remote_ledger_menu_rows(target) -> tuple[LedgerRow, ...]:
-    """Every peer row the ledger should show right now.
-
-    The modern dropdown is built from ``operator_state``, which only ever
-    contains work this machine's own collector saw -- so a peer's rows
-    reach the ledger through here or not at all. Muted rows are INCLUDED
-    on purpose: muting decides what may take a light, not what the ledger
-    is allowed to say.
-    """
-    ledger = getattr(target, "current_merged_ledger", None)
-    if type(ledger) is not MergedLedger:
-        return ()
-    return tuple(row for row in ledger.remote_rows if not row.status.is_subagent)
-
-
-def remote_ledger_row_title(row: LedgerRow, now: datetime) -> str:
-    state = state_for_mode(row.status.mode)
-    # relative_age_label: "one dropdown should not measure time two
-    # ways" (its own docstring) -- the Other Macs rows were the last
-    # holdout saying "12m03s" beside rows saying "12m ago".
-    parts = [state.label, relative_age_label(row.status.age_seconds(now))]
-    if row.status.stale:
-        parts.append("stale")
-    return f"{row.ledger_label} — {' · '.join(parts)}"
-
-
-def add_remote_ledger_menu_items(menu: NSMenu, target, now: datetime) -> int:
-    """The other Mac, in the ledger. Returns how many rows it drew.
-
-    Rows are DISABLED, and that is the design rather than an omission:
-    there is no session here to open, and a clickable row that cannot do
-    the thing it looks like it does is the same lie as a light that means
-    two things.
-    """
-    rows = remote_ledger_menu_rows(target)
-    ledger = getattr(target, "current_merged_ledger", None)
-    unreachable = (
-        tuple(item for item in ledger.health if not item.reachable)
-        if type(ledger) is MergedLedger
-        else ()
-    )
-    if not rows and not unreachable:
-        return 0
-    menu.addItem_(NSMenuItem.separatorItem())
-    menu.addItem_(disabled_menu_item("Other Macs"))
-    shown = rows[:MAX_REMOTE_LEDGER_MENU_ROWS]
-    for row in shown:
-        item = disabled_menu_item(remote_ledger_row_title(row, now))
-        image = status_icon_for_status(row.status)
-        if image is not None:
-            item.setImage_(image)
-        menu.addItem_(item)
-    hidden = len(rows) - len(shown)
-    if type(ledger) is MergedLedger:
-        hidden += ledger.dropped_remote_rows
-    if hidden > 0:
-        menu.addItem_(disabled_menu_item(f"and {hidden} more"))
-    for item in unreachable:
-        # Naming the failure beats an empty section: "mac-b is quiet" and
-        # "mac-b cannot be reached" are completely different facts, and
-        # only one of them means nothing is running there.
-        menu.addItem_(
-            disabled_menu_item(
-                f"⚠ {item.machine}: {item.failure or 'unreachable'}"
-            )
-        )
-    return len(shown)
-
-
-def add_intake_menu_items(menu: NSMenu, target) -> None:
-    """The dropdown half of first-run honesty: the fault, then the ledger.
-
-    Renders only what the controller already decided. A menu that probed
-    the filesystem itself would make every menu open pay for eight
-    detector reads, and would make this function's output depend on the
-    machine it runs on rather than on the report it is handed.
-    """
-    report = getattr(target, "current_intake_report", None)
-    if type(report) is not IntakeReport:
-        return
-    alert = intake_alert_title(report)
-    if alert:
-        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            alert,
-            "openSetup:",
-            "",
-        )
-        item.setTarget_(target)
-        menu.addItem_(item)
-    summary = last_heard_summary(report)
-    rows = last_heard_rows(report)
-    if summary and rows:
-        # A dead hook looks exactly like an idle agent until you can see
-        # WHEN each provider last spoke. One row per provider, freshest
-        # first, so the silent one sorts to the bottom where it shows.
-        parent = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(summary, None, "")
-        submenu = NSMenu.alloc().init()
-        submenu.setAutoenablesItems_(False)
-        for row in rows:
-            submenu.addItem_(disabled_menu_item(row))
-        parent.setSubmenu_(submenu)
-        menu.addItem_(parent)
-    if alert or (summary and rows):
-        menu.addItem_(NSMenuItem.separatorItem())
-
-
-def build_menu(snapshot, state: StatusBarState, target: StatusBarController) -> NSMenu:
-    """The status-item dropdown. Glanceability rules: sessions first
-    (the thing you opened the menu to check), no self-titled header (you
-    know what menu you clicked), and one row per secondary concern --
-    the keep-awake policy is a submenu, not four inline rows."""
-    menu = NSMenu.alloc().init()
-    _marks: list[tuple[str, int]] = []
-    _mark_t = time.monotonic()
-
-    def _mark(label: str) -> None:
-        nonlocal _mark_t
-        _now = time.monotonic()
-        _marks.append((label, int((_now - _mark_t) * 1000)))
-        _mark_t = _now
-
-    browser_projection = _canonical_agent_browser_projection(snapshot, target)
-    if browser_projection is None:
-        menu.addItem_(build_agent_mailbox_menu_item(snapshot, target))
-    else:
-        actions_by_work_key = _canonical_operator_actions(
-            getattr(target, "current_operator_state", None),
-            target,
-        )
-        for item in build_agent_root_items(
-            browser_projection,
-            actions_by_work_key=actions_by_work_key,
-            target=target,
-        ):
-            menu.addItem_(item)
-        action_error = getattr(target, "operator_action_error", None)
-        if type(action_error) is str and action_error:
-            menu.addItem_(disabled_menu_item(action_error))
-    # First-run honesty: an empty mailbox means one of three completely
-    # different things, and only one of them is "nothing to do". The other
-    # two get the same one click that fixes them.
-    _mark("sessions")
-    add_intake_menu_items(menu, target)
-    # An out-of-date hook cannot deliver live events. Say so where the
-    # user already looks, with the one click that fixes it -- this
-    # failure was invisible for an hour the first time it happened.
-    legacy_hooks = sorted(getattr(target, "legacy_hook_providers", ()) or ())
-    if legacy_hooks:
-        names = ", ".join(provider.title() for provider in legacy_hooks)
-        stale_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            f"\u26a0 {names} hooks are out of date \u2014 reinstall in Setup\u2026",
-            "openSetup:",
-            "",
-        )
-        stale_item.setTarget_(target)
-        menu.addItem_(stale_item)
-        menu.addItem_(NSMenuItem.separatorItem())
-    # Same shape, same reason: Alcove following cannot capture anything
-    # without Screen Recording, and that failure has no other symptom --
-    # the bar just keeps its old size forever and nothing says why.
-    alcove_alert = alcove_menu_alert_title(target)
-    if alcove_alert:
-        alcove_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            alcove_alert,
-            "grantScreenRecording:",
-            "",
-        )
-        alcove_item.setTarget_(alcove_actions_for(target))
-        menu.addItem_(alcove_item)
-        menu.addItem_(NSMenuItem.separatorItem())
-    # Sessions answer "what is happening now"; this answers "what changed
-    # while I was gone". Directly under the sessions because it is the second
-    # question, never above them because it is not the first.
-    _mark("alerts")
-    activity_item = build_activity_ledger_menu_item(snapshot, target)
-    if activity_item is not None:
-        menu.addItem_(NSMenuItem.separatorItem())
-        menu.addItem_(activity_item)
-    # The other Mac goes UNDER this desk's own rows and above everything
-    # else: it is still the ledger's subject (what is happening), just not
-    # here. With remote peers off it draws nothing at all.
-    add_remote_ledger_menu_items(
-        menu,
-        target,
-        getattr(snapshot, "collected_at", None) or datetime.now(timezone.utc),
-    )
-    focus_summary = (
-        target.active_focus_summary()
-        if callable(getattr(target, "active_focus_summary", None))
-        else "No Focus is active."
-    )
-    if "\u2014" in focus_summary:
-        # A Focus is active with a concrete effect -- say so where the
-        # user is already looking.
-        menu.addItem_(disabled_menu_item(f"Focus: {focus_summary}"))
-
-    _mark("ledger")
-    menu.addItem_(NSMenuItem.separatorItem())
-    reveal_current = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        reveal_current_ask_menu_title(target.settings),
-        "performRevealCurrentAsk:",
-        "",
-    )
-    reveal_current.setTarget_(target)
-    menu.addItem_(reveal_current)
-    # getattr-tolerant: tests drive build_menu with bare probe targets.
-    if not getattr(target, "jr_plane_owns_usage_menu_item", lambda: False)():
-        menu.addItem_(build_usage_menu_item(target))
-    from .today_menu import build_today_menu_item
-
-    today_item = build_today_menu_item(target)
-    if today_item is not None:
-        menu.addItem_(today_item)
-    _mark("usage")
-    menu.addItem_(NSMenuItem.separatorItem())
-    menu.addItem_(disabled_menu_item("Devices"))
-    # A device whose writes are failing must say so HERE, not only in
-    # a log file -- the ENOSPC freeze sat invisible for 13 minutes
-    # while the lights played a stale program.
-    device_errors = getattr(target, "device_errors", None) or {}
-    if device_errors:
-        known_names = {
-            device.device_id: device.name
-            for device in (target.status_bar_devices() or [])
-        }
-        for device_id, error in sorted(device_errors.items()):
-            menu.addItem_(
-                disabled_menu_item(
-                    f"\u26a0 {known_names.get(device_id, device_id)}: "
-                    f"not updating \u2014 {str(error)[:48]}"
-                )
-            )
-    # Calibration/brightness profiles: three named slots, applied or
-    # saved in two clicks from here.
-    profiles_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Profiles", None, "")
-    profiles_menu = NSMenu.alloc().init()
-    # Manual enablement: with the default autoenablesItems, AppKit
-    # re-enables every targeted item and "Apply" for an empty slot
-    # becomes a clickable lie.
-    profiles_menu.setAutoenablesItems_(False)
-    saved_profiles = getattr(target, "settings", None)
-    saved = saved_profiles.calibration_profiles if saved_profiles is not None else {}
-    for slot in CALIBRATION_PROFILE_SLOTS:
-        apply_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            f"Apply {slot}", "applyCalibrationProfile:", ""
-        )
-        apply_item.setTarget_(target)
-        apply_item.setRepresentedObject_(slot)
-        apply_item.setEnabled_(slot in saved)
-        profiles_menu.addItem_(apply_item)
-    profiles_menu.addItem_(NSMenuItem.separatorItem())
-    for slot in CALIBRATION_PROFILE_SLOTS:
-        save_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            f"Save Current as {slot}", "saveCalibrationProfile:", ""
-        )
-        save_item.setTarget_(target)
-        save_item.setRepresentedObject_(slot)
-        profiles_menu.addItem_(save_item)
-    profiles_item.setSubmenu_(profiles_menu)
-    menu.addItem_(profiles_item)
-    _mark("profiles")
-    devices = target.status_bar_devices()
-    if devices:
-        for device in devices:
-            menu.addItem_(cached_device_menu_item(device, target))
-    else:
-        menu.addItem_(disabled_menu_item("No devices yet"))
-        menu.addItem_(
-            disabled_menu_item(
-                "Plug in a SidePulse Pro or SidePulse Dot, or add the Screen Bar below"
-            )
-        )
-    # "Remove Screen Bar" lives INSIDE the Screen Bar's own submenu (see
-    # build_device_menu_item) -- a destructive-looking top-level item
-    # right under "Screen Bar >" read as clutter. Only the affordance to
-    # ADD one belongs at the top level, and only while there is none.
-    if (
-        SCREEN_BAR_FEATURE_ENABLED
-        and not target.settings.virtual_status_device_enabled
-    ):
-        virtual_toggle = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Add Screen Bar",
-            "toggleVirtualStatusDevice:",
-            "",
-        )
-        virtual_toggle.setTarget_(target)
-        menu.addItem_(virtual_toggle)
-
-    menu.addItem_(NSMenuItem.separatorItem())
-    brightness_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        "Brightness", None, ""
-    )
-    brightness_menu = NSMenu.alloc().init()
-    for preset_label, preset_value in BRIGHTNESS_PRESET_CHOICES:
-        brightness_menu.addItem_(
-            build_brightness_preset_item(preset_label, preset_value, target)
-        )
-    brightness_item.setSubmenu_(brightness_menu)
-    menu.addItem_(brightness_item)
-    keep_awake_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        "Keep Awake With Lid Closed", None, ""
-    )
-    keep_awake_menu = NSMenu.alloc().init()
-    for policy in CLOSED_LID_AWAKE_CHOICES:
-        keep_awake_menu.addItem_(build_closed_lid_awake_policy_item(policy, target))
-    keep_awake_item.setSubmenu_(keep_awake_menu)
-    menu.addItem_(keep_awake_item)
-    if target.closed_lid_awake.last_error:
-        # Errors stay inline where they can't be missed -- never tucked
-        # into the submenu they originate from.
-        menu.addItem_(disabled_menu_item(f"Sleep warning: {target.closed_lid_awake.last_error}"))
-
-    menu.addItem_(NSMenuItem.separatorItem())
-    # Every debugging session in this project began by reading a log the
-    # user cannot see. This is that log's conclusion, in words, one click
-    # from the light it explains.
-    why = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        WHY_PANEL_MENU_TITLE,
-        "openWhyPanel:",
-        "",
-    )
-    why.setTarget_(target)
-    menu.addItem_(why)
-    setup = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        "Setup…",
-        "openSetup:",
-        "",
-    )
-    setup.setTarget_(target)
-    menu.addItem_(setup)
-
-    settings = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        "Settings…",
-        "openSettings:",
-        ",",
-    )
-    settings.setTarget_(target)
-    menu.addItem_(settings)
-
-    if target_quiet_active(target):
-        override = target.settings.dnd_settings().override
-        remaining = max(
-            0.0,
-            (override.until_epoch - time.time()) if override is not None else 0.0,
-        )
-        minutes_left = max(1, int(remaining // 60)) if remaining else 0
-        quiet_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            f"End Quiet ({minutes_left}m left)" if minutes_left else "End Quiet",
-            "toggleQuietHour:",
-            "",
-        )
-        quiet_item.setTarget_(target)
-        quiet_item.setState_(1)
-        menu.addItem_(quiet_item)
-    else:
-        # Snooze granularity: an hour was the only option, and "one
-        # hour" is almost never the actual length of "leave me alone."
-        quiet_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Quiet", None, ""
-        )
-        quiet_menu = NSMenu.alloc().init()
-        quiet_menu.setAutoenablesItems_(False)
-        for label, seconds in (
-            ("For 15 Minutes", 15 * 60),
-            ("For an Hour", 3600),
-            ("Until Tomorrow", quiet_seconds_until_tomorrow()),
-        ):
-            choice = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                label, "startQuiet:", ""
-            )
-            choice.setTarget_(target)
-            choice.setRepresentedObject_(seconds)
-            quiet_menu.addItem_(choice)
-        quiet_item.setSubmenu_(quiet_menu)
-        menu.addItem_(quiet_item)
-    if clearable_presented_count(snapshot, target):
-        clear_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Clear Agents…",
-            "clearAgents:",
-            "",
-        )
-        clear_item.setTarget_(target)
-        menu.addItem_(clear_item)
-
-    tip = daily_tip(getattr(target, "settings", None))
-    if tip is not None:
-        menu.addItem_(NSMenuItem.separatorItem())
-        tip_text, tip_pane, tip_anchor = tip
-        tip_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            f"Tip: {tip_text}", None, ""
-        )
-        tip_menu = NSMenu.alloc().init()
-        if tip_pane:
-            show_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                "Show Me", "openTipPane:", ""
-            )
-            show_item.setTarget_(target)
-            show_item.setRepresentedObject_(
-                {"pane": tip_pane, "anchor": tip_anchor or "", "text": tip_text}
-            )
-            tip_menu.addItem_(show_item)
-        dismiss_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Dismiss This Tip", "dismissTip:", ""
-        )
-        dismiss_item.setTarget_(target)
-        dismiss_item.setRepresentedObject_(tip_text)
-        tip_menu.addItem_(dismiss_item)
-        off_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Turn Off Tips", "disableTips:", ""
-        )
-        off_item.setTarget_(target)
-        tip_menu.addItem_(off_item)
-        tip_item.setSubmenu_(tip_menu)
-        menu.addItem_(tip_item)
-
-    quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        f"Quit {PRODUCT_DISPLAY_NAME}",
-        "quit:",
-        "q",
-    )
-    quit_item.setTarget_(target)
-    menu.addItem_(quit_item)
-
-    _mark("tail")
-    if sum(ms for _, ms in _marks) > 400:
-        log_status_bar(
-            "menu build timing: "
-            + " ".join(f"{label}={ms}ms" for label, ms in _marks)
-        )
-    return menu
-
-
 _AppKitStatusBarController = StatusBarController
-
-
-# The master brightness dial's one-click presets (see
-# setGlobalBrightness_): both surfaces, composing with every other dim.
-BRIGHTNESS_PRESET_CHOICES: tuple[tuple[str, float], ...] = (
-    ("Dim", 0.15),
-    ("Half", 0.5),
-    ("Full", 1.0),
-)
-
-
-def build_brightness_preset_item(
-    label: str, value: float, target: StatusBarController
-) -> NSMenuItem:
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        label, "setGlobalBrightness:", ""
-    )
-    item.setTarget_(target)
-    item.setRepresentedObject_(value)
-    item.setState_(
-        1 if abs(target.settings.global_brightness_scale - value) < 0.01 else 0
-    )
-    return item
-
-
-def build_closed_lid_awake_policy_item(policy: str, target: StatusBarController) -> NSMenuItem:
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        CLOSED_LID_AWAKE_LABELS[policy],
-        "setClosedLidAwakePolicy:",
-        "",
-    )
-    item.setTarget_(target)
-    item.setRepresentedObject_(policy)
-    item.setState_(1 if target.settings.closed_lid_awake_policy == policy else 0)
-    return item
-
-
-_device_menu_item_cache: dict[str, tuple[object, object]] = {}
-
-
-def cached_device_menu_item(
-    device: StatusBarDevice, target: StatusBarController
-) -> NSMenuItem:
-    """build_device_menu_item, reused while the device's fields are
-    unchanged. The submenu carries four NSSlider custom-view items --
-    the most expensive constructions in the whole dropdown -- and
-    device settings change orders of magnitude less often than the menu
-    rebuilds. The device dataclass itself is the change signature; a
-    reused item is detached from the discarded tree first, because an
-    NSMenuItem belongs to at most one menu."""
-    cached = _device_menu_item_cache.get(device.device_id)
-    if cached is not None and cached[0] == device:
-        item = cached[1]
-        old_menu = item.menu()
-        if old_menu is not None:
-            old_menu.removeItem_(item)
-        return item
-    item = build_device_menu_item(device, target)
-    _device_menu_item_cache[device.device_id] = (device, item)
-    return item
-
-
-def build_brightness_slider_item(
-    device: StatusBarDevice,
-    target: StatusBarController,
-) -> NSMenuItem:
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", None, "")
-    view = NSView.alloc().initWithFrame_(((0, 0), (230, 34)))
-    slider = NSSlider.alloc().initWithFrame_(((14, 6), (202, 22)))
-    slider.setMinValue_(0.0)
-    slider.setMaxValue_(255.0)
-    slider.setDoubleValue_(float(normalize_brightness(device.brightness)))
-    slider.setContinuous_(False)
-    slider.setTarget_(target)
-    slider.setAction_("setDeviceBrightness:")
-    slider.setIdentifier_(device.device_id)
-    view.addSubview_(slider)
-    item.setView_(view)
-    return item
-
-
-def build_channel_gain_slider_item(
-    device: StatusBarDevice,
-    target: StatusBarController,
-    label: str,
-    current_gain: float,
-    action_selector: str,
-) -> NSMenuItem:
-    """A compact labeled slider for one RGB channel's write-time gain
-    correction (see led_status.apply_channel_gain_to_program) -- same
-    layout convention as build_brightness_slider_item, just with a short
-    channel-name label since three of these stack in the same submenu."""
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", None, "")
-    view = NSView.alloc().initWithFrame_(((0, 0), (230, 34)))
-    label_field = NSTextField.alloc().initWithFrame_(((14, 8), (40, 18)))
-    label_field.setStringValue_(label)
-    label_field.setBezeled_(False)
-    label_field.setDrawsBackground_(False)
-    label_field.setEditable_(False)
-    label_field.setSelectable_(False)
-    label_field.setFont_(NSFont.systemFontOfSize_(11))
-    view.addSubview_(label_field)
-    slider = NSSlider.alloc().initWithFrame_(((54, 6), (162, 22)))
-    slider.setMinValue_(MIN_CHANNEL_GAIN * 100.0)
-    slider.setMaxValue_(MAX_CHANNEL_GAIN * 100.0)
-    slider.setDoubleValue_(float(current_gain) * 100.0)
-    slider.setContinuous_(False)
-    slider.setTarget_(target)
-    slider.setAction_(action_selector)
-    slider.setIdentifier_(device.device_id)
-    view.addSubview_(slider)
-    item.setView_(view)
-    return item
-
-
-SETUP_DEMO_WIDTH = 420.0
-SETUP_DEMO_HEIGHT = 30.0
-
-
-def _setup_toggle_row(title: str, help_text: str | None = None):
-    """A "Title ... status [switch]" row for the welcome window -- the
-    switch carries no action (its state is read when Set Up runs), the
-    status label reports installed-ness."""
-    switch = NSSwitch.alloc().init()
-    status = native_ui.make_label("", secondary=True, size=12.0)
-    cluster = native_ui.make_stack(orientation="horizontal", spacing=native_ui.SPACE_S)
-    cluster.addArrangedSubview_(status)
-    cluster.addArrangedSubview_(switch)
-    row = native_ui.make_row(title, cluster, help_text=help_text)
-    return row, switch, status
-
-
-def build_why_panel_window(target: StatusBarController) -> NSWindow:
-    return why_panel_module.build_window(
-        target,
-        window_class=NSWindow,
-        view_class=NSView,
-        style_mask=NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
-        backing_store=NSBackingStoreBuffered,
-        title=WHY_PANEL_TITLE,
-        text_view_builder=add_text_view,
-    )
-
-
 
 
 # --- Settings window: sidebar + detail pane ---------------------------
@@ -18793,12 +16358,8 @@ ANIMATION_STYLE_DESCRIPTIONS: dict[str, str] = {
 
 
 def make_closed_lid_awake_policy_popup(target):
-    """A Settings-window popup for the same policy the status-bar menu's
-    build_closed_lid_awake_policy_item radio-style items control -- a
-    separate control (not reused menu items) since it lives in a
-    completely different part of the UI, but both write the same
-    settings.closed_lid_awake_policy and take effect immediately either
-    way."""
+    """A Settings-window popup for settings.closed_lid_awake_policy; the
+    choice takes effect immediately."""
     popup = native_ui.make_popup_button(target, "setClosedLidAwakePolicyFromPopup:")
     for policy in CLOSED_LID_AWAKE_CHOICES:
         popup.addItemWithTitle_(CLOSED_LID_AWAKE_LABELS[policy])
@@ -18910,23 +16471,6 @@ def select_popup_action(popup, action: str) -> None:
     select_popup_item(popup, "action", action)
 
 
-def add_text_view(parent, text: str, x: int, y: int, width: int, height: int):
-    scroll = NSScrollView.alloc().initWithFrame_(((x, y), (width, height)))
-    scroll.setHasVerticalScroller_(True)
-    scroll.setHasHorizontalScroller_(False)
-    text_view = NSTextView.alloc().initWithFrame_(((0, 0), (width, height)))
-    text_view.setString_(text)
-    text_view.setVerticallyResizable_(True)
-    text_view.setHorizontallyResizable_(False)
-    try:
-        text_view.setFont_(NSFont.monospacedSystemFontOfSize_weight_(11.0, 0.0))
-    except Exception:
-        pass
-    scroll.setDocumentView_(text_view)
-    parent.addSubview_(scroll)
-    return text_view
-
-
 def add_separator(parent, x: int, y: int, width: int):
     separator = NSTextField.alloc().initWithFrame_(((x, y), (width, 1)))
     separator.setStringValue_("")
@@ -18994,10 +16538,6 @@ def set_checkbox_state(button, enabled: bool) -> None:
 
 def checkbox_is_on(button) -> bool:
     return button is not None and button.state() == NSOnState
-
-
-def should_show_setup_window(settings) -> bool:
-    return not getattr(settings, "setup_screen_completed", False)
 
 
 def open_terminal_setup_command(command: str, *, filename: str = "install-sleep-helper.command") -> Path:
@@ -19171,12 +16711,6 @@ def device_display_name(name: str) -> str:
     return name or "JR-Bar Device"
 
 
-def disabled_menu_item(title: str) -> NSMenuItem:
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, None, "")
-    item.setEnabled_(False)
-    return item
-
-
 def disambiguate_device_names(devices: list[StatusBarDevice]) -> list[StatusBarDevice]:
     counts: dict[str, int] = {}
     for device in devices:
@@ -19214,159 +16748,6 @@ def duplicate_device_suffix(device: StatusBarDevice) -> str:
     return root_name
 
 
-def build_worker_rollup_item(
-    children,
-    collected_at,
-    target,
-    dot_color,
-    *,
-    max_visible: int | None = None,
-):
-    """One indented '\u21b3 N workers' row whose submenu holds EVERY
-    worker as a real session item -- busiest first, active count in
-    the title."""
-    active = [c for c in children if c.mode not in (AgentMode.COMPLETED,)]
-    title = f"\u21b3 {len(children)} worker" + ("s" if len(children) != 1 else "")
-    if active and len(active) != len(children):
-        title += f" \u00b7 {len(active)} active"
-    rollup = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, None, "")
-    rollup.setIndentationLevel_(1)
-    submenu = NSMenu.alloc().init()
-    submenu.setAutoenablesItems_(False)
-    ordered = sorted(
-        children,
-        key=lambda c: (c.mode == AgentMode.COMPLETED, -c.updated_at.timestamp()),
-    )
-    visible = ordered if max_visible is None else ordered[: max(0, max_visible)]
-    for child in visible:
-        submenu.addItem_(
-            build_session_menu_item(
-                child, collected_at, target, identity_color=dot_color
-            )
-        )
-    overflow_count = len(ordered) - len(visible)
-    if overflow_count:
-        submenu.addItem_(disabled_menu_item(f"{overflow_count} more"))
-    rollup.setSubmenu_(submenu)
-    return rollup
-
-
-def build_session_menu_item(
-    status: AgentStatus,
-    now: datetime,
-    target: StatusBarController,
-    *,
-    width: float | None = None,
-    identity_color: str | None = None,
-    indent: bool = False,
-    title_suffix: str = "",
-) -> NSMenuItem:
-    # Sub-agent rows carry an explicit elbow -- indentationLevel alone
-    # disappears next to the state-spinner and app-icon stack.
-    prefix = "\u21b3 " if indent else ""
-    base_title = (
-        f"{native_session_menu_title(status)}"
-        f"{session_heard_suffix(status, now)}{title_suffix}"
-    )
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        f"{prefix}{base_title}",
-        "openSessionPrimary:",
-        "",
-    )
-    item.setTarget_(target)
-    item.setRepresentedObject_(status)
-    if indent:
-        item.setIndentationLevel_(1)
-    if identity_color is not None:
-        # A colored bullet leading the title -- the session's identity
-        # hue, matching what the LEDs show for it.
-        title = f"{prefix}\u25cf {base_title}"
-        attributed = NSMutableAttributedString.alloc().initWithString_(title)
-        attributed.addAttribute_value_range_(
-            NSForegroundColorAttributeName,
-            nscolor_from_hex(identity_color),
-            (len(prefix), 1),
-        )
-        item.setAttributedTitle_(attributed)
-    image = session_row_icon_for_status(status)
-    if image is not None:
-        item.setImage_(image)
-    return item
-
-
-def session_heard_suffix(status: AgentStatus, now: datetime) -> str:
-    """" · 4m ago" after every session title -- when JR-Bar last
-    HEARD from it. The number existed only in Diagnostics before
-    (audited gap): a row that says nothing about its own recency makes
-    the owner guess whether "working" is live truth or a memory. Fresh
-    rows (under a minute) stay clean -- "just now" on every live row is
-    noise, silence is the freshness signal.
-    """
-    try:
-        age = (now - status.updated_at).total_seconds()
-    except (TypeError, AttributeError):
-        return ""
-    if not math.isfinite(age) or age < 60.0:
-        return ""
-    return f" · {relative_age_label(age)}"
-
-
-def native_session_menu_title(status: AgentStatus) -> str:
-    title, project = session_title_parts(status)
-    parts = [title]
-    if project:
-        parts.append(project)
-    # Em dash: two deliberate fields, not accidental whitespace.
-    return " — ".join(parts)
-
-
-_session_row_icon_cache: dict[tuple, object] = {}
-
-
-def session_row_icon_for_status(status: AgentStatus):
-    # The composite (two lockFocus draws per row) ran fresh for every
-    # session row on every menu rebuild -- the single largest cost of a
-    # rebuild once app icons were cached. The result depends only on
-    # (mode, provider, origin), all of which recur across rows and
-    # rebuilds, so the composite is computed once per combination.
-    key = (
-        status.mode,
-        (status.provider or "").lower(),
-        normalized_origin_text(status.origin),
-    )
-    cached = _session_row_icon_cache.get(key)
-    if cached is not None:
-        return cached
-    status_icon = status_icon_for_status(status)
-    origin_icon = session_origin_icon_for_status(status)
-    if origin_icon is None:
-        icon = status_icon
-    elif status_icon is None:
-        icon = origin_icon
-    else:
-        icon = horizontal_icon_pair(status_icon, origin_icon)
-    if icon is not None:
-        _session_row_icon_cache[key] = icon
-    return icon
-
-
-def status_icon_for_status(status: AgentStatus):
-    state = state_for_mode(status.mode)
-    return image_for_symbol(state.symbol, state.label)
-
-
-def session_origin_icon_for_status(status: AgentStatus):
-    provider_icon = provider_icon_for_status(status)
-    host_icon = host_icon_for_origin(status.origin)
-    if host_icon is None:
-        return provider_icon
-    return composite_app_icons(host_icon, provider_icon)
-
-
-def provider_icon_for_status(status: AgentStatus):
-    return provider_icon_for_provider(status.provider)
-
-
 def provider_icon_for_provider(provider: str):
     provider = provider.lower()
     if provider == "codex":
@@ -19386,110 +16767,6 @@ def provider_icon_for_provider(provider: str):
             return image
         return grok_badge_icon()
     return image_for_symbol("terminal", provider.title() or "Agent")
-
-
-def host_icon_for_origin(origin: str | None):
-    normalized = normalized_origin_text(origin)
-    if not normalized:
-        return None
-    if "vs code" in normalized or "vscode" in normalized or "visual studio code" in normalized:
-        return first_app_icon(
-            (
-                "/Applications/Visual Studio Code.app",
-                "/Applications/Visual Studio Code - Insiders.app",
-            )
-        ) or image_for_symbol("chevron.left.forwardslash.chevron.right", "VS Code")
-    if "cursor" in normalized:
-        return first_app_icon(("/Applications/Cursor.app",)) or image_for_symbol(
-            "cursorarrow",
-            "Cursor",
-        )
-    if "windsurf" in normalized:
-        return first_app_icon(("/Applications/Windsurf.app",)) or image_for_symbol(
-            "wind",
-            "Windsurf",
-        )
-    if any(token in normalized for token in ("cli", "terminal", "command line")):
-        return first_app_icon(
-            (
-                "/System/Applications/Utilities/Terminal.app",
-                "/Applications/iTerm.app",
-                "/Applications/iTerm2.app",
-            )
-        ) or image_for_symbol("terminal", "Terminal")
-    if "transcript" in normalized:
-        return image_for_symbol("doc.text", "Transcript")
-    return None
-
-
-def first_app_icon(paths: tuple[str, ...]):
-    for path in paths:
-        image = app_icon(path)
-        if image is not None:
-            return image
-    return None
-
-
-def composite_app_icons(host_icon, provider_icon):
-    if provider_icon is None:
-        return host_icon
-    if host_icon is None:
-        return provider_icon
-
-    image = NSImage.alloc().initWithSize_((24.0, 18.0))
-    try:
-        image.lockFocus()
-        host_icon.drawInRect_fromRect_operation_fraction_(
-            ((0.0, 1.0), (15.5, 15.5)),
-            image_source_rect(host_icon),
-            NSCompositingOperationSourceOver,
-            1.0,
-        )
-        provider_icon.drawInRect_fromRect_operation_fraction_(
-            ((8.0, 1.0), (15.5, 15.5)),
-            image_source_rect(provider_icon),
-            NSCompositingOperationSourceOver,
-            1.0,
-        )
-    finally:
-        image.unlockFocus()
-    image.setSize_((24.0, 18.0))
-    return image
-
-
-def horizontal_icon_pair(left_icon, right_icon):
-    left_width = 15.5
-    right_width = float(right_icon.size().width)
-    width = left_width + 3.0 + right_width
-    height = 18.0
-    image = NSImage.alloc().initWithSize_((width, height))
-    try:
-        image.lockFocus()
-        left_icon.drawInRect_fromRect_operation_fraction_(
-            ((0.0, 1.25), (left_width, left_width)),
-            image_source_rect(left_icon),
-            NSCompositingOperationSourceOver,
-            1.0,
-        )
-        right_icon.drawInRect_fromRect_operation_fraction_(
-            ((left_width + 3.0, 0.0), (right_width, height)),
-            image_source_rect(right_icon),
-            NSCompositingOperationSourceOver,
-            1.0,
-        )
-    finally:
-        image.unlockFocus()
-    image.setSize_((width, height))
-    return image
-
-
-def image_source_rect(image) -> tuple[tuple[float, float], tuple[float, float]]:
-    size = image.size()
-    return ((0.0, 0.0), (float(size.width), float(size.height)))
-
-
-def normalized_origin_text(origin: str | None) -> str:
-    return " ".join(str(origin or "").strip().lower().replace("-", " ").split())
 
 
 _grok_badge_icon = None
@@ -19543,18 +16820,6 @@ def app_icon(path: str):
         image.setSize_((18, 18))
         _app_icon_cache[path] = image
     return image
-
-
-def build_error_menu(exc: Exception) -> NSMenu:
-    menu = NSMenu.alloc().init()
-    item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        f"Agent monitor error: {exc}",
-        None,
-        "",
-    )
-    item.setEnabled_(False)
-    menu.addItem_(item)
-    return menu
 
 
 def unseen_completions(
@@ -19757,33 +17022,6 @@ def open_terminal_command(
     return plan
 
 
-def run_status_bar() -> None:
-    app = NSApplication.sharedApplication()
-    controller = StatusBarController.alloc().init()
-    app.setDelegate_(controller)
-    app.run()
-
-
-def main() -> int:
-    # Backlog #15: a second instance used to steal events.sock, and
-    # quitting it unlinked the socket and permanently deafened the
-    # survivor. One live-owner probe; a stale socket file still reads
-    # as dead and gets rebound over as before.
-    if another_instance_alive():
-        print(f"{PRODUCT_DISPLAY_NAME} is already running; this instance is exiting.")
-        return 0
-    from .application_composition import compose_status_bar_application
-    from .migration import run_startup_migration
-
-    # A SidePulse install's settings, ledgers and history come forward
-    # before composition reads any of them.
-    run_startup_migration()
-    compose_status_bar_application()
-    run_status_bar()
-    return 0
-
-
-
 # --- Extraction seam (backlog #14): the Settings window's construction
 # lives in settings_window.py with explicit dependencies and is re-exported
 # below so controller methods, tests, and callers keep addressing
@@ -19850,10 +17088,3 @@ from .settings_window import (  # noqa: E402, F401 -- re-export: tests and
     remote_peer_status_text,
     select_focus_dim_choice,
 )
-
-# Direct execution (python -m jrbar.status_bar) must run AFTER the
-# extraction seam above -- main() blocks for the app's whole life, so
-# anything below the guard would never execute (the seam sat below it
-# briefly, and every Settings path NameError'd under -m).
-if __name__ == "__main__":
-    raise SystemExit(main())

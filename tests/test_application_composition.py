@@ -110,7 +110,9 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
             keyword.arg for keyword in node.keywords if keyword.arg is not None
         )
 
-    assert {"controller", "final_controller", "menu_binding"} <= receipt_keywords
+    assert {"controller", "final_controller"} <= receipt_keywords
+    # The NSMenu tree is gone, so there is no menu binding left to record.
+    assert "menu_binding" not in receipt_keywords
 
     # --- scenario: status_bar_modules_stop_bootstrapping_on_import
     for path in (
@@ -137,27 +139,7 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
 
 
 
-def test_foreground_entrypoints_reach_one_composition_boundary__and_2_more() -> None:
-    # --- scenario: foreground_entrypoints_reach_one_composition_boundary
-    legacy_main = _function(_tree(STATUS_BAR_LEGACY), "main")
-    provider_main = _function(_tree(PROVIDER_USAGE_STATUS_BAR), "main")
-    legacy_calls = [
-        _call_name(node) for node in ast.walk(legacy_main) if isinstance(node, ast.Call)
-    ]
-    provider_calls = [
-        _call_name(node)
-        for node in ast.walk(provider_main)
-        if isinstance(node, ast.Call)
-    ]
-
-    assert legacy_calls.count("compose_status_bar_application") == 1
-    assert legacy_calls.count("run_status_bar") == 1
-    assert legacy_calls.index("compose_status_bar_application") < legacy_calls.index(
-        "run_status_bar"
-    )
-    assert "compose_status_bar_application" not in provider_calls
-    assert provider_calls == ["main"]
-
+def test_status_bar_composition_is_pure_on_import_and_idempotent_at_boot__and_1_more() -> None:
     # --- scenario: status_bar_composition_is_pure_on_import_and_idempotent_at_boot
     script = """
 import json
@@ -177,14 +159,12 @@ threading.Thread.start = guarded_start
 from jrbar import status_bar_legacy as legacy
 
 controller_before = legacy.StatusBarController
-menu_before = legacy.build_menu
 
 from jrbar import _status_bar_production as production
 from jrbar import provider_usage_status_bar as provider
 from jrbar import status_bar as public_status_bar
 
 assert legacy.StatusBarController is controller_before
-assert legacy.build_menu is menu_before
 assert not thread_starts
 
 from jrbar.application_composition import compose_status_bar_application
@@ -196,7 +176,6 @@ assert receipt is second
 assert not thread_starts
 assert receipt.controller is production.JRStatusBarController
 assert receipt.final_controller is provider.JRProviderUsageStatusBarController
-assert receipt.menu_binding is provider.build_menu
 assert receipt.steps == (
     "production-controller",
     "status-bar-facade",
@@ -206,7 +185,7 @@ assert receipt.steps == (
     "provider-usage-controller",
 )
 assert legacy.StatusBarController is provider.JRProviderUsageStatusBarController
-assert legacy.build_menu is provider.build_menu
+assert not hasattr(legacy, "build_menu")
 assert public_status_bar.StatusBarController is production.JRStatusBarController
 print(json.dumps({"ok": True}))
 """
@@ -227,36 +206,55 @@ print(json.dumps({"ok": True}))
 
     assert completed.returncode == 0, completed.stderr
 
-    # --- scenario: provider_foreground_main_composes_once_before_appkit
+    # --- scenario: no_module_starts_the_retired_foreground_menu_bar
+    # The daemon composes the headless controller; nothing runs the
+    # PyObjC menu bar's NSApplication loop any more.
+    for path in (STATUS_BAR, PRODUCTION_STATUS_BAR, PROVIDER_USAGE_STATUS_BAR, STATUS_BAR_LEGACY):
+        tree = _tree(path)
+        names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        assert "main" not in names, f"{path.name} still has a foreground main"
+        assert "run_status_bar" not in names, f"{path.name} still runs the menu-bar app"
+        assert '__name__ == "__main__"' not in path.read_text(encoding="utf-8")
+
+
+def test_the_composed_daemon_class_still_routes_operator_history_to_the_store() -> None:
+    """Deleting the legacy methods the daemon class shadows must not cut the
+    ones it still reaches through a captured original: the ambient runtime
+    wraps observe_operator_history_events, and that wrapper has to land on
+    the legacy observer that queues the rows for the history store."""
     script = """
-from jrbar import application_composition
-from jrbar import provider_usage_status_bar as provider
-from jrbar import status_bar_legacy as legacy
+import json
 
-calls = []
-application_composition.compose_status_bar_application = (
-    lambda: calls.append("compose")
-)
-legacy.another_instance_alive = lambda: False
-legacy.run_status_bar = lambda: calls.append("run")
+from jrbar import core_runtime
+from jrbar.application_composition import compose_status_bar_application
 
-assert provider.main() == 0
-assert calls == ["compose", "run"], calls
+compose_status_bar_application()
+controller_class = core_runtime.build_headless_controller_class()
+controller = controller_class.alloc().init()
+queued = []
+controller._enqueue_operator_history_events = queued.append
+controller.observe_operator_history_events((), None)
+assert queued == [()], queued
+print(json.dumps({"ok": True}))
 """
     with tempfile.TemporaryDirectory() as tempdir:
         env = os.environ.copy()
         env["SIDEPULSE_TESTING"] = "1"
         env["HOME"] = tempdir
         env["PYTHONPATH"] = str(ROOT / "src")
+        # A `python -c` child under PYTEST_CURRENT_TEST is the provider
+        # module's import probe, which swaps the real controller for
+        # stand-ins; this child needs the real composition.
+        env.pop("PYTEST_CURRENT_TEST", None)
         completed = subprocess.run(
             [sys.executable, "-c", script],
             cwd=ROOT,
             env=env,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=60,
             check=False,
         )
 
     assert completed.returncode == 0, completed.stderr
-
+    assert '"ok": true' in completed.stdout

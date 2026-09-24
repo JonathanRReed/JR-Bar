@@ -7,30 +7,16 @@ and returns exact transition announcements for a native adapter to publish.
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
-import math
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from enum import Enum
 from typing import Final
 
-from .agent_browser import AgentBrowserDocument
-from .mailbox import MailboxRow
-from .navigation_policy import OperatorActionDescriptor
 from .operator_state import (
     PRESENCE_HORIZON_SECONDS,
-    CanonicalOperatorEvent,
     CanonicalOperatorState,
-    InterruptionClass,
     RequestPhase,
-    SemanticEventKey,
-    TransitionKind,
     active_work_went_silent,
     projection_now_epoch,
-    semantic_event_key_to_payload,
 )
 from .presentation_policy import (
     FiniteCueState,
@@ -65,11 +51,8 @@ def _present_primary_works(state: CanonicalOperatorState) -> tuple:
 MAX_ACCESSIBILITY_LABEL_LENGTH: Final = 256
 MAX_ACCESSIBILITY_VALUE_LENGTH: Final = 512
 MAX_ACCESSIBILITY_HELP_LENGTH: Final = 256
-MAX_ACCESSIBILITY_ANNOUNCEMENT_KEY_LENGTH: Final = 128
-MAX_ACCESSIBILITY_ANNOUNCEMENT_TEXT_LENGTH: Final = 256
 MAX_FOCUS_KEY_LENGTH: Final = 128
 MAX_TEXT_SELECTION_COMPONENT: Final = (1 << 63) - 1
-MAX_ANNOUNCED_EVENT_KEYS: Final = 2_000
 
 _PRODUCT_PROVIDER_LABELS: Final = {
     "antigravity": "Antigravity",
@@ -84,14 +67,6 @@ _PRODUCT_PROVIDER_LABELS: Final = {
     "opencode": "OpenCode",
     "pi": "Pi",
     "gemini": "Gemini",
-}
-_LIFECYCLE_LABELS: Final = {
-    WorkLifecycle.IDLE: "Idle",
-    WorkLifecycle.ACTIVE: "Active",
-    WorkLifecycle.WAITING: "Waiting",
-    WorkLifecycle.COMPLETED: "Completed",
-    WorkLifecycle.FAILED: "Failed",
-    WorkLifecycle.UNKNOWN: "Unknown",
 }
 _FRESHNESS_LABELS: Final = {
     SourceFreshness.FRESH: "Source fresh",
@@ -110,14 +85,6 @@ _GLANCE_HEADLINES: Final = {
     GlanceSemantic.CAPACITY: "Capacity status available",
     GlanceSemantic.REST: "No agents need attention",
 }
-_DISABLED_REASONS: Final = frozenset(
-    {
-        "Not available",
-        "Source is stale",
-        "Target changed",
-        "Multiple sources match",
-    }
-)
 _TEXT_SCALE_BY_PERCENT: Final = {
     100: 1.0,
     125: 1.25,
@@ -222,34 +189,6 @@ class FocusSnapshot:
             and _valid_focus_key(self.sidebar_key, required=False)
         ):
             raise ValueError("invalid focus snapshot")
-
-
-class AnnouncementPriority(str, Enum):
-    ACTIONABLE = "actionable"
-    ERROR = "error"
-    OUTCOME = "outcome"
-    SUCCESS = "success"
-
-
-@dataclass(frozen=True, slots=True)
-class AccessibilityAnnouncement:
-    key: str
-    text: str
-    priority: AnnouncementPriority
-
-    def __post_init__(self) -> None:
-        if not (
-            _valid_public_text(
-                self.key,
-                maximum=MAX_ACCESSIBILITY_ANNOUNCEMENT_KEY_LENGTH,
-            )
-            and _valid_public_text(
-                self.text,
-                maximum=MAX_ACCESSIBILITY_ANNOUNCEMENT_TEXT_LENGTH,
-            )
-            and type(self.priority) is AnnouncementPriority
-        ):
-            raise ValueError("invalid accessibility announcement")
 
 
 def status_item_accessibility(
@@ -381,136 +320,6 @@ def status_item_title(
     return headline
 
 
-def mailbox_row_accessibility(
-    row: MailboxRow,
-    *,
-    pinned: bool = False,
-    watched: bool = False,
-    snoozed_until: float | None = None,
-    woke: bool = False,
-    acknowledged_locally: bool = False,
-    disabled_reason: str | None = None,
-) -> AccessibilityText:
-    """Describe one canonical mailbox row without depending on color."""
-    if type(row) is not MailboxRow or type(row.work_key) is not WorkKey:
-        return _row_fallback(disabled_reason=disabled_reason)
-    values = _row_values(
-        lifecycle=row.lifecycle,
-        actionable=row.actionable,
-        pinned=pinned,
-        watched=watched,
-        snoozed=(snoozed_until is not None),
-        snoozed_until=snoozed_until,
-        woke=woke,
-        acknowledged=acknowledged_locally,
-        source_freshness=row.source_freshness,
-        timing_uncertain=row.timing_uncertain,
-        worker_count=row.worker_count,
-    )
-    return AccessibilityText(
-        _family_label(row.work_key, row.safe_label),
-        _bounded_join(values),
-        _row_help(disabled_reason),
-    )
-
-
-def browser_row_accessibility(
-    row: AgentBrowserDocument,
-    *,
-    lifecycle: WorkLifecycle,
-    snoozed_until: float | None = None,
-    disabled_reason: str | None = None,
-) -> AccessibilityText:
-    """Describe one browser row with explicit canonical lifecycle authority."""
-    if type(row) is not AgentBrowserDocument or type(row.work_key) is not WorkKey:
-        return _row_fallback(disabled_reason=disabled_reason)
-    values = _row_values(
-        lifecycle=lifecycle if type(lifecycle) is WorkLifecycle else None,
-        actionable=row.actionable,
-        pinned=row.pinned,
-        watched=row.watched,
-        snoozed=row.snoozed,
-        snoozed_until=snoozed_until,
-        woke=row.woke,
-        acknowledged=row.acknowledged,
-        source_freshness=row.source_freshness,
-        timing_uncertain=row.timing_uncertain,
-        worker_count=row.worker_count,
-    )
-    return AccessibilityText(
-        _family_label(row.work_key, row.safe_family_label),
-        _bounded_join(values),
-        _row_help(disabled_reason),
-    )
-
-
-def action_accessibility(descriptor: OperatorActionDescriptor) -> AccessibilityText:
-    """Translate one shared action descriptor into full native control text."""
-    if type(descriptor) is not OperatorActionDescriptor:
-        return AccessibilityText("Agent action", "Unavailable", "Not available")
-    title = descriptor.title
-    if not _valid_public_text(title, maximum=MAX_ACCESSIBILITY_LABEL_LENGTH):
-        return AccessibilityText("Agent action", "Unavailable", "Not available")
-    if descriptor.enabled:
-        value = "Available"
-        if descriptor.key_equivalent:
-            value = f"Available, keyboard shortcut {descriptor.key_equivalent.upper()}"
-        return AccessibilityText(title, value, f"Activate {title}")
-    return AccessibilityText(
-        title,
-        "Unavailable",
-        _normalized_disabled_reason(descriptor.disabled_reason),
-    )
-
-
-def announcement_for_transition(
-    event: CanonicalOperatorEvent,
-    *,
-    announced_event_keys: frozenset[SemanticEventKey] = frozenset(),
-    quiet: bool = False,
-    acknowledged_locally: bool = False,
-) -> AccessibilityAnnouncement | None:
-    """Return one fresh edge announcement, deduplicated by exact semantic key."""
-    if not (
-        type(event) is CanonicalOperatorEvent
-        and type(announced_event_keys) is frozenset
-        and len(announced_event_keys) <= MAX_ANNOUNCED_EVENT_KEYS
-        and all(type(key) is SemanticEventKey for key in announced_event_keys)
-        and type(quiet) is bool
-        and type(acknowledged_locally) is bool
-    ):
-        return None
-    if quiet or event.source_freshness is not SourceFreshness.FRESH or event.key in announced_event_keys:
-        return None
-
-    announcement: tuple[str, AnnouncementPriority] | None = None
-    if (
-        event.kind is TransitionKind.REQUEST_OPENED
-        and event.interruption_class is InterruptionClass.ACTION_REQUIRED
-        and not acknowledged_locally
-    ):
-        announcement = (
-            "An agent needs your attention",
-            AnnouncementPriority.ACTIONABLE,
-        )
-    elif event.kind is TransitionKind.FAILED:
-        announcement = ("An agent failed", AnnouncementPriority.ERROR)
-    elif event.kind is TransitionKind.REQUEST_RESOLVED:
-        announcement = (
-            "An agent request was resolved",
-            AnnouncementPriority.OUTCOME,
-        )
-    elif event.kind is TransitionKind.COMPLETED:
-        announcement = ("An agent completed", AnnouncementPriority.SUCCESS)
-    if announcement is None:
-        return None
-    return AccessibilityAnnouncement(
-        _announcement_key(event.key),
-        announcement[0],
-        announcement[1],
-    )
-
-
 def normalize_semantic_text_scale(value: object) -> float:
     """Normalize exact percentage choices to a system-font scale multiplier."""
     if type(value) is not int:
@@ -530,87 +339,6 @@ def _provider_label(work_key: WorkKey) -> str:
     return _PRODUCT_PROVIDER_LABELS.get(work_key.source_key.provider_id, "Provider")
 
 
-def _family_label(work_key: WorkKey, candidate: object) -> str:
-    provider = _provider_label(work_key)
-    expected = f"{provider} {work_key.work_id.value}"
-    if (
-        type(candidate) is str
-        and candidate == expected
-        and _valid_public_text(candidate, maximum=MAX_ACCESSIBILITY_LABEL_LENGTH)
-    ):
-        return candidate
-    return f"{provider} agent family"
-
-
-def _row_values(
-    *,
-    lifecycle: WorkLifecycle | None,
-    actionable: object,
-    pinned: object,
-    watched: object,
-    snoozed: object,
-    snoozed_until: object,
-    woke: object,
-    acknowledged: object,
-    source_freshness: object,
-    timing_uncertain: object,
-    worker_count: object,
-) -> tuple[str, ...]:
-    values = [_LIFECYCLE_LABELS.get(lifecycle, "Lifecycle unavailable")]
-    if actionable is True:
-        values.append("Needs you")
-    if pinned is True:
-        values.append("Pinned")
-    if watched is True:
-        values.append("Watching")
-    if snoozed is True:
-        deadline = _format_snooze_deadline(snoozed_until)
-        values.append("Snoozed" if deadline is None else f"Snoozed until {deadline}")
-    if woke is True:
-        values.append("Woke")
-    if acknowledged is True:
-        values.append("Acknowledged locally")
-
-    if timing_uncertain is True:
-        values.append(_FRESHNESS_LABELS[SourceFreshness.TIMING_UNCERTAIN])
-    else:
-        values.append(_FRESHNESS_LABELS.get(source_freshness, "Source status unavailable"))
-
-    if type(worker_count) is int and 0 <= worker_count <= 1_000:
-        values.append("1 worker" if worker_count == 1 else f"{worker_count} workers")
-    else:
-        values.append("Worker count unavailable")
-    return tuple(values)
-
-
-def _format_snooze_deadline(value: object) -> str | None:
-    if not (type(value) in {int, float} and math.isfinite(value) and 0.0 <= float(value) <= 253_402_300_799.0):
-        return None
-    try:
-        deadline = datetime.fromtimestamp(float(value), tz=timezone.utc)
-    except (OverflowError, OSError, ValueError):
-        return None
-    return deadline.strftime("%Y-%m-%d %H:%M UTC")
-
-
-def _normalized_disabled_reason(reason: object) -> str:
-    return reason if type(reason) is str and reason in _DISABLED_REASONS else "Not available"
-
-
-def _row_help(disabled_reason: object) -> str:
-    if disabled_reason is None:
-        return "Open actions for this agent family"
-    return f"Open unavailable. {_normalized_disabled_reason(disabled_reason)}"
-
-
-def _row_fallback(*, disabled_reason: object) -> AccessibilityText:
-    return AccessibilityText(
-        "Agent family",
-        "Lifecycle unavailable, Source status unavailable, Worker count unavailable",
-        _row_help(disabled_reason),
-    )
-
-
 def _bounded_join(values: tuple[str, ...] | list[str]) -> str:
     retained: list[str] = []
     for value in values:
@@ -619,16 +347,3 @@ def _bounded_join(values: tuple[str, ...] | list[str]) -> str:
             break
         retained.append(value)
     return ", ".join(retained) if retained else "Status unavailable"
-
-
-def _announcement_key(event_key: SemanticEventKey) -> str:
-    payload = semantic_event_key_to_payload(event_key)
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("ascii")
-    digest = hashlib.blake2s(encoded, digest_size=15).digest()
-    token = base64.b32encode(digest).decode("ascii").rstrip("=").casefold()
-    return f"announcement:{token}"

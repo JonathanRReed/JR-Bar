@@ -1,6 +1,6 @@
 """One-time copy of SidePulse config, state and data into the JR-Bar locations.
 
-Runs at status-bar start and from ``jrbar setup``. Every copy is additive:
+Runs at daemon start and from ``jrbar setup``. Every copy is additive:
 the SidePulse trees are never modified or removed, nothing already present
 under a JR-Bar location is overwritten, and the run is recorded in
 ``<state dir>/migrated-from-sidepulse.json`` so it happens once. Logging is
@@ -18,8 +18,9 @@ Areas (old, flattened into new):
 * ``~/Library/Application Support/SidePulse/*``
   -> ``~/Library/Application Support/JR-Bar/``
 
-The LaunchAgent swap, provider hook rewrites and Keychain copy-forward are
-handled by their own installers and stores; this module only moves files.
+Provider hook rewrites and the Keychain copy-forward are handled by their
+own installers and stores. The one thing startup does besides moving files
+is unloading the retired menu-bar LaunchAgent (``status_bar_launch``).
 """
 
 from __future__ import annotations
@@ -314,10 +315,18 @@ def migrate_from_sidepulse(
 def run_startup_migration() -> MigrationReport | None:
     """Bring a SidePulse install's files forward before anything reads them.
 
-    Called by the one retained foreground main. Never blocks startup: a
-    failure is logged content-free, the app starts with whatever is present,
-    and the next start retries.
+    Called by the daemon at start. Never blocks startup: a failure is logged
+    content-free, the daemon starts with whatever is present, and the next
+    start retries. Every start also unloads the retired menu-bar
+    LaunchAgent, which an older ``jrbar setup`` installed with KeepAlive.
     """
+    try:
+        from .status_bar_launch import remove_retired_launch_agents
+
+        for path in remove_retired_launch_agents():
+            print(f"migration: removed the retired LaunchAgent {path.name}", flush=True)
+    except Exception as exc:  # pragma: no cover - defensive startup guard
+        _log.warning("migration: retired LaunchAgent not removed (%s)", type(exc).__name__)
     try:
         report = migrate_from_sidepulse()
     except Exception as exc:  # pragma: no cover - defensive startup guard

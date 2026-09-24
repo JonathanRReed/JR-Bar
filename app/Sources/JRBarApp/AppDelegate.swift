@@ -728,6 +728,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // The daemon finished a transcript scan: the panel's sparklines
             // were drawn from a partial answer and can be redrawn now.
             if event.kind == CoreEvent.usageHistoryReadyKind { self?.store?.refreshSparklines(force: true) }
+            // A deck key asked for a window or the waiting ask: the same
+            // router a jrbar:// link runs through.
+            if let command = AppCommand.requested(by: event) { AppCommandRouter.shared.perform(command) }
         }
         observeCore()
         watchSocketDirectory(core.socketPath)

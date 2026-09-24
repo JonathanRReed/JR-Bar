@@ -42,12 +42,12 @@ The status authority for what ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
 | Architecture-policing meta-tests | 0 | They tested the shape of the Python UI that no longer exists |
 | Dead settings dials (`closed_lid_system_override_enabled`, `local_activity_history_enabled`, `forecast_release_authority`), `signals.quota_resets`, `interruption_policy.plan_deliveries`, `LID_ANIMATION_CHOICES` | 0 | No callers |
 | The multi-receipt release gate as the release path | 1 | `make package` is the release; the scripts stay only until their tests are retired |
+| Legacy PyObjC windows behind `open_legacy_window` | 1 | Every one has a Swift replacement; the command went on 2026-09-24 and the deck's window keys ask the app |
 
 ## Still open
 
 | Feature | Score | Disposition |
 | --- | ---: | --- |
-| Legacy PyObjC windows behind `open_legacy_window` | 1 | Retire one at a time as each Swift replacement is confirmed complete |
 | Studio (hand-written LEDS programs, `INIT.LED` burn) | 3 | Daemon only; needs a Swift surface or a decision to fold it into Effect Studio |
 | Browser-session import for provider auth | 2 | Daemon only; no Swift consent flow yet |
 | Price table served by the daemon | 3 | The Usage Center reads "no price table" until it exists |

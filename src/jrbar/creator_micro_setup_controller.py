@@ -283,9 +283,6 @@ def apply_creator_micro_setup_result(
             target.reconfigureDeckRuntime_(None)
         if pane is not None:
             pane.set_status(messages.get(code, f"Creator Micro 2: {code.replace('_', ' ')}."))
-        if code == "keymap_verified":
-            from .deck_control_center import open_control_center
-            open_control_center(target, input_check=True)
         return
 
     preview = result.preview

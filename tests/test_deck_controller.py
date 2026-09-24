@@ -6,19 +6,24 @@ from jrbar.deck_controller import apply_deck_input
 from jrbar.deck_input_dispatch import DeckInputDispatch
 
 
-def test_controller_routes_a_hardware_press_to_the_existing_usage_center__and_2_more() -> None:
-    # --- scenario: controller_routes_a_hardware_press_to_the_existing_usage_center
+def test_controller_routes_a_hardware_press_to_the_apps_usage_center__and_2_more() -> None:
+    # --- scenario: controller_routes_a_hardware_press_to_the_apps_usage_center
     queued, opened = [], []
+
+    def request_app(kind, **fields):
+        opened.append((kind, fields))
+        return True
+
     target = SimpleNamespace(
         _deck_deliver_inline=True,
         performSelectorOnMainThread_withObject_waitUntilDone_=lambda selector, batch, wait: queued.append(batch),
-        openProviderUsageCenter_=lambda sender: opened.append("usage"),
+        _core_request_app=request_app,
     )
     controls = DeckControlSettings(enabled=True, bindings=((3, DeckAction("open_usage")),))
     dispatch = DeckInputDispatch(target, controls)
     dispatch.receive([{"method": "v.oai.hid", "params": {"k": "AG03", "act": 1}}])
     apply_deck_input(target, queued[0])
-    assert opened == ["usage"]
+    assert opened == [("open_window", {"window": "usage"})]
     assert target._deck_action_receipt.success
 
     # --- scenario: controller_ignores_input_during_termination
@@ -26,7 +31,7 @@ def test_controller_routes_a_hardware_press_to_the_existing_usage_center__and_2_
     target = SimpleNamespace(
         _runtime_termination_started=True,
         performSelectorOnMainThread_withObject_waitUntilDone_=lambda selector, batch, wait: queued.append(batch),
-        openProviderUsageCenter_=lambda sender: opened.append("usage"),
+        _core_request_app=lambda kind, **fields: opened.append(kind) or True,
     )
     dispatch = DeckInputDispatch(target, DeckControlSettings(enabled=True, bindings=((3, DeckAction("open_usage")),)))
     dispatch.receive([{"method": "v.oai.hid", "params": {"k": "AG03", "act": 1}}])

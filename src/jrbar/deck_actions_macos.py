@@ -158,7 +158,11 @@ class MacDeckActionExecutor:
             callback, success_code = self._callbacks[action.kind]
             if callback is None:
                 return DeckActionReceipt(code="callback_unavailable", success=False)
-            callback()
+            # A callback that knows better than "it ran" (the daemon asking
+            # the app for a window, with no app connected) says so itself.
+            result = callback()
+            if type(result) is DeckActionReceipt:
+                return result
             return DeckActionReceipt(code=success_code, success=True)
         except Exception:
             code = "callback_failed" if action.kind in self._callbacks else "native_error"

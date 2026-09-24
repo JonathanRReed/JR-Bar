@@ -37,7 +37,6 @@ from .providers import (
     negotiated_provider_sources,
 )
 from .runtime_scheduler import MAX_RUNTIME_PENDING_KEYS, RuntimeFeature
-from .status_bar_launch import launch_agent_path
 from .trusted_tools import trusted_system_tool
 
 DOCTOR_DOCUMENT: Final = "jrbar-doctor"
@@ -45,11 +44,13 @@ DOCTOR_DOCUMENT: Final = "jrbar-doctor"
 # Alcove following to its seven semantic confidence states; 5: adds
 # not_applicable to launch_agent_state for the bundled embedded daemon,
 # where the app supervises the core and a missing LaunchAgent plist is
-# the design rather than a fault. The document gains rows and codes, so
-# anything holding an older export is reading a different shape --
-# version it rather than let a consumer silently miss a check that is
-# now reported.
-DOCTOR_VERSION: Final = 5
+# the design rather than a fault; 6 drops launch_agent_state, since no
+# JR-Bar install has a menu-bar LaunchAgent any more (the Swift app
+# supervises the daemon, and startup unloads the retired plist). The
+# document gains and loses rows and codes, so anything holding an older
+# export is reading a different shape -- version it rather than let a
+# consumer silently miss a check.
+DOCTOR_VERSION: Final = 6
 MAX_DOCTOR_EXPORT_BYTES: Final = 64 * 1024
 PUBLIC_COLLECTION_ERROR_MESSAGE: Final = "Diagnostics could not be collected."
 
@@ -57,7 +58,6 @@ PUBLIC_COLLECTION_ERROR_MESSAGE: Final = "Diagnostics could not be collected."
 class DiagnosticCheck(str, Enum):
     PACKAGE_IMPORT_ROOT = "package_import_root"
     SIGNATURE_STATE = "signature_state"
-    LAUNCH_AGENT_STATE = "launch_agent_state"
     PRIVATE_PATH_MODES = "private_path_modes"
     HOOK_DETECTOR_STATE = "hook_detector_state"
     NEGOTIATED_SOURCE_HEALTH = "negotiated_source_health"
@@ -75,7 +75,6 @@ class DiagnosticCode(str, Enum):
     NOT_APPLICABLE = "not_applicable"
     VERIFIED = "verified"
     UNVERIFIED = "unverified"
-    INSTALLED = "installed"
     MISSING = "missing"
     UNSAFE = "unsafe"
     PRIVATE = "private"
@@ -166,17 +165,6 @@ DIAGNOSTIC_MANIFEST: Final = DiagnosticManifest(
                 DiagnosticCode.NOT_APPLICABLE,
                 DiagnosticCode.VERIFIED,
                 DiagnosticCode.UNVERIFIED,
-                DiagnosticCode.UNAVAILABLE,
-            ),
-            1,
-        ),
-        DiagnosticFieldManifest(
-            DiagnosticCheck.LAUNCH_AGENT_STATE,
-            (
-                DiagnosticCode.INSTALLED,
-                DiagnosticCode.MISSING,
-                DiagnosticCode.NOT_APPLICABLE,
-                DiagnosticCode.UNSAFE,
                 DiagnosticCode.UNAVAILABLE,
             ),
             1,
@@ -388,41 +376,6 @@ def _signature_state_probe() -> DiagnosticFinding:
         DiagnosticCheck.SIGNATURE_STATE,
         DiagnosticCode.VERIFIED if verified else DiagnosticCode.UNVERIFIED,
         int(verified),
-        1,
-    )
-
-
-def _launch_agent_state_probe() -> DiagnosticFinding:
-    path = launch_agent_path()
-    try:
-        info = path.lstat()
-    except FileNotFoundError:
-        if running_inside_bundle():
-            # The bundled core is spawned and supervised by the app
-            # itself; a LaunchAgent plist is only expected when the
-            # daemon runs standalone under launchd.
-            return _finding(
-                DiagnosticCheck.LAUNCH_AGENT_STATE,
-                DiagnosticCode.NOT_APPLICABLE,
-                1,
-                1,
-            )
-        return _finding(
-            DiagnosticCheck.LAUNCH_AGENT_STATE,
-            DiagnosticCode.MISSING,
-            0,
-            1,
-        )
-    safe = (
-        stat.S_ISREG(info.st_mode)
-        and not stat.S_ISLNK(info.st_mode)
-        and info.st_uid == os.geteuid()
-        and not info.st_mode & 0o022
-    )
-    return _finding(
-        DiagnosticCheck.LAUNCH_AGENT_STATE,
-        DiagnosticCode.INSTALLED if safe else DiagnosticCode.UNSAFE,
-        int(safe),
         1,
     )
 
@@ -700,7 +653,6 @@ def _default_probes() -> tuple[DiagnosticProbe, ...]:
     return (
         DiagnosticProbe(DiagnosticCheck.PACKAGE_IMPORT_ROOT, _package_import_root_probe),
         DiagnosticProbe(DiagnosticCheck.SIGNATURE_STATE, _signature_state_probe),
-        DiagnosticProbe(DiagnosticCheck.LAUNCH_AGENT_STATE, _launch_agent_state_probe),
         DiagnosticProbe(DiagnosticCheck.PRIVATE_PATH_MODES, _private_path_modes_probe),
         DiagnosticProbe(DiagnosticCheck.HOOK_DETECTOR_STATE, _hook_detector_state_probe),
         DiagnosticProbe(DiagnosticCheck.NEGOTIATED_SOURCE_HEALTH, _negotiated_source_health_probe),

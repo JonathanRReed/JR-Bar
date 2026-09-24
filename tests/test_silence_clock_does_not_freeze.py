@@ -12,13 +12,24 @@ last event.
 
 The existing silence tests all advanced the clock to simulate silence,
 which is the one thing real silence never does. These pin the quiet case
-for EVERY provider, since the freeze was provider-independent.
+for EVERY provider, since the freeze was provider-independent, and they
+run the daemon's own path: the monitor's snapshot of the canonical state
+at the monitor's clock, then project_attention.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
+from jrbar._collector_legacy import (
+    COMPLETED_VISIBLE_SECONDS,
+    IDLE_VISIBLE_SECONDS,
+    POST_TOOL_WORKING_VISIBLE_SECONDS,
+    RestoreHealth,
+    _snapshot_from_operator_state,
+)
 from jrbar._settings_legacy import AgentMonitorSettings
-from jrbar.attention import project_attention_from_operator_state
+from jrbar.attention import project_attention
 from jrbar.capacity_types import SourceKey
 from jrbar.mailbox import project_canonical_mailbox
 from jrbar.operator_state import (
@@ -97,6 +108,28 @@ def state_that_went_quiet(provider: str, lifecycle: WorkLifecycle):
     ).state
 
 
+def live_projection(state, seconds_after_last_event: float):
+    """What the daemon's lights read: the monitor's snapshot of this
+    canonical state, taken at the monitor's own clock (which keeps running
+    through the silence), then project_attention."""
+    snapshot = _snapshot_from_operator_state(
+        state,
+        events=(),
+        sources=(),
+        collected_at=datetime.fromtimestamp(
+            LAST_EVENT_AT + seconds_after_last_event, timezone.utc
+        ),
+        restore_health=RestoreHealth.NOT_ATTEMPTED,
+        stale_after_seconds=3600.0,
+        tool_running_timeout_seconds=0.0,
+        completed_visible_seconds=COMPLETED_VISIBLE_SECONDS,
+        idle_visible_seconds=IDLE_VISIBLE_SECONDS,
+        post_tool_working_visible_seconds=POST_TOOL_WORKING_VISIBLE_SECONDS,
+        canonical_projected_uses_age_windows=True,
+    )
+    return project_attention(snapshot, AgentMonitorSettings())
+
+
 def freeze_wall_clock(monkeypatch, seconds_after_last_event: float) -> None:
     monkeypatch.setattr(
         "jrbar.operator_state.time.time",
@@ -109,11 +142,10 @@ def test_a_silent_active_work_stops_claiming_the_lights_and_being_counted(
 ) -> None:
     for provider in ALL_PROVIDERS:
         state = state_that_went_quiet(provider, WorkLifecycle.ACTIVE)
-        freeze_wall_clock(monkeypatch, active_silence_seconds_for(provider) + 60.0)
+        silent_for = active_silence_seconds_for(provider) + 60.0
+        freeze_wall_clock(monkeypatch, silent_for)
 
-        projection = project_attention_from_operator_state(
-            state, (), AgentMonitorSettings()
-        )
+        projection = live_projection(state, silent_for)
         assert all(
             row.lifecycle_mode.value != "active" for row in projection.visible_rows
         ), f"{provider}: the lights still claim a session that went quiet"
@@ -127,11 +159,8 @@ def test_a_finished_turn_does_not_hold_its_completion_forever__and_2_more(monkey
     """The exact reported symptom: the completion sweep never retiring."""
     for provider in ALL_PROVIDERS:
         state = state_that_went_quiet(provider, WorkLifecycle.COMPLETED)
-        freeze_wall_clock(monkeypatch, 3_600.0)
 
-        projection = project_attention_from_operator_state(
-            state, (), AgentMonitorSettings()
-        )
+        projection = live_projection(state, 3_600.0)
         assert all(
             row.lifecycle_mode.value != "completed_recently"
             for row in projection.visible_rows
@@ -141,23 +170,17 @@ def test_a_finished_turn_does_not_hold_its_completion_forever__and_2_more(monkey
     monkeypatch.undo()
     """The fix must not retire work that is merely between tool calls."""
     state = state_that_went_quiet("claude", WorkLifecycle.ACTIVE)
-    freeze_wall_clock(monkeypatch, ACTIVE_SILENCE_SECONDS - 30.0)
 
-    projection = project_attention_from_operator_state(
-        state, (), AgentMonitorSettings()
-    )
+    projection = live_projection(state, ACTIVE_SILENCE_SECONDS - 30.0)
     assert any(row.lifecycle_mode.value == "active" for row in projection.visible_rows)
 
     # --- scenario: a_wall_clock_behind_the_evidence_cannot_rejuvenate_work
     monkeypatch.undo()
     """A machine whose clock sits behind the events (restore after sleep,
     a clock stepped backwards) must not make silent work look young."""
-    state = state_that_went_quiet("claude", WorkLifecycle.ACTIVE)
-    freeze_wall_clock(monkeypatch, -86_400.0)
+    state = state_that_went_quiet("claude", WorkLifecycle.COMPLETED)
 
-    projection = project_attention_from_operator_state(
-        state, (), AgentMonitorSettings()
-    )
-    # Floored at the observed moment: neither aged out nor rejuvenated.
+    projection = live_projection(state, -86_400.0)
+    # Evidence from a day "ahead" of the clock is implausible, so nothing
+    # claims a fresh completion from it.
     assert all(row.lifecycle_mode.value != "completed_recently" for row in projection.visible_rows)
-
