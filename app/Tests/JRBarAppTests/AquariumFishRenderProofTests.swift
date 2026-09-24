@@ -52,18 +52,34 @@ struct AquariumFishRenderProofTests {
                              hat: ShopItem? = nil, accessory: ShopItem? = nil) {
         var f = c
         f.translateBy(x: p.x, y: p.y)
+        if swim.thin < AquariumTurn.frontCut, species != .seahorse {
+            // Mid-turn: the head-on frame, as the tank draws it.
+            f.scaleBy(x: facing * length, y: length)
+            CartoonFish.drawFront(into: &f, species: species, palette: palette, swim: swim, mouth: mouth,
+                                  blink: blink, dead: dead, pointSize: length)
+            CartoonFish.drawFrontWear(hat: hat, accessory: accessory, species: species, into: &f,
+                                      trail: 0.4, lineWidth: CartoonFish.outlineWidth(length))
+            return
+        }
         f.scaleBy(x: facing * swim.thin * length, y: length)
         CartoonFish.draw(into: &f, species: species, palette: palette, swim: swim,
                          mouth: mouth, blink: blink, dead: dead, pointSize: length, variant: variant)
-        let art = CartoonFish.art(for: species)
-        let lw = CartoonFish.outlineWidth(length)
-        if let hat {
-            CartoonFish.drawHat(hat, into: &f, at: art.hatAnchor, scale: art.hatScale,
-                                tilt: art.hatTilt, lineWidth: lw)
-        }
-        if let accessory {
-            CartoonFish.drawAccessory(accessory, into: &f, art: art, trail: 0.4, thin: swim.thin, lineWidth: lw)
-        }
+        // The wear the tank draws, head lead and all.
+        CartoonFish.drawSideWear(hat: hat, accessory: accessory, art: CartoonFish.art(for: species),
+                                 into: &f, trail: 0.4, thin: swim.thin, lead: swim.lead,
+                                 lineWidth: CartoonFish.outlineWidth(length))
+    }
+
+    /// The swim of a turn at `p` (`AquariumTurn.pose`): the side-on
+    /// share, the head lead and the tail's kick, and the mirror the tank
+    /// draws it with (head-on, the facing the turn came in with).
+    private static func turning(_ p: Double) -> (swim: CartoonFish.Swim, facing: Double) {
+        let pose = AquariumTurn.pose(p: p, dir0: 1, arc: 1)
+        var l = AquariumView.Layout()
+        l.apply(pose)
+        return (CartoonFish.Swim(phase: 0.9 + p * 4, amplitude: 0.2 * pose.ampMul,
+                                 thin: max(0.001, abs(pose.c)), lead: pose.lead),
+                l.front ? l.frontFacing : l.facing)
     }
 
     private static func label(_ c: inout GraphicsContext, _ text: String, at p: CGPoint) {
@@ -164,9 +180,9 @@ struct AquariumFishRenderProofTests {
         }
         try Self.write(lineup, "fish-lineup-tank-size")
 
-        // The swim cycle and the turn: tail phases, then the head-on
-        // squash a wall turn passes through.
-        let motion = Self.sheet(width: 960, height: 110 * 4) { c, _ in
+        // The swim cycle and the turn: tail phases, then five moments
+        // of a U-turn — the head leading, head-on, the tail kicking out.
+        let motion = Self.sheet(width: 1160, height: 110 * 4) { c, _ in
             for (row, species) in [FishSpecies.clownfish, .angelfish, .betta, .shark].enumerated() {
                 let provider = heroProviders[species] ?? "claude"
                 let y = 55 + Double(row) * 110
@@ -175,12 +191,13 @@ struct AquariumFishRenderProofTests {
                     Self.pose(&c, species, at: CGPoint(x: 60 + Double(k) * 100, y: y),
                               length: 80, palette: Self.palette(provider), swim: beat)
                 }
-                for (k, thin) in [0.75, 0.45, 0.2].enumerated() {
-                    Self.pose(&c, species, at: CGPoint(x: 600 + Double(k) * 100, y: y),
-                              length: 80, palette: Self.palette(provider),
-                              swim: CartoonFish.Swim(phase: 0.9, amplitude: 0.2, thin: thin))
+                for (k, p) in [0.2, 0.36, 0.5, 0.64, 0.84].enumerated() {
+                    let turn = Self.turning(p)
+                    Self.pose(&c, species, at: CGPoint(x: 590 + Double(k) * 95, y: y),
+                              length: 80, palette: Self.palette(provider), swim: turn.swim,
+                              facing: turn.facing)
                 }
-                Self.pose(&c, species, at: CGPoint(x: 900, y: y), length: 80,
+                Self.pose(&c, species, at: CGPoint(x: 1100, y: y), length: 80,
                           palette: Self.palette(provider), blink: 1)
             }
         }
@@ -221,17 +238,19 @@ struct AquariumFishRenderProofTests {
         }
         try Self.write(view, "fish-wearables")
 
-        // Eyewear follows the eyes round through a wall turn.
-        let turning = Self.sheet(width: 800, height: 360) { c, _ in
-            let rows: [(FishSpecies, ShopItem, String)] = [(.shark, .sunglasses, "codex"),
-                                                           (.clownfish, .monocle, "claude"),
-                                                           (.puffer, .sunglasses, "antigravity")]
-            for (row, (species, item, provider)) in rows.enumerated() {
-                for (k, thin) in [1.0, 0.75, 0.58, 0.4, 0.22].enumerated() {
-                    Self.pose(&c, species, at: CGPoint(x: 80 + Double(k) * 160, y: 60 + Double(row) * 120),
-                              length: 100, palette: Self.palette(provider),
-                              swim: CartoonFish.Swim(phase: 0.9, amplitude: 0.2, thin: thin),
-                              accessory: item)
+        // Wear follows the face round through a U-turn: the eyewear on
+        // the eyes, the hat on the head, onto the head-on frame and out.
+        let turning = Self.sheet(width: 1000, height: 480) { c, _ in
+            let rows: [(FishSpecies, ShopItem?, ShopItem?, String)] = [
+                (.shark, nil, .sunglasses, "codex"), (.clownfish, nil, .monocle, "claude"),
+                (.puffer, .hatParty, .sunglasses, "antigravity"), (.tang, .hatCrown, .bowTie, "devin"),
+            ]
+            for (row, (species, hat, item, provider)) in rows.enumerated() {
+                for (k, p) in [0.0, 0.22, 0.36, 0.5, 0.64, 0.8].enumerated() {
+                    let turn = Self.turning(p)
+                    Self.pose(&c, species, at: CGPoint(x: 80 + Double(k) * 165, y: 60 + Double(row) * 115),
+                              length: 100, palette: Self.palette(provider), swim: turn.swim,
+                              facing: turn.facing, hat: hat, accessory: item)
                 }
             }
         }

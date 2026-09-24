@@ -31,6 +31,8 @@ struct AquariumView: View {
         var visitorProgress: Double?
         /// A pinned water mood; nil is calm water.
         var mood: AquariumWaterMood?
+        /// The swim settings a proof shot swims with; nil is the defaults.
+        var swimSettings: AquariumSettings?
     }
 
     let toy: AquariumToy?
@@ -292,15 +294,8 @@ struct AquariumView: View {
                         drawFish(canvas: &canvas, size: size, t: t, now: context.date,
                                  fish: aFish, layout: l, parent: parent,
                                  showLabels: showLabels && aFish.id != nameplateID)
-                        // The hover/tap hit area: a soft-edged box
-                        // around the drawn body, front-most fish wins.
-                        let len = Self.fishBaseLength * l.scale * aFish.species.sizeScale
-                            * (aFish.isFry ? AquariumModel.fryScale : 1)
-                        let hgt = len * aFish.species.aspect
-                        hoverProbe.boxes.append((
-                            aFish.id,
-                            CGRect(x: l.x - len * 0.62, y: l.y - hgt * 0.85,
-                                   width: len * 1.24, height: hgt * 1.7)))
+                        // The hover/tap hit area, front-most fish wins.
+                        hoverProbe.boxes.append((aFish.id, hitBox(of: aFish, layout: l)))
                     }
                     drawTokenPasses(canvas: &canvas, roster: order.ordered,
                                     layouts: layouts, t: t, now: context.date)
@@ -574,6 +569,9 @@ struct AquariumView: View {
         /// Which fish are at their station this frame — the cue pass
         /// only draws a fish's work where it is actually doing it.
         var stationed: [String: TankStation] = [:]
+        /// Where each fish was last drawn and how its last change of
+        /// state is settling (`TankSwimMemory`).
+        let swim = TankSwimMemory()
     }
 
     /// A game event a draw pass produced — recorded, not applied.
@@ -630,10 +628,14 @@ struct AquariumView: View {
     /// just reads the results. Special states (rise/sink/leave) hold
     /// their bodies still; the pose functions animate from the anchor
     /// recorded where the state changed.
-    private func stepSwim(_ roster: [Fish], in size: CGSize, t: Double, now: Date,
-                          density: Double = 1) {
+    func stepSwim(_ roster: [Fish], in size: CGSize, t: Double, now: Date,
+                  density: Double = 1) {
         let m = motion
         m.size = size
+        // One read of the swim settings per frame.
+        m.swim.settings = swimSettings
+        let tuning = m.swim.settings ?? AquariumSettings()
+        let tempo = AquariumSettings.clamped(tuning.swimSpeed, to: AquariumSettings.swimSpeedRange)
         // Reduce Motion ticks once a second: let the sim absorb real
         // elapsed time so sinking food and darting fish still arrive —
         // the motion reads as a stepped drift, not a frozen tank.
@@ -648,6 +650,7 @@ struct AquariumView: View {
             m.startles = m.startles.filter { liveIDs.contains($0.key) }
             m.stationed = m.stationed.filter { liveIDs.contains($0.key) }
         }
+        m.swim.prune(keeping: liveIDs)
         // Transient FX expiry — puffs and flights are draw-only state.
         m.startles = m.startles.filter { now < $0.value.until }
         m.puffs.removeAll { now.timeIntervalSince($0.bornAt) > 0.8 }
@@ -672,10 +675,38 @@ struct AquariumView: View {
         for fish in swimmers where m.bodies[fish.id] == nil {
             m.bodies[fish.id] = spawnBody(for: fish, in: size)
         }
+        // A fish back from the glass (an ask answered) or up off the sand
+        // swims on from where it was last drawn, not from where its body
+        // waited — so it swims back down instead of jumping.
+        for fish in swimmers {
+            guard let was = m.anchors[fish.id]?.state, was != .swimming, was != .idling,
+                  let drawn = m.swim.drawn[fish.id], var body = m.bodies[fish.id],
+                  size.width > 1, size.height > 1 else { continue }
+            body.x = drawn.x / size.width
+            body.y = drawn.y / size.height
+            body.dir = drawn.yawCos >= 0 ? 1 : -1
+            body.climb = 0
+            body.pitch = drawn.pitch
+            body.turn = nil
+            body.throttle = 0.5
+            m.bodies[fish.id] = body
+        }
 
         // Claims: each pellet goes to the nearest swimmer.
         m.claims.removeAll(keepingCapacity: true)
         var foodByFish: [String: (x: Double, y: Double)] = [:]
+        // A finished fish's meal: each eater swims for its pellet through
+        // its own turn, and eats it when its mouth gets there (below).
+        let meals = completionMeals(in: size, now: now, roster: roster)
+        for meal in meals {
+            let age = now.timeIntervalSince(meal.leaver.stateSince)
+            for pellet in meal.pellets {
+                guard let eater = pellet.eater, m.bodies[eater] != nil,
+                      age > 0.35, age < pellet.gone else { continue }
+                let at = pellet.position(at: age)
+                foodByFish[eater] = (at.x / max(1, size.width), at.y / max(1, size.height))
+            }
+        }
         for pellet in m.pellets {
             var best: String?
             var bestD = Double.greatestFiniteMagnitude
@@ -726,24 +757,28 @@ struct AquariumView: View {
             if m.curiousID != nil { pointerUnit = pu }
         }
 
-        let bounds = SwimBounds(
-            minX: 0.05, minY: 30 / max(1, size.height),
-            maxX: 0.95, maxY: (size.height - 100) / max(1, size.height),
-            margin: 0.10)
+        let maxY = (size.height - 100) / max(1, size.height)
 
         for fish in swimmers {
             guard var body = m.bodies[fish.id] else { continue }
-            var context = SwimContext(bounds: bounds)
+            // Its tallest fin stays under the surface at its size.
+            let top = min(maxY - 0.05, surfaceClearance(of: fish) / max(1, size.height))
+            let bounds = SwimBounds(minX: 0.05, minY: top, maxX: 0.95, maxY: maxY, margin: 0.10)
+            var context = SwimContext(bounds: bounds, pace: tuning.swimPace, tempo: tempo)
+            // The body sees the glass by its drawn length.
+            body.length = drawnSize(of: fish, layout: steeringLayout(of: fish)).length
+                / max(1, size.width)
             // A startled fish darts away from the tap — expressed as a
-            // pellet just past its tail, so the food-seek does the
-            // darting. Unless a real pellet already claimed it: lunch
-            // outranks a scare.
+            // place to flee to just past its tail, so the seek does the
+            // darting and a tap behind it turns it round quick. Unless a
+            // real pellet already claimed it: lunch outranks a scare.
             if let s = m.startles[fish.id], foodByFish[fish.id] == nil {
                 let dx = body.x * size.width - s.from.x
                 let dy = body.y * size.height - s.from.y
                 let len = max(1, (dx * dx + dy * dy).squareRoot())
                 context.food = (x: min(0.98, max(0.02, body.x + dx / len * 0.45)),
                                 y: min(0.92, max(0.02, body.y + dy / len * 0.45)))
+                context.startled = true
             } else {
                 context.food = foodByFish[fish.id]
             }
@@ -758,15 +793,16 @@ struct AquariumView: View {
                 context.school = pu
             }
             let hungry = toy?.game.pets[fish.id]?.hungry(at: now) ?? false
+            context.idling = fish.state == .idling
             context.wander = fish.state == .idling ? 0.5 : 1.0
             context.hunger = hungry ? 1.3 : 1.0
             context.effort = fish.state == .idling ? 0.42 : 1.0
             // At work: the plan's tool-level action has a station, and
             // the fish goes and does it there — foraging the kelp for a
-            // read, circling the wreck for a test. Expressed as a slow
-            // seek on the station's moving point, so the glass, the
-            // food and a startle all still outrank it: lunch first, a
-            // poke still scares, and the work waits a beat.
+            // read, circling the wreck for a test. It swims to the
+            // station's moving point and hovers once it arrives, so the
+            // glass, the food and a startle all still outrank it: lunch
+            // first, a poke still scares, and the work waits a beat.
             if context.food == nil, fish.state == .swimming,
                let cue = fish.cue, cue.isFresh(at: now),
                let anchor = stationAnchor(cue.station, for: fish, in: size,
@@ -774,9 +810,8 @@ struct AquariumView: View {
                 let goal = AquariumStations.target(for: cue.station, anchor: anchor,
                                                    t: t, seed: fish.seed)
                 let dx = goal.x - body.x, dy = goal.y - body.y
-                context.food = (x: min(bounds.maxX, max(bounds.minX, goal.x)),
-                                y: min(bounds.maxY, max(bounds.minY, goal.y)))
-                context.hunger = AquariumStations.seekHunger
+                context.station = (x: min(bounds.maxX, max(bounds.minX, goal.x)),
+                                   y: min(bounds.maxY, max(bounds.minY, goal.y)))
                 context.wander = 0.35
                 context.effort = AquariumStations.effort(for: cue.station,
                                                          distance: (dx * dx + dy * dy).squareRoot())
@@ -787,6 +822,28 @@ struct AquariumView: View {
             AquariumSteering.step(&body, dt: dt, t: t, seed: fish.seed,
                                   context: context)
             m.bodies[fish.id] = body
+        }
+
+        // A fish whose mouth reached its meal's pellet eats it: the
+        // pellet blinks out, the mouth smiles, the body squash-stretches.
+        for meal in meals {
+            let age = now.timeIntervalSince(meal.leaver.stateSince)
+            for (i, pellet) in meal.pellets.enumerated() {
+                guard let eater = pellet.eater, let b = m.bodies[eater],
+                      age > 0.35, age < pellet.gone else { continue }
+                let at = pellet.position(at: age)
+                let cx = b.x * size.width, cy = b.y * size.height
+                let pose = AquariumTurn.pose(of: b)
+                let nose = CGPoint(x: cx + pose.c * pellet.mouth * cos(b.pitch),
+                                   y: cy + abs(pose.c) * pellet.mouth * sin(b.pitch))
+                let bite = max(5, pellet.mouth * 0.45)
+                if hypot(nose.x - at.x, nose.y - at.y) < bite
+                    || hypot(cx - at.x, cy - at.y) < pellet.mouth * 0.7 {
+                    mealEaten(meal.leaver, pellet: i, age: age)
+                    m.smileUntil[eater] = now.addingTimeInterval(3.5)
+                    m.bounceUntil[eater] = now.addingTimeInterval(0.7)
+                }
+            }
         }
 
         // A fish that reached its pellet eats it: the game hears the
@@ -859,21 +916,23 @@ struct AquariumView: View {
     }
 
     /// A new fish's body, seeded off its id: starts inside the glass at
-    /// its lane's depth, heading the way its swim says.
-    private func spawnBody(for fish: Fish, in size: CGSize) -> SwimBody {
-        let h = fish.seed
-        func unit(_ shift: UInt64) -> Double {
-            Double((h >> shift) & 0xFFFF) / 0xFFFF
-        }
+    /// its lane's depth, facing the way its swim says, at a calm cruise
+    /// (`AquariumSteering.spawn`).
+    func spawnBody(for fish: Fish, in size: CGSize) -> SwimBody {
         let homeY = min(0.80, max(0.14,
                                   laneY(for: fish, in: size) / max(1, size.height)))
-        return SwimBody(x: 0.15 + 0.7 * unit(0),
-                        y: homeY,
-                        heading: fish.direction > 0 ? 0 : .pi,
-                        speed: fish.speed * 1.6,
-                        turnRate: 1.8 + 1.2 * unit(24),
-                        energy: 0.65 + 0.7 * unit(40),
-                        homeY: homeY)
+        let length = drawnSize(of: fish, layout: steeringLayout(of: fish)).length
+        return AquariumSteering.spawn(seed: fish.seed, fishSpeed: fish.speed,
+                                      direction: fish.direction, homeY: homeY,
+                                      length: length / max(1, size.width))
+    }
+
+    /// The layout a swimming fish's size is measured under: its lane's
+    /// depth scale, before any rise or bounce.
+    func steeringLayout(of fish: Fish) -> Layout {
+        var l = Layout()
+        l.scale = 1.08 - fish.lane * 0.4
+        return l
     }
 
     /// Where a fish's current state found it, in points — the anchor

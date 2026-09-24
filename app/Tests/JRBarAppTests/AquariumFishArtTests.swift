@@ -106,4 +106,67 @@ struct AquariumFishArtTests {
         }
         #expect(twoTanks == oneTank)
     }
+
+    @Test("with no head lead a fish draws its cached paths untouched")
+    func noLeadIsFree() {
+        for species in FishSpecies.allCases {
+            let art = CartoonFish.art(for: species)
+            let turned = CartoonFish.Pose(art: art, swim: CartoonFish.Swim(thin: 0.5, lead: 0))
+            #expect(!turned.moving && !turned.warps)
+            #expect(turned.body(art.body) == art.body)
+            #expect(CartoonFish.HeadLead(art: art, thin: 0.5, lead: 0) == nil)
+            #expect(turned.warpX(0.3) == 0.3)
+        }
+        // A lead does move the head.
+        let art = CartoonFish.art(for: .clownfish)
+        let leading = CartoonFish.Pose(art: art, swim: CartoonFish.Swim(thin: 0.5, lead: 0.3))
+        #expect(leading.warps && leading.moving)
+        #expect(leading.body(art.body) != art.body)
+        #expect(leading.headThin < 0.5, "the head is further round than the middle")
+    }
+
+    @Test("the head lead never folds a body back on itself")
+    func leadNeverFolds() {
+        for species in FishSpecies.allCases where species != .seahorse {
+            let art = CartoonFish.art(for: species)
+            let e = art.extent
+            for thin in stride(from: AquariumTurn.frontCut, through: 1.0, by: 0.05) {
+                for lead in stride(from: -0.5, through: 0.5, by: 0.05) {
+                    guard let warp = CartoonFish.HeadLead(art: art, thin: thin, lead: lead) else { continue }
+                    var last = -Double.infinity
+                    for k in 0...120 {
+                        let x = e.minX + (e.maxX - e.minX) * Double(k) / 120
+                        let warped = warp.x(x)
+                        #expect(warped > last, "\(species) folds at x \(x), thin \(thin), lead \(lead)")
+                        last = warped
+                    }
+                    // The middle of the body keeps the caller's squash.
+                    let mid = (art.tailRootX + art.eye.x) / 2
+                    #expect(abs(warp.x(mid) - mid) < 1e-9)
+                }
+            }
+        }
+    }
+
+    @Test("the eyes stay on the body while the head leads a turn")
+    func eyesStayOnTheHead() {
+        for species in FishSpecies.allCases where species != .seahorse {
+            let art = CartoonFish.art(for: species)
+            for k in 1..<30 {
+                // The head-first half of a turn, side view only.
+                let pose = AquariumTurn.pose(p: Double(k) / 60, dir0: 1, arc: 1)
+                guard !pose.isFront else { continue }
+                let swim = CartoonFish.Swim(thin: abs(pose.c), lead: pose.lead)
+                let place = CartoonFish.facePlacement(art: art, swim: swim)
+                let warp = CartoonFish.HeadLead(art: art, thin: swim.thin, lead: swim.lead)
+                let nose = warp?.x(art.bounds.maxX) ?? art.bounds.maxX
+                let back = warp?.x(art.bounds.minX) ?? art.bounds.minX
+                #expect(place.nearEye.x + art.eyeR * place.sx * 0.9 <= nose + 1e-9,
+                        "\(species) at c \(pose.c): the near eye is past the nose")
+                #expect(place.farEye.x - art.eyeR * place.sx * 0.9 >= back - 1e-9,
+                        "\(species) at c \(pose.c): the far eye is off the back")
+                #expect(place.nearEye.x >= place.farEye.x - 1e-9, "\(species): the eyes crossed")
+            }
+        }
+    }
 }

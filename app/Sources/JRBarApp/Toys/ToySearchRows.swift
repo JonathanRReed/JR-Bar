@@ -83,6 +83,9 @@ enum ToySearchCatalog {
             ToySearchRow("Screensaver", keywords: ["idle"]),
             ToySearchRow("Clock on the screensaver", keywords: ["time", "date"]),
             ToySearchRow("In the tank", keywords: ["fish", "sessions"]),
+            ToySearchRow("Swim pace", keywords: ["calm", "lively", "turn", "busy"]),
+            ToySearchRow("Fish size", keywords: ["bigger", "smaller", "scale"]),
+            ToySearchRow("Swimming speed", keywords: ["faster", "slower", "tempo"]),
         ],
         "fold": [
             ToySearchRow("Look", keywords: ["duo", "iphone", "room", "style"]),

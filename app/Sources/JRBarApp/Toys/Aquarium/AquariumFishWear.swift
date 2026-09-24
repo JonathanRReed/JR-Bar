@@ -120,19 +120,21 @@ extension CartoonFish {
     /// slot), the bow tie knots under the chin and the scarf wraps the
     /// collar. Same unit space as `drawHat` — the body's flip, pitch
     /// and squash carry it. `trail` (−1…1) lifts the scarf's loose end;
-    /// `thin` is the swim's turn, so eyewear follows the eyes round.
+    /// `thin` is the swim's turn, so eyewear follows the eyes round;
+    /// `lead` is the turn's head lead, so it rides the head with them.
     static func drawAccessory(_ item: ShopItem, into f: inout GraphicsContext,
                               art: Art, trail: Double = 0, thin: Double = 1,
-                              lineWidth lw: Double = 0.02) {
+                              lineWidth lw: Double = 0.02, lead: Double = 0) {
         let e = art.eye, r = art.eyeR
+        let place = facePlacement(art: art, swim: Swim(thin: thin, lead: lead))
         switch item {
         case .sunglasses:
             // A big dark lens over the near eye, the arm running back
             // to the gill. Through a turn the frames come round with
             // the face: the far lens shows and the bridge spans them.
-            let face = faceTurn(art: art, thin: thin)
-            let near = CGPoint(x: e.x + face.spread, y: e.y)
-            let far = CGPoint(x: e.x - face.spread, y: e.y)
+            let face = (turn: place.face.turn, sx: place.sx, far: place.face.far)
+            let near = place.nearEye
+            let far = place.farEye
             let frame = Color(red: 0.05, green: 0.05, blue: 0.07)
             if face.turn > 0.05 {
                 var back = f
@@ -161,8 +163,8 @@ extension CartoonFish {
             // A gold rim over the eye, faintly tinted glass, a glint and
             // a fine chain looping down to the chin; it stays on the near
             // eye through a turn.
-            let face = faceTurn(art: art, thin: thin)
-            let eye = CGPoint(x: e.x + face.spread, y: e.y)
+            let face = (spread: place.face.spread, sx: place.sx)
+            let eye = place.nearEye
             var chain = Path()
             chain.move(to: CGPoint(x: eye.x - r * 0.9 * face.sx, y: e.y + r * 1.15))
             chain.addQuadCurve(to: art.chin, control: CGPoint(x: eye.x - r * 1.3, y: art.chin.y + r * 1.4))
@@ -348,6 +350,131 @@ extension CartoonFish {
                                 base: Color(red: 0.76, green: 0.78, blue: 0.84),
                                 shade: Color(red: 0.50, green: 0.52, blue: 0.58), outline: ink, lineWidth: lw)
         default:
+            break
+        }
+    }
+
+    /// What a fish wears in the side view: the hat on its crown and the
+    /// accessory in its slot, carried round with the face by the turn's
+    /// head lead as the eyes are — the one placement the tank draws and
+    /// the render proofs show.
+    static func drawSideWear(hat: ShopItem?, accessory: ShopItem?, art: Art,
+                             into f: inout GraphicsContext, trail: Double = 0, thin: Double = 1,
+                             lead: Double = 0, lineWidth lw: Double = 0.02) {
+        var worn = art
+        if let headLead = HeadLead(art: art, thin: thin, lead: lead) {
+            worn.hatAnchor.x = headLead.x(art.hatAnchor.x)
+            worn.chin.x = headLead.x(art.chin.x)
+        }
+        if let hat {
+            drawHat(hat, into: &f, at: worn.hatAnchor, scale: art.hatScale, tilt: art.hatTilt,
+                    lineWidth: lw)
+        }
+        if let accessory {
+            drawAccessory(accessory, into: &f, art: worn, trail: trail, thin: thin, lineWidth: lw,
+                          lead: lead)
+        }
+    }
+
+    // MARK: Head-on
+
+    /// What a fish wears in the head-on frame of its turn: a hat sat
+    /// square on the crown, eyewear over both eyes, headphones over both
+    /// ears, the bow tie at the middle of the chin and the scarf round
+    /// the neck. The laptop stays tucked away for the few frames the
+    /// fish faces you.
+    static func drawFrontWear(hat: ShopItem?, accessory: ShopItem?, species: FishSpecies,
+                              into f: inout GraphicsContext, trail: Double = 0,
+                              lineWidth lw: Double = 0.02) {
+        let art = art(for: species)
+        let face = frontFace(species)
+        let headwear = accessory == .topHat || accessory == .headphones
+        if let hat, !headwear {
+            drawHat(hat, into: &f, at: face.crown, scale: art.hatScale, tilt: 0, lineWidth: lw)
+        }
+        guard let accessory else { return }
+        let r = face.eyeR
+        switch accessory {
+        case .sunglasses:
+            let frame = Color(red: 0.05, green: 0.05, blue: 0.07)
+            for (side, eye) in [(-1.0, face.eyes.0), (1.0, face.eyes.1)] {
+                var g = f
+                g.translateBy(x: eye.x, y: eye.y)
+                // Each lens is the side view's, turned to face out.
+                g.scaleBy(x: side, y: 1)
+                sunglassLens(&g, at: .zero, r: r, sx: 0.9, lw: lw)
+            }
+            var bridge = Path()
+            bridge.move(to: CGPoint(x: face.eyes.0.x + r * 1.1, y: face.eyes.0.y - r * 0.75))
+            bridge.addQuadCurve(to: CGPoint(x: face.eyes.1.x - r * 1.1, y: face.eyes.1.y - r * 0.75),
+                                control: CGPoint(x: 0, y: face.eyes.0.y - r * 1.1))
+            f.stroke(bridge, with: .color(frame), style: StrokeStyle(lineWidth: r * 0.26, lineCap: .round))
+        case .monocle:
+            // On the eye nearest the side it faces, as the side view keeps
+            // it on the near eye.
+            let eye = face.eyes.1
+            var m = f
+            m.translateBy(x: eye.x, y: eye.y)
+            let ringR = r * 1.45
+            let ring = Path(ellipseIn: CGRect(x: -ringR, y: -ringR, width: ringR * 2, height: ringR * 2))
+            m.fill(ring, with: .color(Color(red: 0.85, green: 0.95, blue: 1.0).opacity(0.2)))
+            m.stroke(ring, with: .color(Color(red: 0.52, green: 0.36, blue: 0.06)), lineWidth: r * 0.42)
+            m.stroke(ring, with: .color(Color(red: 0.98, green: 0.82, blue: 0.40)), lineWidth: r * 0.26)
+            var chain = Path()
+            chain.move(to: CGPoint(x: eye.x, y: eye.y + ringR))
+            chain.addQuadCurve(to: face.chin, control: CGPoint(x: eye.x, y: face.chin.y + r))
+            f.stroke(chain, with: .color(Color(red: 0.86, green: 0.68, blue: 0.26)),
+                     style: StrokeStyle(lineWidth: max(lw * 0.8, r * 0.12), lineCap: .round,
+                                        dash: [r * 0.18, r * 0.14]))
+        case .topHat:
+            var aligned = art
+            aligned.hatAnchor = face.crown
+            aligned.hatTilt = 0
+            drawAccessory(.topHat, into: &f, art: aligned, lineWidth: lw)
+        case .headphones:
+            let ink = Color(red: 0.05, green: 0.06, blue: 0.09)
+            let half = face.width * 0.5
+            let y = face.eyes.0.y
+            var band = Path()
+            band.move(to: CGPoint(x: -half * 0.95, y: y))
+            band.addCurve(to: CGPoint(x: half * 0.95, y: y),
+                          control1: CGPoint(x: -half * 1.05, y: face.crown.y - r * 2),
+                          control2: CGPoint(x: half * 1.05, y: face.crown.y - r * 2))
+            f.stroke(band, with: .color(ink), style: StrokeStyle(lineWidth: r * 0.55, lineCap: .round))
+            f.stroke(band, with: .color(Color(red: 0.90, green: 0.92, blue: 0.96)),
+                     style: StrokeStyle(lineWidth: r * 0.30, lineCap: .round))
+            for side in [-1.0, 1.0] {
+                let cup = Path(roundedRect: CGRect(x: side * half - r * 0.75, y: y - r * 0.2,
+                                                   width: r * 1.5, height: r * 2.1),
+                               cornerRadius: r * 0.65)
+                CreaturePaint.solid(&f, cup, lit: .white, base: Color(red: 0.86, green: 0.88, blue: 0.92),
+                                    shade: Color(red: 0.55, green: 0.58, blue: 0.66), outline: ink, lineWidth: lw)
+            }
+        case .bowTie:
+            var centred = art
+            centred.chin = face.chin
+            drawAccessory(.bowTie, into: &f, art: centred, lineWidth: lw)
+        case .scarf:
+            let knit = Color(red: 0.93, green: 0.42, blue: 0.20)
+            let knitDark = Color(red: 0.62, green: 0.20, blue: 0.08)
+            let y = face.chin.y - r * 0.4
+            let half = face.width * 0.52
+            let w = max(0.05, min(0.09, face.width * 0.16))
+            var wrap = Path()
+            wrap.move(to: CGPoint(x: -half, y: y - w * 0.4))
+            wrap.addQuadCurve(to: CGPoint(x: half, y: y - w * 0.4), control: CGPoint(x: 0, y: y + w * 0.9))
+            var tail = Path()
+            tail.move(to: CGPoint(x: half * 0.45, y: y + w * 0.1))
+            tail.addQuadCurve(to: CGPoint(x: half * 0.55 + trail * 0.02, y: y + w * 2.6),
+                              control: CGPoint(x: half * 0.7, y: y + w * 1.4))
+            for path in [tail, wrap] {
+                f.stroke(path, with: .color(knitDark), style: StrokeStyle(lineWidth: w + lw * 2, lineCap: .round))
+                f.stroke(path, with: .color(knit), style: StrokeStyle(lineWidth: w, lineCap: .round))
+                f.stroke(path, with: .color(Color(red: 1.0, green: 0.93, blue: 0.80).opacity(0.9)),
+                         style: StrokeStyle(lineWidth: w, lineCap: .butt, dash: [w * 0.35, w * 0.65]))
+            }
+        default:
+            // The laptop, and anything new, sits the head-on frame out.
             break
         }
     }

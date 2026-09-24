@@ -85,6 +85,10 @@ enum CartoonFish {
         /// 1 side-on, falling toward 0 as a wall turn brings the face
         /// round to the glass; the caller squashes x by the same.
         var thin: Double = 1
+        /// Through a turn, how far the head is turned beyond the body's
+        /// middle, radians (`AquariumTurn.Pose.lead`): ahead while it
+        /// comes round, behind while it opens out. 0 draws the kit as is.
+        var lead: Double = 0
 
         /// A fish holding perfectly still — the Reduce Motion pose.
         static let still = Swim()
@@ -513,7 +517,8 @@ enum CartoonFish {
             endPoint: art.upright ? CGPoint(x: r.maxX, y: 0) : CGPoint(x: 0, y: r.maxY)))
         var b = f
         b.clip(to: body)
-        if detailed, let scales = art.scales {
+        if detailed, let rest = art.scales {
+            let scales = pose.warps ? pose.body(rest) : rest
             b.stroke(scales, with: .linearGradient(
                 Gradient(colors: [palette.dark.opacity(0.16), palette.dark.opacity(0)]),
                 startPoint: CGPoint(x: r.minX, y: 0),
@@ -521,7 +526,7 @@ enum CartoonFish {
                 lineWidth: lw * 0.55)
         }
         for mark in art.marks {
-            paintMark(mark, path: mark.flexes ? pose.body(mark.path) : mark.path,
+            paintMark(mark, path: mark.flexes || pose.warps ? pose.body(mark.path) : mark.path,
                       palette: palette, into: &b, lw: lw, vivid: vivid)
         }
         if let variant { drawVariant(variant, art: art, pose: pose, palette: palette, into: &b) }
@@ -539,7 +544,7 @@ enum CartoonFish {
             center: CGPoint(x: r.midX + r.width * 0.12, y: r.midY - r.height * 0.24),
             startRadius: 0, endRadius: extent * 0.62))
         // The gloss: a crisp catch of light on the brow.
-        let g = art.gloss
+        let g = pose.warps ? warped(art.gloss, pose) : art.gloss
         b.fill(Path(ellipseIn: g), with: .radialGradient(
             Gradient(colors: [.white.opacity(0.70), .white.opacity(0)]),
             center: CGPoint(x: g.midX + g.width * 0.1, y: g.midY),
@@ -561,7 +566,8 @@ enum CartoonFish {
             ]),
             startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)),
             lineWidth: lw * 2.4)
-        if let gill = art.gill {
+        if let rest = art.gill {
+            let gill = pose.warps ? pose.body(rest) : rest
             b.stroke(gill, with: .color(palette.dark.opacity(0.55)),
                      style: StrokeStyle(lineWidth: lw * 0.9, lineCap: .round))
             if detailed {
@@ -569,6 +575,12 @@ enum CartoonFish {
                          style: StrokeStyle(lineWidth: lw * 0.7, lineCap: .round))
             }
         }
+    }
+
+    /// `rect` carried along the length by the turn's head lead.
+    private static func warped(_ rect: CGRect, _ pose: Pose) -> CGRect {
+        let minX = pose.warpX(rect.minX), maxX = pose.warpX(rect.maxX)
+        return CGRect(x: minX, y: rect.minY, width: max(0.001, maxX - minX), height: rect.height)
     }
 
     private static func color(_ tone: Mark.Tone, _ palette: Palette, vivid: Bool) -> Color {
@@ -659,7 +671,7 @@ enum CartoonFish {
             var sparkle = b
             sparkle.blendMode = .plusLighter
             for (u, v, s) in specks {
-                let c = CGPoint(x: r.minX + r.width * u, y: r.minY + r.height * v)
+                let c = CGPoint(x: pose.warpX(r.minX + r.width * u), y: r.minY + r.height * v)
                 let d = s * max(r.width, r.height) * 0.5
                 sparkle.fill(Path(ellipseIn: CGRect(x: c.x - d * 2, y: c.y - d * 2, width: d * 4, height: d * 4)),
                              with: .radialGradient(Gradient(colors: [.white.opacity(0.35), .clear]),
@@ -674,32 +686,66 @@ enum CartoonFish {
 
     /// The eyes and mouth. Through a wall turn the face comes round to
     /// the glass: both eyes show, and they stay round instead of
-    /// squashing with the body.
+    /// squashing with the body. When the head leads the turn, the face
+    /// turns with the head, not the middle, and rides the warp with it.
     private static func drawFace(art: Art, species: FishSpecies, swim: Swim, palette: Palette,
                                  into f: inout GraphicsContext, mouth: MouthKind,
                                  blink: Double, dead: Bool, lw: Double, detailed: Bool) {
-        let face = faceTurn(art: art, thin: swim.thin)
-        let turn = face.turn, spread = face.spread, sx = face.sx
-        if turn > 0.05 {
+        let place = facePlacement(art: art, swim: swim)
+        let face = place.face
+        if face.turn > 0.05 {
             // The far eye, peeking over the brow as the head comes round.
             var far = f
             far.opacity = face.far
-            drawEye(into: &far, at: CGPoint(x: art.eye.x - spread, y: art.eye.y), r: art.eyeR * 0.94,
+            drawEye(into: &far, at: place.farEye, r: art.eyeR * 0.94,
                     palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: false,
-                    sx: sx)
+                    sx: place.sx)
         }
-        drawEye(into: &f, at: CGPoint(x: art.eye.x + spread, y: art.eye.y), r: art.eyeR,
+        drawEye(into: &f, at: place.nearEye, r: art.eyeR,
                 palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed,
-                sx: sx)
+                sx: place.sx)
         if !dead, species != .seahorse || mouth != .plain {
             var m = f
-            if turn > 0.05 {
+            if face.turn > 0.05 {
                 // Face-on the mouth sits centred under the eyes.
-                m.translateBy(x: -spread * 0.2, y: 0)
+                m.translateBy(x: -face.spread * 0.2, y: 0)
             }
-            drawMouth(into: &m, at: art.mouth, kind: mouth, palette: palette, lw: lw,
+            drawMouth(into: &m, at: place.mouth, kind: mouth, palette: palette, lw: lw,
                       s: art.mouthScale)
         }
+    }
+
+    /// Where the face sits this frame, in the kit's unit space: the turn
+    /// read off the head's own yaw, both eyes and the mouth carried by
+    /// the head lead, and how much wider to draw an eye so it stays round
+    /// against the caller's squash (the body's middle). Wear anchors on
+    /// the same numbers, so glasses stay on the eyes through a turn.
+    static func facePlacement(art: Art, swim: Swim)
+        -> (face: (turn: Double, spread: Double, sx: Double, far: Double),
+            nearEye: CGPoint, farEye: CGPoint, mouth: CGPoint, sx: Double) {
+        let lead = CartoonFish.HeadLead(art: art, thin: swim.thin, lead: swim.lead)
+        let face = faceTurn(art: art, thin: lead?.headThin ?? swim.thin)
+        let warp: (Double) -> Double = { x in lead?.x(x) ?? x }
+        var sx = face.sx
+        if lead != nil {
+            // The eye ovals aren't warped, so they widen back against the
+            // middle's squash, turned by the head's.
+            let mid = max(0.12, min(1, swim.thin))
+            sx = (0.55 + 0.45 * mid) / mid * face.turn + (1 - face.turn)
+        }
+        // Nearly head-on the eyes part further than a squashed side view
+        // is wide — more so while the head leads, turned further round
+        // than the middle: each eye stops at the silhouette, bulging at
+        // it, never floating off the head (a puffer is short enough for
+        // both to).
+        let inset = art.eyeR * sx * 0.9
+        let near = min(warp(art.eye.x + face.spread), warp(art.bounds.maxX) - inset)
+        let far = max(warp(art.eye.x - face.spread), warp(art.bounds.minX) + inset)
+        return (face,
+                CGPoint(x: max(near, far), y: art.eye.y),
+                CGPoint(x: far, y: art.eye.y),
+                CGPoint(x: warp(art.mouth.x), y: art.mouth.y),
+                sx)
     }
 
     /// How far a turn has brought the face round to the glass: `turn`
@@ -724,7 +770,7 @@ enum CartoonFish {
     /// happy squint after a meal, a worried slant when hungry — and
     /// slide shut on `blink`. `sx` widens the circle back
     /// against a turn's squash.
-    private static func drawEye(into f: inout GraphicsContext, at e: CGPoint, r: Double,
+    static func drawEye(into f: inout GraphicsContext, at e: CGPoint, r: Double,
                                 palette: Palette, mood: MouthKind, blink: Double, dead: Bool,
                                 lw: Double, detailed: Bool, sx: Double) {
         func oval(_ cx: Double, _ cy: Double, _ rr: Double) -> Path {
@@ -841,7 +887,7 @@ enum CartoonFish {
 
     /// The mouth: a smile just after eating, a small "o" when hungry,
     /// a soft upturned curve otherwise. `s` sizes it to the face.
-    private static func drawMouth(into f: inout GraphicsContext, at p: CGPoint,
+    static func drawMouth(into f: inout GraphicsContext, at p: CGPoint,
                                   kind: MouthKind, palette: Palette, lw: Double, s: Double) {
         let throat = Color(red: 0.36, green: 0.06, blue: 0.12)
         switch kind {

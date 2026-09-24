@@ -474,6 +474,67 @@ visitor is still marked seen and its caption tells the story), tapped
 fish do no tricks, and the sips, spirals, rings & bursts hold at a
 still pose — poses stay.
 
+### Swimming
+
+A fish cruises in gentle arcs: the wander bends its path at a turn
+*rate* (`AquariumSteering`), a weak spring holds it near its own depth,
+its climb stays under about 26° and its drawn pitch is eased and
+clamped, so it never noses straight up or down. Turning back is its own
+behaviour — a committed U-turn (`SwimTurn`) — started by the glass seen
+far enough ahead that the turn fits, by food or a tap behind it, or by a
+whim that has lasted a beat; a turn is followed by a cooldown before the
+next whim, so a cruising fish reverses about twice a minute at Natural,
+mostly at the glass, with the odd mid-tank change of mind. A fish at a
+work station swims to it and hovers once it is close, nosing at the
+point instead of circling it; its fins lift and sink it with the point,
+so it only turns back when the point is well behind it, after a longer
+wait — at most about three times a minute at the kelp, the survey or the
+wreck. Food and work both outrank the school's pull.
+
+The turn itself (`AquariumTurn`) is a U-turn in depth, after the classic
+2D turn strip: the fish stays level, drifts forward about a fifth of a
+body and comes back, its head swings round ahead of its tail (a
+per-point warp along the body that can never fold), and for four or five
+frames in the middle it is drawn head-on (`AquariumFishFront`) — a
+proper face built from each species' kit, both eyes on you, the
+pectorals out, the tail tips sweeping behind, a white collar on a banded
+fish, a translucent fan for the betta's veil, spines on the puffer. The
+facing only flips inside that head-on frame, so no fish ever mirrors
+where you can see it, and the head-on frame keeps one mirror from the
+cut in to the cut out, so a monocle or a scarf's end never hops sides
+mid-face. The eyes stop at the silhouette as the head comes round. No
+turn is shorter than 0.4 s, however quick the settings. The tail kicks
+out of the turn. Hats sit square on the crown head-on, glasses cover
+both eyes, the bow tie knots at the middle of the chin and the laptop
+sits the frame out. The seahorse, which stands upright, flicks round
+through a narrow side view instead.
+
+Everything else that used to mirror in one frame turns too: fry squash
+through zero at each end of their orbit, a completing fish facing left
+turns round before it corkscrews out, the fish that come for a finished
+run's pellets are picked once, when the run finishes, and each swims
+over through its own turn and eats its pellet when its mouth gets there,
+the turtle comes round over 1.4 s with a small dip, each tetra turns on
+its own beat, and the axolotl ambles back with a turn instead of jumping
+home. An ask holds the turn about a third of the way round, level, both
+eyes on you, whatever the fish was doing when it came; answering swims
+it back down from the glass. Every change of state starts from where the
+fish was last drawn — its place, its turn, its size, its tail and its
+roll — and settles over about half a second. The bubbles, rings, the z's
+and the station's work hang off the nose as the turn carries it. The
+glad swimmer's flourish is a true barrel roll, decided as it begins: one
+due mid-turn or by the surface is let go, and one begun finishes. Reduce
+Motion only ever shows a turn's two ends.
+
+Three settings shape it (`AquariumSwimRows`, in the card's Fine-tune
+section): **Swim pace** — Calm, Natural (the default) or Lively — sets
+how hard the wander bends, how long a fish waits between turns, how long
+a turn takes and how fast it cruises; **Swimming speed** (0.5–1.6×)
+speeds swimming and turning together, so the paths keep their shape and
+only run faster; **Fish size** (0.6–1.6×) scales every fish, and the
+hover box with it, and a big fish swims and asks far enough under the
+surface that no fin pokes out of the tank.
+
 ## Notch Buddy (native)
 
 A tiny creature in the `NotchHUD` panel that lives by the agent state:
