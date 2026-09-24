@@ -1910,13 +1910,7 @@ final class DockEnhanceController {
         // The tap decides synchronously whether a ⌘-right-click is a
         // quick quit — it reads this mirror, not the main-actor cache.
         mirrorQuickQuitTargets()
-        let chars = tracker.shown == nil ? [] : Self.previewChars(
-            walked: preview.selectedWindowID != nil, media: preview.media != nil,
-            pointerInPanel: inPanel)
-        if chars != mirroredChars {
-            mirroredChars = chars
-            switcher.setPreviewChars(chars)
-        }
+        mirrorPreviewChars(pointerInPanel: inPanel)
         let tracked = DockHoverTracker.trackedItem(
             hovered?.hoverID, shown: tracker.shown, trigger: preferences.previewTrigger,
             optionHeld: NSEvent.modifierFlags.contains(.option))
@@ -2629,6 +2623,7 @@ final class DockEnhanceController {
             return
         }
         preview.selectedWindowID = window.id
+        mirrorPreviewChars()
         if let index = preview.windows.firstIndex(where: { $0.id == window.id }) {
             preview.windows[index].minimized = false
         }
@@ -2661,6 +2656,7 @@ final class DockEnhanceController {
         showPreview(for: item)
         guard keyboardPinned else { return }  // nothing to preview
         preview.selectedWindowID = DockEnhanceMath.frontWalkStart(preview.windows)
+        mirrorPreviewChars()
     }
 
     /// A key the switcher's tap ate for the floating preview — Esc
@@ -2697,14 +2693,26 @@ final class DockEnhanceController {
         }
     }
 
-    /// The action keys to ask the tap for: the window verbs only once a
-    /// card is walked (the arrows are already the preview's), Space only
-    /// while the pointer rests on a panel showing a player. Anything
-    /// else keeps typing into the front app.
+    /// The action keys to ask the tap for: the window verbs, tiling and
+    /// Return only once a card is walked (the bare arrows are already
+    /// the preview's), Space only while the pointer rests on a panel
+    /// showing a player. Anything else keeps typing into the front app.
     static func previewChars(walked: Bool, media: Bool, pointerInPanel: Bool) -> Set<String> {
-        var chars: Set<String> = walked ? ["w", "m", "f", "tile"] : []
+        var chars: Set<String> = walked ? ["w", "m", "f", SwitcherKeyTap.walkedMarker] : []
         if media && pointerInPanel { chars.insert(" ") }
         return chars
+    }
+
+    /// Hand the tap the keys the preview wants now — on every tick, and
+    /// at once when a walk starts, so a Return pressed straight after
+    /// the arrow is already the preview's.
+    private func mirrorPreviewChars(pointerInPanel inPanel: Bool? = nil) {
+        let chars = tracker.shown == nil ? [] : Self.previewChars(
+            walked: preview.selectedWindowID != nil, media: preview.media != nil,
+            pointerInPanel: inPanel ?? pointerInPanel())
+        guard chars != mirroredChars else { return }
+        mirroredChars = chars
+        switcher.setPreviewChars(chars)
     }
 
     /// Arrows walk the window cards while the pointer rests on the
@@ -2722,6 +2730,7 @@ final class DockEnhanceController {
                 ($0 + delta + windows.count) % windows.count
             } ?? (delta > 0 ? 0 : windows.count - 1)
             preview.selectedWindowID = windows[next].id
+            mirrorPreviewChars()
             return true
         case 36, 76: // Return / keypad Enter
             guard let id = preview.selectedWindowID,

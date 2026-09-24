@@ -356,7 +356,10 @@ struct DockSwitcherTests {
                 "the panel can't take key status — the tap eats its arrows")
         let esc = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: true))
         let enter = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true))
-        #expect(!passes(tap, esc) && !passes(tap, enter))
+        #expect(!passes(tap, esc))
+        #expect(passes(tap, enter), "no card walked: Return is the front app's")
+        tap.setPreviewChars([SwitcherKeyTap.walkedMarker])
+        #expect(!passes(tap, enter), "a walked card: Return raises it")
         // A letter still passes — the preview owns only its keys.
         let a = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
         #expect(passes(tap, a))

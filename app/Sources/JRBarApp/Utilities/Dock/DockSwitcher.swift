@@ -616,9 +616,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// right now (W/M/F once a card is walked, Space over a player), or
     /// ⌥← / ⌥→ as "tile left" / "tile right".
     var onPreviewAction: (_ action: String) -> Void = { _ in }
-    /// The preview panel's keys — Esc/arrows/Return — while its flag is
-    /// set. The events are eaten either way: the panel can't take key
-    /// status, so a pass-through would land them in the front app too.
+    /// The preview panel's keys while its flag is set — bare Esc and
+    /// arrows, and Return once a card is walked. Those are eaten: the
+    /// panel can't take key status, so a pass-through would land them
+    /// in the front app too. A modified arrow is the front app's.
     var onPreviewKey: (_ code: Int64) -> Void = { _ in }
     /// Set from the main actor whenever the panel opens or closes;
     /// read on the tap thread.
@@ -671,9 +672,10 @@ final class SwitcherKeyTap: @unchecked Sendable {
     }
 
     /// The letters the floating preview wants beyond its arrows — empty
-    /// unless a card is walked (W/M/F, ⌥←/⌥→ tiling) or the pointer
-    /// rests on a player's row (Space). Mirrored by the watcher; every
-    /// other key keeps reaching the front app.
+    /// unless a card is walked (W/M/F, and `walkedMarker` for ⌥←/⌥→
+    /// tiling and Return) or the pointer rests on a player's row
+    /// (Space). Mirrored by the watcher; every other key keeps reaching
+    /// the front app.
     nonisolated(unsafe) private var previewChars: Set<String> = []
 
     func setPreviewChars(_ chars: Set<String>) {
@@ -888,17 +890,23 @@ final class SwitcherKeyTap: @unchecked Sendable {
             // The dock preview floats but can't take key status — while
             // it's up the tap owns its keys wherever the pointer sits:
             // a card walk with the pointer parked on the Dock still
-            // lands, and nothing leaks into the front app. The strip's
-            // own keys are all consumed above, so an open strip keeps
+            // lands, and nothing leaks into the front app. Only the bare
+            // keys are the preview's: ⇧→ selects, ⌘← goes to the line's
+            // start and ⌥→ jumps a word in the front app, and Return is
+            // the front app's until a card is walked. The strip's own
+            // keys are all consumed above, so an open strip keeps
             // precedence.
             if isPreviewOpen {
                 lock.lock(); let wanted = previewChars; lock.unlock()
+                let walked = wanted.contains(Self.walkedMarker)
                 let plain = !flags.contains(.maskCommand) && !flags.contains(.maskControl)
-                if plain, flags.contains(.maskAlternate), wanted.contains("tile"),
+                if plain, !flags.contains(.maskShift), flags.contains(.maskAlternate), walked,
                    code == 123 || code == 124 {
                     return swallow { self.onPreviewAction(code == 123 ? "tile-left" : "tile-right") }
                 }
-                if Self.previewKeyCodes.contains(code) {
+                if Self.previewKeyCodes.contains(code),
+                   flags.intersection([.maskCommand, .maskControl, .maskShift, .maskAlternate]).isEmpty,
+                   walked || !Self.returnKeyCodes.contains(code) {
                     return swallow { self.onPreviewKey(code) }
                 }
                 if plain, !wanted.isEmpty,
@@ -975,9 +983,15 @@ final class SwitcherKeyTap: @unchecked Sendable {
         return cmdOpen
     }
 
-    /// The keys the floating dock preview owns — Esc closes it, the
-    /// arrows walk its cards, Return raises the pick.
+    /// The keys the floating dock preview owns, bare — Esc closes it,
+    /// the arrows walk its cards, Return raises the pick.
     nonisolated static let previewKeyCodes: Set<Int64> = [53, 123, 124, 125, 126, 36, 76]
+    /// Return and keypad Enter — the preview's only once a card is
+    /// walked, since with none there is nothing for them to raise.
+    nonisolated static let returnKeyCodes: Set<Int64> = [36, 76]
+    /// Stands for the walked card in the preview's wanted keys: what
+    /// earns Return and ⌥←/⌥→ tiling.
+    nonisolated static let walkedMarker = "walked"
 
     /// The ⌘-verb letters — the row of actions stock ⌘⇥ and AltTab
     /// share. Type-ahead keeps every other key.
@@ -1055,9 +1069,9 @@ final class DockSwitcherController {
     private var workspaceObservers: [NSObjectProtocol] = []
     static let liveInterval: TimeInterval = 1
     /// The dock preview's keys while its panel floats — Esc closes,
-    /// arrows walk the cards, Return raises. The tap eats them either
-    /// way: the panel can't take key status, so a pass-through would
-    /// type them into the front app.
+    /// arrows walk the cards, Return raises the walked one. The tap
+    /// eats them bare: the panel can't take key status, so a
+    /// pass-through would type them into the front app.
     var onPreviewKey: ((Int64) -> Void)?
     /// Mirrors the preview panel's visibility into the tap — the
     /// enhance controller's show/hide drives it.
