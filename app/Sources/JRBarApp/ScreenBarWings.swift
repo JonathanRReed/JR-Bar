@@ -453,6 +453,9 @@ final class ScreenBarWingsModel {
     /// notch is alive while the intent debounce decides on the card.
     var leftSwell = false
     var rightSwell = false
+    /// Somebody can see the band — shown, the display awake, not stepped
+    /// aside for a video. The media ear's bars stand still while false.
+    var live = false
 }
 
 /// The wing lobes. The drawn ear is a fixed-size complication hugging
@@ -544,9 +547,11 @@ struct ScreenBarWingsView: View {
                 // The media ear: three bars bouncing on their own
                 // phases — the island strip's grammar, not a spectrum.
                 // The slot only exists while the track plays; Reduce
-                // Motion pins them still. 12 fps is plenty at 13 pt.
+                // Motion pins them still, and so does a band nobody can
+                // see. 12 fps is plenty at 13 pt.
                 TimelineView(.animation(minimumInterval: 1.0 / 12.0,
-                                        paused: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
+                                        paused: !model.live
+                                            || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
                     let t = context.date.timeIntervalSinceReferenceDate
                     HStack(alignment: .bottom, spacing: 1.5) {
                         ForEach(0..<3, id: \.self) { index in

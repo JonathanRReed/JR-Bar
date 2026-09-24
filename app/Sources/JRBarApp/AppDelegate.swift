@@ -386,6 +386,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // swipe on the band summons dismissed wings back. The pull wires
         // make the ear ride the finger until the flick commits.
         interaction.wingSideAt = { [weak screenBar] point in screenBar?.wingSide(atScreenPoint: point) }
+        // Nobody can see the band — asleep, or stepped aside for a video:
+        // the hover poll parks with the band's own clocks.
+        screenBar.onLiveChange = { [weak interaction] live in interaction?.setParked(!live) }
         interaction.onWingDismiss = { [weak screenBar] side in screenBar?.dismissWing(side) }
         interaction.onWingRestore = { [weak screenBar] in screenBar?.restoreWings() }
         interaction.onWingPull = { [weak screenBar] side, dx in screenBar?.pullWing(side, to: dx) }

@@ -11,7 +11,8 @@ import QuartzCore
 /// cycle is too long to keyframe keeps the older frame clock: a
 /// `CADisplayLink` (capped at 60 Hz, the Python pipeline's
 /// `MAX_SAMPLE_RATE_HZ`) that runs the sampler on ticks and pauses whenever
-/// the program has gone still, the bar is hidden, or the display is asleep.
+/// the program has gone still or nobody can see the bar
+/// (`ScreenBarVisibility`).
 @MainActor
 final class ScreenBarController {
     /// The document value's default when the daemon has not sent
@@ -50,7 +51,13 @@ final class ScreenBarController {
     /// Whether the band has stepped aside for a full-screen video: the
     /// panel stays ordered in (no Space dance) at zero alpha, and it
     /// answers no hover or click while it does.
-    private(set) var steppedAsideForVideo = false
+    var steppedAsideForVideo: Bool { visibility.steppedAside }
+    /// Shown, asleep, stepped aside — and whether anybody can see the
+    /// band at all, whose edges park and restart its clocks.
+    private var visibility = ScreenBarVisibility()
+    /// Every edge of "somebody can see the band": the hover poll
+    /// (`ScreenBarInteraction.setParked`) follows it.
+    var onLiveChange: (@MainActor (Bool) -> Void)?
     /// `screen_bar_gap_width`, live from the settings document: the manual
     /// width of the notch gap the band is centred on. nil is Automatic.
     var gapWidth: CGFloat? {
@@ -337,7 +344,6 @@ final class ScreenBarController {
     private var anchor: CFTimeInterval = 0
     private var lastCodes: [RGB8] = []
     private var lastRaw: [RGB8] = Array(repeating: .black, count: ScreenBarGeometry.ledCount)
-    private var displayAsleep = false
     /// The island frame the last scan saw — the watcher's dedup, so a
     /// poll that finds nothing new runs no layout.
     private var lastIslandScan: NSRect?
@@ -362,7 +368,7 @@ final class ScreenBarController {
     /// Reduce Motion: the band holds the program's brightest frame instead
     /// of playing it. Live-read and re-presented on the workspace's change.
     private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    private(set) var isShown = false
+    var isShown: Bool { visibility.shown }
     private(set) var programText: String = ""
     /// The raw text of the last ACCEPTED program -- refusal never reaches
     /// it, so a refused republish can neither dedupe against nor move the
@@ -514,9 +520,9 @@ final class ScreenBarController {
     private static let fadeSeconds: TimeInterval = 0.18
 
     func show() {
-        isShown = true
+        visibility.shown = true
         reposition()
-        steppedAsideForVideo = wantsVideoGuard()
+        visibility.steppedAside = wantsVideoGuard()
         let shown: CGFloat = steppedAsideForVideo ? 0 : 1
         if reduceMotion {
             panel.alphaValue = shown
@@ -531,19 +537,19 @@ final class ScreenBarController {
         }
         updateNoticeMonitors()
         updateAppMenuWatch()
-        syncIslandWatch()
+        settleVisibility()
         present()
     }
 
     func hide() {
-        isShown = false
-        steppedAsideForVideo = false
+        visibility.shown = false
+        visibility.steppedAside = false
         peek.hide()
         publishStatus()
         ScreenBarGeometry.menuHandleScreenRect = nil
         updateNoticeMonitors()
         updateAppMenuWatch()
-        syncIslandWatch()
+        settleVisibility()
         if reduceMotion {
             panel.alphaValue = 1
             panel.orderOut(nil)
@@ -640,24 +646,41 @@ final class ScreenBarController {
     private var lastEarAvoidLeft: CGFloat?
     private var lastEarAvoidRight: CGFloat?
 
-    /// The safety poll lives exactly as long as the band is shown: a
-    /// hidden band has no silhouette to keep in step.
+    /// The safety poll lives exactly as long as somebody can see the
+    /// band: a hidden, sleeping or stepped-aside band has no silhouette
+    /// to keep in step, and the edge back looks once at once.
     private func syncIslandWatch() {
-        if isShown, islandWatch == nil {
+        if visibility.live, islandWatch == nil {
             let timer = Timer(timeInterval: Self.islandWatchInterval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.islandFrameChanged() }
             }
             timer.tolerance = Self.islandWatchInterval / 4
             RunLoop.main.add(timer, forMode: .common)
             islandWatch = timer
-        } else if !isShown {
+            islandFrameChanged()
+        } else if !visibility.live {
             islandWatch?.invalidate()
             islandWatch = nil
         }
     }
-    @objc private func screensDidSleep(_ note: Notification) { displayAsleep = true; updateClock() }
+
+    /// A visibility fact moved: on an edge of "somebody can see it", the
+    /// island watch, the hover poll, the frame clock and the ears'
+    /// timelines start or park together.
+    private func settleVisibility() {
+        guard let live = visibility.settle() else { return }
+        view.wingsLive = live
+        syncIslandWatch()
+        updateClock()
+        onLiveChange?(live)
+    }
+
+    @objc private func screensDidSleep(_ note: Notification) {
+        visibility.displayAsleep = true
+        settleVisibility()
+    }
     @objc private func screensDidWake(_ note: Notification) {
-        displayAsleep = false
+        visibility.displayAsleep = false
         if let epoch = lastAnchorEpoch {
             let now = CACurrentMediaTime()
             let locked = Self.mediaTime(forEpoch: epoch)
@@ -666,6 +689,7 @@ final class ScreenBarController {
             // the program to a garbage offset -- restart from wake instead.
             anchor = locked <= now + 0.05 && now - locked < 6 * 3600 ? locked : now
         }
+        settleVisibility()
         present()
     }
 
@@ -722,9 +746,10 @@ final class ScreenBarController {
     private func updateVideoGuard() {
         let want = wantsVideoGuard()
         guard want != steppedAsideForVideo, isShown else { return }
-        steppedAsideForVideo = want
+        visibility.steppedAside = want
         if want { peek.hide() }
         publishStatus()
+        settleVisibility()
         onGeometryChange?()
         let alpha: CGFloat = want ? 0 : 1
         if reduceMotion {
@@ -1344,7 +1369,7 @@ final class ScreenBarController {
         } else {
             stillMoving = true
         }
-        let shouldRun = isShown && !displayAsleep && stillMoving
+        let shouldRun = visibility.live && stillMoving
         if shouldRun {
             if displayLink == nil {
                 let link = view.displayLink(target: self, selector: #selector(tick(_:)))
@@ -1374,6 +1399,29 @@ final class ScreenBarController {
         if codes == lastCodes { return }
         lastCodes = codes
         view.display(colors: codes.map(\.rgb))
+    }
+}
+
+/// Whether anybody can see the band: shown, the display awake, and not
+/// stepped aside for a full-screen video. Everything that exists only to
+/// be seen — the hover poll, the island watch, the frame clock, the
+/// ears' timelines — runs while `live` and parks on its edge down, so an
+/// overnight run with the display asleep, or a movie, wakes nothing.
+struct ScreenBarVisibility: Equatable {
+    var shown = false
+    var displayAsleep = false
+    var steppedAside = false
+    /// The `live` the clocks were last set to.
+    private(set) var applied = false
+
+    var live: Bool { shown && !displayAsleep && !steppedAside }
+
+    /// The edge since the last settle, once: true starts the clocks,
+    /// false parks them, nil leaves them as they are.
+    mutating func settle() -> Bool? {
+        guard live != applied else { return nil }
+        applied = live
+        return live
     }
 }
 

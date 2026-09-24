@@ -152,6 +152,11 @@ final class ScreenBarInteraction {
     /// The hover poll — `moveInterval` cadence, replaces the moved
     /// event tap whose every delivery cost a `TCCAccessRequest`.
     private var hoverTimer: Timer?
+    /// Nobody can see the band — the display asleep, or stepped aside for
+    /// a full-screen video (`ScreenBarVisibility`): the hover poll parks.
+    private(set) var parked = false
+    /// The hover poll is armed.
+    var isPolling: Bool { hoverTimer != nil }
     private(set) var hovering = false
     private var showWork: DispatchWorkItem?
     private var hideWork: DispatchWorkItem?
@@ -211,8 +216,9 @@ final class ScreenBarInteraction {
         // `TCCAccessRequest` round trip — that was the tccd flood. Polling
         // `NSEvent.mouseLocation` at `moveInterval` hits the same code
         // path for free, and `pointerMoved` reads the live location
-        // rather than an event, so nothing is lost.
-        scheduleMovePoll(after: Self.moveInterval)
+        // rather than an event, so nothing is lost. A parked band arms
+        // it on the edge back instead.
+        if !parked { scheduleMovePoll(after: Self.moveInterval) }
         if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown], handler: { [weak self] event in
             let point = NSEvent.mouseLocation
             Self.diag("global down raw (\(Int(point.x)),\(Int(point.y)))")
@@ -278,6 +284,23 @@ final class ScreenBarInteraction {
         timer.tolerance = interval * 0.2
         RunLoop.main.add(timer, forMode: .common)
         hoverTimer = timer
+    }
+
+    /// The band's visibility edge: parked, the pointer poll stops — one
+    /// last read first, so a hover the band can no longer answer lets go
+    /// — and it picks up again on the edge back. The click and scroll
+    /// monitors stay; they cost nothing until an event lands.
+    func setParked(_ parked: Bool) {
+        guard parked != self.parked else { return }
+        self.parked = parked
+        let started = !globalMonitors.isEmpty || !localMonitors.isEmpty
+        if parked {
+            if started { pointerMoved() }
+            hoverTimer?.invalidate()
+            hoverTimer = nil
+        } else if started {
+            scheduleMovePoll(after: Self.moveInterval)
+        }
     }
 
     func stop() {

@@ -109,6 +109,12 @@ final class ScreenBarView: NSView {
     private(set) var housingRect: NSRect?
     private let wingsModel = ScreenBarWingsModel()
     private var wingsHosting: NSHostingView<ScreenBarWingsView>?
+    /// Somebody can see the band (`ScreenBarVisibility.live`): the ears'
+    /// own timelines pause while it is false.
+    var wingsLive: Bool {
+        get { wingsModel.live }
+        set { if wingsModel.live != newValue { wingsModel.live = newValue } }
+    }
     /// Settings › Screen Bar › Minimum glow, pushed in live: it scales the
     /// housing rim and nothing else. A band showing no light gets no rim —
     /// a black program under a lit outline is a resting glow the strip
