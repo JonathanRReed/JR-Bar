@@ -725,23 +725,34 @@ final class PanelStore {
     /// the clock moves, so without it the ring would wait for unrelated
     /// activity. Nil without an open ask in focus.
     func nextAskAgeTick(now: Double = Date().timeIntervalSince1970) -> Double? {
-        Self.nextAskAgeTick(opened: focusAskOpened, now: now, finalSeconds: escalationFinalSeconds)
+        Self.nextAskAgeTick(opened: focusAskOpened, now: now, finalSeconds: escalationFinalSeconds,
+                            holdUntil: focusAskHoldUntil)
+    }
+
+    /// When the hook's hold on the focus pick's ask lapses — a moment the
+    /// ask's verbs change with no daemon frame to mark it.
+    var focusAskHoldUntil: Double? {
+        focusPick?.ask.flatMap { $0.isHeldForDecision ? $0.decision?.holdUntil : nil }
     }
 
     /// The next boundary the ear shows: the ring's next twelfth of
-    /// `finalSeconds` while it is filling, or the wait's next whole minute
-    /// (the peek's "· N min"), whichever comes first. The words keep
-    /// counting past an hour, so a full ring still ticks once a minute;
-    /// nil only when there is no ask to count.
-    nonisolated static func nextAskAgeTick(opened: Double?, now: Double, finalSeconds: Double) -> Double? {
+    /// `finalSeconds` while it is filling, the wait's next whole minute
+    /// (the peek's "· N min"), or the hold's lapse, whichever comes
+    /// first. The words keep counting past an hour, so a full ring still
+    /// ticks once a minute; nil only when there is no ask to count.
+    nonisolated static func nextAskAgeTick(opened: Double?, now: Double, finalSeconds: Double,
+                                           holdUntil: Double? = nil) -> Double? {
         guard let opened else { return nil }
         let waited = max(0, now - opened)
         let minute = opened + ((waited / 60).rounded(.down) + 1) * 60
-        guard finalSeconds > 0, waited < finalSeconds else { return minute }
-        // The same arithmetic `askAgeFraction` steps on, so the tick lands
-        // on the twelfth that changes the fill.
-        let twelfth = opened + ((waited / finalSeconds * 12).rounded(.down) + 1) * finalSeconds / 12
-        return min(twelfth, minute)
+        var next = minute
+        if finalSeconds > 0, waited < finalSeconds {
+            // The same arithmetic `askAgeFraction` steps on, so the tick
+            // lands on the twelfth that changes the fill.
+            next = min(next, opened + ((waited / finalSeconds * 12).rounded(.down) + 1) * finalSeconds / 12)
+        }
+        if let holdUntil, holdUntil > now { next = min(next, holdUntil) }
+        return next
     }
 
     /// The ask-age ring's fill: the share of the way to the final stage,

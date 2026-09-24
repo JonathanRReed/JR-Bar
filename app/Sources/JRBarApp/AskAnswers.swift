@@ -47,27 +47,36 @@ enum AskVerdict: Equatable, Sendable {
 
 /// Which verbs an ask can take from outside its own window — read off
 /// the daemon's flags, never guessed. A peer's ask takes none of them;
-/// callers check `CoreSession.isRemoteID` before this.
+/// callers check `CoreSession.isRemoteID` before this. The hold's verbs
+/// (Always allow, a question's options, a question's Deny) end at its
+/// `hold_until` (`CoreAsk.isHeld(at:)`): after that the agent's own
+/// prompt carries on and the hook can no longer take them.
 enum AskVerbs {
-    /// Approve where the daemon can deliver a yes. Never on a held
-    /// question: a bare allow answers nothing there — its options do.
+    /// Approve where the daemon can deliver a yes. Never on a question:
+    /// a bare allow answers nothing there — its options do.
     static func approves(_ ask: CoreAsk) -> Bool {
         ask.canAnswer && !ask.wantsTextReply && !ask.canChoose
     }
 
     /// Deny wherever Approve is, and on a held question too: the hook
     /// declines it the way Esc does, whatever hosts the session.
-    static func denies(_ ask: CoreAsk) -> Bool {
-        (ask.canAnswer && !ask.wantsTextReply) || ask.canChoose
+    static func denies(_ ask: CoreAsk) -> Bool { denies(ask, at: Date()) }
+
+    static func denies(_ ask: CoreAsk, at now: Date) -> Bool {
+        (ask.canAnswer && !ask.wantsTextReply) || chooses(ask, at: now)
     }
 
     /// Always allow, only while the hook holds an ask that offers it.
-    static func alwaysAllows(_ ask: CoreAsk) -> Bool {
-        ask.canAlwaysAllow && !ask.canChoose
+    static func alwaysAllows(_ ask: CoreAsk) -> Bool { alwaysAllows(ask, at: Date()) }
+
+    static func alwaysAllows(_ ask: CoreAsk, at now: Date) -> Bool {
+        ask.canAlwaysAllow && ask.isHeld(at: now) && !ask.canChoose
     }
 
-    /// A held question's options can be picked.
-    static func chooses(_ ask: CoreAsk) -> Bool { ask.canChoose }
+    /// A held question's options can be picked while the hold stands.
+    static func chooses(_ ask: CoreAsk) -> Bool { chooses(ask, at: Date()) }
+
+    static func chooses(_ ask: CoreAsk, at now: Date) -> Bool { ask.canChoose && ask.isHeld(at: now) }
 
     /// A typed reply, where the ask wants words and the daemon can take
     /// them.
@@ -113,6 +122,42 @@ enum AskVerbs {
     /// Any verb at all to draw beside the ask.
     static func any(_ ask: CoreAsk) -> Bool {
         approves(ask) || denies(ask) || alwaysAllows(ask) || chooses(ask)
+    }
+}
+
+/// The decide lane's hold as the verbs' ring: how much of the window the
+/// hook holds an ask for is left. The daemon holds for `span` seconds
+/// (`DECISION_HOLD_SECONDS`); at `hold_until` the agent's own prompt
+/// carries on, and Always and the choices go with the hold.
+enum AskHold {
+    static let span: TimeInterval = 45
+
+    /// 1 → 0 across the hold's last `span` seconds; nil when the ask is
+    /// not held at `now` or its hold names no end.
+    static func remaining(_ ask: CoreAsk, at now: Date) -> Double? {
+        guard ask.isHeld(at: now), let until = ask.decision?.holdUntil else { return nil }
+        return min(1, max(0, (until - now.timeIntervalSince1970) / span))
+    }
+
+    /// Under Reduce Motion the ring steps in ninths — five seconds at the
+    /// daemon's hold — rather than draining every second; it only reads
+    /// empty once the hold is over.
+    static func stepped(_ fraction: Double, steps: Int = 9) -> Double {
+        (min(1, max(0, fraction)) * Double(steps)).rounded(.up) / Double(steps)
+    }
+
+    /// When the hold lapses, for the one-shot re-render that takes its
+    /// verbs away; nil when there is nothing to lapse.
+    static func end(_ ask: CoreAsk, at now: Date) -> Date? {
+        guard ask.isHeld(at: now), let until = ask.decision?.holdUntil else { return nil }
+        return Date(timeIntervalSince1970: until)
+    }
+
+    /// The ring's tooltip: how long JR-Bar still holds the ask.
+    static func help(_ ask: CoreAsk, at now: Date) -> String? {
+        guard let end = end(ask, at: now) else { return nil }
+        let seconds = max(1, Int(end.timeIntervalSince(now).rounded(.up)))
+        return "JR-Bar holds this ask for \(seconds) s more — then the agent's own prompt takes over"
     }
 }
 

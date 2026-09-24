@@ -48,6 +48,44 @@ struct AskAnswersTests {
         #expect(!AskVerbs.approves(reply) && !AskVerbs.denies(reply), "a reply ask wants words")
     }
 
+    @Test("Always and a question's options leave with the hold; Approve on a question never comes")
+    func holdLapses() {
+        let until = Date(timeIntervalSince1970: 1_000)
+        let offered = CoreAsk(session: Self.session, summary: "Bash", answerable: true, request: "r1",
+                              decision: CoreAskDecision(holdUntil: 1_000, always: true))
+        #expect(AskVerbs.alwaysAllows(offered, at: until.addingTimeInterval(-1)))
+        #expect(!AskVerbs.alwaysAllows(offered, at: until), "the hold is over at hold_until")
+        #expect(AskVerbs.approves(offered), "Approve stays: it types into the session once the hook lets go")
+        #expect(AskVerbs.alwaysAllows(Self.held(always: true)), "a hold still ahead keeps its verbs")
+
+        let question = CoreAsk(session: Self.session, summary: "Pick", answerable: false, request: "r2",
+                               decision: CoreAskDecision(holdUntil: 1_000, choices: [Self.single]))
+        #expect(AskVerbs.chooses(question, at: until.addingTimeInterval(-1)))
+        #expect(AskVerbs.denies(question, at: until.addingTimeInterval(-1)))
+        #expect(!AskVerbs.chooses(question, at: until))
+        #expect(!AskVerbs.denies(question, at: until), "the hook no longer holds it to decline")
+        #expect(!AskVerbs.approves(question))
+    }
+
+    @Test("the hold's ring drains over its last 45 s, steps in ninths under Reduce Motion, and ends at hold_until")
+    func holdRing() {
+        let ask = CoreAsk(session: Self.session, summary: "Bash", answerable: true,
+                          decision: CoreAskDecision(holdUntil: 1_000, always: true))
+        #expect(AskHold.remaining(ask, at: Date(timeIntervalSince1970: 955)) == 1)
+        #expect(AskHold.remaining(ask, at: Date(timeIntervalSince1970: 977.5)) == 0.5)
+        #expect(AskHold.remaining(ask, at: Date(timeIntervalSince1970: 1_000)) == nil, "lapsed: no ring")
+        #expect(AskHold.remaining(ask, at: Date(timeIntervalSince1970: 900)) == 1, "more than a hold left is full")
+        #expect(AskHold.end(ask, at: Date(timeIntervalSince1970: 990)) == Date(timeIntervalSince1970: 1_000))
+        #expect(AskHold.help(ask, at: Date(timeIntervalSince1970: 967.5))?.contains("33 s more") == true)
+        let unheld = CoreAsk(session: Self.session, summary: "Bash", answerable: true)
+        #expect(AskHold.remaining(unheld, at: Date()) == nil)
+        let endless = CoreAsk(session: Self.session, summary: "Bash", decision: CoreAskDecision(always: true))
+        #expect(AskHold.remaining(endless, at: Date()) == nil, "a hold with no deadline draws no ring")
+        #expect(AskHold.stepped(0.5) == 5.0 / 9)
+        #expect(AskHold.stepped(0.01) == 1.0 / 9, "empty only once the hold is over")
+        #expect(AskHold.stepped(1) == 1)
+    }
+
     @Test("a pick is allowed only when it names every question with offered labels")
     func pickGate() {
         let ask = Self.held(choices: [Self.single, Self.multi])

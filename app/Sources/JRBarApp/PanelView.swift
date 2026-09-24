@@ -939,12 +939,30 @@ struct AskRow: View {
         .frame(height: 30, alignment: .topLeading)
     }
 
+    /// When the hook's hold on this ask lapses: the verbs are drawn again
+    /// at that moment, not a clock tick later, so Always and the choices
+    /// leave with the hold.
+    private var holdEnd: Date? { row.ask.flatMap { AskHold.end($0, at: store.now) } }
+
+    /// The card's verbs, re-drawn once more at the hold's end.
+    private var verbRow: some View {
+        TimelineView(.explicit(holdEnd.map { [$0] } ?? [])) { context in
+            verbs(now: max(store.now, context.date))
+        }
+    }
+
     /// The card's verbs: a reply field, a held question's options, or
     /// Deny · Always Allow · Approve — each only where the daemon says
     /// it can land — else the honest way to the session's own window.
-    private var verbRow: some View {
+    /// A held ask's verbs sit beside a ring draining with its hold.
+    private func verbs(now: Date) -> some View {
         HStack(spacing: 6) {
             Spacer()
+            if let ask = row.ask, !row.isRemote, let left = AskHold.remaining(ask, at: now) {
+                AskHoldRing(fraction: left, reduced: store.reduceMotion)
+                    .help(AskHold.help(ask, at: now) ?? "")
+                    .accessibilityLabel(AskHold.help(ask, at: now) ?? "")
+            }
             if let ask = row.ask, ask.wantsTextReply, ask.canAnswer, ask.session != nil, !row.isRemote {
                 // A reply-kind ask wants words, not a verdict: a field
                 // and Send; `reply_text` rides the same answer_ask. A
@@ -963,7 +981,7 @@ struct AskRow: View {
                     .buttonStyle(PillButtonStyle(prominent: true))
                     .disabled(replyText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
                     .help("Type this reply into \(row.terminalApp ?? "the session's terminal")")
-            } else if let ask = row.ask, ask.session != nil, !row.isRemote, AskVerbs.chooses(ask) {
+            } else if let ask = row.ask, ask.session != nil, !row.isRemote, AskVerbs.chooses(ask, at: now) {
                 // A held question: its options are the answer, sent
                 // through the agent's own hook — Deny declines it.
                 Button("Deny") { store.deny(ask) }
@@ -982,7 +1000,7 @@ struct AskRow: View {
                     .buttonStyle(PillButtonStyle(prominent: false))
                     .disabled(store.isAnswerPending(ask))
                     .help("Answer no (⌘D)")
-                if AskVerbs.alwaysAllows(ask) {
+                if AskVerbs.alwaysAllows(ask, at: now) {
                     // Its own button, never a chord: the agent will
                     // remember this rule and stop asking.
                     Button("Always Allow") { store.alwaysAllow(ask) }
@@ -993,9 +1011,7 @@ struct AskRow: View {
                 Button("Approve") { store.approve(ask) }
                     .buttonStyle(PillButtonStyle(prominent: true))
                     .disabled(store.isAnswerPending(ask))
-                    .help(ask.isHeldForDecision
-                          ? "Approve through \(row.style.name)'s own permission hook (⌘↩)"
-                          : "Bring \(row.terminalApp ?? "the terminal") forward and approve there (⌘↩)")
+                    .help(approveHelp(ask, now: now))
             } else if row.isRemote {
                 // A peer's ask: nothing local can type into it.
                 Text("on \(row.remoteMachine ?? "a peer")")
@@ -1015,6 +1031,13 @@ struct AskRow: View {
                     .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
             }
         }
+    }
+
+    /// Approve's route: the agent's own hook while it holds the ask, else
+    /// the terminal the daemon brings forward.
+    private func approveHelp(_ ask: CoreAsk, now: Date) -> String {
+        if ask.isHeld(at: now) { return "Approve through \(row.style.name)'s own permission hook (⌘↩)" }
+        return "Bring \(row.terminalApp ?? "the terminal") forward and approve there (⌘↩)"
     }
 
     private var accessibilityHint: String {
