@@ -80,9 +80,6 @@ final class OverviewStore {
     /// that one.
     private let ownDesk: AskAnswerDesk
     var askDesk: AskAnswerDesk { AskAnswerDesk.shared ?? ownDesk }
-    /// The exact window a live session runs in, through the Dock's
-    /// window locator — Open's fallback when the daemon cannot find it.
-    @ObservationIgnored var raiseSessionWindow: (@MainActor (String) -> Bool)?
 
     /// Reads usage for the rows the table leads with and the selection.
     func refreshSessionUsage(force: Bool = false) {
@@ -624,8 +621,8 @@ final class OverviewStore {
 
     // MARK: Actions on rows
 
-    /// A transient status line for action outcomes — the daemon's own
-    /// words ("Opened in iTerm", a refusal reason), never a guessed
+    /// A transient status line for action outcomes — a receipt ("Opened
+    /// fix-ci") or the refusal in the daemon's own words, never a guessed
     /// success. Cleared by the next action or the next roster load.
     var actionStatus: String?
     var actionIsError = false
@@ -640,40 +637,27 @@ final class OverviewStore {
     func canOpen(_ entry: CoreRosterEntry) -> Bool { !entry.session.remote }
     var canOpenSelected: Bool { selected.map(canOpen) ?? false }
 
-    /// Open the selected session's terminal through `send` so the reply
-    /// reaches the user: "Opened in {app}" on success, the daemon's
-    /// refusal string on failure — never a silent `post`.
+    /// Open the selected session's terminal or app so the outcome reaches
+    /// the user: "Opened {name}" once it is in front, the refusal on
+    /// failure — never a silent `post`.
     func openSelected() {
         guard let entry = selected, canOpen(entry) else { return }
         let id = entry.id
         Task { await openSession(id) }
     }
 
+    /// Through `SessionOpener`: the daemon, then the Dock's window
+    /// locator for a running session the daemon could not find.
     func openSession(_ id: String) async {
-        do {
-            let reply = try await core.send("open_session", args: ["session": .string(id)])
-            if reply.ok {
-                let app = reply.result?["activated"]?.stringValue
-                report(app.map { "Opened in \($0)" } ?? "Open request sent")
-            } else if reply.error?.code == "not_found", isLiveLocal(id), raiseSessionWindow?(id) == true {
-                // The daemon could not find a running session's window;
-                // the Dock's window locator could, and raised it.
-                report("Raised its window")
-            } else {
-                report(reply.error?.message ?? "Open refused", isError: true)
-            }
-        } catch {
-            report(Self.describe(error), isError: true)
+        if let refusal = await opener(id) {
+            report(refusal, isError: true)
+        } else {
+            report("Opened \(roster.first { $0.id == id }?.session.displayLabel ?? "the session")")
         }
     }
 
-    /// A local row still running — the only kind whose window a refused
-    /// open is worth looking for.
-    private func isLiveLocal(_ id: String) -> Bool {
-        guard let entry = roster.first(where: { $0.id == id }) else { return false }
-        let activity = SessionActivity.reduce(entry.session)
-        return !entry.session.remote && !activity.isClearable && activity != .failed
-    }
+    /// Opening a session: `SessionOpener` in production; tests stage it.
+    @ObservationIgnored var opener: @MainActor (_ session: String) async -> String? = { await SessionOpener.open($0) }
 
     // MARK: New session here
 

@@ -309,26 +309,19 @@ final class HistoryStore {
         // an ended row keeps its history but has nothing to show — Resume
         // is its verb.
         guard isLiveSession(row.session), let session = row.session else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let reply = try await self.core.send("open_session", args: ["session": .string(session)])
-                guard !reply.ok else { return }
-                // The daemon could not find a running session's window;
-                // the Dock's window locator may still raise it.
-                if reply.error?.code == "not_found", self.raiseSessionWindow?(session) == true { return }
-                self.say(reply.error?.message ?? "Could not open \(row.displayTitle)", isError: true)
-            } catch {
-                self.say("The monitor is not answering", isError: true)
-            }
-        }
+        Task { [weak self] in await self?.open(session: session) }
     }
 
-    // MARK: Resume
+    /// One live session, through `SessionOpener` — the daemon, then the
+    /// Dock's window locator — with its refusal, if any, as the notice.
+    func open(session: String) async {
+        if let refusal = await opener(session) { say(refusal, isError: true) }
+    }
 
-    /// The exact window a live session runs in, through the Dock's window
-    /// locator — Open's fallback when the daemon cannot find it.
-    @ObservationIgnored var raiseSessionWindow: (@MainActor (String) -> Bool)?
+    /// Opening a session: `SessionOpener` in production; tests stage it.
+    @ObservationIgnored var opener: @MainActor (_ session: String) async -> String? = { await SessionOpener.open($0) }
+
+    // MARK: Resume
 
     /// The last Open or Resume's outcome, in the daemon's words — a
     /// receipt or a refusal — for a few seconds under the filter bar.

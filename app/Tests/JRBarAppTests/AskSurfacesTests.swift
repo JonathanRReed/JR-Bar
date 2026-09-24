@@ -370,6 +370,39 @@ struct AskSurfacesTests {
                                          title: "fix-ci") == "fix-ci was still running — raised it in Terminal")
     }
 
+    @Test("History and the Overview open through the session opener, and its refusal is what they show")
+    func pastOpensThroughTheOpener() async {
+        let log = Log()
+        let live = CoreSession(id: "claude:live", provider: "claude", label: "fix-ci", mode: "working")
+        let core = CoreModel()
+        core.apply(.state(CoreState(sessions: [live], asks: [])))
+        let opener: @MainActor (String) async -> String? = { id in
+            log.calls.append("open:\(id)")
+            return id == live.id ? nil : "Could not open that session"
+        }
+
+        let history = HistoryStore(core: core)
+        history.opener = opener
+        history.open(CoreHistoryRow(at: 1, kind: "completed", provider: "claude", session: "claude:done"))
+        #expect(log.calls.isEmpty, "an ended row has nothing to open — Resume is its verb")
+        history.open(CoreHistoryRow(at: 2, kind: "started", provider: "claude", session: live.id))
+        await Self.waitFor { !log.calls.isEmpty }
+        #expect(log.calls == ["open:claude:live"])
+        #expect(history.notice == nil, "an open that landed says nothing")
+        await history.open(session: "claude:gone")
+        #expect(history.notice == HistoryStore.Notice(text: "Could not open that session", isError: true))
+
+        let overview = OverviewStore(core: core)
+        overview.opener = opener
+        overview.roster = [CoreRosterEntry(session: live)]
+        await overview.openSession(live.id)
+        #expect(overview.actionStatus == "Opened fix-ci")
+        #expect(!overview.actionIsError)
+        await overview.openSession("claude:gone")
+        #expect(overview.actionStatus == "Could not open that session")
+        #expect(overview.actionIsError)
+    }
+
     @Test("New Session Here is for a local row with a folder, of an agent whose CLI the daemon starts")
     func overviewNewSession() {
         let store = OverviewStore(core: CoreModel())
