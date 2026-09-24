@@ -90,11 +90,37 @@ extension AquariumView {
     var sandPalette: SandPalette { Self.sandPalette(forSubstrate: substrateKey) }
 
     /// A substrate's sand as a swatch, crest to foot — the shop's tile.
-    /// A multicoloured gravel shows its colours instead.
+    /// A multicoloured gravel adds its beads on top (`drawSwatchGravel`).
     static func sandSwatch(forSubstrate substrate: String) -> [Color] {
         let sand = sandPalette(forSubstrate: substrate)
-        if let candy = sand.speckColors { return candy.map { TankPaint.color($0) } }
         return [TankPaint.color(sand.lit), TankPaint.color(sand.body), TankPaint.color(sand.foot)]
+    }
+
+    /// A multicoloured gravel's beads over a swatch's sand, so the shop
+    /// tile and the card's strip read as gravel, not a rainbow. Seeded,
+    /// so a tile looks the same every time; `bead` is the radius in
+    /// points. Nothing for a plain sand.
+    static func drawSwatchGravel(_ canvas: inout GraphicsContext, in rect: CGRect,
+                                 substrate: String, bead: Double) {
+        guard let colors = sandPalette(forSubstrate: substrate).speckColors,
+              rect.width > 0, rect.height > 0, bead > 0 else { return }
+        var beads = [Path](repeating: Path(), count: colors.count)
+        var glints = Path()
+        var rng = TankPaint.Seeded(0xCA4D5)
+        let count = min(400, Int(rect.width * rect.height / (bead * bead * 3.2)))
+        for k in 0..<count {
+            let r = bead * rng.next(0.75, 1.15)
+            let x = rect.minX + rng.next() * rect.width
+            let y = rect.minY + rng.next(0.15, 1.05) * rect.height
+            beads[k % colors.count].addEllipse(in: CGRect(x: x - r, y: y - r * 0.85,
+                                                          width: r * 2, height: r * 1.7))
+            glints.addEllipse(in: CGRect(x: x - r * 0.5, y: y - r * 0.6,
+                                         width: r * 0.5, height: r * 0.38))
+        }
+        for (color, path) in zip(colors, beads) {
+            canvas.fill(path, with: .color(TankPaint.color(color, 0.95)))
+        }
+        canvas.fill(glints, with: .color(.white.opacity(0.7)))
     }
 
     /// Candy gravel's five colours: pink, lemon, cyan, lime and violet.

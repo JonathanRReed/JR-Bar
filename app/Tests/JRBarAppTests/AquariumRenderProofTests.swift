@@ -270,6 +270,14 @@ struct AquariumRenderProofTests {
         let candy = AquariumView(fixture: Self.fixture(themeID: "classic", substrateID: "candy",
                                                        backdropID: "classic", night: 0, visitor: nil))
         if try Self.writePNG(candy, size: tank, name: "aquarium-candy-classic", into: dir) { written += 1 }
+        // The card's swatch for it: beads on tan, not a rainbow.
+        let swatches = HStack(spacing: 12) {
+            TankSwatch(themeID: "classic", substrateID: "classic")
+            TankSwatch(themeID: "arcade", substrateID: "candy")
+        }
+        .padding(10)
+        if try Self.writePNG(swatches, size: CGSize(width: 196, height: 66),
+                             name: "aquarium-swatch-candy", into: dir) { written += 1 }
         // Coins mid-fall, at rest and a crowned fish's gem.
         if try Self.writePNG(Self.coins(), size: CGSize(width: 640, height: 360),
                              name: "aquarium-coins", into: dir) { written += 1 }
@@ -379,7 +387,7 @@ struct AquariumRenderProofTests {
                 written += 1
             }
         }
-        #expect(written == shots.count + 22)
+        #expect(written == shots.count + 23)
     }
 
     // MARK: The Arcade tank

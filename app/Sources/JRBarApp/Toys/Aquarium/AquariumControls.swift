@@ -368,6 +368,10 @@ struct TankSwatch: View {
             canvas.fill(sand, with: .linearGradient(
                 Gradient(colors: AquariumView.sandSwatch(forSubstrate: substrateID)),
                 startPoint: CGPoint(x: 0, y: size.height * 0.72), endPoint: CGPoint(x: 0, y: size.height)))
+            var gravel = canvas
+            gravel.clip(to: sand)
+            let bed = CGRect(x: 0, y: size.height * 0.70, width: size.width, height: size.height * 0.30)
+            AquariumView.drawSwatchGravel(&gravel, in: bed, substrate: substrateID, bead: 1.5)
         }
         .clipShape(shape)
         .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.35), .black.opacity(0.15)],

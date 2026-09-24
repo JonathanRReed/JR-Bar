@@ -347,6 +347,17 @@ extension AquariumView {
         .opacity(unlocked ? 1 : 0.5)
     }
 
+    /// A floor's tile: its sand, crest to foot, and a gravel's beads.
+    private func sandTile(_ substrate: String) -> some View {
+        Canvas { canvas, size in
+            let rect = CGRect(origin: .zero, size: size)
+            let sand = Gradient(colors: Self.sandSwatch(forSubstrate: substrate))
+            canvas.fill(Path(rect), with: .linearGradient(sand, startPoint: .zero,
+                                                          endPoint: CGPoint(x: 0, y: size.height)))
+            Self.drawSwatchGravel(&canvas, in: rect, substrate: substrate, bead: 2.2)
+        }
+    }
+
     /// The row's tile: a theme shows its own water, a floor its sand,
     /// everything else a glyph on its shelf's colour.
     @ViewBuilder
@@ -360,8 +371,8 @@ extension AquariumView {
                         Capsule().fill(.white.opacity(0.35)).frame(width: 14, height: 2).padding(.bottom, 5)
                     }
             } else if let substrate = item.substrateID {
-                shape.fill(LinearGradient(colors: Self.sandSwatch(forSubstrate: substrate),
-                                          startPoint: .top, endPoint: .bottom))
+                sandTile(substrate)
+                    .clipShape(shape)
             } else if let backdrop = item.backdropID {
                 BackdropSwatch(backdropID: backdrop)
                     .clipShape(shape)
