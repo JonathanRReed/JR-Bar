@@ -312,8 +312,8 @@ struct ScreenBarPeekNudge: View {
     }
 }
 
-/// One glyph in the peek: its face, a light wash under the pointer, the
-/// change dot the Item Bar draws too.
+/// One glyph in the peek: its face, a light wash under the pointer, and
+/// the one unseen dot (`UnseenDot`) while it changed since you looked.
 struct ScreenBarPeekTile: View {
     let tile: MenuBarEarFeed.Tile
     /// The app's icon when the glyph was never photographed — read once
@@ -334,7 +334,7 @@ struct ScreenBarPeekTile: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     if tile.changed {
-                        Circle().fill(Color.accentColor).frame(width: 5, height: 5).padding(2)
+                        UnseenDot().padding(2)
                     }
                 }
                 .contentShape(Rectangle())
