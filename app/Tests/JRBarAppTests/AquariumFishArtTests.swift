@@ -61,14 +61,16 @@ struct AquariumFishArtTests {
     @Test("the swim clock beats faster with speed and never jumps")
     func swimClock() {
         let clock = FishSwimClock()
-        var still = clock.advance("a", seed: 0, t: 100, x: 0, y: 0, length: 60, vigor: 1).phase
-        var dash = clock.advance("b", seed: 0, t: 100, x: 0, y: 0, length: 60, vigor: 1).phase
+        let tank = AquariumView.TankMotion()
+        var still = clock.advance("a", in: tank, seed: 0, t: 100, x: 0, y: 0, length: 60, vigor: 1).phase
+        var dash = clock.advance("b", in: tank, seed: 0, t: 100, x: 0, y: 0, length: 60, vigor: 1).phase
         var lastStill = still
         var lastDash = dash
         for frame in 1...90 {
             let t = 100 + Double(frame) / 30
-            still = clock.advance("a", seed: 0, t: t, x: 0, y: 0, length: 60, vigor: 1).phase
-            dash = clock.advance("b", seed: 0, t: t, x: Double(frame) * 4, y: 0, length: 60, vigor: 1).phase
+            still = clock.advance("a", in: tank, seed: 0, t: t, x: 0, y: 0, length: 60, vigor: 1).phase
+            dash = clock.advance("b", in: tank, seed: 0, t: t, x: Double(frame) * 4, y: 0,
+                                 length: 60, vigor: 1).phase
             // No frame advances the beat by more than a fraction of a
             // stroke — the tail never teleports.
             #expect(still - lastStill < 1.2 && still >= lastStill)
@@ -78,8 +80,30 @@ struct AquariumFishArtTests {
         }
         #expect(dash > still * 1.5, "a fish swimming two lengths a second beats faster than one hovering")
         // A paused window picks up where it was instead of lurching.
-        let before = clock.advance("a", seed: 0, t: 104, x: 0, y: 0, length: 60, vigor: 1).phase
-        let after = clock.advance("a", seed: 0, t: 400, x: 0, y: 0, length: 60, vigor: 1).phase
+        let before = clock.advance("a", in: tank, seed: 0, t: 104, x: 0, y: 0, length: 60, vigor: 1).phase
+        let after = clock.advance("a", in: tank, seed: 0, t: 400, x: 0, y: 0, length: 60, vigor: 1).phase
         #expect(after == before)
+    }
+
+    @Test("two tanks showing the same fish keep separate beats")
+    func swimClockPerTank() {
+        let clock = FishSwimClock()
+        let window = AquariumView.TankMotion()
+        let wallpaper = AquariumView.TankMotion()
+        var oneTank = 0.0
+        var twoTanks = 0.0
+        let lone = FishSwimClock()
+        for frame in 0...90 {
+            let t = 200 + Double(frame) / 30
+            // The same hovering fish, drawn at two places on two screens
+            // in the same frame: neither reads the gap as a dash.
+            twoTanks = clock.advance("f", in: window, seed: 0, t: t, x: 100, y: 50,
+                                     length: 60, vigor: 1).phase
+            _ = clock.advance("f", in: wallpaper, seed: 0, t: t, x: 900, y: 400,
+                              length: 120, vigor: 1)
+            oneTank = lone.advance("f", in: window, seed: 0, t: t, x: 100, y: 50,
+                                   length: 60, vigor: 1).phase
+        }
+        #expect(twoTanks == oneTank)
     }
 }

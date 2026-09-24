@@ -416,8 +416,8 @@ extension AquariumView {
         // glides, poses stay.
         let recency = fish.lastUpdate.map { now.timeIntervalSince($0) } ?? .infinity
         let vigor = 1 + 0.5 * exp(-max(0, recency) / 9)
-        let clock = FishSwimClock.shared.advance(fish.id, seed: phase, t: t, x: l.x, y: l.y,
-                                                  length: length, vigor: vigor)
+        let clock = FishSwimClock.shared.advance(fish.id, in: motion, seed: phase, t: t,
+                                                  x: l.x, y: l.y, length: length, vigor: vigor)
         let stroke = 0.2 * l.wag * (0.8 + 0.3 * min(1.3, clock.speed)) * (1 + l.turn * 0.3)
         let swim = CartoonFish.Swim(phase: clock.phase, amplitude: reduceMotion ? 0 : stroke,
                                     thin: l.thin)

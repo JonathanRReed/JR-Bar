@@ -113,9 +113,17 @@ extension CartoonFish {
 /// fish that speeds up beats faster without its tail ever jumping. The
 /// frequency follows how fast the fish is really moving, in body
 /// lengths per second, measured off its drawn position frame to frame.
+/// Every tank keeps its own clocks: the same fish on the wallpaper and
+/// in the window swims at two sizes, and neither reads the other's
+/// position as a lunge.
 @MainActor
 final class FishSwimClock {
     static let shared = FishSwimClock()
+
+    private struct Key: Hashable {
+        let tank: ObjectIdentifier
+        let id: String
+    }
 
     private struct Entry {
         var phase: Double
@@ -126,16 +134,17 @@ final class FishSwimClock {
         var speed: Double
     }
 
-    private var entries: [String: Entry] = [:]
+    private var entries: [Key: Entry] = [:]
 
-    /// Advance `id`'s clock to `t` at position (`x`, `y`) for a fish
-    /// `length` points long; `vigor` (1 calm … ~1.5) quickens a fish
-    /// whose session just spoke. Returns the beat phase and the
-    /// smoothed speed.
-    func advance(_ id: String, seed: Double, t: Double, x: Double, y: Double,
+    /// Advance the clock of fish `id` in `tank` to `t` at position
+    /// (`x`, `y`) for a fish `length` points long; `vigor` (1 calm …
+    /// ~1.5) quickens a fish whose session just spoke. Returns the
+    /// beat phase and the smoothed speed.
+    func advance(_ id: String, in tank: AnyObject, seed: Double, t: Double, x: Double, y: Double,
                  length: Double, vigor: Double) -> (phase: Double, speed: Double) {
-        guard var e = entries[id] else {
-            entries[id] = Entry(phase: seed, t: t, x: x, y: y, speed: 0.4)
+        let key = Key(tank: ObjectIdentifier(tank), id: id)
+        guard var e = entries[key] else {
+            entries[key] = Entry(phase: seed, t: t, x: x, y: y, speed: 0.4)
             prune(before: t)
             return (seed, 0.4)
         }
@@ -146,7 +155,7 @@ final class FishSwimClock {
             e.t = t
             e.x = x
             e.y = y
-            entries[id] = e
+            entries[key] = e
             return (e.phase, e.speed)
         }
         let moved = hypot(x - e.x, y - e.y) / max(1, length)
@@ -157,7 +166,7 @@ final class FishSwimClock {
         e.t = t
         e.x = x
         e.y = y
-        entries[id] = e
+        entries[key] = e
         return (e.phase, e.speed)
     }
 
