@@ -12,6 +12,7 @@ import pytest
 
 from jrbar.core_server import (
     MAX_FRAME_BYTES,
+    SLOW_LANE_RECEIVED_AT,
     CommandError,
     CommandRouter,
     CoreServer,
@@ -399,6 +400,145 @@ def test_dispatch_runs_on_the_reader_thread_and_reply_is_serialisable(sock_dir: 
         reply = _read_frames(client, 1)[0]
         assert reply["result"] == {"echo": {"a": [1, 2]}}
         assert seen["thread"].startswith("JRBarCoreClient")
+        client.close()
+    finally:
+        instance.stop()
+
+
+
+def test_a_slow_read_never_holds_up_a_later_command_on_the_same_socket__and_2_more(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A usage_graph took 107 s on 2026-09-23 and a ping sent behind it on
+    the same connection waited just as long; an Approve gives up after 8 s.
+    Slow-lane reads now run on one worker and reply by id when done."""
+    from jrbar import core_server
+
+    release = threading.Event()
+    started = threading.Event()
+    running = 0
+    overlap: list[int] = []
+    order: list[str] = []
+    threads: dict[str, str] = {}
+    guard = threading.Lock()
+
+    def dispatch(name: str, args: dict) -> object:
+        nonlocal running
+        threads[name] = threading.current_thread().name
+        if name in ("usage_graph", "list_history"):
+            with guard:
+                running += 1
+                overlap.append(running)
+            started.set()
+            try:
+                assert release.wait(5.0)
+            finally:
+                with guard:
+                    running -= 1
+                    order.append(args.get("tag", name))
+        return {"name": name, "tag": args.get("tag")}
+
+    setup_threads: list[str] = []
+    instance = CoreServer(
+        dispatch=dispatch,
+        initial_documents=lambda: [],
+        socket_path=sock_dir / "core.sock",
+        slow_lane_setup=lambda: setup_threads.append(threading.current_thread().name),
+    )
+    instance.start()
+    try:
+        # --- scenario: a fast command behind a slow read answers first
+        first = _connect(instance)
+        _read_frames(first, 1)
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "slow", "name": "usage_graph", "args": {"tag": "a"}}))
+        assert started.wait(5.0)
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "fast", "name": "answer_ask", "args": {}}))
+        reply = _read_frames(first, 1)[0]
+        assert reply["id"] == "fast" and reply["ok"] is True
+        assert threads["answer_ask"].startswith("JRBarCoreClient")
+
+        # --- scenario: two slow reads from two clients never overlap
+        second = _connect(instance)
+        _read_frames(second, 1)
+        second.sendall(encode_frame({"t": "command", "v": 1, "id": "slow2", "name": "list_history", "args": {"tag": "b"}}))
+        second.sendall(encode_frame({"t": "command", "v": 1, "id": "ping2", "name": "ping", "args": {}}))
+        assert _read_frames(second, 1)[0]["id"] == "ping2"
+        release.set()
+        assert _read_frames(first, 1)[0]["result"] == {"name": "usage_graph", "tag": "a"}
+        assert _read_frames(second, 1)[0]["result"] == {"name": "list_history", "tag": "b"}
+        assert overlap == [1, 1]
+        assert order == ["a", "b"]
+        assert threads["usage_graph"] == threads["list_history"] == "JRBarCoreSlowLane"
+        assert setup_threads == ["JRBarCoreSlowLane"]
+
+        # --- scenario: past the queue bound a slow read is refused busy at once
+        release.clear()
+        started.clear()
+        monkeypatch.setattr(core_server, "MAX_SLOW_LANE_QUEUED", 1)
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "s1", "name": "usage_graph", "args": {}}))
+        assert started.wait(5.0)  # s1 is running, so the queue is empty
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "s2", "name": "usage_graph", "args": {}}))
+        first.sendall(encode_frame({"t": "command", "v": 1, "id": "s3", "name": "usage_graph", "args": {}}))
+        refused = _read_frames(first, 1)[0]
+        assert refused["id"] == "s3" and refused["ok"] is False
+        assert refused["error"]["code"] == "busy"
+        release.set()
+        assert [frame["id"] for frame in _read_frames(first, 2)] == ["s1", "s2"]
+        first.close()
+        second.close()
+    finally:
+        release.set()
+        instance.stop()
+
+
+def test_mark_history_seen_waits_behind_the_list_history_sent_before_it(sock_dir: Path) -> None:
+    """History opens with list_history then mark_history_seen on one socket.
+    With the read on the slow lane and the mark inline, the mark reached the
+    main thread first and moved the watermark the read measures ``unseen``
+    from, so every row came back seen. The mark now queues behind it."""
+    watermark = {"last_seen": "old"}
+    threads: dict[str, str] = {}
+    # The reader thread handles one socket's frames in order, so once the
+    # ping behind the mark has run, the mark has been handled too: run
+    # inline (the bug) or queued behind the read.
+    mark_handled = threading.Event()
+
+    def dispatch(name: str, args: dict) -> object:
+        threads[name] = threading.current_thread().name
+        if name == "list_history":
+            assert mark_handled.wait(5.0)
+            return {"measured_from": watermark["last_seen"]}
+        if name == "mark_history_seen":
+            watermark["last_seen"] = "new"
+            watermark["received_at"] = args.get(SLOW_LANE_RECEIVED_AT)
+            return {"last_seen": "new"}
+        if name == "ping":
+            mark_handled.set()
+        return {}
+
+    instance = CoreServer(
+        dispatch=dispatch,
+        initial_documents=lambda: [],
+        socket_path=sock_dir / "core.sock",
+    )
+    instance.start()
+    try:
+        client = _connect(instance)
+        _read_frames(client, 1)
+        sent_at = time.time()
+        client.sendall(
+            encode_frame({"t": "command", "v": 1, "id": "list", "name": "list_history", "args": {}})
+            + encode_frame({"t": "command", "v": 1, "id": "mark", "name": "mark_history_seen", "args": {}})
+            + encode_frame({"t": "command", "v": 1, "id": "ping", "name": "ping", "args": {}})
+        )
+        replies = _read_frames(client, 3)
+        assert [reply["id"] for reply in replies] == ["ping", "list", "mark"]
+        assert replies[1]["result"] == {"measured_from": "old"}
+        assert replies[2]["result"] == {"last_seen": "new"}
+        assert threads["mark_history_seen"] == "JRBarCoreSlowLane"
+        # Stamped when it arrived, so the watermark is the look, not the
+        # moment the read ahead of it finished.
+        assert sent_at <= watermark["received_at"] <= time.time()
         client.close()
     finally:
         instance.stop()

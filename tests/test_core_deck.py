@@ -324,7 +324,7 @@ def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.Mon
     assert (empty.value.code, empty.value.message) == ("not_found", "No session assigned.")
     with pytest.raises(CommandError) as aux:
         controller._core_dispatch("deck_press", {"index": 14})
-    assert (aux.value.code, aux.value.message) == ("not_found", "Configure this control in the Control Center (⌘K).")
+    assert (aux.value.code, aux.value.message) == ("not_found", "Configure this control in the Creator Micro window.")
 
     # A working session: reveal.
     reply = controller._core_dispatch("deck_press", {"index": work_key})
@@ -540,6 +540,8 @@ def deck_live(headless, monkeypatch: pytest.MonkeyPatch):  # noqa: F811
     save_integration_settings(IntegrationSettings().with_creator_micro(enabled=True, device_serial=SERIAL))
     controller = headless
     controller.applicationDidFinishLaunching_(None)
+    # The pad starts one run-loop pass after 'core: ready'.
+    controller.coreLaunchDeferred_(None)
     controller._deck_board_ready = True
 
     def dispatch(selector: str, payload, wait: bool) -> bool:

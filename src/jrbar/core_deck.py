@@ -103,7 +103,7 @@ ACTION_RECEIPT_MESSAGES: Final = {
 INPUT_CHECK_MESSAGE: Final = "Input check is on: device actions are paused."
 NO_SESSION_MESSAGE: Final = "No session assigned."
 RESERVED_MESSAGE: Final = "Reserved: session not observed."
-AUXILIARY_MESSAGE: Final = "Configure this control in the Control Center (⌘K)."
+AUXILIARY_MESSAGE: Final = "Configure this control in the Creator Micro window."
 NO_DEVICE_MESSAGE: Final = "No Creator Micro 2 is connected."
 
 

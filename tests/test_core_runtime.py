@@ -315,6 +315,57 @@ def test_headless_launch_skips_every_appkit_surface_and_serves__and_2_more(headl
 
 
 
+def test_ready_comes_before_the_pad_the_agents_and_the_peers(headless, monkeypatch) -> None:
+    """'core: ready' means the socket answers; what the first client does
+    not need starts one run-loop pass later, each step on its own, and the
+    pass logs one launch timing line."""
+    from jrbar import optional_integration_runtime
+    from jrbar import status_bar_legacy as legacy
+
+    lines: list[str] = []
+    monkeypatch.setattr(legacy, "log_status_bar", lines.append)
+    started: list[object] = []
+    monkeypatch.setattr(
+        optional_integration_runtime,
+        "start_optional_integration_runtime",
+        lambda target: started.append(target) or "runtime",
+    )
+    controller = headless
+    controller._core_deck_probe_now = MagicMock(name="_core_deck_probe_now")
+    controller.applicationDidFinishLaunching_(None)
+    assert any(line.startswith("core: ready") for line in lines)
+    assert (0.0, "coreLaunchDeferred:", False) in _TimerAPI.calls
+    assert started == []
+    controller._core_deck_probe_now.assert_not_called()
+    controller.refresh_installed_agent_inventory.assert_not_called()
+
+    # One step failing never keeps the next from starting.
+    controller.refresh_installed_agent_inventory.side_effect = RuntimeError("roots gone")
+    controller.coreLaunchDeferred_(None)
+    assert started == [controller]
+    assert controller._jrbar_optional_integration_runtime == "runtime"
+    controller._core_deck_probe_now.assert_called_once_with()
+    controller.refresh_installed_agent_inventory.assert_called_once_with()
+    assert any("deferred launch step installed agents failed: roots gone" in line for line in lines)
+    timing = [line for line in lines if line.startswith("core: launch timing ")]
+    assert len(timing) == 1
+    assert "launch_to_ready=" in timing[0] and "deferred=" in timing[0]
+
+    # A runtime a deck_set_settings restart already started is kept, not
+    # orphaned behind a second one.
+    started.clear()
+    controller._jrbar_optional_integration_runtime = "restarted"
+    controller.coreLaunchDeferred_(None)
+    assert started == []
+    assert controller._jrbar_optional_integration_runtime == "restarted"
+
+    # A daemon already shutting down starts none of it.
+    controller._jrbar_optional_integration_runtime = None
+    controller._runtime_termination_started = True
+    controller.coreLaunchDeferred_(None)
+    assert started == []
+
+
 def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_more(headless) -> None:
     # --- scenario: commands_run_on_the_main_thread_and_unknown_ones_are_refused
     controller = headless
@@ -2738,6 +2789,50 @@ def test_dismiss_session_hides_a_live_row_until_it_speaks__and_2_more(cleared) -
 
 
 
+def test_history_rows_take_the_name_the_panel_shows_now(headless) -> None:
+    """A History row is named from the last published roster, where the
+    provider's own title lives; a session the roster no longer lists keeps
+    the label it was recorded with, and nothing off-main asks for extras."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+
+    def entry(subject: str, label: str, detail: str | None, at: float) -> SimpleNamespace:
+        return SimpleNamespace(
+            occurred_at_epoch=at, kind=SimpleNamespace(value="completed"), provider="claude",
+            subject_id=subject, label=label, detail=detail, duration_seconds=None,
+        )
+
+    now = time.time()
+    ledger = SimpleNamespace(
+        last_seen_epoch=now - 3600,
+        entries=[
+            entry("claude:session:known", "claude session 1f2e3d4c", "Fix the login flow", now - 60),
+            entry("claude:session:gone", "Old prompt words", "JR-Bar", now - 30),
+            entry("claude:session:same", "Refactor serve", None, now - 10),
+        ],
+    )
+    controller.ensure_activity_ledger = lambda: ledger
+    controller._core_extras_for = MagicMock(side_effect=AssertionError("extras read off-main"))
+    with controller._core_lock:
+        controller._core_documents["state"] = {
+            "sessions": [
+                {"id": "claude:session:known", "label": "Fix the login flow"},
+                {"id": "claude:session:same", "label": "Refactor serve"},
+                {"id": "claude:session:blank", "label": "  "},
+                "not a row",
+            ]
+        }
+    rows = {row["session"]: row for row in controller._core_dispatch("list_history", {})["rows"]}
+    # The roster's title replaces the recorded guess, and the detail that
+    # repeated it goes.
+    assert rows["claude:session:known"]["label"] == "Fix the login flow"
+    assert rows["claude:session:known"]["detail"] is None
+    # A session the roster no longer lists keeps what was recorded.
+    assert (rows["claude:session:gone"]["label"], rows["claude:session:gone"]["detail"]) == ("Old prompt words", "JR-Bar")
+    assert rows["claude:session:same"]["label"] == "Refactor serve"
+    controller._core_extras_for.assert_not_called()
+
+
 def test_mark_history_seen_advances_the_watermark(headless) -> None:
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -2749,6 +2844,28 @@ def test_mark_history_seen_advances_the_watermark(headless) -> None:
     assert reply["last_seen"] >= before["last_seen"]
     after = controller._core_dispatch("list_history", {})
     assert after["last_seen"] == reply["last_seen"]
+
+
+def test_mark_history_seen_stamps_the_look_when_it_arrived(headless) -> None:
+    """The mark waits on the slow lane behind a scan; the core server
+    stamps when it arrived, and that is the look the watermark records."""
+    from jrbar.core_server import SLOW_LANE_RECEIVED_AT
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.mark_activity_seen_now(1_000.0)
+    arrived = time.time() - 90.0
+
+    reply = controller._core_dispatch("mark_history_seen", {SLOW_LANE_RECEIVED_AT: arrived})
+    assert reply["last_seen"] == arrived
+
+    # A stamp from the future, or one that is not a number, is not trusted:
+    # the look is stamped now instead, so the watermark still moves.
+    previous = reply["last_seen"]
+    for bogus in (time.time() + 3_600.0, float("nan"), "soon", True):
+        reply = controller._core_dispatch("mark_history_seen", {SLOW_LANE_RECEIVED_AT: bogus})
+        assert previous < reply["last_seen"] <= time.time()
+        previous = reply["last_seen"]
 
 
 def test_serve_token_answers_the_loopback_bearer(headless, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -7042,6 +7042,8 @@ team id YOUR_TEAM_ID, push key '/path/to/AuthKey_YOUR_KEY_ID.p8'
             cwd="/Users/pero/pgit/sdstatus_bitbang",
         )
 
+        # No session of Claude.app's own store matches (the sandbox has
+        # none), so the app link only brings the app forward.
         self.assertEqual(session_deep_link(status), "claude://")
         self.assertEqual(
             session_resume_command(status),
@@ -7051,7 +7053,11 @@ team id YOUR_TEAM_ID, push key '/path/to/AuthKey_YOUR_KEY_ID.p8'
             session_vscode_link(status),
             "vscode://anthropic.claude-code/open?session=1ca4348e-2aec-4147-9e81-d7d56364d257",
         )
-        self.assertEqual(default_session_open_action(status), "vscode")
+        # Automatic puts VS Code first only where something opens its links.
+        with patch("jrbar.session_actions.vscode_link_handled", return_value=True):
+            self.assertEqual(default_session_open_action(status), "vscode")
+        with patch("jrbar.session_actions.vscode_link_handled", return_value=False):
+            self.assertEqual(default_session_open_action(status), "app")
         self.assertEqual(
             session_open_target(status, "vscode"),
             (

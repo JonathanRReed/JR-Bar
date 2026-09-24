@@ -53,7 +53,7 @@ struct MockDeckRoundTripTests {
         let reserved = try await model.deckPress(index: 5)
         #expect(!reserved.ok && reserved.error?.code == "not_found")
         let unmapped = try await model.deckPress(index: 18)
-        #expect(!unmapped.ok && unmapped.error?.message == "Configure this control in the Control Center (⌘K).")
+        #expect(!unmapped.ok && unmapped.error?.message == "Configure this control in the Creator Micro window.")
         let bad = try await model.deckPress(index: 24)
         #expect(!bad.ok && bad.error?.code == "invalid_args")
 

@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 import pytest
 
-from jrbar.local_api_contract import LocalAPIRequest, ReplayGuard
 from jrbar.product_identity import PRODUCT_DISPLAY_NAME
 from jrbar.provider_usage_store import default_provider_usage_state_path
 from jrbar.providers import default_state_dir
 from jrbar.serve import (
     _read_json,
-    build_authenticated_local_api_response,
     build_serve_document,
     create_serve_server,
 )
@@ -366,41 +365,57 @@ def test_cli_status_requires_token_unless_anonymous_compatibility_is_explicit(
     assert calls[-1]["status_access_token"] is None
 
 
-def test_in_process_integrations_are_authenticated_and_only_reuse_redacted_projection(
-    tmp_path: Path,
-) -> None:
-    _write_private_state(tmp_path)
-    secret = b"local-integration-test-key"
-    request = LocalAPIRequest(
-        client_id="streamdeck",
-        capability="agents.read",
-        nonce="n-1",
-        issued_at=1000.0,
-        expires_at=1020.0,
-    ).sign(secret)
-    guard = ReplayGuard()
+def test_a_peer_cannot_pin_serve_threads__and_1_more(monkeypatch) -> None:
+    import socket
 
-    response = build_authenticated_local_api_response(
-        request.encode(),
-        secret=secret,
-        replay_guard=guard,
-        home=tmp_path,
-        now=1001.0,
-    )
-    response_document = json.loads(response.encode())
+    from jrbar import serve as serve_module
 
-    assert response_document["capability"] == "agents.read"
-    assert response_document["data"] == {
-        "agents": build_serve_document(tmp_path)["agents"]
-    }
-    with pytest.raises(ValueError, match="replayed"):
-        build_authenticated_local_api_response(
-            request,
-            secret=secret,
-            replay_guard=guard,
-            home=tmp_path,
-            now=1001.0,
-        )
+    def closed_by_server(connection: socket.socket, timeout: float = 5.0) -> bool:
+        connection.settimeout(timeout)
+        try:
+            return connection.recv(1024) == b""
+        except ConnectionResetError:
+            return True
 
-    encoded = response.encode()
-    assert all(sentinel.encode() not in encoded for sentinel in PRIVATE_SENTINELS)
+    # --- scenario: a half-sent request gives its thread up at the handler timeout
+    assert serve_module._ServeHandler.timeout == serve_module.SERVE_HANDLER_TIMEOUT_SECONDS == 5.0
+    monkeypatch.setattr(serve_module._ServeHandler, "timeout", 0.2)
+    server = create_serve_server(port=0, allow_anonymous_status=True)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        trickler = socket.create_connection(("127.0.0.1", port), timeout=5)
+        trickler.sendall(b"GET /status.js")
+        assert closed_by_server(trickler)
+        trickler.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    # --- scenario: past the connection cap a new one is closed, and a slot comes back when one ends
+    monkeypatch.setattr(serve_module._ServeHandler, "timeout", 5.0)
+    monkeypatch.setattr(serve_module, "MAX_SERVE_CONNECTIONS", 2)
+    server = create_serve_server(port=0, allow_anonymous_status=True)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        idle = [socket.create_connection(("127.0.0.1", port), timeout=5) for _ in range(2)]
+        refused = socket.create_connection(("127.0.0.1", port), timeout=5)
+        assert closed_by_server(refused)
+        refused.close()
+        for connection in idle:
+            connection.close()
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/status.json", timeout=5) as response:
+                    assert response.status == 200
+                break
+            except (urllib.error.URLError, ConnectionError):
+                # The idle handlers are still noticing their peers left.
+                assert time.monotonic() < deadline
+    finally:
+        server.shutdown()
+        server.server_close()

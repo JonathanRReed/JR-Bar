@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import math
+import threading
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final
@@ -43,6 +45,15 @@ MAX_PUBLIC_ASKS: Final = 64
 ANSWER_SOCKET_TIMEOUT_SECONDS: Final = 12.0
 #: The reads (the switch, the waiting asks) come back at once.
 READ_SOCKET_TIMEOUT_SECONDS: Final = 3.0
+#: How long one core connection's settings and state serve the reads. Each
+#: poll used to open two connections, each sent hello, state, lights and
+#: settings (about 32 KB) and each took one of the daemon's four client
+#: slots; a poll's switch check and ask list now share one.
+READ_CACHE_SECONDS: Final = 1.0
+#: A slot answer that names no ``request`` is refused while the ask on that
+#: slot is younger than this: the key may still have shown the ask it
+#: replaced. The panel always pins ``request``; a URL-only key cannot.
+SLOT_ANSWER_SETTLE_SECONDS: Final = 1.5
 #: What a receipt may carry back over HTTP: the verdict, never the host's
 #: pid, tty or window evidence.
 _RECEIPT_FIELDS: Final = frozenset(
@@ -232,6 +243,25 @@ def public_asks(state: Mapping[str, Any]) -> list[dict[str, Any]]:
     return public
 
 
+def refuse_a_slot_that_just_changed(target: Mapping[str, Any], state: Mapping[str, Any], *, now: float) -> None:
+    """Raise ``stale_request`` for a slot answer with no ``request`` whose
+    slot shows an ask that opened within ``SLOT_ANSWER_SETTLE_SECONDS``.
+    ``deck_answer`` answers whatever the slot holds at press time; this is
+    serve's own guard, so the app's Rail is untouched."""
+    if "slot" not in target or "request" in target:
+        return
+    opened = [
+        ask["opened_at"]
+        for ask in public_asks(state)
+        if ask["slot"] == target["slot"] and ask["opened_at"] is not None
+    ]
+    if opened and now - max(opened) < SLOT_ANSWER_SETTLE_SECONDS:
+        raise ServeAnswerRefused(
+            "stale_request",
+            "The ask on that key just changed; look at the key and press it again.",
+        )
+
+
 def _command_for(target: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
     """The daemon command one validated target runs."""
     extras = {key: target[key] for key in ("answers", "request") if key in target}
@@ -249,25 +279,28 @@ class ControllerAnswers:
     """The daemon's own serve thread: the switch, the published state and
     the command dispatch, in process."""
 
-    def __init__(self, controller: object) -> None:
+    def __init__(self, controller: object, *, clock: Callable[[], float] = time.time) -> None:
         self._controller = controller
+        self._clock = clock
 
     def enabled(self) -> bool:
         return bool(getattr(getattr(self._controller, "settings", None), "serve_answer_enabled", False))
 
-    def asks(self) -> list[dict[str, Any]]:
+    def _state(self) -> Mapping[str, Any]:
         lock = getattr(self._controller, "_core_lock", None)
         documents = getattr(self._controller, "_core_documents", None) or {}
         if lock is None:
-            state = documents.get("state") or {}
-        else:
-            with lock:
-                state = documents.get("state") or {}
-        return public_asks(state)
+            return documents.get("state") or {}
+        with lock:
+            return documents.get("state") or {}
+
+    def asks(self) -> list[dict[str, Any]]:
+        return public_asks(self._state())
 
     def answer(self, target: Mapping[str, Any]) -> dict[str, Any]:
         from .core_server import CommandError
 
+        refuse_a_slot_that_just_changed(target, self._state(), now=self._clock())
         name, args = _command_for(target)
         dispatch = getattr(self._controller, "_core_dispatch", None)
         if not callable(dispatch):
@@ -283,9 +316,20 @@ class CoreSocketAnswers:
     """A standalone ``jrbar serve --allow-answers``: the same three reads and
     the one command, over the daemon's core socket."""
 
-    def __init__(self, socket_path: Path, *, connect: Callable[..., Any] | None = None) -> None:
+    def __init__(
+        self,
+        socket_path: Path,
+        *,
+        connect: Callable[..., Any] | None = None,
+        clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._socket_path = socket_path
         self._connect = connect
+        self._clock = clock
+        self._monotonic = monotonic
+        self._read_lock = threading.Lock()
+        self._read: tuple[float, dict[str, Any], dict[str, Any] | None] | None = None
 
     def _connection(self, timeout: float = READ_SOCKET_TIMEOUT_SECONDS):
         if self._connect is not None:
@@ -294,12 +338,32 @@ class CoreSocketAnswers:
 
         return CoreConnection(self._socket_path, timeout=timeout)
 
+    def _documents(self) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """``settings`` and ``state`` from one connection -- both arrive in
+        the frames the daemon sends on connect -- kept ``READ_CACHE_SECONDS``.
+        A state that does not come is ``None``; a failed connection raises
+        ``ControlError`` and caches nothing."""
+        from .cli_control import ControlError
+
+        with self._read_lock:
+            now = self._monotonic()
+            cached = self._read
+            if cached is not None and now - cached[0] < READ_CACHE_SECONDS:
+                return cached[1], cached[2]
+            with self._connection() as core:
+                settings = core.document("settings")
+                try:
+                    state = core.document("state")
+                except ControlError:
+                    state = None
+            self._read = (now, settings, state)
+            return settings, state
+
     def enabled(self) -> bool:
         from .cli_control import ControlError
 
         try:
-            with self._connection() as core:
-                settings = core.document("settings")
+            settings, _state = self._documents()
         except ControlError:
             return False
         document = settings.get("document") if isinstance(settings.get("document"), dict) else settings
@@ -309,10 +373,11 @@ class CoreSocketAnswers:
         from .cli_control import ControlError
 
         try:
-            with self._connection() as core:
-                state = core.document("state")
+            _settings, state = self._documents()
         except ControlError as error:
             raise ServeAnswerRefused("unavailable", str(error)) from None
+        if state is None:
+            raise ServeAnswerRefused("unavailable", "the monitor sent no state yet")
         return public_asks(state)
 
     def answer(self, target: Mapping[str, Any]) -> dict[str, Any]:
@@ -324,6 +389,10 @@ class CoreSocketAnswers:
             # surface has said what happened, and a timeout here would call
             # a delivered answer a refusal.
             with self._connection(ANSWER_SOCKET_TIMEOUT_SECONDS) as core:
+                if "slot" in target and "request" not in target:
+                    # The state this connection opened with, not a cached
+                    # one: the ask that just replaced the key's must count.
+                    refuse_a_slot_that_just_changed(target, core.document("state"), now=self._clock())
                 return core.command(name, args)
         except ControlError as error:
             raise ServeAnswerRefused(error.code or "unavailable", str(error)) from None
@@ -334,6 +403,8 @@ __all__ = [
     "ANSWER_SOCKET_TIMEOUT_SECONDS",
     "DECK_SLOTS",
     "MAX_ANSWER_BODY_BYTES",
+    "READ_CACHE_SECONDS",
+    "SLOT_ANSWER_SETTLE_SECONDS",
     "ControllerAnswers",
     "CoreSocketAnswers",
     "ServeAnswerRefused",
@@ -341,4 +412,5 @@ __all__ = [
     "parse_answer_target",
     "public_asks",
     "receipt_document",
+    "refuse_a_slot_that_just_changed",
 ]

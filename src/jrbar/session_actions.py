@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
+import os
+import re
 import shlex
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import PurePath
+from pathlib import Path, PurePath
+from typing import Final
 from urllib.parse import quote, urlencode
 
 from .models import AgentStatus
@@ -39,6 +45,21 @@ SESSION_TERMINAL_OPENERS = {
 }
 MAX_SESSION_ID_LENGTH = 256
 MAX_SESSION_CWD_LENGTH = 1_024
+# Claude.app's own record of the Claude Code sessions it runs: one
+# ``local_<uuid>.json`` per session under <account>/<org>/, naming the CLI
+# session JR-Bar sees as ``cliSessionId``. A private format read only to
+# find that one id; anything unexpected is simply no match.
+CLAUDE_DESKTOP_SESSION_STORE: Final = (
+    Path.home() / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
+)
+# The id Claude.app's claude://code/continue accepts (its URL handler
+# matches exactly this).
+CLAUDE_DESKTOP_LOCAL_ID: Final = re.compile(r"local_[A-Za-z0-9-]{1,64}")
+_CLAUDE_STORE_MAX_DEPTH: Final = 4
+_CLAUDE_STORE_MAX_FILES: Final = 4_096
+_CLAUDE_STORE_MAX_FILE_BYTES: Final = 1024 * 1024
+# How long a "is there a vscode:// handler" answer is trusted.
+_VSCODE_HANDLER_TTL_SECONDS: Final = 300.0
 
 
 class ProfileSessionActionResolutionKind(str, Enum):
@@ -184,6 +205,117 @@ def _valid_session_cwd(value: object) -> bool:
     )
 
 
+class ClaudeDesktopSessions:
+    """``cliSessionId`` -> Claude.app's ``local_`` id, from its session store.
+
+    Read-only. The walk is cached by the store's directory mtimes and each
+    file by its own mtime and size, so an open that finds nothing new reads
+    only directory entries. A file rewritten in place (its ``cliSessionId``
+    filled in after it was made) leaves every directory mtime alone, so a
+    miss also restats the files and rereads any that changed. A store that
+    is missing, unreadable or shaped differently answers ``None``, and the
+    open falls back to bare ``claude://``."""
+
+    def __init__(self, root: Path | None = None) -> None:
+        self._root = root
+        self._lock = threading.Lock()
+        self._signature: tuple[tuple[str, int], ...] | None = None
+        self._files: dict[str, tuple[tuple[int, int], str | None, str | None]] = {}
+        self._by_cli: dict[str, str] = {}
+
+    def local_id(self, cli_session_id: object) -> str | None:
+        if not _valid_session_id(cli_session_id):
+            return None
+        key = str(cli_session_id)
+        try:
+            with self._lock:
+                self._refresh()
+                found = self._by_cli.get(key)
+                if found is None:
+                    self._refresh(restat=True)
+                    found = self._by_cli.get(key)
+                return found
+        except Exception:
+            return None
+
+    def _refresh(self, *, restat: bool = False) -> None:
+        root = self._root if self._root is not None else CLAUDE_DESKTOP_SESSION_STORE
+        directories: list[tuple[str, int]] = []
+        files: list[os.DirEntry[str]] = []
+        pending = [(str(root), 0)]
+        while pending:
+            path, depth = pending.pop()
+            try:
+                directories.append((path, os.stat(path).st_mtime_ns))
+                with os.scandir(path) as entries:
+                    for entry in entries:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir() and depth + 1 < _CLAUDE_STORE_MAX_DEPTH:
+                            pending.append((entry.path, depth + 1))
+                        elif (
+                            entry.name.startswith("local_")
+                            and entry.name.endswith(".json")
+                            and len(files) < _CLAUDE_STORE_MAX_FILES
+                            and entry.is_file()
+                        ):
+                            files.append(entry)
+            except OSError:
+                if depth == 0:
+                    self._signature, self._files, self._by_cli = None, {}, {}
+                    return
+        signature = tuple(sorted(directories))
+        if signature == self._signature and not restat:
+            return
+        known: dict[str, tuple[tuple[int, int], str | None, str | None]] = {}
+        for entry in files:
+            try:
+                info = entry.stat()
+            except OSError:
+                continue
+            stamp = (info.st_mtime_ns, info.st_size)
+            cached = self._files.get(entry.path)
+            known[entry.path] = cached if cached is not None and cached[0] == stamp else (stamp, *_read_claude_session(entry.path, info.st_size))
+        self._signature = signature
+        self._files = known
+        self._by_cli = {cli: local for _stamp, cli, local in known.values() if cli is not None and local is not None}
+
+
+def _read_claude_session(path: str, size: int) -> tuple[str | None, str | None]:
+    """``(cliSessionId, sessionId)`` from one store file, or ``(None, None)``."""
+    if size > _CLAUDE_STORE_MAX_FILE_BYTES:
+        return None, None
+    try:
+        with open(path, "rb") as handle:
+            document = json.loads(handle.read(_CLAUDE_STORE_MAX_FILE_BYTES + 1))
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(document, dict):
+        return None, None
+    cli = document.get("cliSessionId")
+    local = document.get("sessionId")
+    if not _valid_session_id(cli) or type(local) is not str or not CLAUDE_DESKTOP_LOCAL_ID.fullmatch(local):
+        return None, None
+    return cli, local
+
+
+_CLAUDE_DESKTOP_SESSIONS: Final = ClaudeDesktopSessions()
+
+
+def claude_desktop_link(status: AgentStatus, sessions: ClaudeDesktopSessions | None = None) -> str | None:
+    """``claude://code/continue?session=local_…`` for a session Claude.app
+    runs, which lands on that session; bare ``claude://`` only brings the
+    app forward on whichever one it showed last. ``None`` for a session the
+    app's store does not know, or a row whose origin says it is not the
+    app's (a CLI in a terminal, an editor panel): that store is only read
+    for rows it can hold."""
+    origin = normalized_origin(status.origin)
+    if origin and not any(surface in origin.split() for surface in ("app", "ui")):
+        return None
+    local_id = (sessions or _CLAUDE_DESKTOP_SESSIONS).local_id(status.session_id)
+    return None if local_id is None else f"claude://code/continue?session={local_id}"
+
+
 def session_deep_link(status: AgentStatus) -> str | None:
     provider = status.provider.lower()
     session_id = status.session_id
@@ -191,7 +323,7 @@ def session_deep_link(status: AgentStatus) -> str | None:
     if provider == "codex" and _valid_session_id(session_id):
         return f"codex://threads/{quote(session_id, safe='')}"
     if provider == "claude":
-        return "claude://"
+        return claude_desktop_link(status) or "claude://"
     return None
 
 
@@ -273,8 +405,38 @@ def preferred_session_open_actions(status: AgentStatus) -> tuple[str, ...]:
             return (SESSION_OPEN_APP, SESSION_OPEN_TERMINAL, SESSION_OPEN_VSCODE)
 
     if status.provider.lower() == "claude":
-        return (SESSION_OPEN_VSCODE, SESSION_OPEN_APP, SESSION_OPEN_TERMINAL)
+        # VS Code first only where something opens vscode:// links: on a
+        # Mac without it, Automatic sent every Claude session to a link
+        # that went nowhere.
+        if vscode_link_handled():
+            return (SESSION_OPEN_VSCODE, SESSION_OPEN_APP, SESSION_OPEN_TERMINAL)
+        return (SESSION_OPEN_APP, SESSION_OPEN_TERMINAL)
     return (SESSION_OPEN_APP, SESSION_OPEN_TERMINAL, SESSION_OPEN_VSCODE)
+
+
+_vscode_handler_cache: tuple[float, bool] | None = None
+
+
+def vscode_link_handled(*, monotonic: Callable[[], float] = time.monotonic) -> bool:
+    """Whether LaunchServices has an app for ``vscode://`` links, asked at
+    most every five minutes; False when it cannot be asked."""
+    global _vscode_handler_cache
+    now = monotonic()
+    cached = _vscode_handler_cache
+    if cached is not None and now - cached[0] < _VSCODE_HANDLER_TTL_SECONDS:
+        return cached[1]
+    try:
+        from AppKit import NSWorkspace
+        from Foundation import NSURL
+
+        handled = (
+            NSWorkspace.sharedWorkspace().URLForApplicationToOpenURL_(NSURL.URLWithString_("vscode://"))
+            is not None
+        )
+    except Exception:
+        handled = False
+    _vscode_handler_cache = (now, handled)
+    return handled
 
 
 def normalized_origin(origin: str | None) -> str:

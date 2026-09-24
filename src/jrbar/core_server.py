@@ -2,12 +2,16 @@
 
 One accept thread, one reader thread per client, one flusher thread that
 coalesces the ``state`` / ``lights`` / ``settings`` documents (latest wins,
-bounded rate) and fans every frame out to every connected client.
+bounded rate) and fans every frame out to every connected client, and one
+slow-lane worker for the heavy reads.
 
 The server knows nothing about AppKit or the controller. Commands arrive on
 a client's reader thread and are handed to ``dispatch(name, args)``; the
-runtime wraps that callable so it runs on the main thread. Publishing is
-thread-safe and never blocks the caller on socket I/O.
+runtime wraps that callable so it runs on the main thread. A slow-lane
+command (``SLOW_LANE_COMMANDS``) is queued for the worker instead and
+answered by id when it is done, so a transcript scan never holds up the
+Approve the same client sends after it. Publishing is thread-safe and never
+blocks the caller on socket I/O.
 """
 
 from __future__ import annotations
@@ -77,6 +81,39 @@ DEFAULT_CAPABILITIES: Final = (
     "event_replay",
 )
 _COALESCED_KINDS: Final = ("state", "lights", "settings")
+# Reads that scan transcripts or run diagnostics, all ``main_thread=False``
+# in the runtime. A usage_graph took 107 s and then 195 s on 2026-09-23, and
+# every command the app sent behind it on its one connection -- an Approve,
+# a ping -- waited just as long. These run on one worker shared by every
+# client: in order among themselves, so two scans never overlap and fight
+# for the GIL, and out of order with everything else.
+#
+# ``mark_history_seen`` is not a scan, but History sends it right behind a
+# ``list_history`` whose ``unseen`` flags measure from the watermark it
+# moves. Inline it would overtake the queued read and every row would come
+# back seen; on the lane it waits its turn. It is ``main_thread=True``, so
+# the dispatch still hops it to the main thread from the worker.
+SLOW_LANE_COMMANDS: Final = frozenset(
+    {
+        "usage_graph",
+        "usage_history",
+        "session_timeline",
+        "list_history",
+        "mark_history_seen",
+        "compare_sessions",
+        "session_usage",
+        "doctor",
+    }
+)
+# Stamped into a slow-lane command's args when it is queued (epoch
+# seconds), so a command that records "now" -- mark_history_seen's
+# watermark -- can record when it was sent, not when a scan ahead of it
+# finished.
+SLOW_LANE_RECEIVED_AT: Final = "_received_at"
+# Slow-lane commands waiting for the worker, across every client. The app
+# keeps a few in flight; past this a new one is refused ``busy`` at once
+# rather than answered minutes late.
+MAX_SLOW_LANE_QUEUED: Final = 32
 
 
 class CommandError(Exception):
@@ -161,9 +198,13 @@ class CoreServer:
         on_client_change: Callable[[int], None] | None = None,
         log: Callable[[str], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        slow_commands: Iterable[str] = SLOW_LANE_COMMANDS,
+        slow_lane_setup: Callable[[], None] | None = None,
     ) -> None:
         if not callable(dispatch) or not callable(initial_documents):
             raise ValueError("invalid core server dependency")
+        if slow_lane_setup is not None and not callable(slow_lane_setup):
+            raise ValueError("invalid core server slow-lane setup")
         if type(max_clients) is not int or max_clients <= 0:
             raise ValueError("invalid core server client bound")
         self.socket_path = Path(socket_path or default_core_socket_path()).expanduser()
@@ -176,6 +217,16 @@ class CoreServer:
         self._on_client_change = on_client_change
         self._log = log or (lambda _line: None)
         self._clock = clock
+        self._slow_commands = frozenset(slow_commands)
+        # Runs once on the worker before its first command (the runtime
+        # drops it to utility QoS there, never on a client's reader thread).
+        self._slow_lane_setup = slow_lane_setup
+        self._slow_condition = threading.Condition()
+        self._slow_queue: deque[tuple[_Client, str | None, str, dict[str, Any]]] = deque()
+        self._slow_worker: threading.Thread | None = None
+        # Bumped at each start: a worker left finishing a scan from before a
+        # stop exits instead of serving beside the new one.
+        self._slow_generation = 0
 
         self._lock = threading.RLock()
         self._clients: list[_Client] = []
@@ -211,7 +262,8 @@ class CoreServer:
         self._journal_dropped = 0
         self.stats = {"frames_out": 0, "commands": 0, "dropped_oversize": 0,
                       "refused_clients": 0, "deduped_frames": 0,
-                      "dropped_queue": 0, "journal_dropped": 0}
+                      "dropped_queue": 0, "journal_dropped": 0,
+                      "slow_lane": 0, "slow_lane_refused": 0}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -250,8 +302,15 @@ class CoreServer:
             self._flusher = threading.Thread(
                 target=self._flush_loop, name="JRBarCoreFlush", daemon=True
             )
+            with self._slow_condition:
+                self._slow_generation += 1
+                generation = self._slow_generation
+            self._slow_worker = threading.Thread(
+                target=self._slow_lane_loop, args=(generation,), name="JRBarCoreSlowLane", daemon=True
+            )
             self._accept_thread.start()
             self._flusher.start()
+            self._slow_worker.start()
             self._log(f"core listening on {path}")
             return path
 
@@ -267,6 +326,9 @@ class CoreServer:
             self._clients = []
         with self._flush_condition:
             self._flush_condition.notify_all()
+        with self._slow_condition:
+            self._slow_queue.clear()
+            self._slow_condition.notify_all()
         if wakeup is not None:
             # Interrupt the accept thread's select BEFORE closing the
             # listening socket so the loop observes `running` False on a
@@ -274,6 +336,10 @@ class CoreServer:
             wakeup.wake()
         for client in clients:
             client.close()
+        # The slow-lane worker is not joined: mid-scan it would hold a quit
+        # for the whole timeout, as a client's reader thread running one
+        # never did. It sees the server stopped when the scan ends, and the
+        # reply goes nowhere.
         for thread in (self._accept_thread, self._flusher):
             if thread is not None and thread is not threading.current_thread():
                 thread.join(timeout_seconds)
@@ -689,8 +755,45 @@ class CoreServer:
             client.send(encode_frame(self._reply(command_id, ok=False, code="bad_command", message="missing name")))
             return
         self.stats["commands"] += 1
+        if name in self._slow_commands:
+            self._queue_slow(client, command_id, name, {**args, SLOW_LANE_RECEIVED_AT: time.time()})
+            return
         reply = self.run_command(command_id, name, args)
         client.send(encode_frame(reply))
+
+    def _queue_slow(self, client: _Client, command_id: str | None, name: str, args: dict[str, Any]) -> None:
+        with self._slow_condition:
+            if len(self._slow_queue) < MAX_SLOW_LANE_QUEUED:
+                self._slow_queue.append((client, command_id, name, args))
+                self.stats["slow_lane"] += 1
+                self._slow_condition.notify_all()
+                return
+            self.stats["slow_lane_refused"] += 1
+        client.send(encode_frame(self._reply(
+            command_id, ok=False, code="busy", message=f"{name}: too many slow reads queued; try again"
+        )))
+
+    def _slow_lane_loop(self, generation: int) -> None:
+        if self._slow_lane_setup is not None:
+            try:
+                self._slow_lane_setup()
+            except Exception as exc:  # pragma: no cover - defensive
+                self._log(f"core slow-lane setup failed: {exc}")
+        while True:
+            with self._slow_condition:
+                while self._running and generation == self._slow_generation and not self._slow_queue:
+                    self._slow_condition.wait()
+                if not self._running or generation != self._slow_generation:
+                    return
+                client, command_id, name, args = self._slow_queue.popleft()
+            # A client that left while its read waited gets no scan.
+            if not client.alive:
+                continue
+            reply = self.run_command(command_id, name, args)
+            # _Client.send holds the client's write lock, so this reply
+            # never interleaves with a frame the flusher or the reader
+            # thread is writing to the same socket.
+            client.send(encode_frame(reply))
 
     def run_command(self, command_id: str | None, name: str, args: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -771,6 +874,7 @@ __all__ = [
     "MAX_CLIENTS",
     "MAX_FRAME_BYTES",
     "PROTOCOL_VERSION",
+    "SLOW_LANE_COMMANDS",
     "STATE_MIN_INTERVAL_SECONDS",
     "CommandError",
     "CommandRouter",

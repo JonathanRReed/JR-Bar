@@ -5,9 +5,10 @@
  * It reads the payload from stdin, hands it to the JR-Bar daemon over the
  * hook-ingress socket in the existing wire format
  * (src/jrbar/hook_ingress_protocol.py) and exits 0. When the daemon is not
- * listening, or the frame did not get through whole, the payload is
- * appended to <state>/<provider>.pending.jsonl with the time it was queued
- * and the daemon drains that file later (src/jrbar/hook_pending.py). The
+ * listening, the frame did not get through whole, or the daemon answered
+ * refused_full or refused_closed, the payload is appended to
+ * <state>/<provider>.pending.jsonl with the time it was queued and the
+ * daemon drains that file later (src/jrbar/hook_pending.py). The
  * file rotates to <provider>.overflow.jsonl at MAX_SPOOL_BYTES. Nothing here
  * can block an agent: everything after the payload is read is bounded by
  * HARD_BUDGET_MS -- by DECIDE_WAIT_MS for the verdict wait of --decide,
@@ -124,11 +125,26 @@ static size_t decide_verdict(const char *reply, size_t len, const char **verdict
     return rest;
 }
 
+/* Whether a reply opens with a disposition that leaves the payload with
+ * nobody: the daemon's queue was full, or it was shutting down. It never
+ * processes a frame it answered this way, so the shim spools it.
+ * refused_invalid is not here: a frame the daemon cannot read would not
+ * read any better from the spool. */
+static int refused_for_later(const char *reply, size_t len) {
+    static const char *const later[] = { "refused_full\n", "refused_closed\n" };
+    for (size_t i = 0; i < sizeof later / sizeof *later; i++) {
+        size_t n = strlen(later[i]);
+        if (len >= n && memcmp(reply, later[i], n) == 0) return 1;
+    }
+    return 0;
+}
+
 /* Send the whole frame and wait for the one-line reply. 0 once the whole
- * frame is sent, reply or not: the daemon may have queued it, so it is
- * never re-queued. -1 when the socket was unavailable; -2 when the budget
- * or an error cut the send short. A truncated frame never decodes (the
- * daemon records refused_invalid), so both failures are spooled.
+ * frame is sent and the daemon did not refuse it, reply or not: it may
+ * have queued the frame, so it is never re-queued. 1 when the daemon
+ * refused it as full or closed; -1 when the socket was unavailable; -2
+ * when the budget or an error cut the send short. A truncated frame never
+ * decodes (the daemon records refused_invalid), so all three are spooled.
  *
  * With `reply` (--decide) the read runs until the daemon closes the
  * connection, the buffer is full or `decide_deadline` passes, and the bytes
@@ -177,16 +193,18 @@ static int deliver(const char *dir, const char *frame, size_t frame_len, uint64_
         }
         *reply_len = got;
         close(fd);
-        return 0;
+        return refused_for_later(reply, got);
     }
     left = (int64_t)deadline - (int64_t)now_ms();
     if (left > REPLY_TIMEOUT_MS) left = REPLY_TIMEOUT_MS;
+    int refused = 0;
     if (left > 0 && poll(&pfd, 1, (int)left) > 0) {
         char ack[80];
-        (void)read(fd, ack, sizeof ack);
+        ssize_t n = read(fd, ack, sizeof ack);
+        refused = n > 0 && refused_for_later(ack, (size_t)n);
     }
     close(fd);
-    return 0;
+    return refused;
 }
 
 static int open_spool(const char *path) {
@@ -353,7 +371,7 @@ int main(int argc, char **argv) {
     size_t reply_len = 0;
     int result = deliver(dir, frame, prefix + (size_t)header_len + len, deadline - SPOOL_RESERVE_MS,
                          reply, reply ? MAX_REPLY_BYTES : 0, &reply_len, received + DECIDE_WAIT_MS);
-    if (result < 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len, deadline);
+    if (result != 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len, deadline);
     if (reply) {
         const char *verdict = NULL;
         size_t verdict_len = decide_verdict(reply, reply_len, &verdict);

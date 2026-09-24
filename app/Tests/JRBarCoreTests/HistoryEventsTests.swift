@@ -45,6 +45,9 @@ struct HistoryEventsTests {
         #expect(entries[1].text == "escalated to stage 2")
         #expect(entries[2].text == "Claude failed · JR-Bar")
         #expect(LightLog.text(for: Self.journal[0]) == "Codex asked · sidepulse-core")
+        let pace = CoreEvent(id: "p", kind: "quota_pace", label: "5-hour", at: 200, provider: "codex", detail: "30% left")
+        #expect(EventLogCategory.of(pace.kind) == .quota)
+        #expect(LightLog.text(for: pace) == "Codex is running low · 5-hour")
     }
 
     @Test("a row opens its timeline when it names a local session a reader exists for")

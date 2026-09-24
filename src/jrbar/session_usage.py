@@ -66,9 +66,10 @@ SESSION_USAGE_MAX_IDS: Final = 64
 #: says so (``partial``); the head of a run that long is mostly cache
 #: reads already priced into the turns that follow.
 SESSION_USAGE_MAX_BYTES: Final = 64 * 1024 * 1024
-#: How long one request may spend reading before it answers: the app's
-#: other commands queue behind it on the same connection (an Approve waits
-#: 8 s), and usage_history holds itself to 2 s for the same reason.
+#: How long one request may spend reading before it answers: every other
+#: slow-lane read queues behind it on the daemon's one slow-lane worker
+#: (core_server.py), and usage_history holds itself to 2 s for the same
+#: reason.
 SESSION_USAGE_REPLY_BUDGET_SECONDS: Final = 1.5
 #: Per-file state kept between requests (offset, totals, turns).
 _CACHE_MAX_FILES: Final = 64

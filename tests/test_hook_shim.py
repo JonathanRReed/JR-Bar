@@ -48,8 +48,13 @@ def shim() -> Path:
 
 
 class _FakeIngress:
-    def __init__(self, state_dir: Path) -> None:
+    def __init__(
+        self,
+        state_dir: Path,
+        disposition: HookIngressDisposition = HookIngressDisposition.ACCEPTED,
+    ) -> None:
         self.path = state_dir / "hook-ingress.sock"
+        self.disposition = disposition
         self.requests: list = []
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(str(self.path))
@@ -79,7 +84,7 @@ class _FakeIngress:
                     chunks.append(chunk)
                 self.requests.append(decode_hook_ingress_request(b"".join(chunks)))
                 self.arrived.set()
-                connection.sendall(encode_hook_ingress_response(HookIngressDisposition.ACCEPTED))
+                connection.sendall(encode_hook_ingress_response(self.disposition))
 
     def close(self) -> None:
         self._stop.set()
@@ -319,4 +324,90 @@ def test_shim_spools_a_frame_the_budget_cut_short(shim: Path, sock_dir: Path) ->
     finally:
         server.close()
     rows = [json.loads(line) for line in (sock_dir / "claude.pending.jsonl").read_text().splitlines()]
+    assert [row["payload"] for row in rows] == [payload]
+
+
+def test_shim_spools_what_a_full_or_closing_daemon_refused__and_2_more(shim: Path, sock_dir: Path) -> None:
+    """refused_full and refused_closed leave the payload with nobody: the
+    daemon never processes a frame it answered that way. The shim spools it
+    for the drain, inside its budget. refused_invalid and accepted spool
+    nothing: the first would not read any better from the spool, and the
+    second is already queued."""
+    pending = sock_dir / "claude.pending.jsonl"
+    # --- scenario: refused_full and refused_closed are spooled
+    for disposition in (HookIngressDisposition.REFUSED_FULL, HookIngressDisposition.REFUSED_CLOSED):
+        ingress = _FakeIngress(sock_dir, disposition)
+        payload = json.dumps({"hook_event_name": "Stop", "session_id": disposition.value})
+        try:
+            started = time.monotonic()
+            result = _run(shim, sock_dir, "claude", payload)
+            elapsed = time.monotonic() - started
+            assert ingress.wait_for_request()
+        finally:
+            ingress.close()
+        assert result.returncode == 0 and result.stdout == b""
+        assert elapsed < 2.0
+        rows = [json.loads(line) for line in pending.read_text().splitlines()]
+        assert [row["payload"] for row in rows] == [payload]
+        assert rows[0]["ppid"] == os.getpid()
+        pending.unlink()
+        (sock_dir / "hook-ingress.sock").unlink()
+
+    # --- scenario: accepted and refused_invalid spool nothing
+    for disposition in (HookIngressDisposition.ACCEPTED, HookIngressDisposition.REFUSED_INVALID):
+        ingress = _FakeIngress(sock_dir, disposition)
+        try:
+            assert _run(shim, sock_dir, "claude", '{"hook_event_name":"Stop"}').returncode == 0
+            assert ingress.wait_for_request()
+        finally:
+            ingress.close()
+        assert not pending.exists()
+        (sock_dir / "hook-ingress.sock").unlink()
+
+    # --- scenario: a --decide hook the daemon refused is spooled and prints nothing
+    ingress = _FakeIngress(sock_dir, HookIngressDisposition.REFUSED_FULL)
+    payload = json.dumps({"hook_event_name": "PermissionRequest", "session_id": "decide", "tool_name": "Bash"})
+    try:
+        result = _run(shim, sock_dir, "claude", payload, "--decide")
+        assert ingress.wait_for_request()
+    finally:
+        ingress.close()
+    assert result.returncode == 0 and result.stdout == b""
+    rows = [json.loads(line) for line in pending.read_text().splitlines()]
+    assert [row["payload"] for row in rows] == [payload]
+
+
+def test_shim_spools_a_hook_that_arrives_past_every_ingress_slot(
+    shim: Path, sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real ingress with its connection slots all held: it used to
+    close the socket unanswered and the shim, reading EOF, counted the hook
+    delivered. The ingress now answers refused_full, and the shim spools
+    whether that answer or the close reaches it first."""
+    from jrbar.hook_ingress import HookIngressService
+
+    monkeypatch.setattr("jrbar.hook_ingress.MAX_HOOK_INGRESS_CONNECTIONS", 1)
+    processed: list = []
+    service = HookIngressService(
+        process=processed.append,
+        socket_path=sock_dir / "hook-ingress.sock",
+        rejection_path=sock_dir / "rejections.jsonl",
+        backlog_cleared=lambda: None,
+    )
+    service.start()
+    pending = sock_dir / "claude.pending.jsonl"
+    payload = json.dumps({"hook_event_name": "Stop", "session_id": "past-the-slots"})
+    try:
+        holder = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        holder.connect(str(sock_dir / "hook-ingress.sock"))
+        holder.sendall(b"J")
+        try:
+            result = _run(shim, sock_dir, "claude", payload)
+        finally:
+            holder.close()
+    finally:
+        assert service.close(timeout_seconds=1.0)
+    assert result.returncode == 0 and result.stdout == b""
+    assert processed == []
+    rows = [json.loads(line) for line in pending.read_text().splitlines()]
     assert [row["payload"] for row in rows] == [payload]

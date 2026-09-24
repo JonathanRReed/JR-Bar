@@ -58,7 +58,7 @@ from .core_projection import (
     why_detail,
     why_for_glance,
 )
-from .core_server import CommandError, CoreServer, default_core_socket_path
+from .core_server import SLOW_LANE_RECEIVED_AT, CommandError, CoreServer, default_core_socket_path
 from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import (
     PendingHookDrainer,
@@ -2122,6 +2122,20 @@ def _usage_history_service(self):
     return service
 
 
+def _process_age_seconds() -> float | None:
+    """Seconds since this process was spawned, from libproc's start time;
+    None when it cannot be read. For the launch timing line only."""
+    try:
+        from .antigravity_process_identity import _process_facts
+
+        facts = _process_facts(os.getpid())
+    except Exception:
+        return None
+    if facts is None:
+        return None
+    return max(0.0, time.time() - (facts[2] + facts[3] / 1_000_000))
+
+
 def _usage_history_warm_later(self) -> None:
     """Warm the transcript caches shortly after start so the first
     ``usage_history`` answers inside its budget instead of a cold scan."""
@@ -2182,13 +2196,12 @@ def _cmd_usage_graph(self, args):
     Same local-transcript scan the old Settings graph ran. days,
     metric and providers are per-request overrides: nothing the pane
     picks rewrites the stored settings. Heavy (~9s warm, ~30s cold),
-    so it rides the client's socket thread at utility QoS and never
-    touches the menu.
+    so it rides the server's slow-lane worker, which runs at utility QoS
+    (``_core_start_server``), and never touches the menu.
     """
     from .t3_compat import T3ReadOnlyPolicy
-    from .usage_graph_worker import _drop_to_utility_qos, usage_graph_document
+    from .usage_graph_worker import usage_graph_document
 
-    _drop_to_utility_qos()
     t3_policy = getattr(self, "_t3_read_only_policy", None)
     if type(t3_policy) is not T3ReadOnlyPolicy:
         t3_policy = None
@@ -2644,6 +2657,41 @@ def _cmd_resolve_effect(self, args):
     return core_lights.resolve_effect(self, args)
 
 
+def _history_rows_named(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Name each History row the way the panel names its session now.
+
+    A row keeps the label written when it was recorded, often the
+    collector's project/prompt guess or a bare id; the last published
+    roster carries the provider's own title. The names are read from that
+    document only: this command runs off the main thread, where
+    ``_core_extras_for`` must never be called. A session the roster no
+    longer lists keeps its stored label."""
+    with self._core_lock:
+        state = self._core_documents.get("state") or {}
+    names: dict[str, str] = {}
+    for session in state.get("sessions") or ():
+        if not isinstance(session, dict):
+            continue
+        session_id, label = session.get("id"), session.get("label")
+        if isinstance(session_id, str) and isinstance(label, str) and label.strip():
+            names[session_id] = label.strip()
+    if not names:
+        return rows
+    named: list[dict[str, Any]] = []
+    for row in rows:
+        label = names.get(row.get("session")) if isinstance(row.get("session"), str) else None
+        if label is None or label == row.get("label"):
+            named.append(row)
+            continue
+        renamed = {**row, "label": label}
+        # The recorded detail was the label without the provider's title;
+        # once the title is the label, repeating it under itself says nothing.
+        if renamed.get("detail") == label:
+            renamed["detail"] = None
+        named.append(renamed)
+    return named
+
+
 @command("list_history", main_thread=False)
 def _cmd_list_history(self, args):
     since = args.get("since")
@@ -2655,7 +2703,9 @@ def _cmd_list_history(self, args):
     # state), so it is fetched there; the frozen object then reads off-main.
     on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
     ledger = on_main(lambda: self.ensure_activity_ledger())
-    rows = history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
+    rows = _history_rows_named(
+        self, history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
+    )
     # The power log's rows ("let go: Mac too hot", "put the Mac to sleep")
     # sit beside the sessions' in the one History list.
     from . import core_power
@@ -3171,9 +3221,15 @@ def _cmd_mark_history_seen(self, args):
 
     Same stamp the menu writes when the dropdown opens -- ``unseen`` rows
     and the "while you were away" banner measure from the last look, not
-    from a restart.
+    from a restart. It waits on the slow lane behind the History read sent
+    before it, so the look is stamped when the command arrived: a scan
+    ahead of it must not mark what came in meanwhile as seen.
     """
-    self.mark_activity_seen_now()
+    received = args.get(SLOW_LANE_RECEIVED_AT)
+    # NaN and infinity fail the range check; a stamp from the future is
+    # never trusted over the clock.
+    at = float(received) if type(received) in (int, float) and 0 < received <= time.time() else None
+    self.mark_activity_seen_now(at)
     return {"last_seen": self.ensure_activity_ledger().last_seen_epoch}
 
 
@@ -3944,6 +4000,7 @@ def build_headless_controller_class() -> type:
                 raise
 
         def _core_launch(self) -> None:
+            self._core_launch_started = time.monotonic()
             _application().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
             self.load_operator_local_state()
             self.trim_oversized_state_logs()
@@ -3954,9 +4011,14 @@ def build_headless_controller_class() -> type:
             # so the order it reaches the monitor in is the order it counts
             # in: drained after the session's own first live hook, a spooled
             # prompt would land on top of the Stop that followed it. The
-            # thread that drains on the interval starts further down.
+            # thread that drains on the interval starts further down. Its
+            # refresh hints wait for the end of each pass, so the monitor
+            # rereads each provider's log once per drain, not once per hook.
+            from .hook_ingress import DeferredRefreshHints
+
+            self._core_pending_hints = DeferredRefreshHints(self.handle_hook_event_message)
             self._core_pending_drainer = PendingHookDrainer(
-                self._core_submit_pending, log=legacy.log_status_bar
+                self._core_submit_pending, after_drain=self._core_pending_hints.flush, log=legacy.log_status_bar
             )
             try:
                 self._core_pending_drainer.drain_now()
@@ -3969,7 +4031,6 @@ def build_headless_controller_class() -> type:
             self._install_dnd_environment_observers()
             self._refresh_dnd_environment("start")
             sys.setswitchinterval(0.001)
-            self.refresh_installed_agent_inventory()
             self._install_accessibility_display_observer()
             self.reconcile_lid_observation()
             self._core_start_server()
@@ -3980,25 +4041,70 @@ def build_headless_controller_class() -> type:
                 self.lid_timer = _schedule_timer(legacy.LID_POLL_SECONDS, self, "pollLid:", True)
             self.liveness_timer = _schedule_timer(legacy.LIVENESS_POLL_SECONDS, self, "pollLiveness:", True)
             self.start_remote_peer_timer()
-            if self.settings.remote_peers.enabled:
-                self.start_remote_peer_refresh()
-            threading.Thread(
-                target=lambda: legacy.trim_oversized_logs(default_state_dir()), daemon=True
-            ).start()
             # The Screen Bar is the app's; the daemon only computes its program.
             self.virtual_status_device.hide()
-            # The Creator Micro 2 output service and deck input, exactly as
-            # the menu-bar app started them (provider_usage_status_bar).
-            from .optional_integration_runtime import start_optional_integration_runtime
-
-            self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
-            self._core_deck_probe_now()
             self._core_pending_drainer.start()
             self._core_housekeeping_timer = _schedule_timer(HOUSEKEEPING_SECONDS, self, "coreHousekeepingTick:", True)
             if os.environ.get("JRBAR_SUPERVISED") == "1":
                 self._core_supervision_timer = _schedule_timer(SUPERVISION_SECONDS, self, "coreSupervisionTick:", True)
             _usage_history_warm_later(self)
+            self._core_ready_at = time.monotonic()
             legacy.log_status_bar(f"core: ready pid={os.getpid()} socket={self._core.socket_path}")
+            # Whatever the first client does not need waits one run-loop
+            # pass: 'ready' still means the socket answers, and the app's
+            # first state no longer queues behind the pad, the installed
+            # agents, the remote peers or a sweep of the logs.
+            _schedule_timer(0.0, self, "coreLaunchDeferred:", False)
+
+        def coreLaunchDeferred_(self, _timer) -> None:
+            if getattr(self, "_runtime_termination_started", False) or getattr(self, "_core", None) is None:
+                return
+            started = time.monotonic()
+
+            def start_deck() -> None:
+                # The Creator Micro 2 output service and deck input, exactly
+                # as the menu-bar app started them (provider_usage_status_bar).
+                from .deck_controller import _lifecycle_lock
+                from .optional_integration_runtime import start_optional_integration_runtime
+
+                # A deck_set_settings answered since 'ready' may already
+                # have started one on its restart thread; a second here
+                # would orphan it, still running with nobody to close it.
+                with _lifecycle_lock(self):
+                    if getattr(self, "_jrbar_optional_integration_runtime", None) is None:
+                        self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
+                self._core_deck_probe_now()
+
+            def start_remote_peers() -> None:
+                if self.settings.remote_peers.enabled:
+                    self.start_remote_peer_refresh()
+
+            def trim_logs() -> None:
+                threading.Thread(
+                    target=lambda: legacy.trim_oversized_logs(default_state_dir()), daemon=True
+                ).start()
+
+            # AppKit swallows what a timer callback raises, so each step says
+            # its own failure and never keeps the next one from starting.
+            for label, step in (
+                ("deck", start_deck),
+                ("installed agents", self.refresh_installed_agent_inventory),
+                ("remote peers", start_remote_peers),
+                ("log trim", trim_logs),
+            ):
+                try:
+                    step()
+                except Exception as exc:
+                    legacy.log_status_bar(f"core: deferred launch step {label} failed: {exc}")
+            finished = time.monotonic()
+            launch_started = getattr(self, "_core_launch_started", started)
+            ready_at = getattr(self, "_core_ready_at", started)
+            age = _process_age_seconds()
+            spawn = "" if age is None else f"spawn_to_ready={age - (finished - ready_at):.2f}s "
+            legacy.log_status_bar(
+                f"core: launch timing {spawn}launch_to_ready={ready_at - launch_started:.2f}s "
+                f"deferred={finished - started:.2f}s"
+            )
 
         def applicationWillTerminate_(self, notification):
             if getattr(self, "_runtime_termination_started", False):
@@ -5453,6 +5559,8 @@ def build_headless_controller_class() -> type:
             legacy.log_status_bar(message)
 
         def _core_start_server(self) -> None:
+            from .usage_graph_worker import _drop_to_utility_qos
+
             server = CoreServer(
                 dispatch=self._core_dispatch,
                 initial_documents=self._core_initial_documents,
@@ -5460,9 +5568,18 @@ def build_headless_controller_class() -> type:
                 core_version=CORE_VERSION,
                 on_client_change=self._core_client_change,
                 log=legacy.log_status_bar,
+                # The scans on the slow lane parse six figures of JSONL
+                # lines; at default QoS they compete with the main thread
+                # that answers every Approve.
+                slow_lane_setup=_drop_to_utility_qos,
             )
             server.start()
             self._core = server
+            # A decide-lane hold that lapses, is let go or is decided changes
+            # what every ask card may offer; the broker says so here.
+            from .answer_decisions import default_decision_broker
+
+            default_decision_broker().set_on_change(self._core_publish_state_soon)
             self._core_publish_settings()
 
         def _core_sync_serve_server(self) -> None:
@@ -5547,6 +5664,9 @@ def build_headless_controller_class() -> type:
             server = self._core
             self._core = None
             if server is not None:
+                from .answer_decisions import default_decision_broker
+
+                default_decision_broker().set_on_change(None)
                 server.stop()
 
         def _core_client_change(self, count: int) -> None:
@@ -5555,7 +5675,10 @@ def build_headless_controller_class() -> type:
         def _core_submit_pending(self, request) -> object:
             from .hook_ingress import AppOwnedHookIngressProcessor
 
-            processor = AppOwnedHookIngressProcessor(self.handle_hook_event_message)
+            hints = getattr(self, "_core_pending_hints", None)
+            processor = AppOwnedHookIngressProcessor(
+                hints.note if hints is not None else self.handle_hook_event_message
+            )
             return processor(request)
 
         def _core_dispatch(self, name: str, args: dict[str, Any]) -> Any:

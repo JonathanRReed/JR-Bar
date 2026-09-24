@@ -25,7 +25,7 @@ from .hook_ingress_protocol import (
     default_hook_ingress_socket_path,
     encode_hook_ingress_response,
 )
-from .hook_pending import PENDING_REPLAY_HORIZON_SECONDS
+from .hook_pending import PENDING_REPLAY_HORIZON_SECONDS, nudge_pending_drains
 from .ipc import (
     ProviderRefreshHint,
     _accept_one,
@@ -39,7 +39,13 @@ from .ipc import (
 from .private_io import append_private_text, ensure_private_directory
 from .state_paths import default_state_dir
 
-MAX_HOOK_INGRESS_ACCEPTED: Final = 32
+# Outstanding hooks (running plus queued). 32 filled in ten seconds of
+# parallel agents on 2026-09-22 and every refusal past it was lost; the
+# shim now spools a refusal, and this bound is sized so it rarely has to.
+MAX_HOOK_INGRESS_ACCEPTED: Final = 128
+# The count alone would let 128 one-megabyte payloads sit in memory; the
+# queue also refuses once the payloads it holds pass this many bytes.
+MAX_HOOK_INGRESS_OUTSTANDING_BYTES: Final = 16 * 1024 * 1024
 MAX_HOOK_INGRESS_METRIC_COUNT: Final = 10_000
 HOOK_INGRESS_READ_TIMEOUT_SECONDS: Final = 0.25
 # Whole-connection budget, not per-recv: a trickling client that keeps
@@ -120,6 +126,7 @@ class HookIngressSnapshot:
 class _AcceptedHook:
     sequence: int
     request: HookIngressRequest = field(repr=False)
+    size: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +150,40 @@ class AppOwnedHookIngressProcessor:
             refresh_hint_handler=self.refresh_hint_handler,
             **_replay_arguments(request),
         )
+
+
+class DeferredRefreshHints:
+    """Refresh hints held while a drain replays the spool, then applied once
+    per provider source when the pass ends.
+
+    A hint only wakes the monitor, which rereads the provider's log for
+    whatever was appended (``LiveAgentMonitor.reconcile_refresh_hint``), so
+    the last hint of a source covers every line the drain wrote before it.
+    Applied per hook, a 12-hook backlog opened, read and reconciled the same
+    log twelve times in front of the first client (84 ms a hook measured)."""
+
+    def __init__(self, apply: Callable[[ProviderRefreshHint], object]) -> None:
+        if not callable(apply):
+            raise ValueError("invalid refresh hint handler")
+        self._apply = apply
+        self._lock = threading.Lock()
+        self._held: dict[object, ProviderRefreshHint] = {}
+
+    def note(self, hint: ProviderRefreshHint) -> None:
+        with self._lock:
+            self._held[hint.source_key] = hint
+
+    def flush(self) -> int:
+        """Apply the newest hint of every source held, in first-seen order."""
+        with self._lock:
+            hints = tuple(self._held.values())
+            self._held.clear()
+        for hint in hints:
+            try:
+                self._apply(hint)
+            except Exception:
+                continue
+        return len(hints)
 
 
 def _replay_arguments(request: HookIngressRequest) -> dict[str, object]:
@@ -248,6 +289,7 @@ class HookIngressService:
         *,
         process: Callable[[HookIngressRequest], object] = _process_request,
         maximum_accepted: int = MAX_HOOK_INGRESS_ACCEPTED,
+        maximum_outstanding_bytes: int = MAX_HOOK_INGRESS_OUTSTANDING_BYTES,
         receipt_handler: Callable[[HookIngressReceipt], None] | None = None,
         rejection_recorder: Callable[[HookIngressReceipt], None] | None = None,
         rejection_path: Path | None = None,
@@ -256,6 +298,7 @@ class HookIngressService:
         monotonic: Callable[[], float] = time.monotonic,
         decision_broker: object | None = None,
         surface_recorder: object | None = None,
+        backlog_cleared: Callable[[], object] | None = None,
     ) -> None:
         if not callable(process):
             raise ValueError("invalid hook ingress processor")
@@ -265,6 +308,14 @@ class HookIngressService:
             or maximum_accepted > MAX_HOOK_INGRESS_ACCEPTED
         ):
             raise ValueError("invalid hook ingress bound")
+        if (
+            type(maximum_outstanding_bytes) is not int
+            or maximum_outstanding_bytes <= 0
+            or maximum_outstanding_bytes > MAX_HOOK_INGRESS_OUTSTANDING_BYTES
+        ):
+            raise ValueError("invalid hook ingress byte bound")
+        if backlog_cleared is not None and not callable(backlog_cleared):
+            raise ValueError("invalid hook ingress backlog handler")
         if receipt_handler is not None and not callable(receipt_handler):
             raise ValueError("invalid hook ingress receipt handler")
         if rejection_recorder is not None and not callable(rejection_recorder):
@@ -275,6 +326,13 @@ class HookIngressService:
             raise ValueError("invalid hook ingress clock")
         self._process = process
         self._maximum_accepted = maximum_accepted
+        self._maximum_outstanding_bytes = maximum_outstanding_bytes
+        # A shim told refused_full spools its payload (hook_pending); once
+        # the queue that refused it is empty again the spool is drained at
+        # once, not at the next 30 s pass, so the refused events land before
+        # the next human-paced one instead of after it.
+        self._backlog_cleared = backlog_cleared or nudge_pending_drains
+        self._refused_since_idle = False
         self._receipt_handler = receipt_handler
         self._rejection_path = Path(
             rejection_path or default_hook_ingress_rejection_path()
@@ -400,6 +458,7 @@ class HookIngressService:
             self.refuse_invalid()
             return HookIngressDisposition.REFUSED_INVALID
         receipt: HookIngressReceipt | None = None
+        size = len(request.payload_text.encode("utf-8", errors="replace"))
         with self._condition:
             self._sequence += 1
             sequence = self._sequence
@@ -413,8 +472,13 @@ class HookIngressService:
                     error_code="refused_closed",
                 )
                 disposition = HookIngressDisposition.REFUSED_CLOSED
-            elif self._outstanding_locked() >= self._maximum_accepted:
+            elif (
+                self._outstanding_locked() >= self._maximum_accepted
+                or self._outstanding_bytes_locked() + size
+                > self._maximum_outstanding_bytes
+            ):
                 self._increment("refused_full")
+                self._refused_since_idle = True
                 receipt = HookIngressReceipt(
                     sequence,
                     HookIngressOutcome.REFUSED_FULL,
@@ -423,7 +487,7 @@ class HookIngressService:
                 )
                 disposition = HookIngressDisposition.REFUSED_FULL
             else:
-                command = _AcceptedHook(sequence, request)
+                command = _AcceptedHook(sequence, request, size)
                 self._pending.append(command)
                 self._increment("accepted")
                 disposition = HookIngressDisposition.ACCEPTED
@@ -606,9 +670,17 @@ class HookIngressService:
                         if receipt.outcome is HookIngressOutcome.SUCCEEDED
                         else "failed"
                     )
+                backlog_cleared = self._refused_since_idle and not self._pending
+                if backlog_cleared:
+                    self._refused_since_idle = False
                 self._condition.notify_all()
             if not timed_out:
                 self._publish(receipt)
+            if backlog_cleared:
+                try:
+                    self._backlog_cleared()
+                except Exception:
+                    pass
 
     def _serve(self) -> None:
         while True:
@@ -627,20 +699,49 @@ class HookIngressService:
                 if not self._server_running or self._server_socket is not server:
                     connection.close()
                     return
-                if not self._connection_slots.acquire(blocking=False):
-                    # Every worker slot is held; refuse at the TCP level
-                    # (close) so the submitter sees a clean failure.
-                    connection.close()
-                    continue
-                worker = threading.Thread(
-                    target=self._serve_connection,
-                    args=(connection,),
-                    name="JRBarHookIngressConn",
-                    daemon=True,
-                )
-                self._connections.add(connection)
-                self._connection_workers.add(worker)
+                slot = self._connection_slots.acquire(blocking=False)
+                if slot:
+                    worker = threading.Thread(
+                        target=self._serve_connection,
+                        args=(connection,),
+                        name="JRBarHookIngressConn",
+                        daemon=True,
+                    )
+                    self._connections.add(connection)
+                    self._connection_workers.add(worker)
+            if not slot:
+                # Outside the server lock: the refusal takes the queue's.
+                self._refuse_without_a_slot(connection)
+                continue
             worker.start()
+
+    def _refuse_without_a_slot(self, connection: socket.socket) -> None:
+        """Every worker slot is held: answer refused_full, then close.
+
+        A bare close read as delivered to the C shim -- its small frame was
+        already in the socket buffer, it read EOF and spooled nothing -- so
+        a burst of parallel hooks lost the ones past the slots. With the
+        answer it spools them for the drain, and so does the Python client
+        when the answer reaches it before its send fails. The frame is
+        never read. Nothing is written to the rejection log on the accept thread
+        a burst is already crowding; the counter still says it happened.
+        """
+        with self._condition:
+            self._sequence += 1
+            self._increment("submitted")
+            self._increment("refused_full")
+            self._refused_since_idle = True
+        try:
+            # Never block the accept loop: a fresh socket's send buffer
+            # takes one short line, and a peer already gone costs nothing.
+            connection.setblocking(False)
+            connection.send(
+                encode_hook_ingress_response(HookIngressDisposition.REFUSED_FULL)
+            )
+        except OSError:
+            pass
+        finally:
+            connection.close()
 
     def _serve_connection(self, connection: socket.socket) -> None:
         parked = None
@@ -931,6 +1032,19 @@ class HookIngressService:
             for command in self._pending
         )
 
+    def _outstanding_bytes_locked(self) -> int:
+        running = (
+            self._running.size
+            if self._running is not None
+            and self._running.sequence not in self._timed_out_sequences
+            else 0
+        )
+        return running + sum(
+            command.size
+            for command in self._pending
+            if command.sequence not in self._timed_out_sequences
+        )
+
     def _increment(self, name: str, amount: int = 1) -> None:
         self._metrics[name] = _bounded_increment(self._metrics[name], amount)
 
@@ -953,6 +1067,8 @@ class HookIngressService:
 __all__ = [
     "HOOK_INGRESS_READ_TIMEOUT_SECONDS",
     "MAX_HOOK_INGRESS_ACCEPTED",
+    "MAX_HOOK_INGRESS_OUTSTANDING_BYTES",
+    "DeferredRefreshHints",
     "HookIngressOutcome",
     "HookIngressReceipt",
     "HookIngressService",

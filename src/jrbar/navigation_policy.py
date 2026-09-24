@@ -220,6 +220,13 @@ class OperatorLocalActionState:
             raise ValueError("invalid local pin state")
 
 
+# Claude.app's own URL handler: the app, the session waiting longest for a
+# permission answer, and one session by the ``local_`` id the app gives it
+# (session_actions.claude_desktop_link). Exactly these shapes, nothing else.
+_CLAUDE_APP_TARGETS: Final = frozenset({"claude://", "claude://code/needs-input"})
+_CLAUDE_CONTINUE_TARGET: Final = re.compile(r"claude://code/continue\?session=local_[A-Za-z0-9-]{1,64}")
+
+
 def _valid_session_identifier(value: str) -> bool:
     return (
         1 <= len(value) <= MAX_SESSION_ID_LENGTH
@@ -253,7 +260,9 @@ def _valid_url_target(work_key: WorkKey, target: str) -> bool:
             f"codex://threads/{quote(session_id, safe='')}"
         )
 
-    if provider == "claude" and target == "claude://":
+    if provider == "claude" and target in _CLAUDE_APP_TARGETS:
+        return True
+    if provider == "claude" and _CLAUDE_CONTINUE_TARGET.fullmatch(target):
         return True
     if provider != "claude" or not (
         parsed.scheme == "vscode"
