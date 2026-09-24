@@ -12,6 +12,12 @@ extension AquariumView {
     /// stacks boulders along the back. Drawn on the still bed, dimmed
     /// into the water so it reads as metres away.
     func drawBackdrop(canvas: inout GraphicsContext, size: CGSize) {
+        // The wall's plates and boulders step across by a share of the
+        // tank's height, so a canvas caught mid-layout with no height
+        // would never finish a course, and a very short, wide one would
+        // cut thousands of invisible slabs. A tank that short has no
+        // wall, and no course steps less than 4 pt.
+        guard size.height >= 8, size.width > 0 else { return }
         // Rock & sponge tones pulled toward the water's floor colour
         // so the wall recedes with the theme instead of floating on it.
         func tinted(_ r: Double, _ g: Double, _ b: Double,
@@ -98,7 +104,7 @@ extension AquariumView {
                                with: .color(tinted(0.70, 0.78, 0.80, 0.45, 0.22)), lineWidth: 1.4)
                     inner.stroke(slab, with: .color(tinted(0.01, 0.02, 0.04, 0.5, 0.7)),
                                  style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
-                    px += pw * rng.next(0.86, 1.05)
+                    px += max(4, pw * rng.next(0.86, 1.05))
                     i += 1
                 }
             }
@@ -212,7 +218,7 @@ extension AquariumView {
                     canvas.stroke(boulder,
                                   with: .color(tinted(0.02, 0.03, 0.04, 0.5, 0.6)),
                                   lineWidth: 1.2)
-                    bx += bw * (0.80 + Double((h >> 20) & 0xF) / 0xF * 0.3)
+                    bx += max(4, bw * (0.80 + Double((h >> 20) & 0xF) / 0xF * 0.3))
                     i += 1
                 }
             }
