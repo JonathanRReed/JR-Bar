@@ -16,7 +16,7 @@ struct EffectModelTests {
     @Test("list_effects decodes the registry, the pack and the cadences")
     func decodesCatalog() throws {
         let catalog = try Self.catalog()
-        #expect(catalog.effects.count == 28)
+        #expect(catalog.effects.count == 34)
         #expect(catalog.packs.map(\.id) == ["nightlab"])
         #expect(catalog.cadences.map(\.id) == ["calm", "deliberate", "double"])
         #expect(catalog.generation >= 1)
@@ -32,7 +32,7 @@ struct EffectModelTests {
         #expect(chase.catalog == "provider_animation")
         #expect(chase.role == "directional_flow")
         #expect(!chase.isFromPack)
-        #expect(chase.parameters.map(\.name) == ["duration_seconds", "direction", "spacing", "softness"])
+        #expect(chase.parameters.map(\.name) == ["duration_seconds", "direction", "crests", "softness"])
         #expect(chase.preview?.ledCount == 8)
 
         let alert = try #require(catalog.effect("alert"))
@@ -96,10 +96,10 @@ struct EffectModelTests {
         #expect(direction.control == .menu(choices: ["forward", "reverse"]))
         #expect(direction.normalize(.string("sideways")) == .string("forward"))
 
-        let spacing = try #require(chase.parameter(named: "spacing"))
-        #expect(spacing.control == .integerSlider(range: 1...6))
-        #expect(spacing.normalize(.number(2.6)) == .number(3))
-        #expect(spacing.normalize(.number(40)) == .number(6))
+        let crests = try #require(chase.parameter(named: "crests"))
+        #expect(crests.control == .integerSlider(range: 1...3))
+        #expect(crests.normalize(.number(1.6)) == .number(2))
+        #expect(crests.normalize(.number(40)) == .number(3))
 
         let softness = try #require(chase.parameter(named: "softness"))
         guard case .slider(let softRange, let softStep) = softness.control else { Issue.record("softness is a slider"); return }
@@ -117,9 +117,9 @@ struct EffectModelTests {
         #expect(seed.title == "Variation")
         #expect(catalog.effect("aurora")?.parameter(named: "wave_count")?.title == "Waves")
         #expect(catalog.effect("aurora")?.parameter(named: "palette")?.title == "Colours")
-        #expect(spacing.title == "Spacing", "an id that already reads plainly keeps its words")
+        #expect(crests.title == "Crests", "an id that already reads plainly keeps its words")
 
-        let toggle = try #require(catalog.effect("gradient")?.parameter(named: "smooth_morph"))
+        let toggle = try #require(catalog.effect("blink")?.parameter(named: "repeat"))
         #expect(toggle.control == .toggle)
         #expect(toggle.normalize(.bool(false)) == .bool(false))
         #expect(toggle.normalize(.string("yes")) == .bool(true))
@@ -139,8 +139,8 @@ struct EffectModelTests {
         let cadence = try #require(catalog.effect("blink")?.parameter(named: "cadence"))
         #expect(cadence.control == .menu(choices: ["calm", "deliberate", "double"]))
 
-        let normalized = chase.normalizedParameters(["spacing": .number(9), "unknown": .string("x")])
-        #expect(normalized["spacing"] == .number(6))
+        let normalized = chase.normalizedParameters(["crests": .number(9), "unknown": .string("x")])
+        #expect(normalized["crests"] == .number(3))
         #expect(normalized["direction"] == .string("forward"))
         #expect(normalized["unknown"] == nil)
         #expect(chase.defaultParameters["softness"] == .number(1))
@@ -151,7 +151,7 @@ struct EffectModelTests {
         let catalog = try Self.catalog()
         let groups = catalog.groups()
         #expect(groups.first?.title == "Provider animation")
-        #expect(groups.first?.effects.count == 19)
+        #expect(groups.first?.effects.count == 25)
         #expect(groups.map(\.title).contains("Attention required"))
         #expect(groups.map(\.title).contains("Pack · nightlab"))
         let scan = catalog.groups(matching: "scan")
@@ -245,7 +245,7 @@ struct EffectModelTests {
         let hydrated = document.draftParameters(for: chase, scope: .semantic, targetID: "working")
         #expect(hydrated["duration_seconds"] == .number(1.6))
         #expect(hydrated["direction"] == .string("forward"))
-        #expect(hydrated["spacing"] == chase.defaultParameters["spacing"])
+        #expect(hydrated["crests"] == chase.defaultParameters["crests"])
 
         // A pair with no assignment returns the catalog defaults — not
         // values tuned for a different target.
@@ -256,10 +256,10 @@ struct EffectModelTests {
         // effect does not declare are dropped.
         let tuned = EffectAssignmentDocument(assignments: [
             EffectAssignment(effectID: "chase", scope: .provider, targetID: "devin",
-                             parameters: ["spacing": .number(99), "mystery": .string("x")]),
+                             parameters: ["crests": .number(99), "mystery": .string("x")]),
         ])
         let clamped = tuned.draftParameters(for: chase, scope: .provider, targetID: "devin")
-        #expect(clamped["spacing"] == .number(6))
+        #expect(clamped["crests"] == .number(3))
         #expect(clamped["mystery"] == nil)
     }
 

@@ -885,9 +885,11 @@ def pendulum(
             late = min(1.0, (position + reach) / last)
             width = max(MIN_STEP_MS * 2, int(arrival(late) - arrival(early)))
             if position == 0:
-                segments.append(f"{led}:{floor_color} {_time(max(MIN_STEP_MS, width // 2))} cosine")
+                # The swing leaves the end as slowly as it arrived: the
+                # crest eases off over the whole time the head is near it.
+                segments.append(f"{led}:{floor_color} {_time(max(MIN_STEP_MS, width))} cosine")
             elif position == last:
-                rise = max(MIN_STEP_MS, width // 2)
+                rise = max(MIN_STEP_MS, width)
                 segments.append(f"{led}:{color} {_time(rise)} cosine {_time(max(0, half - rise))}")
             else:
                 delay = max(0, int(arrival(position / last) - width / 2))
@@ -1368,7 +1370,7 @@ def _motion_lines(
         level = _number(params, "level", 0.625, 0.0, 1.0)
         return frontier(peak, floor_color, led_count=count, cycle_ms=cycle, level=level)
     if motion == RIPPLE:
-        decay = _number(params, "decay", RIPPLE_DECAY, 0.0, 0.5)
+        decay = _number(params, "fade", RIPPLE_DECAY, 0.0, 0.5)
         return ripple(peak, floor_color, led_count=count, cycle_ms=cycle, decay=decay)
 
     if motion in TRAVELLING_MOTIONS and not positional(count):
@@ -1469,7 +1471,7 @@ def _motion_lines(
             tail_leds=round(1.0 + 0.5 * (beam - 1) + trail / 0.7, 3),
         )
     if motion == PENDULUM:
-        reach = _number(params, "tail_leds", PENDULUM_TAIL_LEDS, 1.0, 3.0)
+        reach = _number(params, "glow", PENDULUM_TAIL_LEDS, 1.0, 3.0)
         return pendulum(peak, floor_color, led_count=count, cycle_ms=cycle, tail_leds=reach)
     if motion == CONVERGE:
         return converge(peak, floor_color, led_count=count, step_ms=_travel_step(cycle, count))

@@ -710,7 +710,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     colors_module.MOTION_RIPPLE: (
         _duration(minimum=1.0),
         _number(
-            "decay",
+            "fade",
             0.22,
             "How much dimmer each ring is than the one inside it.",
             0.0,
@@ -720,7 +720,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     colors_module.MOTION_PENDULUM: (
         _duration(minimum=1.2),
         _number(
-            "tail_leds",
+            "glow",
             1.6,
             "How wide the swinging light's glow is, in LEDs.",
             1.0,
