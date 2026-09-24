@@ -218,7 +218,8 @@ extension AquariumView {
             l.facing = body.map { cos($0.heading) >= 0 ? 1.0 : -1.0 } ?? (p.u >= 0 ? 1 : -1)
             l.pitch = (body.map { steeringReadout($0).pitch } ?? turnPitch)
                 - (1 - rise) * 0.75
-            l.thin = min(body.map { steeringReadout($0).thin } ?? thin, 1 - 0.42 * rise)
+            let sideOn = body.map { steeringReadout($0).thin } ?? thin
+            l.thin = min(sideOn, 1 - 0.42 * rise)
             l.turn = body.map { steeringReadout($0).turn } ?? p.turn
             l.wag = 0.45 + (1 - rise) * 0.7
             let ring = reduceMotion ? 0.55

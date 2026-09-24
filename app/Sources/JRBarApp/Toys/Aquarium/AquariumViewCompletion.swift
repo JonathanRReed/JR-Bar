@@ -195,8 +195,10 @@ extension AquariumView {
         let drawn = drawnSize(of: fish, layout: l)
         // A fish flying an overlay mark keeps it in view: the tag
         // rides above the mark instead of over it.
-        let mark = fish.plan?.overlay != nil && !fish.isFry
-            ? max(3.4, drawn.length * 0.10) * 2 + 6 : 0
+        var mark = 0.0
+        if fish.plan?.overlay != nil, !fish.isFry {
+            mark = max(3.4, drawn.length * 0.10) * 2 + 6
+        }
         let tag = canvas
         let resolved: GraphicsContext.ResolvedText
         let textSize: CGSize
