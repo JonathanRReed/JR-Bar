@@ -349,7 +349,7 @@ struct EffectInspectorPane: View {
 
     var body: some View {
         if let effect = store.selected {
-            ScrollView {
+            SnapshotScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header(effect)
                     preview(effect)

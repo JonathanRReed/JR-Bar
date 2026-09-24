@@ -20,7 +20,7 @@ struct UsageCenterView: View {
                 }
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
+                    SnapshotScrollView {
                         LazyVStack(spacing: 14) {
                             statusLine
                             if store.providers.count > 1 {

@@ -363,7 +363,7 @@ struct SessionsSection: View {
             if store.visibleRows.isEmpty {
                 SessionsEmptyState(store: store)
             } else {
-                ScrollView(.vertical) {
+                SnapshotScrollView {
                     VStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
                         ForEach(store.visibleAskRows) { row in
                             AskRow(row: row, store: store)
@@ -1150,7 +1150,7 @@ struct UsageSection: View {
                     .padding(.horizontal, 14)
                     .frame(height: CGFloat(PanelLayout.emptyUsageHeight), alignment: .top)
             } else {
-                ScrollView(.vertical) {
+                SnapshotScrollView {
                     VStack(spacing: CGFloat(PanelLayout.usageRowSpacing)) {
                         // `identity` (id|instance), not `id`: two accounts
                         // of one provider are two rows here.

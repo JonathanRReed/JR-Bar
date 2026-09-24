@@ -241,7 +241,7 @@ struct SetupAgentsStep: View {
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             } else {
-                ScrollView {
+                SnapshotScrollView {
                     VStack(spacing: 0) {
                         ForEach(store.agentRows) { agent in
                             SetupAgentRow(store: store, agent: agent)
@@ -325,7 +325,7 @@ struct SetupPermissionsStep: View {
     @Bindable var store: SetupStore
 
     var body: some View {
-        ScrollView {
+        SnapshotScrollView {
             VStack(spacing: 0) {
                 ForEach(Array(SetupPermission.allCases.enumerated()), id: \.element) { index, permission in
                     if index > 0 { Divider().opacity(0.5) }
@@ -391,7 +391,7 @@ struct SetupAppearanceStep: View {
     @Bindable var store: SetupStore
 
     var body: some View {
-        ScrollView {
+        SnapshotScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 SettingLabel(title: "Menu bar icon",
                              subtitle: "What the status item shows at a glance.")

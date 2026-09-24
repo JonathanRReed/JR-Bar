@@ -201,7 +201,7 @@ struct LightMomentsView: View {
     @ViewState private var cues: [String: LightCueState]?
 
     var body: some View {
-        ScrollView {
+        SnapshotScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Moments").font(.title2.weight(.semibold))

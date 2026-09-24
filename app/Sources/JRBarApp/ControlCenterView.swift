@@ -846,7 +846,7 @@ struct SessionSidebar: View {
                     .padding(.top, 8)
                 Spacer()
             } else {
-                ScrollView {
+                SnapshotScrollView {
                     VStack(spacing: 2) {
                         ForEach(store.sessionRows) { session in
                             SessionDragRow(store: store, session: session)

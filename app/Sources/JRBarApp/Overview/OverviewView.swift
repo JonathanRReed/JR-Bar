@@ -609,7 +609,7 @@ struct OverviewView: View {
     /// chip cut by the pane reads as "more", not as a clipped view.
     @ViewBuilder
     private var connectionsStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        SnapshotScrollView(axes: .horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(store.links) { link in
                     connectionChip(link)
@@ -689,7 +689,7 @@ struct OverviewView: View {
     /// A focused chip's facts — the same labelled grid the session
     /// inspector uses, every line carrying the daemon's own words.
     private func connectionInspector(_ link: OverviewLink) -> some View {
-        ScrollView {
+        SnapshotScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 8) {
                     connectionGlyph(link)
@@ -716,7 +716,7 @@ struct OverviewView: View {
     /// nodes, devices, providers — so an empty roster still answers
     /// "what is connected". A row focuses that link.
     private var connectionsBrowser: some View {
-        ScrollView {
+        SnapshotScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Connections")
                     .font(.system(size: 15, weight: .semibold))
@@ -834,7 +834,7 @@ struct OverviewView: View {
         if store.pane == .usage {
             UsageGraphFacts(store: store)
         } else if let entry = store.selected {
-            ScrollView {
+            SnapshotScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(entry.session.label ?? entry.session.shortId ?? "Session")
                         .font(.system(size: 15, weight: .semibold))

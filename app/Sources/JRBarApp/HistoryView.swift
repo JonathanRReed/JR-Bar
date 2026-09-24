@@ -79,7 +79,7 @@ struct HistoryView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
+                SnapshotScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         ForEach(store.days) { day in
                             Section {
@@ -206,7 +206,7 @@ struct HistoryFilterBar: View {
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
                 }
             }
-            ScrollView(.horizontal, showsIndicators: false) {
+            SnapshotScrollView(axes: .horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 if let day = store.filter.day {
                     // A day the Overview's heatmap sent here: one chip,
@@ -613,7 +613,7 @@ struct EventLogView: View {
             .padding(.vertical, 5)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.primary.opacity(0.06)))
             .frame(maxWidth: 220)
-            ScrollView(.horizontal, showsIndicators: false) {
+            SnapshotScrollView(axes: .horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(store.eventCategories) { category in
                         FilterChip(selected: store.eventFilter.categories.contains(category),
