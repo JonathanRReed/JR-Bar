@@ -326,6 +326,10 @@ final class PanelStore {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
         self.askDesk = AskAnswerDesk(core: core)
+        self.fetchUsageHistory = { [weak core] provider, range in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.usageHistory(provider: provider, range: range)
+        }
         self.draftsDefaults = draftsDefaults
         self.mediaFeed = mediaFeed
         self.screenBarShown = screenBarShown
@@ -380,6 +384,7 @@ final class PanelStore {
         clock?.invalidate()
         brightnessFlush?.cancel()
         toastClear?.cancel()
+        sparklineWork?.cancel()
     }
 
     /// The media ear rides the shared feed — one monitor for every
@@ -419,7 +424,7 @@ final class PanelStore {
         }
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
-        refreshSparklines()
+        scheduleSparklines()
         refreshSessionUsage()
     }
 
@@ -437,6 +442,8 @@ final class PanelStore {
         findQuery = ""
         clock?.invalidate()
         clock = nil
+        sparklineWork?.cancel()
+        sparklineWork = nil
     }
 
     // MARK: Derived: layout
@@ -1174,13 +1181,43 @@ final class PanelStore {
         return days <= 7 ? .week : .month
     }
 
+    /// How long after the panel opens its sparklines are asked for. The
+    /// daemon answers one client's commands in order, so a burst of
+    /// `usage_history` sent on open queued ahead of the Approve the panel
+    /// was opened to click.
+    static let sparklineDelay: TimeInterval = 1.5
+    /// `sparklineDelay`, shortened by the tests.
+    @ObservationIgnored var sparklineWait = PanelStore.sparklineDelay
+    @ObservationIgnored private var sparklineWork: Task<Void, Never>?
+    /// `usage_history` for one provider — the core's in production; tests
+    /// stage it.
+    @ObservationIgnored var fetchUsageHistory: @MainActor (_ provider: String, _ range: UsageHistoryRange) async throws -> UsageHistory
+
+    /// The sparklines are fetched a beat after the panel opens, if it is
+    /// still open then.
+    private func scheduleSparklines() {
+        sparklineWork?.cancel()
+        let wait = sparklineWait
+        sparklineWork = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self, self.isOpen else { return }
+            self.sparklineWork = nil
+            self.refreshSparklines()
+        }
+    }
+
+    /// Whether the sparklines are worth asking for now: never while an
+    /// ask is open, since every `usage_history` waits in line ahead of its
+    /// answer.
+    nonisolated static func wantsSparklines(live: Bool, asksOpen: Bool) -> Bool { live && !asksOpen }
+
     /// Asks the daemon for `usage_graph_days` of history — week or month,
     /// see `sparklineRange` — for every provider the panel shows, unless
-    /// it asked recently. Failures are silent: a row without a sparkline
-    /// simply has none. `force` is for the `usage_history_ready` event,
-    /// which means the rows just changed.
+    /// it asked recently or an ask is open. Failures are silent: a row
+    /// without a sparkline simply has none. `force` is for the
+    /// `usage_history_ready` event, which means the rows just changed.
     func refreshSparklines(force: Bool = false) {
-        guard core.isLive else { return }
+        guard Self.wantsSparklines(live: core.isLive, asksOpen: !askRows.isEmpty) else { return }
         let now = Date()
         let range = sparklineRange
         for provider in usage {
@@ -1190,7 +1227,7 @@ final class PanelStore {
             Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let history = try await self.core.usageHistory(provider: id, range: range)
+                    let history = try await self.fetchUsageHistory(id, range)
                     let values = UsageSparkline.tokensPerDay(history)
                     if UsageSparkline.hasSignal(values) {
                         self.sparklines[id] = values
