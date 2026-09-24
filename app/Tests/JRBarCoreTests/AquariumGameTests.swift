@@ -701,3 +701,156 @@ extension AquariumGameTests {
         #expect(game.themeID == "arcade")
     }
 }
+
+// MARK: The oyster, the alien and putting things away
+
+extension AquariumGameTests {
+    private static func owning(_ items: [ShopItem]) -> AquariumGame {
+        var game = AquariumGame()
+        for item in items { game.inventory[item.rawValue] = 1 }
+        return game
+    }
+
+    @Test("the oyster is ready after 30 working minutes, not before, and idle time doesn't count")
+    func oysterReadiness() {
+        var game = Self.owning([.oyster])
+        let tick = AquariumRules.tickInterval
+        let ticks = Int(AquariumRules.oysterWorkSeconds / tick)
+        for i in 0..<(ticks - 1) {
+            game.apply(.workTick(seconds: tick, working: ["a"]), now: Self.t0 + Double(i) * tick)
+        }
+        // Quiet beats bank nothing.
+        for i in 0..<50 {
+            game.apply(.workTick(seconds: tick, working: []), now: Self.t0 + 10_000 + Double(i))
+        }
+        #expect(!game.oysterReady)
+        let effects = game.apply(.workTick(seconds: tick, working: ["a"]), now: Self.t0 + 20_000)
+        #expect(game.oysterReady)
+        #expect(effects.contains(.oysterReady))
+    }
+
+    @Test("the oyster's pearl pays once, then it starts over")
+    func oysterPays() {
+        var game = Self.owning([.oyster])
+        game.apply(.collectOyster, now: Self.t0)
+        #expect(game.pearls == 0, "a shut oyster pays nothing")
+        game.oysterReady = true
+        game.apply(.collectOyster, now: Self.t0)
+        let paid = game.pearls
+        #expect(paid == AquariumRules.oysterPearl + AquariumAchievement.firstPearl.reward)
+        #expect(!game.oysterReady)
+        #expect(game.oysterWork == 0)
+        game.apply(.collectOyster, now: Self.t0 + 1)
+        #expect(game.pearls == paid)
+    }
+
+    private static func failure(_ ids: [String]) -> AquariumFleetFacts {
+        AquariumFleetFacts(failedIDs: ids)
+    }
+
+    @Test("a fresh failure calls the alien when the beacon is in the tank — once a day")
+    func alienQueues() {
+        var game = Self.owning([.alienBeacon])
+        let effects = game.apply(.fleet(Self.failure(["x"])), now: Self.t0)
+        #expect(effects.contains(.visitor(.alien)))
+        #expect(game.pendingVisitors == [.alien])
+        // The same failure, still listed, is nothing new.
+        game.apply(.visitorShown(.alien), now: Self.t0 + 5)
+        game.apply(.fleet(Self.failure(["x"])), now: Self.t0 + 10)
+        #expect(game.pendingVisitors.isEmpty)
+        // A new failure inside the day waits for tomorrow.
+        game.apply(.fleet(Self.failure(["x", "y"])), now: Self.t0 + 3600)
+        #expect(game.pendingVisitors.isEmpty)
+        game.apply(.fleet(Self.failure(["x", "y", "z"])),
+                   now: Self.t0 + AquariumRules.visitorCooldown + 1)
+        #expect(game.pendingVisitors == [.alien])
+    }
+
+    @Test("no beacon, a stored beacon or visitors off: no alien")
+    func alienNeedsBeacon() {
+        var none = AquariumGame()
+        none.apply(.fleet(Self.failure(["x"])), now: Self.t0)
+        #expect(none.pendingVisitors.isEmpty)
+        var stored = Self.owning([.alienBeacon])
+        stored.apply(.setStored(.alienBeacon, true), now: Self.t0)
+        stored.apply(.fleet(Self.failure(["x"])), now: Self.t0)
+        #expect(stored.pendingVisitors.isEmpty)
+        var off = Self.owning([.alienBeacon])
+        off.visitorsWelcome = false
+        off.apply(.fleet(Self.failure(["x"])), now: Self.t0)
+        #expect(off.pendingVisitors.isEmpty)
+        #expect(off.lastVisitorAt[AquariumVisitor.alien.rawValue] == nil, "no cooldown starts either")
+    }
+
+    @Test("shooing pays once a visit; an unshooed alien leaves with nothing")
+    func alienShoo() {
+        var game = Self.owning([.alienBeacon])
+        game.apply(.fleet(Self.failure(["x"])), now: Self.t0)
+        // A shoo before the parade starts pays nothing.
+        game.apply(.shooAlien, now: Self.t0 + 1)
+        #expect(game.pearls == 0)
+        game.apply(.visitorShown(.alien), now: Self.t0 + 2)
+        let effects = game.apply(.shooAlien, now: Self.t0 + 8)
+        #expect(effects.contains(.alienShooed(AquariumRules.alienBounty)))
+        let paid = game.pearls
+        #expect(paid == AquariumRules.alienBounty + AquariumAchievement.firstPearl.reward)
+        game.apply(.shooAlien, now: Self.t0 + 9)
+        #expect(game.pearls == paid, "one bounty a visit")
+        // The next day's alien, left alone.
+        let later = Self.t0 + AquariumRules.visitorCooldown + 10
+        game.apply(.fleet(Self.failure(["x", "y"])), now: later)
+        game.apply(.visitorShown(.alien), now: later + 1)
+        let before = game
+        game.apply(.visitorDeparted(.alien), now: later + 26)
+        game.apply(.shooAlien, now: later + 27)
+        #expect(game.pearls == before.pearls)
+        #expect(game.drops == before.drops)
+        #expect(game.pets == before.pets)
+        #expect(game.alienShownAt == 0)
+    }
+
+    @Test("a stored snail doesn't collect; putting away needs an owned piece or pet")
+    func stored() {
+        var game = Self.owning([.snail, .hatCrown])
+        game.drops = [PearlDrop(id: "d1", fishID: "a", at: Self.t0.timeIntervalSince1970, value: 1)]
+        game.apply(.setStored(.snail, true), now: Self.t0)
+        #expect(game.owns(.snail))
+        #expect(!game.shows(.snail))
+        game.apply(.tick, now: Self.t0 + AquariumRules.snailCollectAfter + 1)
+        game.apply(.snailCollected(dropID: "d1"), now: Self.t0 + AquariumRules.snailCollectAfter + 2)
+        #expect(game.drops.count == 1, "a snail put away fetches nothing")
+        game.apply(.setStored(.snail, false), now: Self.t0 + 20)
+        #expect(game.shows(.snail))
+        #expect(game.stored.isEmpty)
+        #expect(game.apply(.setStored(.hatCrown, true), now: Self.t0).contains(.purchaseDenied(.hatCrown)))
+        #expect(game.apply(.setStored(.octopus, true), now: Self.t0).contains(.purchaseDenied(.octopus)))
+        #expect(game.stored.isEmpty)
+    }
+
+    @Test("stored items, the oyster and the alien's window round-trip, unknown stored ids kept")
+    func tankSystemsRoundTrip() throws {
+        var game = Self.owning([.oyster, .alienBeacon])
+        game.stored = ["alienBeacon", "somethingFromTheFuture"]
+        game.oysterWork = 600
+        game.oysterReady = true
+        game.alienShownAt = 42
+        let back = try JSONDecoder().decode(AquariumGame.self, from: JSONEncoder().encode(game))
+        #expect(back == game)
+        let wild = try JSONDecoder().decode(AquariumGame.self, from: Data(
+            #"{"stored": ["a", "a", "b"], "oysterWork": 1e12, "alienShownAt": -5}"#.utf8))
+        #expect(wild.stored == ["a", "b"])
+        #expect(wild.oysterWork == AquariumRules.oysterWorkSeconds)
+        #expect(wild.alienShownAt == 0)
+    }
+
+    @Test("with visitors turned off nothing queues, the whale included")
+    func visitorsOff() {
+        var game = AquariumGame()
+        game.visitorsWelcome = false
+        game.apply(.quotaReset, now: Self.t0)
+        #expect(game.pendingVisitors.isEmpty)
+        game.visitorsWelcome = true
+        game.apply(.quotaReset, now: Self.t0 + 1)
+        #expect(game.pendingVisitors == [.submarine])
+    }
+}

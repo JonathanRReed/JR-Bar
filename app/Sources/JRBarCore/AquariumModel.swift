@@ -641,6 +641,7 @@ public enum AquariumModel {
         case .sunkenStatue: return DecorSlot(x: 0.44, back: true, w: 0.14, h: 0.16)
         case .ruinedColumns: return DecorSlot(x: 0.62, back: true, w: 0.25, h: 0.19)
         case .volcano: return DecorSlot(x: 0.82, back: true, w: 0.24, h: 0.16)
+        case .alienBeacon: return DecorSlot(x: 0.95, back: true, w: 0.07, h: 0.12)
         // Front row — over the fish lane like the original shop set.
         case .bubbleWall: return DecorSlot(x: 0.08, back: false, w: 0.10, h: 0.28)
         case .driftwood: return DecorSlot(x: 0.22, back: false, w: 0.21, h: 0.07)

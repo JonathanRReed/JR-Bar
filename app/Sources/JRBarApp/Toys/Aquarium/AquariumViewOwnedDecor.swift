@@ -51,7 +51,7 @@ extension AquariumView {
     func drawOwnedBackDecor(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
-            game.owns(item) ? AquariumModel.decorSlot(for: item) : nil
+            game.shows(item) ? AquariumModel.decorSlot(for: item) : nil
         }
         let veil = atmosphere(depth: Self.backRowDepth, t: t)
         if let s = slot(.shipwreck) { drawShipwreck(canvas: &canvas, size: size, slot: s, veil: veil) }
@@ -62,6 +62,7 @@ extension AquariumView {
             drawVolcano(canvas: &canvas, size: size, slot: s, veil: veil,
                         lit: nightFactor(t: t) > 0.45 || isDarkTheme)
         }
+        if let s = slot(.alienBeacon) { drawBeacon(canvas: &canvas, size: size, slot: s, t: t) }
     }
 
     /// A sunken hull: a listing, broken-backed ship on the dune — lit
@@ -557,14 +558,14 @@ extension AquariumView {
     func drawOwnedFrontDecor(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
-            game.owns(item) ? AquariumModel.decorSlot(for: item) : nil
+            game.shows(item) ? AquariumModel.decorSlot(for: item) : nil
         }
         let tone = decorTone()
         if let s = slot(.anemoneBed) { drawAnemone(canvas: &canvas, size: size, t: t, slot: s, tone: tone) }
         if let s = slot(.moonJellyLamp) { drawJellyLamp(canvas: &canvas, size: size, t: t, slot: s, tone: tone) }
         if let s = slot(.bubbleWall) { drawBubbleWall(canvas: &canvas, size: size, t: t, slot: s) }
         // The volcano's live half rides along when the crater's lit.
-        if let s = game.owns(.volcano) ? AquariumModel.decorSlot(for: .volcano) : nil,
+        if let s = game.shows(.volcano) ? AquariumModel.decorSlot(for: .volcano) : nil,
            nightFactor(t: t) > 0.45 || isDarkTheme {
             drawVolcanoGlow(canvas: &canvas, size: size, t: t, slot: s)
         }
@@ -576,7 +577,7 @@ extension AquariumView {
     func drawOwnedFrontStill(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
-            game.owns(item) ? AquariumModel.decorSlot(for: item) : nil
+            game.shows(item) ? AquariumModel.decorSlot(for: item) : nil
         }
         let veil = atmosphere(depth: Self.frontRowDepth, t: t)
         if let s = slot(.driftwood) { drawDriftwood(canvas: &canvas, size: size, slot: s, veil: veil) }
@@ -1166,21 +1167,21 @@ extension AquariumView {
         }
     }
 
-    /// The hermit crab shuffles sideways along the sand, pausing to
-    /// tuck into its shell. Reduce Motion parks it near the middle.
+    /// The hermit crab walks the bed one way, sits tucked in its shell,
+    /// turns round — squashing through zero, never a one-frame flip —
+    /// and walks back (`HermitCrabRounds`). Reduce Motion parks it near
+    /// the middle.
     func drawHermitCrab(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         let tone = decorTone()
-        // A slow shuttle across the bed with rest stops: walk 70% of
-        // each ~90 s lap, sit tucked the rest.
-        let lap = reduceMotion ? 0.45 : frac(t / 90 + 0.13)
-        let walking = lap < 0.7
-        let progress = walking ? lap / 0.7 : 1
-        let x = size.width * (0.10 + 0.78 * progress)
+        let rounds = reduceMotion ? (x: 0.45, facing: 1.0, walking: false)
+            : HermitCrabRounds.pose(at: t)
+        let walking = rounds.walking
+        let x = size.width * rounds.x
         let y = sandTop(atX: x, in: size) - 2
         contactShadow(canvas: &canvas, x: x - 1, y: y + 2, halfW: 8, alpha: 0.30)
         var c = canvas
         c.translateBy(x: x, y: y)
-        c.scaleBy(x: 16, y: 12)
+        c.scaleBy(x: 16 * rounds.facing, y: 12)
         let flesh = tone(Color(red: 0.94, green: 0.44, blue: 0.28))
         let fleshDark = tone(Color(red: 0.54, green: 0.16, blue: 0.09))
         let edge = fleshDark.opacity(0.6)
@@ -1250,18 +1251,68 @@ extension AquariumView {
         }
     }
 
-    /// A snail inches along the sand — about four minutes a crossing.
-    /// Reduce Motion sits it mid-tank.
+    /// The snail (`SnailSim`): it hustles to the oldest pearl resting
+    /// on the sand — legs going, a little dust behind — picks it up with
+    /// a clink and a bloop, and otherwise creeps end to end, napping now
+    /// and then with its eyestalks in and a "z" rising. An hour with no
+    /// pearl warms its shell toward red, and it huffs. It turns by
+    /// squashing through zero, never a one-frame flip. The live wallpaper
+    /// and screensaver only watch: their snail never fetches.
     func drawSnail(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let m = motion
+        let dt = m.snailT > 0 ? t - m.snailT : 0
+        m.snailT = t
+        // The oldest pearl that has landed, if the snail may fetch.
+        var target: (id: String, x: Double)?
+        if !ambient, let game, size.width > 0 {
+            let resting = game.drops
+                .filter { !m.snailClaimed.contains($0.id) }
+                .filter { dropPoint($0, size: size, t: t, layouts: [:]).fall >= 1 }
+                .min { $0.at < $1.at }
+            if let drop = resting {
+                target = (drop.id, dropRest(drop, size: size, layouts: [:], t: t).x / size.width)
+            }
+        }
+        let arrived = m.snail.step(dt: dt, pearl: target?.x, still: reduceMotion)
+        if arrived, let target {
+            m.snailClaimed.insert(target.id)
+            m.pendingEvents.append(.snailCollected(target.id))
+            let y = sandTop(atX: target.x * size.width, in: size) - 5
+            m.puffs.append((x: target.x, y: y / max(1, size.height), bornAt: Date(timeIntervalSince1970: t)))
+            m.flights.append((from: CGPoint(x: target.x * size.width, y: y),
+                              bornAt: Date(timeIntervalSince1970: t)))
+            queueEventDrain()
+        }
+        if let game, m.snailClaimed.count > 8 {
+            let live = Set(game.drops.map(\.id))
+            m.snailClaimed = m.snailClaimed.filter { live.contains($0) }
+        }
+        drawSnailBody(canvas: &canvas, size: size, t: t, sim: m.snail)
+    }
+
+    /// The snail at its sim's pose.
+    func drawSnailBody(canvas: inout GraphicsContext, size: CGSize, t: Double, sim: SnailSim) {
         let tone = decorTone()
-        let crawl = reduceMotion ? 0.42 : frac(t * 0.0042 + 0.6)
-        let x = size.width * (0.06 + crawl * 0.88)
+        let x = size.width * sim.x
         // It inches along the dune crest, not the glass bottom.
         let y = sandTop(atX: x, in: size) - 1
+        let still = reduceMotion
         contactShadow(canvas: &canvas, x: x, y: y + 1.5, halfW: 12, alpha: 0.28)
+        // A hustle kicks up a little dust behind it.
+        if sim.hustling && !still {
+            for k in 0..<3 {
+                let ph = frac(t * 2.4 + Double(k) / 3)
+                let dx = -sim.facing * (14 + ph * 10)
+                let r = 1.4 + ph * 2.2
+                canvas.fill(Path(ellipseIn: CGRect(x: x + dx - r, y: y - 3 - ph * 5 - r, width: r * 2, height: r * 2)),
+                            with: .color(TankPaint.color(sandPalette.lit, 0.55 * (1 - ph))))
+            }
+        }
         var s = canvas
         s.translateBy(x: x, y: y)
-        s.scaleBy(x: 25, y: 19)
+        // Hustling, it bobs with its stride.
+        let bob = sim.hustling && !still ? abs(sin(t * 16)) * 0.04 : 0
+        s.scaleBy(x: 25 * sim.facing, y: 19 * (1 - bob))
         let flesh = tone(Color(red: 0.76, green: 0.70, blue: 0.60))
         let fleshDark = tone(Color(red: 0.38, green: 0.32, blue: 0.26))
         var body = Path()
@@ -1273,24 +1324,34 @@ extension AquariumView {
         body.closeSubpath()
         TankPaint.solid(&s, body, lit: tone(Color(red: 0.94, green: 0.90, blue: 0.80)), base: flesh, shade: fleshDark,
                         outline: fleshDark.opacity(0.55), lineWidth: 0.025, rim: 0.3)
-        // Two eyestalks, because it is a screensaver.
+        // Two eyestalks: tall and forward on a hustle, drawn in for a nap.
+        let reach = sim.napping ? 0.45 : (sim.hustling ? 1.15 : 1)
+        let lean = sim.hustling ? 0.06 : 0
         for dx in [0.42, 0.55] {
+            let tip = CGPoint(x: dx + lean, y: -0.14 - 0.28 * reach)
             var stalk = Path()
             stalk.move(to: CGPoint(x: dx - 0.1, y: -0.14))
-            stalk.addQuadCurve(to: CGPoint(x: dx, y: -0.42), control: CGPoint(x: dx - 0.05, y: -0.30))
+            stalk.addQuadCurve(to: tip, control: CGPoint(x: dx - 0.05 + lean * 0.5, y: -0.14 - 0.16 * reach))
             s.stroke(stalk, with: .color(fleshDark), style: StrokeStyle(lineWidth: 0.06, lineCap: .round))
             s.stroke(stalk, with: .color(flesh), style: StrokeStyle(lineWidth: 0.035, lineCap: .round))
-            s.fill(Path(ellipseIn: CGRect(x: dx - 0.05, y: -0.48, width: 0.10, height: 0.10)),
-                   with: .color(tone(Color(red: 0.12, green: 0.10, blue: 0.10))))
-            s.fill(Path(ellipseIn: CGRect(x: dx - 0.015, y: -0.47, width: 0.035, height: 0.035)),
-                   with: .color(.white.opacity(0.9)))
+            let eye = CGRect(x: tip.x - 0.05, y: tip.y - 0.06, width: 0.10, height: sim.napping ? 0.035 : 0.10)
+            s.fill(Path(ellipseIn: eye), with: .color(tone(Color(red: 0.12, green: 0.10, blue: 0.10))))
+            if !sim.napping {
+                s.fill(Path(ellipseIn: CGRect(x: tip.x - 0.015, y: tip.y - 0.05, width: 0.035, height: 0.035)),
+                       with: .color(.white.opacity(0.9)))
+            }
         }
-        // The shell: a banded spiral, lit from above.
+        // The shell: a banded spiral, lit from above — warming toward
+        // red the longer it has gone without a pearl.
+        let huff = sim.huff
         let shellRect = CGRect(x: -0.44, y: -0.66, width: 0.62, height: 0.62)
         let shell = Path(ellipseIn: shellRect)
-        let shellShade = tone(Color(red: 0.36, green: 0.19, blue: 0.08))
-        TankPaint.solid(&s, shell, lit: tone(Color(red: 0.98, green: 0.80, blue: 0.52)),
-                        base: tone(Color(red: 0.76, green: 0.47, blue: 0.23)),
+        func warm(_ r: Double, _ g: Double, _ b: Double) -> Color {
+            tone(Color(red: r + (0.95 - r) * huff, green: g * (1 - 0.55 * huff), blue: b * (1 - 0.6 * huff)))
+        }
+        let shellShade = warm(0.36, 0.19, 0.08)
+        TankPaint.solid(&s, shell, lit: warm(0.98, 0.80, 0.52),
+                        base: warm(0.76, 0.47, 0.23),
                         shade: shellShade, outline: shellShade.opacity(0.6), lineWidth: 0.03, rim: 0.35)
         var spiral = Path()
         let cx = shellRect.midX + 0.03, cy = shellRect.midY + 0.02
@@ -1302,8 +1363,24 @@ extension AquariumView {
         }
         var inner = s
         inner.clip(to: shell)
-        inner.stroke(spiral, with: .color(tone(Color(red: 0.98, green: 0.90, blue: 0.72)).opacity(0.7)), lineWidth: 0.05)
+        inner.stroke(spiral, with: .color(warm(0.98, 0.90, 0.72).opacity(0.7)), lineWidth: 0.05)
         inner.stroke(spiral.offsetBy(dx: 0.012, dy: 0.012),
-                     with: .color(tone(Color(red: 0.30, green: 0.14, blue: 0.06)).opacity(0.55)), lineWidth: 0.025)
+                     with: .color(warm(0.30, 0.14, 0.06).opacity(0.55)), lineWidth: 0.025)
+        // A nap breathes out a "z"; a huff puffs a little cloud.
+        if !still, sim.napping || huff > 0.3 {
+            let ph = frac(t / 2.6)
+            let bx = x + sim.facing * 10 + ph * 6
+            let by = y - 22 - ph * 16
+            var bubble = canvas
+            bubble.opacity = (1 - ph) * 0.85
+            if sim.napping {
+                bubble.draw(Text("z").font(.system(size: 9 + ph * 3, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white), at: CGPoint(x: bx, y: by))
+            } else {
+                let r = 2.5 + ph * 3
+                bubble.fill(Path(ellipseIn: CGRect(x: bx - r, y: by - r, width: r * 2, height: r * 2)),
+                            with: .color(Color(red: 1.0, green: 0.55, blue: 0.45).opacity(0.7 * huff)))
+            }
+        }
     }
 }

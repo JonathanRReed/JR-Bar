@@ -431,6 +431,31 @@ final class AquariumToy: Toy {
         playSound(.clink)
     }
 
+    /// A tap on the open oyster: its pearl comes home.
+    func collectOyster() {
+        guard game.oysterReady else { return }
+        let now = Date()
+        note(game.apply(.collectOyster, now: now), now: now)
+        persist()
+        playSound(.clink)
+    }
+
+    /// The fifth tap on the alien: it zips off, and the bounty lands.
+    func shooAlien() {
+        let now = Date()
+        note(game.apply(.shooAlien, now: now), now: now)
+        persist()
+        playSound(.whoosh)
+    }
+
+    /// The shop's In tank switch: put an owned piece or pet away, or
+    /// back.
+    func setStored(_ item: ShopItem, _ away: Bool) {
+        let now = Date()
+        note(game.apply(.setStored(item, away), now: now), now: now)
+        persist()
+    }
+
     /// The snail reached a drop in the open tank and picked it up.
     func snailCollected(_ id: String) {
         guard game.drops.contains(where: { $0.id == id }) else { return }
@@ -591,6 +616,7 @@ final class AquariumToy: Toy {
         let toastBefore = toast?.at
         let noticeBefore = notice?.id
         var earned = 0
+        var shooed: Int?
         var milestone = game.tankLevel > knownLevel
         knownLevel = max(knownLevel, game.tankLevel)
         for effect in effects {
@@ -617,9 +643,14 @@ final class AquariumToy: Toy {
             case .purchaseLocked(let item, let needs):
                 toast = ("\(item.displayName) unlocks at tank level \(needs)", now)
             case .visitor(let v):
-                toast = ("A \(v.displayName) drifts by", now)
+                toast = (v == .alien ? "An alien is on its way — tap it to shoo it off"
+                                     : "A \(v.displayName) drifts by", now)
             case .visitorDeparted(let v):
                 toast = ("The \(v.displayName) drifts on", now)
+            case .oysterReady:
+                toast = ("The oyster opened — there's a pearl inside", now)
+            case .alienShooed(let bounty):
+                shooed = bounty
             case .variantEarned(let id, let variant):
                 switch variant {
                 case .tide: toast = ("\(label(for: id)) earned its tide stripe", now)
@@ -630,6 +661,9 @@ final class AquariumToy: Toy {
         }
         if earned > 0 {
             toast = ("+\(earned) pearl\(earned == 1 ? "" : "s")", now)
+        }
+        if let shooed {
+            toast = ("The alien zips off · +\(shooed) pearls", now)
         }
         // A hushed room: this batch's toast is dropped (a toast is a
         // passing remark) and its reward card is held for later.

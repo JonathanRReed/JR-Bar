@@ -359,6 +359,7 @@ struct AquariumView: View {
                                           layouts: layouts, roster: order.ordered,
                                           now: context.date)
                     }
+                    drawOyster(canvas: &canvas, size: size, t: t)
                     drawDrops(canvas: &canvas, size: size, t: t,
                               layouts: layouts)
                     drawGoldBursts(canvas: &canvas, size: size, now: context.date)
@@ -418,9 +419,22 @@ struct AquariumView: View {
         // water clears. The flash path still covers a tap that hits
         // nothing selectable.
         .gesture(SpatialTapGesture(coordinateSpace: .local).onEnded { value in
-            // The buried treasure takes the tap first — it's the
-            // rarest thing on the sand; then a pearl drop collects; a
-            // fish selects; open water drops a pinch of food.
+            // The oyster's pearl takes the tap first, then the alien,
+            // then the buried treasure — the rarest thing on the sand;
+            // then a pearl drop collects; a fish selects; open water
+            // drops a pinch of food.
+            if let box = motion.oysterBox, box.contains(value.location), toy?.game.oysterReady == true {
+                toy?.collectOyster()
+                motion.puffs.append((x: box.midX / max(1, motion.size.width),
+                                     y: box.maxY / max(1, motion.size.height) - 0.03, bornAt: Date()))
+                motion.flights.append((from: CGPoint(x: box.midX, y: box.midY), bornAt: Date()))
+                return
+            }
+            if let box = motion.alienBox, box.contains(value.location),
+               let visit = motion.activeVisitor, visit.kind == .alien, motion.alienShooedAt == nil {
+                tapAlien(at: value.location, visit: visit.startedAt)
+                return
+            }
             if let box = motion.treasureBox, box.rect.contains(value.location) {
                 toy?.digTreasure(box.id)
                 let unitX = box.rect.midX / max(1, motion.size.width)
@@ -625,6 +639,22 @@ struct AquariumView: View {
         /// it falls from there to the sand and rests at that x for good,
         /// however its fish swims on. `fromY` nil rests at once.
         var dropSpots: [String: DropSpot] = [:]
+        /// The snail's errands, and the frame clock it last stepped on.
+        var snail = SnailSim()
+        var snailT: Double = 0
+        /// Pearls the snail has picked up whose collection hasn't
+        /// reached the game yet — it won't fetch one twice.
+        var snailClaimed: Set<String> = []
+        /// The oyster's tap box this frame, when it's in the tank.
+        var oysterBox: CGRect?
+        /// The alien's tap box this frame, and the taps it has taken
+        /// this visit (keyed by when the visit started).
+        var alienBox: CGRect?
+        var alienTaps: (visit: Date, count: Int)?
+        /// When the alien was shooed off, so it zips away from there,
+        /// and when the last tap made it wobble.
+        var alienShooedAt: Date?
+        var alienWobbleAt: Date?
     }
 
     /// A game event a draw pass produced — recorded, not applied.
@@ -635,6 +665,8 @@ struct AquariumView: View {
         case visitorShown(AquariumVisitor)
         /// The parade ended — the visitor swam off the far edge.
         case visitorDeparted(AquariumVisitor)
+        /// The snail reached a pearl and picked it up.
+        case snailCollected(String)
     }
 
     /// What a tapped fish shows off (docs/TOYS.md: fish tricks).
@@ -904,6 +936,7 @@ struct AquariumView: View {
                     case .pelletEaten(let fishID): toy?.pelletEaten(by: fishID)
                     case .visitorShown(let visitor): toy?.visitorShown(visitor)
                     case .visitorDeparted(let visitor): toy?.visitorDeparted(visitor)
+                    case .snailCollected(let id): toy?.snailCollected(id)
                     }
                 }
             }

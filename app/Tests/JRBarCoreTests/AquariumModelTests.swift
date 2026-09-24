@@ -419,7 +419,7 @@ struct AquariumModelTests {
     @Test("owned decor slots never overlap on their row, at either proof size")
     func decorSlotSpacing() {
         let items: [ShopItem] = [
-            .shipwreck, .amphora, .sunkenStatue, .ruinedColumns, .volcano,
+            .shipwreck, .amphora, .sunkenStatue, .ruinedColumns, .volcano, .alienBeacon,
             .bubbleWall, .driftwood, .anemoneBed, .moonJellyLamp, .coralGarden,
         ]
         // Footprints are fractions of the tank's height; a piece's

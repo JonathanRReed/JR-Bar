@@ -6,10 +6,10 @@ import SwiftUI
 extension AquariumView {
     // MARK: Game chrome
 
-    /// Whether the tank owns a shop item — the fixture path owns
-    /// whatever its synthetic game says.
+    /// Whether a shop item is in the tank — owned and not put away.
+    /// The fixture path shows whatever its synthetic game says.
     func owns(_ item: ShopItem) -> Bool {
-        game?.owns(item) ?? false
+        game?.shows(item) ?? false
     }
 
     /// Where the pearl counter sits before it has measured itself — the
@@ -430,6 +430,8 @@ extension AquariumView {
         case .hatBeanie, .buddyBeanie: return "hat.cap.fill"
         case .hatParty: return "party.popper.fill"
         case .hatCrown: return "crown.fill"
+        case .oyster: return "circle.circle.fill"
+        case .alienBeacon: return "antenna.radiowaves.left.and.right"
         default: return "sparkles"
         }
     }
@@ -498,11 +500,18 @@ extension AquariumView {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-        default:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14))
-                .foregroundStyle(Self.shopAccent)
-                .help("In the tank")
+        case .decor, .pets:
+            // Owned pieces and pets can be put away without selling
+            // them — the switch is whether it's in the tank.
+            Toggle("In tank", isOn: Binding(
+                get: { game.shows(item) },
+                set: { toy?.setStored(item, !$0) }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .font(.system(size: 10.5))
+                .fixedSize()
+                .help(game.shows(item) ? "In the tank — switch off to put it away."
+                                       : "Put away — switch on to bring it back.")
         }
     }
 

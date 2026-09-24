@@ -273,6 +273,18 @@ struct AquariumRenderProofTests {
         // Coins mid-fall, at rest and a crowned fish's gem.
         if try Self.writePNG(Self.coins(), size: CGSize(width: 640, height: 360),
                              name: "aquarium-coins", into: dir) { written += 1 }
+        // The alien, mid-parade, just tapped.
+        var alien = Self.fixture(themeID: "arcade", substrateID: "candy",
+                                 backdropID: "toyreef", night: 0, visitor: .alien, visitorProgress: 0.42)
+        alien.game?.lifetimePearls = 400
+        let alienTank = AquariumView(fixture: alien)
+        alienTank.motion.puffs = [(x: 0.58, y: 0.24, bornAt: Date().addingTimeInterval(-0.15))]
+        if try Self.writePNG(alienTank, size: tank, name: "aquarium-alien", into: dir) { written += 1 }
+        // The oyster open with its pearl, and the snail at its errands.
+        if try Self.writePNG(Self.sandPets(), size: CGSize(width: 640, height: 360),
+                             name: "aquarium-oyster-open", into: dir) { written += 1 }
+        if try Self.writePNG(Self.sandPets(arcade: true), size: CGSize(width: 640, height: 360),
+                             name: "aquarium-snail-hustle", into: dir) { written += 1 }
         // A new tank: the seeded bed only, four sessions swimming.
         var starter = Self.fixture(themeID: "classic", substrateID: "classic",
                                    backdropID: "classic", night: 0, visitor: nil)
@@ -364,7 +376,7 @@ struct AquariumRenderProofTests {
                 written += 1
             }
         }
-        #expect(written == shots.count + 19)
+        #expect(written == shots.count + 22)
     }
 
     // MARK: The Arcade tank
@@ -452,6 +464,39 @@ struct AquariumRenderProofTests {
         }
     }
 
+    // MARK: Put away
+
+    @Test("a piece put away draws nothing: the tank looks as if it were never bought")
+    func storedDrawsNothing() throws {
+        func render(_ dress: (inout AquariumGame) -> Void) throws -> Data {
+            var fixture = Self.quietTank(theme: "classic")
+            var game = AquariumGame(lifetimePearls: 5000)
+            dress(&game)
+            fixture.game = game
+            let tank = AquariumView(fixture: fixture)
+            let renderer = ImageRenderer(content: Canvas { canvas, size in
+                tank.drawWater(canvas: &canvas, size: size, t: 0)
+                tank.drawOwnedBackDecor(canvas: &canvas, size: size, t: 0)
+                tank.drawOyster(canvas: &canvas, size: size, t: 0)
+            }.frame(width: 450, height: 260))
+            renderer.scale = 1
+            let image = try #require(renderer.cgImage)
+            return try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        }
+        let bare = try render { _ in }
+        let shown = try render { game in
+            game.inventory["shipwreck"] = 1
+            game.inventory["oyster"] = 1
+        }
+        let stored = try render { game in
+            game.inventory["shipwreck"] = 1
+            game.inventory["oyster"] = 1
+            game.stored = ["shipwreck", "oyster"]
+        }
+        #expect(shown != bare)
+        #expect(stored == bare)
+    }
+
     // MARK: Pearls that stay put
 
     /// Draws one drops pass at `time` and returns the first drop's box.
@@ -520,6 +565,40 @@ struct AquariumRenderProofTests {
             tank.drawSand(canvas: &canvas, size: size, t: t)
             tank.drawBubbles(canvas: &canvas, size: size, t: t, density: 1)
             tank.drawDrops(canvas: &canvas, size: size, t: t, layouts: [:])
+        }
+    }
+
+    /// A patch of the bed: the oyster open with its pearl (a coin in the
+    /// Arcade tank), one snail hustling toward a resting pearl, dust
+    /// behind it, and a second one an hour past its last pearl — shell
+    /// warmed red — napping.
+    private static func sandPets(arcade: Bool = false) -> some View {
+        var fixture = Self.quietTank(theme: arcade ? "arcade" : "classic",
+                                     substrate: arcade ? "candy" : "classic")
+        let now = Date()
+        let t = now.timeIntervalSince1970
+        fixture.game?.oysterReady = true
+        fixture.game?.drops = [PearlDrop(id: "p0", fishID: "gone", at: t - 600, value: 1)]
+        let tank = AquariumView(fixture: fixture)
+        tank.motion.dropSpots = ["p0": .init(x: 0.22, fromY: nil, seenAt: t)]
+        var hustler = SnailSim(x: 0.62)
+        for _ in 0..<30 { hustler.step(dt: 1.0 / 30, pearl: 0.22) }
+        var grump = SnailSim(x: 0.86)
+        grump.facing = -1
+        for _ in 0..<Int((SnailSim.huffAfter + SnailSim.huffRamp) / 0.25) { grump.step(dt: 0.25, pearl: nil) }
+        while !grump.napping { grump.step(dt: 0.25, pearl: nil) }
+        grump.x = 0.86
+        let snails = [hustler, grump]
+        return Canvas { canvas, size in
+            tank.drawWater(canvas: &canvas, size: size, t: t)
+            tank.drawBackdrop(canvas: &canvas, size: size)
+            tank.drawFarSand(canvas: &canvas, size: size)
+            tank.drawSand(canvas: &canvas, size: size, t: t)
+            tank.drawOyster(canvas: &canvas, size: size, t: t)
+            tank.drawDrops(canvas: &canvas, size: size, t: t, layouts: [:])
+            for snail in snails {
+                tank.drawSnailBody(canvas: &canvas, size: size, t: t, sim: snail)
+            }
         }
     }
 
