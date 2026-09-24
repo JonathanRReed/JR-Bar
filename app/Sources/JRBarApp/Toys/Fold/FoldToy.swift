@@ -1307,11 +1307,12 @@ final class FoldToy: Toy {
         _ = workspaceVersion
         _ = permissionVersion
         guard settings.provider == .jrbar else { return "Handed off" }
+        // The black hold rides out the closed-lid pause, so it speaks first.
+        if blackout.active { return "Holding black across the close" }
         if let reason = pauseReason { return "Paused — \(reason)" }
         guard canFold else { return "Waiting for Screen Recording" }
         if rendererFailed { return "Renderer failed to start" }
         if let lastError = capture?.lastError { return "Capture stopped — \(lastError)" }
-        if blackout.active { return "Holding black across the close" }
         let tilted = displayedDelta * 180 / .pi
         guard tilted > 0.1 else {
             if settings.anchor == .movement {
