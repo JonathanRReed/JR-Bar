@@ -253,10 +253,13 @@ enum PetArt {
             let outer = abs(u) > 0.5
             CreaturePaint.solid(&c, arm, lit: outer ? skin.base : skin.lit, base: outer ? skin.shade : skin.base,
                                 shade: skin.shade, outline: octoInk, lineWidth: 0.6, rim: outer ? 0 : 0.35)
+            // Suckers along the underside, between the bend and the curl.
             var suckers = Path()
-            for t in [0.35, 0.55, 0.72] {
-                let x = base.x + (end.x - base.x) * t
-                suckers.addEllipse(in: CGRect(x: x - 0.65, y: 1.6 + t * 0.9, width: 1.3, height: 1.0))
+            for t in [0.25, 0.55, 0.85] {
+                let x = spine[1].x + (spine[2].x - spine[1].x) * t
+                let y = spine[1].y + (spine[2].y - spine[1].y) * t
+                let half = (3.4 + (2.4 - 3.4) * t) * 0.5
+                suckers.addEllipse(in: CGRect(x: x - 0.55, y: y + half * 0.35 - 0.4, width: 1.1, height: 0.8))
             }
             c.fill(suckers, with: .color(Color(red: 1.0, green: 0.90, blue: 0.84).opacity(outer ? 0.5 : 0.85)))
         }
