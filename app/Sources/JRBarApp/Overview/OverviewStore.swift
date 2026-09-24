@@ -68,6 +68,10 @@ final class OverviewStore {
         self.core = core
         self.sessionUsage = SessionUsageStore(core: core)
         self.ownDesk = AskAnswerDesk(core: core)
+        self.fetchGraph = { [weak core] days, metric, providers in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.usageGraph(days: days, metric: metric, providers: providers)
+        }
     }
 
     /// Always allow and a held question's picks go through the panel's
@@ -1501,6 +1505,15 @@ final class OverviewStore {
     /// overwrite a newer pick's document (same discipline as
     /// `timelineSessionID`).
     var graphRequestKey: String?
+    /// One `usage_graph` at a time. The daemon runs this client's
+    /// commands in order, so every extra scan queues ahead of each
+    /// Approve; a pick made mid-scan only marks `graphFollowUp`, and the
+    /// running load asks once more, with the latest picks, when it lands.
+    @ObservationIgnored private(set) var graphInFlight = false
+    @ObservationIgnored private var graphFollowUp = false
+    /// The `usage_graph` round trip, replaceable in tests.
+    @ObservationIgnored var fetchGraph: @MainActor (_ days: Int, _ metric: String, _ providers: [String]?)
+        async throws -> CoreUsageGraphDocument
     var graphDays = 30
     /// `tokens` | `cost` | `sessions` | `percent`.
     var graphMetric = "tokens"
@@ -1520,31 +1533,57 @@ final class OverviewStore {
         if graph == nil || stale { Task { await loadGraph() } }
     }
 
+    /// The request key for the current picks.
+    var graphPickKey: String {
+        "\(graphDays)|\(graphMetric)|\((graphProviders ?? []).joined(separator: ","))"
+    }
+
     /// Fetch the chart for the current picks. Slow on a cold transcript
-    /// cache (~30s) — the view shows its scanning state meanwhile.
+    /// cache (~30s) — the view shows its scanning state meanwhile. A call
+    /// while one is out returns at once: the running load asks again
+    /// with the newest picks when its reply lands, so any number of
+    /// picker clicks during a scan cost one more scan, not one each.
     func loadGraph() async {
-        let providers = graphProviders
-        let key = "\(graphDays)|\(graphMetric)|\((providers ?? []).joined(separator: ","))"
-        graphRequestKey = key
+        graphRequestKey = graphPickKey
         graphLoading = true
-        defer { if graphRequestKey == key { graphLoading = false } }
-        do {
-            let document = try await core.usageGraph(days: graphDays, metric: graphMetric,
-                                                     providers: providers)
-            guard graphRequestKey == key else { return }
-            graph = document
-            graphLoadedAt = Date()
-            graphError = nil
-            // A reply can name a source the registry did not (t3code
-            // appears only when its T3 coverage exists).
-            for id in document.graph.providers + document.graph.series.map(\.providerId)
-            where !graphProviderOptions.contains(id) {
-                graphProviderOptions.append(id)
-            }
-        } catch {
-            guard graphRequestKey == key else { return }
-            graphError = Self.describe(error)
+        guard !graphInFlight else {
+            graphFollowUp = true
+            return
         }
+        graphInFlight = true
+        defer {
+            graphInFlight = false
+            graphLoading = false
+        }
+        repeat {
+            graphFollowUp = false
+            let days = graphDays, metric = graphMetric, providers = graphProviders
+            let key = graphPickKey
+            graphRequestKey = key
+            let outcome: Result<CoreUsageGraphDocument, Error>
+            do {
+                outcome = .success(try await fetchGraph(days, metric, providers))
+            } catch {
+                outcome = .failure(error)
+            }
+            // Picks that moved and came back leave this reply current.
+            if graphFollowUp, graphPickKey == key { graphFollowUp = false }
+            if graphFollowUp { continue }
+            switch outcome {
+            case .success(let document):
+                graph = document
+                graphLoadedAt = Date()
+                graphError = nil
+                // A reply can name a source the registry did not (t3code
+                // appears only when its T3 coverage exists).
+                for id in document.graph.providers + document.graph.series.map(\.providerId)
+                where !graphProviderOptions.contains(id) {
+                    graphProviderOptions.append(id)
+                }
+            case .failure(let error):
+                graphError = Self.describe(error)
+            }
+        } while graphFollowUp
     }
 
     /// The provider picker's option set — the daemon's registry, so an
