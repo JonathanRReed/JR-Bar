@@ -69,11 +69,13 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > of running apps stays, the agent conceals the rest and repacks the
 > row. No spacer; the native « appears only on a bar too crowded for
 > what stays. Sections are per app (`concealedApps`) and explicit: an
-> app is hidden only when the person picks it — in the card's
-> overrides, on an Item Bar tile, in the icon's menu or in the ⌘⇧K
-> palette — and nothing is learned from where an item sits. Apple's own
-> extras and bare helpers have no path through the agent and take a
-> cover where they sit. Reveal = invalidate, rehide = re-activate, a new
+> app is hidden only when the person picks it — with a ⌘-drag across
+> the icon (below), in the card's overrides, on an Item Bar tile, in the
+> icon's menu or in the ⌘⇧K palette — and nothing is ever learned from
+> where an item happens to sit. Apple's own extras and bare helpers have
+> no path through the agent and take a cover where they sit, unless
+> `curation.concealAppleExtras` lets Weather, Passwords and Time Machine
+> hide like any app (off until a live probe shows they conceal cleanly). Reveal = invalidate, rehide = re-activate, a new
 > assertion goes up before the old comes down; clicks on the agent's own
 > clock/battery/Wi-Fi are held at an event tap, lifted for and replayed.
 >
@@ -140,10 +142,87 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > status item's preferred position is a sort key against other apps'
 > stored keys, not an x, and steering it blind put the controls in the
 > wrong place on a real bar.
-> Physically reordering items is possible only via synthetic ⌘-drags —
-> which move the person's real cursor — so `MenuBarItemMover` runs only
-> inside the explicit, cancellable arrange mode and has no background
-> call sites.
+> JR-Bar never moves an item and never posts a drag: a synthetic ⌘-drag
+> moves the person's real cursor. The person's own ⌘-drag is the only
+> thing that reorders the bar.
+
+### ⌘-drag across the icon (macOS 27)
+
+Bartender's, Ice's and Hidden Bar's habit, under the concealer
+(`MenuBarDragLearn`, `MenuBarUtilityDrag.swift`; on by default,
+`curation.dragToHide`, card row "⌘-drag across the icon hides or
+shows"). ⌘-drag an item and drop it left of the JR-Bar icon: its app
+hides. Drop it right of the icon: it shows. Hold ⌥ at the drop for
+Always Hidden; a hide keeps an existing Always, and a drop that lands
+the app where it already is writes nothing (a reorder is only a
+reorder). A drop on the icon itself does nothing.
+
+- **Where it is heard.** The click bridge's event tap (the one that
+  already lifts the clock, battery and Wi-Fi for a click) passes every
+  ⌘-press straight through — it used to turn a ⌘-drag of Wi-Fi into a
+  plain click — and reports the press and the release that ends it.
+  With the tap down, the reveal's own discrete monitor (mouse-downs and
+  mouse-ups) stands in. Nothing is posted; the pointer is the person's.
+- **One drag, one write.** The press notes the drawn item under it —
+  never ours, never the «, never a concealed app's Accessibility ghost —
+  and the icon's span as the person saw it. The release reads the drop's
+  side, waits 0.6 s for MenuBarAgent to persist the move, reads a fresh
+  listing, and writes one section through the same path the pickers take
+  (the active profile's delta when that profile already speaks for the
+  app, else the base). A listing that changes on its own never writes:
+  no press, no write — the lesson of `424c08ad`, pinned by a test.
+- **A whole-bar shift is not a move.** Every ScreenCaptureKit capture
+  lights the recording indicator and shifts the bar about 56 pt. The
+  confirm measures the item against the clock (or Control Center) read
+  in the same pass and needs a real reorder; when the anchor itself
+  moved, or Accessibility did not answer, only a drop that crossed the
+  icon is believed (or, when granted, the layout table read after it).
+- **Frozen while it lasts.** From the press until 1.2 s after the write
+  (through `shrinkHold` when the bar shifted), the icon keeps its right
+  edge, the hover reveal stands down (so the drop no longer pops the
+  Item Bar), and an inline reveal's rehide clock re-arms. A held mouse
+  button suppresses the hover reveal too.
+- **Never silent.** A drop that asked for something says what happened
+  for four seconds under the icon, in the Item Bar's own glass: macOS's
+  own item ("macOS keeps Wi-Fi, the clock and Control Center — hide them
+  in System Settings › Control Center"), an Apple extra that took a
+  cover, another display's bar, an app with several items ("Hid all of
+  iStat Menus's items"), or a drop macOS did not take.
+- **Limits.** Apps hide as a whole (a platform limit Bartender, Thaw and
+  Ice share). Only the main display's bar carries the icon. The start
+  of a run (the 2.5 s adoption grace) learns nothing.
+- **Show hidden items while ⌘-dragging** (`revealWhileDragging`, off):
+  Ice's reveal — the hidden run comes in beside the icon for the drag
+  and the ‹ becomes a thin divider. Off by default: MenuBarAgent may
+  drop a drag when the assertion changes under it.
+- **Drag a tile out of the Item Bar** onto the bar right of the icon to
+  show its app — the bar's own drag session, read where it ends.
+- **The icon's seat** (`mirrorSeat`, Advanced › Icon seat): beside the
+  first shown item (today) or on JR-Bar's own slot, with the real item
+  sized to the icon (rounded up to 8 pt, grown at once, shrunk only after
+  5 s) so "left of the icon" is the agent's own order.
+- **The layout table** (Advanced › Menu bar layout table): pick
+  `~/Library/Group Containers/com.apple.MenuBar/Library/Preferences/
+  com.apple.MenuBar.plist` once in an open panel and JR-Bar reads
+  `TrailingItemPreferredPositions` — read-only, watched, never written.
+  It orders the Item Bar and the layout editor, confirms drags without
+  Accessibility, and flags an app whose section and place disagree with
+  a one-click section fix (a pick, never a move). The file's shape is
+  unverified until a real grant; the parser takes the likely forms.
+- **The clock and Control Center** (`concealSystemItems`, off,
+  experimental): a ⌘-drag may hide them through the assertion's system
+  item list. Wi-Fi, the battery and sound always stay. It stays off
+  unless a live probe shows they conceal and come back cleanly.
+
+Also in this pass: **New menu bar items** (`newItems`: where macOS
+puts them and the ear asks, straight to Shown, or straight to Hidden),
+**Item Bar opens at** the icon or the pointer (`itemBarAt`), **Tuck
+away when you switch apps** (`RehideMode.focusChange`, Ice's smart
+rehide), keep-awake rule actions (keep awake for N minutes, until
+released, or let the Mac sleep — the Keep Awake card's own hold), and
+**Relaunch menu bar apps** under the spacing dial: items take a new
+spacing only as their apps relaunch, so a confirm lists the apps it will
+quit and reopen. It never runs on its own and never touches Apple's.
 
 ### Item management
 
@@ -164,11 +243,10 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
   never a stream, so no capture indicator (see docs/TOY-PARITY.md).
 - Items that would land under the notch auto-move to hidden ("beat the
   notch") using `ScreenBarGeometry.slotWidth`. **Built** (see docs/TOY-PARITY.md).
-- **Layout editor**: drag-to-arrange within a live snapshot of the bar.
-  **Built** as the explicit, cancellable arrange mode — and arrange is the
-  *only* place synthetic ⌘-drags may run, inside a mode the person entered
-  deliberately, because a posted drag moves the real cursor. Items that can't
-  be moved (Siri, clock) are marked and skipped (see docs/TOY-PARITY.md).
+- **Layout editor**: three rows (Shown, Hidden, Always) of the items' own
+  glyphs; dragging a tile to another row is a pick through the same write
+  the pickers make — never a move on the bar. With the layout table
+  granted, the rows follow macOS's own order. **Built.**
 - **Item search / Command bar**: ⌘⇧K or click on the JR-Bar item's menu —
   fuzzy search over every menu bar item (shown + hidden), Return triggers it.
 - **Spacing**: per-item padding adjustments via spacer status items where
@@ -299,7 +377,7 @@ likewise gone — same reason.
 | --- | --- | --- |
 | Hide/show items, sections, Item Bar (icon tiles) | nothing extra | full |
 | Live tiles in Item Bar | Screen Recording | app icons instead |
-| ⌘-drag arrange, click-through to real items, triggers on click | Accessibility | arrange + click disabled, search still opens item's app |
+| ⌘-drag across the icon, click-through to real items, triggers on click | Accessibility | drags and clicks go unheard, the pickers still work, search still opens item's app |
 | Wi-Fi network name | Location | shows strength glyph only |
 | Focus readout | daemon Focus sync (FDA) | Focus row hidden |
 | Hide Apple's Battery/Wi-Fi/etc. | nothing (user defaults) | — |
