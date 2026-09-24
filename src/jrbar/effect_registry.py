@@ -489,7 +489,7 @@ def _duration(*, minimum: float | None = None) -> EffectParameter:
     return _number(
         "duration_seconds",
         colors_module.DEFAULT_CYCLE_SPEED_SECONDS,
-        "Length of one complete motion cycle.",
+        "How long one full cycle takes.",
         colors_module.MIN_CYCLE_SPEED_SECONDS if minimum is None else minimum,
         colors_module.MAX_CYCLE_SPEED_SECONDS,
         unit="seconds",
@@ -534,7 +534,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
         _palette(
             "palette",
-            "Optional validated identity and state colors; empty derives both tones.",
+            "The two colours it moves between; leave it empty to take both from the session's colour.",
             maximum_items=2,
         ),
     ),
@@ -563,7 +563,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
         _palette(
             "palette",
-            "Optional bounded gradient endpoints; empty derives them from identity color.",
+            "The gradient's two end colours; leave it empty to take them from the session's colour.",
             maximum_items=2,
         ),
         _boolean("smooth_morph", True, "Morph smoothly when state colors change."),
@@ -602,7 +602,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     ),
     colors_module.MOTION_FLICKER: (
         _duration(minimum=0.5),
-        _integer("seed", 271, "Seed for deterministic luminance variation.", 0, 2_147_483_647),
+        _integer("seed", 271, "Picks one of many repeatable flicker patterns.", 0, 2_147_483_647),
         _number("luminance_floor", 0.35, "Lowest relative luminance.", 0.1, 0.8),
         _number("variation", 0.25, "Maximum deterministic luminance variation.", 0.0, 0.5),
     ),
@@ -625,7 +625,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     colors_module.MOTION_TWINKLE: (
         _duration(minimum=0.5),
         _number("density", 0.15, "Maximum fraction of LEDs sparkling at once.", 0.02, 0.3),
-        _integer("seed", 271, "Seed for deterministic sparkle placement.", 0, 2_147_483_647),
+        _integer("seed", 271, "Picks one of many repeatable sparkle patterns.", 0, 2_147_483_647),
         _integer("max_cluster", 1, "Largest allowed adjacent sparkle cluster.", 1, 2),
     ),
     colors_module.MOTION_DRIFT: (
@@ -653,11 +653,11 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         _duration(minimum=1.0),
         _palette(
             "palette",
-            "Optional bounded aurora palette; empty derives tones from identity color.",
+            "Up to four colours; leave it empty to take tones from the session's colour.",
             maximum_items=4,
         ),
-        _integer("wave_count", 2, "Number of slow layered waves.", 1, 4),
-        _integer("seed", 617, "Seed for deterministic wave phases.", 0, 2_147_483_647),
+        _integer("wave_count", 2, "How many slow waves drift across the strip.", 1, 4),
+        _integer("seed", 617, "Picks one of many repeatable wave patterns.", 0, 2_147_483_647),
     ),
     colors_module.MOTION_TIDE: (
         _duration(minimum=0.5),

@@ -103,12 +103,26 @@ public struct EffectParameter: Codable, Hashable, Sendable, Identifiable {
         unit = try c.decodeIfPresent(String.self, forKey: .unit)
     }
 
-    /// "Duration seconds" from `duration_seconds`.
+    /// The name a person reads: plain words for the ids that are jargon
+    /// (`duration_seconds` is "Cycle length", `seed` "Variation"), else
+    /// the id in sentence case — "Fill direction" from `fill_direction`.
+    /// The raw id stays one hover away, in the row's tooltip.
     public var title: String {
+        if let plain = Self.plainTitles[name] { return plain }
         let words = name.split(separator: "_").map(String.init)
         guard let first = words.first else { return name }
         return ([first.prefix(1).uppercased() + first.dropFirst()] + words.dropFirst()).joined(separator: " ")
     }
+
+    /// The parameters whose ids read as engineering: how long one cycle
+    /// takes, which of the repeatable patterns plays, how many waves, and
+    /// which colours.
+    static let plainTitles: [String: String] = [
+        "duration_seconds": "Cycle length",
+        "seed": "Variation",
+        "wave_count": "Waves",
+        "palette": "Colours",
+    ]
 
     /// The native control for this parameter.
     public var control: EffectParameterControl {

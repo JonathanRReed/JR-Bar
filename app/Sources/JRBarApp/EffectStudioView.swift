@@ -564,19 +564,54 @@ struct EffectParameterRow: View {
     let onChange: (JSONValue) -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(parameter.title)
-                Text(parameter.description).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        Group {
+            if Self.picksOnItsOwnLine(parameter.control) {
+                // A picker gets the row's full width under its words, so
+                // neither squeezes the other in a narrow inspector.
+                VStack(alignment: .leading, spacing: 8) {
+                    label
+                    control
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(alignment: .center, spacing: 14) {
+                    label.frame(maxWidth: .infinity, alignment: .leading)
+                    control
+                        .frame(minWidth: 180, maxWidth: 260, alignment: .trailing)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            control
-                .frame(minWidth: 180, maxWidth: 260, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(parameter.title)
+    }
+
+    /// The plain title and sentence; the raw id the daemon and packs use
+    /// is the tooltip, for whoever writes a pack by hand.
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(parameter.title)
+            if !parameter.description.isEmpty {
+                Text(parameter.description).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .help(parameter.name)
+    }
+
+    /// Menus and colour pickers sit one per row; sliders, switches and
+    /// number fields stay beside their words.
+    static func picksOnItsOwnLine(_ control: EffectParameterControl) -> Bool {
+        switch control {
+        case .menu, .paletteEditor, .colorWell: return true
+        case .toggle, .slider, .integerSlider, .stepper, .numberField: return false
+        }
+    }
+
+    /// "All at once" from `all_at_once`.
+    static func choiceTitle(_ choice: String) -> String {
+        let words = choice.replacingOccurrences(of: "_", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
     }
 
     private var unitSuffix: String {
@@ -628,11 +663,12 @@ struct EffectParameterRow: View {
                 .frame(width: 110)
         case .menu(let choices):
             Picker("", selection: Binding(get: { value.stringValue ?? choices.first ?? "" }, set: { onChange(.string($0)) })) {
-                ForEach(choices, id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ")).tag($0) }
+                ForEach(choices, id: \.self) { Text(Self.choiceTitle($0)).tag($0) }
             }
             .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize()
+            .help(value.stringValue ?? "")
         case .colorWell:
             HStack(spacing: 8) {
                 Text(value.stringValue ?? "").font(.caption.monospaced()).foregroundStyle(.tertiary)
@@ -665,7 +701,11 @@ struct PaletteEditor: View {
     var body: some View {
         HStack(spacing: 6) {
             if colors.isEmpty {
-                Text(allowEmpty ? "Derived from the colour" : "Empty").font(.caption).foregroundStyle(.tertiary)
+                Text(allowEmpty ? "None yet — tones come from the session's colour" : "None yet")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             ForEach(Array(colors.enumerated()), id: \.offset) { index, hex in
                 ColorPicker("", selection: Binding(

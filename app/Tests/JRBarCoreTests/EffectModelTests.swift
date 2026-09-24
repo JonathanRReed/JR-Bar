@@ -88,7 +88,7 @@ struct EffectModelTests {
         #expect(range == 0.3...10)
         #expect(step == 0.1)
         #expect(duration.unit == "seconds")
-        #expect(duration.title == "Duration seconds")
+        #expect(duration.title == "Cycle length", "plain words, not the id")
         #expect(duration.normalize(.number(99)) == .number(10))
         #expect(duration.normalize(.string("x")) == .number(2.2))
 
@@ -108,6 +108,10 @@ struct EffectModelTests {
 
         let seed = try #require(catalog.effect("flicker")?.parameter(named: "seed"))
         #expect(seed.control == .stepper(range: 0...2_147_483_647))
+        #expect(seed.title == "Variation")
+        #expect(catalog.effect("aurora")?.parameter(named: "wave_count")?.title == "Waves")
+        #expect(catalog.effect("aurora")?.parameter(named: "palette")?.title == "Colours")
+        #expect(spacing.title == "Spacing", "an id that already reads plainly keeps its words")
 
         let toggle = try #require(catalog.effect("gradient")?.parameter(named: "smooth_morph"))
         #expect(toggle.control == .toggle)
