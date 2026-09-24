@@ -11,6 +11,7 @@ from .device_writer import (
     DEFAULT_FILE_NAME,
     POWER_UP_FILE_NAME,
     DeviceWriteError,
+    normalize_led_text,
     resolve_target_path,
     write_led_program,
 )
@@ -155,7 +156,19 @@ class LedStatusWrite:
     #: another device -- a linked Dot extending the strip -- must start from
     #: this, never from ``program``: transferring an already-transferred
     #: program decodes it twice and drives the second device nearly black.
+    #: Like ``program`` it is what RUNS: a reassert's trimmed variant, not
+    #: the full text it was trimmed from.
     nominal_program: str = ""
+    #: The monotonic moment the device took the bytes (the write's fsync
+    #: return): the program's clock starts here. ``None`` for a write that
+    #: did not reach a device (dry runs, unchanged, errors, test doubles).
+    applied_at: float | None = None
+    #: A linked Dot's timing, as baked in at the write boundary
+    #: (``linked_sync.TimedProgram``), when there was any.
+    timed: object | None = None
+    #: The exact bytes the device holds after this write (post gate and
+    #: timing), for a later fresh read to be compared against.
+    device_bytes: str = ""
 
     @property
     def label(self) -> str:
@@ -1347,11 +1360,58 @@ def _steady_state_variant(program: str) -> str:
     return program
 
 
-def apply_brightness(program: str, brightness: float = 255) -> str:
-    value = normalize_brightness(brightness)
+_BRIGHTNESS_LINE_RE = re.compile(r"(?im)^([ \t]*)brightness[ \t]+(\d{1,3})[ \t]*$")
+
+
+def fold_brightness(program: str, cap: float = 255) -> str:
+    """A device's brightness cap applied to a program, by one rule.
+
+    Every authored ``brightness M`` becomes ``round(M * N / 255)``, and a
+    program with none gets ``brightness N`` in front -- only when N is below
+    full scale. The strip used to stack ``brightness N`` in front of the
+    author's own line, and the firmware obeys the LAST one, so a custom
+    ``brightness 255`` escaped "Maximum brightness" entirely; the Dot
+    deleted authored lines instead, so one program read differently on the
+    two devices. Ported from upstream #38, identically for both. Nominal
+    codes are close to a power law of light, so the product of two codes is
+    the product of their light to within a few codes.
+    """
+    value = normalize_brightness(cap)
+    if _BRIGHTNESS_LINE_RE.search(program or ""):
+        return _BRIGHTNESS_LINE_RE.sub(
+            lambda match: (
+                f"{match.group(1)}brightness "
+                f"{int(round(min(255, int(match.group(2))) * value / 255.0))}"
+            ),
+            program,
+        )
     if value >= 255:
         return program
     return f"brightness {value}\n{program}"
+
+
+def scale_program_brightness(program: str, fraction: float) -> str:
+    """Every brightness line scaled by ``fraction`` of LIGHT
+    (``scale_nominal_brightness``), or one in front when there is none:
+    ``linked_dot_scale`` applied to a program that already carries the
+    strip's brightness policy."""
+    fraction = max(0.0, min(1.0, float(fraction)))
+    if fraction >= 1.0:
+        return program
+    if _BRIGHTNESS_LINE_RE.search(program or ""):
+        return _BRIGHTNESS_LINE_RE.sub(
+            lambda match: (
+                f"{match.group(1)}brightness "
+                f"{scale_nominal_brightness(int(match.group(2)), fraction)}"
+            ),
+            program,
+        )
+    return f"brightness {scale_nominal_brightness(255, fraction)}\n{program}"
+
+
+def apply_brightness(program: str, brightness: float = 255) -> str:
+    """The device's brightness cap on a program (``fold_brightness``)."""
+    return fold_brightness(program, brightness)
 
 
 class AgentLedController:
@@ -1389,6 +1449,13 @@ class AgentLedController:
         self.last_device_uptime_ms: float | None = None
         self.last_uptime_check_monotonic = 0.0
         self.pending_reboot_repaint = False
+        # The exact bytes the device holds after our last write, and the
+        # foreign-write watch that compares a fresh read against them at
+        # the reassert cadence (never faster).
+        self.last_device_bytes: str | None = None
+        self.foreign_writes: list[float] = []
+        self.foreign_write_paused = False
+        self.foreign_status_reader = None
 
     def reset(self) -> None:
         self.last_state = None
@@ -1622,10 +1689,19 @@ class AgentLedController:
         state: LedDisplayState,
         *,
         dedupe_token: object | None = None,
+        force: bool = False,
+        trim_on_reassert: bool = True,
+        timing: object | None = None,
     ) -> LedStatusWrite:
         """Writes a pre-rendered program through the same gain/dedup/retry
         path sync_snapshot uses -- for displays that aren't derived from
-        agent statuses at all (e.g. the low-battery reminder)."""
+        agent statuses at all (e.g. the low-battery reminder).
+
+        A linked Dot passes ``force`` when the strip just restarted (its
+        program must restart with it whatever the deduper thinks),
+        ``trim_on_reassert=False`` because its program is already derived
+        from the strip's running one, and ``timing`` for the write boundary
+        to rotate and retime it (``linked_sync.DeviceTiming``)."""
         nominal = program
         program = self._for_strip(program)
         return self._write_deduped_program(
@@ -1633,6 +1709,9 @@ class AgentLedController:
             program,
             dedupe_token=dedupe_token,
             nominal=nominal,
+            force=force,
+            trim_on_reassert=trim_on_reassert,
+            timing=timing,
         )
 
     def sync_transferred_program(
@@ -1661,54 +1740,96 @@ class AgentLedController:
 
     UPTIME_CHECK_SECONDS = 60.0
 
+    def _status_root(self) -> Path | None:
+        """The device's volume root. Production controllers carry the
+        LEDS.LED FILE path, not the volume root -- appending STATUS.TXT to
+        that yields <volume>/LEDS.LED/STATUS.TXT and a silent failure:
+        reboot detection had never fired in the shipped app (audit,
+        2026-08-26)."""
+        if self.device_path is None:
+            return None
+        from .device_writer import KNOWN_LED_FILE_NAMES
+
+        root = Path(self.device_path)
+        if root.name.upper() in KNOWN_LED_FILE_NAMES:
+            root = root.parent
+        return root
+
     def _device_rebooted_since_last_write(self, now: float) -> bool:
-        """True when the firmware's uptime went BACKWARDS -- the strip
+        """True when the firmware's clock went BACKWARDS -- the device
         rebooted (wake-time USB re-enumeration, replug) and whatever it
         is displaying no longer corresponds to what this writer believes
         it last delivered. Live incident 2026-08-20: the device rebooted
         on lid-open mid-flourish and looped the lid greens for two hours
         while every dedupe-skipped tick assumed the steady program was
-        still showing. Read at most once a minute; unreadable STATUS.TXT
-        is not evidence of a reboot."""
+        still showing.
+
+        The read is FRESH (``device_clock.read_fresh_status``): the host
+        caches STATUS.TXT, and a plain read returned the same ``uptime_ms``
+        for ten minutes and more, so a reboot could hide behind the cache.
+        The Pro reports ``uptime_ms``; the Dot has no such field, only
+        ``ticks``, which counts the same way. Read at most once a minute,
+        off the main thread, never longer than half a second; an unreadable
+        STATUS.TXT is not evidence of a reboot."""
         if self.device_path is None or self.dry_run:
             return False
         if now - self.last_uptime_check_monotonic < self.UPTIME_CHECK_SECONDS:
             return False
         self.last_uptime_check_monotonic = now
-        try:
-            root = Path(self.device_path)
-            # Production controllers carry the LEDS.LED FILE path, not
-            # the volume root -- appending STATUS.TXT to that yields
-            # <volume>/LEDS.LED/STATUS.TXT, NotADirectoryError, and a
-            # silent False: reboot detection had never fired in the
-            # shipped app (audit, 2026-08-26). Mirror the keepalive
-            # helper's file-vs-directory handling.
-            from .device_writer import KNOWN_LED_FILE_NAMES
-
-            if root.name.upper() in KNOWN_LED_FILE_NAMES:
-                root = root.parent
-            status_path = root / "STATUS.TXT"
-            text = status_path.read_text(errors="replace")[:4096]
-        except OSError:
+        root = self._status_root()
+        if root is None:
             return False
-        uptime_ms: float | None = None
-        for line in text.splitlines():
-            if line.startswith("uptime_ms"):
-                parts = line.split()
-                if len(parts) == 2:
-                    try:
-                        uptime_ms = float(parts[1])
-                    except ValueError:
-                        uptime_ms = None
-                break
-        if uptime_ms is None:
+        from .device_clock import read_fresh_status
+
+        status = read_fresh_status(root)
+        if status is None or status.clock_ms is None:
             return False
         previous = self.last_device_uptime_ms
-        self.last_device_uptime_ms = uptime_ms
-        if previous is not None and uptime_ms < previous:
+        self.last_device_uptime_ms = status.clock_ms
+        if previous is not None and status.clock_ms < previous:
             self.pending_reboot_repaint = True
             return True
         return False
+
+    #: Two foreign writes inside this window stop the reassert from
+    #: fighting whoever else is writing the device.
+    FOREIGN_WRITE_WINDOW_SECONDS = 600.0
+
+    def _foreign_write_seen(self, now: float) -> bool | None:
+        """A fresh read of LEDS.LED against the bytes we last wrote there.
+
+        ``True``: someone else wrote the device (upstream's app, a shell
+        ``echo``, a second JR-Bar); ``False``: our program is still there;
+        ``None``: nothing to compare or the read failed. Runs only at the
+        reassert cadence, never faster (upstream b675ff5 and gourneau's
+        contention badge are the prior art)."""
+        expected = self.last_device_bytes
+        if not expected or self.device_path is None or self.dry_run:
+            return None
+        reader = self.foreign_status_reader
+        if reader is None:
+            from .device_clock import read_fresh_file
+
+            reader = read_fresh_file
+        target = Path(self.device_path)
+        if target.name.upper() not in ("LEDS.LED", "INIT.LED"):
+            target = target / self.file_name
+        try:
+            text = reader(target)
+        except Exception:
+            return None
+        if text is None:
+            return None
+        seen = normalize_led_text(text).strip()
+        mine = normalize_led_text(expected).strip()
+        if seen == mine:
+            return False
+        self.foreign_writes = [
+            at for at in self.foreign_writes if now - at < self.FOREIGN_WRITE_WINDOW_SECONDS
+        ]
+        self.foreign_writes.append(now)
+        self.foreign_write_paused = len(self.foreign_writes) >= 2
+        return True
 
     def _write_deduped_program(
         self,
@@ -1717,6 +1838,9 @@ class AgentLedController:
         *,
         dedupe_token: object | None = None,
         nominal: str | None = None,
+        force: bool = False,
+        trim_on_reassert: bool = True,
+        timing: object | None = None,
     ) -> LedStatusWrite:
         now = time.monotonic()
         nominal = program if nominal is None else nominal
@@ -1738,13 +1862,15 @@ class AgentLedController:
             self.last_attempt_monotonic = 0.0
 
         if (
-            identity == self.last_program_identity
+            not force
+            and identity == self.last_program_identity
             and self.last_error is None
             and now - self.last_attempt_monotonic < self.reassert_after_seconds
         ):
             return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         if (
-            identity == self.last_program_identity
+            not force
+            and identity == self.last_program_identity
             and self.last_error is not None
             and now - self.last_attempt_monotonic < self.error_retry_seconds
         ):
@@ -1756,11 +1882,30 @@ class AgentLedController:
                 error=self.last_error,
             )
 
-        self.last_attempt_monotonic = now
-        reassert = identity == self.last_program_identity and self.last_error is None
-        to_write = (
-            _steady_state_variant(program) if reassert else program
+        reassert = (
+            not force
+            and identity == self.last_program_identity
+            and self.last_error is None
         )
+        if identity != self.last_program_identity:
+            # Our own new program: whatever another writer did, the person's
+            # state changed and has to show.
+            self.foreign_write_paused = False
+        if reassert:
+            foreign = self._foreign_write_seen(now)
+            if foreign and self.foreign_write_paused:
+                # A second writer twice inside ten minutes: stop fighting
+                # it (and wearing the flash); the device card says so.
+                self.last_attempt_monotonic = now
+                return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
+        self.last_attempt_monotonic = now
+        trim = reassert and trim_on_reassert
+        to_write = _steady_state_variant(program) if trim else program
+        running_nominal = _steady_state_variant(nominal) if trim else nominal
+        extra = {} if timing is None else {"timing": timing}
+        from .device_writer import take_receipt
+
+        take_receipt()
         try:
             written_target = write_led_program(
                 to_write,
@@ -1768,6 +1913,7 @@ class AgentLedController:
                 file_name=self.file_name,
                 dry_run=self.dry_run,
                 preserve_existing_inode=not self.dry_run,
+                **extra,
             )
         except (DeviceWriteError, OSError) as exc:
             self.last_state = state
@@ -1781,24 +1927,28 @@ class AgentLedController:
                 changed=False,
                 error=self.last_error,
             )
+        receipt = take_receipt()
 
         self.last_state = state
         # Report what is RUNNING, not what was asked for: on a reassert the
         # device plays the steady-state variant (the approach frame is
         # dropped), so the strip's loop is that much shorter. Publishing the
-        # full program would have a linked Screen Bar looping a span the
-        # strip is not running, drifting further off phase every lap.
+        # full program would have a linked Screen Bar -- and a linked Dot --
+        # looping a span the strip is not running, drifting further off
+        # phase every lap.
         self.last_program = to_write
-        self.last_nominal_program = (
-            _steady_state_variant(nominal) if reassert else nominal
-        )
+        self.last_nominal_program = running_nominal
         self.last_program_identity = identity
         self.last_error = None
         self.last_target = written_target
+        self.last_device_bytes = receipt.program if receipt is not None else to_write
         return LedStatusWrite(
             state=state,
             target=written_target,
-            program=program,
+            program=to_write,
             changed=True,
-            nominal_program=nominal,
+            nominal_program=running_nominal,
+            applied_at=receipt.applied_at if receipt is not None else None,
+            timed=receipt.timed if receipt is not None else None,
+            device_bytes=self.last_device_bytes,
         )

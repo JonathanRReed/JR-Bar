@@ -3,12 +3,62 @@
 from __future__ import annotations
 
 import sys as _sys
+import threading as _threading
 import time as _time
+from collections import deque as _deque
+from dataclasses import dataclass as _dataclass
 from pathlib import Path
+from statistics import median as _median
 
 from . import _device_writer_legacy as _legacy
 
 _ORIGINAL_WRITE_LED_PROGRAM = _legacy.write_led_program
+
+#: Until a device has been written a few times, the gap between preparing a
+#: program and the device taking it is assumed to be this long.
+DEFAULT_APPLY_LATENCY_MS = 20.0
+
+
+@_dataclass(frozen=True)
+class WriteReceipt:
+    """What one device write actually did, for the caller on the same thread.
+
+    ``applied_at`` is the monotonic fsync return (the device's parse, as
+    near as the host can see it); ``prepared_at`` the moment the program
+    was final; ``program`` the exact bytes; ``timed`` the linked timing
+    baked in (``linked_sync.TimedProgram``), when there was any."""
+
+    target: Path
+    prepared_at: float
+    applied_at: float
+    program: str
+    timed: object | None = None
+
+
+_RECEIPTS = _threading.local()
+_LATENCIES: dict[str, _deque] = {}
+_LATENCY_LOCK = _threading.Lock()
+
+
+def take_receipt() -> WriteReceipt | None:
+    """This thread's last successful device write, once."""
+    receipt = getattr(_RECEIPTS, "last", None)
+    _RECEIPTS.last = None
+    return receipt
+
+
+def apply_latency_ms(target: Path) -> float:
+    """The median prepare-to-apply gap of this device's recent writes."""
+    with _LATENCY_LOCK:
+        samples = list(_LATENCIES.get(str(Path(target).parent), ()))
+    return float(_median(samples)) if samples else DEFAULT_APPLY_LATENCY_MS
+
+
+def _note_latency(target: Path, milliseconds: float) -> None:
+    with _LATENCY_LOCK:
+        _LATENCIES.setdefault(str(Path(target).parent), _deque(maxlen=9)).append(
+            max(0.0, float(milliseconds))
+        )
 
 
 def _led_count_for_target(target: Path) -> int:
@@ -59,7 +109,16 @@ def write_led_program(
     file_name: str = _legacy.DEFAULT_FILE_NAME,
     dry_run: bool = False,
     preserve_existing_inode: bool = False,
+    timing=None,
 ) -> Path:
+    """Gate, time, validate and write one program to one device.
+
+    ``timing`` (a ``linked_sync.DeviceTiming``) is for a linked Dot: after
+    the safety gate has judged the program in real milliseconds, it is
+    rotated to the strip's phase and retimed for the Dot's clock, and the
+    firmware parser still checks the result. The scaled text is never
+    judged again -- the gate would clamp a 250 ms phase written as 243
+    straight back to 250 and break the loop."""
     normalized = _legacy.normalize_led_text(text)
     _legacy.validate_led_text(normalized)
     target = _legacy.resolve_target_path(
@@ -73,6 +132,7 @@ def write_led_program(
             file_name=file_name,
             dry_run=dry_run,
             preserve_existing_inode=preserve_existing_inode,
+            timing=timing,
         )
     except _legacy.DeviceWriteError as exc:
         if not dry_run:
@@ -108,6 +168,7 @@ def _checked_write(
     file_name: str,
     dry_run: bool,
     preserve_existing_inode: bool,
+    timing=None,
 ) -> Path:
     from .firmware_validation import (
         FirmwareValidationError,
@@ -137,6 +198,20 @@ def _checked_write(
             "LED program failed the presentation safety gate."
         )
     final_program = compiled.program
+    timed = None
+    prepared = _time.monotonic()
+    if timing is not None:
+        from .linked_sync import apply_device_timing
+
+        latency = getattr(timing, "latency_ms", None)
+        timed = apply_device_timing(
+            final_program,
+            timing,
+            led_count=led_count,
+            now=prepared,
+            latency_ms=apply_latency_ms(target) if latency is None else float(latency),
+        )
+        final_program = timed.program
     _legacy.validate_led_text(final_program)
     if not dry_run:
         try:
@@ -148,6 +223,7 @@ def _checked_write(
         except FirmwareValidationError as exc:
             raise _legacy.DeviceWriteError(str(exc)) from exc
     started = _time.monotonic()
+    _legacy.take_applied_at()
     written = _ORIGINAL_WRITE_LED_PROGRAM(
         final_program,
         device_path=target,
@@ -156,7 +232,11 @@ def _checked_write(
         preserve_existing_inode=preserve_existing_inode,
     )
     if not dry_run:
-        _note_health(target, seconds=_time.monotonic() - started, transformed=bool(compiled.reasons))
+        finished = _time.monotonic()
+        applied = _legacy.take_applied_at() or finished
+        _note_latency(target, (applied - prepared) * 1000.0)
+        _note_health(target, seconds=finished - started, transformed=bool(compiled.reasons))
+        _RECEIPTS.last = WriteReceipt(target, prepared, applied, final_program, timed)
     return written
 
 
