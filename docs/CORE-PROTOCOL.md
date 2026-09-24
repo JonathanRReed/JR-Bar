@@ -1513,7 +1513,7 @@ matches the Mac's to 0.02%). So:
 | `linked_dot_clock_correction` | bool | `true` | Retime the Dot for its clock and close the loop. Off, every Dot write still starts on the strip's beat but drifts between writes. |
 | `linked_dot_phase_trim_ms` | number, -250..250 | `0` | A constant nudge of the Dot against the strip; positive runs it ahead. |
 | `linked_sync_tolerance_ms` | number, 20..200 | `40` | How far the Dot may drift before a re-anchor. |
-| `dot_extend_style` | `"mirror"` \| `"continue"` | `"mirror"` | Fold the strip into two bands, or let light run off the end of the strip into the Dot (travelling light only; anything else mirrors). |
+| `dot_extend_style` | `"continue"` \| `"mirror"` | `"continue"` | Let light run off the end of the strip into the Dot (travelling light only; anything else mirrors), or fold the strip into two bands. |
 | `dot_extend_side` | `"after_last"` \| `"before_first"` | `"after_last"` | Continue only: which end of the strip the Dot carries on from. The Dot's own `devices[].led_direction` (default `forward`) flips its two LEDs. |
 | `linked_follow_brightness` | bool | `true` | A linked Dot takes the strip's brightness lines times `linked_dot_scale` (in light), capped by its own manual brightness, and ignores its own auto-brightness. |
 

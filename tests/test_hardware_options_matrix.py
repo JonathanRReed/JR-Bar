@@ -331,7 +331,7 @@ def check_follow_brightness(rig: Rig) -> None:
 def check_extend_style(rig: Rig) -> None:
     rig.set("studio_program", _comet())
     rig.set(f"{PRO}.led_display", "studio")
-    _changes(rig, "dot_extend_style", "continue", field="dot")
+    _changes(rig, "dot_extend_style", "mirror", field="dot", before="continue")
 
 
 def check_extend_side(rig: Rig) -> None:
@@ -449,6 +449,50 @@ def test_every_devices_page_setting_is_in_the_matrix() -> None:
 @pytest.mark.parametrize("path", sorted(MATRIX))
 def test_the_option_does_something(rig: Rig, path: str) -> None:
     MATRIX[path](rig)
+
+
+# --- the linked settings ---------------------------------------------------------
+
+
+def test_the_linked_settings_decode_tolerantly_and_round_trip__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: missing_keys_take_the_defaults_continue_first
+    """A file from before these keys existed gets the defaults: the Dot
+    continues the strip (Jonathan's answer, "light flows Pro -> Dot"),
+    past LED 7, clock-corrected, 40 ms, no trim, following the strip's
+    brightness."""
+    settings = settings_from_document({}, scratch_dir=tmp_path)
+    assert settings.dot_extend_style == "continue"
+    assert settings.dot_extend_side == "after_last"
+    assert settings.linked_dot_clock_correction is True
+    assert settings.linked_sync_tolerance_ms == 40.0
+    assert settings.linked_dot_phase_trim_ms == 0.0
+    assert settings.linked_follow_brightness is True
+
+    # --- scenario: nonsense_decodes_to_defaults_and_numbers_clamp
+    wrong = {
+        "dot_extend_style": "sideways",
+        "dot_extend_side": 7,
+        "linked_dot_clock_correction": "maybe",
+        "linked_sync_tolerance_ms": 5000,
+        "linked_dot_phase_trim_ms": -900,
+        "linked_follow_brightness": None,
+    }
+    settings = settings_from_document(wrong, scratch_dir=tmp_path)
+    assert settings.dot_extend_style == "continue" and settings.dot_extend_side == "after_last"
+    assert settings.linked_dot_clock_correction is True and settings.linked_follow_brightness is True
+    assert settings.linked_sync_tolerance_ms == 200.0 and settings.linked_dot_phase_trim_ms == -250.0
+    chosen = {
+        "dot_extend_style": "mirror",
+        "dot_extend_side": "before_first",
+        "linked_dot_clock_correction": False,
+        "linked_sync_tolerance_ms": 65,
+        "linked_dot_phase_trim_ms": 35,
+        "linked_follow_brightness": False,
+    }
+    written = settings_from_document(chosen, scratch_dir=tmp_path).to_dict()
+    assert {key: written[key] for key in chosen} == {**chosen, "linked_sync_tolerance_ms": 65.0, "linked_dot_phase_trim_ms": 35.0}
+    again = settings_from_document(written, scratch_dir=tmp_path).to_dict()
+    assert {key: again[key] for key in chosen} == {key: written[key] for key in chosen}
 
 
 # --- the eject guard ----------------------------------------------------------

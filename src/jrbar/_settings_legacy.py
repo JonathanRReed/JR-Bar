@@ -671,10 +671,10 @@ class AgentMonitorSettings:
     # How far the Dot may drift, in ms [20, 200], before a Dot-only
     # re-anchor (at most one every 20 s). Higher means fewer Dot writes.
     linked_sync_tolerance_ms: float = 40.0
-    # "mirror" folds the strip's eight LEDs into the Dot's two; "continue"
-    # lets light run off the end of the strip into the Dot (travelling
-    # effects only; anything else mirrors).
-    dot_extend_style: str = "mirror"
+    # "continue" (the default) lets light run off the end of the strip into
+    # the Dot (travelling effects only; anything else mirrors); "mirror"
+    # folds the strip's eight LEDs into the Dot's two.
+    dot_extend_style: str = "continue"
     # Continue only: the Dot sits past LED 7 ("after_last") or before
     # LED 0 ("before_first").
     dot_extend_side: str = "after_last"

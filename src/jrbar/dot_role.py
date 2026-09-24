@@ -885,10 +885,12 @@ def shift_program_phase(
 
 
 #: How a linked ``extend`` Dot is laid out against the strip.
-#: ``mirror`` folds the strip's eight LEDs into two bands; ``continue`` has
-#: the light run off the end of the strip into the Dot.
-DOT_EXTEND_STYLES: Final = ("mirror", "continue")
-DEFAULT_DOT_EXTEND_STYLE: Final = "mirror"
+#: ``continue`` (the default: "light flows Pro -> Dot", Jonathan,
+#: 2026-09-24) has the light run off the end of the strip into the Dot;
+#: ``mirror`` folds the strip's eight LEDs into two bands, and is also what
+#: ``continue`` shows for light that does not travel.
+DOT_EXTEND_STYLES: Final = ("continue", "mirror")
+DEFAULT_DOT_EXTEND_STYLE: Final = "continue"
 #: Where the Dot sits for ``continue``: past the strip's last LED, or
 #: before its first.
 DOT_EXTEND_SIDES: Final = ("after_last", "before_first")

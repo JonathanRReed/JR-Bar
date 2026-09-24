@@ -4811,7 +4811,7 @@ def build_headless_controller_class() -> type:
                 brightness=brightness,
                 extend_light_scale=extend_scale,
                 finalize=finalize,
-                extend_style=str(getattr(self.settings, "dot_extend_style", "mirror")),
+                extend_style=str(getattr(self.settings, "dot_extend_style", "continue")),
                 extend_side=str(getattr(self.settings, "dot_extend_side", "after_last")),
                 led_direction=led_direction,
                 include_completions=bool(
@@ -7163,7 +7163,7 @@ def build_headless_controller_class() -> type:
                 "role": dot_role,
                 "error": None,
                 **timing,
-                "style": str(getattr(self.settings, "dot_extend_style", "mirror")),
+                "style": str(getattr(self.settings, "dot_extend_style", "continue")),
                 "rung": plan,
             }
 

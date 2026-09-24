@@ -1086,7 +1086,7 @@ def default_settings_document() -> dict:
         "linked_dot_clock_correction": True,
         "linked_dot_phase_trim_ms": 0.0,
         "linked_sync_tolerance_ms": 40.0,
-        "dot_extend_style": "mirror",
+        "dot_extend_style": "continue",
         "dot_extend_side": "after_last",
         "linked_follow_brightness": True,
         "menu_bar_icon_style": "meters",
@@ -1966,7 +1966,7 @@ class World:
                     "sync_writes_hour": 2,
                     "rotation": "exact",
                     "check_until": self.sync_check_until if self.sync_check_until > time.time() else None,
-                    "style": self.document.get("dot_extend_style", "mirror"),
+                    "style": self.document.get("dot_extend_style", "continue"),
                     "rung": "brightest",
                 })
         surfaces = {
