@@ -65,12 +65,20 @@ struct UtilitySurfacesRenderProofTests {
             ("dock-music", Fixtures.musicContent()),
             ("dock-calendar", Fixtures.calendarContent()),
             ("dock-not-running", Fixtures.notRunningContent()),
+            ("dock-large", Fixtures.terminalContent(large: true)),
         ]
         for (name, content) in shots {
             for dark in [true, false] {
                 let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
-                try Self.write(view, glassRadius: DockPreviewPanel.cornerRadius, name: name, dark: dark)
+                try Self.write(view, glassRadius: DockPreviewPanel.cornerRadius, name: name, dark: dark,
+                               canvas: CGSize(width: 900, height: 460))
             }
+        }
+        let toast = DockToastPanel.Model()
+        toast.text = "Claude is working here — ⌘-right-click again to quit"
+        for dark in [true, false] {
+            try Self.write(DockToastView(model: toast), glassRadius: 12, name: "dock-toast", dark: dark,
+                           canvas: CGSize(width: 520, height: 120))
         }
     }
 
@@ -83,6 +91,7 @@ struct UtilitySurfacesRenderProofTests {
             ("switcher-latched", Fixtures.switcherModel(stills: false, latched: true)),
             ("switcher-armed", Fixtures.switcherModel(stills: true, armed: true)),
             ("switcher-hints", Fixtures.switcherModel(stills: true, hints: true)),
+            ("switcher-nomatch", Fixtures.switcherModel(stills: true, query: "zzz")),
         ]
         for (name, model) in shots {
             for dark in [true, false] {
@@ -299,8 +308,9 @@ private enum Fixtures {
                           frame: nil, thumbnail: still, element: nil)
     }
 
-    static func terminalContent() -> DockPreviewContent {
+    static func terminalContent(large: Bool = false) -> DockPreviewContent {
         let content = DockPreviewContent()
+        content.largeCards = large
         content.appName = "Ghostty"
         content.icon = terminalIcon
         content.bundleID = "com.mitchellh.ghostty"

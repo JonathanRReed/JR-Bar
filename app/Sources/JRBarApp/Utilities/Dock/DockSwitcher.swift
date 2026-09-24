@@ -2163,21 +2163,14 @@ struct DockSwitcherView: View {
                         .transition(.opacity)
                         .animation(.easeOut(duration: 0.12), value: item.id)
                 }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 4) {
-                        ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
-                            card(item, selected: index == model.selection)
-                                .id(item.id)
-                                .onTapGesture { model.onPick(index) }
-                                .onHover { inside in
-                                    if inside { model.onHover(index) }
-                                }
-                        }
-                    }
-                    .padding(12)
+                if !model.items.isEmpty {
+                    strip
                 }
                 if !model.query.isEmpty || model.latched {
+                    // A query that filtered every card away keeps only
+                    // its field, with the strip's air above it.
                     searchRow
+                        .padding(.top, model.items.isEmpty ? 14 : 0)
                         .padding(.bottom, 14)
                         .padding(.horizontal, 14)
                 }
@@ -2199,6 +2192,34 @@ struct DockSwitcherView: View {
                 withAnimation(.easeOut(duration: 0.08)) { proxy.scrollTo(item.id) }
             }
         }
+    }
+
+    /// The cards, one per window: centred under the pane while the row
+    /// fits — a short filtered row left-anchored reads as a lopsided
+    /// panel — and scrolling once it runs past the screen.
+    private var strip: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            ViewThatFits(in: .horizontal) {
+                cards
+                ScrollView(.horizontal, showsIndicators: false) { cards }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var cards: some View {
+        HStack(alignment: .top, spacing: 4) {
+            ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
+                card(item, selected: index == model.selection)
+                    .id(item.id)
+                    .onTapGesture { model.onPick(index) }
+                    .onHover { inside in
+                        if inside { model.onHover(index) }
+                    }
+            }
+        }
+        .padding(12)
     }
 
     // MARK: The pane
