@@ -538,6 +538,9 @@ def test_the_eject_guard_reports_what_launchd_really_has__and_2_more(tmp_path: P
     assert calls == [{"scope": "user", "volume_uuid": "B293BB91-193C-3A17-88DC-35CD9BA19B2F", "start": True}]
     with pytest.raises(guard.SdEjectGuardInstallError):
         guard.protect_mounted_sidepulse(tmp_path, installer=installer, uuid_reader=lambda volume: None)
+    calls.clear()
+    guard.release_sidepulse(installer=installer)
+    assert calls == [{"scope": "user", "volume_uuid": None, "start": True}]
 
     # --- scenario: a_plist_with_the_uuid_protects
     paths.plist_path.write_bytes(
@@ -629,7 +632,7 @@ def test_a_check_sync_the_strip_refuses_holds_nothing(rig: Rig) -> None:
     assert controller._core_linked.check_until is None
 
 
-def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_1_more(
+def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_2_more(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # --- scenario: status_names_the_sidepulse_plugged_in_now
@@ -659,6 +662,25 @@ def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_1_more(
     assert missing.value.code == "not_found"
     assert installs == []
     assert eject_guard_commands.status(rig.controller, {})["mounted_volume_uuid"] is None
+
+    # --- scenario: stop_protecting_puts_the_guard_back_to_nothing
+    """Protected, the card refuses Finder's Eject; "Stop protecting"
+    reinstalls the guard with no volume, reloaded so the running guard
+    stops. With nothing protected there is nothing to stop."""
+    releases: list[bool] = []
+    monkeypatch.setattr(sd_eject_guard_launch, "release_sidepulse", lambda: releases.append(True))
+    with pytest.raises(CommandError) as idle:
+        eject_guard_commands.release(rig.controller, {})
+    assert idle.value.code == "not_ready" and releases == []
+    monkeypatch.setattr(
+        sd_eject_guard_launch,
+        "sd_eject_guard_status",
+        lambda: sd_eject_guard_launch.SdEjectGuardStatus(
+            installed=True, volume_uuid="B293BB91-193C-3A17-88DC-35CD9BA19B2F", keep_alive=True, loaded=True
+        ),
+    )
+    eject_guard_commands.release(rig.controller, {})
+    assert releases == [True]
 
 
 # --- the timing readout ------------------------------------------------------------

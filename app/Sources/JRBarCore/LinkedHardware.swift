@@ -51,11 +51,16 @@ public struct EjectGuardReading: Equatable, Sendable {
     /// Whether "Protect this SidePulse" has something to do.
     public var canProtect: Bool { mountedVolumeUUID != nil && !protectsMounted }
 
+    /// Whether the card offers "Stop protecting" instead: the guard holds
+    /// the SidePulse plugged in now, so Finder's Eject is refused until it
+    /// is released.
+    public var canRelease: Bool { protectsMounted }
+
     /// One line for the card: what is protected, never just "installed".
     public var words: String {
         if protectsMounted {
             return running
-                ? "Protecting this SidePulse: nothing ejects it in software, even a wake while locked. Pull it out to remove it."
+                ? "Protecting this SidePulse: nothing ejects it in software, even a wake while locked. Stop protecting to eject it in Finder."
                 : "Set up for this SidePulse; launchd starts it when the card mounts."
         }
         if protects {

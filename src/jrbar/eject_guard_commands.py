@@ -4,7 +4,9 @@
 next to the SidePulse that is mounted now, so the page can say "installed,
 never started" instead of "installed". ``protect_sidepulse`` reinstalls the
 guard for the mounted SidePulse's volume, and runs only when the person
-clicks "Protect this SidePulse": nothing in the daemon calls it on its own.
+clicks "Protect this SidePulse"; ``release_sidepulse`` puts it back to
+protecting nothing, only when they click "Stop protecting". Nothing in the
+daemon calls either on its own.
 """
 
 from __future__ import annotations
@@ -63,4 +65,20 @@ def protect(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     return status(runtime, args)
 
 
-__all__ = ["protect", "status"]
+def release(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
+    from .core_server import CommandError
+    from .sd_eject_guard_launch import SdEjectGuardInstallError, release_sidepulse, sd_eject_guard_status
+
+    if not sd_eject_guard_status().protects:
+        raise CommandError("not_ready", "The eject guard is not protecting a SidePulse.")
+    try:
+        release_sidepulse()
+    except SdEjectGuardInstallError as error:
+        raise CommandError("refused", str(error)) from error
+    except Exception as error:
+        raise CommandError("refused", f"could not stop the eject guard: {error}") from error
+    runtime._core_legacy().log_status_bar("eject guard: stopped protecting")
+    return status(runtime, args)
+
+
+__all__ = ["protect", "release", "status"]

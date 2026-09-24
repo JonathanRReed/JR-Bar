@@ -67,7 +67,7 @@ enum SettingsSearch {
         .init(.devices, "Pro & Dot", "Keep in step", subtitle: "Times the Dot for its own clock and re-syncs it before it drifts. Off, it only starts on the beat."),
         .init(.devices, "Pro & Dot", "Sync tolerance", subtitle: "How far the Dot may drift before it is re-synced. Wider means fewer Dot rewrites."),
         .init(.devices, "Pro & Dot", "Check sync", subtitle: "Both flash white every 2 seconds for a minute. In step, they read as one flash."),
-        .init(.devices, "Devices", "Eject guard", subtitle: "Keeps macOS from ejecting the SidePulse when the Mac wakes locked. Protect this SidePulse sets it up for the one plugged in."),
+        .init(.devices, "Devices", "Eject guard", subtitle: "Keeps macOS from ejecting the SidePulse when the Mac wakes locked. Protect this SidePulse sets it up for the one plugged in; Stop protecting undoes it."),
         .init(.devices, "Devices", "Display"),
         .init(.devices, "Devices", "Brightness"),
         .init(.devices, "Devices", "Auto-brightness", subtitle: "Follows the display's brightness: dim in a dark room, bright in daylight."),

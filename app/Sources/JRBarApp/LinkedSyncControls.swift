@@ -132,7 +132,8 @@ struct LinkedBrightnessToggle: View {
 }
 
 /// A SidePulse's card: the SD eject guard, as launchd really has it, and
-/// the one explicit action that fixes it for the SidePulse plugged in now.
+/// the one explicit action for the SidePulse plugged in now: protect it, or
+/// stop protecting it so Finder can eject it again.
 struct EjectGuardRow: View {
     let store: SettingsStore
     @ViewState private var reading: EjectGuardReading?
@@ -141,8 +142,13 @@ struct EjectGuardRow: View {
 
     var body: some View {
         SettingRow("Eject guard", subtitle: subtitle) {
-            Button(working ? "Protecting…" : "Protect this SidePulse") { protect() }
-                .disabled(!(reading?.canProtect ?? false) || working || !store.core.isLive)
+            if reading?.canRelease == true {
+                Button(working ? "Stopping…" : "Stop protecting") { send("release_sidepulse") }
+                    .disabled(working || !store.core.isLive)
+            } else {
+                Button(working ? "Protecting…" : "Protect this SidePulse") { send("protect_sidepulse") }
+                    .disabled(!(reading?.canProtect ?? false) || working || !store.core.isLive)
+            }
         }
         // Asked again whenever the monitor comes (back) up: asked once, a
         // page opened before the monitor was live said "Asking…" forever.
@@ -166,17 +172,19 @@ struct EjectGuardRow: View {
         }
     }
 
-    private func protect() {
+    /// `protect_sidepulse` or `release_sidepulse`: both reinstall the guard
+    /// and answer with its new reading.
+    private func send(_ command: String) {
         working = true
         failure = nil
         let core = store.core
-        Task { @MainActor in
-            let reply = try? await core.send("protect_sidepulse", timeout: 30)
+        _ = Task { @MainActor in
+            let reply = try? await core.send(command, timeout: 30)
             working = false
             if reply?.ok == true, let parsed = EjectGuardReading.parse(reply?.result) {
                 reading = parsed
             } else {
-                failure = reply?.error?.message ?? "The guard could not be installed."
+                failure = reply?.error?.message ?? "The eject guard could not be changed."
             }
         }
     }

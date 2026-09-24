@@ -444,7 +444,11 @@ struct SettingsRenderProofTests {
             SettingGroup("Eject guard") {
                 ForEach(Array(readings.enumerated()), id: \.offset) { _, reading in
                     SettingRow("Eject guard", subtitle: reading.words) {
-                        Button("Protect this SidePulse") {}.disabled(!reading.canProtect)
+                        if reading.canRelease {
+                            Button("Stop protecting") {}
+                        } else {
+                            Button("Protect this SidePulse") {}.disabled(!reading.canProtect)
+                        }
                     }
                 }
             }

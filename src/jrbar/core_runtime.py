@@ -2679,6 +2679,14 @@ def _cmd_protect_sidepulse(self, args):
     return eject_guard_commands.protect(self, args)
 
 
+@command("release_sidepulse", main_thread=False)
+def _cmd_release_sidepulse(self, args):
+    """Put the eject guard back to protecting nothing. Explicit only."""
+    from . import eject_guard_commands
+
+    return eject_guard_commands.release(self, args)
+
+
 def _history_rows_named(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Name each History row the way the panel names its session now.
 

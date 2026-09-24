@@ -1529,6 +1529,7 @@ in front only when the program has none and `N < 255`. A custom
 | `linked_sync_check` | `{seconds?}` (default 60, 10-120) | `{until, devices}`. Both devices flash white for 80 ms every 2 s, the Dot timed like any linked write and re-anchored by the loop if it drifts; both are held (like a calibration preview) until `until`. `not_ready` unless the Dot is linked with role `extend` beside a strip; `busy` under a calibration hold. |
 | `eject_guard` | - | The SD eject guard as launchd has it: `{installed, scope, plist_path, volume_uuid, run_at_load, keep_alive, loaded, running, runs, pid, last_exit, protects, mounted_volume_uuid, mounted_name, protects_mounted}`. Read-only. |
 | `protect_sidepulse` | - | Reinstalls the guard for the mounted SidePulse's volume UUID (user scope, started) and answers like `eject_guard`. Only ever from the person's click. `not_found` with no SidePulse mounted. |
+| `release_sidepulse` | - | Puts the guard back to protecting nothing (its plist without a volume, reloaded, so the running guard stops and Finder can eject the SidePulse again) and answers like `eject_guard`. Only ever from the person's click. `not_ready` when it is not protecting anything. |
 
 ## Light and presence settings the legacy window owned
 

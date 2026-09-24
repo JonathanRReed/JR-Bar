@@ -2726,6 +2726,11 @@ class World:
                                         run_at_load=True, keep_alive=True, loaded=True, running=True,
                                         runs=1, protects=True, protects_mounted=True)
             result = dict(self.eject_guard)
+        elif name == "release_sidepulse":
+            with self.lock:
+                self.eject_guard.update(volume_uuid=None, run_at_load=False, keep_alive=False,
+                                        running=False, pid=None, protects=False, protects_mounted=False)
+            result = dict(self.eject_guard)
         elif name == "set_device_display":
             with self.lock:
                 for entry in self.document.get("devices", []):

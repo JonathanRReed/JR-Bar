@@ -819,3 +819,12 @@ def protect_mounted_sidepulse(
     if uuid is None:
         raise SdEjectGuardInstallError(f"could not read a volume UUID for {volume}")
     return installer(scope="user", volume_uuid=uuid, start=True)
+
+
+def release_sidepulse(*, installer=install_sd_eject_guard) -> SdEjectGuardResult:
+    """Put the guard back to protecting nothing: the plist without a volume
+    (so launchd never runs it), reloaded, which stops the running guard and
+    lets Finder eject the SidePulse again. Only ever from an explicit click
+    (``release_sidepulse``): a protected card refuses Finder's Eject, and
+    the page has to offer the way back."""
+    return installer(scope="user", volume_uuid=None, start=True)
