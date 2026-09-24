@@ -2122,6 +2122,20 @@ def _usage_history_service(self):
     return service
 
 
+def _process_age_seconds() -> float | None:
+    """Seconds since this process was spawned, from libproc's start time;
+    None when it cannot be read. For the launch timing line only."""
+    try:
+        from .antigravity_process_identity import _process_facts
+
+        facts = _process_facts(os.getpid())
+    except Exception:
+        return None
+    if facts is None:
+        return None
+    return max(0.0, time.time() - (facts[2] + facts[3] / 1_000_000))
+
+
 def _usage_history_warm_later(self) -> None:
     """Warm the transcript caches shortly after start so the first
     ``usage_history`` answers inside its budget instead of a cold scan."""
@@ -3943,6 +3957,7 @@ def build_headless_controller_class() -> type:
                 raise
 
         def _core_launch(self) -> None:
+            self._core_launch_started = time.monotonic()
             _application().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
             self.load_operator_local_state()
             self.trim_oversized_state_logs()
@@ -3953,9 +3968,14 @@ def build_headless_controller_class() -> type:
             # so the order it reaches the monitor in is the order it counts
             # in: drained after the session's own first live hook, a spooled
             # prompt would land on top of the Stop that followed it. The
-            # thread that drains on the interval starts further down.
+            # thread that drains on the interval starts further down. Its
+            # refresh hints wait for the end of each pass, so the monitor
+            # rereads each provider's log once per drain, not once per hook.
+            from .hook_ingress import DeferredRefreshHints
+
+            self._core_pending_hints = DeferredRefreshHints(self.handle_hook_event_message)
             self._core_pending_drainer = PendingHookDrainer(
-                self._core_submit_pending, log=legacy.log_status_bar
+                self._core_submit_pending, after_drain=self._core_pending_hints.flush, log=legacy.log_status_bar
             )
             try:
                 self._core_pending_drainer.drain_now()
@@ -3968,7 +3988,6 @@ def build_headless_controller_class() -> type:
             self._install_dnd_environment_observers()
             self._refresh_dnd_environment("start")
             sys.setswitchinterval(0.001)
-            self.refresh_installed_agent_inventory()
             self._install_accessibility_display_observer()
             self.reconcile_lid_observation()
             self._core_start_server()
@@ -3979,25 +3998,64 @@ def build_headless_controller_class() -> type:
                 self.lid_timer = _schedule_timer(legacy.LID_POLL_SECONDS, self, "pollLid:", True)
             self.liveness_timer = _schedule_timer(legacy.LIVENESS_POLL_SECONDS, self, "pollLiveness:", True)
             self.start_remote_peer_timer()
-            if self.settings.remote_peers.enabled:
-                self.start_remote_peer_refresh()
-            threading.Thread(
-                target=lambda: legacy.trim_oversized_logs(default_state_dir()), daemon=True
-            ).start()
             # The Screen Bar is the app's; the daemon only computes its program.
             self.virtual_status_device.hide()
-            # The Creator Micro 2 output service and deck input, exactly as
-            # the menu-bar app started them (provider_usage_status_bar).
-            from .optional_integration_runtime import start_optional_integration_runtime
-
-            self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
-            self._core_deck_probe_now()
             self._core_pending_drainer.start()
             self._core_housekeeping_timer = _schedule_timer(HOUSEKEEPING_SECONDS, self, "coreHousekeepingTick:", True)
             if os.environ.get("JRBAR_SUPERVISED") == "1":
                 self._core_supervision_timer = _schedule_timer(SUPERVISION_SECONDS, self, "coreSupervisionTick:", True)
             _usage_history_warm_later(self)
+            self._core_ready_at = time.monotonic()
             legacy.log_status_bar(f"core: ready pid={os.getpid()} socket={self._core.socket_path}")
+            # Whatever the first client does not need waits one run-loop
+            # pass: 'ready' still means the socket answers, and the app's
+            # first state no longer queues behind the pad, the installed
+            # agents, the remote peers or a sweep of the logs.
+            _schedule_timer(0.0, self, "coreLaunchDeferred:", False)
+
+        def coreLaunchDeferred_(self, _timer) -> None:
+            if getattr(self, "_runtime_termination_started", False) or getattr(self, "_core", None) is None:
+                return
+            started = time.monotonic()
+
+            def start_deck() -> None:
+                # The Creator Micro 2 output service and deck input, exactly
+                # as the menu-bar app started them (provider_usage_status_bar).
+                from .optional_integration_runtime import start_optional_integration_runtime
+
+                self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
+                self._core_deck_probe_now()
+
+            def start_remote_peers() -> None:
+                if self.settings.remote_peers.enabled:
+                    self.start_remote_peer_refresh()
+
+            def trim_logs() -> None:
+                threading.Thread(
+                    target=lambda: legacy.trim_oversized_logs(default_state_dir()), daemon=True
+                ).start()
+
+            # AppKit swallows what a timer callback raises, so each step says
+            # its own failure and never keeps the next one from starting.
+            for label, step in (
+                ("deck", start_deck),
+                ("installed agents", self.refresh_installed_agent_inventory),
+                ("remote peers", start_remote_peers),
+                ("log trim", trim_logs),
+            ):
+                try:
+                    step()
+                except Exception as exc:
+                    legacy.log_status_bar(f"core: deferred launch step {label} failed: {exc}")
+            finished = time.monotonic()
+            launch_started = getattr(self, "_core_launch_started", started)
+            ready_at = getattr(self, "_core_ready_at", started)
+            age = _process_age_seconds()
+            spawn = "" if age is None else f"spawn_to_ready={age - (finished - ready_at):.2f}s "
+            legacy.log_status_bar(
+                f"core: launch timing {spawn}launch_to_ready={ready_at - launch_started:.2f}s "
+                f"deferred={finished - started:.2f}s"
+            )
 
         def applicationWillTerminate_(self, notification):
             if getattr(self, "_runtime_termination_started", False):
@@ -5568,7 +5626,10 @@ def build_headless_controller_class() -> type:
         def _core_submit_pending(self, request) -> object:
             from .hook_ingress import AppOwnedHookIngressProcessor
 
-            processor = AppOwnedHookIngressProcessor(self.handle_hook_event_message)
+            hints = getattr(self, "_core_pending_hints", None)
+            processor = AppOwnedHookIngressProcessor(
+                hints.note if hints is not None else self.handle_hook_event_message
+            )
             return processor(request)
 
         def _core_dispatch(self, name: str, args: dict[str, Any]) -> Any:

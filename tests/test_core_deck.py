@@ -540,6 +540,8 @@ def deck_live(headless, monkeypatch: pytest.MonkeyPatch):  # noqa: F811
     save_integration_settings(IntegrationSettings().with_creator_micro(enabled=True, device_serial=SERIAL))
     controller = headless
     controller.applicationDidFinishLaunching_(None)
+    # The pad starts one run-loop pass after 'core: ready'.
+    controller.coreLaunchDeferred_(None)
     controller._deck_board_ready = True
 
     def dispatch(selector: str, payload, wait: bool) -> bool:

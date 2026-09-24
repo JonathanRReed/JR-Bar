@@ -443,9 +443,13 @@ class PendingHookDrainer:
         *,
         state_dir: Path | None = None,
         interval_seconds: float = PENDING_DRAIN_INTERVAL_SECONDS,
+        after_drain: Callable[[], object] | None = None,
         log: Callable[[str], None] | None = None,
     ) -> None:
         self._submit = submit
+        # Runs once at the end of every pass, whatever it submitted: the
+        # daemon applies the refresh hints the pass held back here.
+        self._after_drain = after_drain
         self._state_dir = state_dir
         self._interval = max(1.0, float(interval_seconds))
         self._log = log or (lambda _line: None)
@@ -479,7 +483,14 @@ class PendingHookDrainer:
         self._wake.set()
 
     def drain_now(self) -> int:
-        count = drain_pending_hooks(self._submit, state_dir=self._state_dir, log=self._log)
+        try:
+            count = drain_pending_hooks(self._submit, state_dir=self._state_dir, log=self._log)
+        finally:
+            if self._after_drain is not None:
+                try:
+                    self._after_drain()
+                except Exception as exc:
+                    self._log(f"hook_pending after-drain failed: {exc}")
         if count:
             self._log(f"hook_pending drained={count}")
         return count

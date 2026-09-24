@@ -315,6 +315,49 @@ def test_headless_launch_skips_every_appkit_surface_and_serves__and_2_more(headl
 
 
 
+def test_ready_comes_before_the_pad_the_agents_and_the_peers(headless, monkeypatch) -> None:
+    """'core: ready' means the socket answers; what the first client does
+    not need starts one run-loop pass later, each step on its own, and the
+    pass logs one launch timing line."""
+    from jrbar import optional_integration_runtime
+    from jrbar import status_bar_legacy as legacy
+
+    lines: list[str] = []
+    monkeypatch.setattr(legacy, "log_status_bar", lines.append)
+    started: list[object] = []
+    monkeypatch.setattr(
+        optional_integration_runtime,
+        "start_optional_integration_runtime",
+        lambda target: started.append(target) or "runtime",
+    )
+    controller = headless
+    controller._core_deck_probe_now = MagicMock(name="_core_deck_probe_now")
+    controller.applicationDidFinishLaunching_(None)
+    assert any(line.startswith("core: ready") for line in lines)
+    assert (0.0, "coreLaunchDeferred:", False) in _TimerAPI.calls
+    assert started == []
+    controller._core_deck_probe_now.assert_not_called()
+    controller.refresh_installed_agent_inventory.assert_not_called()
+
+    # One step failing never keeps the next from starting.
+    controller.refresh_installed_agent_inventory.side_effect = RuntimeError("roots gone")
+    controller.coreLaunchDeferred_(None)
+    assert started == [controller]
+    assert controller._jrbar_optional_integration_runtime == "runtime"
+    controller._core_deck_probe_now.assert_called_once_with()
+    controller.refresh_installed_agent_inventory.assert_called_once_with()
+    assert any("deferred launch step installed agents failed: roots gone" in line for line in lines)
+    timing = [line for line in lines if line.startswith("core: launch timing ")]
+    assert len(timing) == 1
+    assert "launch_to_ready=" in timing[0] and "deferred=" in timing[0]
+
+    # A daemon already shutting down starts none of it.
+    started.clear()
+    controller._runtime_termination_started = True
+    controller.coreLaunchDeferred_(None)
+    assert started == []
+
+
 def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_more(headless) -> None:
     # --- scenario: commands_run_on_the_main_thread_and_unknown_ones_are_refused
     controller = headless

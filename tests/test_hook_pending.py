@@ -435,3 +435,64 @@ def test_a_nudge_drains_the_spool_now_instead_of_at_the_interval(tmp_path) -> No
     finally:
         drainer.stop()
     assert drainer not in hook_pending._running_drainers
+
+
+def test_a_drain_applies_one_refresh_hint_per_source_after_the_pass(tmp_path, monkeypatch) -> None:
+    """A spooled backlog reaches the monitor as one reread per provider log:
+    the pass holds every hint, the end of the pass applies the newest of
+    each source, and it does so even when the pass itself failed."""
+    from jrbar.hook_ingress import DeferredRefreshHints
+    from jrbar.hook_pending import PendingHookDrainer
+    from jrbar.ipc import EventToken, ProviderRefreshHint, SourceKey
+
+    def hint(provider: str, token: str) -> ProviderRefreshHint:
+        return ProviderRefreshHint(SourceKey(provider, "hooks", "local", "session"), EventToken(token))
+
+    applied: list[ProviderRefreshHint] = []
+    hints = DeferredRefreshHints(applied.append)
+    held = [hint("claude", "a" * 32), hint("codex", "b" * 32), hint("claude", "c" * 32)]
+
+    submitted: list[HookIngressRequest] = []
+
+    def submit(request: HookIngressRequest) -> None:
+        hints.note(held[len(submitted)])
+        submitted.append(request)
+
+    (tmp_path / f"claude{PENDING_SUFFIX}").write_text("\n".join(_line() for _ in held) + "\n")
+    drainer = PendingHookDrainer(submit, state_dir=tmp_path, after_drain=hints.flush)
+    assert drainer.drain_now() == 3
+    # Nothing reached the monitor while the pass ran; after it, one hint
+    # per source, the newest one, in the order the sources first appeared.
+    assert [(item.source_key.provider_id, item.event_token) for item in applied] == [
+        ("claude", held[2].event_token),
+        ("codex", held[1].event_token),
+    ]
+    # A flush with nothing held applies nothing.
+    assert hints.flush() == 0 and len(applied) == 2
+
+    # A pass that raises still flushes what it held.
+    hints.note(hint("claude", "d" * 32))
+
+    def broken(*_args, **_kwargs) -> int:
+        raise RuntimeError("disk gone")
+
+    from jrbar import hook_pending
+
+    monkeypatch.setattr(hook_pending, "drain_pending_hooks", broken)
+    with pytest.raises(RuntimeError):
+        drainer.drain_now()
+    assert applied[-1].event_token == EventToken("d" * 32)
+
+    # A handler that raises costs only its own hint.
+    def refuse(item: ProviderRefreshHint) -> None:
+        if item.source_key.provider_id == "claude":
+            raise RuntimeError("monitor busy")
+        applied.append(item)
+
+    picky = DeferredRefreshHints(refuse)
+    picky.note(hint("claude", "e" * 32))
+    picky.note(hint("codex", "f" * 32))
+    assert picky.flush() == 2
+    assert applied[-1].event_token == EventToken("f" * 32)
+    with pytest.raises(ValueError):
+        DeferredRefreshHints(None)  # type: ignore[arg-type]
