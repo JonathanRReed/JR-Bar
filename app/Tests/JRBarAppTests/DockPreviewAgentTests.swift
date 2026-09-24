@@ -299,4 +299,19 @@ struct DockPreviewAgentTests {
                 "a still whose cache entry lapsed is at least half a minute old")
         #expect(DockThumbnailer.wantsHoverRefresh(hasStill: true, age: 1, cachedTag: "a|working", tag: "a|waiting"))
     }
+
+    @Test("the compact list keeps a mark or state column any row needs, for every row")
+    func compactColumns() {
+        let marks = DockAgentMark.marks(from: [session("a", label: "Build the thing")])
+        var parked = window(3, "vim")
+        parked.minimized = true
+        let plain = [window(1, "zsh"), window(2, "htop")]
+        #expect(DockCompactColumns.of(plain, agents: [:]) == DockCompactColumns(),
+                "nothing to mark, no indent")
+        #expect(DockCompactColumns.of(plain + [parked], agents: [1: marks[0]])
+                == DockCompactColumns(mark: true, state: true))
+        var full = window(4, "Keynote")
+        full.fullScreen = true
+        #expect(DockCompactColumns.of(plain + [full], agents: [:]) == DockCompactColumns(state: true))
+    }
 }

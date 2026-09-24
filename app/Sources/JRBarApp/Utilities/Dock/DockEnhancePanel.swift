@@ -726,6 +726,8 @@ struct DockPreviewCard: View {
     let actions: DockPreviewActions
     @ViewState private var hovering = false
     @ViewState private var shake = DockEnhanceMath.ShakeDetector()
+    /// The card's corner; a ring drawn inside it steps in from it.
+    static let radius: CGFloat = 10
 
     var body: some View {
         VStack(spacing: 4) {
@@ -850,18 +852,20 @@ struct DockPreviewCard: View {
         }
         .padding(5)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
                 .fill(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.quaternary.opacity(0.45))))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.accentColor, lineWidth: selected ? 2 : 0))
+            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                .strokeBorder(Color.accentColor, lineWidth: selected ? 2 : 0))
         // A waiting agent's card is outlined in its provider's colour; a
-        // guarded close's first press thickens it.
+        // guarded close's first press thickens it. Inside the selection
+        // ring it steps in and keeps the card's curve.
         .overlay {
             if let agent, agent.isWaiting || armedNote != nil {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                let inset: CGFloat = selected ? 3 : 0
+                RoundedRectangle(cornerRadius: Self.radius - inset, style: .continuous)
                     .strokeBorder(agent.accent.opacity(0.9), lineWidth: armedNote != nil ? 3 : 1.5)
-                    .padding(selected ? 3 : 0)
+                    .padding(inset)
                     .allowsHitTesting(false)
             }
         }
@@ -948,12 +952,16 @@ struct DockPreviewCompactList: View {
     let actions: DockPreviewActions
 
     var body: some View {
+        // The leading columns are the list's, not each row's: a row with
+        // no mark or no state glyph still keeps the space, so every title
+        // starts on the same line.
+        let columns = DockCompactColumns.of(windows, agents: agents)
         ScrollView(.vertical, showsIndicators: true) {
             LazyVStack(spacing: 2) {
                 ForEach(windows) { window in
                     DockPreviewCompactRow(window: window, agent: agents[window.id],
                                           armedNote: armedWindowID == window.id ? armedNote : nil,
-                                          actions: actions)
+                                          columns: columns, actions: actions)
                 }
             }
             .padding(2)
@@ -1158,27 +1166,50 @@ final class SwipeCatcherView: NSView {
     }
 }
 
+/// Which leading columns the compact list reserves — the agent's mark
+/// and the minimized / full-screen glyph. Every row keeps a column any
+/// row needs, so the titles line up.
+struct DockCompactColumns: Equatable {
+    var mark = false
+    var state = false
+
+    static func of(_ windows: [DockPreviewWindow], agents: [Int: DockAgentMark]) -> DockCompactColumns {
+        DockCompactColumns(mark: windows.contains { agents[$0.id] != nil },
+                           state: windows.contains { $0.minimized || $0.fullScreen == true })
+    }
+}
+
 /// One row of the compact list — click raises, hover shows the verbs.
 private struct DockPreviewCompactRow: View {
     let window: DockPreviewWindow
     var agent: DockAgentMark? = nil
     var armedNote: String? = nil
+    var columns = DockCompactColumns()
     let actions: DockPreviewActions
     @ViewState private var hovering = false
 
     var body: some View {
         Button { actions.pick(window) } label: {
             HStack(spacing: 6) {
-                if let agent {
-                    DockAgentDot(mark: agent, size: 7)
+                // A clear slot, not a Group: a Group hands its frame to
+                // each child, so an empty one would take no room at all.
+                if columns.mark {
+                    Color.clear
+                        .frame(width: 8, height: 8)
+                        .overlay {
+                            if let agent { DockAgentDot(mark: agent, size: 7) }
+                        }
                 }
-                if window.minimized {
-                    Image(systemName: "arrow.down.right.and.arrow.up.left")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
-                }
-                if window.fullScreen == true {
-                    Image(systemName: "arrow.up.right.and.arrow.down.left")
+                if columns.state {
+                    Color.clear
+                        .frame(width: 10, height: 10)
+                        .overlay {
+                            if window.minimized {
+                                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            } else if window.fullScreen == true {
+                                Image(systemName: "arrow.up.right.and.arrow.down.left")
+                            }
+                        }
                         .font(.system(size: 8))
                         .foregroundStyle(.secondary)
                 }
