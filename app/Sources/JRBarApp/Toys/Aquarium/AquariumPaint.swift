@@ -255,8 +255,8 @@ enum TankPaint {
                 layer.drawLayer { net in
                     net.fill(box, with: .linearGradient(
                         Gradient(stops: [
-                            .init(color: color(a.light, 0.34 * day), location: 0),
-                            .init(color: color(a.light, 0.12 * day), location: 0.4),
+                            .init(color: color(a.light, 0.24 * day), location: 0),
+                            .init(color: color(a.light, 0.08 * day), location: 0.4),
                             .init(color: color(a.light, 0), location: 0.7),
                         ]),
                         startPoint: CGPoint(x: rect.midX, y: rect.minY),
@@ -280,9 +280,9 @@ enum TankPaint {
 
     /// Caustics: the net of light the surface ripples focus onto
     /// whatever is below, as the cells between its bright lines — a
-    /// jittered lattice of rounded cells, each drawn a little smaller
-    /// than its corners so the net shows where they don't reach. Fill
-    /// them out of a lit layer. Seeded, so a baked piece keeps its net.
+    /// jittered lattice of cells, each drawn a little smaller than its
+    /// corners so the net shows where they don't reach. Fill them out
+    /// of a lit layer. Seeded, so a baked piece keeps its net.
     static func causticCells(in rect: CGRect, cell: Double, seed: UInt64) -> Path {
         let columns = max(1, Int((rect.width / cell).rounded(.up)) + 1)
         let rows = max(1, Int((rect.height / (cell * 0.7)).rounded(.up)) + 1)
@@ -300,20 +300,42 @@ enum TankPaint {
         var p = Path()
         for row in 0..<rows {
             for col in 0..<columns {
-                let a = corners[row * (columns + 1) + col], b = corners[row * (columns + 1) + col + 1]
-                let c = corners[(row + 1) * (columns + 1) + col + 1], d = corners[(row + 1) * (columns + 1) + col]
-                let cx = (a.x + b.x + c.x + d.x) / 4, cy = (a.y + b.y + c.y + d.y) / 4
-                let keep = rng.next(0.78, 0.88)
-                let q = [a, b, c, d].map { CGPoint(x: cx + ($0.x - cx) * keep, y: cy + ($0.y - cy) * keep) }
-                p.move(to: CGPoint(x: (q[3].x + q[0].x) / 2, y: (q[3].y + q[0].y) / 2))
-                for k in 0..<4 {
-                    let next = q[(k + 1) % 4]
-                    p.addQuadCurve(to: CGPoint(x: (q[k].x + next.x) / 2, y: (q[k].y + next.y) / 2), control: q[k])
-                }
-                p.closeSubpath()
+                addCausticCell(&p, corners[row * (columns + 1) + col],
+                               corners[row * (columns + 1) + col + 1],
+                               corners[(row + 1) * (columns + 1) + col + 1],
+                               corners[(row + 1) * (columns + 1) + col],
+                               keep: rng.next(0.84, 0.91))
             }
         }
         return p
+    }
+
+    /// One cell of a caustic net: the quad `a b c d` drawn `keep` of
+    /// its size about its middle, the sides straight and only the
+    /// corners rounded — so the light left between two cells is a thin,
+    /// even line that swells where the lines meet, a net rather than a
+    /// field of spots.
+    static func addCausticCell(_ p: inout Path, _ a: CGPoint, _ b: CGPoint, _ c: CGPoint, _ d: CGPoint,
+                               keep: Double) {
+        let cx = (a.x + b.x + c.x + d.x) / 4, cy = (a.y + b.y + c.y + d.y) / 4
+        func pulled(_ q: CGPoint) -> CGPoint {
+            CGPoint(x: cx + (q.x - cx) * keep, y: cy + (q.y - cy) * keep)
+        }
+        func toward(_ from: CGPoint, _ to: CGPoint, _ f: Double) -> CGPoint {
+            CGPoint(x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f)
+        }
+        let q0 = pulled(a), q1 = pulled(b), q2 = pulled(c), q3 = pulled(d)
+        let corner = 0.3
+        p.move(to: toward(q0, q1, corner))
+        p.addLine(to: toward(q0, q1, 1 - corner))
+        p.addQuadCurve(to: toward(q1, q2, corner), control: q1)
+        p.addLine(to: toward(q1, q2, 1 - corner))
+        p.addQuadCurve(to: toward(q2, q3, corner), control: q2)
+        p.addLine(to: toward(q2, q3, 1 - corner))
+        p.addQuadCurve(to: toward(q3, q0, corner), control: q3)
+        p.addLine(to: toward(q3, q0, 1 - corner))
+        p.addQuadCurve(to: toward(q0, q1, corner), control: q0)
+        p.closeSubpath()
     }
 
     /// How far decor sinks into the water's colour: a little by

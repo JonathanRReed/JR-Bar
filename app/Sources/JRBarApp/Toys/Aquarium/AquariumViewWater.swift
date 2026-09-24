@@ -327,8 +327,8 @@ extension AquariumView {
 
     /// Caustics on the bed: the net of light the rippling surface
     /// focuses onto the sand. The whole bed is lit in a layer, then
-    /// each cell of a wobbling lattice is cut back out — rounded, a
-    /// little smaller than its corners — so what stays lit is the net
+    /// each cell of a wobbling lattice is cut back out — a little
+    /// smaller than its corners — so what stays lit is the net
     /// between the cells, fine and flat far off, broader toward the
     /// glass. The net burns brightest where the shafts land. Reduce
     /// Motion holds it still.
@@ -358,23 +358,13 @@ extension AquariumView {
         var holes = Path()
         for row in 0..<Self.causticRows {
             for col in 0..<Self.causticColumns {
-                let a = points[row * columns + col], b = points[row * columns + col + 1]
-                let c = points[(row + 1) * columns + col + 1], d = points[(row + 1) * columns + col]
-                let cx = (a.x + b.x + c.x + d.x) / 4, cy = (a.y + b.y + c.y + d.y) / 4
                 let v = Double(row) / Double(Self.causticRows)
                 let seed = Self.causticCorners[row * columns + col].phase
-                let keep = 0.86 - 0.03 * v + 0.05 * sin(seed * 3.7)
-                func pull(_ p: CGPoint) -> CGPoint {
-                    CGPoint(x: cx + (p.x - cx) * keep, y: cy + (p.y - cy) * keep)
-                }
-                let q = [pull(a), pull(b), pull(c), pull(d)]
-                holes.move(to: CGPoint(x: (q[3].x + q[0].x) / 2, y: (q[3].y + q[0].y) / 2))
-                for k in 0..<4 {
-                    let next = q[(k + 1) % 4]
-                    holes.addQuadCurve(to: CGPoint(x: (q[k].x + next.x) / 2, y: (q[k].y + next.y) / 2),
-                                       control: q[k])
-                }
-                holes.closeSubpath()
+                TankPaint.addCausticCell(&holes, points[row * columns + col],
+                                         points[row * columns + col + 1],
+                                         points[(row + 1) * columns + col + 1],
+                                         points[(row + 1) * columns + col],
+                                         keep: 0.88 - 0.03 * v + 0.04 * sin(seed * 3.7))
             }
         }
         // Where the shafts land the net is bright; between them it dims.
@@ -387,10 +377,12 @@ extension AquariumView {
         stops.append(.init(color: .white.opacity(0.35), location: 1))
         stops.sort { $0.location < $1.location }
         let light = w.light
+        // Clipped before the layer opens, so the layer is only as big
+        // as the bed rather than the whole tank.
         var lit = canvas
         lit.opacity = min(1, level * boost)
+        lit.clip(to: bed)
         lit.drawLayer { layer in
-            layer.clip(to: bed)
             layer.fill(bed, with: .linearGradient(
                 Gradient(stops: [
                     .init(color: TankPaint.color(light, 0.03), location: 0),
