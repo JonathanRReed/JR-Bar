@@ -216,6 +216,35 @@ struct DataHoarderModelTests {
         #expect(model.captureRunning == false)
     }
 
+    @Test func switchingOnTwiceStartsTheEngineOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let watch = root.appending(path: "watch")
+        try FileManager.default.createDirectory(at: watch, withIntermediateDirectories: true)
+        let model = DataHoarderModel(archive: DataHoarderArchive(root: root.appending(path: "archive")))
+        model.captureSettings.captureSources = [watch.path: true]
+        await model.applyCaptureNow()
+        let before = model.captureApplies
+
+        // The utility's setter, then the store's echo of the same value.
+        model.enabled = true
+        model.enabled = true
+        #expect(model.captureApplies == before + 1)
+        await model.applyCaptureNow()
+        #expect(model.captureApplies == before + 1)
+        #expect(await model.capture.activeSourceIDs == [watch.path])
+
+        // A real change while an apply is on its way still queues behind it.
+        model.enabled = false
+        model.enabled = true
+        model.enabled = false
+        await model.applyCaptureNow()
+        #expect(model.captureApplies == before + 4)
+        #expect(await model.capture.activeSourceIDs.isEmpty)
+        #expect(model.captureRunning == false)
+    }
+
     @Test func captureTogglesPersistThroughTheStoreCallback() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

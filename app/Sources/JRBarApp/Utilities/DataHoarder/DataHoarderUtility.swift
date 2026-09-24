@@ -809,45 +809,64 @@ final class DataHoarderModel {
         return (sources, signature)
     }
 
+    /// The apply on its way, if any. Applies run one after another, so a
+    /// stop and a start — or two starts — never interleave on the engine,
+    /// where a second start's `stop` could land mid-rescan and the first
+    /// would then open a stream nothing stops.
+    @ObservationIgnored private var applyTask: Task<Void, Never>?
+    @ObservationIgnored private var appliesInFlight = 0
+    /// Engine applies launched; tests read it to see a repeat dropped.
+    @ObservationIgnored private(set) var captureApplies = 0
+
+    /// A new plan always applies. The same plan re-applies only when no
+    /// apply is on its way and the engine disagrees with it — switching on
+    /// sets `enabled` twice (the utility, then the store's echo), and the
+    /// echo must not start a second engine behind the first.
+    private func needsApply(_ sources: [ArchiveSource], _ signature: String) -> Bool {
+        if signature != appliedCaptureSignature { return true }
+        return appliesInFlight == 0 && captureRunning != !sources.isEmpty
+    }
+
     /// Re-derives what should be running. Utility off or paused ⇒ nothing
     /// watches — the disabled-module rule is enforced here, not by trusting
     /// the watcher list to be empty.
     func applyCapture() {
         let (sources, signature) = capturePlan()
-        guard signature != appliedCaptureSignature || captureRunning != !sources.isEmpty else {
-            return
-        }
+        guard needsApply(sources, signature) else { return }
         appliedCaptureSignature = signature
         let full = captureSettings.fullContent
         let since = backfillSince()
-        Task {
-            if sources.isEmpty {
-                await capture.stop()
-                captureRunning = false
-            } else {
-                await capture.start(sources: sources, fullContent: full, backfillSince: since)
-                captureRunning = !(await capture.activeSourceIDs).isEmpty
-            }
-            await refreshCaptureStatus()
-            pumpSearchIndex()
+        let previous = applyTask
+        appliesInFlight += 1
+        captureApplies += 1
+        applyTask = Task {
+            await previous?.value
+            await runApply(sources: sources, fullContent: full, backfillSince: since)
+            appliesInFlight -= 1
         }
     }
 
     /// Awaitable twin of `applyCapture` for tests and any caller that must
     /// not race a pending fire-and-forget capture task.
     func applyCaptureNow() async {
+        await applyTask?.value
         let (sources, signature) = capturePlan()
-        guard signature != appliedCaptureSignature || captureRunning != !sources.isEmpty else {
+        guard needsApply(sources, signature) else {
             await refreshCaptureStatus()
             return
         }
         appliedCaptureSignature = signature
+        captureApplies += 1
+        await runApply(sources: sources, fullContent: captureSettings.fullContent,
+                       backfillSince: backfillSince())
+    }
+
+    private func runApply(sources: [ArchiveSource], fullContent: Bool, backfillSince: Date?) async {
         if sources.isEmpty {
             await capture.stop()
             captureRunning = false
         } else {
-            await capture.start(sources: sources, fullContent: captureSettings.fullContent,
-                                backfillSince: backfillSince())
+            await capture.start(sources: sources, fullContent: fullContent, backfillSince: backfillSince)
             captureRunning = !(await capture.activeSourceIDs).isEmpty
         }
         await refreshCaptureStatus()
