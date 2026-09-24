@@ -164,7 +164,7 @@ enum UtilityRivals {
         case .hud:
             return "\(rival.name) also draws volume and brightness, so a key press can show two."
         case .shelfGesture:
-            return "\(rival.name) is running, so a shake while dragging is its shelf. JR-Bar's shake steps aside until it quits; dropping on the notch still works."
+            return "\(rival.name) is running, so a shake is its shelf — JR-Bar's steps aside until it quits."
         case .keepAwake:
             return "\(rival.name) can hold this Mac awake too. The holds stack harmlessly: the Mac sleeps once both let go."
         }

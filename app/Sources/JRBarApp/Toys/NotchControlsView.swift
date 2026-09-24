@@ -184,13 +184,13 @@ struct NotchControlsView: View {
             CardSubrows {
                 LabeledContent {
                     HStack(spacing: 10) {
-                        Slider(value: toy.bind(\.hoverOpenDelay), in: NotchSettings.hoverOpenDelayRange, step: 0.02)
+                        Slider(value: toy.bind(\.hoverOpenDelay), in: NotchSettings.hoverOpenDelayRange)
                             .frame(width: 140)
-                        ValueText(text: SettingsStore.seconds(toy.settings.hoverOpenDelay))
+                        ValueText(text: Self.delayText(toy.settings.hoverOpenDelay))
                     }
                 } label: {
                     SettingLabel(title: "Open after",
-                                 subtitle: "How long the pointer rests on the notch before the card grows. Coming down from the menu bar still waits a third of a second, so reaching for a menu never opens it.")
+                                 subtitle: "How long the pointer rests on the notch before the card grows. Arriving from the menu bar still waits a third of a second.")
                 }
             }
         }
@@ -459,6 +459,13 @@ struct NotchControlsView: View {
             SettingLabel(title: "Mirror",
                          subtitle: "A quick look through the camera: ⌥-click the notch, or the camera button in the card. Never a standing row — the lens closes when the card folds, and macOS asks for the camera the first time.")
         }
+    }
+
+    /// "At once", "0.12 s", "0.5 s": the hover delay, to the hundredth.
+    static func delayText(_ seconds: Double) -> String {
+        let hundredths = Int((seconds * 100).rounded())
+        guard hundredths > 0 else { return "At once" }
+        return (Double(hundredths) / 100).formatted(.number.precision(.fractionLength(0...2))) + " s"
     }
 
     /// "2 s", "1.5 s": the level capsule's hold.
