@@ -7,8 +7,9 @@ import SwiftUI
 /// Dock stays, and `enhance` — the AX hover watcher — floats window
 /// previews over it. The main thread constructs it once, wires
 /// `settings` to the persisted `DockSettings`, sets the persist
-/// callback, and calls `start()`/`stop()` from the card toggle and
-/// `applySettings()` on every settings change.
+/// callback, and calls `applySettings()` after launch and on every
+/// settings change — it starts and stops the utility as the card's
+/// toggle says — and `stop()` only as the app quits.
 ///
 /// The Replace bar is gone; what survives of it is `appleDock`, the
 /// save-and-restore control over `com.apple.dock autohide`, kept so a
