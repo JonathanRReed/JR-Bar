@@ -14,12 +14,25 @@ extension CartoonFish {
         .puffer: pufferKit(),
         .shark: sharkKit(),
         .seahorse: seahorseKit(),
-    ].mapValues(withCollar)
+    ].mapValues(finished)
 
-    /// The kit with its collar found: just behind the gill on a
+    /// The kit made ready: marks that never reach the bending tail are
+    /// told so, and the collar is found — just behind the gill on a
     /// swimmer, across the neck under the head on an upright one.
-    private static func withCollar(_ art: Art) -> Art {
+    private static func finished(_ art: Art) -> Art {
         var art = art
+        // Every path the swim bends is held as a CoreGraphics path, so
+        // bending one each frame reads it without converting it first.
+        art.body = Path(art.body.cgPath)
+        for i in art.marks.indices {
+            art.marks[i].path = Path(art.marks[i].path.cgPath)
+            art.marks[i].flexes = art.marks[i].path.boundingRect.minX < art.flexPivot
+        }
+        for i in art.fins.indices {
+            art.fins[i].path = Path(art.fins[i].path.cgPath)
+            art.fins[i].rays = Path(art.fins[i].rays.cgPath)
+        }
+        art.flank = Path(art.flank.cgPath)
         let b = art.bounds
         var inside: [CGPoint] = []
         if art.upright {
@@ -333,19 +346,19 @@ extension CartoonFish {
             fin(pt(0.22, 0.03), pt(0.20, 0.07), edge: [k(0.14, 0.02), corner(0.08, 0.06), k(0.12, 0.09)],
                 rays: 3, motion: .paddle(0.6), layer: .far),
             fin(pt(0.22, 0.12), pt(0.16, 0.14), edge: [k(0.16, 0.28), corner(0.06, 0.44), k(0.12, 0.26)],
-                rays: 0, motion: .ripple(0.6), layer: .far, sheen: true),
+                rays: 0, motion: .ripple(0.6), layer: .far),
             fin(pt(-0.29, -0.07), pt(-0.29, 0.07), edge: veil,
-                rays: 13, motion: .tail, sheen: true),
+                rays: 13, motion: .tail),
             fin(pt(0.02, -0.15), pt(-0.28, -0.075),
                 edge: [k(-0.04, -0.28), k(-0.18, -0.40), k(-0.36, -0.44), k(-0.50, -0.38),
                        k(-0.46, -0.24), k(-0.36, -0.12)],
-                rays: 8, motion: .ripple(0.45), sheen: true),
+                rays: 8, motion: .ripple(0.45)),
             fin(pt(0.16, 0.14), pt(-0.28, 0.07),
                 edge: [k(0.08, 0.30), k(-0.06, 0.46), k(-0.26, 0.54), k(-0.46, 0.48),
                        k(-0.44, 0.30), k(-0.36, 0.14)],
-                rays: 10, motion: .ripple(0.45), sheen: true),
+                rays: 10, motion: .ripple(0.45)),
             fin(pt(0.26, 0.12), pt(0.20, 0.14), edge: [k(0.22, 0.28), corner(0.12, 0.46), k(0.17, 0.27)],
-                rays: 0, motion: .ripple(0.6), sheen: true),
+                rays: 0, motion: .ripple(0.6)),
             fin(pt(0.22, 0.02), pt(0.20, 0.08),
                 edge: [k(0.14, 0.02), k(0.07, 0.06), corner(0.05, 0.10), k(0.13, 0.11)],
                 rays: 3, motion: .paddle(0.7), layer: .near),
@@ -362,7 +375,8 @@ extension CartoonFish {
             flexPivot: 0.08, tailRootX: -0.30,
             gloss: CGRect(x: 0.20, y: -0.13, width: 0.18, height: 0.05),
             scales: scaleTexture(bounds: body.boundingRect, r: 0.04),
-            extent: extent(body, fins))
+            extent: extent(body, fins),
+            iridescent: true)
     }
 
     // MARK: Puffer

@@ -45,19 +45,33 @@ enum CartoonFish {
         /// hue as well as brightness, with a touch of grey on top, so
         /// a deep fish reads watery rather than just dim. Shadows cool
         /// toward navy instead of black, the way light falls off in
-        /// water.
+        /// water. Plain sRGB colours, so a frame resolves them for free.
         init(accent: NSColor, depth: Double = 0, floor: NSColor) {
-            let washed = (accent.blended(withFraction: depth * 0.30, of: .gray) ?? accent)
-                .blended(withFraction: depth * 0.45, of: floor) ?? accent
-            let navy = NSColor(srgbRed: 0.03, green: 0.07, blue: 0.19, alpha: 1)
-            let ink = NSColor(srgbRed: 0.02, green: 0.03, blue: 0.08, alpha: 1)
-            let sky = NSColor(srgbRed: 0.86, green: 0.97, blue: 1.0, alpha: 1)
+            let a = Self.rgb(accent), fl = Self.rgb(floor)
+            let grey = (0.5, 0.5, 0.5)
+            let washed = Self.mix(Self.mix(a, grey, depth * 0.30), fl, depth * 0.45)
             self.init(
-                body: Color(nsColor: washed),
-                light: Color(nsColor: washed.blended(withFraction: 0.58, of: .white) ?? washed),
-                dark: Color(nsColor: washed.blended(withFraction: 0.42, of: navy) ?? washed),
-                outline: Color(nsColor: washed.blended(withFraction: 0.74, of: ink) ?? ink),
-                glow: Color(nsColor: washed.blended(withFraction: 0.72, of: sky) ?? sky))
+                body: Self.color(washed),
+                light: Self.color(Self.mix(washed, (1, 1, 1), 0.58)),
+                dark: Self.color(Self.mix(washed, (0.03, 0.07, 0.19), 0.42)),
+                outline: Self.color(Self.mix(washed, (0.02, 0.03, 0.08), 0.74)),
+                glow: Self.color(Self.mix(washed, (0.86, 0.97, 1.0), 0.72)))
+        }
+
+        private typealias RGB = (Double, Double, Double)
+
+        private static func rgb(_ c: NSColor) -> RGB {
+            // A colour with no sRGB form (a pattern, say) swims grey.
+            guard let s = c.usingColorSpace(.sRGB) else { return (0.5, 0.5, 0.5) }
+            return (Double(s.redComponent), Double(s.greenComponent), Double(s.blueComponent))
+        }
+
+        private static func mix(_ a: RGB, _ b: RGB, _ u: Double) -> RGB {
+            (a.0 + (b.0 - a.0) * u, a.1 + (b.1 - a.1) * u, a.2 + (b.2 - a.2) * u)
+        }
+
+        private static func color(_ c: RGB) -> Color {
+            Color(.sRGB, red: c.0, green: c.1, blue: c.2)
         }
     }
 
@@ -126,8 +140,6 @@ enum CartoonFish {
         var tint: Color?
         /// Opaque, body-coloured — the puffer's spines.
         var solid = false
-        /// An iridescent sweep over the fin — the betta's veils.
-        var sheen = false
     }
 
     /// A paint layer clipped to the body: bars, bands, stripes, spots.
@@ -152,6 +164,9 @@ enum CartoonFish {
 
         var path: Path
         var style: Style
+        /// Reaches back into the bending tail, so the swim must bend
+        /// it too; a mark on the head stays put for free.
+        var flexes = true
     }
 
     /// One species' silhouette kit.
@@ -194,6 +209,8 @@ enum CartoonFish {
         /// Where a scarf wraps: the collar's top and bottom edge,
         /// found once from the silhouette.
         var collar: (top: CGPoint, bottom: CGPoint) = (.zero, .zero)
+        /// Fins that shimmer cyan to rose toward the edge — the betta's.
+        var iridescent = false
     }
 
     // MARK: Shape builders
@@ -233,7 +250,7 @@ enum CartoonFish {
     /// (back) out round `edge`; `rays` fan from the root to the edge.
     static func fin(_ a: CGPoint, _ b: CGPoint, edge: [Knot], rays count: Int,
                     motion: Fin.Motion, layer: Fin.Layer = .behind,
-                    trim: Bool = false, tint: Color? = nil, sheen: Bool = false) -> Fin {
+                    trim: Bool = false, tint: Color? = nil) -> Fin {
         let path = spline([Knot(p: a, corner: true)] + edge + [Knot(p: b, corner: true)])
         let pivot = lerp(a, b, 0.5)
         // The edge as a polyline, measured, so the rays land evenly.
@@ -255,13 +272,13 @@ enum CartoonFish {
         for i in 0..<count {
             let u = (Double(i) + 1) / (Double(count) + 1)
             let start = lerp(a, b, 0.15 + 0.7 * u)
-            let end = along(u)
-            // Past the edge a touch — the clip trims it clean.
-            let over = CGPoint(x: end.x + (end.x - start.x) * 0.12, y: end.y + (end.y - start.y) * 0.12)
-            let mid = lerp(start, over, 0.5)
-            let bow = CGPoint(x: mid.x - (over.y - start.y) * 0.06, y: mid.y + (over.x - start.x) * 0.06)
+            // Just short of the edge, so no clip is needed to keep the
+            // rays inside the membrane.
+            let end = lerp(start, along(u), 0.96)
+            let mid = lerp(start, end, 0.5)
+            let bow = CGPoint(x: mid.x - (end.y - start.y) * 0.04, y: mid.y + (end.x - start.x) * 0.04)
             rays.move(to: start)
-            rays.addQuadCurve(to: over, control: bow)
+            rays.addQuadCurve(to: end, control: bow)
         }
         var tip = pivot
         var reach = 0.0
@@ -270,7 +287,7 @@ enum CartoonFish {
             if d > reach { reach = d; tip = p }
         }
         return Fin(path: path, rays: rays, pivot: pivot, tip: tip, reach: max(0.01, reach),
-                   motion: motion, layer: layer, trim: trim, tint: tint, sheen: sheen)
+                   motion: motion, layer: layer, trim: trim, tint: tint)
     }
 
     /// A filled ribbon along `spine`, `widths` wide at each point — a
@@ -347,14 +364,7 @@ enum CartoonFish {
         let lw = outlineWidth(pointSize)
         let detailed = pointSize >= 38
 
-        // Fins behind the body — soft and translucent, so they read as
-        // fins rather than more body.
-        for fin in art.fins where fin.layer == .far {
-            drawFin(fin, pose: pose, palette: palette, into: &f, lw: lw, detailed: detailed)
-        }
-        for fin in art.fins where fin.layer == .behind {
-            drawFin(fin, pose: pose, palette: palette, into: &f, lw: lw, detailed: detailed)
-        }
+        drawFinsBehind(art: art, pose: pose, palette: palette, into: &f, lw: lw, detailed: detailed)
 
         let body = pose.body(art.body)
         // The silhouette's edge goes down first, twice as wide as it
@@ -362,28 +372,126 @@ enum CartoonFish {
         // bodies (the seahorse) keep one clean outline.
         f.stroke(body, with: .color(palette.outline),
                  style: StrokeStyle(lineWidth: lw * 2, lineJoin: .round))
-        drawBody(body, art: art, pose: pose, palette: palette, into: &f,
-                 lw: lw, detailed: detailed, seed: patternSeed, variant: variant)
-
+        var near: [(fin: Fin, path: Path)] = []
         for fin in art.fins where fin.layer == .near {
-            // The fin's soft shadow on the flank under it.
-            var shade = f
-            shade.clip(to: body)
-            shade.fill(pose.fin(fin.path, fin).offsetBy(dx: -0.012, dy: 0.022),
-                       with: .color(palette.dark.opacity(0.35)))
-            drawFin(fin, pose: pose, palette: palette, into: &f, lw: lw, detailed: detailed)
+            near.append((fin, pose.fin(fin.path, fin)))
+        }
+        drawBody(body, art: art, pose: pose, palette: palette, into: &f,
+                 lw: lw, detailed: detailed, seed: patternSeed, variant: variant,
+                 shadows: near.map(\.path))
+        for (fin, path) in near {
+            // The near pectoral: its own lit membrane, rays and edge.
+            let base = fin.tint ?? palette.body
+            if fin.trim {
+                f.stroke(path, with: .color(palette.outline.opacity(0.95)),
+                         style: StrokeStyle(lineWidth: lw * 3.2, lineJoin: .round))
+            }
+            f.fill(path, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: base.opacity(0.97), location: 0),
+                    .init(color: base.opacity(0.82), location: 0.5),
+                    .init(color: (fin.tint ?? palette.light).opacity(0.66), location: 1),
+                ]),
+                startPoint: pose.finPoint(fin.pivot, fin), endPoint: pose.finPoint(fin.tip, fin)))
+            if detailed {
+                f.stroke(pose.fin(fin.rays, fin), with: .color(palette.dark.opacity(0.34)), lineWidth: lw * 0.55)
+            }
+            if !fin.trim {
+                f.stroke(path, with: .color(palette.outline.opacity(0.8)),
+                         style: StrokeStyle(lineWidth: lw * 0.9, lineJoin: .round))
+            }
         }
 
         drawFace(art: art, species: species, swim: swim, palette: palette, into: &f,
-                 mouth: mouth, blink: blink, dead: dead, lw: lw, comp: aspectComp)
+                 mouth: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed, comp: aspectComp)
+    }
+
+    /// The fins behind the body, soft and translucent so they read as
+    /// fins rather than more body. Every plain membrane shares one
+    /// radial wash — dense by the body, glassy out at the edges — and
+    /// all the rays and edges go down in one stroke each, so a fish's
+    /// fins cost a handful of fills however many it has. A tinted fin
+    /// (the tang's yellow) paints its own; spines are solid.
+    private static func drawFinsBehind(art: Art, pose: Pose, palette: Palette,
+                                       into f: inout GraphicsContext, lw: Double, detailed: Bool) {
+        var far = Path()
+        var membrane = Path()
+        var trims = Path()
+        var rays = Path()
+        var edges = Path()
+        var tinted: [(fin: Fin, path: Path)] = []
+        for fin in art.fins where fin.layer != .near {
+            let path = pose.fin(fin.path, fin)
+            if fin.solid {
+                // Spines are body, not membrane: lit tips, a full outline.
+                f.stroke(path, with: .color(palette.outline), style: StrokeStyle(lineWidth: lw * 2, lineJoin: .round))
+                f.fill(path, with: .radialGradient(Gradient(colors: [palette.body, palette.light]),
+                                                   center: fin.pivot, startRadius: fin.reach * 0.8,
+                                                   endRadius: fin.reach * 1.05))
+                continue
+            }
+            if fin.layer == .far {
+                far.addPath(path)
+            } else if fin.tint != nil {
+                tinted.append((fin, path))
+            } else {
+                membrane.addPath(path)
+            }
+            if fin.trim { trims.addPath(path) } else { edges.addPath(path) }
+            if detailed { rays.addPath(pose.fin(fin.rays, fin)) }
+        }
+        f.fill(far, with: .color(palette.dark.opacity(0.75)))
+        f.stroke(trims, with: .color(palette.outline.opacity(0.95)),
+                 style: StrokeStyle(lineWidth: lw * 3.2, lineJoin: .round))
+        let centre = CGPoint(x: art.bounds.midX, y: art.bounds.midY)
+        let e = art.extent
+        let reach = max(hypot(e.minX - centre.x, e.minY - centre.y), hypot(e.minX - centre.x, e.maxY - centre.y),
+                        hypot(e.maxX - centre.x, e.minY - centre.y))
+        let inner = min(art.bounds.width, art.bounds.height) * 0.4
+        f.fill(membrane, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: palette.body.opacity(0.94), location: 0),
+                .init(color: palette.body.opacity(0.70), location: 0.45),
+                .init(color: palette.light.opacity(0.42), location: 1),
+            ]),
+            center: centre, startRadius: inner, endRadius: reach * 0.9))
+        if art.iridescent {
+            // The shimmer: cyan through rose toward the veils' edges.
+            var sheen = f
+            sheen.blendMode = .plusLighter
+            sheen.fill(membrane, with: .radialGradient(
+                Gradient(stops: [
+                    .init(color: .clear, location: 0.1),
+                    .init(color: Color(red: 0.35, green: 0.80, blue: 1.0).opacity(0.30), location: 0.45),
+                    .init(color: Color(red: 1.0, green: 0.45, blue: 0.85).opacity(0.28), location: 0.8),
+                    .init(color: .clear, location: 1),
+                ]),
+                center: centre, startRadius: inner, endRadius: reach * 0.9))
+        }
+        for (fin, path) in tinted {
+            let tint = fin.tint ?? palette.body
+            f.fill(path, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: tint.opacity(0.94), location: 0),
+                    .init(color: tint.opacity(0.72), location: 0.5),
+                    .init(color: tint.opacity(0.5), location: 1),
+                ]),
+                startPoint: pose.finPoint(fin.pivot, fin), endPoint: pose.finPoint(fin.tip, fin)))
+        }
+        f.stroke(rays, with: .color(palette.dark.opacity(0.32)), lineWidth: lw * 0.55)
+        f.stroke(edges, with: .color(palette.outline.opacity(0.5)),
+                 style: StrokeStyle(lineWidth: lw * 0.7, lineJoin: .round))
     }
 
     /// The body's paint, back to front: the countershaded base, the
-    /// markings, the scales, the volume, the top light and gloss, a
-    /// cool rim of light off the surface and the gill cover.
+    /// markings and scales, one pass of volume that lifts the back
+    /// toward the surface and darkens the flanks as they turn away, a
+    /// gloss on the brow, the near fins' soft shadows, a cool rim of
+    /// light along the back with a bounce under the belly, and the
+    /// gill cover. One clip to the silhouette carries all of it.
     private static func drawBody(_ body: Path, art: Art, pose: Pose, palette: Palette,
                                  into f: inout GraphicsContext, lw: Double, detailed: Bool,
-                                 seed: UInt64, variant: AquariumVariant?) {
+                                 seed: UInt64, variant: AquariumVariant?, shadows: [Path]) {
         let r = art.bounds
         // Countershading: a deep back, the true colour across the
         // flank and a pale underside — for an upright seahorse, the
@@ -407,50 +515,53 @@ enum CartoonFish {
                 lineWidth: lw * 0.55)
         }
         for mark in art.marks {
-            paintMark(mark, path: pose.body(mark.path), palette: palette, into: &b, lw: lw)
+            paintMark(mark, path: mark.flexes ? pose.body(mark.path) : mark.path,
+                      palette: palette, into: &b, lw: lw)
         }
         if let variant { drawVariant(variant, art: art, pose: pose, palette: palette, into: &b) }
-        // Volume: the flanks turn away from the light toward the edge,
-        // deepest along the belly and the tail.
+        // Volume and the top light in one pass: the surface's glow soft
+        // along the back, the flanks turning away from it toward the
+        // edge, deepest along the belly and the tail.
         let extent = max(r.width, r.height)
         b.fill(body, with: .radialGradient(
             Gradient(stops: [
-                .init(color: palette.dark.opacity(0), location: 0),
-                .init(color: palette.dark.opacity(0), location: 0.52),
+                .init(color: palette.glow.opacity(0.32), location: 0),
+                .init(color: palette.glow.opacity(0), location: 0.34),
+                .init(color: palette.dark.opacity(0), location: 0.55),
                 .init(color: palette.dark.opacity(0.42), location: 1),
             ]),
-            center: CGPoint(x: r.midX + r.width * 0.14, y: r.midY - r.height * 0.16),
-            startRadius: 0, endRadius: extent * 0.60))
-        // The top light: the surface's glow spread soft along the back.
-        b.fill(Path(ellipseIn: CGRect(x: r.minX + r.width * 0.16, y: r.minY - r.height * 0.10,
-                                      width: r.width * 0.72, height: r.height * 0.52)),
-               with: .radialGradient(
-                Gradient(colors: [palette.glow.opacity(0.34), palette.glow.opacity(0)]),
-                center: CGPoint(x: r.midX + r.width * 0.10, y: r.minY + r.height * 0.12),
-                startRadius: 0, endRadius: r.width * 0.36))
+            center: CGPoint(x: r.midX + r.width * 0.12, y: r.midY - r.height * 0.24),
+            startRadius: 0, endRadius: extent * 0.62))
         // The gloss: a crisp catch of light on the brow.
         let g = art.gloss
         b.fill(Path(ellipseIn: g), with: .radialGradient(
             Gradient(colors: [.white.opacity(0.70), .white.opacity(0)]),
             center: CGPoint(x: g.midX + g.width * 0.1, y: g.midY),
             startRadius: 0, endRadius: g.width * 0.5))
-        // A rim of cool light along the back, where the surface sits.
+        // The near fins' soft shadows on the flank under them.
+        if !shadows.isEmpty {
+            var shade = Path()
+            for shadow in shadows { shade.addPath(shadow.offsetBy(dx: -0.012, dy: 0.022)) }
+            b.fill(shade, with: .color(palette.dark.opacity(0.35)))
+        }
+        // A rim of cool light along the back, where the surface sits,
+        // and bounce light off the sand along the belly's edge.
         b.stroke(body, with: .linearGradient(
-            Gradient(colors: [palette.glow.opacity(0.85), palette.glow.opacity(0)]),
-            startPoint: CGPoint(x: 0, y: r.minY),
-            endPoint: CGPoint(x: 0, y: r.minY + r.height * 0.42)),
-            lineWidth: lw * 2.6)
-        // Bounce light off the sand along the belly's edge.
-        b.stroke(body, with: .linearGradient(
-            Gradient(colors: [palette.light.opacity(0), palette.light.opacity(0.35)]),
-            startPoint: CGPoint(x: 0, y: r.maxY - r.height * 0.30),
-            endPoint: CGPoint(x: 0, y: r.maxY)),
-            lineWidth: lw * 2.2)
+            Gradient(stops: [
+                .init(color: palette.glow.opacity(0.85), location: 0),
+                .init(color: palette.glow.opacity(0), location: 0.42),
+                .init(color: palette.light.opacity(0), location: 0.70),
+                .init(color: palette.light.opacity(0.35), location: 1),
+            ]),
+            startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)),
+            lineWidth: lw * 2.4)
         if let gill = art.gill {
             b.stroke(gill, with: .color(palette.dark.opacity(0.55)),
                      style: StrokeStyle(lineWidth: lw * 0.9, lineCap: .round))
-            b.stroke(gill.offsetBy(dx: lw * 1.1, dy: 0), with: .color(palette.light.opacity(0.35)),
-                     style: StrokeStyle(lineWidth: lw * 0.7, lineCap: .round))
+            if detailed {
+                b.stroke(gill.offsetBy(dx: lw * 1.1, dy: 0), with: .color(palette.light.opacity(0.35)),
+                         style: StrokeStyle(lineWidth: lw * 0.7, lineCap: .round))
+            }
         }
     }
 
@@ -514,58 +625,6 @@ enum CartoonFish {
         }
     }
 
-    /// One fin: a soft gradient from the root to a pale translucent
-    /// edge, fine rays fanning from the root, and a thin edge line.
-    private static func drawFin(_ fin: Fin, pose: Pose, palette: Palette,
-                                into f: inout GraphicsContext, lw: Double, detailed: Bool) {
-        let path = pose.fin(fin.path, fin)
-        let root = pose.finPoint(fin.pivot, fin)
-        let tip = pose.finPoint(fin.tip, fin)
-        if fin.solid {
-            // Spines are body, not membrane: lit tips, a full outline.
-            f.stroke(path, with: .color(palette.outline), style: StrokeStyle(lineWidth: lw * 2, lineJoin: .round))
-            f.fill(path, with: .radialGradient(Gradient(colors: [palette.body, palette.light]),
-                                               center: root, startRadius: fin.reach * 0.8,
-                                               endRadius: fin.reach * 1.05))
-            return
-        }
-        let base = fin.tint ?? palette.body
-        let far = fin.layer == .far
-        let near = fin.layer == .near
-        f.fill(path, with: .linearGradient(
-            Gradient(stops: [
-                .init(color: (far ? palette.dark : base).opacity(near ? 0.97 : 0.92), location: 0),
-                .init(color: base.opacity(near ? 0.82 : 0.68), location: 0.5),
-                .init(color: (fin.tint ?? palette.light).opacity(near ? 0.66 : 0.46), location: 1),
-            ]),
-            startPoint: root, endPoint: tip))
-        if detailed || fin.trim || fin.sheen {
-            var r = f
-            r.clip(to: path)
-            if fin.sheen {
-                var sheen = r
-                sheen.blendMode = .plusLighter
-                sheen.fill(path, with: .linearGradient(
-                    Gradient(stops: [
-                        .init(color: .clear, location: 0.1),
-                        .init(color: Color(red: 0.35, green: 0.80, blue: 1.0).opacity(0.28), location: 0.45),
-                        .init(color: Color(red: 1.0, green: 0.45, blue: 0.85).opacity(0.24), location: 0.8),
-                        .init(color: .clear, location: 1),
-                    ]),
-                    startPoint: root, endPoint: tip))
-            }
-            if detailed {
-                r.stroke(pose.fin(fin.rays, fin), with: .color(palette.dark.opacity(far ? 0.22 : 0.34)),
-                         lineWidth: lw * 0.55)
-            }
-            if fin.trim {
-                r.stroke(path, with: .color(palette.outline.opacity(0.9)), lineWidth: lw * 3.4)
-            }
-        }
-        f.stroke(path, with: .color(palette.outline.opacity(near ? 0.8 : 0.5)),
-                 style: StrokeStyle(lineWidth: lw * (near ? 0.9 : 0.7), lineJoin: .round))
-    }
-
     /// An earned mark (`AquariumVariant`), clipped to the body like a
     /// pattern and drawn over it — small and pale, so it reads as a
     /// distinction rather than a costume.
@@ -608,7 +667,7 @@ enum CartoonFish {
     /// squashing with the body.
     private static func drawFace(art: Art, species: FishSpecies, swim: Swim, palette: Palette,
                                  into f: inout GraphicsContext, mouth: MouthKind,
-                                 blink: Double, dead: Bool, lw: Double, comp: Double) {
+                                 blink: Double, dead: Bool, lw: Double, detailed: Bool, comp: Double) {
         let thin = max(0.12, min(1, swim.thin))
         let turn = min(1, max(0, (0.9 - thin) / 0.6))
         let spread = art.eyeSpread * (1 - thin * thin).squareRoot() / thin * turn
@@ -619,10 +678,12 @@ enum CartoonFish {
             var far = f
             far.opacity = turn
             drawEye(into: &far, at: CGPoint(x: art.eye.x - spread, y: art.eye.y), r: art.eyeR * 0.94,
-                    palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, sx: sx, sy: comp)
+                    palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: false,
+                    sx: sx, sy: comp)
         }
         drawEye(into: &f, at: CGPoint(x: art.eye.x + spread, y: art.eye.y), r: art.eyeR,
-                palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, sx: sx, sy: comp)
+                palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed,
+                sx: sx, sy: comp)
         if !dead, species != .seahorse || mouth != .plain {
             var m = f
             if turn > 0.05 {
@@ -642,7 +703,7 @@ enum CartoonFish {
     /// against the caller's squash.
     private static func drawEye(into f: inout GraphicsContext, at e: CGPoint, r: Double,
                                 palette: Palette, mood: MouthKind, blink: Double, dead: Bool,
-                                lw: Double, sx: Double, sy: Double) {
+                                lw: Double, detailed: Bool, sx: Double, sy: Double) {
         func oval(_ cx: Double, _ cy: Double, _ rr: Double) -> Path {
             Path(ellipseIn: CGRect(x: cx - rr * sx, y: cy - rr * sy,
                                    width: rr * 2 * sx, height: rr * 2 * sy))
@@ -659,22 +720,30 @@ enum CartoonFish {
                      style: StrokeStyle(lineWidth: lw * 1.6, lineCap: .round))
             return
         }
-        // The socket: a soft shadow ring that seats the eye in the head.
-        f.fill(oval(e.x - r * 0.03, e.y + r * 0.08, r * 1.3), with: .radialGradient(
-            Gradient(colors: [palette.dark.opacity(0.3), palette.dark.opacity(0)]),
-            center: CGPoint(x: e.x, y: e.y + r * 0.08 * sy), startRadius: r * 0.9, endRadius: r * 1.3))
+        if detailed {
+            // The socket: a soft shadow ring that seats the eye in the head.
+            f.fill(oval(e.x - r * 0.03, e.y + r * 0.08, r * 1.3), with: .radialGradient(
+                Gradient(colors: [palette.dark.opacity(0.3), palette.dark.opacity(0)]),
+                center: CGPoint(x: e.x, y: e.y + r * 0.08 * sy), startRadius: r * 0.9, endRadius: r * 1.3))
+        }
+        // The white, shaded under the brow at the top and cool at the
+        // bottom edge.
         let white = oval(e.x, e.y, r)
-        f.fill(white, with: .radialGradient(
-            Gradient(colors: [.white, Color(red: 0.84, green: 0.89, blue: 0.95)]),
-            center: CGPoint(x: e.x + r * 0.2 * sx, y: e.y - r * 0.3 * sy),
-            startRadius: 0, endRadius: r * 1.25))
-        var inner = f
-        inner.clip(to: white)
+        f.fill(white, with: .linearGradient(
+            Gradient(stops: [
+                .init(color: palette.dark.mix(with: .white, by: 0.55), location: 0),
+                .init(color: .white, location: 0.36),
+                .init(color: .white, location: 0.7),
+                .init(color: Color(red: 0.84, green: 0.89, blue: 0.95), location: 1),
+            ]),
+            startPoint: CGPoint(x: 0, y: e.y - r * sy), endPoint: CGPoint(x: 0, y: e.y + r * sy)))
+        // Everything inside the white sits well inside it, so nothing
+        // here needs a clip.
         // The iris looks forward, where the fish is going; a hungry
         // fish's pupils go wide.
         let ix = e.x + r * 0.24 * sx, iy = e.y + r * 0.04 * sy
         let irisR = r * (mood == .hungry ? 0.74 : 0.68)
-        inner.fill(oval(ix, iy, irisR), with: .radialGradient(
+        f.fill(oval(ix, iy, irisR), with: .radialGradient(
             Gradient(stops: [
                 .init(color: palette.light, location: 0),
                 .init(color: palette.body, location: 0.55),
@@ -682,16 +751,12 @@ enum CartoonFish {
             ]),
             center: CGPoint(x: ix, y: iy + irisR * 0.45 * sy),
             startRadius: 0, endRadius: irisR * 1.15))
-        inner.fill(oval(ix + r * 0.03 * sx, iy, irisR * (mood == .hungry ? 0.66 : 0.58)),
+        f.fill(oval(ix + r * 0.03 * sx, iy, irisR * (mood == .hungry ? 0.66 : 0.58)),
                    with: .color(Color(red: 0.02, green: 0.03, blue: 0.07)))
-        // The upper lid's shadow across the top of the white.
-        inner.fill(Path(CGRect(x: e.x - r * sx, y: e.y - r * sy, width: r * 2 * sx, height: r * 0.7 * sy)),
-                   with: .linearGradient(Gradient(colors: [palette.dark.opacity(0.30), .clear]),
-                                         startPoint: CGPoint(x: 0, y: e.y - r * sy),
-                                         endPoint: CGPoint(x: 0, y: e.y - r * 0.3 * sy)))
-        // Catchlights: a big soft one high and forward, a sharp dot low.
-        inner.fill(oval(ix + r * 0.16 * sx, iy - r * 0.30 * sy, r * 0.27), with: .color(.white.opacity(0.97)))
-        inner.fill(oval(ix - r * 0.26 * sx, iy + r * 0.30 * sy, r * 0.10), with: .color(.white.opacity(0.8)))
+        // Catchlights: a big one high and forward, a sharp dot low.
+        var glints = oval(ix + r * 0.16 * sx, iy - r * 0.30 * sy, r * 0.27)
+        glints.addPath(oval(ix - r * 0.26 * sx, iy + r * 0.30 * sy, r * 0.10))
+        f.fill(glints, with: .color(.white.opacity(0.95)))
         f.stroke(white, with: .color(palette.outline.opacity(0.9)), lineWidth: lw * 0.95)
 
         // The lids. `upper` is how far the top lid has come down (0…1

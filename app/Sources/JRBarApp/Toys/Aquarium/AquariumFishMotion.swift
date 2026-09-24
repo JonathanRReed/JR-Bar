@@ -41,9 +41,13 @@ extension CartoonFish {
             return flex * s * s
         }
 
+        /// Swing `p` about `c` by `a` radians. Swim angles stay under
+        /// ~0.6 rad, where the short series is as good as the real
+        /// thing to a hundredth of a point and far cheaper per point.
         private func rotate(_ p: CGPoint, about c: CGPoint, by a: Double, stretch: Double = 1) -> CGPoint {
             let dx = p.x - c.x, dy = p.y - c.y
-            let ca = cos(a), sa = sin(a)
+            let a2 = a * a
+            let ca = 1 - a2 * (0.5 - a2 / 24), sa = a * (1 - a2 / 6)
             return CGPoint(x: c.x + (dx * ca - dy * sa) * stretch, y: c.y + dx * sa + dy * ca)
         }
 
@@ -78,19 +82,28 @@ extension CartoonFish {
             moving ? Self.map(path) { finPoint($0, fin) } : path
         }
 
-        /// `path` with every point sent through `f`.
+        /// `path` with every point sent through `f`, built straight
+        /// into a CoreGraphics path — the cheap way, every frame.
         static func map(_ path: Path, _ f: (CGPoint) -> CGPoint) -> Path {
-            var out = Path()
-            path.forEach { element in
-                switch element {
-                case .move(let p): out.move(to: f(p))
-                case .line(let p): out.addLine(to: f(p))
-                case .quadCurve(let p, let c): out.addQuadCurve(to: f(p), control: f(c))
-                case .curve(let p, let c1, let c2): out.addCurve(to: f(p), control1: f(c1), control2: f(c2))
-                case .closeSubpath: out.closeSubpath()
+            let out = CGMutablePath()
+            path.cgPath.applyWithBlock { element in
+                let e = element.pointee
+                switch e.type {
+                case .moveToPoint:
+                    out.move(to: f(e.points[0]))
+                case .addLineToPoint:
+                    out.addLine(to: f(e.points[0]))
+                case .addQuadCurveToPoint:
+                    out.addQuadCurve(to: f(e.points[1]), control: f(e.points[0]))
+                case .addCurveToPoint:
+                    out.addCurve(to: f(e.points[2]), control1: f(e.points[0]), control2: f(e.points[1]))
+                case .closeSubpath:
+                    out.closeSubpath()
+                @unknown default:
+                    break
                 }
             }
-            return out
+            return Path(out)
         }
     }
 }
