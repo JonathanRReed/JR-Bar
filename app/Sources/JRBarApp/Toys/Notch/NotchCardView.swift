@@ -1441,9 +1441,13 @@ struct NotchOutputPicker: View {
                 }
             }
         } label: {
+            // A 10 pt glyph on a 22 pt target: the frame keeps the row's
+            // height, the shape reaches past it so the click lands.
             Image(systemName: current?.symbol ?? "hifispeaker")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(style.subColor)
+                .frame(width: 22, height: 14, alignment: .trailing)
+                .contentShape(Rectangle().inset(by: -4))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
