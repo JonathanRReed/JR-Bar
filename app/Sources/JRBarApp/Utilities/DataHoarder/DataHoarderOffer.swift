@@ -109,10 +109,14 @@ struct DataHoarderOfferSheet: View {
             windowPicker
             sourceList
             VStack(alignment: .leading, spacing: 6) {
-                Text(DataHoarderOffer.summary(offer.total))
-                    .font(.system(size: 12, weight: .medium))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+                if offer.loaded {
+                    // Only once the folders are read: a "no files" line
+                    // under the spinner would contradict it.
+                    Text(DataHoarderOffer.summary(offer.total))
+                        .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
                 Label {
                     Text("Prompts and responses are kept as “[redacted]”: the copy holds each session's projects, branches, tools, models and times. Full content is a separate switch in Data Hoarder.")
                 } icon: {

@@ -69,6 +69,7 @@ struct HistoryView: View {
                 HistoryEmptyState(store: store)
             } else if store.filtered.isEmpty {
                 VStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 26)).foregroundStyle(.quaternary)
                     Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                     Button("Clear search") { store.clearFilter() }.buttonStyle(.link).font(.system(size: 12))
                     if store.offersHoarder {
@@ -549,6 +550,7 @@ struct EventLogView: View {
                         : "The event journal lives in the monitor. It appears when the socket is live.")
             } else if store.events.isEmpty {
                 VStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 26)).foregroundStyle(.quaternary)
                     Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                     Button("Clear filter") { store.eventFilter = EventLogFilter() }.buttonStyle(.link).font(.system(size: 12))
                 }
