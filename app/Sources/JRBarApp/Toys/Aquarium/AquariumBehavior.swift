@@ -40,11 +40,6 @@ enum AquariumBehavior {
         return age / flourishDuration
     }
 
-    /// Which way the roll turns — seeded, constant per fish.
-    static func flourishDirection(seed: UInt64) -> Double {
-        scramble(seed ^ 0x3B84D5A5_9E3779B9) & 1 == 0 ? 1 : -1
-    }
-
     // MARK: Tricks
 
     /// The tap-trick's length in seconds — a barrel roll or a bubble

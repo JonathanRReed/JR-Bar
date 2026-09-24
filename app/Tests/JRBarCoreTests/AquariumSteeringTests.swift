@@ -401,7 +401,6 @@ struct AquariumSteeringTests {
             b.throttle = AquariumSteering.glide(seed: 21, at: 0)
             var t = 0.0
             let dt = 1.0 / 240
-            let startX = b.x
             var turnX: Double?
             var furthest = 0.0
             var distance = 0.0
@@ -415,7 +414,6 @@ struct AquariumSteeringTests {
                 if b.turn != nil, turnX == nil { turnX = x0 }
                 if let turnX { furthest = max(furthest, b.x - turnX) }
             }
-            _ = startX
             return (distance, furthest)
         }
         let slow = run(1, seconds: 30)

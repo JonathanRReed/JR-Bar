@@ -119,11 +119,10 @@ extension AquariumView {
 
     /// The cruise patrol: a sinusoidal sweep between the walls, so the
     /// fish eases to a stop at the glass — and there turns round through
-    /// the same U-turn a steered fish makes. `u` is the velocity proxy
-    /// (±1 mid-tank, 0 at a wall), `pose` the turn's, and `bow` how far
-    /// the loop dips (points).
+    /// the same U-turn a steered fish makes. `pose` is the turn's, and
+    /// `bow` how far the loop dips (points).
     func patrol(of fish: Fish, in size: CGSize, at t: Double, margin: Double)
-        -> (x: Double, u: Double, turn: Double, pose: AquariumTurn.Pose, bow: Double) {
+        -> (x: Double, turn: Double, pose: AquariumTurn.Pose, bow: Double) {
         let h = fish.seed
         let x0 = Double((h >> 33) & 0x3FF) / 0x3FF
         // Deep lanes swim slower: parallax.
@@ -134,7 +133,6 @@ extension AquariumView {
         let s = min(1, max(-1, x0 * 2 - 1))
         let phase = fish.direction > 0 ? asin(s) : Double.pi - asin(s)
         let theta = omega * t + phase
-        let u = cos(theta)
         // The turnaround: a cruise U-turn centred on each point where
         // the sweep reverses (u = 0).
         let duration = AquariumTurn.duration(for: .cruise, pace: swimTuning.swimPace, tempo: tempo)
@@ -158,7 +156,7 @@ extension AquariumView {
         // The nose pokes a touch past the patrol line mid-turn.
         let pos = 0.5 * (1 + sin(theta))
         let x = margin + pos * max(0, size.width - 2 * margin) + turn * 7 * sin(theta)
-        return (x, u, turn, pose, bow)
+        return (x, turn, pose, bow)
     }
 
     /// The lane's resting height: near the surface at lane 0, clear of

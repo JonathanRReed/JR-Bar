@@ -18,11 +18,6 @@ struct AquariumBehaviorTests {
                 if let a { #expect(a >= 0 && a <= 1) }
             }
         }
-        // The roll direction is one of the two valid signs, per seed.
-        for seed: UInt64 in [3, 9, 512] {
-            let d = AquariumBehavior.flourishDirection(seed: seed)
-            #expect(d == 1 || d == -1)
-        }
     }
 
     @Test("some fish roll, briefly and occasionally")

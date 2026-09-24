@@ -274,7 +274,7 @@ struct AquariumTurnRenderProofTests {
         let sheet = Self.sheet(width: cellW * Double(wear.count), height: cellH * Double(species.count) + 24) { c, _ in
             Self.label(&c, "head-on: bare, crown, party + shades, beanie + bow tie, monocle, headphones, top hat, scarf, laptop (hidden); the seahorse flicks round side-on",
                        at: CGPoint(x: cellW * Double(wear.count) / 2, y: 12), size: 10)
-            for (row, sp) in species.enumerated() {
+            for row in species.indices {
                 for col in wear.indices {
                     let fish = cast[row * wear.count + col]
                     var l = AquariumView.Layout()
