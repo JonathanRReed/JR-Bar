@@ -542,10 +542,14 @@ final class FoldToy: Toy {
         // the fold gate's hysteresis at the activation edge. Movement
         // mode arms on the first real move off the anchor instead: the
         // streams come up with the gesture's start, which is the warm-up
-        // that keeps the first painted frame from being black.
+        // that keeps the first painted frame from being black. A reopen
+        // from the black hold films at once, wherever the lid is and
+        // whatever the fold measures from: a fresh frame is what lets it
+        // unfold from black, and after it lets go the cooldown carries
+        // the unwind.
         let outcome: FoldArming.Outcome
-        if settings.anchor == .movement {
-            let moving = gateAngle.map { moveAnchor.moving($0) } ?? false
+        if settings.anchor == .movement || blackout.active {
+            let moving = blackout.active || (gateAngle.map { moveAnchor.moving($0) } ?? false)
             let lidShut = cachedClamshell == true
                 || (gateAngle.map { $0 <= FoldPause.closedAngle } ?? false)
             outcome = arming.updateMovement(
@@ -773,11 +777,17 @@ final class FoldToy: Toy {
                 noteDiag(stage: "tick")
                 return
             }
-            FoldLog.log.notice("blackout: reopened, folding from black")
+            FoldLog.log.notice("blackout: reopened, unfolding from black")
             endBlackout(hide: false)
         }
         // The tracker's glide IS the easing while the lid moves; the
         // chase owns the rest — instant while the target grows, a damped
+            // The unfold starts from the last angle that still draws all
+            // black, so the first frame matches the hold, and the chase
+            // unwinds from there to the live lid.
+            let reference = heldReference ?? duoReference ?? 110
+            chase.reset(to: FoldDuoModel.reopenDelta(
+                reference: reference, perspective: self.settings.perspective))
         // unwind when the gate snaps it to 0 mid-motion, so opening
         // counter-rotates back through the hinge instead of snapping.
         // A late first frame eases in over `FirstFrameCatchUp.duration`.

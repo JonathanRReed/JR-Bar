@@ -313,6 +313,46 @@ struct FoldDuoModelTests {
         #expect(!hold.releases(angle: 40, freshFrame: true), "nothing to release once let go")
     }
 
+    @Test("a reopen from black unfolds: the first frame is still black and the picture comes up over frames")
+    func reopenUnfoldsFromBlack() {
+        let reference = 110.0
+        let seed = FoldDuoModel.reopenDelta(reference: reference, perspective: 0.6)
+        let seedTheta = reference - seed * 180 / .pi
+        #expect(abs(seedTheta - FoldDuoModel.blackAngle(eye: eye)) < 1e-9)
+        #expect(FoldDuoModel.endFade(theta: seedTheta, eye: eye) == 1, "the first frame matches the hold")
+        // The lid is already at 60° (a quick reopen) or back at its rest
+        // by the time a frame lands; the chase unwinds from the seed.
+        for liveLid in [60.0, reference] {
+            var chase = DeltaChase()
+            chase.reset(to: seed)
+            let live = (reference - liveLid) * .pi / 180
+            var lastFade = 1.0
+            var biggestStep = 0.0
+            var frames = 0
+            while frames < 120 {
+                let delta = chase.tick(target: live, dt: 1.0 / 60)
+                frames += 1
+                let fade = FoldDuoModel.endFade(theta: reference - delta * 180 / .pi, eye: eye)
+                #expect(fade <= lastFade, "the picture only ever comes up")
+                biggestStep = max(biggestStep, lastFade - fade)
+                lastFade = fade
+                if chase.atRest { break }
+            }
+            #expect(chase.value == live, "the unfold lands on the lid")
+            #expect(Double(frames) / 60 < 0.5, "and is done within half a second")
+            #expect(lastFade == 0, "clear once it lands above edge-on + 22°")
+            #expect(biggestStep < 0.25, "no frame cuts from black to lit (\(biggestStep))")
+        }
+        // A lid still under the black angle when the frame lands simply
+        // follows the lid: the chase takes the larger delta.
+        var low = DeltaChase()
+        low.reset(to: seed)
+        let under = (reference - 20) * .pi / 180
+        #expect(low.tick(target: under, dt: 1.0 / 60) == under)
+        #expect(FoldDuoModel.reopenDelta(reference: 30, perspective: 0.6) == 0)
+        #expect(FoldDuoModel.reopenDelta(reference: .nan, perspective: 0.6) == 0)
+    }
+
     // MARK: Bar windows
 
     @Test("the Duo keeps JR-Bar's own menu-bar windows and nothing else of ours")

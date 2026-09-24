@@ -431,6 +431,33 @@ struct FoldRenderProofTests {
         }
     }
 
+    /// The Duo's reopen from the black hold, at its worst: the lid is
+    /// already back at rest when the first frame lands, so the whole
+    /// unfold plays on the chase. Frames every 50 ms from the release;
+    /// the first is still black and the picture comes up out of it.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the reopen strip"))
+    func reopenStrip() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let rig = try Self.makeRig(.duo)
+        var chase = DeltaChase()
+        chase.reset(to: FoldDuoModel.reopenDelta(reference: Self.rest, perspective: 0.6))
+        var cells: [(Double, CGImage, CGImage)] = []
+        for frame in 0...30 {
+            let drawn = Self.rest - chase.tick(target: 0, dt: 1.0 / 60) * 180 / .pi
+            guard frame % 3 == 0, cells.count < 7 else { continue }
+            let panel = try Self.renderPanel(rig, angle: drawn)
+            // The lid itself is at rest: the eye sees the glass flat.
+            let seen = try Self.renderObserver(rig, panel: panel, angle: Self.rest)
+            cells.append((drawn, try Self.image(panel), try Self.image(seen)))
+        }
+        let title = "Duo reopen — the lid is back at 110° as the first frame lands; the glass unfolds from black, one cell per 50 ms"
+        let url = dir.appendingPathComponent("fold-duo-reopen-strip.png")
+        try Self.writePNG(try Self.makeStrip(cells, title: title), to: url)
+    }
+
     // MARK: Pictures
 
     static func image(_ texture: MTLTexture) throws -> CGImage {

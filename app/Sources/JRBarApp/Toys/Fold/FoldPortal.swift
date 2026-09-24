@@ -721,8 +721,25 @@ enum FoldDuoModel {
     /// The fade to black as the seated eye loses the glass: 1 (black)
     /// at or under edge-on + 2°, 0 from edge-on + 22° up.
     static func endFade(theta: Double, eye: SIMD2<Double>) -> Double {
-        let edge = edgeOn(eye: eye)
-        return 1 - smoothstep(edge + endFadeFrom, edge + endFadeFrom + endFadeSpan, theta)
+        let black = blackAngle(eye: eye)
+        return 1 - smoothstep(black, black + endFadeSpan, theta)
+    }
+
+    /// The highest lid angle the end fade still draws all black:
+    /// edge-on + 2°, 39.6° for the default eye.
+    static func blackAngle(eye: SIMD2<Double>) -> Double {
+        edgeOn(eye: eye) + endFadeFrom
+    }
+
+    /// Where a reopen from the black hold starts its unfold, as a delta
+    /// in radians: the glass drawn at the last angle that is still all
+    /// black. The first frame after the hold matches it, and the unwind
+    /// down to the live lid brings the picture up out of black instead
+    /// of cutting straight to a half-lit desktop. 0 for a reference at
+    /// or under that angle.
+    static func reopenDelta(reference: Double, perspective: Double) -> Double {
+        guard reference.isFinite else { return 0 }
+        return radians(max(0, reference - blackAngle(eye: eye(perspective: perspective))))
     }
 
     /// The overlay's own alpha over the first degrees of travel.
