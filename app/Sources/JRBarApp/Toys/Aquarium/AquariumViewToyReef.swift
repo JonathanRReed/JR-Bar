@@ -76,11 +76,17 @@ extension AquariumView {
 
     /// The painted paths, built once per window size and act.
     private static var toyReefPaths: [String: Path] = [:]
+    /// Room for the busiest act (about twenty paths) at three sizes at
+    /// once — the window, a wallpaper and a screensaver — so one never
+    /// empties the cache under another every two seconds.
+    private static let toyReefPathLimit = 64
 
     private func reefPath(_ name: String, _ size: CGSize, build: () -> Path) -> Path {
         let key = "\(name)-\(toyReefAct)-\(Int(size.width))x\(Int(size.height))"
         if let hit = Self.toyReefPaths[key] { return hit }
-        if Self.toyReefPaths.count > 20 { Self.toyReefPaths.removeAll(keepingCapacity: true) }
+        if Self.toyReefPaths.count >= Self.toyReefPathLimit {
+            Self.toyReefPaths.removeAll(keepingCapacity: true)
+        }
         let path = build()
         Self.toyReefPaths[key] = path
         return path
@@ -119,6 +125,7 @@ extension AquariumView {
             return mass.subtracting(hole)
         }
         paintPainted(arch, canvas: &canvas, size: size, fill: TankPaint.RGB(0.34, 0.40, 0.72))
+        shadeArch(arch, canvas: &canvas, size: size)
         // Bubble coral: clusters of glossy round heads, each its own
         // bubble, coral pink and orange.
         let clusters: [(x: Double, y: Double, s: Double, rgb: TankPaint.RGB)] = [
@@ -140,6 +147,32 @@ extension AquariumView {
             }
             paintPainted(weed, canvas: &canvas, size: size,
                          fill: i.isMultiple(of: 2) ? TankPaint.RGB(0.36, 0.82, 0.40) : TankPaint.RGB(0.20, 0.68, 0.46))
+        }
+    }
+
+    /// The arch's toy shading: a hard shadow along its foot, the cave's
+    /// depth as a dark rim round the hole, and a few light lumps on its
+    /// crown, so it reads as a rock rather than a flat cut-out.
+    private func shadeArch(_ arch: Path, canvas: inout GraphicsContext, size: CGSize) {
+        let w = size.width, h = size.height
+        var inside = canvas
+        inside.clip(to: arch)
+        let shade = TankPaint.color(TankPaint.RGB(0.14, 0.12, 0.40), 0.5)
+        var foot = Path()
+        foot.move(to: CGPoint(x: w * 0.16, y: h * 0.85))
+        foot.addQuadCurve(to: CGPoint(x: w * 0.43, y: h * 0.80), control: CGPoint(x: w * 0.30, y: h * 0.90))
+        foot.addLine(to: CGPoint(x: w * 0.43, y: h))
+        foot.addLine(to: CGPoint(x: w * 0.16, y: h))
+        foot.closeSubpath()
+        inside.fill(foot, with: .color(shade))
+        let hole = Path(ellipseIn: CGRect(x: w * 0.255, y: h * 0.71, width: w * 0.08, height: h * 0.24))
+        inside.stroke(hole, with: .color(shade), lineWidth: h * 0.04)
+        let lumps: [(x: Double, y: Double, r: Double)] = [(0.235, 0.64, 0.028), (0.29, 0.625, 0.02),
+                                                          (0.345, 0.66, 0.018), (0.205, 0.70, 0.014)]
+        for lump in lumps {
+            let r = h * lump.r
+            let rect = CGRect(x: w * lump.x - r, y: h * lump.y - r * 0.7, width: r * 2, height: r * 1.4)
+            inside.fill(Path(ellipseIn: rect), with: .color(.white.opacity(0.24)))
         }
     }
 
