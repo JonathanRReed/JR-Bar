@@ -159,8 +159,10 @@ struct MoveAnchor: Sendable {
     /// The stillness deadband in degrees — the sensor's jitter window.
     var tolerance = 1.5
     /// How far off the anchor counts as a real move — what arms the
-    /// capture. nil uses `tolerance`; the Duo sets 3° so a nudge of the
-    /// lid never flashes the Screen Recording indicator.
+    /// capture. nil uses `tolerance`, either way off the anchor. The Duo
+    /// sets 3° and counts only a move down: a nudge never flashes the
+    /// Screen Recording indicator, and neither does tilting the screen
+    /// back, which has nothing to fold.
     var armThreshold: Double?
     /// How far below the anchor counts as folded: past this the
     /// reference freezes until the lid returns.
@@ -197,10 +199,13 @@ struct MoveAnchor: Sendable {
 
     /// A real deviation from the anchor — what arms the capture in
     /// movement mode. A held fold counts as moving (the streams must
-    /// stay); parked at rest does not.
+    /// stay); parked at rest does not. With `armThreshold` set only a
+    /// move down counts; a reopen back through the anchor keeps its
+    /// streams through the arming cooldown.
     func moving(_ angle: Double) -> Bool {
         guard angle.isFinite, let a = anchor else { return false }
-        return abs(angle - a) > (armThreshold ?? tolerance)
+        if let threshold = armThreshold { return a - angle > threshold }
+        return abs(angle - a) > tolerance
     }
 
     /// Seat the anchor directly — the dwell pause hands the desktop

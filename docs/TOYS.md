@@ -205,8 +205,9 @@ study of Apple's own model (MIT).
   parked angle when it hands the desktop back. Movement mode arms the
   streams on the first move off the anchor and holds the delta at 0
   until the first complete frame — the warm-up keeps the room from
-  opening black. In the Duo the capture arms on 3° of real travel (a
-  nudge never flashes the Screen Recording indicator), the first frame of
+  opening black. In the Duo the capture arms on 3° of travel down (a
+  nudge, or tilting the screen back wider, never flashes the Screen
+  Recording indicator; the Room still arms either way), the first frame of
   a gesture eases the delta up from 0 over 150 ms instead of popping to
   a close that is already 15° in, and the overlay's first 120 ms on
   screen fade it in. The Duo's travel is not clamped: its geometry goes
