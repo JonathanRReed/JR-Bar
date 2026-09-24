@@ -76,7 +76,7 @@ private struct DockSampleDesk: View {
         let pad = DockPreviewSample.dockPad
         let tile = DockPreviewSample.tile
         ZStack(alignment: .bottom) {
-            DockSampleWallpaper(dark: scheme == .dark)
+            DockSampleWallpaper(dark: dark)
             dockGlass
                 .padding(.bottom, pad)
             // The bubble is the Dock's, drawn in the Dock's window: a
@@ -92,7 +92,7 @@ private struct DockSampleDesk: View {
             VStack(spacing: 0) {
                 DockPreviewView(content: content, actions: DockPreviewActions(content: content))
                     .fixedSize()
-                    .background(DockSampleGlass(radius: content.metrics.panelRadius, dark: scheme == .dark))
+                    .background(DockSampleGlass(radius: content.metrics.panelRadius, dark: dark))
                 Color.clear
                     .frame(width: 1, height: air)
                     .overlay(alignment: .leading) { if showsMeasure { measure } }
@@ -102,14 +102,20 @@ private struct DockSampleDesk: View {
         }
     }
 
+    private var dark: Bool { scheme == .dark }
+    private var bubbleInk: Color { dark ? Color.white : Color.black.opacity(0.85) }
+    private var bubbleFill: Color { dark ? Color(white: 0.22).opacity(0.92) : Color(white: 0.96).opacity(0.94) }
+    private var dockFill: Color { dark ? Color.white.opacity(0.12) : Color.white.opacity(0.4) }
+    private var dockRim: Color { Color.white.opacity(dark ? 0.16 : 0.6) }
+
+    /// The Dock's own name bubble over the hovered icon.
     private var bubble: some View {
         Text(content.appName)
             .font(.system(size: 13, weight: .regular))
-            .foregroundStyle(scheme == .dark ? Color.white : Color.black.opacity(0.85))
+            .foregroundStyle(bubbleInk)
             .padding(.horizontal, 10)
             .frame(height: DockPreviewSample.bubbleHeight)
-            .background(Capsule().fill(scheme == .dark ? Color(white: 0.22).opacity(0.92)
-                                                       : Color(white: 0.96).opacity(0.94)))
+            .background(Capsule().fill(bubbleFill))
             .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
             .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
     }
@@ -135,8 +141,8 @@ private struct DockSampleDesk: View {
         let width = count * DockPreviewSample.tile + (count - 1) * Self.tileGap + DockPreviewSample.dockPad * 2
         let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         return shape
-            .fill(scheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.4))
-            .overlay(shape.strokeBorder(Color.white.opacity(scheme == .dark ? 0.16 : 0.6), lineWidth: 0.75))
+            .fill(dockFill)
+            .overlay(shape.strokeBorder(dockRim, lineWidth: 0.75))
             .frame(width: width, height: DockPreviewSample.tile + DockPreviewSample.dockPad * 2)
     }
 

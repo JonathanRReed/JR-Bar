@@ -512,8 +512,8 @@ struct DockSwitcherTests {
         #expect(tight.cornerRadius == 19)
         #expect(tight.zoomWidth == 288, "the pane narrows with the scale, to 80 % at most")
         #expect(DockSwitcherMetrics.scaled(1.4).zoomWidth == 360, "and never grows past its old width")
-        let floor = DockSwitcherMetrics.scaled(0.5)
-        #expect(floor.paneInset == 10 && floor.rowInset == 8 && floor.stripInset == 6 && floor.cardGap == 2)
+        let least = DockSwitcherMetrics.scaled(0.5)
+        #expect(least.paneInset == 10 && least.rowInset == 8 && least.stripInset == 6 && least.cardGap == 2)
         var previous = DockSwitcherMetrics.scaled(0.5)
         for step in 11...32 {
             let current = DockSwitcherMetrics.scaled(Double(step) / 20)
