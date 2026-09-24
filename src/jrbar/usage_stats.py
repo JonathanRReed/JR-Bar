@@ -1905,48 +1905,6 @@ def _discover_usage_files(
         return coverage, candidates, root
 
 
-def build_usage_inventory(
-    root: Path,
-    *,
-    codex_root: Path | None = None,
-    max_files_per_source: int = USAGE_INVENTORY_MAX_FILES,
-    max_file_bytes: int = USAGE_FILE_MAX_BYTES,
-) -> LocalUsageInventory:
-    """Freeze one bounded, no-follow admission set for all local consumers."""
-    if (
-        isinstance(max_files_per_source, bool)
-        or not isinstance(max_files_per_source, int)
-        or not 0 <= max_files_per_source <= USAGE_INVENTORY_MAX_FILES
-        or isinstance(max_file_bytes, bool)
-        or not isinstance(max_file_bytes, int)
-        or not 1 <= max_file_bytes <= USAGE_FILE_MAX_BYTES
-    ):
-        raise ValueError("invalid usage inventory bounds")
-
-    sources: list[_InventorySource] = []
-    source_roots: list[tuple[str, Path]] = [("claude", root)]
-    if codex_root is not None:
-        source_roots.append(("codex", codex_root))
-    for provider_id, source_root in source_roots:
-        coverage, candidates, scanned_root = _discover_usage_files(
-            source_root,
-            provider_id,
-            max_files=max_files_per_source,
-            max_file_bytes=max_file_bytes,
-        )
-        sources.append(
-            _InventorySource(
-                provider_id=provider_id,
-                root=source_root,
-                root_key=_root_key(source_root),
-                walk_complete=scanned_root is not None,
-                coverage=coverage.finalize(),
-                candidates=tuple(candidates),
-            )
-        )
-    return LocalUsageInventory(tuple(sources))
-
-
 def _cached_entry_covers(entry: object, since_epoch: float) -> bool:
     """Does this cache entry hold enough history to answer this window?
 
