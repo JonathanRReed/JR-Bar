@@ -297,8 +297,8 @@ PROVIDER_ANIMATION_DESCRIPTIONS: dict[str, str] = {
     MOTION_BLOOM: "Light opens from the center outward, holds lit, then fades — the lid-open signature as a loop. Shared strips ride it as the full swell.",
     MOTION_FRONTIER: "A held fill whose leading edge pulses into the dark — a progress bar with a live tip. Shared strips pulse the tip over a raised bed.",
     MOTION_GLINT: "One thin bright pass sweeping a lit strip, like light catching a rim. Shared strips ride it as a narrow flare over a lit bed.",
-    MOTION_RIPPLE: "A stone in water: the middle crests first and rings run outward, dimmer at every step, then the strip rests. Shared strips ride it as a unison swell.",
-    MOTION_PENDULUM: "A weight on a string: the light swings end to end, lingering at each end and passing quickly through the middle. Shared strips ride it as a narrow travelling flare.",
+    MOTION_RIPPLE: "A stone in water: the middle crests first and a wide ring runs outward, dimmer at every step, then the next stone falls. Shared strips ride it as a unison swell.",
+    MOTION_PENDULUM: "A weight on a string: the light hangs at each end and rushes, dimmer, through the middle. Shared strips ride it as a narrow travelling flare.",
     MOTION_STEADY: "Holds its color. Never moves.",
     MOTION_BLINK: "Hard-edged on/off, no easing.",
 }

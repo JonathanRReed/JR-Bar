@@ -411,7 +411,7 @@
   {
    "id": "pendulum",
    "label": "Pendulum",
-   "description": "A weight on a string: the light swings end to end, lingering at each end and passing quickly through the middle. Shared strips ride it as a narrow travelling flare.",
+   "description": "A weight on a string: the light hangs at each end and rushes, dimmer, through the middle. Shared strips ride it as a narrow travelling flare.",
    "meaning": "provider animation: pendulum",
    "surfaces": [
     "screen_bar",
@@ -443,7 +443,7 @@
    "catalog": "provider_animation",
    "role": "mechanical",
    "preview": {
-    "program": "#000203 160ms cosine\n0:#000203 349ms cosine; 1:#007280 458ms pulse 42ms; 2:#007280 390ms pulse 199ms; 3:#007280 337ms pulse 331ms; 4:#007280 337ms pulse 431ms; 5:#007280 390ms pulse 510ms; 6:#007280 458ms pulse 599ms; 7:#007280 349ms cosine 751ms\n7:#000203 349ms cosine; 6:#007280 458ms pulse 42ms; 5:#007280 390ms pulse 199ms; 4:#007280 337ms pulse 331ms; 3:#007280 337ms pulse 431ms; 2:#007280 390ms pulse 510ms; 1:#007280 458ms pulse 599ms; 0:#007280 349ms cosine 751ms\nrepeat",
+    "program": "#000203 160ms cosine\n0:#000203 419ms cosine; 1:#006571 491ms pulse 118ms; 2:#005863 274ms pulse 312ms; 3:#004B54 219ms pulse 408ms; 4:#004B54 219ms pulse 472ms; 5:#005863 274ms pulse 513ms; 6:#006571 491ms pulse 490ms; 7:#007280 419ms cosine 681ms\n7:#000203 419ms cosine; 6:#006571 491ms pulse 118ms; 5:#005863 274ms pulse 312ms; 4:#004B54 219ms pulse 408ms; 3:#004B54 219ms pulse 472ms; 2:#005863 274ms pulse 513ms; 1:#006571 491ms pulse 490ms; 0:#007280 419ms cosine 681ms\nrepeat",
     "led_count": 8
    }
   },
@@ -830,7 +830,7 @@
   {
    "id": "ripple",
    "label": "Ripple",
-   "description": "A stone in water: the middle crests first and rings run outward, dimmer at every step, then the strip rests. Shared strips ride it as a unison swell.",
+   "description": "A stone in water: the middle crests first and a wide ring runs outward, dimmer at every step, then the next stone falls. Shared strips ride it as a unison swell.",
    "meaning": "provider animation: ripple",
    "surfaces": [
     "screen_bar",
@@ -862,7 +862,7 @@
    "catalog": "provider_animation",
    "role": "transition",
    "preview": {
-    "program": "#000203 160ms cosine\n#000203 60ms cosine\n0:#00272C 576ms pulse 576ms; 1:#004048 576ms pulse 384ms; 2:#005964 576ms pulse 192ms; 3:#007280 576ms pulse; 4:#007280 576ms pulse; 5:#005964 576ms pulse 192ms; 6:#004048 576ms pulse 384ms; 7:#00272C 576ms pulse 576ms\n#000203 988ms cosine\nrepeat",
+    "program": "#000203 160ms cosine\n#000203 60ms cosine\n0:#00272C 1210ms pulse 660ms; 1:#004048 1210ms pulse 440ms; 2:#005964 1210ms pulse 220ms; 3:#007280 1210ms pulse; 4:#007280 1210ms pulse; 5:#005964 1210ms pulse 220ms; 6:#004048 1210ms pulse 440ms; 7:#00272C 1210ms pulse 660ms\n#000203 270ms cosine\nrepeat",
     "led_count": 8
    }
   },

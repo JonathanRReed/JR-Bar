@@ -581,9 +581,10 @@ struct FinishLookList: Decodable {
 
 /// Effect Studio › Moments › Finish: how a finished session is celebrated
 /// -- the shipped bloom, Land (a light falls to the far end, gathering
-/// speed, and splashes: "it arrived") or Ripple (one ring out from the
-/// middle). Picking one writes `colors.done_celebration_style`; the play
-/// button shows it on the Screen Bar.
+/// speed, splashes and glows where it landed: "it arrived") or Ripple (one
+/// wide ring out from the middle). Picking one writes
+/// `colors.done_celebration_style`; the play button shows it on the Screen
+/// Bar.
 struct FinishMomentsSection: View {
     @Bindable var store: EffectStudioStore
     /// What to show before the monitor answers (a render proof's data).
@@ -594,8 +595,8 @@ struct FinishMomentsSection: View {
 
     static let meanings: [String: String] = [
         "bloom": "A spark crosses the strip, then it blooms in the done colour and fades.",
-        "land": "A light falls to the far end, faster and faster, and lands with a splash.",
-        "ripple": "One ring runs out from the middle, dimming as it goes.",
+        "land": "A light falls to the far end, faster and faster, lands with a splash and glows there a moment.",
+        "ripple": "One wide ring runs out from the middle, dimming as it goes.",
     ]
 
     var body: some View {

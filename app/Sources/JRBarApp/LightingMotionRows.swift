@@ -22,8 +22,8 @@ struct LightingMotionRows: View {
 
     private var finishSubtitle: String {
         switch store.document.string("colors.done_celebration_style") ?? "bloom" {
-        case "land": return "A light falls to the far end, faster and faster, and lands with a splash."
-        case "ripple": return "One ring runs out from the middle, dimming as it goes."
+        case "land": return "A light falls to the far end, faster and faster, lands with a splash and glows there a moment."
+        case "ripple": return "One wide ring runs out from the middle, dimming as it goes."
         default: return "A spark crosses the strip, then it blooms in the done colour and fades."
         }
     }

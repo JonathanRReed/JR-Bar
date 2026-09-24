@@ -340,10 +340,10 @@ PROVIDER_ANIMATIONS = [
 
 # 2026-09-24 (lane led-motions): the two new provider motions.
 PROVIDER_ANIMATIONS += [
-    ("ripple", "Ripple", "A stone in water: the middle crests first and rings run outward, dimmer at every step, then the strip rests. Shared strips ride it as a unison swell.", "transition", "medium", [
+    ("ripple", "Ripple", "A stone in water: the middle crests first and a wide ring runs outward, dimmer at every step, then the next stone falls. Shared strips ride it as a unison swell.", "transition", "medium", [
         _duration(1.0), _num("fade", 0.22, "How much dimmer each ring is than the one inside it.", 0.0, 0.5),
     ]),
-    ("pendulum", "Pendulum", "A weight on a string: the light swings end to end, lingering at each end and passing quickly through the middle. Shared strips ride it as a narrow travelling flare.", "mechanical", "medium", [
+    ("pendulum", "Pendulum", "A weight on a string: the light hangs at each end and rushes, dimmer, through the middle. Shared strips ride it as a narrow travelling flare.", "mechanical", "medium", [
         _duration(1.2), _num("glow", 1.6, "How wide the swinging light's glow is, in LEDs.", 1.0, 3.0),
     ]),
 ]

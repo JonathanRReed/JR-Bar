@@ -804,6 +804,10 @@ def scaled_tail(tail: tuple[float, ...], *, low: float, high: float) -> tuple[fl
 
 #: How much dimmer each ring of a ripple is than the one inside it.
 RIPPLE_DECAY = 0.22
+#: How much of a ripple's cycle one LED's swell lasts, and how much of it
+#: the ring takes to travel from the centre pair to the ends.
+RIPPLE_SWELL = 0.55
+RIPPLE_TRAVEL = 0.3
 
 
 def ripple(
@@ -814,21 +818,24 @@ def ripple(
     cycle_ms: int,
     decay: float = RIPPLE_DECAY,
 ) -> list[str]:
-    """A stone dropped in water: the centre crests first, rings run outward
-    dimming as they go, and the strip rests before the next stone.
+    """A stone dropped in water: the centre crests first, a wide ring runs
+    outward dimming as it goes, and the next stone falls a moment after it
+    reaches the ends.
 
     Bloom fills from the centre and holds; converge sends two heads to
-    meet. A ripple is neither -- every ring is a bump that has already
-    passed by the time the next one lands further out, and each is weaker
-    than the one inside it, so the strip reads as a single disturbance
-    spreading and dying away.
+    meet. A ripple is neither -- every LED swells and settles in turn, a
+    little later and a little weaker the further out it is, so the strip
+    reads as one disturbance spreading and dying away. Each swell lasts
+    over half the cycle and the ring takes most of the rest to reach the
+    ends, so the strip is never dark for long: this is a working light,
+    not a blip followed by a wait.
     """
     count = max(2, int(led_count))
     total = max(MIN_STEP_MS * 8, int(cycle_ms))
     middle = (count - 1) / 2.0
     farthest = max(0.0, middle - 0.5)
-    step = max(MIN_STEP_MS, int(total * 0.35 / max(1.0, farthest + 1.0)))
-    width = max(MIN_STEP_MS * 3, min(step * 3, int(total * 0.6)))
+    step = max(MIN_STEP_MS, int(total * RIPPLE_TRAVEL / max(1.0, farthest)))
+    width = max(MIN_STEP_MS * 3, int(total * RIPPLE_SWELL))
     fade = max(0.0, min(0.5, float(decay)))
     segments = []
     for index in range(count):
@@ -848,6 +855,9 @@ def ripple(
 
 #: How wide the pendulum's glow is, in LEDs either side of the head.
 PENDULUM_TAIL_LEDS = 1.6
+#: How much dimmer the swing is as it rushes through the middle than where
+#: it hangs at either end.
+PENDULUM_MIDDLE_DIM = 0.4
 
 
 def pendulum(
@@ -858,25 +868,33 @@ def pendulum(
     cycle_ms: int,
     tail_leds: float = PENDULUM_TAIL_LEDS,
 ) -> list[str]:
-    """A bounce whose head follows a swing: it lingers at the ends and
-    passes quickly through the middle, like a weight on a string.
+    """A weight on a string: the light hangs at each end, then rushes --
+    dimmer, the way a fast thing blurs -- through the middle.
 
-    The head reaches position ``x`` of a sweep at ``acos(1 - 2x) / pi`` of
-    the way through it, so it slows into each turn and speeds out of it.
-    Each LED's bump is as wide as the time the head spends near it --
-    broad at the ends, narrow in the middle -- which is what makes the
-    swing read as weight rather than as a scanner with a limp. The ends
-    hand over with the same rise-then-open trick ``bounce`` uses, so the
-    turn is a dwell at full light, never a blink.
+    The head's place in a sweep follows a swing eased twice (the time to
+    reach ``x`` is ``g(g(x))`` with ``g(x) = acos(1 - 2x) / pi``), so it
+    spends most of each sweep near the ends and crosses the middle in a
+    few frames. Each LED's bump is as wide as the time the head spends
+    near it and as bright as it is slow there. That is what sets it apart
+    from Knight Rider, whose eye keeps one pace and one brightness end to
+    end. The ends hand over with the rise-then-open trick ``bounce`` uses,
+    so a turn is a dwell at full light, never a blink.
     """
     count = max(2, int(led_count))
     half = max(MIN_STEP_MS * 2, max(2, int(cycle_ms)) // 2)
     reach = max(0.5, min(3.0, float(tail_leds)))
     last = count - 1
 
+    def swing(fraction: float) -> float:
+        return math.acos(1.0 - 2.0 * max(0.0, min(1.0, fraction))) / math.pi
+
     def arrival(fraction: float) -> float:
-        clamped = max(0.0, min(1.0, fraction))
-        return half * math.acos(1.0 - 2.0 * clamped) / math.pi
+        return half * swing(swing(fraction))
+
+    def lit(position: int) -> str:
+        edge = abs(2.0 * position / last - 1.0)
+        level = 1.0 - PENDULUM_MIDDLE_DIM * (1.0 - edge)
+        return color if level >= 1.0 else shade(color, level)
 
     def sweep(order: list[int]) -> str:
         segments = []
@@ -894,7 +912,7 @@ def pendulum(
             else:
                 delay = max(0, int(arrival(position / last) - width / 2))
                 tail = f" {_time(delay)}" if delay else ""
-                segments.append(f"{led}:{color} {_time(width)} pulse{tail}")
+                segments.append(f"{led}:{lit(position)} {_time(width)} pulse{tail}")
         return "; ".join(segments)
 
     forward = list(range(count))
@@ -916,16 +934,20 @@ def land(
     cycle_ms: int,
     reverse: bool = False,
     splash: bool = True,
+    settle: str | None = None,
 ) -> list[str]:
     """Something arriving: a light falls toward the far end, gathering
     speed, lands with a small splash, and rests.
 
     Arrival time grows with the square root of the distance travelled, as a
     dropped thing does, so the gaps between LEDs shrink toward the landing
-    and each bump narrows with them. The splash is the landing LED and its
-    two neighbours thrown back at falling strength. On a horizontal strip it
-    reads as "it arrived", which is why it is a finish rather than a
-    working loop.
+    and each bump narrows with them. The landing LED does not bump: it
+    rises to full as the light arrives and stays lit through the splash
+    (its two neighbours thrown back at falling strength), easing to
+    ``settle`` -- the glow a finish holds where the light came to rest --
+    or, without one, to the floor. There is no moment where it goes dark
+    and lights again. On a horizontal strip it reads as "it arrived", which
+    is why it is a finish rather than a working loop.
     """
     count = max(2, int(led_count))
     total = max(MIN_STEP_MS * 12, int(cycle_ms))
@@ -943,20 +965,31 @@ def land(
     # Every bump is centred on its arrival; the release is pushed back just
     # far enough that the first bump's rise fits before it.
     lead = max(0.0, max(width / 2 - arrive for arrive, width in timings))
+    landing = order[-1]
     segments = []
     for (arrive, width), led in zip(timings, order):
+        if led == landing:
+            # Rises into the arrival and holds full until the splash.
+            rise = max(MIN_STEP_MS, int(round(width / 2)))
+            delay = max(0, int(round(arrive + lead)) - rise)
+            tail = f" {_time(delay)}" if delay else ""
+            segments.append(f"{led}:{color} {_time(rise)} cosine{tail}")
+            continue
         delay = max(0, int(round(arrive + lead - width / 2)))
         tail = f" {_time(delay)}" if delay else ""
         segments.append(f"{led}:{color} {_time(width)} pulse{tail}")
     lines = [f"{floor_color} {_time(MIN_STEP_MS)} cosine", "; ".join(segments)]
     used = MIN_STEP_MS + int(fall + lead)
+    rest_color = settle or floor_color
     if splash and count >= 2:
-        landing = order[-1]
-        throw = [f"{landing}:{shade(color, 0.55)} {_time(260)} pulse"]
+        throw = [f"{landing}:{rest_color} {_time(400)} cosine"]
         throw.append(f"{order[-2]}:{shade(color, 0.35)} {_time(260)} pulse {_time(60)}")
         if count > 3:
             throw.append(f"{order[-3]}:{shade(color, 0.15)} {_time(240)} pulse {_time(140)}")
         lines.append("; ".join(throw))
+        used += 400
+    elif settle:
+        lines.append(f"{landing}:{settle} {_time(400)} cosine")
         used += 400
     lines.append(f"{floor_color} {_time(max(MIN_STEP_MS, total - used))} cosine")
     return lines

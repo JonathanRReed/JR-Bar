@@ -90,12 +90,14 @@ DONE_CELEBRATION_STYLES: tuple[str, ...] = (
     DONE_CELEBRATION_RIPPLE,
 )
 DEFAULT_DONE_CELEBRATION_STYLE = DONE_CELEBRATION_BLOOM
-#: The one cycle each look is drawn at, and how it lets go afterwards: a
-#: short glow in the done colour, then a fade to dark -- a finish is a
-#: finite cue, never a held light.
+#: The one cycle each look is drawn at, and how it lets go afterwards: Land
+#: holds a short glow where the light came to rest, then everything fades
+#: to dark -- a finish is a finite cue, never a held light.
 DONE_CELEBRATION_CYCLE_MS = 2400
 DONE_CELEBRATION_GLOW_MS = 500
 DONE_CELEBRATION_FADE_MS = 900
+#: How bright the landing LED glows once Land has arrived.
+DONE_CELEBRATION_LAND_GLOW = 0.45
 
 
 def normalize_done_celebration_style(value: object) -> str:
@@ -108,17 +110,24 @@ def done_celebration_program(style: str, color: str, *, led_count: int = 8) -> s
     from . import motion_shapes as shapes
 
     count = max(2, int(led_count))
+    body = [f"off {DONE_CELEBRATION_SETTLE_MS}ms cosine"]
     if style == DONE_CELEBRATION_LAND:
-        lines = shapes.land(color, "#000000", led_count=count, cycle_ms=DONE_CELEBRATION_CYCLE_MS)
+        # The light lands and stays lit where it came to rest, glows there
+        # a moment, then lets go -- one arrival, never a second light-up.
+        glow = shapes.shade(color, DONE_CELEBRATION_LAND_GLOW)
+        lines = shapes.land(
+            color, "#000000", led_count=count, cycle_ms=DONE_CELEBRATION_CYCLE_MS, settle=glow
+        )
+        body += lines[1:-1]
+        body.append(f"{count - 1}:{glow} {DONE_CELEBRATION_GLOW_MS}ms cosine")
+        body.append(f"off {DONE_CELEBRATION_FADE_MS}ms cosine")
     elif style == DONE_CELEBRATION_RIPPLE:
+        # The ring runs out to the ends and the water is still: the ring
+        # is the whole cue, and it ends dark on its own.
         lines = shapes.ripple(color, "#000000", led_count=count, cycle_ms=DONE_CELEBRATION_CYCLE_MS)
+        body += lines[1:-1]
     else:
         return None
-    # The shape's own resting line is for a loop; a finish glows once
-    # where it ended and lets go.
-    body = [f"off {DONE_CELEBRATION_SETTLE_MS}ms cosine", *lines[1:-1]]
-    body.append(f"{shapes.shade(color, 0.35)} {DONE_CELEBRATION_GLOW_MS}ms cosine")
-    body.append(f"off {DONE_CELEBRATION_FADE_MS}ms cosine")
     return "\n".join(body)
 
 

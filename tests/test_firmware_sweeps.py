@@ -187,8 +187,24 @@ def test_the_pendulum_lingers_at_the_ends() -> None:
     ends far longer than it takes to cross the middle -- more so than the
     even-paced Knight Rider eye, whose only dwell is the turn itself."""
     pendulum = _end_dwell("pendulum")
-    assert pendulum > 1.6, pendulum
-    assert pendulum > _end_dwell("kitt") + 0.2
+    assert pendulum > 2.5, pendulum
+    assert pendulum > 2 * _end_dwell("kitt")
+
+
+def test_the_pendulum_rushes_dimmer_through_the_middle() -> None:
+    """Knight Rider's eye is one brightness end to end; the pendulum's
+    light blurs as it rushes through the middle and is brightest where it
+    hangs -- the other half of why the two never read as one motion."""
+    for motion, dims in (("pendulum", True), ("kitt", False)):
+        frames, _loop = _second_loop(_solo_program(motion, cycle_seconds=2.4))
+        peak = [max(frame[led] for frame in frames) for led in range(8)]
+        middle = max(peak[3], peak[4])
+        ends = min(peak[0], peak[7])
+        if dims:
+            assert middle < 0.6 * ends, (motion, peak)
+            assert peak[3] < peak[2] < peak[1] < peak[0], (motion, peak)
+        else:
+            assert middle > 0.9 * ends, (motion, peak)
 
 
 def test_land_arrives_faster_and_faster() -> None:
@@ -218,6 +234,43 @@ def test_a_ripple_starts_in_the_middle_and_fades_as_it_spreads() -> None:
     assert peak_at[2] < peak_at[1] < peak_at[0], peak_at
     assert peak_level[0] < peak_level[3], peak_level
     assert peak_level[7] < peak_level[4], peak_level
+
+
+@pytest.mark.parametrize("seconds", (1.0, 2.2, 5.0))
+def test_a_ripple_is_never_dark_for_long(seconds: float) -> None:
+    """A working light, not a blip and a wait: the ring takes most of the
+    cycle to spread, so the strip is never fully dark for as much as a
+    third of it (the first cut sat dark for half of every cycle)."""
+    frames, _loop = _second_loop(_solo_program("ripple", cycle_seconds=seconds))
+    crest = max(max(frame) for frame in frames)
+    run = longest = 0
+    for frame in frames:
+        run = run + 1 if max(frame) < 0.05 * crest else 0
+        longest = max(longest, run)
+    assert longest < len(frames) / 3, (seconds, longest, len(frames))
+
+
+@pytest.mark.parametrize("led_count", (8, 2))
+def test_a_land_finish_lights_its_landing_once(led_count: int) -> None:
+    """The light lands and stays lit where it came to rest until the fade:
+    the landing LED rises once. It used to go dark after the splash and
+    then light the whole strip again -- a double take."""
+    from jrbar import celebrations
+    from jrbar.animation import animation_duration_ms
+
+    program = celebrations.done_celebration_program("land", COLOR, led_count=led_count)
+    end = animation_duration_ms(parse_animation(program, led_count=led_count))
+    frames = _frames(program, led_count, start_ms=0, span_ms=end + 60)
+    landing = [frame[led_count - 1] for frame in frames]
+    top = max(landing)
+    rises = sum(1 for before, after in pairwise(landing) if before < 0.25 * top <= after)
+    assert rises == 1, landing
+    # Once the splash has thrown back from the neighbours (400 ms), nothing
+    # else on the strip lights up again.
+    arrived = next(index for index, value in enumerate(landing) if value >= 0.9 * top)
+    settled = arrived + int(500 / FRAME_MS)
+    others = [max(frame[: led_count - 1]) for frame in frames[settled:]]
+    assert all(after <= before + 0.005 for before, after in pairwise(others)), others
 
 
 def test_the_dot_wipe_reads_as_a_direction() -> None:
