@@ -91,6 +91,18 @@ struct MenuBarBarKeysTests {
         #expect(Keys.key(keyCode: UInt16(kVK_F5), characters: "\u{F708}", modifiers: []) == nil)
     }
 
+    @Test("the keyboard's bar claims only keys aimed at its own window; the pointer's bar only Esc")
+    func claimsKeys() {
+        let letter = UInt16(kVK_ANSI_K)
+        let escape = UInt16(kVK_Escape)
+        #expect(Keys.claims(keyCode: letter, keyboard: true, inBar: true))
+        #expect(!Keys.claims(keyCode: letter, keyboard: true, inBar: false),
+                "a key typed into the palette's field is the palette's")
+        #expect(!Keys.claims(keyCode: escape, keyboard: true, inBar: false))
+        #expect(Keys.claims(keyCode: escape, keyboard: false, inBar: false), "Esc folds the pointer's bar")
+        #expect(!Keys.claims(keyCode: letter, keyboard: false, inBar: true))
+    }
+
     @MainActor
     @Test("the keyboard's bar lists what the filter leaves, selects inside it, and makes room for the chip")
     func model() {

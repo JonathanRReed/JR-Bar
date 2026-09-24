@@ -207,6 +207,16 @@ enum MenuBarBarKeys {
         return .text(characters)
     }
 
+    /// Whether the bar's local key monitor takes a key-down. The
+    /// keyboard's bar claims every key aimed at its own window — it
+    /// answers its own and swallows the rest, so a stray ⌘Q or ⌘W never
+    /// reaches JR-Bar's menus from under it — and leaves a key aimed at
+    /// another JR-Bar window, the palette's field, to that window. The
+    /// pointer's bar takes Esc alone, to fold.
+    nonisolated static func claims(keyCode: UInt16, keyboard: Bool, inBar: Bool) -> Bool {
+        keyboard ? inBar : Int(keyCode) == kVK_Escape
+    }
+
     /// The typed filter's chip width — measured in the chip's own font,
     /// so the glass grows by what the chip draws.
     nonisolated static func chipWidth(_ query: String) -> CGFloat {
@@ -959,20 +969,18 @@ final class MenuBarBar {
             matching: .keyDown,
             handler: { [weak self] event in
                 guard let self else { return event }
-                // The keyboard's bar owns the keys while it holds key:
-                // it answers its own and swallows the rest, so a stray
-                // ⌘Q or ⌘W never reaches JR-Bar's menus from under it.
-                // A pointer's bar only folds on Esc.
-                if self.model.keys != nil {
-                    if let key = MenuBarBarKeys.key(keyCode: event.keyCode,
-                                                    characters: event.charactersIgnoringModifiers,
-                                                    modifiers: event.modifierFlags) {
-                        self.press(key)
-                    }
+                let keyboard = self.model.keys != nil
+                guard MenuBarBarKeys.claims(keyCode: event.keyCode, keyboard: keyboard,
+                                            inBar: event.window === self.panel) else { return event }
+                guard keyboard else {
+                    self.close()
                     return nil
                 }
-                guard event.keyCode == UInt16(kVK_Escape) else { return event }
-                self.close()
+                if let key = MenuBarBarKeys.key(keyCode: event.keyCode,
+                                                characters: event.charactersIgnoringModifiers,
+                                                modifiers: event.modifierFlags) {
+                    self.press(key)
+                }
                 return nil
             }) {
             dismissMonitors.append(localKeys)

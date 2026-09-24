@@ -4110,6 +4110,10 @@ extension MenuBarUtility: MenuBarActionsDelegate {
         toggleHiddenSection(fromKeyboard: true)
     }
 
+    func menuBarActionsFoldItemBar(_: MenuBarActions) {
+        bar.close()
+    }
+
     /// The dedicated always-hidden gesture: drop that run's covers on
     /// the rehide clock. Under the concealer the reveal set narrows
     /// the assertion the same way — the deeper apps stand back on the

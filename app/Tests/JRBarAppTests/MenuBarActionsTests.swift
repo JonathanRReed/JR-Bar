@@ -822,6 +822,10 @@ struct MenuBarActionsTests {
         func menuBarActions(_ actions: MenuBarActions, renameProfile id: String, to name: String) {
             calls.append("rename:\(id):\(name)")
         }
+        weak var palette: PaletteController?
+        func menuBarActionsFoldItemBar(_ actions: MenuBarActions) {
+            calls.append(palette?.isOpen == true ? "fold:over-palette" : "fold")
+        }
     }
 
     /// A delegate that answers only the original requirements — the
@@ -1125,6 +1129,25 @@ struct MenuBarActionsTests {
             "revealAlwaysHidden", "hideAll",
             "cycle:1", "profile:Away",
         ])
+    }
+
+    @MainActor
+    @Test("every route to the palette folds the Item Bar before the palette opens")
+    func paletteFoldsItemBar() {
+        let actions = MenuBarActions(bindings: [])
+        let delegate = FakeDelegate()
+        actions.delegate = delegate
+        delegate.palette = actions.commandBar.palette
+        actions.commandBar.palette.presentsWindow = false
+        actions.openCommandBar()
+        #expect(actions.commandBar.isOpen)
+        actions.hotkeys.onAction(.commandBar)
+        #expect(!actions.commandBar.isOpen, "the hotkey toggles it shut")
+        actions.parkedPaletteKey.onAction(.commandBar)
+        #expect(actions.commandBar.isOpen)
+        actions.commandBar.close()
+        #expect(delegate.calls == ["fold", "fold:over-palette", "fold"],
+                "the bar folds first, whatever the palette's state")
     }
 
     /// A source that only exists so the facade wires `onEvent`.

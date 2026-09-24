@@ -91,6 +91,9 @@ protocol MenuBarActionsDelegate: AnyObject {
     func menuBarActions(_ actions: MenuBarActions, saveProfileNamed name: String)
     /// Rename a saved profile — the card's rename.
     func menuBarActions(_ actions: MenuBarActions, renameProfile id: String, to name: String)
+    /// Fold the Item Bar — the palette is about to open, and the
+    /// keyboard's bar must not stand under it holding key.
+    func menuBarActionsFoldItemBar(_ actions: MenuBarActions)
 }
 
 extension MenuBarActionsDelegate {
@@ -102,6 +105,7 @@ extension MenuBarActionsDelegate {
     func menuBarActions(_: MenuBarActions, setRule _: String, enabled _: Bool) {}
     func menuBarActions(_: MenuBarActions, saveProfileNamed _: String) {}
     func menuBarActions(_: MenuBarActions, renameProfile _: String, to _: String) {}
+    func menuBarActionsFoldItemBar(_: MenuBarActions) {}
 }
 
 /// The ACTIONS track's single owner: arrange mode, the ⌘⇧K command
@@ -162,7 +166,15 @@ final class MenuBarActions {
     }
 
     /// The hotkey/palette route in.
-    func openCommandBar() { commandBar.toggle() }
+    func openCommandBar() { togglePalette() }
+
+    /// Every route to the palette — the full set's key, the parked key,
+    /// the card and `jrbar://` — folds the Item Bar first, so the
+    /// palette never opens over a bar still holding the keys.
+    private func togglePalette() {
+        delegate?.menuBarActionsFoldItemBar(self)
+        commandBar.toggle()
+    }
 
     /// The utility's start/stop: hotkeys live while the utility does.
     /// The trigger feed is the utility's call — `syncActions` starts it
@@ -289,7 +301,7 @@ final class MenuBarActions {
         // The parked key has one binding, the palette's.
         parkedPaletteKey.onAction = { [weak self] action in
             guard action == .commandBar else { return }
-            self?.commandBar.toggle()
+            self?.togglePalette()
         }
     }
 
@@ -375,7 +387,7 @@ final class MenuBarActions {
         case .showAll:
             delegate.menuBarActionsShowAll(self)
         case .commandBar:
-            commandBar.toggle()
+            togglePalette()
         case .nextProfile:
             delegate.menuBarActions(self, cycleProfile: 1)
         case .previousProfile:
