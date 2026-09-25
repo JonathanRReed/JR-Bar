@@ -271,8 +271,13 @@ def atomic_private_write(
     *,
     overwrite: bool = True,
     mode: int = PRIVATE_FILE_MODE,
+    durable_directory: bool = True,
 ) -> Path:
-    """Publish a sensitive file atomically; optional create-only never replaces."""
+    """Publish a sensitive file atomically; optional create-only never replaces.
+
+    ``durable_directory=False`` skips the directory fsync after the rename:
+    for a cache rebuilt from other records, a crash may then leave the
+    previous version in place, never a torn one."""
     if mode not in (PRIVATE_FILE_MODE, PRIVATE_DIRECTORY_MODE):
         raise ValueError("private file mode must be 0o600 or 0o700")
     payload = data.encode("utf-8") if isinstance(data, str) else bytes(data)
@@ -309,7 +314,8 @@ def atomic_private_write(
                 os.link(scratch_name, name, src_dir_fd=parent_descriptor,
                         dst_dir_fd=parent_descriptor, follow_symlinks=False)
                 os.unlink(scratch_name, dir_fd=parent_descriptor)
-            _fsync_private_parent(parent_descriptor)
+            if durable_directory:
+                _fsync_private_parent(parent_descriptor)
             return target
         finally:
             if descriptor is not None:

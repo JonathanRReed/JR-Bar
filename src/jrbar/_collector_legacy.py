@@ -131,12 +131,14 @@ TRANSCRIPT_FILE_LIST_CACHE_MAX_ENTRIES = 16
 STATUS_RETENTION_SECONDS = 24 * 3600.0
 # latest.json is the restore snapshot and a slow feed: socket clients get
 # every change as it lands, but serve.py's /status.json, doctor and the
-# app's offline fallback read the file. At 1 s the daemon rewrote and
-# fsynced 145 KB about 0.6 times a second while agents worked. A change
-# that lands inside the interval is written by one trailing flush when
-# the interval ends, so the last state of a burst never waits for the
-# next hook event.
-LATEST_STATE_WRITE_INTERVAL_SECONDS = 5.0
+# app's offline fallback read the file. At 5 s the daemon still rewrote
+# 270 KB up to 12.7 times a minute while agents worked (3.4 MB a minute,
+# over macOS's disk-write limit). A change that lands inside the interval
+# is written by one trailing flush when the interval ends, so the last
+# state of a burst never waits for the next hook event; a lifecycle or
+# ask transition (a session starts or ends, an ask opens or resolves) is
+# written at once.
+LATEST_STATE_WRITE_INTERVAL_SECONDS = 30.0
 # Transcript detail is capped before any UI surface (T3 caps at 160 --
 # long tool output in a menu row is noise at best, a leak at worst).
 DETAIL_TEXT_CAP = 160
@@ -1210,6 +1212,9 @@ class LiveAgentMonitor(LiveSessionMemory):
         self._pending_permissions_by_key: dict[str, set[str]] = {}
         self.restore_health = RestoreHealth.NOT_ATTEMPTED
         self._latest_state_dirty = False
+        # Set by a batch that moved a lifecycle or an ask; cleared by the
+        # write that takes it.
+        self._latest_state_transition = False
         self._latest_state_written_at = 0.0
         self._latest_state_digest: bytes | None = None
         self._latest_state_write_lock = threading.Lock()
@@ -1339,6 +1344,10 @@ class LiveAgentMonitor(LiveSessionMemory):
                 if key in current_keys
             }
             self._latest_state_dirty = True
+            if reduced.events:
+                # A session started or ended, an ask opened or resolved:
+                # the restore snapshot takes it now, not at the interval.
+                self._latest_state_transition = True
             self.revision += 1
         self.maybe_write_latest_state()
 
@@ -1630,7 +1639,7 @@ class LiveAgentMonitor(LiveSessionMemory):
                 if not self._latest_state_dirty:
                     return
                 elapsed = now_monotonic - self._latest_state_written_at
-                if elapsed < LATEST_STATE_WRITE_INTERVAL_SECONDS:
+                if elapsed < LATEST_STATE_WRITE_INTERVAL_SECONDS and not self._latest_state_transition:
                     # Without this the last change of a burst -- often an
                     # agent's Stop -- sat unwritten until the next hook
                     # event, which can be hours away.
@@ -1652,6 +1661,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             with self.lock:
                 state = self.operator_state
                 overlays = dict(self._status_overlays_by_work_key)
+                self._latest_state_transition = False
             try:
                 serialized = _serialize_latest_state(
                     state,
@@ -1659,9 +1669,15 @@ class LiveAgentMonitor(LiveSessionMemory):
                 )
                 digest = hashlib.blake2b(serialized.encode("utf-8"), digest_size=16).digest()
                 # A debounced write of the bytes already on disk is skipped;
-                # the shutdown flush always writes.
+                # the shutdown flush always writes. The directory is not
+                # fsynced: after a crash the restore replays the logs past
+                # whichever version the rename left.
                 if force or digest != self._latest_state_digest:
-                    atomic_private_write(self.latest_state_path, serialized)
+                    atomic_private_write(
+                        self.latest_state_path,
+                        serialized,
+                        durable_directory=False,
+                    )
                     self._latest_state_digest = digest
             except (OSError, ValueError):
                 return

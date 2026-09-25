@@ -671,3 +671,17 @@ def test_retention_refuses_symlink_root__and_2_more(tmp_path: Path) -> None:
     assert capped.endswith("tail-line\n")
     assert len(capped.encode("utf-8")) <= 16
 
+
+
+def test_a_restore_cache_can_skip_the_directory_fsync(tmp_path, monkeypatch) -> None:
+    """latest.json is rebuilt from the logs after a crash, so its rename
+    does not need the directory fsync every other private write keeps."""
+    from jrbar import private_io
+
+    synced: list[int] = []
+    monkeypatch.setattr(private_io, "_fsync_private_parent", synced.append)
+    target = tmp_path / "cache.json"
+    private_io.atomic_private_write(target, "{}", durable_directory=False)
+    assert synced == [] and target.read_text() == "{}"
+    private_io.atomic_private_write(target, "[]")
+    assert len(synced) == 1 and target.read_text() == "[]"
