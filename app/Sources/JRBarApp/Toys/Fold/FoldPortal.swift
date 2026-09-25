@@ -15,7 +15,8 @@ import JRBarCore
 /// - `MoveAnchor` — the movement-anchored reference: where the lid was
 ///   resting when the gesture began. Still for `settleAfter` while flat
 ///   and the rest spot becomes the anchor; a live fold freezes it until
-///   the picture unwinds home or the dwell pause re-seats it.
+///   the picture unwinds home, a reopen that stops short settles, or the
+///   dwell pause re-seats it.
 /// - `FoldArming` — the capture-lifecycle state machine. The
 ///   ScreenCaptureKit streams exist only inside the arming band
 ///   (activation + margin) in fixed-angle mode, or from the first move
@@ -143,6 +144,14 @@ struct SlewTracker: Sendable {
 /// handing the desktop back is the dwell pause's job, and it re-seats
 /// the anchor itself. Opening back through the anchor is what counts as
 /// flat — the stillness clock resumes from there.
+///
+/// A reopen that stops short of the old rest is a rest too: once the lid
+/// has come back up more than `reopenRise` from the lowest point of the
+/// close and holds still for `reopenSettleAfter`, that spot becomes the
+/// anchor. Without it a lid that rested at 110°, dipped to 80° and came
+/// back to 104° kept a 6° fold on screen, and the capture running, until
+/// it was opened past 107°. A lid parked mid-close with no rise keeps
+/// its fold.
 struct MoveAnchor: Sendable {
     /// The reference angle a fold measures from. nil until the first
     /// real sample seats it.
@@ -167,13 +176,26 @@ struct MoveAnchor: Sendable {
     /// How far below the anchor counts as folded: past this the
     /// reference freezes until the lid returns.
     var flightMargin = 3.0
+    /// Seconds a reopen must hold still, short of the old rest, before
+    /// it becomes the new anchor — longer than the flat zone's settle,
+    /// so a person pausing on the way back up still sees the fold follow.
+    var reopenSettleAfter: TimeInterval = 1.0
+    /// The low point of the close in flight, and the highest the lid has
+    /// come back up since; nil while flat.
+    private var flightLow: Double?
+    private var flightHigh: Double?
+
+    /// How far back up from the close's lowest point counts as a reopen
+    /// rather than sensor wobble on a parked lid: the flight margin, or
+    /// the whole jitter window when that is wider.
+    var reopenRise: Double { max(flightMargin, 2 * tolerance) }
 
     init() {}
 
     mutating func reset() { self = MoveAnchor() }
 
-    /// Feed a raw lid sample at host time `at`. Folded or not, the
-    /// anchor never moves mid-flight.
+    /// Feed a raw lid sample at host time `at`. Mid-flight the anchor
+    /// moves only when a reopen settles short of it.
     mutating func feed(_ angle: Double, at: TimeInterval) {
         guard angle.isFinite, at.isFinite else { return }
         guard let a = anchor else {
@@ -183,12 +205,11 @@ struct MoveAnchor: Sendable {
             return
         }
         if a - angle > flightMargin {
-            // In flight: the rest clock restarts so a return to flat
-            // still owes its own settle before re-anchoring.
-            restAngle = angle
-            restAt = at
+            feedInFlight(angle, at: at)
             return
         }
+        flightLow = nil
+        flightHigh = nil
         if let r = restAngle, abs(angle - r) <= tolerance {
             if at - restAt >= settleAfter { anchor = angle }
         } else {
@@ -213,6 +234,33 @@ struct MoveAnchor: Sendable {
     mutating func reseat(_ angle: Double, at: TimeInterval) {
         guard angle.isFinite, at.isFinite else { return }
         anchor = angle
+        restAngle = angle
+        restAt = at
+        flightLow = nil
+        flightHigh = nil
+    }
+
+    /// A sample below the anchor. Parked with no rise the rest clock
+    /// restarts every time, so the fold holds and a return to flat still
+    /// owes its own settle; back up past `reopenRise` from the low point,
+    /// stillness counts, and after `reopenSettleAfter` the lid's new spot
+    /// is the anchor. Closing again by more than `reopenRise` starts a
+    /// new low, so a lid that comes part way up and goes back down to
+    /// park keeps its fold.
+    private mutating func feedInFlight(_ angle: Double, at: TimeInterval) {
+        var low = min(flightLow ?? angle, angle)
+        var high = max(flightHigh ?? angle, angle)
+        if angle == low || high - angle > reopenRise {
+            low = angle
+            high = angle
+        }
+        flightLow = low
+        flightHigh = high
+        let reopened = angle - low > reopenRise
+        if reopened, let r = restAngle, abs(angle - r) <= tolerance {
+            if at - restAt >= reopenSettleAfter { reseat(angle, at: at) }
+            return
+        }
         restAngle = angle
         restAt = at
     }

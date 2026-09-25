@@ -103,9 +103,10 @@ final class FoldToy: Toy {
     @ObservationIgnored private var overlayShownAt: TimeInterval?
     /// The reference the Duo draws this gesture from: taken as the
     /// overlay orders in and kept until it orders out, so an unwind that
-    /// outlives its anchor (the dwell re-seat, a reset) still draws from
-    /// the same lid, and a reopen from the black hold unfolds from the
-    /// lid it closed from.
+    /// outlives its anchor (the dwell re-seat, a reopen that settles
+    /// short of the old rest, a reset) still draws from the same lid,
+    /// and a reopen from the black hold unfolds from the lid it closed
+    /// from.
     @ObservationIgnored private var heldReference: Double?
     /// The displayed-delta follower: instant while the fold deepens, a
     /// slew-limited unwind when the gate snaps the target to 0 —
