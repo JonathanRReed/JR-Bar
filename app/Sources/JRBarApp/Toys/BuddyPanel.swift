@@ -543,25 +543,32 @@ struct BuddyPanelView: View {
                 // not a headline.
                 let caption = min(11, 7.2 * scale)
                 // The name tag shows only under the pointer, and only
-                // while "Caption on hover" is on. Its row is always laid
-                // out, the way the docked slot keeps its space, so neither
-                // a hover nor the toggle moves the pet.
-                let showsTag = model.hovered && toy.showsCaption
+                // while "Caption on hover" is on. Its row always keeps its
+                // height, the way the docked slot keeps its space, so
+                // neither a hover nor the toggle moves the pet. Off, the
+                // row keeps only that height: nothing wide and unseen
+                // sits beside the pet catching clicks meant for what is
+                // under it.
                 VStack(spacing: 0) {
                     NotchBuddyView(toy: toy, scale: scale)
-                    Text(summary.focus?.line ?? toy.buddyName)
-                        .font(.system(size: caption, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        // No pill behind it — the shadow keeps the tag
-                        // readable over whatever it parks on.
-                        .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: max(150, 60 * scale))
-                        .frame(height: caption + 2)
-                        .padding(.bottom, 2 * scale)
-                        .opacity(showsTag ? 1 : 0)
-                        .accessibilityHidden(!toy.showsCaption)
+                    if toy.showsCaption {
+                        Text(summary.focus?.line ?? toy.buddyName)
+                            .font(.system(size: caption, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            // No pill behind it — the shadow keeps the
+                            // tag readable over whatever it parks on.
+                            .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: max(150, 60 * scale))
+                            .frame(height: caption + 2)
+                            .padding(.bottom, 2 * scale)
+                            .opacity(model.hovered ? 1 : 0)
+                    } else {
+                        Color.clear
+                            .frame(width: 0, height: caption + 2)
+                            .padding(.bottom, 2 * scale)
+                    }
                 }
                 .help(summary.statusLine)
             }
