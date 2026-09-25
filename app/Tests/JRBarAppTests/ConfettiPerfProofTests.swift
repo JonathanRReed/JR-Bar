@@ -14,15 +14,32 @@ import JRBarCore
 /// with `JRBAR_PERF_PROOF=1`, on its own: never in the everyday suite,
 /// and not alongside the render proofs, whose drawing would crowd its
 /// timings over budget.
+///
+/// The provider rows pin the heavy marks (Hermes' 882 segments, Devin's):
+/// a mark is rastered once a burst into a template image, so a burst of
+/// them must cost what a burst of plain letters does — the `pi` case is
+/// that baseline. Glyphs-only draws every piece as a mark or letter, so
+/// its budget is the letter baseline's own ~6 ms at Big, not the mixed
+/// recipe's.
 @Suite("Confetti perf proof", .serialized)
 @MainActor
 struct ConfettiPerfProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_PERF_PROOF"] == "1",
                    "set JRBAR_PERF_PROOF=1 to time the confetti frames"),
-          arguments: [(ConfettiIntensity.standard, 3.5), (.big, 5.0)])
-    func frameCost(_ intensity: ConfettiIntensity, budget: Double) throws {
-        let look = ConfettiRenderProofTests.claude
-        var recipe = ConfettiRenderProofTests.recipe(.notch, .rest)
+          arguments: [
+              ("claude", ConfettiIntensity.standard, ConfettiShapes.mixed, 3.5),
+              ("claude", .big, .mixed, 5.0),
+              ("hermes", .big, .mixed, 5.0),
+              ("devin", .big, .mixed, 5.0),
+              ("hermes", .big, .glyphs, 9.0),
+              ("devin", .big, .glyphs, 9.0),
+              ("pi", .big, .glyphs, 9.0),
+          ])
+    func frameCost(provider: String, intensity: ConfettiIntensity, shapes: ConfettiShapes,
+                   budget: Double) throws {
+        let look = ConfettiView.look(.provider, tint: ProviderStyle.style(for: provider).accent,
+                                     provider: provider)
+        var recipe = ConfettiRenderProofTests.recipe(.notch, .rest, look: look, shapes: shapes)
         recipe.intensity = intensity
         let burst = ConfettiBurst(stage: ConfettiRenderProofTests.laptop(), recipe: recipe, seed: 11)
         let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
@@ -45,8 +62,8 @@ struct ConfettiPerfProofTests {
         for step in 0..<60 { times.append(try frame(at: 0.15 + Double(step) * 0.06)) }
         times.sort()
         let p50 = times[30], p90 = times[54]
-        print(String(format: "confetti perf %@: %d pieces, p50 %.2f ms, p90 %.2f ms a frame at 2× (budget %.1f ms)",
-                     intensity.rawValue, burst.pieces.count, p50, p90, budget))
-        #expect(p90 <= budget, "\(intensity) p90 \(p90) ms is over its \(budget) ms budget")
+        print(String(format: "confetti perf %@ %@ %@: %d pieces, p50 %.2f ms, p90 %.2f ms a frame at 2× (budget %.1f ms)",
+                     provider, intensity.rawValue, shapes.rawValue, burst.pieces.count, p50, p90, budget))
+        #expect(p90 <= budget, "\(provider)/\(shapes.rawValue) \(intensity) p90 \(p90) ms is over its \(budget) ms budget")
     }
 }

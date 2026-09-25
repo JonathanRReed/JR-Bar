@@ -208,9 +208,10 @@ private struct ProviderMarkSurfaces: View {
             context.translateBy(x: size.width / 2, y: size.height / 2)
             context.rotate(by: .degrees(-18))
             switch marks[0] {
-            case .path(let path):
-                context.scaleBy(x: 14, y: 14)
-                context.fill(path, with: .color(style.accent))
+            case .image(var image):
+                image.shading = .color(style.accent)
+                context.scaleBy(x: 14 / ConfettiView.markImagePoints, y: 14 / ConfettiView.markImagePoints)
+                context.draw(image, at: .zero, anchor: .center)
             case .text(let text):
                 context.scaleBy(x: 14 / 13, y: 14 / 13)
                 context.draw(text, at: .zero, anchor: .center)
