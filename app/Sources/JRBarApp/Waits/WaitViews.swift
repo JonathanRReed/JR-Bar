@@ -18,33 +18,46 @@ struct WaitStageReader<Content: View>: View {
             content(WaitPolicy.stage(since: since, now: still.now))
         } else {
             TimelineView(.explicit(WaitPolicy.schedule(since: since))) { context in
-                content(WaitPolicy.stage(since: since, now: context.date))
+                staged(WaitPolicy.stage(since: since, now: context.date))
             }
         }
     }
+
+    /// A timeline's update carries no animation, so a stage's change
+    /// brings its own: whatever the content fades in or out as the stage
+    /// moves — an orb, a note, a mark giving way — fades rather than
+    /// cuts.
+    private func staged(_ stage: WaitStage) -> some View {
+        content(stage).animation(WaitPolicy.stageChange, value: stage)
+    }
 }
 
-/// A wait drawn by the rule: nothing for its first two seconds — its
-/// slot held, so nothing moves when the orb arrives — then a
-/// `ThinkingOrb`. The app's small spinners become this, so a quick
-/// load no longer flashes. `since` nil times the wait from when this
-/// view appeared, which is when its `if busy` put it on screen.
+/// A wait drawn by the rule: nothing for its first two seconds, its slot
+/// held so nothing moves when it shows, then the system spinner — or,
+/// for an agent's work or a search, a `ThinkingOrb` of it. The orb says
+/// an agent is busy, never that something is loading, so an ordinary
+/// load keeps the spinner and only loses the flash. `since` nil times
+/// the wait from when this view appeared, which is when its `if busy`
+/// put it on screen.
 ///
-/// `quiet` is what shows before the orb: nothing (the default), or the
+/// `quiet` is what shows before then: nothing (the default), or the
 /// control's own label, so a button that starts a quick job keeps its
-/// face instead of blinking a spinner.
+/// face instead of blinking a spinner. The label stays in the layout
+/// under the spinner, so the button never narrows.
 struct DelayedWait<Quiet: View>: View {
     var since: Date?
-    var activity: AgentActivity = .thinking
-    /// The label colour by default, like the system spinner it replaces;
-    /// the dots' own opacities do the greying.
-    var tint: Color = .primary
+    /// What the agent or search is doing; nil — any other load — draws
+    /// the system spinner.
+    var activity: AgentActivity?
+    /// An orb's ink: the secondary label colour, as light as the system
+    /// spinner it stands in for.
+    var tint: Color = .secondary
     var size: CGFloat = 14
     let quiet: Quiet
     /// When this wait appeared — the start of a wait that names none.
     @ViewState private var appeared = Date()
 
-    init(since: Date? = nil, activity: AgentActivity = .thinking, tint: Color = .primary,
+    init(since: Date? = nil, activity: AgentActivity? = nil, tint: Color = .secondary,
          size: CGFloat = 14, @ViewBuilder quiet: () -> Quiet) {
         self.since = since
         self.activity = activity
@@ -55,23 +68,55 @@ struct DelayedWait<Quiet: View>: View {
 
     var body: some View {
         WaitStageReader(since: since ?? appeared) { stage in
-            if stage.showsOrb {
-                ThinkingOrb(activity: activity, tint: tint, size: size)
-                    .transition(.opacity)
-            } else if Quiet.self == EmptyView.self {
-                Color.clear
-                    .frame(width: size, height: size)
-                    .accessibilityHidden(true)
+            if Quiet.self == EmptyView.self {
+                indicator(shown: stage.showsOrb)
             } else {
                 quiet
+                    .opacity(stage.showsOrb ? 0 : 1)
+                    .overlay { indicator(shown: stage.showsOrb) }
             }
         }
+    }
+
+    private func indicator(shown: Bool) -> some View {
+        WaitIndicator(activity: activity, tint: tint, size: size, shown: shown)
+            .opacity(shown ? 1 : 0)
+            .accessibilityHidden(!shown)
     }
 }
 
 extension DelayedWait where Quiet == EmptyView {
-    init(since: Date? = nil, activity: AgentActivity = .thinking, tint: Color = .primary, size: CGFloat = 14) {
+    init(since: Date? = nil, activity: AgentActivity? = nil, tint: Color = .secondary, size: CGFloat = 14) {
         self.init(since: since, activity: activity, tint: tint, size: size) { EmptyView() }
+    }
+}
+
+/// What a `DelayedWait` draws once it shows: the system spinner at the
+/// control size nearest `size`, or an orb that runs only while shown and
+/// only while its window is on screen — a window kept alive but ordered
+/// out (the Dock's preview, the Data Hoarder after its close) runs no
+/// clock for it.
+struct WaitIndicator: View {
+    let activity: AgentActivity?
+    let tint: Color
+    let size: CGFloat
+    let shown: Bool
+    @ViewState private var onScreen = true
+    @Environment(\.waitStill) private var still
+
+    /// The spinner's size: mini for the 12 pt slots, small otherwise —
+    /// the sizes the call sites used before the rule.
+    static func controlSize(for size: CGFloat) -> ControlSize { size < 14 ? .mini : .small }
+
+    var body: some View {
+        if let activity {
+            ThinkingOrb(activity: activity, tint: tint, size: size, animating: shown && onScreen)
+                .background {
+                    if still == nil { WindowVisibilityReader { onScreen = $0 } }
+                }
+        } else {
+            ProgressView().controlSize(Self.controlSize(for: size))
+        }
     }
 }
 
@@ -161,10 +206,11 @@ struct SessionRowMark: View {
 }
 
 /// An ask card's mark while its answer is on the wire (`AskAnswerDesk`'s
-/// pending set, which every surface shares): its usual amber pulse
-/// under two seconds; an amber orb from two; and from three, when the
-/// card's own beam carries the motion, the pulse again, held still.
-/// Display only — nothing here sends, retries or answers.
+/// pending set, which every surface shares): its usual amber pulse under
+/// two seconds; from two, an amber orb in its place, which moves until
+/// the card's own beam arrives at three and then holds still, so the
+/// beam is the one thing moving. Display only — nothing here sends,
+/// retries or answers.
 struct AskWaitMark: View {
     let since: Date?
     let accent: Color
@@ -178,11 +224,11 @@ struct AskWaitMark: View {
         WaitStageReader(since: since) { stage in
             ActivityMark(activity: .waiting, accent: accent, reduced: reduced,
                          active: active && stage == .quiet)
-                .opacity(stage == .orb ? 0 : 1)
+                .opacity(stage.showsOrb ? 0 : 1)
                 .overlay {
-                    if stage == .orb {
+                    if stage.showsOrb {
                         ThinkingOrb(activity: .thinking, tint: SessionActivity.waiting.tint,
-                                    size: Self.orbSize, animating: active, reduced: reduced)
+                                    size: Self.orbSize, animating: active && stage == .orb, reduced: reduced)
                             .frame(width: Self.orbSize, height: Self.orbSize)
                             .transition(.opacity)
                     }
@@ -194,7 +240,7 @@ struct AskWaitMark: View {
 
 /// The palette's footer status while its slower sources — the front
 /// app's menus, History, the archive — are still reading: nothing for
-/// two seconds, then an orb and a word.
+/// two seconds, then an orb and a word, in the footer's own greys.
 struct PaletteWaitNote: View {
     let since: Date?
 
@@ -202,7 +248,7 @@ struct PaletteWaitNote: View {
         WaitStageReader(since: since) { stage in
             if stage.showsOrb {
                 HStack(spacing: 5) {
-                    ThinkingOrb(activity: .searching, tint: .primary, size: 14)
+                    ThinkingOrb(activity: .searching, tint: .secondary, size: 14)
                         .accessibilityHidden(true)
                     Text("Searching…")
                         .foregroundStyle(.tertiary)

@@ -82,7 +82,7 @@ struct UsageCenterView: View {
                     store.refresh()
                 } label: {
                     if store.refreshing {
-                        DelayedWait(activity: .running) { Label("Refresh", systemImage: "arrow.clockwise") }
+                        DelayedWait { Label("Refresh", systemImage: "arrow.clockwise") }
                     } else {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }

@@ -171,6 +171,10 @@ final class DockPreviewContent {
     /// shows "Loading…" until they land or fail. Only read when
     /// `folderURL` is non-nil.
     var folderState: DockFolderState = .loading
+    /// When the listing now loading started — the wait rule's clock for
+    /// the "Loading…" row, so each load gets its own quiet two seconds
+    /// even when the row stays up from an earlier one.
+    var folderLoadStarted: Date?
     /// DockDoor's player row: while a media app's preview is up the
     /// panel subscribes to `MediaFeed` and shows what the system says
     /// that app is playing. nil until a track lands.

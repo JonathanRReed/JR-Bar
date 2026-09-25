@@ -1,4 +1,4 @@
-import Foundation
+import SwiftUI
 
 /// How a wait is drawn, by how long it has lasted. The libraries.dev
 /// rule, made native: under two seconds a wait draws nothing (a flash
@@ -29,6 +29,10 @@ enum WaitPolicy {
     static let orbAfter: TimeInterval = 2
     /// From here the working element gets its beam too.
     static let beamAfter: TimeInterval = 3
+    /// How long what a stage shows takes to fade in or out as the stage
+    /// changes — an orb arriving, a mark giving way to it.
+    static let fade: TimeInterval = 0.2
+    static let stageChange: Animation = .easeOut(duration: fade)
 
     /// The stage a wait that started at `since` is in at `now`. No wait
     /// (`since` nil) is `.quiet`; a clock that reads earlier than the

@@ -682,7 +682,7 @@ struct DockPreviewView: View {
         switch content.folderState {
         case .loading:
             HStack(spacing: 8) {
-                DelayedWait()
+                DelayedWait(since: content.folderLoadStarted)
                 Text("Loading…")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)

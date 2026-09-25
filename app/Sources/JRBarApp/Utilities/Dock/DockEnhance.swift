@@ -870,6 +870,7 @@ final class DockEnhanceController {
     private func loadFolder(_ url: URL, generation generationAtLoad: Int) {
         preview.folderState = .loading
         preview.folderEntries = []
+        preview.folderLoadStarted = Date()
         let sort = folderSort
         Task { @MainActor [weak self] in
             let work = Task.detached(priority: .userInitiated) {

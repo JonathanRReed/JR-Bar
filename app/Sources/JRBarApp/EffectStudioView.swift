@@ -139,7 +139,7 @@ struct EffectStudioView: View {
         ToolbarItem(placement: .primaryAction) {
             Button { store.reload() } label: {
                 if store.loading {
-                    DelayedWait(activity: .running) { Label("Refresh", systemImage: "arrow.clockwise") }
+                    DelayedWait { Label("Refresh", systemImage: "arrow.clockwise") }
                 } else {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
