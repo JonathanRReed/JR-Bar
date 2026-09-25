@@ -876,11 +876,10 @@ Lambert shade from the upper left (0.7–1, never muddy) with a specular
 glint, its back a deeper, richer shade of its front. About 30% sit on a
 far layer drawn first: smaller, slower, a little hazy, no blur. Rects
 (9–15 pt), dots, diamonds, stars, twisted ribbon streamers whose ripple
-runs along them, and the provider's real glyph (Claude's asterisk,
-Gemini's sparkle, Codex's `</>`, set in heavy type so it reads). The
-colours are resolved once per burst in eight steps of light, so a frame
-never mixes one, and the glyphs are set as type once per burst; 60 fps
-at most.
+runs along them, and the provider's real mark — the same bundled logo
+the tiles, the panel and the ears draw, rastered to a template once per
+burst and tinted per fleck. The colours are resolved once per burst in
+eight steps of light, so a frame never mixes one; 60 fps at most.
 
 **The card** (`ConfettiCard.swift`) has three runs. **Look**: a live
 preview (the top middle of the screen at half size, with the notch over

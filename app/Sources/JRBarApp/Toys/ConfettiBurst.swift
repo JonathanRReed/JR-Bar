@@ -5,7 +5,7 @@ import JRBarCore
 /// What a piece is.
 enum ConfettiPieceShape: Equatable, Sendable {
     case rect, dot, streamer, diamond, star, heart
-    /// The provider's own mark (Claude's asterisk, Gemini's sparkle…).
+    /// The provider's own mark — its bundled logo, drawn at fleck size.
     case glyph
 }
 

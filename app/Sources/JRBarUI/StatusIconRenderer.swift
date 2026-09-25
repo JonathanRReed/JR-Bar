@@ -75,10 +75,12 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
 /// window is, plus the name and glyph the tooltip and the percent style
 /// need.
 public struct StatusMeter: Hashable, Sendable {
-    /// SF Symbol, or one or two characters for a logo no symbol matches.
+    /// The provider's real mark (a `ProviderLogo` id), an SF Symbol, or
+    /// one or two characters.
     public enum Glyph: Hashable, Sendable {
         case symbol(String)
         case text(String)
+        case logo(String)
     }
 
     public var id: String
@@ -824,10 +826,36 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// track, plainly below a fresh fill.
     static let staleAlpha: CGFloat = 0.45
 
-    /// An SF Symbol scaled into the box, or one or two characters centred
-    /// in it; both in `color`.
+    /// The provider's mark, an SF Symbol scaled into the box, or one or
+    /// two characters centred in it; all in `color`. A mark is its cached
+    /// path filled straight into the context: no symbol lookup, no image,
+    /// no second pass to tint it.
     static func drawGlyph(_ glyph: StatusMeter.Glyph, in box: NSRect, color: NSColor) {
         switch glyph {
+        case .logo(let id):
+            guard let logo = ProviderLogo.named(id), let context = NSGraphicsContext.current?.cgContext else {
+                drawGlyph(.text(String(id.prefix(1)).uppercased()), in: box, color: color)
+                return
+            }
+            // The same share of the box the symbol's point size took.
+            let side = box.height * 0.82
+            let rect = NSRect(x: box.midX - side / 2, y: box.midY - side / 2, width: side, height: side)
+            let weight = ProviderLogo.hairline(for: id, side: side)
+            let alpha = color.alphaComponent
+            guard weight > 0, alpha < 1 else {
+                color.set()
+                logo.fill(in: rect, context: context, weight: weight)
+                return
+            }
+            // A see-through hairline over its own fill would darken the
+            // mark's rim: draw both opaque in a layer, faded as one.
+            context.saveGState()
+            context.setAlpha(alpha)
+            context.beginTransparencyLayer(in: rect.insetBy(dx: -weight, dy: -weight), auxiliaryInfo: nil)
+            color.withAlphaComponent(1).set()
+            logo.fill(in: rect, context: context, weight: weight)
+            context.endTransparencyLayer()
+            context.restoreGState()
         case .symbol(let name):
             let configuration = NSImage.SymbolConfiguration(pointSize: box.height * 0.82, weight: .semibold)
             guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) else {

@@ -972,11 +972,21 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// picker, used whenever the daemon has nothing to meter yet.
     static var sampleMeters: [StatusMeter] {
         [
-            StatusMeter(id: "claude", name: "Claude", glyph: .symbol("asterisk"), fraction: 0.16),
-            StatusMeter(id: "codex", name: "Codex", glyph: .symbol("chevron.left.forwardslash.chevron.right"), fraction: 0.83),
-            StatusMeter(id: "gemini", name: "Gemini", glyph: .symbol("sparkle"), fraction: 0.97),
-            StatusMeter(id: "devin", name: "Devin", glyph: .symbol("hammer.fill"), fraction: 0.41, approximate: true),
+            StatusMeter(id: "claude", name: "Claude", glyph: meterGlyph("claude"), fraction: 0.16),
+            StatusMeter(id: "codex", name: "Codex", glyph: meterGlyph("codex"), fraction: 0.83),
+            StatusMeter(id: "gemini", name: "Gemini", glyph: meterGlyph("gemini"), fraction: 0.97),
+            StatusMeter(id: "devin", name: "Devin", glyph: meterGlyph("devin"), fraction: 0.41, approximate: true),
         ]
+    }
+
+    /// A provider's mark as the menu-bar strip draws it: its real mark
+    /// when it loads, else the symbol or letters it falls back to.
+    static func meterGlyph(_ provider: String) -> StatusMeter.Glyph {
+        switch ProviderStyle.style(for: provider).mark {
+        case .logo(let logo): return .logo(logo.id)
+        case .symbol(let name): return .symbol(name)
+        case .text(let text): return .text(text)
+        }
     }
 
     /// Five believable sessions for the `agents` previews, in the panel's
@@ -1001,12 +1011,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
                       document: SettingsDocument? = nil,
                       resetsAt: Double? = nil, verdict: UsageForecast.Verdict? = nil) -> StatusMeter {
         let style = ProviderStyle.style(for: provider, document: document)
-        let glyph: StatusMeter.Glyph
-        switch style.glyph {
-        case .symbol(let name): glyph = .symbol(name)
-        case .text(let text): glyph = .text(text)
-        }
-        return StatusMeter(id: style.id, name: style.name, glyph: glyph, fraction: fraction,
+        return StatusMeter(id: style.id, name: style.name, glyph: meterGlyph(provider), fraction: fraction,
                            approximate: approximate,
                            accentHex: document?.agentColorHex(provider),
                            resetsAt: resetsAt, paceVerdict: paceVerdict(for: verdict))

@@ -81,26 +81,36 @@ struct SectionLabel: View {
     }
 }
 
-/// A provider's tile: 22 pt rounded square in the accent with its glyph.
+/// A provider's tile: 22 pt rounded square in the accent with its mark.
 struct ProviderTile: View {
     let style: ProviderStyle
     var size: CGFloat = 22
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// How much of the tile's side the mark's box takes. A symbol at half
+    /// the side in points carried its own padding; a mark's path does not.
+    static let markShare: CGFloat = 0.58
 
     var body: some View {
+        // The plate keeps the raw accent; the mark's ink clears 3:1 on it.
+        let ink = style.markInk(dark: colorScheme == .dark)
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
                 .fill(style.accent.opacity(0.18))
             RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
                 .strokeBorder(style.accent.opacity(0.35), lineWidth: 0.5)
-            switch style.glyph {
+            switch style.mark {
+            case .logo(let logo):
+                ProviderLogoMark(logo: logo, size: (size * Self.markShare).rounded())
+                    .foregroundStyle(ink)
             case .symbol(let name):
                 Image(systemName: name)
                     .font(.system(size: size * 0.5, weight: .semibold))
-                    .foregroundStyle(style.accent)
+                    .foregroundStyle(ink)
             case .text(let text):
                 Text(text)
                     .font(.system(size: size * 0.56, weight: .semibold, design: .rounded))
-                    .foregroundStyle(style.accent)
+                    .foregroundStyle(ink)
             }
         }
         .frame(width: size, height: size)

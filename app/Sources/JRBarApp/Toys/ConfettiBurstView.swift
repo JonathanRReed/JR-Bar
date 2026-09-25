@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import os
 import SwiftUI
 
@@ -11,7 +12,8 @@ import SwiftUI
 /// soft glow at the lip and nothing else. One Canvas at up to 60 fps.
 /// A piece's frame evaluates its position and fills a shape built once,
 /// in a colour mixed once when the burst fired, and its glyphs are set
-/// as type once a burst (`ConfettiMarks`). Only the pop (for its first
+/// as type — a provider's mark rastered into a template image — once a
+/// burst (`ConfettiMarks`). Only the pop (for its first
 /// third of a second), the Reduce Motion glow and Rain's clip build a
 /// shape in a frame.
 struct ConfettiView: View {
@@ -163,9 +165,15 @@ struct ConfettiView: View {
         return p
     }
 
-    /// A provider's mark, set as heavy type so a thin symbol (Claude's
-    /// asterisk) still reads at fleck size.
-    typealias Mark = GraphicsContext.ResolvedText
+    /// What a glyph fleck draws: a provider's real mark rastered once a
+    /// burst into a template image, stamped with the paper like any other
+    /// piece — a heavy mark (Hermes is 882 segments) costs far too much
+    /// filled per fleck per frame — or a symbol or letters set as heavy
+    /// type so a thin one still reads at fleck size.
+    enum Mark {
+        case image(GraphicsContext.ResolvedImage)
+        case text(GraphicsContext.ResolvedText)
+    }
 
     private func paint(_ piece: ConfettiBurst.Piece, frame: ConfettiBurst.Frame, paper: ConfettiLook.Paint,
                        marks: [Mark], in c: inout GraphicsContext) {
@@ -183,10 +191,16 @@ struct ConfettiView: View {
                 c.fill(Self.unitStar, with: paper.shading)
                 return
             }
-            var mark = marks[piece.glyph % marks.count]
-            mark.shading = paper.shading
-            c.scaleBy(x: size / Self.markPoints, y: size / Self.markPoints)
-            c.draw(mark, at: .zero, anchor: .center)
+            switch marks[piece.glyph % marks.count] {
+            case .image(var mark):
+                mark.shading = paper.shading
+                c.scaleBy(x: size / Self.markImagePoints, y: size / Self.markImagePoints)
+                c.draw(mark, at: .zero, anchor: .center)
+            case .text(var mark):
+                mark.shading = paper.shading
+                c.scaleBy(x: size / Self.markPoints, y: size / Self.markPoints)
+                c.draw(mark, at: .zero, anchor: .center)
+            }
             return
         case .rect:
             c.scaleBy(x: size, y: size * piece.aspect)
@@ -215,15 +229,46 @@ struct ConfettiView: View {
     /// The point size a letter mark is set at before it's scaled to its piece.
     private static let markPoints = 13.0
 
-    /// `glyphs` set as type in `canvas`.
+    /// How much of a glyph piece's size a provider's mark spans: about
+    /// what the heavy type's ink covered.
+    static let logoSpan: CGFloat = 0.92
+
+    /// The point size a mark's template image is made at before a fleck
+    /// scales it down: large enough to stay crisp at the biggest piece.
+    static let markImagePoints: CGFloat = 32
+
+    /// `glyphs` ready to draw: a mark drawn once into a template image,
+    /// anything else set as type in `canvas`.
     static func resolve(_ glyphs: [ConfettiLook.Glyph], in canvas: GraphicsContext) -> [Mark] {
         let font = Font.system(size: Self.markPoints, weight: .black, design: .rounded)
         return glyphs.map { glyph in
             switch glyph {
-            case .symbol(let name): return canvas.resolve(Text(Image(systemName: name)).font(font))
-            case .text(let text): return canvas.resolve(Text(text).font(font))
+            case .logo(let id):
+                if let logo = ProviderLogo.named(id) {
+                    return .image(canvas.resolve(Self.markImage(logo)))
+                }
+                return .text(canvas.resolve(Text(String(id.prefix(1)).uppercased()).font(font)))
+            case .symbol(let name): return .text(canvas.resolve(Text(Image(systemName: name)).font(font)))
+            case .text(let text): return .text(canvas.resolve(Text(text).font(font)))
             }
         }
+    }
+
+    /// A provider's mark as a template image, the mark spanning `logoSpan`
+    /// of its side. Stamping a resolved image costs one image copy per
+    /// fleck, where filling the path costs a raster pass over every
+    /// segment.
+    static func markImage(_ logo: ProviderLogo) -> Image {
+        let side = Self.markImagePoints
+        let margin = side * (1 - logoSpan) / 2
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.setFillColor(.white)
+            logo.fill(in: rect.insetBy(dx: margin, dy: margin), context: context)
+            return true
+        }
+        image.isTemplate = true
+        return Image(nsImage: image).renderingMode(.template)
     }
 
     // MARK: The pop

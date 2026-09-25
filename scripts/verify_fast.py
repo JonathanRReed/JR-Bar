@@ -38,6 +38,8 @@ CONTRACT_TESTS: Final = (
     "tests/test_executable_packaging.py",
     "tests/test_release_gate_contract.py",
     "tests/test_dependency_and_entitlements.py",
+    # The provider marks are current with their pinned sources.
+    "tests/test_provider_logo_data.py",
 )
 FIXTURE_TESTS: Final = (
     "tests/test_provider_adapters.py",

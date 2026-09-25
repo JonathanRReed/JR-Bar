@@ -751,6 +751,54 @@ struct StatusCompactPercentTests {
         #expect(size.width < columns.width)
     }
 
+    /// The glyph box of a compact image alone, as alpha, at 2x.
+    static func glyphAlpha(_ glyph: StatusMeter.Glyph, color: NSColor = .black) -> [UInt8] {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 22, pixelsHigh: 22, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                   bytesPerRow: 0, bitsPerPixel: 0)!
+        rep.size = NSSize(width: 11, height: 11)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        StatusIconRenderer.drawGlyph(glyph, in: NSRect(x: 0, y: 0, width: 11, height: 11), color: color)
+        NSGraphicsContext.restoreGraphicsState()
+        var alpha: [UInt8] = []
+        for y in 0..<22 {
+            for x in 0..<22 {
+                let value = rep.colorAt(x: x, y: y)?.alphaComponent ?? 0
+                alpha.append(UInt8(value * 255))
+            }
+        }
+        return alpha
+    }
+
+    @Test("a provider's mark is filled from its path, inside the glyph box, in the glyph's colour")
+    func logoGlyph() throws {
+        let claude = Self.glyphAlpha(.logo("claude"))
+        let openai = Self.glyphAlpha(.logo("openai"))
+        let inked = claude.filter { $0 > 127 }.count
+        #expect(inked > 40, "the spark covers \(inked) px of the 22 px box")
+        #expect(claude != openai, "each mark is its own shape")
+        // The mark keeps a margin inside the box, as the symbol did.
+        var edges: [UInt8] = []
+        for index in 0..<22 {
+            let top = claude[index]
+            let bottom = claude[21 * 22 + index]
+            let left = claude[index * 22]
+            let right = claude[index * 22 + 21]
+            edges += [top, bottom, left, right]
+        }
+        #expect(edges.allSatisfy { $0 < 64 })
+        // A calm compact image with a mark is still a template.
+        var meter = Self.meter("claude", 0.4)
+        meter.glyph = .logo("claude")
+        let image = StatusIconRenderer().image(for: StatusIconSpec(style: .compactPercent, meters: [meter]))
+        #expect(image.isTemplate)
+        // A mark the data does not carry falls back to its initial, never a gap.
+        let unknown = Self.glyphAlpha(.logo("zed"))
+        #expect(unknown.contains { $0 > 127 })
+        #expect(unknown == Self.glyphAlpha(.text("Z")))
+    }
+
     @Test("VoiceOver and the tooltip read remaining percent, or the reset")
     func readout() {
         let spec = StatusIconSpec(style: .compactPercent, meters: [Self.meter("claude", 0.38)])

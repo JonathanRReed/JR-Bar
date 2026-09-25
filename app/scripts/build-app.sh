@@ -154,6 +154,10 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
+# The provider marks ship in the binary; their sources, licences and the
+# trademark notice ship beside them, next to Sparkle's licence.
+mkdir -p "$BUNDLE/Contents/Resources/ThirdPartyLicenses"
+cp "$APP_DIR/Resources/ProviderLogos/NOTICE.txt" "$BUNDLE/Contents/Resources/ThirdPartyLicenses/ProviderLogos.txt"
 if [[ "$SPARKLE_LINKED" == "1" && "${JRBAR_EMBED_SPARKLE:-1}" != "0" ]]; then
     echo "==> embedding Sparkle.framework"
     mkdir -p "$BUNDLE/Contents/Frameworks"

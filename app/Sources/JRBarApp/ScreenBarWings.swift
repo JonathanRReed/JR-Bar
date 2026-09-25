@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// One wing slot's content: a lobe of the notch itself — the selected
@@ -720,7 +721,7 @@ struct ScreenBarWingsView: View {
     /// Sized to the menu bar's own glyphs: an 18 pt ring inked ~20 pt
     /// tall beside Wi-Fi's 11.5 and the battery's 13.5 (measured
     /// 2026-09-22) and made the right ear read heavy. 16 pt keeps the
-    /// inner mark — Codex's `</>` included — legible at 8 pt.
+    /// inner mark — the OpenAI blossom included — legible at 8 pt.
     private func ring(_ fraction: Double, slot: ScreenBarWingSlot, tint: Color?) -> some View {
         ZStack {
             Circle()
@@ -737,21 +738,26 @@ struct ScreenBarWingsView: View {
         .frame(width: 16, height: 16)
     }
 
-    /// The provider's bare glyph in its accent — no badge: the boxed
+    /// The provider's bare mark in its accent — no badge: the boxed
     /// `ProviderTile` reads as a menu-bar icon where the references draw a
-    /// plain mark against the notch extension. `tint` wins for the
-    /// attention/alert tones.
+    /// plain mark against the notch extension. The accent is lifted to
+    /// 3:1 on the bar's black where it would vanish (Kiro's crimson);
+    /// `tint` wins for the attention/alert tones.
     @ViewBuilder
     private func glyph(_ style: ProviderStyle, size: CGFloat, tint: Color? = nil) -> some View {
-        switch style.glyph {
+        let ink = tint ?? style.markInk(on: .black)
+        switch style.mark {
+        case .logo(let logo):
+            ProviderLogoMark(logo: logo, size: size)
+                .foregroundStyle(ink)
         case .symbol(let name):
             Image(systemName: name)
                 .font(.system(size: size, weight: .semibold))
-                .foregroundStyle(tint ?? style.accent)
+                .foregroundStyle(ink)
         case .text(let text):
             Text(text)
                 .font(.system(size: size, weight: .semibold, design: .rounded))
-                .foregroundStyle(tint ?? style.accent)
+                .foregroundStyle(ink)
         }
     }
 }

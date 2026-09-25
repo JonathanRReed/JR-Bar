@@ -99,7 +99,7 @@ import JRBarUI
 /// The status item's pure redraw plan: which spec each style draws,
 /// which style may carry a label, and who owns the item's width.
 @Suite struct StatusItemPlanTests {
-    static let meters = [StatusMeter(id: "claude", name: "Claude", glyph: .symbol("asterisk"), fraction: 0.8)]
+    static let meters = [StatusMeter(id: "claude", name: "Claude", glyph: .logo("claude"), fraction: 0.8)]
     static let dots = [SessionDot(id: "a", state: .working), SessionDot(id: "b", state: .ask)]
 
     @Test func agentsStyleIsAStripCarryingTheSessionDots() {
@@ -159,7 +159,7 @@ import JRBarUI
         // The ring's own figure still arrives as the 5h window's, but the
         // leading meter now leads with the provider's most-exhausted
         // window — a weekly at 100 % must not leave a calm 40 % ring.
-        let exhausted = [StatusMeter(id: "claude", name: "Claude", glyph: .symbol("asterisk"), fraction: 1.0)]
+        let exhausted = [StatusMeter(id: "claude", name: "Claude", glyph: .logo("claude"), fraction: 1.0)]
         let ring = StatusItemController.plan(style: .glyphRing, ringFraction: 0.4, meters: exhausted)
         #expect(ring.spec.ringFraction == 1.0)
         #expect(ring.spec.ringWarning == .red)
@@ -167,7 +167,7 @@ import JRBarUI
         #expect(orbit.spec.ringFraction == 1.0)
         // A calmer leading window never lowers the ring, and non-ring
         // styles never take the meter's figure.
-        let calm = [StatusMeter(id: "claude", name: "Claude", glyph: .symbol("asterisk"), fraction: 0.2)]
+        let calm = [StatusMeter(id: "claude", name: "Claude", glyph: .logo("claude"), fraction: 0.2)]
         #expect(StatusItemController.plan(style: .glyphRing, ringFraction: 0.4, meters: calm).spec.ringFraction == 0.4)
         #expect(StatusItemController.plan(style: .glyph, ringFraction: 0.4, meters: exhausted).spec.ringFraction == nil)
         // No ring figure at all: the leading meter's constraint still fills it.
