@@ -182,7 +182,7 @@ struct T3CodeRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if model.busy { ProgressView().controlSize(.mini) }
+                if model.busy { DelayedWait(size: 12) }
                 Toggle("Read T3 Code", isOn: Binding(
                     get: { status.enabled },
                     set: { model.setEnabled($0, core: core) }))

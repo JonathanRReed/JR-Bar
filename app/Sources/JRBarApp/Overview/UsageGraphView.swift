@@ -74,7 +74,7 @@ struct UsageGraphView: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     if store.graphLoading {
-                        ProgressView().controlSize(.small).padding(18)
+                        DelayedWait().padding(18)
                     }
                 }
             } else {
@@ -502,6 +502,7 @@ struct UsageGraphView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
         }
+        .delayedReveal()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

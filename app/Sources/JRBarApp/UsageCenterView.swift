@@ -82,7 +82,7 @@ struct UsageCenterView: View {
                     store.refresh()
                 } label: {
                     if store.refreshing {
-                        ProgressView().controlSize(.small)
+                        DelayedWait(activity: .running) { Label("Refresh", systemImage: "arrow.clockwise") }
                     } else {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
@@ -830,7 +830,7 @@ struct ResignInButton: View {
             store.resignIn(provider)
         } label: {
             if store.isResigningIn(provider) {
-                ProgressView().controlSize(.small)
+                DelayedWait { Label("Re-sign in", systemImage: "arrow.clockwise") }
             } else {
                 Label("Re-sign in", systemImage: "arrow.clockwise")
             }
@@ -1449,7 +1449,7 @@ struct UsageDailyTable: View {
 struct ScanningNote: View {
     var body: some View {
         HStack(spacing: 6) {
-            ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 12, height: 12)
+            DelayedWait(size: 12)
             Text("Still reading transcripts — this will fill in.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
@@ -1514,7 +1514,7 @@ struct UsageSkeleton: View {
             }
             .frame(height: 120)
             HStack(spacing: 6) {
-                ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 12, height: 12)
+                DelayedWait(size: 12)
                 Text(scanning ? "Reading transcripts — the monitor is still scanning." : "Loading history…")
                     .font(.caption)
                     .foregroundStyle(.tertiary)

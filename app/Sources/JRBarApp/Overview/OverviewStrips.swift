@@ -34,7 +34,7 @@ struct OverviewSummaryStrip: View {
             }
             Spacer()
             if store.loading {
-                ProgressView().controlSize(.mini)
+                DelayedWait(size: 12)
             } else if let loadedAt = store.loadedAt {
                 Text("Updated \(loadedAt, style: .time)").foregroundStyle(.tertiary).font(.system(size: 10.5))
             }

@@ -448,7 +448,7 @@ struct AgentRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if busy {
-                ProgressView().controlSize(.mini)
+                DelayedWait(size: 12)
             } else if status == "missing", !cliMissing {
                 // Not hooked yet: the one thing to do, in reach.
                 Button("Install") { store.installHooks(provider) }

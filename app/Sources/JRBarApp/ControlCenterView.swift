@@ -997,7 +997,7 @@ struct ApplyKeymapSheet: View {
                     .padding(10)
                 } else {
                     HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
+                        DelayedWait()
                         Text("Reading the pad's keymap…").foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1019,7 +1019,7 @@ struct ApplyKeymapSheet: View {
                     store.confirmSheet()
                 } label: {
                     if store.sheetBusy {
-                        ProgressView().controlSize(.small).frame(width: 100)
+                        DelayedWait { Text("Apply keymap") }.frame(minWidth: 100)
                     } else {
                         Text("Apply keymap").frame(minWidth: 100)
                     }
@@ -1071,7 +1071,7 @@ struct RestoreKeymapSheet: View {
                     store.confirmSheet()
                 } label: {
                     if store.sheetBusy {
-                        ProgressView().controlSize(.small).frame(width: 110)
+                        DelayedWait { Text("Restore keymap") }.frame(minWidth: 110)
                     } else {
                         Text("Restore keymap").frame(minWidth: 110)
                     }
@@ -1121,7 +1121,7 @@ struct ClearAbsentSheet: View {
                     store.confirmSheet()
                 } label: {
                     if store.sheetBusy {
-                        ProgressView().controlSize(.small).frame(width: 130)
+                        DelayedWait { Text("Clear absent slots") }.frame(minWidth: 130)
                     } else {
                         Text("Clear absent slots").frame(minWidth: 130)
                     }

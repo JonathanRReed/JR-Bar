@@ -91,6 +91,7 @@ struct EffectStudioView: View {
                     ProgressView().controlSize(.regular)
                     Text("Loading effects…").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
                 }
+                .delayedReveal()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 HSplitView {
@@ -137,7 +138,11 @@ struct EffectStudioView: View {
         }
         ToolbarItem(placement: .primaryAction) {
             Button { store.reload() } label: {
-                if store.loading { ProgressView().controlSize(.small) } else { Label("Refresh", systemImage: "arrow.clockwise") }
+                if store.loading {
+                    DelayedWait(activity: .running) { Label("Refresh", systemImage: "arrow.clockwise") }
+                } else {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
             }
             .help("Re-read the registry and assignments (⌘R)")
             .keyboardShortcut("r", modifiers: .command)
@@ -417,7 +422,7 @@ struct EffectInspectorPane: View {
                     .help("How the Screen Bar blends it")
                 Spacer()
                 if store.rendering {
-                    ProgressView().controlSize(.mini)
+                    DelayedWait(size: 12)
                     Text("Rendering…").font(.caption).foregroundStyle(.tertiary)
                 }
                 Button {
