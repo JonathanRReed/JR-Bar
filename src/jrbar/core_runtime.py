@@ -5810,6 +5810,13 @@ def build_headless_controller_class() -> type:
             return executor
 
         def _core_deck_statuses(self) -> tuple:
+            """The sessions the deck keys map onto: the last refresh's
+            snapshot, live rows then stale ones -- the same rows the state
+            document was just built from. Asking the monitor instead rebuilt
+            a whole second snapshot inside every state build."""
+            snapshot = getattr(self, "last_snapshot", None)
+            if snapshot is not None:
+                return (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ()))
             monitor = getattr(self, "monitor", None)
             current = getattr(monitor, "current_statuses_by_key", None)
             if callable(current):
@@ -5817,7 +5824,7 @@ def build_headless_controller_class() -> type:
                     return tuple(current().values())
                 except Exception:
                     pass
-            return tuple(getattr(getattr(self, "last_snapshot", None), "statuses", ()) or ())
+            return ()
 
         def _core_deck_status_for_identity(self, identity: str):
             from .deck_session_board import session_identity
@@ -6069,8 +6076,9 @@ def build_headless_controller_class() -> type:
             from .deck_control_center import refresh_deck_board
             from .deck_session_board import session_identity
 
+            deck_statuses = self._core_deck_statuses()
             try:
-                snapshot = refresh_deck_board(self)
+                snapshot = refresh_deck_board(self, statuses=deck_statuses)
             except Exception as exc:
                 legacy.log_status_bar(f"core: deck board unavailable: {exc.__class__.__name__}")
                 snapshot = self._core_deck_board().snapshot()
@@ -6112,7 +6120,7 @@ def build_headless_controller_class() -> type:
                 )
             labels = {row["id"]: row.get("label") for row in sessions if isinstance(row, dict) and row.get("id")}
             statuses = {}
-            for status in self._core_deck_statuses():
+            for status in deck_statuses:
                 identity = session_identity(status)
                 if identity is not None:
                     statuses[identity] = status

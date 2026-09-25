@@ -288,6 +288,31 @@ def test_state_carries_the_deck_with_no_pad_and_with_an_unapproved_one__and_1_mo
 
 
 
+def test_the_deck_reads_the_snapshot_the_state_was_built_from(headless) -> None:  # noqa: F811
+    """The deck used to ask the monitor for its rows, which rebuilt a whole
+    second snapshot inside every state build; it reads the last refresh's
+    snapshot, live rows then stale ones."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    live = [_status("session-a"), _status("session-b")]
+    stale = [_status("session-c", AgentMode.COMPLETED)]
+    controller._core_deck_board()
+    controller._deck_board_ready = True
+
+    def forbidden():
+        raise AssertionError("the deck rebuilt a snapshot")
+
+    controller.monitor = SimpleNamespace(current_statuses_by_key=forbidden)
+    controller.last_snapshot = SimpleNamespace(statuses=tuple(live), stale_statuses=tuple(stale), aggregate=None)
+    assert controller._core_deck_statuses() == (*live, *stale)
+    deck = controller._core_build_state()["deck"]
+    assert {slot["session"] for slot in deck["slots"] if slot["session"]} == {status.agent_id for status in (*live, *stale)}
+    # Before the first refresh there is no snapshot: the monitor answers.
+    controller.last_snapshot = None
+    controller.monitor = SimpleNamespace(current_statuses_by_key=lambda: {status.agent_id: status for status in live})
+    assert controller._core_deck_statuses() == tuple(live)
+
+
 def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
     from jrbar import deck_control_center
     from jrbar.deck_actions import DeckAction
