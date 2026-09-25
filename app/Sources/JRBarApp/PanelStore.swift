@@ -1260,7 +1260,11 @@ final class PanelStore {
                   !source.fresh,
                   let age = source.heardAgeSeconds,
                   age.isFinite, age >= Self.sourceQuietBound else { continue }
-            result[session.provider] = max(result[session.provider] ?? 0, age)
+            // Keyed the way `quietFeedText` reads it: the canonical
+            // provider id, so a raw id that arrives mixed-case still
+            // lands on its row.
+            let provider = ProviderStyle.style(for: session.provider).id
+            result[provider] = max(result[provider] ?? 0, age)
         }
         return result
     }
