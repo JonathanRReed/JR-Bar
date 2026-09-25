@@ -161,16 +161,27 @@ enum ShelfActions {
     }
 
     /// Vision's accurate recognizer over the image, line by line in
-    /// reading order.
+    /// reading order. A photo taken with the phone on its side stores its
+    /// pixels sideways and says which way is up; Vision is told, so the
+    /// words read the way the photo shows them.
     nonisolated static func recognizeText(in url: URL) throws -> String? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
-        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        try VNImageRequestHandler(cgImage: image, orientation: orientation(of: source), options: [:])
+            .perform([request])
         let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    /// Which way is up in the image's first frame, from its own metadata;
+    /// up when it doesn't say.
+    nonisolated static func orientation(of source: CGImageSource) -> CGImagePropertyOrientation {
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let raw = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value ?? 1
+        return CGImagePropertyOrientation(rawValue: raw) ?? .up
     }
 
     // MARK: Convert
@@ -181,14 +192,17 @@ enum ShelfActions {
 
     /// The image re-encoded as PNG or JPEG beside the original, under a
     /// free name ("photo.png", "photo 2.png"); the original stays. An
-    /// image already in that format is left alone.
+    /// image already in that format is left alone. It is written from the
+    /// source itself, so the photo's metadata comes along — its
+    /// orientation above all, or a portrait photo would turn sideways.
     nonisolated static func convert(_ url: URL, to format: ImageFormat,
                                     fileManager: FileManager = .default) throws -> URL {
         guard !format.holds(url) else {
             throw ActionError.failed("\(url.lastPathComponent) is already a \(format.title)")
         }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+              CGImageSourceGetCount(source) > 0,
+              CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else {
             throw ActionError.failed("\(url.lastPathComponent) isn't an image ImageIO can read")
         }
         let staged = fileManager.temporaryDirectory
@@ -200,7 +214,7 @@ enum ShelfActions {
         }
         let properties: [CFString: Any] = format == .jpeg
             ? [kCGImageDestinationLossyCompressionQuality: 0.9] : [:]
-        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        CGImageDestinationAddImageFromSource(destination, source, 0, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw ActionError.failed("ImageIO couldn't finish the \(format.title)")
         }

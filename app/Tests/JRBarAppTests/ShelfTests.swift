@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 import JRBarCore
 @testable import JRBarApp
 
@@ -652,6 +654,22 @@ extension ShelfTests {
         #expect(!ShelfActionMenu.verbs(for: [folder.appendingPathComponent("a.zip")]).contains(.copyText))
     }
 
+    @Test func aPhotoTakenSidewaysConvertsTheWayItIsShown() throws {
+        let folder = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // Stored 200 × 900 on its side, shown 900 × 200 by its orientation.
+        let photo = folder.appendingPathComponent("sideways.jpg")
+        try Self.drawSidewaysText("SHELF READS THIS", to: photo)
+        #expect(try Self.shownSize(of: photo) == CGSize(width: 900, height: 200))
+        let png = try ShelfActions.convert(photo, to: .png)
+        #expect(try Self.shownSize(of: png) == CGSize(width: 900, height: 200),
+                "the PNG is shown the way the photo was, not turned on its side")
+        let source = try #require(CGImageSourceCreateWithURL(photo as CFURL, nil))
+        #expect(ShelfActions.orientation(of: source) == .right, "Vision is told which way is up")
+        let text = try #require(try ShelfActions.text(of: photo))
+        #expect(text.uppercased().contains("SHELF"), "read: \(text)")
+    }
+
     @Test func convertOffersAndMakesOnlyAnotherFormat() throws {
         let folder = try scratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -752,6 +770,43 @@ extension ShelfTests {
         }
         #expect(!ShelfShakeDetector.isShake(small, sensitivity: 0.5))
         #expect(ShelfShakeDetector.isShake(small, sensitivity: 1))
+    }
+
+    /// Black words on white as a phone on its side stores them: the pixels
+    /// turned a quarter left, and EXIF orientation 6 (`.right`) saying to
+    /// turn them back to be shown.
+    static func drawSidewaysText(_ text: String, to url: URL) throws {
+        let context = try #require(CGContext(
+            data: nil, width: 200, height: 900, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: 200, height: 900))
+        context.translateBy(x: 200, y: 0)
+        context.rotate(by: .pi / 2)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        (text as NSString).draw(at: NSPoint(x: 30, y: 60), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 72, weight: .bold),
+            .foregroundColor: NSColor.black,
+        ])
+        NSGraphicsContext.restoreGraphicsState()
+        let image = try #require(context.makeImage())
+        let destination = try #require(CGImageDestinationCreateWithURL(
+            url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image,
+                                   [kCGImagePropertyOrientation: 6] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+    }
+
+    /// The size an image is shown at: its pixels, turned by its
+    /// orientation when that swaps the sides.
+    static func shownSize(of url: URL) throws -> CGSize {
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        let width = try #require(properties[kCGImagePropertyPixelWidth] as? NSNumber).doubleValue
+        let height = try #require(properties[kCGImagePropertyPixelHeight] as? NSNumber).doubleValue
+        let turn = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        return (5...8).contains(turn) ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
     }
 
     /// Black words on white, large enough for Vision to read.
