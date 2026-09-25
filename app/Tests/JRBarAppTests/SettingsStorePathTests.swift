@@ -240,6 +240,10 @@ struct SettingsStorePathTests {
             return try CoreCodec.decode(line: String(decoding: data, as: UTF8.self))
         }
         core.apply(try state(1, lastWrite: 1_790_000_000))
+        // An open window reads the facts; the reads mark them in use and
+        // the sync then carries what they returned to the mirrors.
+        _ = store.deviceFacts("sidepulse:pro:A1")
+        _ = store.isLive
         store.syncMirrors()
         let facts = Self.watch { _ = store.deviceFacts("sidepulse:pro:A1") }
         let live = Self.watch { _ = store.isLive }

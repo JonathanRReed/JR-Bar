@@ -184,9 +184,10 @@ final class SettingsStore {
     @ObservationIgnored private var watchingFacts = false
     @ObservationIgnored private var facts = SettingsCoreFacts()
     /// Something has read the facts since the Settings window last
-    /// closed. While nothing has, a push only marks them stale: a closed
-    /// window costs a `state` push nothing but the mark.
-    @ObservationIgnored private var factsInUse = true
+    /// closed — or at all. While nothing has, a push only marks them
+    /// stale: a window never opened costs a `state` push nothing but
+    /// the mark, and every public reader flips this on first.
+    @ObservationIgnored private var factsInUse = false
     @ObservationIgnored private var deviceListCache: [DeviceEntry] = []
     /// The newest `last_write` per device id, read only on the device
     /// card's own 5 s clock: every write moves it, and no mirror carries it.
@@ -982,7 +983,7 @@ final class SettingsStore {
 
     /// The device as the last `state` has it, `last_write` and all: every
     /// state push moves it. A page row reads `deviceFacts` instead.
-    func stateDevice(_ id: String) -> CoreDevice? { core.devices.first { $0.id == id } }
+
 
     /// The device as the last `state` has it, without `last_write` and
     /// `write_health`, which move with every write; observed as a whole
