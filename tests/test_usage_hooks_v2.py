@@ -241,6 +241,79 @@ def test_a_hung_hook_is_killed_with_its_children(tmp_path: Path) -> None:
     assert not alive
 
 
+def test_a_new_first_version_path_changes_the_program_the_legacy_rule_runs(tmp_path: Path) -> None:
+    from jrbar.core_runtime import settings_from_document
+
+    old = _script(tmp_path / "old.sh", "exit 0\n")
+    new = _script(tmp_path / "new.sh", "exit 0\n")
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"usage_event_hook_path": str(old)}), encoding="utf-8")
+    migrated = load_settings(settings_file)
+    document = migrated.to_dict()
+    assert document["usage_hooks"]["rules"][0]["executable"] == str(old)
+
+    # set_setting (or a hand edit) changes only the first version's key;
+    # the saved usage_hooks still names the old program.
+    document["usage_event_hook_path"] = str(new)
+    moved = settings_from_document(document, scratch_dir=tmp_path)
+    [rule] = config_for_settings(moved).rules
+    assert (rule.id, rule.executable, rule.argv, rule.enabled) == ("legacy", str(new), "legacy", True)
+    assert moved.usage_hooks["enabled"] is True
+
+    # An empty path removes the rule, as the legacy window's field does.
+    cleared = moved.to_dict()
+    cleared["usage_event_hook_path"] = ""
+    gone = settings_from_document(cleared, scratch_dir=tmp_path)
+    assert config_for_settings(gone).rules == ()
+    assert gone.usage_hooks["enabled"] is False
+
+    # A path set where no legacy rule is left adds it back.
+    again = gone.to_dict()
+    again["usage_event_hook_path"] = str(old)
+    back = settings_from_document(again, scratch_dir=tmp_path)
+    assert [rule.executable for rule in config_for_settings(back).rules] == [str(old)]
+
+
+def test_a_legacy_rule_the_person_turned_off_stays_off_while_the_path_is_unchanged(tmp_path: Path) -> None:
+    from jrbar.core_runtime import settings_from_document
+
+    script = _script(tmp_path / "chime.sh", "exit 0\n")
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"usage_event_hook_path": str(script)}), encoding="utf-8")
+    document = load_settings(settings_file).to_dict()
+    document["usage_hooks"]["rules"][0]["enabled"] = False
+
+    kept = settings_from_document(document, scratch_dir=tmp_path)
+
+    assert kept.usage_hooks["rules"][0]["enabled"] is False
+    # A file with no first-version key at all leaves the rules alone.
+    del document["usage_event_hook_path"]
+    assert settings_from_document(document, scratch_dir=tmp_path).usage_hooks["rules"][0]["executable"] == str(script)
+
+
+def test_duplicate_rule_ids_that_already_end_in_a_number_settle(tmp_path: Path) -> None:
+    from jrbar.usage_source_settings import normalize_usage_hooks
+
+    long_id = "a" * 56 + "-2"
+    raw = {"enabled": True, "rules": [
+        {"id": long_id, "executable": "/bin/true"},
+        {"id": long_id, "executable": "/bin/true"},
+        {"id": long_id, "executable": "/bin/true"},
+    ]}
+    answer: dict = {}
+    done = threading.Event()
+
+    def normalize() -> None:
+        answer["hooks"] = normalize_usage_hooks(raw)
+        done.set()
+
+    threading.Thread(target=normalize, daemon=True).start()
+    assert done.wait(5.0), "renaming a duplicate id never finished"
+    ids = [rule["id"] for rule in answer["hooks"]["rules"]]
+    assert ids == [long_id, "a" * 56 + "-3", "a" * 56 + "-4"]
+    assert len(set(ids)) == 3
+
+
 def test_one_thread_runs_the_whole_batch_and_records_results(tmp_path: Path) -> None:
     record = tmp_path / "events.txt"
     script = _script(tmp_path / "hook.sh", f'/bin/cat >> "{record}"\n')

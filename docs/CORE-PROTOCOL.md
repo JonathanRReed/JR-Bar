@@ -853,9 +853,12 @@ never costs the rest of the file):
   ("json" or "legacy")}]}`. `set_setting` writes it whole or by dot path
   (`usage_hooks.enabled`). A settings file with no `usage_hooks` but a v1
   `usage_event_hook_path` loads as one enabled rule with id `legacy` and
-  `argv: "legacy"`; the legacy window's path field still writes that rule.
-  A rule the runner refuses stays in the document; `usage_hooks_status`
-  says why.
+  `argv: "legacy"`. After that the rule follows the old key on every load:
+  a new `usage_event_hook_path` (from `set_setting`, a hand edit or the
+  legacy window's field) becomes the `legacy` rule's executable and turns
+  the rule and hooks on, an empty one removes the rule, and a path with no
+  `legacy` rule left adds it back. A rule the runner refuses stays in the
+  document; `usage_hooks_status` says why.
 - `claude_statusline_source` (default false) lets Claude Code's statusLine
   readings stand in for OAuth; `statusline_text_enabled` (default true)
   keeps `statusline.txt` written while the source is on.

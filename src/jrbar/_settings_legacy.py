@@ -2444,13 +2444,19 @@ def _usage_source_settings_from(data: dict) -> dict[str, Any]:
         normalize_pricing_overrides,
         normalize_provider_extra_homes,
         normalize_usage_hooks,
+        sync_legacy_usage_hook,
     )
 
+    legacy_path = (
+        str(data.get("usage_event_hook_path") or "") if "usage_event_hook_path" in data else None
+    )
+    hooks = normalize_usage_hooks(data.get("usage_hooks"), legacy_path=legacy_path or "")
+    if isinstance(data.get("usage_hooks"), dict):
+        # Every save writes usage_hooks, so after the first one the old key
+        # would be ignored: a new path set there must still reach the rule.
+        hooks = sync_legacy_usage_hook(hooks, legacy_path)
     return {
-        "usage_hooks": normalize_usage_hooks(
-            data.get("usage_hooks"),
-            legacy_path=str(data.get("usage_event_hook_path") or ""),
-        ),
+        "usage_hooks": hooks,
         "claude_statusline_source": _bool_setting(data.get("claude_statusline_source"), False),
         "statusline_text_enabled": _bool_setting(data.get("statusline_text_enabled"), True),
         "cliproxy_hub": normalize_cliproxy_hub(data.get("cliproxy_hub")),

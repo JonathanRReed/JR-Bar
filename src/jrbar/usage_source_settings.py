@@ -123,12 +123,58 @@ def normalize_usage_hooks(raw: object, *, legacy_path: str = "") -> dict[str, An
         rule = normalize_usage_hook_rule(item, index)
         if rule is None:
             continue
-        while rule["id"] in seen:
-            rule["id"] = f"{rule['id'][:56]}-{len(seen) + 1}"
+        rule["id"] = _unique_rule_id(rule["id"], seen)
         seen.add(rule["id"])
         rules.append(rule)
     enabled = raw.get("enabled")
     return {"enabled": enabled if type(enabled) is bool else False, "rules": rules}
+
+
+def _unique_rule_id(rule_id: str, seen: set[str]) -> str:
+    """``rule_id`` itself, or, when an earlier rule already has it, its
+    first 56 characters plus the first free ``-2``, ``-3`` and so on. The
+    count only climbs, so two rules that both end in ``-2`` still settle."""
+    if rule_id not in seen:
+        return rule_id
+    base = rule_id[:56]
+    number = 2
+    while f"{base}-{number}" in seen:
+        number += 1
+    return f"{base}-{number}"
+
+
+#: The id the first version's ``usage_event_hook_path`` rule goes by.
+LEGACY_RULE_ID = "legacy"
+
+
+def sync_legacy_usage_hook(hooks: dict[str, Any], path: str | None) -> dict[str, Any]:
+    """Keep the ``legacy`` rule in step with ``usage_event_hook_path``.
+
+    The first version's key still works after the migration. A new path
+    there (from ``set_setting`` or a hand edit) changes the program the
+    ``legacy`` rule runs and turns the rule and hooks on, the way the
+    legacy window's path field always did; an empty path removes the rule;
+    a path with no ``legacy`` rule left adds it back. ``None`` means the
+    file has no such key, and the rules stay as they are.
+    """
+    if path is None:
+        return hooks
+    cleaned = path.strip()
+    rules = list(hooks["rules"])
+    index = next((i for i, rule in enumerate(rules) if rule["id"] == LEGACY_RULE_ID), None)
+    if not cleaned:
+        if index is None:
+            return hooks
+        del rules[index]
+        return {"enabled": bool(hooks["enabled"]) and bool(rules), "rules": rules}
+    wanted = os.path.expanduser(cleaned)
+    if index is not None and rules[index]["executable"] == wanted:
+        return hooks
+    if index is None:
+        rules.insert(0, legacy_usage_hook_rule(cleaned))
+    else:
+        rules[index] = {**rules[index], "executable": wanted, "enabled": True}
+    return {"enabled": True, "rules": rules}
 
 
 def legacy_usage_hook_rule(path: str) -> dict[str, Any]:
@@ -136,7 +182,7 @@ def legacy_usage_hook_rule(path: str) -> dict[str, Any]:
     version expanded a leading ``~``, so the rule does too; kept as typed,
     ``~/bin/chime.sh`` would count as a relative path and never run."""
     return {
-        "id": "legacy",
+        "id": LEGACY_RULE_ID,
         "enabled": True,
         "event": USAGE_HOOK_ANY_EVENT,
         "provider": None,

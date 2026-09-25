@@ -88,3 +88,8 @@ If you set `usage_event_hook_path` before, it became a rule with the id
 (`EVENT PROVIDER LANE DETAIL`) and its five events. `usage_updated` and
 `refresh_failed` reach it only if you change the rule's event to name one
 of them.
+
+The `legacy` rule still follows that key. Point `usage_event_hook_path` at
+another program and the rule runs the new one; clear it and the rule is
+removed. To change the program, change the key rather than the rule's
+`executable`, which the key overwrites the next time the settings load.
