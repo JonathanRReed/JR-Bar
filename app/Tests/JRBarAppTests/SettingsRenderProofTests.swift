@@ -508,13 +508,16 @@ struct SettingsRenderProofTests {
     /// with Display, Pin to, Asks only, Blend and Auto-brightness switched
     /// off and the reason on the card; the receipt and the eject guard on
     /// the SidePulse's. Then a comet the Dot continues, with its side
-    /// picker and a Check sync running, and the Mirror look.
+    /// picker and a Check sync running, and the Mirror look. Every fold on
+    /// the page is open, so each card's rows are drawn.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the linked Devices PNGs"))
     func linkedDevices() throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         let fixture = try Self.fixture()
         fixture.core.apply(try CoreCodec.decode(frame: Data(Self.linkedLightsFrame.utf8)))
         fixture.settings.page = .devices
+        fixture.settings.openFolds = Set(fixture.settings.deviceEntries.map { SettingsFold.device($0.id) }
+            + [SettingsFold.screenBar, SettingsFold.creatorMicro, SettingsFold.streamDeck])
         for width in [CGFloat(560), CGFloat(430)] {
             for dark in [false, true] where Self.wanted("linked-devices") {
                 let view = SettingsPageContainer(store: fixture.settings, page: .devices)
