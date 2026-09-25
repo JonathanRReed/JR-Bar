@@ -121,6 +121,27 @@ def _bounded_smallest(values) -> list[object]:
     return heapq.nsmallest(MAX_COLLECTION_ITEMS, values, key=_json_sort_key)
 
 
+# Per dataclass: its qualified name and the fields a fingerprint reads.
+# ``dataclasses.fields`` rebuilt that tuple on every call, thousands of
+# times per refresh fingerprint.
+_DATACLASS_SHAPES: dict[type, tuple[str, tuple[str, ...]]] = {}
+
+
+def _dataclass_shape(cls: type) -> tuple[str, tuple[str, ...]]:
+    shape = _DATACLASS_SHAPES.get(cls)
+    if shape is None:
+        shape = (
+            f"{cls.__module__}.{cls.__qualname__}",
+            tuple(
+                field.name
+                for field in dataclasses.fields(cls)
+                if field.metadata.get("core_state", True)
+            ),
+        )
+        _DATACLASS_SHAPES[cls] = shape
+    return shape
+
+
 def _normalize(value: object, *, depth: int = 0) -> object:
     if depth > MAX_NORMALIZATION_DEPTH:
         return {"$depth": type(value).__name__}
@@ -143,13 +164,13 @@ def _normalize(value: object, *, depth: int = 0) -> object:
             "$bytes": len(value),
         }
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        type_name, names = _dataclass_shape(type(value))
         fields = {
-            field.name: _normalize(getattr(value, field.name), depth=depth + 1)
-            for field in dataclasses.fields(value)
-            if field.metadata.get("core_state", True)
+            name: _normalize(getattr(value, name), depth=depth + 1)
+            for name in names
         }
         return {
-            "$type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "$type": type_name,
             "fields": fields,
         }
     if isinstance(value, Mapping):
