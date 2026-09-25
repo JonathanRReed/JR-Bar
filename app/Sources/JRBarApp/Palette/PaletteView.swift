@@ -141,6 +141,13 @@ struct PaletteView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     rows(model.sections)
+                        // The list's top, to scroll back to when a reopen
+                        // reuses this view: a mark behind the rows, never
+                        // one of them, so the lazy stack sizes its rows
+                        // as it always has.
+                        .background(alignment: .top) {
+                            Color.clear.frame(height: 1).id(Self.topID).accessibilityHidden(true)
+                        }
                 }
                 .scrollIndicators(.automatic)
                 .onChange(of: model.selectedID) { _, id in
@@ -169,9 +176,6 @@ struct PaletteView: View {
 
     private func rows(_ sections: [PaletteListSection]) -> some View {
         LazyVStack(alignment: .leading, spacing: 0) {
-            // The list's top, to scroll back to when a reopen reuses
-            // this view. No height, and the stack has no spacing.
-            Color.clear.frame(height: 0).id(Self.topID).accessibilityHidden(true)
             ForEach(sections) { section in
                 Text(section.section.title)
                     .font(.system(size: 11, weight: .semibold))
