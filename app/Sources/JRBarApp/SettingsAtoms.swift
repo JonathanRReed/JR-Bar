@@ -618,7 +618,7 @@ struct MultiSelectMenu: View {
     init(_ store: SettingsStore, _ title: String, subtitle: String? = nil, path: String,
          options: [(value: String, label: String)], providerTiles: Bool = false) {
         self.init(title, subtitle: subtitle, options: options, providerTiles: providerTiles,
-                  document: store.document) { store.listMember(path, $0) }
+                  document: store.values.document(["colors.agent_colors"])) { store.listMember(path, $0) }
     }
 
     /// One bool per option under a key prefix (`transcript_monitoring.claude`, …).
@@ -626,7 +626,7 @@ struct MultiSelectMenu: View {
     init(_ store: SettingsStore, _ title: String, subtitle: String? = nil, keyPrefix: String,
          options: [(value: String, label: String)], providerTiles: Bool = false, default fallback: Bool = false) {
         self.init(title, subtitle: subtitle, options: options, providerTiles: providerTiles,
-                  document: store.document,
+                  document: store.values.document(["colors.agent_colors"]),
                   itemEnabled: { store.isProvided("\(keyPrefix).\($0)") }) {
             store.bool("\(keyPrefix).\($0)", default: fallback)
         }

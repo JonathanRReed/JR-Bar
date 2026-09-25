@@ -53,7 +53,7 @@ struct LightingPage: View {
             SettingRow("Celebration preview", subtitle: "The finish the strip plays, once, when a session is done.") {
                 FinishLookPreview(core: store.core, sketch: LightingPreviewPrograms.celebration(colorHex: celebrationColor))
                     .frame(width: 168)
-                    .opacity((store.document.bool("colors.done_celebration_enabled") ?? true) ? 1 : 0.35)
+                    .opacity((store.values.bool("colors.done_celebration_enabled") ?? true) ? 1 : 0.35)
                     .accessibilityLabel("Done celebration preview")
             }
             LightingMotionRows(store: store)
@@ -80,15 +80,15 @@ struct LightingPage: View {
         SettingGroup("Dimming") {
             SettingToggle(store, "Dim when idle", path: "idle_dim_enabled", default: true)
             SettingSlider(store, "After", path: "idle_dim_after_minutes", in: 1...180, step: 1, default: 10, format: SettingsStore.minutes)
-                .disabled(!(store.document.bool("idle_dim_enabled") ?? true))
+                .disabled(!(store.values.bool("idle_dim_enabled") ?? true))
             SettingSlider(store, "Idle brightness", path: "idle_dim_fraction", in: 0.05...1, default: 0.3, format: SettingsStore.percent)
-                .disabled(!(store.document.bool("idle_dim_enabled") ?? true))
+                .disabled(!(store.values.bool("idle_dim_enabled") ?? true))
             SettingToggle(store, "Dim on display sleep", path: "sleep_dim_enabled", default: true)
             SettingSlider(store, "Sleep brightness", path: "sleep_dim_fraction", in: 0.05...1, default: 0.2, format: SettingsStore.percent)
-                .disabled(!(store.document.bool("sleep_dim_enabled") ?? true))
+                .disabled(!(store.values.bool("sleep_dim_enabled") ?? true))
             SettingToggle(store, "Turn off when idle", subtitle: "After a long idle the lights switch off entirely.", path: "idle_auto_off_enabled")
             SettingSlider(store, "Off after", path: "idle_auto_off_after_minutes", in: 5...1440, step: 5, default: 60, format: SettingsStore.minutes)
-                .disabled(!(store.document.bool("idle_auto_off_enabled") ?? false))
+                .disabled(!(store.values.bool("idle_auto_off_enabled") ?? false))
         }
 
         AutoDimSection(store: store)
@@ -107,17 +107,17 @@ struct LightingPage: View {
                           path: "rainstick_idle_enabled")
             SettingToggle(store, "Also at night", subtitle: "The Night scene withholds the drip unless you allow it here.",
                           path: "rainstick_night_enabled")
-                .disabled(!(store.document.bool("rainstick_idle_enabled") ?? false))
+                .disabled(!(store.values.bool("rainstick_idle_enabled") ?? false))
             SettingRow("Rainstick preview", subtitle: "Shown twenty-five times faster and brighter than the strip plays it.") {
                 LEDStripPreview(program: LightingPreviewPrograms.rainstick(), style: .dots, dotSize: 9, spacing: 6)
                     .frame(width: 168)
-                    .opacity((store.document.bool("rainstick_idle_enabled") ?? false) ? 1 : 0.35)
+                    .opacity((store.values.bool("rainstick_idle_enabled") ?? false) ? 1 : 0.35)
                     .accessibilityLabel("Rainstick idle preview")
             }
             SettingToggle(store, "Completion milestones", subtitle: "A short celebration when finished sessions cross a milestone.",
                           path: "milestone_odometer_enabled")
             MilestoneStepsField(store: store)
-                .disabled(!(store.document.bool("milestone_odometer_enabled") ?? false))
+                .disabled(!(store.values.bool("milestone_odometer_enabled") ?? false))
         }
     }
 
@@ -128,7 +128,7 @@ struct LightingPage: View {
             let path = "colors.mode_colors.\(mode)"
             return ColorVisionNote.Entry(
                 id: mode, name: ModeSwatch.labels[mode]?.name ?? mode.capitalized, path: path,
-                hex: store.document.string(SettingsPath(path)) ?? ModeSwatch.defaults[mode] ?? "#8E8E93")
+                hex: store.values.string(SettingsPath(path)) ?? ModeSwatch.defaults[mode] ?? "#8E8E93")
         }
     }
 
@@ -136,14 +136,14 @@ struct LightingPage: View {
     /// a live session or an installed hook. Twelve hues all against each
     /// other would flag pairs nobody will ever see side by side.
     private var providerColorsInUse: [ColorVisionNote.Entry] {
-        let running = Set(store.core.sessions.map(\.provider))
+        let running = store.runningProviders
         return SettingsKey.providers
             .filter { running.contains($0) || (store.hookStatus($0).map { $0 != "missing" } ?? false) }
             .map { provider in
                 let style = ProviderStyle.style(for: provider)
                 let path = "colors.agent_colors.\(provider)"
                 return ColorVisionNote.Entry(id: provider, name: style.name, path: path,
-                                             hex: store.document.string(SettingsPath(path)) ?? style.accentHex)
+                                             hex: store.values.string(SettingsPath(path)) ?? style.accentHex)
             }
     }
 
@@ -151,18 +151,18 @@ struct LightingPage: View {
     /// their colours and a third agent done, under the chosen blend.
     private var fleetProgram: String {
         func accent(_ provider: String) -> String {
-            store.document.agentColorHex(provider) ?? ProviderStyle.style(for: provider).accentHex
+            store.values.agentColorHex(provider) ?? ProviderStyle.style(for: provider).accentHex
         }
         return LightingPreviewPrograms.fleet(
-            blendMode: store.document.string("colors.blend_mode") ?? "color_blend",
+            blendMode: store.values.string("colors.blend_mode") ?? "color_blend",
             working: (accent("claude"), accent("codex")),
-            doneHex: store.document.string("colors.mode_colors.done") ?? ModeSwatch.defaults["done"] ?? "#00FF66",
-            workingStateHex: store.document.string("colors.mode_colors.working") ?? ModeSwatch.defaults["working"] ?? "#00E5FF",
-            cycleSeconds: store.document.double("colors.cycle_speed_seconds") ?? 2.2)
+            doneHex: store.values.string("colors.mode_colors.done") ?? ModeSwatch.defaults["done"] ?? "#00FF66",
+            workingStateHex: store.values.string("colors.mode_colors.working") ?? ModeSwatch.defaults["working"] ?? "#00E5FF",
+            cycleSeconds: store.values.double("colors.cycle_speed_seconds") ?? 2.2)
     }
 
     private var blendDetail: String {
-        let mode = store.document.string("colors.blend_mode") ?? "color_blend"
+        let mode = store.values.string("colors.blend_mode") ?? "color_blend"
         return Self.blendModes.first { $0.value == mode }?.detail ?? ""
     }
 
@@ -170,7 +170,7 @@ struct LightingPage: View {
     /// it has one, else the firmware reference green.
     private var celebrationColor: String {
         for path in ["colors.done_celebration_color", "colors.mode_colors.done", "colors.status_colors.done", "colors.status_colors.completed"] {
-            if let hex = store.document.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
+            if let hex = store.values.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
         }
         return "#00FF66"
     }
@@ -191,7 +191,7 @@ struct ScenePackPicker: View {
     @ViewState private var trying: String?
     @ViewState private var preview: EffectPreview?
 
-    private var active: String { store.document.string("active_scene_pack") ?? "" }
+    private var active: String { store.values.string("active_scene_pack") ?? "" }
     private var shown: String { trying ?? active }
 
     var body: some View {
@@ -228,7 +228,7 @@ struct ScenePackPicker: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .task(id: store.core.isLive) { await load() }
+        .task(id: store.isLive) { await load() }
         .task(id: shown) { await loadPreview() }
     }
 
@@ -253,7 +253,7 @@ struct ScenePackPicker: View {
     }
 
     private func load() async {
-        guard store.core.isLive else { supported = false; return }
+        guard store.isLive else { supported = false; return }
         do {
             packs = try await store.core.listScenePacks()
             supported = true
@@ -265,7 +265,7 @@ struct ScenePackPicker: View {
 
     private func loadPreview() async {
         let id = shown
-        guard !id.isEmpty, store.core.isLive else { preview = nil; return }
+        guard !id.isEmpty, store.isLive else { preview = nil; return }
         preview = try? await store.core.previewScenePack(packID: id, ledCount: 8)
     }
 }
@@ -288,7 +288,7 @@ struct FleetPreviewRow: View {
 
     /// What the render depends on: the blend, its speed, the palette.
     private var key: String {
-        "\(store.core.isLive)|\(store.core.settings?.generation ?? 0)"
+        "\(store.isLive)|\(store.settingsRevision)"
     }
 
     var body: some View {
@@ -306,7 +306,7 @@ struct FleetPreviewRow: View {
         }
         .task(id: key) {
             let key = self.key
-            guard store.core.isLive,
+            guard store.isLive,
                   let reply = try? await store.core.request("preview_fleet", args: ["led_count": .number(8)], as: Reply.self),
                   !reply.program.isEmpty else { rendered = nil; return }
             rendered = (key, reply.program, reply.label ?? "Three agents: two working, one done")
@@ -354,7 +354,7 @@ struct ColorVisionNote: View {
 
     /// The palette as the note knows it: a new colour anywhere re-asks.
     private var checkKey: String {
-        "\(store.core.isLive)|" + (colors + others).map { "\($0.id)=\($0.hex)" }.joined(separator: ",")
+        "\(store.isLive)|" + (colors + others).map { "\($0.id)=\($0.hex)" }.joined(separator: ",")
     }
 
     /// One close pair as the note lists it, with its nudge when there is one.
@@ -414,7 +414,7 @@ struct ColorVisionNote: View {
         }
         .task(id: checkKey) {
             let key = checkKey
-            guard store.core.isLive,
+            guard store.isLive,
                   let reply = try? await store.core.request("check_palette", args: ["visions": .array(PaletteCheck.visions.map(JSONValue.string))],
                                                             as: PaletteCheck.self) else { checked = nil; return }
             checked = (key, reply.pairs)
@@ -511,7 +511,7 @@ struct MilestoneStepsField: View {
     @FocusState private var focused: Bool
 
     private var current: [Int] {
-        (store.document.array("milestone_odometer_steps") ?? []).compactMap(\.intValue)
+        (store.values.array("milestone_odometer_steps") ?? []).compactMap(\.intValue)
     }
     private var currentText: String {
         (current.isEmpty ? SettingsKey.defaultMilestoneSteps : current).map(String.init).joined(separator: ", ")
@@ -550,9 +550,11 @@ struct MilestoneStepsField: View {
 struct AutoDimSection: View {
     @Bindable var store: SettingsStore
 
-    private var settings: AutoDimSettings { AutoDimSettings(document: store.document) }
+    /// The `auto_dim` object, read as one path.
+    private var autoDim: SettingsDocument { store.values.document([AutoDimSettings.root]) }
+    private var settings: AutoDimSettings { AutoDimSettings(document: autoDim) }
     private var mode: AutoDimSettings.Mode { settings.mode }
-    private var provided: Bool { store.hasDocument && AutoDimSettings.isProvided(in: store.document) }
+    private var provided: Bool { store.hasDocument && AutoDimSettings.isProvided(in: autoDim) }
 
     var body: some View {
         SettingGroup("Auto-dim", note: "Multiplies every light's brightness on top of idle and sleep dimming; the why popover names it when it is in effect.") {
@@ -719,13 +721,13 @@ struct AutoDimLearningRow: View {
             }
         }
         // A vote lands with every slider move, which moves the lights.
-        .task(id: "\(store.core.isLive)-\(store.core.settings?.generation ?? 0)-\(store.core.lights?.autoDim?.factor ?? -1)") {
+        .task(id: "\(store.isLive)-\(store.settingsRevision)-\(store.core.lights?.autoDim?.factor ?? -1)") {
             await load(clear: false)
         }
     }
 
     private func load(clear: Bool) async {
-        guard store.core.isLive else { learning = nil; return }
+        guard store.isLive else { learning = nil; return }
         learning = try? await store.core.request("auto_dim_learning", args: clear ? ["clear": .bool(true)] : [:],
                                                  as: AutoDimLearning.self)
     }
@@ -803,16 +805,16 @@ struct ProviderSwatch: View {
     var body: some View {
         let style = ProviderStyle.style(for: provider)
         let path = "colors.agent_colors.\(provider)"
-        let hex = store.document.string(SettingsPath(path)) ?? style.accentHex
-        let blend = store.document.string("colors.blend_mode") ?? "color_blend"
-        let cycle = store.document.double(SettingsPath("colors.cycle_speed_seconds")) ?? 2.2
+        let hex = store.values.string(SettingsPath(path)) ?? style.accentHex
+        let blend = store.values.string("colors.blend_mode") ?? "color_blend"
+        let cycle = store.values.double(SettingsPath("colors.cycle_speed_seconds")) ?? 2.2
         HStack(spacing: 8) {
             ColorPicker("", selection: store.color(path, default: style.accentHex), supportsOpacity: false)
                 .labelsHidden()
                 .disabled(!store.isProvided(path))
             VStack(alignment: .leading, spacing: 4) {
                 SwatchTitle(name: style.name,
-                            hex: store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
+                            hex: store.values.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
                 ProviderMotionPreview(core: store.core, provider: provider,
                                       sketch: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
                                       phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
@@ -849,7 +851,7 @@ struct ModeSwatch: View {
     var body: some View {
         let path = "colors.mode_colors.\(mode)"
         let fallback = Self.defaults[mode] ?? "#8E8E93"
-        let hex = store.document.string(SettingsPath(path)) ?? fallback
+        let hex = store.values.string(SettingsPath(path)) ?? fallback
         let label = Self.labels[mode] ?? (name: mode.capitalized, detail: "")
         HStack(spacing: 8) {
             ColorPicker("", selection: store.color(path, default: fallback), supportsOpacity: false)
@@ -857,7 +859,7 @@ struct ModeSwatch: View {
                 .disabled(!store.isProvided(path))
             VStack(alignment: .leading, spacing: 4) {
                 SwatchTitle(name: label.name,
-                            hex: store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : fallback))
+                            hex: store.values.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : fallback))
                 LEDStripPreview(program: LightingPreviewPrograms.state(mode, colorHex: hex),
                                 style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6)
                     .frame(maxWidth: 110)
@@ -904,10 +906,10 @@ struct FadeRow: View {
                 HStack(spacing: 10) {
                     Text("Floor").font(.callout).foregroundStyle(.secondary)
                     Slider(value: store.double(floorPath, default: 0.01), in: 0...1).frame(width: 90)
-                    ValueText(text: SettingsStore.percent(store.document.double(SettingsPath(floorPath)) ?? 0.01), width: 40)
+                    ValueText(text: SettingsStore.percent(store.values.double(SettingsPath(floorPath)) ?? 0.01), width: 40)
                     Text("Ceiling").font(.callout).foregroundStyle(.secondary).padding(.leading, 6)
                     Slider(value: store.double(ceilingPath, default: 0.5), in: 0...1).frame(width: 90)
-                    ValueText(text: SettingsStore.percent(store.document.double(SettingsPath(ceilingPath)) ?? 0.5), width: 40)
+                    ValueText(text: SettingsStore.percent(store.values.double(SettingsPath(ceilingPath)) ?? 0.5), width: 40)
                 }
             }
         }
@@ -981,21 +983,21 @@ struct NotificationsPage: View {
                     }
                 }
             }
-            .disabled(!(store.document.bool("dnd_schedule_enabled") ?? false))
+            .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false))
             SettingPicker(store, "While quiet", path: "dnd_schedule_mode", options: Self.focusModes, default: "dark")
-                .disabled(!(store.document.bool("dnd_schedule_enabled") ?? false))
+                .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false))
             SettingSlider(store, "Dim to", path: "dnd_dim_fraction", in: 0...1, default: 0.15, format: SettingsStore.percent)
-                .disabled(!(store.document.bool("dnd_schedule_enabled") ?? false) || store.document.string("dnd_schedule_mode") != "dim")
+                .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false) || store.values.string("dnd_schedule_mode") != "dim")
         }
 
         SettingGroup("Focus", note: "A Focus without a rule uses the idle brightness from Lighting.") {
             SettingToggle(store, "React to Focus modes", subtitle: "Reads the active Focus; needs Full Disk Access for this app.", path: "focus_sync_enabled")
             SettingPicker(store, "In Do Not Disturb", path: "dnd_focus_mode", options: Self.focusModes, default: "pause")
-                .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
+                .disabled(!(store.values.bool("focus_sync_enabled") ?? false))
             FocusRoster(store: store) { focuses in
                 ForEach(focuses, id: \.id) { focus in
                     FocusRuleRow(store: store, focusID: focus.id, name: focus.name)
-                        .disabled(!(store.document.bool("focus_sync_enabled") ?? false))
+                        .disabled(!(store.values.bool("focus_sync_enabled") ?? false))
                 }
             }
         }
@@ -1013,13 +1015,13 @@ struct NotificationsPage: View {
             SettingToggle(store, "Low battery alert", subtitle: "Every surface switches to the slow red breathe until power returns.",
                           path: "battery_monitoring.low_battery_alert_enabled", default: true)
             SettingSlider(store, "Below", path: "battery_monitoring.low_battery_threshold_percent", in: 1...50, step: 1, default: 5) { "\(Int($0)) %" }
-                .disabled(!(store.document.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
+                .disabled(!(store.values.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
             SettingSlider(store, "Or with less left than",
                           subtitle: "Time left, not charge: a fast drain at 20 % can be nearer empty than a slow one at 8 %. Twice as early while agents run under a keep-awake hold; never on macOS's first guess, never plugged in.",
                           path: "battery_monitoring.low_battery_threshold_minutes", in: 0...120, step: 5, default: 0) { minutes in
                 minutes < 1 ? "Off" : "\(Int(minutes)) min"
             }
-            .disabled(!(store.document.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
+            .disabled(!(store.values.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
             SettingToggle(store, "Charging fill when idle", subtitle: "While plugged in and nothing is running, the strip fills to the charge level instead of the idle whisper. Agents always break through.",
                           path: "battery_monitoring.charging_idle_enabled", default: true)
             SettingToggle(store, "Show power changes", subtitle: "Plugging in or unplugging shows the charge on the lights for a few seconds.",
@@ -1031,15 +1033,15 @@ struct NotificationsPage: View {
     /// The providers worth a ceiling row: the ones this Mac runs (a live
     /// session or an installed hook) and any that already has one.
     private var escalationProviders: [String] {
-        let running = Set(store.core.sessions.map(\.provider))
-        let ceilings = store.document.object("escalation_tier_by_provider") ?? [:]
+        let running = store.runningProviders
+        let ceilings = store.values.object("escalation_tier_by_provider") ?? [:]
         return SettingsKey.providers.filter {
             running.contains($0) || ceilings[$0] != nil || (store.hookStatus($0).map { $0 != "missing" } ?? false)
         }
     }
 
     private var closedLidNote: String {
-        ClosedLidNote.text(store.core.state?.power?.closedLid)
+        ClosedLidNote.text(store.closedLid)
     }
 }
 
@@ -1061,8 +1063,8 @@ struct FocusRoster<Content: View>: View {
 
     var body: some View {
         content(Self.merge(known: NotificationsPage.knownFocuses, reported: reported))
-            .task(id: store.core.isLive) {
-                guard store.core.isLive,
+            .task(id: store.isLive) {
+                guard store.isLive,
                       let reply = try? await store.core.request("list_focuses", as: Reply.self),
                       reply.available != false else { reported = []; return }
                 reported = (reply.focuses ?? []).map { ($0.id, $0.name ?? $0.id) }
@@ -1096,7 +1098,7 @@ struct EscalationCeilingRow: View {
     ]
 
     var body: some View {
-        let ceilings = store.document.object("escalation_tier_by_provider")
+        let ceilings = store.values.object("escalation_tier_by_provider")
         let current = ceilings?[provider]?.stringValue ?? ""
         Picker(selection: Binding(
             get: { current },
@@ -1118,7 +1120,7 @@ struct EscalationCeilingRow: View {
     /// A ceiling at or above the global stage changes nothing; say so.
     private func note(_ current: String) -> String? {
         guard !current.isEmpty else { return nil }
-        let global = store.document.string("escalation_tier") ?? "menu_bar"
+        let global = store.values.string("escalation_tier") ?? "menu_bar"
         return EventPolicy.escalationCeiling(current) >= EventPolicy.escalationCeiling(global)
             ? "No lower than the stage above, so it changes nothing." : nil
     }
@@ -1138,13 +1140,13 @@ struct CalendarGlowSection: View {
                           path: "calendar_alerts_enabled")
             SettingSlider(store, "Lead time", subtitle: "How long before the start the glow begins.",
                           path: "calendar_lead_minutes", in: 1...60, step: 1, default: 5, format: SettingsStore.minutes)
-                .disabled(!(store.document.bool("calendar_alerts_enabled") ?? false))
-            if store.document.bool("calendar_alerts_enabled") ?? false {
+                .disabled(!(store.values.bool("calendar_alerts_enabled") ?? false))
+            if store.values.bool("calendar_alerts_enabled") ?? false {
                 EventKitAccessNote(entity: .event)
             }
             SettingToggle(store, "Glow for due reminders", subtitle: "An amber glow when a Reminder with a time comes due.",
                           path: "reminder_alerts_enabled")
-            if store.document.bool("reminder_alerts_enabled") ?? false {
+            if store.values.bool("reminder_alerts_enabled") ?? false {
                 EventKitAccessNote(entity: .reminder)
             }
         }
@@ -1196,14 +1198,14 @@ struct FocusRuleRow: View {
 
     /// The rule for this Focus, read out of the rules object: the id is
     /// dotted, so it is a key, never a path.
-    private var rule: Double? { store.document.object("focus_dim_rules")?[focusID]?.doubleValue }
+    private var rule: Double? { store.values.object("focus_dim_rules")?[focusID]?.doubleValue }
 
     /// Writes the rules object whole with this Focus's entry set or
     /// removed. `focus_dim_rules.<id>` would split the dotted id into
     /// nested objects, which the daemon's loader drops — the rule never
     /// stuck.
     private func write(_ value: Double?, throttled: Bool = false) {
-        let rules = LightProfiles.rules(store.document.object("focus_dim_rules"), setting: focusID,
+        let rules = LightProfiles.rules(store.values.object("focus_dim_rules"), setting: focusID,
                                         to: value.map(JSONValue.number))
         store.set("focus_dim_rules", rules, throttled: throttled)
     }
@@ -1246,13 +1248,13 @@ struct RemotePage: View {
         SettingGroup("Peers") {
             SettingToggle(store, "Remote peers", subtitle: "Discover other Macs running JR-Bar and show their agents here.", path: "remote_peers.enabled")
             SettingToggle(store, "Publish this Mac", subtitle: "Lets peers read this desk's sessions.", path: "remote_peers.publish_enabled")
-                .disabled(!(store.document.bool("remote_peers.enabled") ?? false))
+                .disabled(!(store.values.bool("remote_peers.enabled") ?? false))
             SettingToggle(store, "Mute remote asks", subtitle: "A peer's asks take no light here until you unmute that machine.",
                           path: "remote_peers.remote_interrupts_muted", default: true)
-                .disabled(!(store.document.bool("remote_peers.enabled") ?? false))
+                .disabled(!(store.values.bool("remote_peers.enabled") ?? false))
             MachineList(store: store, path: "remote_peers.unmuted_machines", title: "Unmuted machines")
-                .disabled(!(store.document.bool("remote_peers.enabled") ?? false))
-            if store.document.bool("remote_peers.enabled") ?? false, let peers = store.core.state?.peers {
+                .disabled(!(store.values.bool("remote_peers.enabled") ?? false))
+            if store.values.bool("remote_peers.enabled") ?? false, let peers = store.peers {
                 LabeledContent("Fleet") {
                     if peers.isEmpty {
                         Text("No peers found").foregroundStyle(.secondary)
@@ -1271,7 +1273,7 @@ struct RemotePage: View {
             Provided(store, "serve_enabled") {
                 SettingRow("Bearer token") {
                     Button("Copy token") { store.copyServeToken() }
-                        .disabled(!(store.document.bool("serve_enabled") ?? false) || !store.core.isLive)
+                        .disabled(!(store.values.bool("serve_enabled") ?? false) || !store.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             }
@@ -1282,14 +1284,14 @@ struct RemotePage: View {
             Provided(store, "cloud_ingest_token_path") {
                 SettingRow("Token file") {
                     HStack(spacing: 8) {
-                        Text(store.document.string("cloud_ingest_token_path") ?? "")
+                        Text(store.values.string("cloud_ingest_token_path") ?? "")
                             .font(.callout.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .frame(maxWidth: 300, alignment: .trailing)
                         Button("Reveal") {
-                            let path = (store.document.string("cloud_ingest_token_path") ?? "") as NSString
+                            let path = (store.values.string("cloud_ingest_token_path") ?? "") as NSString
                             let url = URL(fileURLWithPath: path.expandingTildeInPath)
                             NSWorkspace.shared.activateFileViewerSelecting([url])
                         }
@@ -1306,7 +1308,7 @@ struct RemotePage: View {
                                 path: "webhook_events",
                                 options: Self.webhookEvents)
             }
-            .disabled((store.document.string("escalation_webhook_url") ?? "").isEmpty)
+            .disabled((store.values.string("escalation_webhook_url") ?? "").isEmpty)
         }
     }
 }
@@ -1322,7 +1324,7 @@ struct MachineList: View {
         Provided(store, path) {
             LabeledContent(title) {
                 VStack(alignment: .leading, spacing: 6) {
-                    let machines = store.document.strings(SettingsPath(path)) ?? []
+                    let machines = store.values.strings(SettingsPath(path)) ?? []
                     if machines.isEmpty {
                         Text("None").foregroundStyle(.tertiary)
                     }
@@ -1373,10 +1375,10 @@ struct StreamDeckCard: View {
     /// return no flag at all).
     @ViewState private var running: Bool?
 
-    private var enabled: Bool { store.document.bool("serve_enabled") ?? false }
+    private var enabled: Bool { store.values.bool("serve_enabled") ?? false }
 
     private var statusText: String {
-        guard store.core.isLive else { return "Monitor not connected" }
+        guard store.isLive else { return "Monitor not connected" }
         guard enabled else { return "Off — the endpoint is not serving" }
         switch running {
         case true: return "Serving on 127.0.0.1:8737"
@@ -1386,7 +1388,7 @@ struct StreamDeckCard: View {
     }
 
     private var statusColor: Color {
-        guard enabled, store.core.isLive else { return .secondary }
+        guard enabled, store.isLive else { return .secondary }
         return running == true ? .green : .orange
     }
 
@@ -1404,7 +1406,7 @@ struct StreamDeckCard: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                     Button("Copy token") { store.copyServeToken() }
-                        .disabled(!enabled || !store.core.isLive)
+                        .disabled(!enabled || !store.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             }
@@ -1412,11 +1414,11 @@ struct StreamDeckCard: View {
             SettingsGroupHeader(title: "Stream Deck", symbol: "square.grid.3x2.fill",
                                 tint: Color(nsColor: .systemBlue))
         }
-        .task(id: enabled && store.core.isLive) { await refreshServeState() }
+        .task(id: enabled && store.isLive) { await refreshServeState() }
     }
 
     private func refreshServeState() async {
-        guard enabled, store.core.isLive else { running = nil; return }
+        guard enabled, store.isLive else { running = nil; return }
         let reply = try? await store.core.send("serve_token")
         running = reply?.result?["running"]?.boolValue
         // The core binds the socket on the settings echo; give it a beat
@@ -1437,7 +1439,7 @@ struct AdvancedPage: View {
 
     var body: some View {
         SettingGroup("Diagnostics") {
-            LabeledContent("Connection", value: connectionWord)
+            ConnectionWordRow(store: store)
             LabeledContent("Core version", value: store.core.hello?.coreVersion ?? "—")
             LabeledContent("Socket") {
                 Text(store.core.socketPath).font(.callout.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -1448,13 +1450,13 @@ struct AdvancedPage: View {
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 380, alignment: .trailing)
             }
-            LabeledContent("Generations", value: "state \(store.core.state?.generation ?? 0) · settings \(store.generation)")
+            GenerationsRow(store: store)
             SettingRow("State folder", subtitle: "The monitor's data on this Mac.") {
                 Button("Reveal in Finder") { store.revealStateFolder() }
             }
             SettingRow("Doctor", subtitle: "Checks the monitor's health.") {
                 Button(store.doctorRunning ? "Running…" : "Run Doctor") { store.runDoctor() }
-                    .disabled(!store.core.isLive || store.doctorRunning)
+                    .disabled(!store.isLive || store.doctorRunning)
             }
         }
 
@@ -1475,21 +1477,41 @@ struct AdvancedPage: View {
                 ForEach(SettingsStore.Page.allCases.filter { $0 != .advanced && $0.catalogue != nil }) { page in
                     LabeledContent(page.title) {
                         Button("Reset…") { store.resetTarget = page }
-                            .disabled(!store.core.isLive)
+                            .disabled(!store.isLive)
                     }
                 }
             }
         }
     }
+}
+
+/// Advanced › Connection, its own view: it reads the connection and
+/// whether a `state` has come, and re-renders alone when they move.
+struct ConnectionWordRow: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        LabeledContent("Connection", value: connectionWord)
+    }
 
     private var connectionWord: String {
         switch store.core.connection {
-        case .connected where store.core.state != nil: return "Connected"
+        case .connected where store.isLive: return "Connected"
         case .connected: return "Connected, waiting for state"
         case .connecting(let attempt): return attempt <= 1 ? "Connecting…" : "Reconnecting (try \(attempt))"
         case .disconnected(let reason): return "Disconnected · \(reason)"
         case .idle: return "Idle"
         }
+    }
+}
+
+/// Advanced › Generations: the `state` count moves with every push, so
+/// the row is its own view and nothing else on the page re-renders.
+struct GenerationsRow: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        LabeledContent("Generations", value: "state \(store.core.state?.generation ?? 0) · settings \(store.generation)")
     }
 }
 

@@ -139,6 +139,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if let closing = notification.object as? NSWindow, closing === window {
             store.windowCovered = true
             detachSettingsContent(from: closing)
+            store.settingsWindowDidClose()
         }
         WindowContentLifecycle.retractWhenLastWindowCloses()
     }

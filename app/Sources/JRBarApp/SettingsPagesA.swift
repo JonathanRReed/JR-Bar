@@ -86,28 +86,30 @@ struct MenuBarStylePicker: View {
 
     private var current: StatusIconStyle { StatusIconStyle(setting: store.menuBarIconStyle) }
 
-    /// The meters as the menu bar would draw them now: the providers shown
-    /// in the panel, in that order; a sample while the core is away.
-    private var meters: [StatusMeter] {
-        let preferred = store.document.strings("usage_graph_providers") ?? []
-        let shown = AppDelegate.meteredProviders(preferred: preferred, usage: store.core.isLive ? store.core.usage : [])
+    /// The configured provider colours, read as one path.
+    private var colors: SettingsDocument { store.values.document(["colors.agent_colors"]) }
+
+    /// The providers the menu bar would meter now: the panel's, in its
+    /// order; empty while the core is away.
+    private var shownProviders: [CoreProviderUsage] {
+        let preferred = store.values.strings("usage_graph_providers") ?? []
+        return AppDelegate.meteredProviders(preferred: preferred, usage: store.isLive ? store.core.usage : [])
+    }
+
+    /// The meters as the menu bar would draw them now; a sample while the
+    /// core is away.
+    private func makeMeters(_ shown: [CoreProviderUsage], colors: SettingsDocument) -> [StatusMeter] {
         guard !shown.isEmpty else { return StatusItemController.sampleMeters }
         let now = Date().timeIntervalSince1970
         return shown.prefix(StatusIconRenderer.maxMeters).map { provider in
-            StatusItemController.previewMeter(for: provider, document: store.document, now: now)
+            StatusItemController.previewMeter(for: provider, document: colors, now: now)
         }
-    }
-
-    private var overflow: Int {
-        let preferred = store.document.strings("usage_graph_providers") ?? []
-        let shown = AppDelegate.meteredProviders(preferred: preferred, usage: store.core.isLive ? store.core.usage : [])
-        return max(0, shown.count - StatusIconRenderer.maxMeters)
     }
 
     /// The session dots as the menu bar would draw them now: the live
     /// sessions in the panel's order, or a sample while the core is away.
-    private var sessions: [SessionDot] {
-        let live = store.core.isLive ? store.core.sessions : []
+    private func makeSessions(colors: SettingsDocument) -> [SessionDot] {
+        let live = store.isLive ? store.core.sessions : []
         guard !live.isEmpty else { return StatusItemController.sampleSessionDots }
         return live.sorted { Self.rank($0) < Self.rank($1) }.map { session in
             let activity = SessionActivity.reduce(session)
@@ -115,8 +117,8 @@ struct MenuBarStylePicker: View {
                 : activity == .failed ? .error
                 : activity == .working ? .working
                 : activity == .done ? .done : .idle
-            return SessionDot(id: session.id, state: state,
-                              accentHex: activity == .working ? ProviderStyle.style(for: session.provider, document: store.document).accentHex : nil)
+            let accent = activity == .working ? ProviderStyle.style(for: session.provider, document: colors).accentHex : nil
+            return SessionDot(id: session.id, state: state, accentHex: accent)
         }
     }
 
@@ -139,21 +141,29 @@ struct MenuBarStylePicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.s + 2) {
             SettingLabel(title: "Menu bar icon", subtitle: "What the status item shows.")
+            // Read once for the nine tiles, not once per tile.
+            let tileColors = colors
+            let shown = shownProviders
+            let tileMeters = makeMeters(shown, colors: tileColors)
+            let tileOverflow = max(0, shown.count - StatusIconRenderer.maxMeters)
+            let tileSessions = makeSessions(colors: tileColors)
+            let tileLabel = labelText
+            let chosen = current
             LazyVGrid(columns: Self.columns, spacing: SettingsMetrics.s) {
                 ForEach(StatusIconStyle.allCases, id: \.self) { style in
                     MenuBarStyleTile(style: style,
-                                     selected: current == style,
-                                     meters: meters,
-                                     overflow: overflow,
-                                     sessions: sessions,
-                                     label: labelText) {
+                                     selected: chosen == style,
+                                     meters: tileMeters,
+                                     overflow: tileOverflow,
+                                     sessions: tileSessions,
+                                     label: tileLabel) {
                         store.menuBarIconStyle = style.rawValue
                     }
                 }
             }
             // The chosen style's own sentence, under the gallery.
             Label {
-                Text(current.subtitle)
+                Text(chosen.subtitle)
                     .fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "info.circle")
@@ -165,7 +175,7 @@ struct MenuBarStylePicker: View {
     }
 
     private var labelText: String? {
-        guard store.core.isLive, let aggregate = store.core.state?.aggregate else {
+        guard store.isLive, let aggregate = store.core.state?.aggregate else {
             return StatusIconRenderer.label(active: 2, needsYou: 1, ready: 0)
         }
         return StatusIconRenderer.label(active: aggregate.active, needsYou: aggregate.needsYou, ready: aggregate.ready)
@@ -378,7 +388,7 @@ struct AgentsPage: View {
             // An install, repair or removal just finished: read again.
             if after.count < before.count { doctor.refresh(core: store.core) }
         }
-        .onChange(of: store.core.isLive) { _, live in
+        .onChange(of: store.isLive) { _, live in
             guard live else { return }
             doctor.refresh(core: store.core)
             t3.refresh(core: store.core)
@@ -408,7 +418,7 @@ struct AgentRow: View {
     /// What `hooks_doctor` found for this provider, when it has said.
     var doctor: HooksDoctorEntry? = nil
 
-    private var style: ProviderStyle { ProviderStyle.style(for: provider, document: store.document) }
+    private var style: ProviderStyle { store.providerStyle(provider) }
     private var status: String? { store.hookStatus(provider) }
 
     private var statusWord: String {
@@ -416,7 +426,7 @@ struct AgentRow: View {
         case "ok": return "Live"
         case "missing": return "Not installed"
         case "stale": return "Quiet"
-        case nil: return store.core.isLive ? "Unknown" : "Monitor offline"
+        case nil: return store.isLive ? "Unknown" : "Monitor offline"
         case let other?: return other.capitalized
         }
     }
@@ -432,7 +442,7 @@ struct AgentRow: View {
 
     private var busy: Bool { store.hookBusy.contains(provider) }
     private var cliMissing: Bool { store.hookDetected(provider) == false }
-    private var canInstall: Bool { store.core.isLive && !cliMissing && !busy }
+    private var canInstall: Bool { store.isLive && !cliMissing && !busy }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -506,7 +516,7 @@ struct AgentRow: View {
             Button(status == "ok" ? "Reinstall Hooks" : "Install Hooks") { store.installHooks(provider) }
                 .disabled(!canInstall)
             Button("Remove Hooks") { store.uninstallHooks(provider) }
-                .disabled(!store.core.isLive || status == "missing" || busy)
+                .disabled(!store.isLive || status == "missing" || busy)
             Divider()
             Picker("Clicks Open", selection: store.optionalString("session_open_preferences.\(provider)")) {
                 ForEach(AgentsPage.openChoices, id: \.value) { choice in
@@ -559,7 +569,7 @@ struct UsagePage: View {
         SettingGroup("Claude") {
             Provided(store, "claude_plan_limits_enabled") {
                 Toggle(isOn: Binding(
-                    get: { store.document.bool("claude_plan_limits_enabled") ?? false },
+                    get: { store.values.bool("claude_plan_limits_enabled") ?? false },
                     // Consent-stamped write: the consent version lands
                     // first so a consent-aware core keeps the enable.
                     set: { on in store.setClaudePlanLimits(on) }
@@ -586,7 +596,7 @@ struct UsagePage: View {
             SettingIntPicker(store, "Keep for", path: "capacity_history_retention_days", options: [
                 (1, "1 day"), (7, "7 days"), (30, "30 days"), (90, "90 days"),
             ], default: 7)
-                .disabled(!(store.document.bool("capacity_history_enabled") ?? false))
+                .disabled(!(store.values.bool("capacity_history_enabled") ?? false))
         }
     }
 }
@@ -596,7 +606,7 @@ struct ThresholdRow: View {
     @Bindable var store: SettingsStore
 
     private var thresholds: [Double] {
-        let values = store.document.array("quota_alert_thresholds")?.compactMap(\.doubleValue) ?? []
+        let values = store.values.array("quota_alert_thresholds")?.compactMap(\.doubleValue) ?? []
         return values.count >= 2 ? Array(values.prefix(2)) : [90, 95]
     }
 
@@ -624,7 +634,7 @@ struct ThresholdRow: View {
                 }
             }
         }
-        .disabled(!(store.document.bool("quota_alerts_enabled") ?? false))
+        .disabled(!(store.values.bool("quota_alerts_enabled") ?? false))
     }
 }
 
@@ -659,7 +669,7 @@ struct DevicesPage: View {
                           path: "devices_linked", default: true)
             SettingSlider(store, "Dot brightness", subtitle: "Two nearby LEDs read much brighter than eight across a desk. The alert beacon is never dimmed.",
                           path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded()))%" }
-                .disabled(!(store.document.bool("devices_linked") ?? true))
+                .disabled(!(store.values.bool("devices_linked") ?? true))
             LinkedBrightnessToggle(store: store)
             DotRoleControls(store: store, inDeviceCard: false)
             LinkedSyncControls(store: store)
@@ -672,7 +682,7 @@ struct DevicesPage: View {
         SettingGroup(note: "The gap is the span treated as the notch, between the two risers; the wing is each stroke's reach beyond it. Automatic measures the notch and Alcove; manual values are points and always win.") {
             ScreenBarCard(store: store)
         } header: {
-            let bar = store.stateDevice("screen-bar")
+            let bar = store.deviceFacts("screen-bar")
             SettingsGroupHeader(title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
                                 tint: Color(nsColor: .systemTeal),
                                 pill: bar.map { $0.enabled == true ? "Shown" : "Hidden" },
@@ -685,7 +695,7 @@ struct DeviceCard: View {
     @Bindable var store: SettingsStore
     let device: SettingsStore.DeviceEntry
 
-    private var state: CoreDevice? { store.stateDevice(device.id) }
+    private var state: CoreDevice? { store.deviceFacts(device.id) }
     private var pinOptions: [(value: String, label: String)] {
         [("", "All agents")] + SettingsKey.providers.map { ($0, ProviderStyle.style(for: $0).name) }
     }
@@ -693,12 +703,7 @@ struct DeviceCard: View {
     var body: some View {
         SettingGroup {
             if state?.isPresent == true {
-                // The age ticks between core pushes; a coarse clock is
-                // enough for "written 40 s ago".
-                TimelineView(.periodic(from: .now, by: 5)) { context in
-                    SettingRow("Right now", subtitle: DeviceHealthLine.describe(
-                        device: state, surface: surface, now: context.date)) { EmptyView() }
-                }
+                DeviceRightNowRow(store: store, deviceID: device.id)
             }
             if linkedDot {
                 LinkedDotNote()
@@ -721,7 +726,7 @@ struct DeviceCard: View {
             .disabled(linkedDot)
             Provided(store, "\(device.prefix).signal_policy") {
                 Toggle(isOn: Binding(
-                    get: { store.document.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
+                    get: { store.values.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
                     set: { store.set("\(device.prefix).signal_policy", $0 ? .string("asks_only") : .null) }
                 )) {
                     SettingLabel(title: "Asks only", subtitle: "Mutes courtesy signals; agent status, asks and low battery still show.")
@@ -740,10 +745,7 @@ struct DeviceCard: View {
                 .pickerStyle(.menu)
             }
             .disabled(linkedDot)
-            SettingRow("Colour calibration", subtitle: calibrationSummary) {
-                Button("Calibrate…") { store.calibrating = device.id }
-                    .disabled(!store.core.isLive)
-            }
+            DeviceCalibrationRow(store: store, deviceID: device.id, prefix: device.prefix)
             LEDDirectionRow(store: store, device: device)
             DotTravelStyleRow(store: store, device: device)
             if device.kind == "dot" {
@@ -761,22 +763,18 @@ struct DeviceCard: View {
         }
     }
 
-    private var calibrationSummary: String {
-        SettingsStore.calibrationSummary(document: store.document, prefix: device.prefix)
-    }
-
     /// A Dot the monitor drives through its role (`devices_linked` on and
     /// any role but On its own): its Display, Pin to, Asks only and Blend
     /// do nothing, so they are switched off with the reason on the card.
     private var linkedDot: Bool {
         device.kind == "dot"
-            && (store.document.bool("devices_linked") ?? true)
-            && DotRole.parse(store.document.string("dot_role")) != .status
+            && (store.values.bool("devices_linked") ?? true)
+            && DotRole.parse(store.values.string("dot_role")) != .status
     }
 
     /// Matching the strip's brightness, a linked Dot ignores its own
     /// auto-brightness.
-    private var followsStripBrightness: Bool { store.document.bool("linked_follow_brightness") ?? true }
+    private var followsStripBrightness: Bool { store.values.bool("linked_follow_brightness") ?? true }
 
     private var autoBrightnessSubtitle: String {
         if linkedDot && followsStripBrightness {
@@ -785,23 +783,58 @@ struct DeviceCard: View {
         return "Follows the display's brightness: dim in a dark room, bright in daylight."
     }
 
-    /// The program this device was last sent, from the `lights` push.
-    private var surface: CoreLightSurface? {
-        guard let state else { return nil }
-        return DeviceHealthLine.surface(for: state, lights: store.core.lights, devices: store.core.devices)
-    }
-
     /// The per-device blend's note: what it does, and the case for it —
     /// on eight discrete LEDs per-agent blocks read cleanly even while
     /// the Screen Bar keeps Smooth, where they would turn to mud.
     private var blendSubtitle: String {
-        let mode = store.document.string(SettingsPath("\(device.prefix).blend_mode"))
+        let mode = store.values.string(SettingsPath("\(device.prefix).blend_mode"))
         guard let mode, let entry = LightingPage.blendModes.first(where: { $0.value == mode }) else {
-            let global = store.document.string("colors.blend_mode") ?? "color_blend"
+            let global = store.values.string("colors.blend_mode") ?? "color_blend"
             let label = LightingPage.blendModes.first { $0.value == global }?.label ?? global
             return "Follows Settings › Lighting (\(label)). A strip can take its own — Everyone reads cleanly on eight LEDs while the band stays Smooth."
         }
         return entry.detail
+    }
+}
+
+/// A device card's "Right now" line on its own 5 s clock: the age of the
+/// last write ticks between pushes, and a push that changes what the line
+/// says re-renders this row alone, not the card.
+struct DeviceRightNowRow: View {
+    let store: SettingsStore
+    let deviceID: String
+
+    var body: some View {
+        let facts = store.deviceFacts(deviceID)
+        let surface = store.deviceSurface(deviceID)
+        // A coarse clock is enough for "written 40 s ago"; the write time
+        // itself is read on the tick, unobserved.
+        TimelineView(.periodic(from: .now, by: 5)) { context in
+            SettingRow("Right now", subtitle: DeviceHealthLine.describe(
+                device: Self.written(facts, at: store.deviceLastWrite(deviceID)),
+                surface: surface, now: context.date)) { EmptyView() }
+        }
+    }
+
+    static func written(_ device: CoreDevice?, at lastWrite: Double?) -> CoreDevice? {
+        guard var device else { return nil }
+        device.lastWrite = lastWrite
+        return device
+    }
+}
+
+/// A device card's "Colour calibration" row, which reads the gains, the
+/// glow and the drive — so a brightness drag re-renders it, not the card.
+struct DeviceCalibrationRow: View {
+    @Bindable var store: SettingsStore
+    let deviceID: String
+    let prefix: String
+
+    var body: some View {
+        SettingRow("Colour calibration", subtitle: SettingsStore.calibrationSummary(prefix: prefix) { store.values.double($0) }) {
+            Button("Calibrate…") { store.calibrating = deviceID }
+                .disabled(!store.isLive)
+        }
     }
 }
 
@@ -810,11 +843,15 @@ extension SettingsStore {
     /// brightness when it is not the full drive -- the sheet edits all
     /// three, so a dimmed-by-calibration device is not "Uncalibrated".
     static func calibrationSummary(document: SettingsDocument, prefix: String) -> String {
-        let r = document.double(SettingsPath("\(prefix).red_gain")) ?? 1
-        let g = document.double(SettingsPath("\(prefix).green_gain")) ?? 1
-        let b = document.double(SettingsPath("\(prefix).blue_gain")) ?? 1
-        let glow = document.double(SettingsPath("\(prefix).resting_glow")) ?? 0
-        let brightness = document.double(SettingsPath("\(prefix).brightness")) ?? 255
+        calibrationSummary(prefix: prefix) { document.double($0) }
+    }
+
+    static func calibrationSummary(prefix: String, read: (SettingsPath) -> Double?) -> String {
+        let r = read(SettingsPath("\(prefix).red_gain")) ?? 1
+        let g = read(SettingsPath("\(prefix).green_gain")) ?? 1
+        let b = read(SettingsPath("\(prefix).blue_gain")) ?? 1
+        let glow = read(SettingsPath("\(prefix).resting_glow")) ?? 0
+        let brightness = read(SettingsPath("\(prefix).brightness")) ?? 255
         if r == 1, g == 1, b == 1, glow == 0, brightness >= 255 { return "Uncalibrated" }
         var summary = String(format: "R %.2f · G %.2f · B %.2f · glow %d%%", r, g, b, Int((glow * 100).rounded()))
         if brightness < 255 {
@@ -890,7 +927,7 @@ struct CreatorMicroCard: View {
     private var deck: DeckState? { store.deck }
     private var device: DeckDevice? { deck?.device }
     private var settings: DeckSettings { deck?.settings ?? DeckSettings() }
-    private var live: Bool { store.core.isLive && deck != nil }
+    private var live: Bool { store.isLive && deck != nil }
 
     private var statusColor: Color {
         guard let device, device.connected else { return .secondary }
@@ -899,7 +936,7 @@ struct CreatorMicroCard: View {
     }
 
     private var statusText: String {
-        guard store.core.isLive else { return "Monitor not connected" }
+        guard store.isLive else { return "Monitor not connected" }
         guard deck != nil else { return "Not in this version" }
         guard let device, device.connected else { return "Not connected" }
         var parts: [String] = []
@@ -1078,14 +1115,12 @@ struct ScreenBarCard: View {
     @AppStorage(ScreenBarController.hideOverVideoDefaultsKey) private var hideOverVideo = true
 
     var body: some View {
-        SettingRow("Right now", subtitle: rightNow) {
-            EmptyView()
-        }
+        ScreenBarRightNowRow(store: store)
         SettingToggle(store, "Show Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
         Provided(store, "screen_bar_show_in_full_screen") {
             Picker(selection: Binding(
-                get: { ScreenBarFullScreen(shows: store.document.bool("screen_bar_show_in_full_screen") ?? true,
+                get: { ScreenBarFullScreen(shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
                                            hideOverVideo: hideOverVideo) },
                 set: { mode in
                     store.set("screen_bar_show_in_full_screen", .bool(mode != .hidden))
@@ -1095,7 +1130,7 @@ struct ScreenBarCard: View {
                 ForEach(ScreenBarFullScreen.allCases, id: \.self) { Text($0.title).tag($0) }
             } label: {
                 SettingLabel(title: "In full screen", subtitle: ScreenBarFullScreen(
-                    shows: store.document.bool("screen_bar_show_in_full_screen") ?? true,
+                    shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
                     hideOverVideo: hideOverVideo).detail)
             }
             .pickerStyle(.menu)
@@ -1106,7 +1141,7 @@ struct ScreenBarCard: View {
                       path: "screen_bar_notch_profile",
                       options: NotchProfile.allCases.map { ($0.rawValue, $0.title) },
                       default: NotchProfile.auto.rawValue)
-        if NotchProfile(setting: store.document.string("screen_bar_notch_profile")) == .custom {
+        if NotchProfile(setting: store.values.string("screen_bar_notch_profile")) == .custom {
             SettingSlider(store, "Corner radius", subtitle: "The tray's bottom corners, in points. Every notched MacBook measures about 8.",
                           path: "screen_bar_notch_corner", in: 4...16, step: 0.5,
                           default: Double(NotchProfile.standardCornerRadius)) { SettingsStore.points($0) }
@@ -1121,35 +1156,13 @@ struct ScreenBarCard: View {
         DisclosureRow("Advanced", subtitle: "Phase, geometry and the band's dim floor.") {
             SettingSlider(store, "Phase nudge", subtitle: "Shift the bar against the strip if the two are visibly out of step. Positive holds the bar back.",
                           path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
-                .disabled(!(store.document.bool("link_screen_bar_to_hardware") ?? true))
+                .disabled(!(store.values.bool("link_screen_bar_to_hardware") ?? true))
             NullableSlider(store: store, title: "Gap width", path: "screen_bar_gap_width", range: 120...400, fallback: 180)
             NullableSlider(store: store, title: "Wing length", path: "screen_bar_wing_length", range: 0...80, fallback: 14)
             SettingSlider(store, "Minimum glow", subtitle: "The band's dim floor; zero is pitch black.",
                           path: "screen_bar_min_glow", in: 0...1, default: 0.25, format: SettingsStore.percent)
         }
-        SettingRow("Colour calibration", subtitle: screenBarCalibrationSummary) {
-            Button("Calibrate…") { store.calibrating = "virtual:status-bar" }
-                .disabled(!store.core.isLive)
-        }
-    }
-
-    /// The "Right now" line: which clock the band is on, whether it
-    /// turned a program away, and why it might be still.
-    private var rightNow: String {
-        let status = ScreenBarLiveStatus.shared
-        let core = store.core
-        return ScreenBarSourceLine.describe(
-            live: core.isLive,
-            mirrorSetting: store.document.bool("link_screen_bar_to_hardware") ?? true,
-            stripPresent: core.devices.contains { $0.kind == "pro" && $0.isPresent },
-            phaseOffsetMs: store.document.double("screen_bar_phase_offset_ms"),
-            why: core.lights?.screenBar?.why,
-            rejection: status.rejection,
-            motionNote: status.motionNote,
-            followingAlcove: status.followingAlcove,
-            steppedAsideForVideo: status.steppedAsideForVideo,
-            cue: core.lights?.screenBar?.cue?.name,
-            offlineFeed: status.offlineFeed)
+        ScreenBarCalibrationRow(store: store)
     }
 
     /// The picker's note: what the machine reports and what the tray's
@@ -1159,12 +1172,54 @@ struct ScreenBarCard: View {
     private var notchShapeSubtitle: String {
         "The tray's bottom corners copy this notch's radius. Detected: \(NotchProfile.machineFamily)."
     }
+}
 
-    private var screenBarCalibrationSummary: String {
-        guard let index = store.document.deviceIndex(id: "virtual:status-bar") else {
+/// The Screen Bar card's "Right now" line: which clock the band is on,
+/// whether it turned a program away, and why it might be still. Its own
+/// view, so a push that changes the line re-renders this row alone.
+struct ScreenBarRightNowRow: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingRow("Right now", subtitle: line) {
+            EmptyView()
+        }
+    }
+
+    private var line: String {
+        let status = ScreenBarLiveStatus.shared
+        let surface = store.screenBarSurface
+        return ScreenBarSourceLine.describe(
+            live: store.isLive,
+            mirrorSetting: store.values.bool("link_screen_bar_to_hardware") ?? true,
+            stripPresent: store.stripPresent,
+            phaseOffsetMs: store.values.double("screen_bar_phase_offset_ms"),
+            why: surface?.why,
+            rejection: status.rejection,
+            motionNote: status.motionNote,
+            followingAlcove: status.followingAlcove,
+            steppedAsideForVideo: status.steppedAsideForVideo,
+            cue: surface?.cue?.name,
+            offlineFeed: status.offlineFeed)
+    }
+}
+
+/// The Screen Bar's "Colour calibration" row: its device entry's gains.
+struct ScreenBarCalibrationRow: View {
+    @Bindable var store: SettingsStore
+
+    private var summary: String {
+        guard let index = store.values.deviceIndex(id: "virtual:status-bar") else {
             return "Uncalibrated"
         }
-        return SettingsStore.calibrationSummary(document: store.document, prefix: "devices.\(index)")
+        return SettingsStore.calibrationSummary(prefix: "devices.\(index)") { store.values.double($0) }
+    }
+
+    var body: some View {
+        SettingRow("Colour calibration", subtitle: summary) {
+            Button("Calibrate…") { store.calibrating = "virtual:status-bar" }
+                .disabled(!store.isLive)
+        }
     }
 }
 
@@ -1235,11 +1290,11 @@ struct NullableSlider: View {
                         set: { auto in store.set(path, auto ? .null : .number(fallback)) }
                     ))
                     .toggleStyle(.checkbox)
-                    Slider(value: Binding(get: { store.document.double(SettingsPath(path)) ?? fallback },
+                    Slider(value: Binding(get: { store.values.double(SettingsPath(path)) ?? fallback },
                                           set: { store.set(path, .number($0.rounded()), throttled: true) }), in: range)
                         .frame(width: 120)
                         .disabled(store.isNull(path))
-                    ValueText(text: store.isNull(path) ? "auto" : SettingsStore.points(store.document.double(SettingsPath(path)) ?? fallback), width: 48)
+                    ValueText(text: store.isNull(path) ? "auto" : SettingsStore.points(store.values.double(SettingsPath(path)) ?? fallback), width: 48)
                 }
             } label: {
                 SettingLabel(title: title, subtitle: subtitle)

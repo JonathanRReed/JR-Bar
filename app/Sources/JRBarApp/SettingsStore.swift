@@ -101,7 +101,13 @@ final class SettingsStore {
     var onOpenControlCenter: (@MainActor () -> Void)?
     /// Usage › Open Usage Center… — where the graphs actually live.
     var onOpenUsageCenter: (@MainActor () -> Void)?
-    var deck: DeckState? { core.deck }
+    /// `state.deck`, observed on its own: it changes when the pad does,
+    /// not on every `state` push.
+    var deck: DeckState? {
+        refreshFacts()
+        _ = deckMirror.value
+        return facts.deck
+    }
     var calibrating: String?
     var doctorReport: JSONValue?
     var doctorRunning = false
@@ -142,8 +148,70 @@ final class SettingsStore {
     @ObservationIgnored private var pending: [String: JSONValue] = [:]
     @ObservationIgnored private var throttles: [String: DispatchWorkItem] = [:]
     @ObservationIgnored private var errorClear: DispatchWorkItem?
-    /// Bumped whenever the overlay changes so observers re-read.
-    private var overlayVersion = 0
+
+    // MARK: Mirrors
+    //
+    // What a page shows of the monitor, kept so that one change re-renders
+    // only the rows that read it. The caches below are always what the
+    // core holds now; the observable mirrors trail them by at most one
+    // run-loop turn after a push, and only a mirror whose value really
+    // changed is written. Reads refresh the caches first, so a read right
+    // after a push is never stale, and then touch the mirror so the view
+    // reading it is invalidated when it moves.
+
+    /// One cell per document path a view has read.
+    @ObservationIgnored private var cells: [SettingsPath: SettingsPathCell] = [:]
+    /// The monitor's document as last read, and the same with the unsent
+    /// or unechoed edits (`pending`) laid over it.
+    @ObservationIgnored private var daemonDocument = SettingsDocument()
+    @ObservationIgnored private var overlaidDocument = SettingsDocument()
+    @ObservationIgnored private var daemonHasDocument = false
+    @ObservationIgnored private var daemonGeneration = 0
+    @ObservationIgnored private var daemonSchema: Int?
+    /// Counts changes to the monitor's own document (`settingsRevision`).
+    @ObservationIgnored private var daemonRevision = 0
+    /// The overlaid document the last `documentVersion` bump stood for.
+    @ObservationIgnored private var versionedDocument = SettingsDocument()
+    /// `core.settings` moved since the caches were read.
+    @ObservationIgnored private var documentStale = true
+    /// `core.state`, `lights` or the connection moved since `facts` was read.
+    @ObservationIgnored private var factsStale = true
+    /// The caches moved and the mirrors have not caught up yet.
+    @ObservationIgnored private var documentMirrorsStale = true
+    @ObservationIgnored private var factsMirrorsStale = true
+    @ObservationIgnored private var mirrorSyncScheduled = false
+    @ObservationIgnored private var watchingSettings = false
+    @ObservationIgnored private var watchingFacts = false
+    @ObservationIgnored private var facts = SettingsCoreFacts()
+    /// Something has read the facts since the Settings window last
+    /// closed. While nothing has, a push only marks them stale: a closed
+    /// window costs a `state` push nothing but the mark.
+    @ObservationIgnored private var factsInUse = true
+    @ObservationIgnored private var deviceListCache: [DeviceEntry] = []
+    /// The newest `last_write` per device id, read only on the device
+    /// card's own 5 s clock: every write moves it, and no mirror carries it.
+    @ObservationIgnored private var lastWrites: [String: Double] = [:]
+
+    /// Bumped whenever the overlaid document changes, for readers of the
+    /// whole `document`.
+    private var documentVersion = 0
+    @ObservationIgnored private let hasDocumentMirror = SettingsMirror(false)
+    @ObservationIgnored private let generationMirror = SettingsMirror(0)
+    @ObservationIgnored private let schemaMirror = SettingsMirror<Int?>(nil)
+    @ObservationIgnored private let revisionMirror = SettingsMirror(0)
+    @ObservationIgnored private let deviceListMirror = SettingsMirror<[DeviceEntry]>([])
+    @ObservationIgnored private let liveMirror = SettingsMirror(false)
+    @ObservationIgnored private let hookStatusMirror = SettingsMirror<[String: String]>([:])
+    @ObservationIgnored private let hookDetectedMirror = SettingsMirror<[String: Bool]>([:])
+    @ObservationIgnored private let runningMirror = SettingsMirror<Set<String>>([])
+    @ObservationIgnored private let deviceFactsMirror = SettingsMirror<[String: CoreDevice]>([:])
+    @ObservationIgnored private let deviceSurfaceMirror = SettingsMirror<[String: CoreLightSurface]>([:])
+    @ObservationIgnored private let dotLinkMirror = SettingsMirror<CoreDotLink?>(nil)
+    @ObservationIgnored private let dotSurfaceMirror = SettingsMirror<CoreLightSurface?>(nil)
+    @ObservationIgnored private let screenBarSurfaceMirror = SettingsMirror<CoreLightSurface?>(nil)
+    @ObservationIgnored private let closedLidMirror = SettingsMirror<CoreClosedLid?>(nil)
+    @ObservationIgnored private let peersMirror = SettingsMirror<[CorePeer]?>(nil)
+    @ObservationIgnored private let deckMirror = SettingsMirror<DeckState?>(nil)
 
     /// `menu_bar_icon_style`: the daemon's settings dataclass does carry
     /// this field and round-trips it in the document, but the document
@@ -319,6 +387,7 @@ final class SettingsStore {
         return entries
     }
 
+
     var searchResults: [SettingsSearchEntry] {
         SettingsSearch.search(searchQuery, in: searchEntries)
     }
@@ -360,29 +429,246 @@ final class SettingsStore {
     /// shows (`refreshLaunchAtLogin`), not here: the read is an XPC call.
     init(core: CoreModel) {
         self.core = core
+        watchSettings()
+        watchFacts()
+        syncMirrors()
     }
 
     // MARK: Document
 
-    /// The daemon's document with unsent-or-unechoed edits applied.
+    /// The daemon's document with unsent-or-unechoed edits applied. A view
+    /// that reads it re-renders on every change to any path; a row should
+    /// read its own path instead (`values`, `value(at:)`, the bindings).
     var document: SettingsDocument {
-        _ = overlayVersion
-        var document = SettingsDocument(core.settings?.document ?? .object([:]))
+        refreshDocument()
+        _ = documentVersion
+        return overlaidDocument
+    }
+
+    var hasDocument: Bool {
+        refreshDocument()
+        _ = hasDocumentMirror.value
+        return daemonHasDocument
+    }
+
+    var generation: Int {
+        refreshDocument()
+        _ = generationMirror.value
+        return daemonGeneration
+    }
+
+    /// Moves when the monitor's own document changes: not when it is sent
+    /// again unchanged, and not with a local edit still in flight. For a
+    /// view that asks the monitor to render something from the document.
+    var settingsRevision: Int {
+        refreshDocument()
+        _ = revisionMirror.value
+        return daemonRevision
+    }
+
+    /// The schema the monitor's document says it speaks.
+    var settingsSchema: Int? {
+        refreshDocument()
+        _ = schemaMirror.value
+        return daemonSchema
+    }
+
+    /// Whether the monitor's own document carries `path` (JSON null
+    /// counts); observed on that path alone.
+    func isProvided(_ path: String) -> Bool { isProvided(SettingsPath(path)) }
+
+    func isProvided(_ path: SettingsPath) -> Bool {
+        refreshDocument()
+        let mirrored = cell(path).provided
+        return documentMirrorsStale ? daemonDocument.contains(path) : mirrored
+    }
+
+    func value(_ path: String) -> JSONValue? { value(at: SettingsPath(path)) }
+
+    /// One path of the overlaid document, observed on that path alone.
+    func value(at path: SettingsPath) -> JSONValue? {
+        refreshDocument()
+        let mirrored = cell(path).value
+        return documentMirrorsStale ? overlaidDocument.value(at: path) : mirrored
+    }
+
+    /// A provider's style with its configured colour, observed on that
+    /// colour's path alone.
+    func providerStyle(_ provider: String) -> ProviderStyle {
+        ProviderStyle.style(for: provider, document: values.document([SettingsPath("colors.agent_colors.\(provider)")]))
+    }
+
+    /// Path-by-path reads with `SettingsDocument`'s own vocabulary:
+    /// `store.values.bool("idle_dim_enabled")`.
+    var values: SettingsValues { SettingsValues(store: self) }
+
+    private func cell(_ path: SettingsPath) -> SettingsPathCell {
+        if let cell = cells[path] { return cell }
+        let cell = SettingsPathCell(value: overlaidDocument.value(at: path), provided: daemonDocument.contains(path))
+        cells[path] = cell
+        return cell
+    }
+
+    /// The monitor's document with `pending` laid over it.
+    private func overlay(_ document: SettingsDocument) -> SettingsDocument {
+        var document = document
         for (path, value) in pending {
             document = document.replacing(SettingsPath(path), with: value)
         }
         return document
     }
 
-    var hasDocument: Bool { core.settings != nil }
-    var generation: Int { core.settings?.generation ?? 0 }
-
-    func isProvided(_ path: String) -> Bool {
-        _ = overlayVersion
-        return SettingsDocument(core.settings?.document ?? .object([:])).contains(SettingsPath(path))
+    /// Re-reads `core.settings` when it moved. The read is not observed
+    /// (`CoreReading`): a row that asks for one path in the moment between
+    /// a push and the sync after it must not end up observing the whole
+    /// document through the store.
+    private func refreshDocument() {
+        guard documentStale else { return }
+        documentStale = false
+        let settings = CoreReading.now(core).settings
+        let previous = daemonDocument
+        daemonDocument = SettingsDocument(settings?.document ?? .object([:]))
+        if daemonDocument != previous { daemonRevision += 1 }
+        daemonHasDocument = settings != nil
+        daemonGeneration = settings?.generation ?? 0
+        daemonSchema = settings?.schema
+        overlaidDocument = overlay(daemonDocument)
+        deviceListCache = computeDeviceEntries()
+        documentMirrorsStale = true
     }
 
-    func value(_ path: String) -> JSONValue? { document.value(at: SettingsPath(path)) }
+    /// Re-reads what the pages show of `state` and `lights` when they
+    /// moved, unobserved for the same reason. A read marks the facts in
+    /// use, so the pushes after it keep their mirrors current.
+    private func refreshFacts() {
+        factsInUse = true
+        refreshFactsCache()
+    }
+
+    private func refreshFactsCache() {
+        guard factsStale else { return }
+        factsStale = false
+        let now = CoreReading.now(core)
+        facts = SettingsCoreFacts(state: now.state, lights: now.lights, connected: now.connected)
+        lastWrites = Dictionary((now.state?.devices ?? []).compactMap { device in device.lastWrite.map { (device.id, $0) } },
+                                uniquingKeysWith: { first, _ in first })
+        deviceListCache = computeDeviceEntries()
+        factsMirrorsStale = true
+    }
+
+    /// `core.settings` is watched for the moment it changes (Observation's
+    /// will-set), which marks the caches stale and books a mirror sync.
+    private func watchSettings() {
+        watchingSettings = true
+        withObservationTracking {
+            _ = core.settings
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.watchingSettings = false
+                self.documentStale = true
+                self.scheduleMirrorSync()
+            }
+        }
+    }
+
+    private func watchFacts() {
+        watchingFacts = true
+        withObservationTracking {
+            _ = core.state
+            _ = core.lights
+            _ = core.connection
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.watchingFacts = false
+                self.factsStale = true
+                self.scheduleMirrorSync()
+            }
+        }
+    }
+
+    /// The sync runs as a run-loop block, which the loop services before
+    /// it next draws, so a push reaches the rows in the same frame.
+    private func scheduleMirrorSync() {
+        guard !mirrorSyncScheduled else { return }
+        mirrorSyncScheduled = true
+        let loop = CFRunLoopGetMain()
+        CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.mirrorSyncScheduled = false
+                self.syncMirrors()
+            }
+        }
+        CFRunLoopWakeUp(loop)
+    }
+
+    /// Brings every mirror up to the caches, writing only the ones whose
+    /// value moved. The run loop calls it after a push; a test calls it to
+    /// stand in for that turn.
+    func syncMirrors() {
+        if !watchingSettings { watchSettings() }
+        if !watchingFacts { watchFacts() }
+        refreshDocument()
+        if factsInUse { refreshFactsCache() }
+        if documentMirrorsStale {
+            documentMirrorsStale = false
+            for (path, cell) in cells {
+                cell.update(value: overlaidDocument.value(at: path), provided: daemonDocument.contains(path))
+            }
+            bumpDocumentVersionIfChanged()
+            hasDocumentMirror.update(daemonHasDocument)
+            generationMirror.update(daemonGeneration)
+            schemaMirror.update(daemonSchema)
+            revisionMirror.update(daemonRevision)
+        }
+        if factsMirrorsStale {
+            factsMirrorsStale = false
+            liveMirror.update(facts.live)
+            hookStatusMirror.update(facts.hookStatuses)
+            hookDetectedMirror.update(facts.hookDetections)
+            runningMirror.update(facts.runningProviders)
+            deviceFactsMirror.update(facts.devices)
+            deviceSurfaceMirror.update(facts.deviceSurfaces)
+            dotLinkMirror.update(facts.dotLink)
+            dotSurfaceMirror.update(facts.dotSurface)
+            screenBarSurfaceMirror.update(facts.screenBarSurface)
+            closedLidMirror.update(facts.closedLid)
+            peersMirror.update(facts.peers)
+            deckMirror.update(facts.deck)
+        }
+        deviceListMirror.update(deviceListCache)
+    }
+
+    /// The Settings window closed: its rows are gone, so pushes stop
+    /// refreshing the facts until something reads them again.
+    func settingsWindowDidClose() {
+        factsInUse = false
+    }
+
+    private func bumpDocumentVersionIfChanged() {
+        guard versionedDocument != overlaidDocument else { return }
+        versionedDocument = overlaidDocument
+        documentVersion += 1
+    }
+
+    /// A local edit or a dropped one: the overlay moved at `path`, so only
+    /// the cells on that path (above or below it) can have changed.
+    private func overlayChanged(at path: SettingsPath) {
+        refreshDocument()
+        overlaidDocument = overlay(daemonDocument)
+        deviceListCache = computeDeviceEntries()
+        if documentMirrorsStale {
+            syncMirrors()
+            return
+        }
+        for (cellPath, cell) in cells where cellPath.overlaps(path) {
+            cell.update(value: overlaidDocument.value(at: cellPath), provided: cell.provided)
+        }
+        deviceListMirror.update(deviceListCache)
+        bumpDocumentVersionIfChanged()
+    }
 
     // MARK: Writes
 
@@ -390,7 +676,7 @@ final class SettingsStore {
     /// write every 120 ms, the last value always winning.
     func set(_ path: String, _ value: JSONValue, throttled: Bool = false) {
         pending[path] = value
-        overlayVersion += 1
+        overlayChanged(at: SettingsPath(path))
         throttles[path]?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.flush(path) }
@@ -427,13 +713,15 @@ final class SettingsStore {
     /// something else (a clamped number, a refused flag) the overlay must
     /// drop at once and say so, not paint the asked-for value until the
     /// document push lands.
-    private func settlePending(_ path: String, value: JSONValue, echoed: JSONValue? = nil) {
+    /// Internal for the overlay-rule tests.
+    func settlePending(_ path: String, value: JSONValue, echoed: JSONValue? = nil) {
         if let echoed, !echoed.isNull, !Self.sameValue(echoed, value) {
             dropPending(path, ifStill: value)
             report(error: "\(path): the monitor kept \(Self.describeValue(echoed)) instead")
             return
         }
-        let inDocument = SettingsDocument(core.settings?.document ?? .object([:])).value(at: SettingsPath(path)) == value
+        refreshDocument()
+        let inDocument = daemonDocument.value(at: SettingsPath(path)) == value
         if inDocument || throttles[path] != nil {
             if inDocument { dropPending(path, ifStill: value) }
             return
@@ -471,8 +759,8 @@ final class SettingsStore {
 
     private func dropPending(_ path: String, ifStill value: JSONValue? = nil) {
         if let value, pending[path] != value { return }
-        pending[path] = nil
-        overlayVersion += 1
+        guard pending.removeValue(forKey: path) != nil else { return }
+        overlayChanged(at: SettingsPath(path))
     }
 
     func report(error: String) {
@@ -497,28 +785,28 @@ final class SettingsStore {
 
     func bool(_ path: String, default fallback: Bool = false) -> Binding<Bool> {
         Binding(
-            get: { self.document.bool(SettingsPath(path)) ?? fallback },
+            get: { self.values.bool(SettingsPath(path)) ?? fallback },
             set: { self.set(path, .bool($0)) }
         )
     }
 
     func double(_ path: String, default fallback: Double = 0, throttled: Bool = true) -> Binding<Double> {
         Binding(
-            get: { self.document.double(SettingsPath(path)) ?? fallback },
+            get: { self.values.double(SettingsPath(path)) ?? fallback },
             set: { self.set(path, .number($0), throttled: throttled) }
         )
     }
 
     func int(_ path: String, default fallback: Int = 0) -> Binding<Int> {
         Binding(
-            get: { self.document.int(SettingsPath(path)) ?? fallback },
+            get: { self.values.int(SettingsPath(path)) ?? fallback },
             set: { self.set(path, .number(Double($0))) }
         )
     }
 
     func string(_ path: String, default fallback: String = "") -> Binding<String> {
         Binding(
-            get: { self.document.string(SettingsPath(path)) ?? fallback },
+            get: { self.values.string(SettingsPath(path)) ?? fallback },
             set: { self.set(path, .string($0)) }
         )
     }
@@ -527,14 +815,14 @@ final class SettingsStore {
     /// `nilToken` stands for null in a picker.
     func optionalString(_ path: String, nilToken: String = "") -> Binding<String> {
         Binding(
-            get: { self.document.string(SettingsPath(path)) ?? nilToken },
+            get: { self.values.string(SettingsPath(path)) ?? nilToken },
             set: { self.set(path, $0 == nilToken ? .null : .string($0)) }
         )
     }
 
     func stringList(_ path: String) -> Binding<[String]> {
         Binding(
-            get: { self.document.strings(SettingsPath(path)) ?? [] },
+            get: { self.values.strings(SettingsPath(path)) ?? [] },
             set: { self.set(path, .array($0.map(JSONValue.string))) }
         )
     }
@@ -542,9 +830,9 @@ final class SettingsStore {
     /// Membership of `item` in a string list as a toggle.
     func listMember(_ path: String, _ item: String) -> Binding<Bool> {
         Binding(
-            get: { (self.document.strings(SettingsPath(path)) ?? []).contains(item) },
+            get: { (self.values.strings(SettingsPath(path)) ?? []).contains(item) },
             set: { on in
-                var items = self.document.strings(SettingsPath(path)) ?? []
+                var items = self.values.strings(SettingsPath(path)) ?? []
                 if on, !items.contains(item) { items.append(item) }
                 if !on { items.removeAll { $0 == item } }
                 self.set(path, .array(items.map(JSONValue.string)))
@@ -554,7 +842,7 @@ final class SettingsStore {
 
     /// A nullable number as (automatic, value) for the geometry rows.
     func isNull(_ path: String) -> Bool {
-        guard let value = document.value(at: SettingsPath(path)) else { return true }
+        guard let value = value(at: SettingsPath(path)) else { return true }
         return value.isNull
     }
 
@@ -562,7 +850,7 @@ final class SettingsStore {
     func color(_ path: String, default fallback: String) -> Binding<Color> {
         Binding(
             get: {
-                let hex = self.document.string(SettingsPath(path)) ?? fallback
+                let hex = self.values.string(SettingsPath(path)) ?? fallback
                 return Color(nsColor: NSColor(hex: hex) ?? .gray)
             },
             set: { color in
@@ -576,7 +864,7 @@ final class SettingsStore {
     func minutesOfDay(_ path: String, default fallback: Int) -> Binding<Date> {
         Binding(
             get: {
-                let minutes = self.document.int(SettingsPath(path)) ?? fallback
+                let minutes = self.values.int(SettingsPath(path)) ?? fallback
                 return Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
             },
             set: { date in
@@ -588,7 +876,7 @@ final class SettingsStore {
 
     // MARK: Devices
 
-    struct DeviceEntry: Identifiable {
+    struct DeviceEntry: Identifiable, Equatable {
         let index: Int
         let id: String
         let name: String
@@ -597,10 +885,19 @@ final class SettingsStore {
     }
 
     /// Devices from the settings document, kind resolved through the
-    /// state's device list when the document does not say.
+    /// state's device list when the document does not say. Observed as
+    /// one list that changes only when a device comes, goes or is
+    /// renamed, not on every edit to a device's settings.
     var deviceEntries: [DeviceEntry] {
-        let known = Dictionary(core.devices.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return document.deviceEntries.map { index, id, entry in
+        refreshDocument()
+        refreshFacts()
+        _ = deviceListMirror.value
+        return deviceListCache
+    }
+
+    private func computeDeviceEntries() -> [DeviceEntry] {
+        let known = Dictionary(facts.devices.map { ($0.key, $0.value) }, uniquingKeysWith: { first, _ in first })
+        return overlaidDocument.deviceEntries.map { index, id, entry in
             let state = known[id]
             let name = entry["name"]?.stringValue ?? state?.name ?? id
             let kind = state?.kind ?? Self.guessKind(id: id, name: name)
@@ -616,7 +913,88 @@ final class SettingsStore {
         return "unknown"
     }
 
+    /// The device as the last `state` has it, `last_write` and all: every
+    /// state push moves it. A page row reads `deviceFacts` instead.
     func stateDevice(_ id: String) -> CoreDevice? { core.devices.first { $0.id == id } }
+
+    /// The device as the last `state` has it, without `last_write` and
+    /// `write_health`, which move with every write; observed as a whole
+    /// that changes only when something a card shows does.
+    func deviceFacts(_ id: String) -> CoreDevice? {
+        refreshFacts()
+        _ = deviceFactsMirror.value
+        return facts.devices[id]
+    }
+
+    /// When the monitor last wrote the device (epoch seconds). Not
+    /// observed: the card's "written N s ago" line reads it on its own
+    /// 5 s clock.
+    func deviceLastWrite(_ id: String) -> Double? {
+        refreshFacts()
+        return lastWrites[id]
+    }
+
+    /// The `lights` surface the device plays (`DeviceHealthLine.surface`).
+    func deviceSurface(_ id: String) -> CoreLightSurface? {
+        refreshFacts()
+        _ = deviceSurfaceMirror.value
+        return facts.deviceSurfaces[id]
+    }
+
+    /// The Dot's `dot_link` word and its own surface, from `lights`.
+    var dotLink: CoreDotLink? {
+        refreshFacts()
+        _ = dotLinkMirror.value
+        return facts.dotLink
+    }
+
+    var dotSurface: CoreLightSurface? {
+        refreshFacts()
+        _ = dotSurfaceMirror.value
+        return facts.dotSurface
+    }
+
+    var screenBarSurface: CoreLightSurface? {
+        refreshFacts()
+        _ = screenBarSurfaceMirror.value
+        return facts.screenBarSurface
+    }
+
+    /// `state.power.closed_lid`.
+    var closedLid: CoreClosedLid? {
+        refreshFacts()
+        _ = closedLidMirror.value
+        return facts.closedLid
+    }
+
+    /// `state.peers`.
+    var peers: [CorePeer]? {
+        refreshFacts()
+        _ = peersMirror.value
+        return facts.peers
+    }
+
+    /// A Pro strip is connected now.
+    var stripPresent: Bool {
+        refreshFacts()
+        _ = deviceFactsMirror.value
+        return facts.devices.values.contains { $0.kind == "pro" && $0.isPresent }
+    }
+
+    /// `CoreModel.isLive`, observed on its own: it moves when the monitor
+    /// connects or goes, not on every `state` push.
+    var isLive: Bool {
+        refreshFacts()
+        _ = liveMirror.value
+        return facts.live
+    }
+
+    /// Providers with a main session running now.
+    var runningProviders: Set<String> {
+        refreshFacts()
+        _ = runningMirror.value
+        return facts.runningProviders
+    }
 
     // MARK: Hooks
 
@@ -625,13 +1003,17 @@ final class SettingsStore {
     private(set) var hookBusy: Set<String> = []
 
     func hookStatus(_ provider: String) -> String? {
-        core.state?.health?["hooks"]?[provider]?.stringValue
+        refreshFacts()
+        _ = hookStatusMirror.value
+        return facts.hookStatuses[provider]
     }
 
     /// `health.detected[provider]`: whether the agent's CLI was found on
     /// this Mac — nil means the daemon does not say.
     func hookDetected(_ provider: String) -> Bool? {
-        core.state?.health?["detected"]?[provider]?.boolValue
+        refreshFacts()
+        _ = hookDetectedMirror.value
+        return facts.hookDetections[provider]
     }
 
     /// `health.sources[provider]`: whether the provider's hook feed is
@@ -743,7 +1125,7 @@ final class SettingsStore {
     /// toggle flipping and quietly reverting.
     func setClaudePlanLimits(_ on: Bool) {
         pending["claude_plan_limits_enabled"] = .bool(on)
-        overlayVersion += 1
+        overlayChanged(at: "claude_plan_limits_enabled")
         pendingWrites += 1
         Task { [weak self] in
             guard let self else { return }
@@ -1134,5 +1516,173 @@ extension NSColor {
         guard let srgb = usingColorSpace(.sRGB) else { return nil }
         let r = Int((srgb.redComponent * 255).rounded()), g = Int((srgb.greenComponent * 255).rounded()), b = Int((srgb.blueComponent * 255).rounded())
         return String(format: "#%02X%02X%02X", max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+    }
+}
+
+// MARK: - Path-by-path observation
+
+/// One path of the settings document, observed on its own: its value with
+/// the unsent edits laid over it, and whether the monitor's own document
+/// carries it. `SettingsStore` writes a cell only when its value moved,
+/// so an edit or a `settings` push re-renders the rows that read that
+/// path and no others.
+@MainActor
+@Observable
+final class SettingsPathCell {
+    private(set) var value: JSONValue?
+    private(set) var provided: Bool
+
+    init(value: JSONValue?, provided: Bool) {
+        self.value = value
+        self.provided = provided
+    }
+
+    func update(value: JSONValue?, provided: Bool) {
+        if self.value != value { self.value = value }
+        if self.provided != provided { self.provided = provided }
+    }
+}
+
+/// One observable value that is written only when it changes.
+@MainActor
+@Observable
+final class SettingsMirror<Value: Equatable> {
+    private(set) var value: Value
+
+    init(_ value: Value) { self.value = value }
+
+    func update(_ value: Value) {
+        if self.value != value { self.value = value }
+    }
+}
+
+/// `SettingsDocument`'s reads, each observed on its own path — what a
+/// page body asks instead of `store.document`, so it re-renders when the
+/// paths it read change and not on every edit elsewhere.
+@MainActor
+struct SettingsValues {
+    let store: SettingsStore
+
+    func value(at path: SettingsPath) -> JSONValue? { store.value(at: path) }
+    func contains(_ path: SettingsPath) -> Bool { value(at: path) != nil }
+    func bool(_ path: SettingsPath) -> Bool? { value(at: path)?.boolValue }
+    func double(_ path: SettingsPath) -> Double? { value(at: path)?.doubleValue }
+    func int(_ path: SettingsPath) -> Int? { value(at: path)?.intValue }
+    func string(_ path: SettingsPath) -> String? { value(at: path)?.stringValue }
+    func strings(_ path: SettingsPath) -> [String]? { value(at: path)?.arrayValue?.compactMap(\.stringValue) }
+    func object(_ path: SettingsPath) -> [String: JSONValue]? { value(at: path)?.objectValue }
+    func array(_ path: SettingsPath) -> [JSONValue]? { value(at: path)?.arrayValue }
+
+    /// `colors.agent_colors.<provider>` as a canonical `#RRGGBB`.
+    func agentColorHex(_ provider: String) -> String? {
+        string(SettingsPath("colors.agent_colors.\(provider)")).flatMap(normalizedColorHex)
+    }
+
+    /// `devices[]`'s index for a device id, from the store's device list.
+    func deviceIndex(id: String) -> Int? {
+        store.deviceEntries.first { $0.id == id }?.index
+    }
+
+    /// A document holding only `paths`, read path by path — for the
+    /// helpers that take a whole `SettingsDocument` but look at a few keys.
+    func document(_ paths: [SettingsPath]) -> SettingsDocument {
+        paths.reduce(SettingsDocument()) { document, path in
+            guard let value = value(at: path) else { return document }
+            return document.replacing(path, with: value)
+        }
+    }
+}
+
+/// What the Settings pages show of `state` and `lights`, read in one
+/// pass. Each field has its own mirror on the store.
+struct SettingsCoreFacts: Equatable {
+    var live = false
+    var hookStatuses: [String: String] = [:]
+    var hookDetections: [String: Bool] = [:]
+    var runningProviders: Set<String> = []
+    /// Devices by id with `last_write` and `write_health` taken out.
+    var devices: [String: CoreDevice] = [:]
+    var deviceSurfaces: [String: CoreLightSurface] = [:]
+    var dotLink: CoreDotLink?
+    var dotSurface: CoreLightSurface?
+    var screenBarSurface: CoreLightSurface?
+    var closedLid: CoreClosedLid?
+    var peers: [CorePeer]?
+    var deck: DeckState?
+
+    init() {}
+
+    init(state: CoreState?, lights: CoreLights?, connected: Bool) {
+        live = connected && state != nil
+        let health = state?.health
+        for provider in SettingsKey.providers {
+            if let status = health?["hooks"]?[provider]?.stringValue { hookStatuses[provider] = status }
+            if let found = health?["detected"]?[provider]?.boolValue { hookDetections[provider] = found }
+        }
+        runningProviders = Set((state?.mainSessions ?? []).map(\.provider))
+        let all = state?.devices ?? []
+        for device in all where devices[device.id] == nil {
+            var still = device
+            still.lastWrite = nil
+            still.writeHealth = nil
+            devices[device.id] = still
+        }
+        for device in all where deviceSurfaces[device.id] == nil {
+            if let surface = DeviceHealthLine.surface(for: device, lights: lights, devices: all) {
+                deviceSurfaces[device.id] = surface
+            }
+        }
+        dotLink = lights?.dotLink
+        dotSurface = lights?.dot
+        screenBarSurface = lights?.screenBar
+        closedLid = state?.power?.closedLid
+        peers = state?.peers
+        deck = state?.deck
+    }
+}
+
+/// What the core holds now, read from its stored properties without
+/// registering an Observation access. The store watches these itself
+/// and syncs its mirrors from them; a view reading a mirror in the
+/// moment before that sync would otherwise start observing the whole
+/// `state`, `lights` or `settings` through the store. Should the model's
+/// storage ever read differently, the plain (observed) reads stand in.
+@MainActor
+enum CoreReading {
+    struct Now {
+        var settings: CoreSettings?
+        var state: CoreState?
+        var lights: CoreLights?
+        var connected: Bool
+    }
+
+    static func now(_ core: CoreModel) -> Now {
+        var settings: CoreSettings?, state: CoreState?, lights: CoreLights?
+        var connection: CoreModel.Connection?
+        var found = 0
+        for child in Mirror(reflecting: core).children {
+            switch child.label {
+            case "_settings": settings = child.value as? CoreSettings; found += 1
+            case "_state": state = child.value as? CoreState; found += 1
+            case "_lights": lights = child.value as? CoreLights; found += 1
+            case "_connection": connection = child.value as? CoreModel.Connection; found += 1
+            default: continue
+            }
+            if found == 4 { break }
+        }
+        guard found == 4, let connection else {
+            return Now(settings: core.settings, state: core.state, lights: core.lights,
+                       connected: core.connection.isConnected)
+        }
+        return Now(settings: settings, state: state, lights: lights, connected: connection.isConnected)
+    }
+}
+
+private extension SettingsPath {
+    /// One path lies along the other (or they are the same path): a write
+    /// to either can change what a read of the other returns.
+    func overlaps(_ other: SettingsPath) -> Bool {
+        let shared = min(segments.count, other.segments.count)
+        return segments.prefix(shared) == other.segments.prefix(shared)
     }
 }

@@ -198,7 +198,7 @@ struct SettingsPageContainer: View {
                                    detail: "Settings are shown with defaults and cannot be changed until the monitor connects.")
                 }
             }
-            if let schema = store.core.settings?.schema, schema > CoreProtocol.knownSettingsSchema {
+            if let schema = store.settingsSchema, schema > CoreProtocol.knownSettingsSchema {
                 Section {
                     SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .orange,
                                    title: "Newer settings schema",
@@ -383,9 +383,9 @@ struct SettingSlider: View {
                         .labelsHidden()
                         .frame(width: 180)
                         .accessibilityLabel(title)
-                        .accessibilityValue(format(store.document.double(SettingsPath(path)) ?? fallback))
+                        .accessibilityValue(format(store.values.double(SettingsPath(path)) ?? fallback))
                         .accessibilityIdentifier(path)
-                    ValueText(text: format(store.document.double(SettingsPath(path)) ?? fallback))
+                    ValueText(text: format(store.values.double(SettingsPath(path)) ?? fallback))
                         .accessibilityHidden(true)
                 }
             }
@@ -489,7 +489,7 @@ struct SettingStepper: View {
         Provided(store, path) {
             LabeledContent {
                 HStack(spacing: 6) {
-                    ValueText(text: "\(store.document.int(SettingsPath(path)) ?? fallback) \(unit)", width: 44)
+                    ValueText(text: "\(store.values.int(SettingsPath(path)) ?? fallback) \(unit)", width: 44)
                     Stepper("", value: store.int(path, default: fallback), in: range, step: step)
                         .labelsHidden()
                 }
@@ -520,7 +520,7 @@ struct SettingTextField: View {
         self.monospaced = monospaced
     }
 
-    private var current: String { store.document.string(SettingsPath(path)) ?? "" }
+    private var current: String { store.values.string(SettingsPath(path)) ?? "" }
 
     var body: some View {
         Provided(store, path) {
@@ -569,7 +569,7 @@ struct SettingNumberField: View {
         self.unit = unit
     }
 
-    private var current: Double { store.document.double(SettingsPath(path)) ?? fallback }
+    private var current: Double { store.values.double(SettingsPath(path)) ?? fallback }
     private var currentText: String { current == current.rounded() ? String(Int(current)) : String(format: "%.1f", current) }
 
     var body: some View {

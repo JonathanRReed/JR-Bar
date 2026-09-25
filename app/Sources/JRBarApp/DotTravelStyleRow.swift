@@ -18,7 +18,7 @@ struct DotTravelStyleRow: View {
     ]
 
     private var path: String { "\(device.prefix).dot_travel_style" }
-    private var style: String { store.document.string(SettingsPath(path)) ?? "wipe" }
+    private var style: String { store.values.string(SettingsPath(path)) ?? "wipe" }
     private var followsPro: Bool { DotLinkReading.followsPro(store) }
 
     var body: some View {
@@ -84,14 +84,14 @@ enum DotLinkReading {
 
     @MainActor
     static func note(_ store: SettingsStore) -> String {
-        note(for: DotRole.parse(store.document.string("dot_role")))
+        note(for: DotRole.parse(store.values.string("dot_role")))
     }
 
     @MainActor
     static func followsPro(_ store: SettingsStore) -> Bool {
-        let linked = store.document.bool("devices_linked") ?? true
-        let off = store.core.lights?.dotLink.map { $0.state == "off" } ?? !linked
-        return !off && DotRole.parse(store.document.string("dot_role")) != .status
+        let linked = store.values.bool("devices_linked") ?? true
+        let off = store.dotLink.map { $0.state == "off" } ?? !linked
+        return !off && DotRole.parse(store.values.string("dot_role")) != .status
     }
 
     /// Whether the Dot's own Strip direction still acts while it follows
@@ -101,8 +101,8 @@ enum DotLinkReading {
     /// Mirror, Asks and Call never read it.
     @MainActor
     static func directionActs(_ store: SettingsStore) -> Bool {
-        DotRole.parse(store.document.string("dot_role")) == .extend
-            && (store.document.string("dot_extend_style") ?? "continue") == "continue"
+        DotRole.parse(store.values.string("dot_role")) == .extend
+            && (store.values.string("dot_extend_style") ?? "continue") == "continue"
     }
 
     /// The Strip direction row's note while Continue reads it.

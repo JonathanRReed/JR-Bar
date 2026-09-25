@@ -128,7 +128,7 @@ struct SettingsTransferGroup: View {
         .sheet(isPresented: Binding(get: { store.pendingImport != nil },
                                     set: { if !$0 { store.pendingImport = nil } })) {
             if let bundle = store.pendingImport {
-                SettingsImportSheet(bundle: bundle, monitorLive: store.core.isLive,
+                SettingsImportSheet(bundle: bundle, monitorLive: store.isLive,
                                     knownSchema: CoreProtocol.knownSettingsSchema,
                                     apply: { store.applyImport(bundle, categories: $0) },
                                     cancel: { store.pendingImport = nil })
