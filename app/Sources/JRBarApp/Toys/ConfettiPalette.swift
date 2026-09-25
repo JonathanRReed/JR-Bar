@@ -38,10 +38,12 @@ struct ConfettiLook {
         }
     }
 
-    /// A mark a glyph fleck draws: an SF Symbol or one or two letters.
+    /// A mark a glyph fleck draws: a provider's real mark (a
+    /// `ProviderLogo` id), an SF Symbol or one or two letters.
     enum Glyph: Equatable {
         case symbol(String)
         case text(String)
+        case logo(String)
     }
 
     /// The palette's colours and how often each is dealt.
