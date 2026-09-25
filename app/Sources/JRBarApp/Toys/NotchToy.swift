@@ -346,8 +346,7 @@ final class NotchToy: Toy {
     // MARK: External providers
 
     var isAlcoveRunning: Bool {
-        _ = workspaceVersion
-        return NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == AlcoveGeometry.bundleIdentifier }
+        RunningApps.shared.isRunning(bundleID: AlcoveGeometry.bundleIdentifier)
     }
 
     var alcoveURL: URL? {
@@ -356,9 +355,8 @@ final class NotchToy: Toy {
     }
 
     var isBoringNotchRunning: Bool {
-        _ = workspaceVersion
         guard let id = boringNotchBundleID else { return false }
-        return NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == id }
+        return RunningApps.shared.isRunning(bundleID: id)
     }
 
     /// boring.notch ships no bundle id we can pin, so it is read off the
@@ -700,22 +698,31 @@ final class NotchToy: Toy {
         collapseWork = nil
         guard activeCapsule == nil, activeOverlay == nil else { return }
         if hovering {
-            if !islandExpanded, s.expandOnHover {
-                // The wink lands now; the card only after the pause.
-                reframeCurrent(
-                    animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-                // One arm per hover: a re-entrant true — the pointer
-                // crossing from an ear onto the island — keeps the
-                // deadline the arrival already set.
-                if expandWork == nil {
-                    let delay = hoverDelays.expand
-                    let work = DispatchWorkItem { [weak self] in
-                        MainActor.assumeIsolated { self?.hoverExpandFired() }
+            if !islandExpanded {
+                // A resting pointer is idle time whether or not the
+                // hover grows the card — a click's card still opens
+                // faster if it was got ready. One arm per hover, like
+                // the grow's own: a re-entrant true keeps the deadline
+                // the arrival set.
+                if prewarmWork == nil {
+                    armPrewarm(before: hoverDelays.expand)
+                }
+                if s.expandOnHover {
+                    // The wink lands now; the card only after the pause.
+                    reframeCurrent(
+                        animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+                    // One arm per hover: a re-entrant true — the pointer
+                    // crossing from an ear onto the island — keeps the
+                    // deadline the arrival already set.
+                    if expandWork == nil {
+                        let delay = hoverDelays.expand
+                        let work = DispatchWorkItem { [weak self] in
+                            MainActor.assumeIsolated { self?.hoverExpandFired() }
+                        }
+                        expandWork = work
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay,
+                                                     execute: work)
                     }
-                    expandWork = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + delay,
-                                                 execute: work)
-                    armPrewarm(before: delay)
                 }
             }
         } else {
@@ -1914,19 +1921,20 @@ final class NotchToy: Toy {
     /// The idle strip's cover, decoded once off the main thread
     /// (`NotchArtworkStore`) — the strip draws it on every breath tick.
     private(set) var islandArtwork: NSImage?
-    /// The cover `islandArtwork` was made from.
-    @ObservationIgnored private var islandArtworkSource: Data?
+    /// The print of the cover `islandArtwork` was made from.
+    @ObservationIgnored private var islandArtworkSource: ArtworkPrint?
 
     private func noteIslandArtwork(_ data: Data?) {
-        guard data != islandArtworkSource else { return }
-        islandArtworkSource = data
+        let print = ArtworkPrint(data)
+        guard print != islandArtworkSource else { return }
+        islandArtworkSource = print
         guard let data else {
             islandArtwork = nil
             return
         }
         // A headless toy (tests, render proofs) draws in the same turn.
         NotchArtworkStore.shared.art(for: data, inline: !runtimeEnabled) { [weak self] art in
-            guard let self, self.islandArtworkSource == data else { return }
+            guard let self, self.islandArtworkSource == print else { return }
             self.islandArtwork = art?.image
         }
     }
@@ -2100,9 +2108,9 @@ final class NotchToy: Toy {
         withObservationTracking {
             _ = store?.state.notch
             _ = core.sessions
-            _ = core.state?.asks          // a pinned ask answered elsewhere steps its capsule down
-            _ = core.state?.usage
-            _ = core.state?.focus         // a quiet stretch ending replays what it held
+            _ = core.asks                 // a pinned ask answered elsewhere steps its capsule down
+            _ = core.usage
+            _ = core.focus                // a quiet stretch ending replays what it held
             _ = core.settings?.document   // screen_bar_notch_wings → earsDrawn
             _ = screenBarShown()          // PanelStore.screenBarShown → earsDrawn, the notice's housing climb
             _ = displayVersion
@@ -2134,8 +2142,8 @@ final class NotchToy: Toy {
             summary: summary,
             asks: core.asks,
             meters: settings.showUsage ? NotchIsland.meters(core.state?.usage) : [],
-            focus: core.state?.focus,
-            settingsDocument: core.settings?.document,
+            focus: core.focus,
+            settingsGeneration: core.settings?.generation,
             screenBarShown: screenBarShown(),
             displayVersion: displayVersion,
             mirror: cardModel.mirror.state,

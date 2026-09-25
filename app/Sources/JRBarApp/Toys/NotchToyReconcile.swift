@@ -19,7 +19,10 @@ struct NotchReconcileInputs: Equatable {
     var asks: [CoreAsk]
     var meters: [NotchIslandMeter]
     var focus: CoreFocus?
-    var settingsDocument: JSONValue?
+    /// `core.settings?.generation` — the int, not the document, so the
+    /// gate's compare stays O(1). A republished identical doc reconciles
+    /// once extra; the daemon rarely does that.
+    var settingsGeneration: Int?
     var screenBarShown: Bool
     var displayVersion: Int
     var mirror: ShelfMirrorModel.State
