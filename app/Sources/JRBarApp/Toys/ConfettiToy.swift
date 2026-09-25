@@ -572,10 +572,4 @@ extension ConfettiView {
     static func density(settings: ConfettiSettings, densityScale: Double) -> Double {
         max(0.25, min(2.0, max(0.5, settings.density)) * densityScale)
     }
-
-    /// How many pieces a laptop screen's burst throws with these settings.
-    static func pieceCount(settings: ConfettiSettings, densityScale: Double = 1) -> Int {
-        ConfettiBurst.count(settings.intensity, density: density(settings: settings, densityScale: densityScale),
-                            stage: .reference)
-    }
 }

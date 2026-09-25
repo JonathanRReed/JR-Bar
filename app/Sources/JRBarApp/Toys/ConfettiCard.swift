@@ -310,7 +310,8 @@ private struct ConfettiMannersSection: View {
             Text("Every screen").tag(ConfettiScreens.all)
             Text("Main screen only").tag(ConfettiScreens.main)
         } label: {
-            SettingLabel(title: "Screens", subtitle: "A screen a fullscreen app owns is always skipped.")
+            SettingLabel(title: "Screens",
+                         subtitle: "While the switch above is on, a screen a fullscreen app owns is skipped. Try it fires on every screen.")
         }
         .pickerStyle(.menu)
     }
@@ -339,6 +340,7 @@ struct ConfettiPreviewTile: View {
 
     @ViewState private var started: Date?
     @ViewState private var seed: UInt64 = 7
+    @ViewState private var marks = ConfettiMarks()
 
     var body: some View {
         let plan = ConfettiToy.plan(settings, shot: shot, densityScale: 1, everyone: everyone, season: nil)
@@ -347,7 +349,8 @@ struct ConfettiPreviewTile: View {
             let time = frameTime(at: context.date)
             ZStack(alignment: .top) {
                 ConfettiPreviewDesk(part: .desk)
-                ConfettiView(burst: burst, look: plan.look, flash: false, scale: Self.scale, frozen: time)
+                ConfettiView(burst: burst, look: plan.look, flash: false, marks: marks, scale: Self.scale,
+                             frozen: time)
                 // The notch is a hole in the screen: it goes over the burst.
                 ConfettiPreviewDesk(part: .notch)
             }

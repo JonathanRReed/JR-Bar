@@ -26,8 +26,10 @@ struct ConfettiPerfProofTests {
         recipe.intensity = intensity
         let burst = ConfettiBurst(stage: ConfettiRenderProofTests.laptop(), recipe: recipe, seed: 11)
         let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        // Like the overlay: the burst's glyphs are set once and kept.
+        let marks = ConfettiMarks()
         func frame(at time: Double) throws -> Double {
-            var view = ConfettiView(burst: burst, look: look, flash: false)
+            var view = ConfettiView(burst: burst, look: look, flash: false, marks: marks)
             view.frozen = time
             let context = try #require(CGContext(data: nil, width: 3024, height: 1964, bitsPerComponent: 8,
                                                  bytesPerRow: 0, space: space,
