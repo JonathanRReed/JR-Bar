@@ -220,7 +220,7 @@ struct KeepAwakeUtilityControls: View {
         let shown = holders ?? readHolders
         CardSectionHeader("Other apps")
         LabeledContent {
-            Button("Refresh") { Task { await refreshHolders() } }
+            Button("Refresh") { _ = Task { await refreshHolders() } }
                 .controlSize(.small)
                 .disabled(holders != nil)
         } label: {

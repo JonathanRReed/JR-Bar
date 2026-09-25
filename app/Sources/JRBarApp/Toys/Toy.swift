@@ -109,7 +109,7 @@ final class ObservationLoop {
         withObservationTracking {
             body()
         } onChange: { [weak self] in
-            Task { @MainActor [weak self] in self?.run() }
+            _ = Task { @MainActor [weak self] in self?.run() }
         }
     }
 }

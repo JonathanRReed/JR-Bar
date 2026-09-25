@@ -116,9 +116,9 @@ struct LEDPreviewStripTests {
 
     @Test("an LED count the strip has no layout for draws eight, as the sampler does")
     func unsupportedCount() {
-        var config = Self.config("#FF0000")
-        config.ledCount = 3
-        let strip = LEDStripLayerView(config: config, held: false, reduceMotion: false, now: 0)
+        var threeLeds = Self.config("#FF0000")
+        threeLeds.ledCount = 3
+        let strip = LEDStripLayerView(config: threeLeds, held: false, reduceMotion: false, now: 0)
         #expect(strip.shownColors.count == 8)
         #expect(strip.drawnCount == 8)
         var band = Self.config("#FF0000", style: .band)
