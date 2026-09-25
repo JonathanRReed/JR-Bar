@@ -1638,7 +1638,7 @@ private struct DockMediaRow: View {
     private var transport: some View {
         HStack(spacing: 10) {
             Group {
-                if let data = media.artworkData, let image = NSImage(data: data) {
+                if let data = media.artworkData, let image = ArtworkThumbCache.shared.image(for: data) {
                     Image(nsImage: image)
                         .resizable()
                         .interpolation(.high)

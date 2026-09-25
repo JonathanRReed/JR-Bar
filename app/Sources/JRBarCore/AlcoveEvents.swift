@@ -783,14 +783,15 @@ public struct AlcoveMedia: Equatable, Sendable {
 }
 
 /// A cover's stand-in for byte equality: the byte count and a 64-bit
-/// mix of up to 64 bytes sampled at the head, the middle and the tail.
-/// The now-playing feed resends the same PNG/JPEG on every line — a
-/// pause, a seek, a poll — and comparing the payloads byte for byte ran
-/// a memcmp of up to `ShelfUtilityModel.maxArtworkBytes` on the main
-/// actor per event. Two covers that share the count and all three
-/// samples are close enough that mistaking them only holds a stale
-/// thumbnail one track too long; every real cover change differs in at
-/// least one of them.
+/// mix of up to 64-byte windows sampled at the head, the quarter marks
+/// and the tail. The now-playing feed resends the same PNG/JPEG on every
+/// line — a pause, a seek, a poll — and comparing the payloads byte for
+/// byte ran a memcmp of up to `ShelfUtilityModel.maxArtworkBytes` on the
+/// main actor per event. Head and tail alone collide too easily — two
+/// covers re-encoded at the same length share JPEG tables at the front
+/// and EOI padding at the back — so the middle samples carry the proof;
+/// mistaking two covers then only holds a stale thumbnail one track too
+/// long.
 public struct ArtworkPrint: Equatable, Sendable {
     public let count: Int
     private let digest: UInt64
@@ -804,8 +805,9 @@ public struct ArtworkPrint: Equatable, Sendable {
             }
             mix(raw.prefix(64))
             if raw.count > 128 {
-                let mid = raw.count / 2
-                mix(raw[mid ..< min(mid + 64, raw.count)])
+                for stride in [raw.count / 4, raw.count / 2, raw.count * 3 / 4] {
+                    mix(raw[stride ..< min(stride + 64, raw.count)])
+                }
             }
             mix(raw.suffix(64))
         }

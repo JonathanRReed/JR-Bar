@@ -147,3 +147,35 @@ final class NotchArtworkStore {
         }
     }
 }
+
+/// Decoded covers for surfaces that draw synchronously — the media ear,
+/// the Dock preview's player tile — keyed on the payload's
+/// `ArtworkPrint`. The feed resends the same cover on every line; the
+/// decode happens once a cover, bounded like the store's own.
+final class ArtworkThumbCache: @unchecked Sendable {
+    static let shared = ArtworkThumbCache()
+    private let lock = NSLock()
+    private var covers: [(print: ArtworkPrint, image: NSImage?)] = []
+
+    /// The decoded thumbnail for a payload — `NotchArtworkStore`'s own
+    /// decode, so the cover decodes at cover size once, and never the
+    /// full bytes per render again. A payload too big for the thumbnail
+    /// decode falls back to `NSImage(data:)`, as the surfaces drew before
+    /// the cache: the result is still decoded once and kept.
+    func image(for data: Data) -> NSImage? {
+        lock.withLock {
+            let print = ArtworkPrint(data)
+            if let index = covers.firstIndex(where: { $0.print == print }) {
+                let hit = covers.remove(at: index)
+                covers.append(hit)
+                return hit.image
+            }
+            let image = NotchArtworkStore.decodeCover(data)?.image ?? NSImage(data: data)
+            covers.append((print, image))
+            if covers.count > NotchArtworkStore.cacheLimit {
+                covers.removeFirst(covers.count - NotchArtworkStore.cacheLimit)
+            }
+            return image
+        }
+    }
+}

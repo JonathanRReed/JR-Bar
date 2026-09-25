@@ -514,4 +514,24 @@ extension AlcoveEventsTests {
         ])
         #expect(noLen?.duration == nil)
     }
+
+    @Test("a cover's print matches identical bytes and splits a same-length body change")
+    func artworkPrint() {
+        var cover = Data((0 ..< 4_000).map { UInt8($0 % 251) })
+        #expect(ArtworkPrint(cover) == ArtworkPrint(cover))
+        // Same length, same head and tail — a mid-body byte still splits.
+        var other = cover
+        other[2_000] ^= 0xff
+        #expect(ArtworkPrint(cover) != ArtworkPrint(other))
+        // Length alone distinguishes, and a payload shorter than the
+        // sampling windows still prints deterministically.
+        cover.append(1)
+        #expect(ArtworkPrint(cover) != ArtworkPrint(other))
+        #expect(ArtworkPrint(Data([1, 2, 3])) == ArtworkPrint(Data([1, 2, 3])))
+        #expect(ArtworkPrint(Data([1, 2, 3])) != ArtworkPrint(Data()))
+        // Quarter-window proof: an edit inside a sampled stride splits.
+        var quarter = Data((0 ..< 4_000).map { UInt8($0 % 251) })
+        quarter[3_050] ^= 0xff
+        #expect(ArtworkPrint(quarter) != ArtworkPrint(Data((0 ..< 4_000).map { UInt8($0 % 251) })))
+    }
 }
