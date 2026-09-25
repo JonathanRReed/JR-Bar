@@ -642,6 +642,15 @@ def unlink_private_file_if_unchanged(
 
 def append_private_text(path: Path, text: str) -> Path:
     """Append text to a private regular file without following symlinks."""
+    append_private_text_at(path, text)
+    return path
+
+
+def append_private_text_at(path: Path, text: str) -> tuple[int, int, int, int] | None:
+    """Append like ``append_private_text``; returns ``(device, inode, start,
+    end)`` of the bytes this call wrote, or None when that cannot be said
+    for certain (the write took more than one call, so another appender
+    may sit between its pieces)."""
     with _private_parent(path) as (target, parent_descriptor, name):
         expected = _require_private_leaf(target, parent_descriptor, name)
         descriptor = os.open(
@@ -654,11 +663,20 @@ def append_private_text(path: Path, text: str) -> Path:
             opened = os.fstat(descriptor)
             _require_opened_leaf(target, expected, opened)
             os.fchmod(descriptor, PRIVATE_FILE_MODE)
-            _write_all(descriptor, str(text).encode("utf-8"))
+            data = str(text).encode("utf-8")
+            written = os.write(descriptor, data) if data else 0
+            whole = written == len(data)
+            if not whole:
+                _write_all(descriptor, data[max(0, written):])
             os.fsync(descriptor)
+            # O_APPEND leaves the offset at the end of this write, even when
+            # another process appended after it.
+            end = os.lseek(descriptor, 0, os.SEEK_CUR)
         finally:
             os.close(descriptor)
-        return target
+        if not whole:
+            return None
+        return (opened.st_dev, opened.st_ino, end - len(data), end)
 
 
 def read_private_bytes_with_identity(

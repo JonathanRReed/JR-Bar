@@ -6345,7 +6345,8 @@ def build_headless_controller_class() -> type:
 
             hints = getattr(self, "_core_pending_hints", None)
             processor = AppOwnedHookIngressProcessor(
-                hints.note if hints is not None else self.handle_hook_event_message
+                hints.note if hints is not None else self.handle_hook_event_message,
+                deduplicator_for=self.resident_hook_deduplicators(),
             )
             return processor(request)
 

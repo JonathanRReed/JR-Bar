@@ -135,6 +135,10 @@ class AppOwnedHookIngressProcessor:
     """Canonical hook processing with a synchronous app monitor refresh."""
 
     refresh_hint_handler: Callable[[ProviderRefreshHint], object] = field(repr=False)
+    # The live ingress's handler for the line it just appended (the monitor
+    # takes it without rereading the log), and its resident deduplicators.
+    appended_handler: Callable[[ProviderRefreshHint, object], object] | None = field(default=None, repr=False)
+    deduplicator_for: Callable[[Path], object] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not callable(self.refresh_hint_handler):
@@ -149,6 +153,8 @@ class AppOwnedHookIngressProcessor:
             Path(request.log_path),
             request.payload_text,
             refresh_hint_handler=self.refresh_hint_handler,
+            appended_handler=self.appended_handler,
+            deduplicator_for=self.deduplicator_for,
             **_replay_arguments(request),
         )
 

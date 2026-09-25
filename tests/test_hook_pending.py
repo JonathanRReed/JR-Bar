@@ -327,8 +327,9 @@ def test_a_fresh_replay_is_stamped_on_arrival_and_only_history_keeps_its_queued_
     # A live delivery, and a replay inside the horizon, are stamped on
     # arrival and refresh: the monitor's watermark is per provider source,
     # so a queued stamp older than another session's live hook is skipped.
-    assert set(live) == {"refresh_hint_handler"}
-    assert set(fresh) == {"refresh_hint_handler"}
+    handlers = {"refresh_hint_handler", "appended_handler", "deduplicator_for"}
+    assert set(live) == handlers
+    assert set(fresh) == handlers
     # Past the horizon the record is history: its queued time, no refresh.
     assert stale["logged_at"] == hook.hook_logged_at(now - PENDING_REPLAY_HORIZON_SECONDS - 60.0)
     assert stale["refresh"] is False

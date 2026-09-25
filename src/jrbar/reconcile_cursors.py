@@ -72,4 +72,26 @@ def take_new_lines(
     return lines
 
 
-__all__ = ["FRESH_START_MAX_LINES", "take_new_lines"]
+def take_own_append(
+    monitor: object,
+    source_key: object,
+    at: tuple[int, int, int, int],
+) -> bool:
+    """Move this source's cursor past a line the monitor's own process just
+    appended at ``(device, inode, start, end)``, when the cursor stands
+    exactly at ``start``: nothing else was appended in between, so the
+    line is all a reread would find. False leaves the cursor alone and the
+    caller rereads the log."""
+    lock = getattr(monitor, _LOCK_ATTR, None)
+    if lock is None:
+        return False
+    device, inode, start, end = at
+    with lock:
+        cursors = getattr(monitor, _CURSORS_ATTR, None)
+        if not cursors or cursors.get(source_key) != (device, inode, start):
+            return False
+        cursors[source_key] = (device, inode, end)
+    return True
+
+
+__all__ = ["FRESH_START_MAX_LINES", "take_new_lines", "take_own_append"]

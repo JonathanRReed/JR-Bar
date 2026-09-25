@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import stat
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -79,7 +80,7 @@ class HookEventDeduplicator:
         return result
 
     @staticmethod
-    def _write_locked(descriptor: int, tokens: list[str]) -> None:
+    def _write_locked(descriptor: int, tokens: list[str], *, sync: bool = True) -> None:
         payload = json.dumps(
             {"version": _STATE_VERSION, "tokens": tokens},
             ensure_ascii=False,
@@ -90,7 +91,8 @@ class HookEventDeduplicator:
         os.lseek(descriptor, 0, os.SEEK_SET)
         os.write(descriptor, payload)
         os.ftruncate(descriptor, len(payload))
-        os.fsync(descriptor)
+        if sync:
+            os.fsync(descriptor)
 
     def run_once(self, event_token: str, callback: Callable[[], object]) -> bool:
         if not self._valid_token(event_token):
@@ -132,4 +134,105 @@ class HookEventDeduplicator:
                 os.close(descriptor)
 
 
-__all__ = ["HookEventDeduplicator"]
+class ResidentHookDeduplicator(HookEventDeduplicator):
+    """The daemon's deduplicator for one dedupe file.
+
+    The standalone hook opens, locks, reads, rewrites and fsyncs the file for
+    every event, and the next open of a file just written waits on the
+    virus scanner (2.8 to 50 ms at p50 on this Mac). The daemon handles
+    every live hook, so it keeps the file open and the tokens in memory. The
+    file stays the backing store the standalone hook and the drainer share:
+    it is still locked for every check, reread whenever another process
+    changed it, and rewritten after each new token -- without an fsync, as
+    the log append's own fsync is the durability point. A crash can lose
+    the last tokens; a replay of that one event is then ordered out by its
+    watermark.
+    """
+
+    def __init__(self, path: Path, *, max_tokens: int = 128) -> None:
+        super().__init__(path, max_tokens=max_tokens)
+        self._lock = threading.Lock()
+        self._descriptor: int | None = None
+        self._tokens: list[str] | None = None
+        self._seen: tuple[int, int] | None = None
+
+    def _held(self) -> int:
+        """The open descriptor; reopened when the file was removed or
+        replaced under it."""
+        descriptor = self._descriptor
+        if descriptor is not None:
+            try:
+                on_disk = os.stat(self.path, follow_symlinks=False)
+                held = os.fstat(descriptor)
+                if (on_disk.st_dev, on_disk.st_ino) == (held.st_dev, held.st_ino):
+                    return descriptor
+            except OSError:
+                pass
+            self.close()
+        self._descriptor = self._open()
+        self._tokens = None
+        return self._descriptor
+
+    def run_once(self, event_token: str, callback: Callable[[], object]) -> bool:
+        if not self._valid_token(event_token):
+            return False
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        with self._lock:
+            descriptor = self._held()
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                info = os.fstat(descriptor)
+                if self._tokens is None or (info.st_size, info.st_mtime_ns) != self._seen:
+                    # First use, or another process wrote the file since.
+                    self._tokens = self._read_locked(descriptor)
+                    self._seen = (info.st_size, info.st_mtime_ns)
+                tokens = self._tokens
+                if event_token in tokens:
+                    return False
+                callback()
+                tokens.append(event_token)
+                if len(tokens) > self.max_tokens:
+                    del tokens[: len(tokens) - self.max_tokens]
+                self._write_locked(descriptor, tokens, sync=False)
+                info = os.fstat(descriptor)
+                self._seen = (info.st_size, info.st_mtime_ns)
+                return True
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+    def close(self) -> None:
+        descriptor, self._descriptor = self._descriptor, None
+        self._tokens = None
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+class ResidentDeduplicators:
+    """One resident deduplicator per dedupe file, for the daemon's ingress."""
+
+    def __init__(self, *, max_tokens: int = 128) -> None:
+        self._max_tokens = max_tokens
+        self._lock = threading.Lock()
+        self._by_path: dict[Path, ResidentHookDeduplicator] = {}
+
+    def __call__(self, path: Path) -> ResidentHookDeduplicator:
+        key = Path(path).expanduser()
+        with self._lock:
+            deduplicator = self._by_path.get(key)
+            if deduplicator is None:
+                deduplicator = ResidentHookDeduplicator(key, max_tokens=self._max_tokens)
+                self._by_path[key] = deduplicator
+            return deduplicator
+
+    def close(self) -> None:
+        with self._lock:
+            held, self._by_path = list(self._by_path.values()), {}
+        for deduplicator in held:
+            deduplicator.close()
+
+
+__all__ = ["HookEventDeduplicator", "ResidentDeduplicators", "ResidentHookDeduplicator"]

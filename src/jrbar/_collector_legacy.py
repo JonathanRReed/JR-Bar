@@ -1353,17 +1353,7 @@ class LiveAgentMonitor(LiveSessionMemory):
 
         if type(hint) is not ProviderRefreshHint:
             return
-        clock = self._clock_sampler()
-        batches: list[ProviderFactBatch] = []
-        source = next(
-            (
-                registered
-                for registered in negotiated_provider_sources()
-                if registered.source_key == hint.source_key
-                and registered.observation_invocation_allowed
-            ),
-            None,
-        )
+        source = self._hint_source(hint)
         if source is None:
             return
         # Only newly appended bytes (see reconcile_cursors).
@@ -1377,6 +1367,55 @@ class LiveAgentMonitor(LiveSessionMemory):
         )
         if lines is None:
             return
+        self._ingest_hint_lines(hint, source, lines)
+
+    def reconcile_appended_line(
+        self,
+        hint: object,
+        appended: object,
+        *,
+        log_path: Path,
+    ) -> None:
+        """Take the line this process just appended for ``hint`` without
+        reopening the log, when the read cursor stands exactly where the
+        line began; otherwise reread the log as ``reconcile_refresh_hint``
+        does. Either way the lines go through the same parse, ordering and
+        watermark rules."""
+        from .ipc import ProviderRefreshHint
+        from .reconcile_cursors import take_own_append
+
+        if type(hint) is not ProviderRefreshHint:
+            return
+        at = getattr(appended, "at", None)
+        line = getattr(appended, "line", None)
+        source = self._hint_source(hint)
+        if source is None:
+            return
+        if (
+            type(at) is tuple
+            and len(at) == 4
+            and type(line) is str
+            and line.endswith("\n")
+            and take_own_append(self, hint.source_key, at)
+        ):
+            self._ingest_hint_lines(hint, source, line.splitlines())
+            return
+        self.reconcile_refresh_hint(hint, log_path=log_path)
+
+    def _hint_source(self, hint):
+        return next(
+            (
+                registered
+                for registered in negotiated_provider_sources()
+                if registered.source_key == hint.source_key
+                and registered.observation_invocation_allowed
+            ),
+            None,
+        )
+
+    def _ingest_hint_lines(self, hint, source, lines) -> None:
+        clock = self._clock_sampler()
+        batches: list[ProviderFactBatch] = []
         for line in lines:
             normalized = None
             try:

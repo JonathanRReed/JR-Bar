@@ -1385,6 +1385,9 @@ CALENDAR_WATCH_RETRY_SECONDS = 300.0
 STATUS_BAR_REFRESH_SECONDS = 15.0
 # How often the app checks that live sessions still have a process.
 LIVENESS_POLL_SECONDS = 5.0
+# The live ingress and the spool drainer create the resident deduplicators
+# on first use, from different threads.
+_RESIDENT_DEDUPE_LOCK = threading.Lock()
 # How old the worker's last sweep may be before a refresh kicks it.
 LIVENESS_STALE_SECONDS = 2 * LIVENESS_POLL_SECONDS
 # The second Mac's own, much slower cadence. A peer fetch is bounded
@@ -8935,10 +8938,26 @@ class StatusBarController(NSObject):
                 f"hook_ingress shutdown_timeout sequence={receipt.sequence}"
             )
 
+    def resident_hook_deduplicators(self):
+        """This process's deduplicators, one per dedupe file, shared by the
+        live ingress and the spool drainer (jrbar.hook_dedupe)."""
+        from .hook_dedupe import ResidentDeduplicators
+
+        with _RESIDENT_DEDUPE_LOCK:
+            held = getattr(self, "_resident_hook_deduplicators", None)
+            if held is None:
+                held = ResidentDeduplicators()
+                self._resident_hook_deduplicators = held
+        return held
+
     def start_hook_ingress(self) -> None:
         self.stop_hook_ingress()
         service = HookIngressService(
-            process=AppOwnedHookIngressProcessor(self.handle_hook_event_message),
+            process=AppOwnedHookIngressProcessor(
+                self.handle_hook_event_message,
+                appended_handler=self.handle_appended_hook_line,
+                deduplicator_for=self.resident_hook_deduplicators(),
+            ),
             receipt_handler=self._record_hook_ingress_receipt,
         )
         self.hook_ingress_service = service
@@ -9097,6 +9116,26 @@ class StatusBarController(NSObject):
                 self._liveness_sweep_running = False
 
         threading.Thread(target=_run, name="JRBarLiveness", daemon=True).start()
+
+    def handle_appended_hook_line(self, hint: ProviderRefreshHint, appended) -> None:
+        """``handle_hook_event_message`` for a line this process appended
+        itself: the monitor takes the line without reopening the log when
+        nothing else was appended before it, and rereads otherwise."""
+        if type(hint) is not ProviderRefreshHint:
+            return
+        take = getattr(self.monitor, "reconcile_appended_line", None)
+        if not callable(take):
+            self.handle_hook_event_message(hint)
+            return
+        try:
+            take(
+                hint,
+                appended,
+                log_path=detect_log_path(hint.source_key.provider_id),
+            )
+            self.schedule_event_refresh()
+        except Exception:
+            log_status_bar("event_server reconciliation error")
 
     def handle_hook_event_message(self, hint: ProviderRefreshHint) -> None:
         """Reconcile one authenticated hint from the persisted normalized log.

@@ -100,6 +100,7 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_published_ledger_path": None,
         "_quota_suffix_error_logged": False,
         "_remote_refresh_ever_applied": False,
+        "_resident_hook_deduplicators": None,
         "_request_provider_usage": None,
         "_screen_bar_ask_latch": False,
         "_screen_bar_fleet_plan": None,
