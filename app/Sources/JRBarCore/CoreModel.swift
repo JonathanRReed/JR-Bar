@@ -37,8 +37,11 @@ public final class CoreModel {
     /// own `now`/`generation`), so a quiet daemon legitimately sends
     /// nothing — this stamps the frame's age, not the daemon's heartbeat.
     public private(set) var lastStateAt: Date?
-    /// Commands the app sent that the daemon has not answered yet.
-    public private(set) var inFlightCommands = 0
+    /// Commands the app sent that the daemon has not answered yet. Not
+    /// observed: every command moves it twice, and a view that re-rendered
+    /// on each would re-render per command. A reader sees the count as of
+    /// its own next render.
+    @ObservationIgnored public private(set) var inFlightCommands = 0
     /// Every `state`'s usage windows, kept so the Usage Center can
     /// extrapolate a pace when the daemon sends no `forecast`.
     public private(set) var usageSamples = UsageSampleLog()
@@ -752,7 +755,7 @@ public final class CoreModel {
 
     // MARK: Control Center (app-proposed extensions, see app/README.md)
 
-    public var deck: DeckState? { state?.deck }
+    // `deck` is a slice of `state` (see Slices).
 
     /// `deck_press {index}`: what a physical press of that control does,
     /// from the screen (a session key reveals its session; an auxiliary
@@ -929,6 +932,7 @@ public final class CoreModel {
             connection = .disconnected(reason: reason)
             connectedAt = nil
             state = nil
+            applySlices(nil)
             lights = nil
             lastStateAt = nil
         case .decodeFailure(let why):
@@ -945,6 +949,7 @@ public final class CoreModel {
             self.hello = hello
         case .state(let state):
             self.state = state
+            applySlices(state)
             refreshLive()
             lastStateAt = Date()
             usageSamples.record(state.usage, now: state.now ?? Date().timeIntervalSince1970)
@@ -969,12 +974,57 @@ public final class CoreModel {
         }
     }
 
-    // MARK: Derived
+    // MARK: Slices
 
-    public var sessions: [CoreSession] { state?.mainSessions ?? [] }
-    public var asks: [CoreAsk] { state?.asks ?? [] }
-    public var devices: [CoreDevice] { state?.devices ?? [] }
-    public var usage: [CoreProviderUsage] { state?.usage?.providers ?? [] }
+    // Each part of the latest `state` on its own, assigned only when it
+    // differs from what is there. The daemon sends the whole document on
+    // every change, so a reader of `state` is woken by every frame; a
+    // reader of a slice only by a frame that changed that slice. `state`
+    // stays for the readers that want the whole document.
+
+    /// The sessions the panel lists (`CoreState.mainSessions`), filtered
+    /// once per frame rather than on every read.
+    public private(set) var sessions: [CoreSession] = []
+    /// Every session in the frame, workers included (`state.sessions`).
+    public private(set) var allSessions: [CoreSession] = []
+    public private(set) var asks: [CoreAsk] = []
+    public private(set) var devices: [CoreDevice] = []
+    /// `state.usage.providers`.
+    public private(set) var usage: [CoreProviderUsage] = []
+    public private(set) var aggregate: CoreAggregate?
+    public private(set) var power: CorePower?
+    public private(set) var focus: CoreFocus?
+    public private(set) var presence: CorePresence?
+    public private(set) var deck: DeckState?
+    public private(set) var health: JSONValue?
+    /// `state.catalog_generation` and `state.settings_generation`: what
+    /// the Effect Studio reloads on.
+    public private(set) var catalogGeneration: Int?
+    public private(set) var stateSettingsGeneration: Int?
+
+    /// Brings every slice in line with `state`, touching only those that
+    /// changed. A disconnect clears them with the document.
+    private func applySlices(_ state: CoreState?) {
+        assign(\.sessions, state?.mainSessions ?? [])
+        assign(\.allSessions, state?.sessions ?? [])
+        assign(\.asks, state?.asks ?? [])
+        assign(\.devices, state?.devices ?? [])
+        assign(\.usage, state?.usage?.providers ?? [])
+        assign(\.aggregate, state?.aggregate)
+        assign(\.power, state?.power)
+        assign(\.focus, state?.focus)
+        assign(\.presence, state?.presence)
+        assign(\.deck, state?.deck)
+        assign(\.health, state?.health)
+        assign(\.catalogGeneration, state?.catalogGeneration)
+        assign(\.stateSettingsGeneration, state?.settingsGeneration)
+    }
+
+    private func assign<Value: Equatable>(_ slice: ReferenceWritableKeyPath<CoreModel, Value>, _ value: Value) {
+        if self[keyPath: slice] != value { self[keyPath: slice] = value }
+    }
+
+    // MARK: Derived
 
     /// Open asks, with the session's own record where the pinned list lacks one.
     public var openAsks: [CoreAsk] {

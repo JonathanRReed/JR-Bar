@@ -139,18 +139,24 @@ final class EffectStudioStore {
         track()
     }
 
+    /// What the Studio wakes for: liveness and the two generations, as
+    /// slices, so a frame that moves neither leaves it asleep.
+    /// `catalog_generation` moves when the registry, packs or assignments
+    /// change anywhere (this window, the CLI, another client);
+    /// `settings_generation` carries `active_scene`.
+    static func observedFacts(_ core: CoreModel) {
+        _ = core.isLive
+        _ = core.catalogGeneration
+        _ = core.stateSettingsGeneration
+    }
+
     private func track() {
         withObservationTracking {
-            _ = core.isLive
-            // `catalog_generation` moves when the registry, packs or
-            // assignments change anywhere (this window, the CLI, another
-            // client); `settings_generation` carries `active_scene`.
-            _ = core.state?.catalogGeneration
-            _ = core.state?.settingsGeneration
+            Self.observedFacts(core)
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let generation = self.core.state?.catalogGeneration
+                let generation = self.core.catalogGeneration
                 // Closed windows don't fetch: `windowDidOpen` reloads on
                 // the next show, so a bumped generation while closed only
                 // updates the seen marker.

@@ -179,12 +179,19 @@ final class UsageCenterStore {
         track()
     }
 
+    /// What the Usage Center wakes for: an event, liveness, the usage
+    /// slice and the settings document — not a frame that only moved the
+    /// sessions or the daemon's clock.
+    static func observedFacts(_ core: CoreModel) {
+        _ = core.lastEvent?.id
+        _ = core.isLive
+        _ = core.usage
+        _ = core.settings?.generation
+    }
+
     private func track() {
         withObservationTracking {
-            _ = core.lastEvent?.id
-            _ = core.isLive
-            _ = core.usage.count
-            _ = core.settings?.generation
+            Self.observedFacts(core)
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }

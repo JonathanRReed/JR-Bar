@@ -825,11 +825,19 @@ final class AquariumToy: Toy {
             .flatMap(FishSpecies.init(rawValue:))
     }
 
+    /// What the tank wakes for: every listed session (the fish) and the
+    /// usage (the water's mood) — slices, so a frame that moved neither
+    /// leaves the tank alone.
+    static func observedFacts(_ core: CoreModel) {
+        _ = core.allSessions
+        _ = core.usage
+    }
+
     /// Watches the session list like `NotchBuddyToy`: one observation
     /// per change, coalesced into a main-queue turn.
     private func observeSessions() {
         withObservationTracking {
-            _ = core.state?.sessions
+            Self.observedFacts(core)
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }

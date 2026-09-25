@@ -118,7 +118,7 @@ final class PresenceReporter {
     /// and observations that re-arm themselves.
     convenience init(core: CoreModel, cards: @escaping @MainActor () -> [NotchCardModel]) {
         self.init(isConnected: { [weak core] in core?.connection.isConnected ?? false },
-                  presence: { [weak core] in core?.isLive == true ? core?.state?.presence : nil },
+                  presence: { [weak core] in core?.isLive == true ? core?.presence : nil },
                   send: { [weak core] report in
                       guard let core else { return false }
                       return (try? await core.reportPresence(report))?.ok == true
@@ -222,10 +222,17 @@ final class PresenceReporter {
         refresh()
     }
 
+    /// What the reporter wakes for: the connection and the daemon's
+    /// presence slice, not every `state` frame the daemon sends.
+    static func observedFacts(_ core: CoreModel) {
+        _ = core.connection
+        _ = core.isLive
+        _ = core.presence
+    }
+
     private func observe(_ core: CoreModel) {
         withObservationTracking {
-            _ = core.connection
-            _ = core.state?.presence
+            Self.observedFacts(core)
         } onChange: { [weak self, weak core] in
             Task { @MainActor [weak self, weak core] in
                 guard let self, let core else { return }
