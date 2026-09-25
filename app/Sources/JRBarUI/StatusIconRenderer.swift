@@ -75,10 +75,12 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
 /// window is, plus the name and glyph the tooltip and the percent style
 /// need.
 public struct StatusMeter: Hashable, Sendable {
-    /// SF Symbol, or one or two characters for a logo no symbol matches.
+    /// The provider's real mark (a `ProviderLogo` id), an SF Symbol, or
+    /// one or two characters.
     public enum Glyph: Hashable, Sendable {
         case symbol(String)
         case text(String)
+        case logo(String)
     }
 
     public var id: String
@@ -824,10 +826,23 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// track, plainly below a fresh fill.
     static let staleAlpha: CGFloat = 0.45
 
-    /// An SF Symbol scaled into the box, or one or two characters centred
-    /// in it; both in `color`.
+    /// The provider's mark, an SF Symbol scaled into the box, or one or
+    /// two characters centred in it; all in `color`. A mark is its cached
+    /// path filled straight into the context: no symbol lookup, no image,
+    /// no second pass to tint it.
     static func drawGlyph(_ glyph: StatusMeter.Glyph, in box: NSRect, color: NSColor) {
         switch glyph {
+        case .logo(let id):
+            guard let logo = ProviderLogo.named(id), let context = NSGraphicsContext.current?.cgContext else {
+                drawGlyph(.text(String(id.prefix(1)).uppercased()), in: box, color: color)
+                return
+            }
+            // The same share of the box the symbol's point size took.
+            let side = box.height * 0.82
+            let rect = NSRect(x: box.midX - side / 2, y: box.midY - side / 2, width: side, height: side)
+            color.setFill()
+            color.setStroke()
+            logo.fill(in: rect, context: context, weight: ProviderLogo.hairline(for: id, side: side))
         case .symbol(let name):
             let configuration = NSImage.SymbolConfiguration(pointSize: box.height * 0.82, weight: .semibold)
             guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) else {
