@@ -70,11 +70,10 @@ struct AquariumControlsTests {
         withExtendedLifetime(store) {}
     }
 
-    @Test("every Fine-tune title the reveal opens for is a row a card draws or will draw")
+    @Test("every Fine-tune title the reveal opens for is a searchable row, the swim rows included")
     func fineTuneTitles() {
         let listed = Set((ToySearchCatalog.rows["aquarium"] ?? []).map(\.title))
-        let swimRows: Set<String> = ["Swim pace", "Fish size", "Swimming speed"]
-        for title in AquariumControlsView.fineTuneTitles.subtracting(swimRows) {
+        for title in AquariumControlsView.fineTuneTitles {
             #expect(listed.contains(title), "\(title) is searchable")
         }
     }

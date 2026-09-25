@@ -166,31 +166,10 @@ enum AquariumSound {
     }
 
     /// 16-bit mono PCM in a RIFF/WAVE container — what AVAudioPlayer
-    /// reads straight from memory.
+    /// reads straight from memory. The confetti's pop already writes
+    /// this exact container, so the tank shares its writer.
     nonisolated static func wav(from samples: [Float], sampleRate: Int) -> Data {
-        var data = Data()
-        func append<T: FixedWidthInteger>(_ value: T) {
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
-        let bytes = samples.count * 2
-        data.append(contentsOf: Array("RIFF".utf8))
-        append(UInt32(36 + bytes))
-        data.append(contentsOf: Array("WAVE".utf8))
-        data.append(contentsOf: Array("fmt ".utf8))
-        append(UInt32(16))
-        append(UInt16(1))                      // PCM
-        append(UInt16(1))                      // mono
-        append(UInt32(sampleRate))
-        append(UInt32(sampleRate * 2))         // byte rate
-        append(UInt16(2))                      // block align
-        append(UInt16(16))                     // bits per sample
-        data.append(contentsOf: Array("data".utf8))
-        append(UInt32(bytes))
-        for sample in samples {
-            let clamped = max(-1, min(1, sample))
-            append(Int16(clamped * Float(Int16.max)))
-        }
-        return data
+        ConfettiSound.wav(from: samples, sampleRate: sampleRate)
     }
 
     /// A linear rise over the first `seconds`, so nothing clicks on.

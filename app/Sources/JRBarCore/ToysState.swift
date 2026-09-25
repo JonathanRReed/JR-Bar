@@ -461,8 +461,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
 
     /// `value` inside `range`; a non-finite value reads as 1×.
     public static func clamped(_ value: Double, to range: ClosedRange<Double>) -> Double {
-        guard value.isFinite else { return 1 }
-        return min(range.upperBound, max(range.lowerBound, value))
+        clamp(value, to: range, default: 1)
     }
 }
 

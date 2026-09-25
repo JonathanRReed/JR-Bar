@@ -571,7 +571,9 @@ body is five rows:
   never on the wallpaper or the screensaver, never while the toys are
   hushed (Focus, quiet hours, a call), at the Sounds page's volume.
 
-A folded **Fine-tune** holds the numbers: **Fish at once** (All, 6, 10,
+A folded **Fine-tune** holds the numbers, led by the three swim rows
+(**Swim pace**, **Fish size** and **Swimming speed**, `AquariumSwimRows`;
+see "Swimming" above): **Fish at once** (All, 6, 10,
 16, 24 — past it, residents rest first, least raised first, then quiet
 sessions, then working ones; an ask, a failure or a finish always shows,
 a finished fish frees its place once it has swum off, and fry go with
@@ -581,9 +583,7 @@ one 0–2 track), **Scenery**
 (full, light or bare seeded dressing — what you bought always stays;
 the fish's work stations use the same share), **Visitors** (off stops
 any visitor from queuing, the alien included, and sends away one already
-waiting), the three swim rows (**Swim pace**, **Fish size** and
-**Swimming speed**, `AquariumSwimRows`; see "Swimming" above) and
-**Reset fine-tune**.
+waiting) and **Reset fine-tune**, which resets the swim rows too.
 A Settings search that lands on one of these rows opens Fine-tune
 (`ToysStore.revealRow`). **Outside the window** keeps Fill screen, Live
 wallpaper, Screensaver and its clock.
