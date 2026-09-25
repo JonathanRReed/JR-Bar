@@ -267,3 +267,34 @@ def test_refresh_budget(headless) -> None:
     assert builds["state"] == ITERATIONS, "state projection built more than once per refresh"
     assert builds["lights"] == ITERATIONS, "lights projection built more than once per refresh"
     assert p95 < P95_BUDGET_MS, f"refresh p95 {p95:.1f}ms over the {P95_BUDGET_MS:.0f}ms guard"
+
+
+def test_a_failed_settings_save_is_retried_by_the_next_refresh(headless, monkeypatch) -> None:
+    """A Settings toggle replies before its save; when the save fails, the
+    next refresh writes it, once nothing is queued on the writer."""
+    from jrbar import status_bar_legacy as legacy
+
+    controller = _refreshable(headless)
+    saved: list[int] = []
+    failing = [True]
+
+    def flaky(settings):
+        if failing[0]:
+            raise OSError("disk full")
+        saved.append(settings.alert_burst)
+
+    monkeypatch.setattr(legacy, "save_settings", flaky)
+    controller.schedule_event_refresh = lambda: None
+    controller._core_dispatch("set_setting", {"path": "alert_burst", "value": 6})
+    assert controller._core_flush_settings() is False
+    assert controller._core_settings_dirty
+    failing[0] = False
+    writer = controller._persistence_writer
+    monkeypatch.setattr(writer, "snapshot", lambda: SimpleNamespace(pending_count=1, running=False))
+    _tick(controller)
+    assert saved == [], "a write still queued on the writer is the writer's"
+    monkeypatch.setattr(writer, "snapshot", lambda: SimpleNamespace(pending_count=0, running=False))
+    _tick(controller)
+    assert saved == [6] and not controller._core_settings_dirty
+    _tick(controller)
+    assert saved == [6]

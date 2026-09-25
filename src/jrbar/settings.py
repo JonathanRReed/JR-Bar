@@ -373,6 +373,31 @@ def load_settings(path: Path | None = None):
     return load_settings_document(path).settings
 
 
+def settings_from_mapping(data: object):
+    """What ``load_settings`` returns for a settings file holding ``data``,
+    without writing or reading one: the same size limit, schema gates and
+    field validation. ``data`` is JSON-shaped (the caller round-trips it
+    through ``json`` first), so it matches what a file would hold."""
+    if not isinstance(data, dict):
+        return _legacy.AgentMonitorSettings()
+    try:
+        size = len(json.dumps(data).encode("utf-8"))
+        source_version = _settings_schema_version(data)
+    except (TypeError, ValueError):
+        return _legacy.AgentMonitorSettings()
+    if size > SETTINGS_DOCUMENT_MAX_BYTES:
+        return _legacy.AgentMonitorSettings()
+    if source_version > CURRENT_SETTINGS_SCHEMA_VERSION:
+        return _legacy.settings_from_data(data)
+    if source_version < MIN_READABLE_SETTINGS_SCHEMA_VERSION:
+        return _legacy.AgentMonitorSettings()
+    try:
+        _migrate_settings_document(data, source_version)
+    except ValueError:
+        return _legacy.AgentMonitorSettings()
+    return _legacy.settings_from_data(data)
+
+
 def save_settings(
     settings,
     path: Path | None = None,

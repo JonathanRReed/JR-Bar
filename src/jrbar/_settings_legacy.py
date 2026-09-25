@@ -2223,7 +2223,12 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
     if not isinstance(data, dict):
         _preserve_corrupt_settings(target)
         return AgentMonitorSettings()
+    return settings_from_data(data)
 
+
+def settings_from_data(data: dict) -> AgentMonitorSettings:
+    """The settings a settings file holding ``data`` loads as: every field
+    validated and defaulted exactly as ``load_settings`` does, with no file."""
     transcript = data.get("transcript_monitoring")
     if not isinstance(transcript, dict):
         transcript = {}

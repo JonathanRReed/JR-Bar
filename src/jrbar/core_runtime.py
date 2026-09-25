@@ -373,26 +373,15 @@ def device_transitions(
 
 
 def settings_from_document(document: dict[str, Any], *, scratch_dir: Path | None = None):
-    """Round a settings dict through the real loader (validation, defaults)."""
-    from . import _settings_legacy as settings_legacy
+    """Round a settings dict through the real loader's rules (validation,
+    defaults, the schema gates), in memory. The JSON round trip hands the
+    loader exactly the values a file on disk would; the temp file this used
+    to write and read back cost a Settings toggle opens, chmods and a
+    virus-scanner pass on the run loop. ``scratch_dir`` is accepted for old
+    callers and no longer written."""
+    from .settings import settings_from_mapping
 
-    scratch = (scratch_dir or default_state_dir()) / "core-tmp"
-    scratch.mkdir(parents=True, exist_ok=True, mode=0o700)
-    try:
-        os.chmod(scratch, 0o700)
-    except OSError:
-        pass
-    target = scratch / f"settings-{os.getpid()}-{threading.get_ident()}.json"
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(document, handle)
-        return settings_legacy.load_settings(target)
-    finally:
-        try:
-            target.unlink()
-        except OSError:
-            pass
+    return settings_from_mapping(json.loads(json.dumps(document)))
 
 
 class HeadlessNotificationClient:
@@ -1114,17 +1103,27 @@ def _cmd_dismiss_session(self, args):
 
 
 def _apply_settings_document(self, document: dict[str, Any], *, touched: list[str]) -> int:
-    legacy = self._core_legacy()
+    """Validate, take and publish a new settings document, then reply.
+
+    The reply no longer waits on the disk or on a refresh: the settings
+    document goes out as soon as ``self.settings`` is set, the save goes to
+    the persistence writer (coalesced, flushed at quit), and the refresh
+    that applies the change runs right after the reply."""
     try:
         candidate = settings_from_document(document)
     except Exception as error:
         raise CommandError("invalid_value", f"settings did not validate: {error}") from error
     self.settings = candidate
-    try:
-        legacy.save_settings(self.settings)
-    except Exception as error:
-        self.settings = legacy.load_settings()
-        raise CommandError("refused", f"could not save settings: {error}") from error
+    save_soon = getattr(self, "_core_save_settings_soon", None)
+    if callable(save_soon):
+        save_soon()
+    else:
+        legacy = self._core_legacy()
+        try:
+            legacy.save_settings(self.settings)
+        except Exception as error:
+            self.settings = legacy.load_settings()
+            raise CommandError("refused", f"could not save settings: {error}") from error
     self._core_after_settings_change(touched)
     return self._core_settings_generation
 
@@ -4046,6 +4045,9 @@ def build_headless_controller_class() -> type:
             self._core_process_table = None
             # Names a run-loop stall while it happens (jrbar.run_loop_watchdog).
             self._core_watchdog = None
+            # A settings change the persistence writer has not written yet.
+            self._core_settings_dirty = False
+            self._core_settings_save_lock = threading.Lock()
             self._core_command_in_flight: str | None = None
             self._core_started_at = time.time()
             self._core_pending_drainer = None
@@ -4291,6 +4293,10 @@ def build_headless_controller_class() -> type:
         def _core_quit_flush(self) -> None:
             """The daemon's last words: the usage sample buffer to disk,
             then every mounted strip off."""
+            # The persistence writer has drained by now; a toggle whose
+            # write failed or never got queued is written here.
+            if self._core_settings_dirty:
+                self._core_flush_settings()
             service = getattr(self, "_core_usage_history_service", None)
             if service is not None:
                 service.close()
@@ -4438,6 +4444,9 @@ def build_headless_controller_class() -> type:
         def refresh_(self, sender):
             previous_asks = self._core_prev_asks
             previous_devices = self._core_prev_devices
+            if self._core_settings_dirty and not self._core_settings_write_queued():
+                # The last settings write failed: try again.
+                self._core_flush_settings()
             # Forget a departed strip BEFORE the legacy refresh plans the
             # Dot's next write: the disconnecting refresh itself would
             # otherwise still submit the ghost program it is reacting to.
@@ -6444,7 +6453,67 @@ def build_headless_controller_class() -> type:
                     self.virtual_status_device.hide()
             except Exception as exc:
                 legacy.log_status_bar(f"core: settings side effect failed: {exc}")
-            self.refresh_(None)
+            # After the reply, not before it: a toggle's answer must not wait
+            # on a whole refresh. A burst of toggles coalesces into one.
+            self.schedule_event_refresh()
+
+        def _core_save_settings_soon(self) -> None:
+            """Save the settings on the persistence writer, coalesced: the
+            reply does not wait on two fsyncs, and a burst of toggles writes
+            once. The write takes the settings as they are when it runs, so
+            it never lands an older document over a newer one."""
+            from .persistence_writer import PersistenceDisposition
+
+            self._core_settings_dirty = True
+            writer = getattr(self, "_persistence_writer", None)
+            disposition = None
+            if writer is not None:
+                try:
+                    disposition = writer.submit(
+                        "core-settings",
+                        self._core_flush_settings,
+                        replace_pending=True,
+                        use_reserved_drain_tail=True,
+                    )
+                except Exception:
+                    disposition = None
+            if disposition is None or disposition in (
+                PersistenceDisposition.REFUSED_FULL,
+                PersistenceDisposition.REFUSED_CLOSED,
+            ):
+                self._core_flush_settings()
+
+        def _core_settings_write_queued(self) -> bool:
+            writer = getattr(self, "_persistence_writer", None)
+            try:
+                snapshot = writer.snapshot() if writer is not None else None
+            except Exception:
+                return False
+            return bool(snapshot is not None and (snapshot.pending_count or snapshot.running))
+
+        def _core_flush_settings(self) -> bool:
+            """Write the settings if a change is waiting; True when nothing
+            is left unsaved. Runs on the persistence writer, at quit, and on
+            the next refresh after a failed write."""
+            with self._core_settings_save_lock:
+                for _ in range(3):
+                    if not self._core_settings_dirty:
+                        return True
+                    self._core_settings_dirty = False
+                    current = self.settings
+                    try:
+                        legacy.save_settings(current)
+                    except Exception as exc:
+                        self._core_settings_dirty = True
+                        legacy.log_status_bar(
+                            f"core: settings save failed, retrying on the next refresh: "
+                            f"{exc.__class__.__name__}: {exc}"
+                        )
+                        return False
+                    if self.settings is not current:
+                        # A newer document arrived while this one was written.
+                        self._core_settings_dirty = True
+                return not self._core_settings_dirty
 
         # -- facts -------------------------------------------------------------
 

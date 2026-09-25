@@ -109,7 +109,35 @@ def test_settings_round_trip_validates_through_the_real_loader(tmp_path: Path) -
     assert settings.idle_dim_fraction == 0.42
     # An invalid enum value falls back to the default instead of raising.
     assert settings.closed_lid_awake_policy == AgentMonitorSettings().closed_lid_awake_policy
-    assert not list((tmp_path / "core-tmp").iterdir())
+    # Validated in memory: no scratch file to open, chmod and scan.
+    assert not (tmp_path / "core-tmp").exists()
+
+
+def test_settings_from_document_matches_loading_the_same_file(tmp_path: Path) -> None:
+    """The in-memory check takes exactly what loading a file holding the
+    same document takes, schema gates included."""
+    import json as _json
+
+    from jrbar.settings import AgentMonitorSettings, load_settings
+
+    base = AgentMonitorSettings().to_dict()
+    base["alert_burst"] = 6
+    base["idle_dim_fraction"] = 2.5
+    base["devices"] = [{"id": "sidepulse:pro:serial:1", "name": "Strip", "path": "/Volumes/X", "brightness": 900}]
+    variants = {
+        "plain": dict(base),
+        "newer schema": {**base, "settings_schema_version": 99},
+        "bad schema": {**base, "settings_schema_version": "two"},
+        "ancient schema": {**base, "settings_schema_version": 0},
+        "current schema": {**base, "settings_schema_version": 2},
+    }
+    for label, document in variants.items():
+        target = tmp_path / f"{label}.json"
+        target.write_text(_json.dumps(document), encoding="utf-8")
+        target.chmod(0o600)
+        from_file = load_settings(target)
+        assert settings_from_document(document) == from_file, label
+    assert settings_from_document(variants["bad schema"]) == AgentMonitorSettings()
 
 
 def test_headless_notification_client_never_delivers() -> None:
@@ -138,7 +166,15 @@ class _Thread:
         self.daemon = daemon
         self.name = name
 
+    ident = None
+
     def start(self) -> None:
+        return None
+
+    def is_alive(self) -> bool:
+        return False
+
+    def join(self, timeout=None) -> None:
         return None
 
 
@@ -491,6 +527,9 @@ def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_p
     assert reply["path"] == "alert_burst" and reply["value"] == 2
     assert reply["generation"] == controller._core_settings_generation
     assert controller.settings.alert_burst == 2
+    # The write is the persistence writer's (no thread runs in this
+    # harness); flushing it is what the writer does.
+    assert controller._core_flush_settings() is True
     # conftest pins every settings facade to one per-test file.
     assert (tmp_path / "pytest-sidepulse-settings.json").exists()
     reset = controller._core_dispatch("reset_settings", {"paths": ["alert_burst", "no.such.path"]})
@@ -3215,6 +3254,49 @@ def test_a_state_build_never_forks_ps_on_the_run_loop__and_1_more(cleared, monke
     assert not controller._core_extras_awaiting_table
 
 
+def test_set_setting_replies_before_its_save_and_its_refresh__and_2_more(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: set_setting_replies_before_its_save_and_its_refresh
+    """A toggle used to write a temp file, fsync twice and run a whole
+    refresh (which could wait on ``ps``) before it answered. Now the
+    settings document goes out, the save is queued and the refresh runs
+    after the reply."""
+    from jrbar import status_bar_legacy as legacy
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    saved: list[int] = []
+    monkeypatch.setattr(legacy, "save_settings", lambda settings: saved.append(settings.alert_burst))
+    scheduled: list[str] = []
+    controller.schedule_event_refresh = lambda: scheduled.append("refresh")
+    controller.refresh_.reset_mock()
+    published = len(controller._core.published)
+    reply = controller._core_dispatch("set_setting", {"path": "alert_burst", "value": 2})
+    assert reply["value"] == 2
+    controller.refresh_.assert_not_called()
+    assert scheduled == ["refresh"]
+    assert saved == []
+    assert controller._persistence_writer.snapshot().pending_count == 1
+    settings_frames = [doc for kind, doc in controller._core.published[published:] if kind == "settings"]
+    assert settings_frames and settings_frames[-1]["document"]["alert_burst"] == 2
+
+    # --- scenario: a_burst_of_toggles_writes_once_with_the_last_value
+    for value in (3, 4, 5):
+        controller._core_dispatch("set_setting", {"path": "alert_burst", "value": value})
+    assert controller._persistence_writer.snapshot().pending_count == 1
+    assert controller._core_flush_settings() is True
+    assert saved == [5]
+    assert controller._core_flush_settings() is True
+    assert saved == [5], "nothing new to write"
+
+    # --- scenario: an_unsaved_toggle_is_written_at_quit
+    import dataclasses
+
+    controller.settings = dataclasses.replace(controller.settings, alert_burst=7)
+    controller._core_settings_dirty = True
+    controller._core_quit_flush()
+    assert saved[-1] == 7 and not controller._core_settings_dirty
+
+
 def test_the_run_loop_watchdog_starts_with_the_daemon_and_sees_the_command(headless) -> None:
     """A stall is named with the command the run loop was running; the
     watchdog's no-op comes back through its own selector."""
@@ -3225,7 +3307,7 @@ def test_the_run_loop_watchdog_starts_with_the_daemon_and_sees_the_command(headl
     watchdog = controller._core_watchdog
     assert isinstance(watchdog, RunLoopWatchdog)
     seen: list[str | None] = []
-    controller._core_legacy = lambda: seen.append(controller._core_command_in_flight) or status_bar
+    controller._core_after_settings_change = lambda touched: seen.append(controller._core_command_in_flight)
     box = core_runtime.CoreCommandBox("set_setting", {"path": "alert_burst", "value": 4})
     controller.runCoreCommand_(box)
     assert seen and seen[0] == "set_setting"
