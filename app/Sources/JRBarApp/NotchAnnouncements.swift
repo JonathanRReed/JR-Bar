@@ -570,11 +570,24 @@ final class TinkPlayer: NotchTickPlayer, @unchecked Sendable {
         self.volume = volume
     }
 
-    /// Where Tink lives: the system's sounds first, then the places a
-    /// person's own sounds go.
-    static let candidates = ["/System/Library/Sounds/Tink.aiff",
-                             "/Library/Sounds/Tink.aiff",
-                             NSHomeDirectory() + "/Library/Sounds/Tink.aiff"]
+    /// Where Tink lives, in `NSSound(named:)`'s own order: the app
+    /// bundle, then the person's sounds, then the libraries' — a
+    /// custom Tink in ~/Library/Sounds still wins over the system's.
+    static let candidates: [String] = {
+        let dirs = [(Bundle.main.resourcePath ?? "") ,
+                    NSHomeDirectory() + "/Library/Sounds",
+                    "/Library/Sounds",
+                    "/Network/Library/Sounds",
+                    "/System/Library/Sounds"]
+        let exts = ["aiff", "aif", "aifc", "wav", "caf", "m4a", "mp3", "snd"]
+        var paths: [String] = []
+        for dir in dirs where !dir.isEmpty {
+            for ext in exts {
+                paths.append(dir + "/Tink." + ext)
+            }
+        }
+        return paths
+    }()
 
     func prepare() {
         guard !loaded else { return }

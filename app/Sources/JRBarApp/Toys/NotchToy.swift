@@ -758,6 +758,9 @@ final class NotchToy: Toy {
     private func armPrewarm(before delay: TimeInterval) {
         prewarmWork?.cancel()
         prewarmWork = nil
+        // The *effective* delay, not the setting's raw number: a pointer
+        // down from the menu bar gets at least 300 ms either way, which
+        // is idle time the prewarm may as well spend.
         guard delay > Self.prewarmDelay * 1.5 else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {

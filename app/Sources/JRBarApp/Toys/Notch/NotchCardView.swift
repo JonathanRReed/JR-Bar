@@ -409,8 +409,16 @@ struct NotchCardRevealSteps: Equatable {
     var privacy = 0
     var media = 0
     var battery = 0
-    /// The shelf page's first row; its rows follow on in order.
-    var shelf = 0
+    /// The shelf page's rows, each in the card's order; the weather,
+    /// reminders, mirror and toggles rows always draw, so their steps
+    /// close over any absent tray, timers or calendar.
+    var shelfTray = 0
+    var shelfTimers = 0
+    var shelfWeather = 0
+    var shelfCalendar = 0
+    var shelfReminders = 0
+    var shelfMirror = 0
+    var shelfToggles = 0
     var pageBar = 0
 
     @MainActor
@@ -420,12 +428,13 @@ struct NotchCardRevealSteps: Equatable {
                   more: model.rows.count > NotchIsland.rowLimit,
                   meters: model.meters.count, privacy: model.privacyLine != nil,
                   media: model.utility.media != nil, battery: model.utility.power.hasBattery,
-                  shelfRows: 7)
+                  tray: model.tray.shelfEnabled(), timers: !model.timers.entries.isEmpty,
+                  calendar: !model.weatherInCalendarSlot)
     }
 
     /// Pure, for the tests: which rows are drawn, in the card's order.
     init(hint: Bool, page: NotchCardModel.Page, sessions: Int, more: Bool, meters: Int,
-         privacy: Bool, media: Bool, battery: Bool, shelfRows: Int) {
+         privacy: Bool, media: Bool, battery: Bool, tray: Bool, timers: Bool, calendar: Bool) {
         var next = 0
         func take(_ drawn: Bool, count: Int = 1) -> Int {
             let step = next
@@ -442,7 +451,13 @@ struct NotchCardRevealSteps: Equatable {
             self.media = take(media)
             self.battery = take(battery)
         case .shelf:
-            self.shelf = take(true, count: shelfRows)
+            self.shelfTray = take(tray)
+            self.shelfTimers = take(timers)
+            self.shelfWeather = take(true)
+            self.shelfCalendar = take(calendar)
+            self.shelfReminders = take(true)
+            self.shelfMirror = take(true)
+            self.shelfToggles = take(true)
         }
         self.pageBar = next
     }
@@ -793,7 +808,7 @@ struct NotchCardView: View {
     @ViewBuilder
     private func shelfPage(_ steps: NotchCardRevealSteps) -> some View {
         if model.tray.shelfEnabled() {
-            revealRow(steps.shelf, ShelfTrayRow(tray: model.tray, style: style,
+            revealRow(steps.shelfTray, ShelfTrayRow(tray: model.tray, style: style,
                                       handTargets: model.handTargets,
                                       onHand: { picked, session in
                                           model.handToAgent(picked, session: session)
@@ -802,19 +817,19 @@ struct NotchCardView: View {
                                       onDropLanded: { model.onDropLanded?() }))
         }
         if !model.timers.entries.isEmpty {
-            revealRow(steps.shelf + 1, ShelfTimersRow(timers: model.timers, style: style))
+            revealRow(steps.shelfTimers, ShelfTimersRow(timers: model.timers, style: style))
         }
         // The weather leads the day; on a day with nothing scheduled it
         // is the day, and the calendar's empty line goes.
-        revealRow(steps.shelf + 2, ShelfWeatherRow(reading: model.utility.weather.reading, style: style))
+        revealRow(steps.shelfWeather, ShelfWeatherRow(reading: model.utility.weather.reading, style: style))
         if !model.weatherInCalendarSlot {
-            revealRow(steps.shelf + 3, ShelfCalendarRow(calendar: model.calendar, state: model.calendar.state,
-                                                        style: style))
+            revealRow(steps.shelfCalendar, ShelfCalendarRow(calendar: model.calendar, state: model.calendar.state,
+                                                            style: style))
         }
-        revealRow(steps.shelf + 4, ShelfRemindersRow(reminders: model.reminders, state: model.reminders.state,
-                                                     style: style))
-        revealRow(steps.shelf + 5, ShelfMirrorRow(mirror: model.mirror, style: style))
-        revealRow(steps.shelf + 6, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
+        revealRow(steps.shelfReminders, ShelfRemindersRow(reminders: model.reminders, state: model.reminders.state,
+                                                          style: style))
+        revealRow(steps.shelfMirror, ShelfMirrorRow(mirror: model.mirror, style: style))
+        revealRow(steps.shelfToggles, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
     }
 
     /// The card's foot: the two pages as a small switcher — the shelf's

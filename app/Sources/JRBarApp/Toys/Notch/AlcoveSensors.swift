@@ -97,6 +97,9 @@ final class NotchSensorMonitor {
         timer?.invalidate()
         timer = nil
         disarmListeners()
+        // An edge queued during the in-flight read is dropped too —
+        // otherwise the next start would run one redundant poll.
+        readAgain = false
         // A stopped monitor reports quiet — a parked island's dots die
         // with it rather than linger stale.
         state = NotchSensorState()
