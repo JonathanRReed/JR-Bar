@@ -194,7 +194,8 @@ extension ConfettiView {
     /// The provider's own mark, when the app knows one.
     nonisolated static func glyph(for provider: String?) -> ConfettiLook.Glyph? {
         guard let id = provider?.lowercased(), let style = ProviderStyle.table[id] else { return nil }
-        switch style.glyph {
+        switch style.mark {
+        case .logo(let logo): return .logo(logo.id)
         case .symbol(let name): return .symbol(name)
         case .text(let text): return .text(text)
         }

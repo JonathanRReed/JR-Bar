@@ -860,7 +860,9 @@ struct GraphGlyph: Hashable {
         }
         let color = solid ? Color.white : style.accent
         Group {
-            switch style.glyph {
+            switch style.mark {
+            case .logo(let logo):
+                ProviderLogoMark(logo: logo, size: size)
             case .symbol(let name):
                 Image(systemName: name).font(.system(size: size, weight: .bold))
             case .text(let text):

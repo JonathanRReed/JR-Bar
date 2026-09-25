@@ -64,7 +64,7 @@ struct ConfettiPaletteTests {
         let look = ConfettiView.look(.everyone, tint: ConfettiView.toysTint, provider: nil,
                                      everyone: working.map { (id: $0.0, color: $0.1) })
         #expect(same(look.slots[0], working[0].1) && same(look.slots[1], working[1].1))
-        #expect(look.glyphs == [.symbol("asterisk"), .symbol("sparkle")])
+        #expect(look.glyphs == [.logo("claude"), .logo("gemini")])
         // Nobody working: the burst's own colour instead.
         let alone = ConfettiView.look(.everyone, tint: ProviderStyle.style(for: "codex").accent, provider: "codex")
         #expect(same(alone.slots[0], ProviderStyle.style(for: "codex").accent))
@@ -94,7 +94,7 @@ struct ConfettiPaletteTests {
         #expect(look.weights[0] == look.weights.max())
         let deep = ConfettiView.deeper(tint)
         #expect(!look.slots.contains { same($0, deep) }, "the deeper shade is a back, never a face")
-        #expect(look.glyphs == [.symbol("asterisk")])
+        #expect(look.glyphs == [.logo("claude")])
         // A lit face is brighter than its own back at the same light.
         let face = look.paper(far: false, front: true, slot: 0, shade: 1)
         let back = look.paper(far: false, front: false, slot: 0, shade: 1)
