@@ -8,9 +8,12 @@ import SwiftUI
 /// drawn where the burst puts it — a paper plane tumbling in 3D, lit
 /// from the upper left, its back a deeper shade of its front, a far
 /// layer smaller and hazier underneath. Or, under Reduce Motion, one
-/// soft glow at the lip and nothing else. One Canvas at up to 60 fps;
-/// a frame evaluates positions and fills paths, and never builds a path
-/// or mixes a colour.
+/// soft glow at the lip and nothing else. One Canvas at up to 60 fps.
+/// A piece's frame evaluates its position and fills a shape built once,
+/// in a colour mixed once when the burst fired, and its glyphs are set
+/// as type once a burst (`ConfettiMarks`). Only the pop (for its first
+/// third of a second), the Reduce Motion glow and Rain's clip build a
+/// shape in a frame.
 struct ConfettiView: View {
     let burst: ConfettiBurst
     let look: ConfettiLook
@@ -20,6 +23,9 @@ struct ConfettiView: View {
     var ledges: ConfettiLedgeWatch?
     /// Where each frame's drawing time goes, for the card's cost line.
     var meter: ConfettiDrawMeter?
+    /// The burst's glyphs, kept once they're set as type; nil (a render
+    /// proof's single frame) sets them for the frame.
+    var marks: ConfettiMarks?
     /// Draw the screen at this size, its top middle centred in the canvas
     /// (the card's preview); nil draws it full size, or shrunk to fit a
     /// narrower canvas.
@@ -75,7 +81,7 @@ struct ConfettiView: View {
             canvas.clip(to: Path(CGRect(x: 0, y: burst.stage.menuBarBottom, width: width,
                                         height: max(0, height - burst.stage.menuBarBottom))))
         }
-        let marks = resolveMarks(in: canvas)
+        let marks = self.marks?.resolved(look.glyphs, in: canvas) ?? Self.resolve(look.glyphs, in: canvas)
         let gone = ledges?.gone ?? [:]
         for index in burst.pieces.indices {
             guard let frame = burst.frame(of: index, at: time) else { continue }
@@ -157,9 +163,9 @@ struct ConfettiView: View {
         return p
     }
 
-    /// A provider's mark, resolved for this frame: set as heavy type so a
-    /// thin symbol (Claude's asterisk) still reads at fleck size.
-    private typealias Mark = GraphicsContext.ResolvedText
+    /// A provider's mark, set as heavy type so a thin symbol (Claude's
+    /// asterisk) still reads at fleck size.
+    typealias Mark = GraphicsContext.ResolvedText
 
     private func paint(_ piece: ConfettiBurst.Piece, frame: ConfettiBurst.Frame, paper: ConfettiLook.Paint,
                        marks: [Mark], in c: inout GraphicsContext) {
@@ -209,10 +215,10 @@ struct ConfettiView: View {
     /// The point size a letter mark is set at before it's scaled to its piece.
     private static let markPoints = 13.0
 
-    /// The glyphs this burst draws, resolved once a frame.
-    private func resolveMarks(in canvas: GraphicsContext) -> [Mark] {
+    /// `glyphs` set as type in `canvas`.
+    static func resolve(_ glyphs: [ConfettiLook.Glyph], in canvas: GraphicsContext) -> [Mark] {
         let font = Font.system(size: Self.markPoints, weight: .black, design: .rounded)
-        return look.glyphs.map { glyph in
+        return glyphs.map { glyph in
             switch glyph {
             case .symbol(let name): return canvas.resolve(Text(Image(systemName: name)).font(font))
             case .text(let text): return canvas.resolve(Text(text).font(font))
@@ -302,6 +308,27 @@ struct ConfettiView: View {
         canvas.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius,
                                            width: 2 * radius, height: 2 * radius)),
                     with: .radialGradient(gradient, center: point, startRadius: 0, endRadius: radius))
+    }
+}
+
+/// A burst's glyphs, set as type on its first frame and drawn from then
+/// on: setting type is text layout, and a burst draws a few hundred
+/// frames of the same few marks. New glyphs (the card's preview after a
+/// palette pick) are set again.
+@MainActor
+final class ConfettiMarks {
+    private var glyphs: [ConfettiLook.Glyph]?
+    private var marks: [ConfettiView.Mark] = []
+    /// How many times the glyphs have been set, for the tests.
+    private(set) var resolves = 0
+
+    func resolved(_ glyphs: [ConfettiLook.Glyph], in canvas: GraphicsContext) -> [ConfettiView.Mark] {
+        if glyphs != self.glyphs {
+            self.glyphs = glyphs
+            marks = ConfettiView.resolve(glyphs, in: canvas)
+            resolves += 1
+        }
+        return marks
     }
 }
 

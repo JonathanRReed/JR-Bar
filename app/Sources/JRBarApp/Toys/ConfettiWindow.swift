@@ -23,7 +23,8 @@ final class ConfettiWindow: NSPanel {
     init(burst: ConfettiBurst, look: ConfettiLook, frame: NSRect, meter: ConfettiDrawMeter?) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let watch = burst.recipe.landing == .rest && !burst.ledges.isEmpty ? ConfettiLedgeWatch() : nil
-        let view = ConfettiView(burst: burst, look: look, flash: reduceMotion, ledges: watch, meter: meter)
+        let view = ConfettiView(burst: burst, look: look, flash: reduceMotion, ledges: watch, meter: meter,
+                                marks: ConfettiMarks())
         self.burst = burst
         life = reduceMotion ? ConfettiView.flashLife : burst.life
         hosting = NSHostingView(rootView: view)
