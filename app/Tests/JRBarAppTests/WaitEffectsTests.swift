@@ -1,0 +1,452 @@
+import CoreGraphics
+import Foundation
+import Testing
+import JRBarCore
+@testable import JRBarApp
+
+/// The wait rule (nothing under 2 s, an orb from 2 s, a beam from 3 s),
+/// the orb's activity vocabulary and the beam's motion flags — every
+/// clock here is the test's own.
+@Suite("Wait effects")
+@MainActor
+struct WaitEffectsTests {
+    static let start = Date(timeIntervalSince1970: 1_800_000_000)
+
+    // MARK: WaitPolicy
+
+    @Test("the thresholds are two and three seconds")
+    func thresholds() {
+        #expect(WaitPolicy.orbAfter == 2)
+        #expect(WaitPolicy.beamAfter == 3)
+        #expect(WaitPolicy.orbAfter < WaitPolicy.beamAfter)
+    }
+
+    @Test("a wait is quiet under 2 s, an orb from 2 s, a beam from 3 s")
+    func stages() {
+        let cases: [(TimeInterval, WaitStage)] = [
+            (0, .quiet), (0.5, .quiet), (1.999, .quiet), (2, .orb), (2.5, .orb), (2.999, .orb),
+            (3, .beam), (3.5, .beam), (600, .beam),
+        ]
+        for (elapsed, expected) in cases {
+            let stage = WaitPolicy.stage(since: Self.start, now: Self.start.addingTimeInterval(elapsed))
+            #expect(stage == expected, "\(elapsed) s")
+        }
+    }
+
+    @Test("no wait, or a clock read before the wait began, is quiet")
+    func quietWithoutAWait() {
+        #expect(WaitPolicy.stage(since: nil, now: Self.start) == .quiet)
+        #expect(WaitPolicy.stage(since: Self.start, now: Self.start.addingTimeInterval(-10)) == .quiet)
+    }
+
+    @Test("each stage draws what the rule says, and only that")
+    func stageDraws() {
+        #expect(!WaitStage.quiet.showsOrb && !WaitStage.quiet.showsBeam)
+        #expect(WaitStage.orb.showsOrb && !WaitStage.orb.showsBeam)
+        #expect(WaitStage.beam.showsOrb && WaitStage.beam.showsBeam)
+        #expect(WaitStage.allCases.sorted() == [.quiet, .orb, .beam])
+    }
+
+    @Test("a live wait schedules only its remaining thresholds, and a finished or absent one none")
+    func boundaries() {
+        let orbAt = Self.start.addingTimeInterval(2)
+        let beamAt = Self.start.addingTimeInterval(3)
+        #expect(WaitPolicy.boundaries(since: Self.start, after: Self.start) == [orbAt, beamAt])
+        #expect(WaitPolicy.boundaries(since: Self.start, after: Self.start.addingTimeInterval(2.5)) == [beamAt])
+        #expect(WaitPolicy.boundaries(since: Self.start, after: beamAt).isEmpty)
+        #expect(WaitPolicy.boundaries(since: nil, after: Self.start).isEmpty)
+        #expect(WaitPolicy.isLive(since: Self.start, now: Self.start.addingTimeInterval(1)))
+        #expect(!WaitPolicy.isLive(since: Self.start, now: Self.start.addingTimeInterval(4)))
+        #expect(!WaitPolicy.isLive(since: nil, now: Self.start))
+    }
+
+    @Test("a wait's timeline holds its start and both thresholds, so each render reads its own stage")
+    func schedule() {
+        let dates = WaitPolicy.schedule(since: Self.start)
+        let moments = [Self.start, Self.start.addingTimeInterval(2), Self.start.addingTimeInterval(3)]
+        #expect(dates == [.distantPast] + moments + [.distantFuture])
+        #expect(moments.map { WaitPolicy.stage(since: Self.start, now: $0) } == [.quiet, .orb, .beam])
+        #expect(WaitPolicy.stage(since: Self.start, now: .distantPast) == .quiet)
+        #expect(WaitPolicy.schedule(since: nil).isEmpty)
+    }
+
+    @Test("an explicit timeline opens in the past and closes with a date that never comes")
+    func explicitTimeline() {
+        let later = Self.start.addingTimeInterval(45)
+        #expect(ExplicitTimeline.moments([later, Self.start]) == [.distantPast, Self.start, later, .distantFuture])
+        #expect(ExplicitTimeline.moments([]).isEmpty)
+    }
+
+    // MARK: AgentActivity
+
+    /// Every provider's own spelling of its tools, as the hook reports
+    /// them, and what the orb makes of them.
+    static let providerTools: [(provider: String, tool: String, expected: AgentActivity)] = [
+        // Claude Code
+        ("claude", "Read", .searching), ("claude", "Grep", .searching), ("claude", "Glob", .searching),
+        ("claude", "LS", .searching), ("claude", "WebSearch", .searching), ("claude", "WebFetch", .searching),
+        ("claude", "Edit", .writing), ("claude", "Write", .writing), ("claude", "MultiEdit", .writing),
+        ("claude", "NotebookEdit", .writing), ("claude", "Bash", .running), ("claude", "BashOutput", .running),
+        ("claude", "KillShell", .running), ("claude", "Task", .thinking), ("claude", "Agent", .thinking),
+        ("claude", "TodoWrite", .thinking), ("claude", "Skill", .thinking), ("claude", "SlashCommand", .thinking),
+        ("claude", "AskUserQuestion", .listening), ("claude", "ExitPlanMode", .listening),
+        ("claude", "mcp__github__search_code", .searching), ("claude", "mcp__github__create_issue", .writing),
+        // Codex
+        ("codex", "shell", .running), ("codex", "exec_command", .running), ("codex", "local_shell", .running),
+        ("codex", "unified_exec", .running), ("codex", "write_stdin", .running), ("codex", "exec", .running),
+        ("codex", "apply_patch", .writing), ("codex", "web_search", .searching), ("codex", "view_image", .searching),
+        ("codex", "update_plan", .thinking), ("codex", "mcp__codex_apps__gmail__batch_read_email", .searching),
+        // Gemini CLI
+        ("gemini", "read_file", .searching), ("gemini", "read_many_files", .searching),
+        ("gemini", "list_directory", .searching), ("gemini", "search_file_content", .searching),
+        ("gemini", "glob", .searching), ("gemini", "google_web_search", .searching), ("gemini", "web_fetch", .searching),
+        ("gemini", "write_file", .writing), ("gemini", "replace", .writing),
+        ("gemini", "run_shell_command", .running),
+        // OpenCode
+        ("opencode", "read", .searching), ("opencode", "grep", .searching), ("opencode", "list", .searching),
+        ("opencode", "webfetch", .searching), ("opencode", "edit", .writing), ("opencode", "write", .writing),
+        ("opencode", "patch", .writing), ("opencode", "multiedit", .writing), ("opencode", "bash", .running),
+        ("opencode", "todowrite", .thinking), ("opencode", "task", .thinking),
+        // Cursor
+        ("cursor", "run_terminal_cmd", .running), ("cursor", "edit_file", .writing),
+        ("cursor", "codebase_search", .searching), ("cursor", "grep_search", .searching),
+        ("cursor", "file_search", .searching), ("cursor", "search_replace", .writing),
+        ("cursor", "delete_file", .writing), ("cursor", "list_dir", .searching),
+        // Devin
+        ("devin", "run_subagent", .thinking), ("devin", "sidekick", .thinking), ("devin", "view", .searching),
+        ("devin", "str_replace", .writing), ("devin", "find", .searching), ("devin", "exec", .running),
+        // Kiro
+        ("kiro", "fs_read", .searching), ("kiro", "fs_write", .writing), ("kiro", "execute_bash", .running),
+        // The daemon's own classification tables (`mailbox._*_TOOLS`)
+        ("jrbar", "open_file", .searching), ("jrbar", "read_text_file", .searching), ("jrbar", "readfile", .searching),
+        ("jrbar", "rg", .searching), ("jrbar", "search_files", .searching), ("jrbar", "search", .searching),
+        ("jrbar", "powershell", .running), ("jrbar", "run_terminal_command", .running), ("jrbar", "terminal", .running),
+        ("jrbar", "zsh", .running), ("jrbar", "think", .thinking), ("jrbar", "reason", .thinking),
+    ]
+
+    @Test("every provider's tool names map to the activity they are")
+    func providerToolNames() {
+        for entry in Self.providerTools {
+            let got = AgentActivity.from(event: "PreToolUse", tool: entry.tool)
+            #expect(got == entry.expected, "\(entry.provider) \(entry.tool)")
+        }
+    }
+
+    @Test("every exact tool name maps, whatever its case or surrounding space")
+    func exactTableIsCaseBlind() {
+        for (name, expected) in AgentActivity.exactTools {
+            #expect(AgentActivity.from(tool: name) == expected, "\(name)")
+            #expect(AgentActivity.from(tool: name.uppercased()) == expected, "\(name) upper-cased")
+            #expect(AgentActivity.from(tool: "  \(name)\n") == expected, "\(name) padded")
+        }
+    }
+
+    @Test("no tool name is claimed by two activities")
+    func toolListsAreDisjoint() {
+        let lists = [AgentActivity.searchTools, AgentActivity.writeTools, AgentActivity.runTools,
+                     AgentActivity.thinkTools, AgentActivity.askTools]
+        let total = lists.reduce(0) { $0 + $1.count }
+        #expect(Set(lists.flatMap { $0 }).count == total)
+        #expect(AgentActivity.exactTools.count == total)
+    }
+
+    @Test("an unknown tool is read by its words, and nothing at all is thinking")
+    func unknownToolsByTheirWords() {
+        let cases: [(String, AgentActivity)] = [
+            ("readSourceFile", .searching), ("fetch_url", .searching), ("github__list_pull_requests", .searching),
+            ("createPullRequest", .writing), ("save_note", .writing), ("run_tests", .running),
+            ("execute_python", .running), ("spawn_subagent", .thinking), ("plan_steps", .thinking),
+            ("mystery", .thinking), ("functions.shell", .running), ("container.exec", .running),
+        ]
+        for (tool, expected) in cases {
+            #expect(AgentActivity.from(tool: tool) == expected, "\(tool)")
+        }
+        #expect(AgentActivity.from(tool: "") == nil)
+        #expect(AgentActivity.from(tool: "   ") == nil)
+        #expect(AgentActivity.toolWords("readSourceFile") == ["read", "source", "file"])
+        #expect(AgentActivity.strippedTool("mcp__github__search_code") == "search_code")
+    }
+
+    @Test("every canonical event the daemon sends has an activity, with and without a tool")
+    func everyEvent() {
+        let thinking = ["UserPromptSubmit", "SessionStart", "PreCompact", "PostCompact", "SubagentStart",
+                        "SubagentStop", "Stop", "StopFailure", "SessionEnd", "Interrupt", "HermesTurnEnd",
+                        "SessionFinalize", "ApiRequestError", "PostToolUse", "PostToolUseFailure",
+                        "PermissionDenied", "ElicitationResult"]
+        for event in thinking {
+            #expect(AgentActivity.from(event: event, tool: nil) == .thinking, "\(event)")
+            // A tool left over from an earlier event says nothing here.
+            #expect(AgentActivity.from(event: event, tool: "Bash") == .thinking, "\(event) + Bash")
+        }
+        for event in ["PermissionRequest", "Elicitation", "Notification"] {
+            #expect(AgentActivity.from(event: event, tool: nil) == .listening, "\(event)")
+            #expect(AgentActivity.from(event: event, tool: "Edit") == .listening, "\(event) + Edit")
+        }
+        // A tool about to run says what it is; Cursor's shell pair names none.
+        #expect(AgentActivity.from(event: "PreToolUse", tool: "Edit") == .writing)
+        #expect(AgentActivity.from(event: "PreToolUse", tool: nil) == .running)
+        #expect(AgentActivity.from(event: "PreToolUse", tool: "") == .running)
+        // No event, or one this table does not know, still reads the tool.
+        #expect(AgentActivity.from(event: nil, tool: "Grep") == .searching)
+        #expect(AgentActivity.from(event: "SomethingNew", tool: "Bash") == .running)
+        #expect(AgentActivity.from(event: nil, tool: nil) == .thinking)
+        #expect(AgentActivity.from(event: " PreToolUse ", tool: "Read") == .searching)
+    }
+
+    @Test("every activity is reachable from a real hook")
+    func everyActivityReachable() {
+        let reached = Set([
+            AgentActivity.from(event: "UserPromptSubmit", tool: nil),
+            AgentActivity.from(event: "PreToolUse", tool: "Grep"),
+            AgentActivity.from(event: "PreToolUse", tool: "apply_patch"),
+            AgentActivity.from(event: "PreToolUse", tool: "shell"),
+            AgentActivity.from(event: "PermissionRequest", tool: "Bash"),
+        ])
+        #expect(reached == Set(AgentActivity.allCases))
+    }
+
+    @Test("only a live working row has an activity for its orb")
+    func rowActivity() {
+        func makeRow(_ mode: String, stale: Bool = false, event: String? = "PreToolUse", tool: String? = "Read") -> SessionRow {
+            SessionRow(session: CoreSession(id: "claude:a", provider: "claude", mode: mode, stale: stale,
+                                            event: event, tool: tool), pinnedAsk: nil)
+        }
+        #expect(makeRow("working").agentActivity == .searching)
+        #expect(makeRow("working", tool: "Bash").agentActivity == .running)
+        #expect(makeRow("working", event: "PostToolUse", tool: "Bash").agentActivity == .thinking)
+        #expect(makeRow("working", stale: true).agentActivity == nil)
+        #expect(makeRow("completed").agentActivity == nil)
+        #expect(makeRow("idle").agentActivity == nil)
+        #expect(makeRow("failed").agentActivity == nil)
+        let ask = CoreAsk(session: "claude:a", summary: "Bash", answerable: true, request: "r")
+        #expect(SessionRow(session: CoreSession(id: "claude:a", provider: "claude", mode: "waiting", ask: ask),
+                           pinnedAsk: nil).agentActivity == nil)
+        #expect(SessionRow(orphanAsk: ask).agentActivity == nil)
+    }
+
+    // MARK: ThinkingOrb
+
+    @Test("under Reduce Motion every orb holds its still arrangement and runs no clock")
+    func orbReduceMotion() {
+        for activity in AgentActivity.allCases {
+            for animating in [true, false] {
+                let mode = OrbMotion.mode(activity: activity, animating: animating, reduced: true)
+                #expect(mode == .still(OrbLayout.stillTime(activity)), "\(activity)")
+                #expect(!mode.isAnimated)
+            }
+        }
+    }
+
+    @Test("an orb runs its clock only while its host animates it and motion is allowed")
+    func orbAnimatesOnlyWhenAsked() {
+        for activity in AgentActivity.allCases {
+            #expect(OrbMotion.mode(activity: activity, animating: true, reduced: false) == .animated)
+            #expect(!OrbMotion.mode(activity: activity, animating: false, reduced: false).isAnimated)
+            #expect(OrbMotion.mode(activity: activity, animating: true, reduced: false, stillTime: 1.5) == .still(1.5))
+        }
+        #expect(OrbMotion.frameInterval == 1.0 / 30)
+    }
+
+    @Test("each activity's still arrangement is its own, and every dot stays inside the orb")
+    func orbArrangements() {
+        var seen: [[OrbDot]] = []
+        for activity in AgentActivity.allCases {
+            let still = OrbLayout.dots(activity, at: OrbLayout.stillTime(activity))
+            #expect(!still.isEmpty)
+            #expect(!seen.contains(still), "\(activity) looks like another activity")
+            seen.append(still)
+            for time in stride(from: 0.0, through: 6.0, by: 0.05) {
+                for dot in OrbLayout.dots(activity, at: time) {
+                    #expect(abs(dot.x) + dot.radius <= 1.001, "\(activity) at \(time)")
+                    #expect(abs(dot.y) + dot.radius <= 1.001, "\(activity) at \(time)")
+                    #expect(dot.radius > 0 && dot.opacity >= 0 && dot.opacity <= 1)
+                }
+            }
+        }
+    }
+
+    @Test("an animated orb actually moves, and loops")
+    func orbMoves() {
+        for activity in AgentActivity.allCases {
+            #expect(OrbLayout.dots(activity, at: 0.2) != OrbLayout.dots(activity, at: 0.7), "\(activity)")
+        }
+        #expect(OrbLayout.dots(.running, at: 0.1) == OrbLayout.dots(.running, at: 0.1))
+    }
+
+    // MARK: BorderBeam
+
+    @Test("an inactive beam draws nothing and runs no clock, reduced or not")
+    func beamInactive() {
+        for reduced in [false, true] {
+            let mode = BeamMotion.mode(active: false, reduced: reduced)
+            #expect(mode == .off)
+            #expect(!mode.draws)
+            #expect(!mode.isAnimating)
+        }
+    }
+
+    @Test("under Reduce Motion an active beam is a still glow; otherwise it travels")
+    func beamReduceMotion() {
+        let glow = BeamMotion.mode(active: true, reduced: true)
+        #expect(glow == .glow && glow.draws && !glow.isAnimating)
+        let travel = BeamMotion.mode(active: true, reduced: false)
+        #expect(travel == .travel && travel.draws && travel.isAnimating)
+    }
+
+    @Test("a lap takes about 2.4 s, and the fade a quarter second")
+    func beamTiming() {
+        #expect(BeamGeometry.lap == 2.4)
+        #expect(BeamGeometry.fade == 0.25)
+        #expect(BeamGeometry.phase(at: 0) == 0)
+        #expect(abs(BeamGeometry.phase(at: 1.2) - 0.5) < 1e-9)
+        #expect(abs(BeamGeometry.phase(at: 2.4 * 7 + 0.6) - 0.25) < 1e-9)
+        #expect(BeamGeometry.phase(at: -0.6) >= 0)
+    }
+
+    @Test("the ring is concentric with the element's corners and its length is the border's")
+    func beamGeometry() {
+        let size = CGSize(width: 200 + 2 * BeamGeometry.bleed, height: 80 + 2 * BeamGeometry.bleed)
+        let rect = BeamGeometry.ringRect(in: size)
+        #expect(abs(rect.width - (200 - BeamGeometry.lineWidth)) < 1e-9)
+        #expect(BeamGeometry.ringRadius(10, in: rect) == 10 - BeamGeometry.lineWidth / 2)
+        #expect(BeamGeometry.ringRadius(0, in: rect) == 0)
+        #expect(BeamGeometry.ringRadius(500, in: rect) == rect.height / 2)
+        let square = CGRect(x: 0, y: 0, width: 100, height: 50)
+        #expect(BeamGeometry.perimeter(of: square, cornerRadius: 0) == 300)
+        #expect(abs(BeamGeometry.perimeter(of: square, cornerRadius: 25) - (100 + 25 * 2 * .pi)) < 1e-9)
+        let baseline = BeamGeometry.trackLength(.baseline, in: CGSize(width: 408, height: 60))
+        #expect(baseline == 400 + BeamGeometry.visibleLength)
+        #expect(BeamGeometry.visibleLength < 200, "a short arc, not a racing stripe")
+        // A baseline stretch is clipped to the edge, and gone off either end.
+        let bar = CGSize(width: 108, height: 60)
+        let entering = BeamGeometry.baselineSpan(of: -10, length: 26, in: bar)
+        #expect(entering.minX == BeamGeometry.bleed && entering.width == 16)
+        let leaving = BeamGeometry.baselineSpan(of: 90, length: 26, in: bar)
+        #expect(leaving.minX == BeamGeometry.bleed + 90 && leaving.width == 10)
+        #expect(BeamGeometry.baselineSpan(of: -40, length: 26, in: bar).width == 0)
+        #expect(BeamGeometry.baselineSpan(of: 120, length: 26, in: bar).width == 0)
+    }
+
+    @Test("a dash phase shows the pattern's one stretch where it is asked for")
+    func beamDashPhase() {
+        let period = BeamGeometry.period
+        #expect(BeamGeometry.dashPhase(showingFrom: 0) == 0)
+        #expect(BeamGeometry.dashPhase(showingFrom: 10) == period - 10)
+        #expect(BeamGeometry.dashPhase(showingFrom: -5) == 5)
+        #expect(BeamGeometry.dashPhase(showingFrom: period + 10) == period - 10)
+        for dash in [BeamGeometry.headDash, BeamGeometry.trailDash, BeamGeometry.glowDash, BeamGeometry.coreDash] {
+            #expect(dash.count == 2 && dash.reduce(0, +) == period, "one stretch a period")
+        }
+        #expect(BeamGeometry.trailOpacity.count == BeamGeometry.trailSteps)
+        #expect(BeamGeometry.trailOpacity == BeamGeometry.trailOpacity.sorted(by: >), "the trail only fades")
+    }
+
+    // MARK: The session row's slot
+
+    @Test("the mark slot is one size whatever it draws, so the trailing column never moves")
+    func rowSlotIsFixed() {
+        var sizes: Set<CGFloat> = []
+        for activity in SessionActivity.allCases {
+            for doing in [nil] + AgentActivity.allCases.map(Optional.some) {
+                let kind = SessionRowMark.kind(activity: activity, agentActivity: doing)
+                let size = SessionRowMark.slotSize(for: kind)
+                sizes.insert(size.width)
+                sizes.insert(size.height)
+            }
+        }
+        #expect(sizes == [SessionRowMark.slot])
+        #expect(SessionRowView.markRoom == 5 + SessionRowMark.slot)
+    }
+
+    @Test("only a working row with an activity draws an orb")
+    func rowSlotKinds() {
+        #expect(SessionRowMark.kind(activity: .working, agentActivity: .writing) == .orb(.writing))
+        #expect(SessionRowMark.kind(activity: .working, agentActivity: nil) == .mark(.working))
+        for activity in SessionActivity.allCases where activity != .working {
+            for doing in AgentActivity.allCases {
+                #expect(SessionRowMark.kind(activity: activity, agentActivity: doing) == .mark(activity))
+            }
+        }
+    }
+
+    @Test("rows doing different things share one trailing width")
+    func rowTrailingWidthIgnoresActivity() {
+        let now = Self.start
+        let tools = ["Read", "Edit", "Bash", "Task"]
+        let rows = tools.enumerated().map { index, tool in
+            SessionRow(session: CoreSession(id: "claude:\(index)", provider: "claude", mode: "working",
+                                            since: now.timeIntervalSince1970 - 60, event: "PreToolUse", tool: tool),
+                       pinnedAsk: nil)
+        }
+        let quietRows = tools.enumerated().map { index, _ in
+            SessionRow(session: CoreSession(id: "claude:\(index)", provider: "claude", mode: "working",
+                                            since: now.timeIntervalSince1970 - 60), pinnedAsk: nil)
+        }
+        #expect(Set(rows.compactMap(\.agentActivity)).count == 4)
+        let column = SessionRowView.trailingWidth(rows: rows, now: now)
+        #expect(column == SessionRowView.trailingWidth(rows: quietRows, now: now))
+        #expect(column == SessionRowView.trailingWidth(rows: [rows[0]], now: now))
+        let workingWord = SessionRowView.wordWidths[.working] ?? 0
+        #expect(column >= workingWord + SessionRowView.markRoom, "the word and the orb fit")
+    }
+
+    // MARK: The clocks the placements read
+
+    @Test("the desk keeps when each answer left, and forgets it when the answer lands")
+    func deskPendingSince() async {
+        let sent = Self.start.addingTimeInterval(42)
+        let probe = WaitDeskProbe()
+        let desk = AskAnswerDesk(send: { _, _, _ in CoreReply(id: "1", ok: true) })
+        desk.clock = { sent }
+        desk.send = { session, _, _ in
+            probe.seen = probe.desk?.pendingSince(session)
+            return CoreReply(id: "1", ok: true)
+        }
+        probe.desk = desk
+        let ask = CoreAsk(session: "claude:a", summary: "Bash", answerable: true, request: "r")
+        #expect(desk.pendingSince("claude:a") == nil)
+        let outcome = await desk.answer(ask, .approve)
+        #expect(outcome.ok)
+        #expect(probe.seen == sent, "in flight, the card's clock reads when it left")
+        #expect(desk.pendingSince("claude:a") == nil)
+        #expect(desk.pendingSince(nil) == nil)
+        #expect(!desk.isPending("claude:a"))
+    }
+
+    @Test("the palette times each search from when it starts reading, and stops when it is done")
+    func paletteSearchingSince() {
+        let model = PaletteModel()
+        let ticks = WaitTestClock(Self.start)
+        model.clock = { ticks.now }
+        model.load(items: [], usage: PaletteUsage(), now: Self.start)
+        #expect(model.searchingSince == nil)
+        model.query = "hid"
+        model.noteSearching(true)
+        #expect(model.searchingSince == Self.start)
+        ticks.now = Self.start.addingTimeInterval(5)
+        model.setSearchResults([], for: "hid", finished: false)
+        #expect(model.searchingSince == Self.start, "a partial answer is the same wait")
+        model.query = "hide"
+        model.noteSearching(true)
+        #expect(model.searchingSince == Self.start.addingTimeInterval(5), "a new query's search is a new wait")
+        model.setSearchResults([], for: "hide", finished: true)
+        #expect(model.searchingSince == nil)
+        model.noteSearching(true)
+        model.load(items: [], usage: PaletteUsage(), now: Self.start)
+        #expect(model.searchingSince == nil)
+    }
+}
+
+/// A clock a test moves by hand.
+@MainActor
+final class WaitTestClock {
+    var now: Date
+    init(_ now: Date) { self.now = now }
+}
+
+/// What the desk looked like from inside its own send.
+@MainActor
+final class WaitDeskProbe {
+    weak var desk: AskAnswerDesk?
+    var seen: Date?
+}

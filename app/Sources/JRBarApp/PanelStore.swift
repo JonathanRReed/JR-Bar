@@ -36,6 +36,9 @@ struct SessionRow: Identifiable, Equatable {
     /// The hook's last word about a working row, humanised ("running
     /// Bash", "compacting"); nil when there is nothing honest to say.
     let activityFact: String?
+    /// What a live working row's agent is doing, for its orb; nil on
+    /// every other row (`AgentActivity.forRow`).
+    let agentActivity: AgentActivity?
     /// Where the session was launched from (`origin.label`: "VS Code",
     /// "cloud ingest"), shown as the subtitle's quiet "via …" tail.
     let originLabel: String?
@@ -58,6 +61,7 @@ struct SessionRow: Identifiable, Equatable {
         snoozedUntil = session.snoozedUntil
         activity = SessionActivity.reduce(session)
         activityFact = Self.activityFact(session: session, activity: activity)
+        agentActivity = AgentActivity.forRow(session: session, activity: activity)
         // A peer's origin is the peer's fact: "via VS Code" on a remote row
         // would name this Mac's apps for another machine's session.
         originLabel = session.isRemote ? nil : Self.shortFact(session.origin?.label, limit: 32)
@@ -98,6 +102,7 @@ struct SessionRow: Identifiable, Equatable {
         isRemote = remote
         remoteMachine = CoreSession.remoteMachine(inID: session)
         activityFact = nil
+        agentActivity = nil
         originLabel = nil
     }
 
