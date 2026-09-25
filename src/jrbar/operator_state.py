@@ -1535,11 +1535,14 @@ def reduce_operator_state(
                 if authority_blocked and batch.source_freshness is SourceFreshness.FRESH
                 else batch.source_freshness
             )
-            works[key] = replace(
-                work,
-                source_health=batch.source_health,
-                source_freshness=freshness,
-            )
+            # Every batch touches every work of its source; rebuild only the
+            # ones whose health or freshness actually moves.
+            if old_health is not batch.source_health or work.source_freshness is not freshness:
+                works[key] = replace(
+                    work,
+                    source_health=batch.source_health,
+                    source_freshness=freshness,
+                )
             if old_health is SourceHealth.HEALTHY and batch.source_health is not SourceHealth.HEALTHY:
                 health_events.append(
                     _event(
@@ -1754,11 +1757,12 @@ def reduce_operator_state(
             SourceFreshness.RESTORED,
         }:
             freshness = SourceFreshness.FRESH
-        works[key] = replace(
-            work,
-            source_freshness=freshness,
-            timing_uncertain=uncertain,
-        )
+        if freshness is not work.source_freshness or uncertain is not work.timing_uncertain:
+            works[key] = replace(
+                work,
+                source_freshness=freshness,
+                timing_uncertain=uncertain,
+            )
 
     elapsed_delta = _advance_elapsed(previous, clock)
     source_timing = {item.source_key: item for item in decision.source_timing}

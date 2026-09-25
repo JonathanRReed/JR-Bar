@@ -1704,10 +1704,27 @@ _PROVIDER_SOURCE_REGISTRATIONS = (
 )
 
 
+# The negotiation is a pure function of the registrations, and every hook
+# asked for it three times (0.47 ms a call). One answer per registrations
+# tuple; a test that swaps the tuple gets a fresh negotiation.
+_NEGOTIATED_CACHE: tuple[object, tuple[NegotiatedProviderSource, ...]] | None = None
+
+
 def negotiated_provider_sources() -> tuple[NegotiatedProviderSource, ...]:
     """Negotiate one visible canonical row per declared read capability."""
+    global _NEGOTIATED_CACHE
+    registrations = _PROVIDER_SOURCE_REGISTRATIONS
+    cached = _NEGOTIATED_CACHE
+    if cached is not None and cached[0] is registrations:
+        return cached[1]
+    rows = _negotiate_provider_sources(registrations)
+    _NEGOTIATED_CACHE = (registrations, rows)
+    return rows
+
+
+def _negotiate_provider_sources(registrations) -> tuple[NegotiatedProviderSource, ...]:
     rows: list[NegotiatedProviderSource] = []
-    for registration in _PROVIDER_SOURCE_REGISTRATIONS:
+    for registration in registrations:
         contract = negotiate_provider_contract(
             provider_contract_document(
                 registration,
