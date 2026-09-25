@@ -482,6 +482,27 @@ struct MenuBarDragLearnTests {
         #expect(h.state.concealedApps.isEmpty)
     }
 
+    // MARK: The Item Bar at the pointer
+
+    @Test("under the pointer the bar keeps the spot it opened at through every re-frame; under the icon it follows the icon")
+    func pointerAnchorHolds() {
+        let opened = NSRect(x: 900, y: 950, width: 0, height: 0)
+        let later = NSRect(x: 1200, y: 940, width: 0, height: 0)
+        var hang = MenuBarBarAnchor()
+        hang.opened(underPointer: true, spot: opened)
+        let first = hang.current(icon: later)
+        #expect(first.rect == opened && first.centred, "photos landing or a reconcile never chase the hand")
+        hang.closed()
+        #expect(hang.pinned == nil)
+        let icon = NSRect(x: 1085, y: 956, width: 14, height: 24)
+        hang.opened(underPointer: false, spot: icon)
+        let moved = NSRect(x: 1131, y: 956, width: 14, height: 24)
+        let underIcon = hang.current(icon: moved)
+        #expect(underIcon.rect == moved && !underIcon.centred, "under the icon it follows the ‹ as it stands")
+        hang.opened(underPointer: true, spot: later)
+        #expect(hang.current(icon: icon).rect == later, "the next open reads the pointer again")
+    }
+
     // MARK: Settings
 
     @Test("the drag's settings default right, round-trip, and read tolerantly")

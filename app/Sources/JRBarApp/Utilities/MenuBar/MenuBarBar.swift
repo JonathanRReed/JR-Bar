@@ -522,6 +522,35 @@ final class MenuBarNewcomerMemory {
     }
 }
 
+/// Where an open Item Bar hangs from. Under the icon it follows the icon
+/// on every re-frame. Under the pointer it keeps the spot the pointer had
+/// when the bar opened: photos landing, an item coming or going, or a
+/// tile dragged out all re-frame the bar, and a bar that re-centred on
+/// the pointer each time would slide its tiles away from the hand
+/// reaching for one.
+struct MenuBarBarAnchor {
+    /// The pointer's spot at open, while the bar stands under it.
+    private(set) var pinned: NSRect?
+
+    /// The bar opened with `spot` as its anchor: under the pointer it is
+    /// the pointer's spot, kept until the bar folds.
+    mutating func opened(underPointer: Bool, spot: NSRect?) {
+        pinned = underPointer ? spot : nil
+    }
+
+    /// The bar folded: the next open reads the pointer again.
+    mutating func closed() {
+        pinned = nil
+    }
+
+    /// The anchor a frame hangs from, and whether the bar centres on it:
+    /// the kept spot while there is one, else `icon`, the ‹ as it stands.
+    func current(icon: NSRect?) -> (rect: NSRect?, centred: Bool) {
+        if let pinned { return (pinned, true) }
+        return (icon, false)
+    }
+}
+
 /// The floating panel itself: borderless, nonactivating, glass-backed,
 /// a row of icon tiles — one per hidden or always-hidden item. The
 /// tile's click is reposted at the real item's frame (Accessibility
@@ -882,6 +911,8 @@ final class MenuBarBar {
     private let model = MenuBarBarModel()
 
     private(set) var isOpen = false
+    /// Where the open bar hangs — the pointer's spot is read once, at open.
+    private var hang = MenuBarBarAnchor()
     private var panel: MenuBarBarPanel?
     /// A drop's note, standing in the bar's glass on its own — no tiles,
     /// no capture, no clicks.
@@ -942,6 +973,7 @@ final class MenuBarBar {
             onUpdateWatch: { [weak self] item, on in self?.onUpdateWatch(item, on) },
             beginDrag: { [weak self] item, image in self?.beginTileDrag(item, image: image) })
         closeNote()
+        hang.opened(underPointer: centersOnAnchor(), spot: anchorFrame())
         panel.setFrame(frame(on: screen), display: false)
         if keyboard {
             panel.takesKeys = true
@@ -971,14 +1003,16 @@ final class MenuBarBar {
     }
 
     /// The panel's frame for the current tiles: under the icon's ‹ when
-    /// it stands on this screen, else at the screen's right end.
+    /// it stands on this screen (or centred on the pointer's spot from
+    /// the open), else at the screen's right end.
     private func frame(on screen: NSScreen) -> NSRect {
         let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
         let widths = model.rowWidths(liveWidths: tiles.imageWidths)
-        let anchorRect = anchorFrame().flatMap { frame in
+        let anchor = hang.current(icon: anchorFrame())
+        let anchorRect = anchor.rect.flatMap { frame in
             screen.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) ? frame : nil
         }
-        if let anchorRect, centersOnAnchor() {
+        if let anchorRect, anchor.centred {
             return MenuBarBarLayout.frame(widths: widths, menuBarDepth: depth, on: screen.frame,
                                           anchorMidX: anchorRect.midX)
         }
@@ -1046,6 +1080,7 @@ final class MenuBarBar {
         panel?.orderOut(nil)
         panel = nil
         isOpen = false
+        hang.closed()
         // Seen: the change marks clear with the bar, and the keyboard's
         // filter with it.
         updatedIDs = []
