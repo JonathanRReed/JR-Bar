@@ -18,6 +18,8 @@ struct GeneralPage: View {
                 Button("Run Setup Again…") { SetupWindowController.show() }
             }
         }
+        // The one page that shows it, read off the main thread.
+        .onAppear { store.refreshLaunchAtLogin() }
 
         SettingGroup("Menu bar") {
             MenuBarStylePicker(store: store)

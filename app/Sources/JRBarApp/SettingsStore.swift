@@ -128,6 +128,16 @@ final class SettingsStore {
     var lastUpdateCheck: Date?
     var launchAtLogin: Bool = false
     var launchAtLoginError: String?
+    /// How the launch-at-login state is read. `SMAppService.status` is a
+    /// synchronous XPC round trip, normally 3 ms and once 250 ms of a
+    /// hang, so it runs off the main thread; a test hands in its own.
+    @ObservationIgnored var launchAtLoginStatus: @Sendable () -> Bool = SettingsStore.systemLaunchAtLogin
+
+    /// The window is open but none of it shows: covered, minimised or on
+    /// another Space. Every LED preview holds its frame
+    /// (`ledPreviewsHeld`) until some of the window shows again. The
+    /// window controller writes it from the window's occlusion.
+    var windowCovered = false
 
     @ObservationIgnored private var pending: [String: JSONValue] = [:]
     @ObservationIgnored private var throttles: [String: DispatchWorkItem] = [:]
@@ -346,9 +356,10 @@ final class SettingsStore {
         }
     }
 
+    /// The launch-at-login state is read by the General page when it
+    /// shows (`refreshLaunchAtLogin`), not here: the read is an XPC call.
     init(core: CoreModel) {
         self.core = core
-        refreshLaunchAtLogin()
     }
 
     // MARK: Document
@@ -1061,8 +1072,19 @@ final class SettingsStore {
 
     // MARK: Launch at login
 
-    func refreshLaunchAtLogin() {
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+    /// Reads the launch-at-login state off the main thread and lands it
+    /// here; the returned task finishes once it has.
+    @discardableResult
+    func refreshLaunchAtLogin() -> Task<Void, Never> {
+        let read = launchAtLoginStatus
+        return Task { [weak self] in
+            let on = await Task.detached(priority: .userInitiated) { read() }.value
+            self?.launchAtLogin = on
+        }
+    }
+
+    nonisolated static let systemLaunchAtLogin: @Sendable () -> Bool = {
+        SMAppService.mainApp.status == .enabled
     }
 
     // MARK: Software update
@@ -1097,6 +1119,8 @@ final class SettingsStore {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
             launchAtLoginError = nil
+            // The switch shows the change at once; the read below confirms it.
+            launchAtLogin = on
         } catch {
             launchAtLoginError = error.localizedDescription
         }

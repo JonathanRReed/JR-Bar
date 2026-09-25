@@ -7,6 +7,8 @@ import SwiftUI
 struct SettingsRootView: View {
     @Bindable var store: SettingsStore
     @FocusState private var searchFocused: Bool
+    /// A hold from whatever hosts the window's content, kept.
+    @Environment(\.ledPreviewsHeld) private var heldAbove
 
     var body: some View {
         NavigationSplitView {
@@ -40,12 +42,14 @@ struct SettingsRootView: View {
                     .accessibilityHidden(true)
             }
         } detail: {
-            NavigationStack {
-                SettingsPageContainer(store: store, page: store.page)
-            }
+            // No NavigationStack: no page pushes a destination, and the
+            // stack measured the whole form once more on every pass.
+            SettingsPageContainer(store: store, page: store.page)
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 640, minHeight: 420)
+        // A covered, minimised or far-Space window holds every preview.
+        .environment(\.ledPreviewsHeld, heldAbove || store.windowCovered)
         .sheet(isPresented: Binding(get: { store.calibrating != nil }, set: { if !$0 { store.calibrating = nil } })) {
             CalibrationSheet(store: store, deviceID: store.calibrating ?? "", dismiss: { store.calibrating = nil })
         }

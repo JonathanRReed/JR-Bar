@@ -12,6 +12,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     let store: SettingsStore
     private var window: NSWindow?
+    private var occlusionObserver: NSObjectProtocol?
 
     init(store: SettingsStore) {
         self.store = store
@@ -29,7 +30,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         DispatchQueue.main.async {
             window.makeFirstResponder(Self.sidebarTable(in: window.contentView) ?? nil)
         }
-        store.refreshLaunchAtLogin()
+        noteOcclusion(of: window)
+    }
+
+    /// Occlusion covers every way the window goes out of sight while open —
+    /// behind another window, minimised, on another Space. The previews
+    /// hold their frame until some of it shows again (`windowCovered`).
+    /// Internal for the test.
+    func noteOcclusion(of window: NSWindow) {
+        store.windowCovered = Self.covered(occlusion: window.occlusionState, visible: window.isVisible)
+    }
+
+    /// Nothing of the window shows: it is ordered out, or on screen with
+    /// none of it visible.
+    nonisolated static func covered(occlusion: NSWindow.OcclusionState, visible: Bool) -> Bool {
+        !visible || !occlusion.contains(.visible)
     }
 
     var isVisible: Bool { window?.isVisible ?? false }
@@ -67,6 +82,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         toolbar.displayMode = .iconOnly
         window.toolbar = toolbar
         observePage(window)
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window, queue: .main) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let window else { return }
+                    self.noteOcclusion(of: window)
+                }
+            }
         return window
     }
 
@@ -114,6 +137,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         if let closing = notification.object as? NSWindow, closing === window {
+            store.windowCovered = true
             detachSettingsContent(from: closing)
         }
         WindowContentLifecycle.retractWhenLastWindowCloses()
