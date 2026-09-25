@@ -374,10 +374,7 @@ struct NotchControlsView: View {
             // looks for it: beside the other way to summon the shelf.
             Toggle(isOn: Binding(get: { settings.shelfHotkeyEnabled },
                                  set: { settings.shelfHotkeyEnabled = $0 })) {
-                SettingLabel(title: "Shelf hotkey",
-                             subtitle: settings.shelfHotkeyRegistrationFailed
-                                ? "⌃⌥D is taken by another app."
-                                : "⌃⌥D opens or folds the card from any app; anything you copied waits there as a Paste chip.")
+                SettingLabel(title: "Shelf hotkey", subtitle: shelfHotkeyNote(settings))
             }
         }
         Toggle(isOn: toy.bind(\.timerLights)) {
@@ -435,6 +432,15 @@ struct NotchControlsView: View {
             // or drawn by Alcove or Boring Notch, has no shake to step aside.
             RivalGuardView(role: .shelfGesture, active: shakeYieldLive)
         }
+    }
+
+    /// The hotkey's line: taken, or what it opens — the Paste chip only
+    /// while the shelf is on to hold what was copied.
+    private func shelfHotkeyNote(_ settings: SettingsStore) -> String {
+        if settings.shelfHotkeyRegistrationFailed { return "⌃⌥D is taken by another app." }
+        let opens = "⌃⌥D opens or folds the card from any app"
+        guard toy.settings.shelfEnabled else { return opens + "." }
+        return opens + "; anything you copied waits there as a Paste chip."
     }
 
     /// Whether the shake-yield note has anything to say: the Notch on and
