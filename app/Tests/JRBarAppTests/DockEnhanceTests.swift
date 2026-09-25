@@ -248,6 +248,24 @@ import Testing
                 "a tile already bigger than the magnified size reaches nothing")
     }
 
+    @Test func aToastOverAPinnedPreviewStillClearsTheSwollenIcon() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = CGSize(width: 160, height: 28)
+        let tile = CGRect(x: 700, y: 0, width: 55, height: 62)
+        // A ⌥`-pinned preview's placement magnifies nothing; a ⌘-right-
+        // click on a tile while it is up still swells that tile.
+        let pinned = DockPlacement(gap: 4, coversLabel: true, magnifying: false, largesize: 96)
+        let toastPlace = pinned.onDock(magnifying: true)
+        let frame = toastPlace.frame(anchor: tile, edge: .bottom, size: size, screen: screen, title: "Ghostty")
+        let lift: CGFloat = 96 - 62
+        #expect(frame.minY - tile.maxY == 4 + lift, "the toast rides above the magnified icon")
+        #expect(toastPlace.gap == pinned.gap && toastPlace.coversLabel && toastPlace.largesize == 96,
+                "only the magnifying flag changes")
+        let flat = pinned.onDock(magnifying: false)
+            .frame(anchor: tile, edge: .bottom, size: size, screen: screen, title: "Ghostty")
+        #expect(flat.minY - tile.maxY == 4, "a Dock that doesn't magnify gets the plain gap")
+    }
+
     @Test func coveringTheGlassNeverDriftsAcrossTheIcon() {
         #expect(DockPlacement(gap: 4, coversLabel: true).openingDrift == 3, "a point short of the 4 pt gap")
         #expect(DockPlacement(gap: 0, coversLabel: true).openingDrift == 1, "the corridor's 2 pt floor, less one")

@@ -1959,7 +1959,10 @@ final class DockEnhanceController {
             ? DockEnhanceMath.magnifiedAnchor(tile: tile, edge: edge, pointer: pointer) : tile
         let panel = toast ?? DockToastPanel()
         toast = panel
-        panel.show(text, over: anchor, edge: edge, screen: screen.frame, placement: placement,
+        // Every toast follows a gesture on a Dock icon, so the swollen
+        // icon counts even while a ⌥`-pinned preview is up.
+        let place = placement.onDock(magnifying: magnificationOn)
+        panel.show(text, over: anchor, edge: edge, screen: screen.frame, placement: place,
                    title: item.title ?? "", duration: duration)
     }
 
