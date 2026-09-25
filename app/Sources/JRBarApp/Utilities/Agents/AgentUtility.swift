@@ -25,7 +25,37 @@ final class AgentUtility: Toy {
     /// so the utility stands alone.
     @ObservationIgnored var onOpenOverview: (@MainActor () -> Void)?
 
-    init(core: CoreModel) { self.core = core }
+    /// What the card and its chip read from the daemon: whether it is
+    /// live, and the providers with hooks installed or a session on
+    /// record. Written only when it changes, so a `state` push that
+    /// changes neither — nearly all of them — redraws nothing.
+    struct Snapshot: Equatable {
+        var live = false
+        var reporting: Set<String> = []
+    }
+
+    private(set) var snapshot = Snapshot()
+    @ObservationIgnored private var watch: ObservationLoop?
+
+    init(core: CoreModel) {
+        self.core = core
+        watch = ObservationLoop { [weak self] in self?.refreshSnapshot() }
+    }
+
+    /// Re-reads the daemon's side of the snapshot; the loop runs it after
+    /// every change to what it reads.
+    func refreshSnapshot() {
+        let next = Self.snapshot(of: core)
+        if next != snapshot { snapshot = next }
+    }
+
+    static func snapshot(of core: CoreModel) -> Snapshot {
+        var reporting = Set(core.sessions.filter { !$0.isRemote }.map(\.provider))
+        if let hooks = core.state?.health?["hooks"]?.objectValue {
+            reporting.formUnion(hooks.compactMap { provider, state in state.stringValue == "missing" ? nil : provider })
+        }
+        return Snapshot(live: core.isLive, reporting: reporting)
+    }
 
     // MARK: Toy
 
@@ -41,7 +71,7 @@ final class AgentUtility: Toy {
 
     var status: ToyStatus {
         guard isOn else { return .off }
-        return core.isLive ? .on : .paused("Monitor not connected")
+        return snapshot.live ? .on : .paused("Monitor not connected")
     }
 
     var controls: AnyView { AnyView(AgentUtilityControls(utility: self)) }
@@ -76,10 +106,7 @@ final class AgentUtility: Toy {
     /// rule, in the settings' provider order.
     var alertProviders: [String] {
         var present = Set(settings().alertRules.keys)
-        present.formUnion(core.sessions.filter { !$0.isRemote }.map(\.provider))
-        if let hooks = core.state?.health?["hooks"]?.objectValue {
-            present.formUnion(hooks.compactMap { provider, state in state.stringValue == "missing" ? nil : provider })
-        }
+        present.formUnion(snapshot.reporting)
         let known = SettingsKey.providers.filter(present.contains)
         return known + present.subtracting(known).sorted()
     }
