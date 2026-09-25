@@ -213,15 +213,20 @@ study of Apple's own model (MIT).
   starts from wherever it was parked (delta is positive only; opening
   back through the anchor is 0). Parked mid-fold never re-seats — that
   would collapse a held fold — but the dwell pause re-seats it at the
-  parked angle when it hands the desktop back. Movement mode arms the
+  parked angle when it hands the desktop back, and so does a reopen that
+  stops short of the old rest: back up more than 3° from the lowest
+  point of the close and still for 1 s, that spot is the new anchor and
+  the fold unwinds from the reference it was drawing (a lid that rested
+  at 110°, dipped to 80° and came back to 104° used to keep a 6° fold,
+  and the capture, until it opened past 107°). Movement mode arms the
   streams on the first move off the anchor and holds the delta at 0
   until the first complete frame — the warm-up keeps the room from
-  opening black. In the Duo the capture arms on 3° of travel down (a
+  opening black. Both looks arm the capture on 3° of travel down (a
   nudge, or tilting the screen back wider, never flashes the Screen
-  Recording indicator; the Room still arms either way), the first frame of
-  a gesture eases the delta up from 0 over 150 ms instead of popping to
-  a close that is already 15° in, and the overlay's first 120 ms on
-  screen fade it in. The Duo's travel is not clamped: its geometry goes
+  Recording indicator: neither look folds on the way up). In the Duo
+  the first frame of a gesture eases the delta up from 0 over 150 ms
+  instead of popping to a close that is already 15° in, and the
+  overlay's first 120 ms on screen fade it in. The Duo's travel is not clamped: its geometry goes
   to black on its own.
 - **Capture** `FoldCapture`: the Duo runs ONE stream (`dual: false`), the
   whole desktop minus JR-Bar, except JR-Bar's own menu-bar windows (the
@@ -305,7 +310,10 @@ study of Apple's own model (MIT).
   lets go on a 3 s watchdog (restarted once when the lid reopens), on
   screen sleep, lock, a session switch or a lost/mirrored built-in
   screen, or when the lid is back past 15° with a frame captured after
-  the close. The reopen films at once, wherever the lid is, and the fold
+  the close. A watchdog that fires on a lid reopened under 15° with a
+  frame in hand hands over to the fold the same way, with the overlay
+  kept up (the fold draws black there too), so the desktop never shows
+  through a fresh order-in. The reopen films at once, wherever the lid is, and the fold
   then unfolds from black: the glass starts at the last angle that still
   draws all black (edge-on + 2°) and the chase unwinds it to the live lid
   in under half a second, so a quick reopen never cuts straight to a

@@ -313,6 +313,29 @@ struct FoldDuoModelTests {
         #expect(!hold.releases(angle: 40, freshFrame: true), "nothing to release once let go")
     }
 
+    @Test("the watchdog hands a reopened lid with a frame to the fold, and orders out otherwise")
+    func blackoutWatchdogHandsOver() {
+        #expect(FoldBlackout.watchdogHandsOver(angle: 10, drawing: true, freshFrame: true))
+        #expect(!FoldBlackout.watchdogHandsOver(angle: 10, drawing: true, freshFrame: false),
+                "no frame, nothing to draw")
+        #expect(!FoldBlackout.watchdogHandsOver(angle: 4, drawing: true, freshFrame: true),
+                "still shut")
+        #expect(!FoldBlackout.watchdogHandsOver(angle: 10, drawing: false, freshFrame: true),
+                "paused or waiting out the resume quiet")
+        #expect(!FoldBlackout.watchdogHandsOver(angle: nil, drawing: true, freshFrame: true))
+        #expect(!FoldBlackout.watchdogHandsOver(angle: .nan, drawing: true, freshFrame: true))
+        // Handed over under the release angle, the fold's first frame is
+        // as black as the hold was.
+        let reference = 110.0
+        for lid in [6.0, 10, 14.9] {
+            var chase = DeltaChase()
+            chase.reset(to: FoldDuoModel.reopenDelta(reference: reference, perspective: 0.6))
+            let delta = chase.tick(target: (reference - lid) * .pi / 180, dt: 1.0 / 60)
+            let theta = reference - delta * 180 / .pi
+            #expect(FoldDuoModel.endFade(theta: theta, eye: eye) == 1, "lid \(lid)°")
+        }
+    }
+
     @Test("a reopen from black unfolds: the first frame is still black and the picture comes up over frames")
     func reopenUnfoldsFromBlack() {
         let reference = 110.0

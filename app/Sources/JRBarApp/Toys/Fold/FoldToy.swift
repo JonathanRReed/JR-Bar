@@ -103,9 +103,10 @@ final class FoldToy: Toy {
     @ObservationIgnored private var overlayShownAt: TimeInterval?
     /// The reference the Duo draws this gesture from: taken as the
     /// overlay orders in and kept until it orders out, so an unwind that
-    /// outlives its anchor (the dwell re-seat, a reset) still draws from
-    /// the same lid, and a reopen from the black hold unfolds from the
-    /// lid it closed from.
+    /// outlives its anchor (the dwell re-seat, a reopen that settles
+    /// short of the old rest, a reset) still draws from the same lid,
+    /// and a reopen from the black hold unfolds from the lid it closed
+    /// from.
     @ObservationIgnored private var heldReference: Double?
     /// The displayed-delta follower: instant while the fold deepens, a
     /// slew-limited unwind when the gate snaps the target to 0 —
@@ -419,10 +420,12 @@ final class FoldToy: Toy {
         let settings = settings
         jitter.tolerance = settings.jitterTolerance
         moveAnchor.tolerance = settings.jitterTolerance
-        // The Duo arms on 3° of real travel, so a nudge never flashes the
-        // Screen Recording indicator, and its tracker runs stiffer: the
-        // edge interpolator already smooths what it chases.
-        moveAnchor.armThreshold = isDuo ? max(3, settings.jitterTolerance) : nil
+        // Both looks arm on 3° of real travel down, so a nudge never
+        // flashes the Screen Recording indicator, and neither does
+        // tilting the screen back: neither look folds on the way up. The
+        // Duo's tracker runs stiffer: the edge interpolator already
+        // smooths what it chases.
+        moveAnchor.armThreshold = max(3, settings.jitterTolerance)
         tracker.omega = isDuo ? 40 : 20
         overlay?.renderer.look = settings.look
         // Every path — off, parked, paused — leaves the vsync link
@@ -961,12 +964,30 @@ final class FoldToy: Toy {
                     return
                 }
                 FoldLog.log.notice("blackout: watchdog let go")
-                self.endBlackout(hide: true)
+                self.expireBlackout()
                 self.reconcile()
             }
         }
         blackoutWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// The watchdog's let-go: handed to the live fold with the overlay
+    /// kept up when the lid is open again with a frame in hand (the fold
+    /// draws black there too), ordered out otherwise.
+    private func expireBlackout() {
+        let handsOver = FoldBlackout.watchdogHandsOver(
+            angle: gateAngle, drawing: !paused && pauseReason == nil,
+            freshFrame: capture?.hasFrame == true)
+        guard handsOver else {
+            endBlackout(hide: true)
+            return
+        }
+        FoldLog.log.notice("blackout: watchdog handed over to the fold")
+        endBlackout(hide: false)
+        let reference = heldReference ?? duoReference ?? 110
+        chase.reset(to: FoldDuoModel.reopenDelta(
+            reference: reference, perspective: self.settings.perspective))
     }
 
     private func ensureOverlay() -> FoldOverlayWindow? {

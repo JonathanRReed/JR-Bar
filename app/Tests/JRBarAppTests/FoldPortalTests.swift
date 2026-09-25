@@ -258,6 +258,77 @@ struct FoldPortalTests {
         #expect(!anchor.moving(80.5), "the parked angle is the new rest")
     }
 
+    @Test("a reopen that stops short of the old rest settles there after a second")
+    func anchorReopenSettles() {
+        var anchor = MoveAnchor()
+        anchor.armThreshold = 3
+        anchor.feed(110, at: 0)
+        // Down to 60 and back up to 104, 6° short of where it rested.
+        let gesture: [Double] = [100, 90, 80, 70, 60, 70, 80, 90, 100, 104]
+        for (i, angle) in gesture.enumerated() {
+            anchor.feed(angle, at: Double(i + 1) * 0.1)
+        }
+        #expect(anchor.anchor == 110, "still on the way up")
+        #expect(anchor.moving(104), "the fold is still live")
+        // Parked at 104 with the sensor's ±1° wobble.
+        let stoppedAt = 1.0
+        for i in 1...9 {
+            let wobble = i % 2 == 0 ? 1.0 : -1.0
+            anchor.feed(104 + wobble, at: stoppedAt + Double(i) * 0.1)
+        }
+        #expect(anchor.anchor == 110, "under a second parked is not yet a rest")
+        for i in 10...12 {
+            anchor.feed(104, at: stoppedAt + Double(i) * 0.1)
+        }
+        #expect(anchor.anchor == 104, "a second still is the new rest")
+        #expect(!anchor.moving(104), "nothing left to fold, so the capture can stand down")
+        #expect(anchor.moving(100.5), "and the next close folds from here")
+    }
+
+    @Test("a lid parked mid-close with no rise keeps its fold")
+    func anchorParkedMidCloseHolds() {
+        var anchor = MoveAnchor()
+        anchor.feed(110, at: 0)
+        anchor.feed(95, at: 0.1)
+        // Parked at 80 for five seconds, wobbling a degree either way.
+        for i in 0..<50 {
+            anchor.feed(80 + Double(i % 3) - 1, at: 0.2 + Double(i) * 0.1)
+        }
+        #expect(anchor.anchor == 110, "wobble on a parked lid is not a reopen")
+        #expect(anchor.moving(80))
+    }
+
+    @Test("part way up and back down to park is a new close, not a reopen")
+    func anchorReopenThenCloseHolds() {
+        var anchor = MoveAnchor()
+        anchor.feed(110, at: 0)
+        // Down to 70, back up to 95, down again to 85 and parked there
+        // for three seconds.
+        let close: [Double] = [90, 70, 80, 95, 90, 85] + Array(repeating: 85, count: 30)
+        for (i, angle) in close.enumerated() {
+            anchor.feed(angle, at: Double(i + 1) * 0.1)
+        }
+        #expect(anchor.anchor == 110, "parked at the bottom of the second close")
+        // A real reopen from there still settles.
+        let reopen: [Double] = [92] + Array(repeating: 100, count: 13)
+        for (i, angle) in reopen.enumerated() {
+            anchor.feed(angle, at: 4 + Double(i) * 0.1)
+        }
+        #expect(anchor.anchor == 100)
+    }
+
+    @Test("a reopen out of the closed hold settles short of the old rest too")
+    func anchorReopenFromShut() {
+        var anchor = MoveAnchor()
+        anchor.feed(110, at: 0)
+        let gesture: [Double] = [80, 40, 10, 3, 3, 3, 30, 70] + Array(repeating: 100, count: 13)
+        for (i, angle) in gesture.enumerated() {
+            anchor.feed(angle, at: Double(i + 1) * 0.1)
+        }
+        #expect(anchor.anchor == 100)
+        #expect(!anchor.moving(100))
+    }
+
     // MARK: FoldArming
 
     @Test("streams exist only inside the arming band and its cooldown")
