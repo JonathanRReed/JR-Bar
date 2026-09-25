@@ -263,3 +263,50 @@ import Testing
         store.windowDidClose()
     }
 }
+
+/// What the Assign sheet opens on for a provider: what that provider
+/// already plays, and always as a loop.
+@MainActor
+@Suite struct EffectStudioProviderDraftTests {
+    static func breathe() -> EffectDefinition {
+        let duration = EffectParameter(name: "duration_seconds", type: .number, defaultValue: .number(2.2),
+                                       minimum: 0.5, maximum: 10)
+        return EffectStudioLibraryTests.makeEffect("breathe", parameters: [duration])
+    }
+
+    static func comet(passing pass: String = "continuous") -> EffectDefinition {
+        let mode = EffectParameter(name: "pass_mode", type: .choice, defaultValue: .string(pass),
+                                   choices: ["continuous", "once", "twice"])
+        return EffectStudioLibraryTests.makeEffect("comet", parameters: [mode])
+    }
+
+    @Test func aProviderWithoutAnAssignmentOpensOnWhatItPlays() {
+        let settings: JSONValue = .object(["colors": .object([
+            "provider_animation": .object(["claude": .string("breathe")]),
+            "provider_animation_parameters": .object(["claude": .object(["duration_seconds": .number(5.5)])]),
+        ])])
+        let live = EffectStudioStore.liveValues(for: Self.breathe(), provider: "claude", settings: settings)
+        #expect(live?["duration_seconds"] == .number(5.5))
+        // Another motion, another provider, or no document: nothing to seed.
+        #expect(EffectStudioStore.liveValues(for: Self.comet(), provider: "claude", settings: settings) == nil)
+        #expect(EffectStudioStore.liveValues(for: Self.breathe(), provider: "codex", settings: settings) == nil)
+        #expect(EffectStudioStore.liveValues(for: Self.breathe(), provider: "claude", settings: nil) == nil)
+    }
+
+    @Test func aProviderDraftIsAlwaysALoop() {
+        let once = Self.comet(passing: "once")
+        let looping = EffectStudioStore.loopingDraft(once.defaultParameters, for: once)
+        #expect(looping["pass_mode"] == .string("continuous"))
+        let plain = Self.breathe().defaultParameters
+        #expect(EffectStudioStore.loopingDraft(plain, for: Self.breathe()) == plain)
+
+        let store = EffectStudioStoreTests.makeStore()
+        store.renderer = { _, _, leds, _ in EffectPreview(program: "off", ledCount: leds) }
+        store.beginAssigning(once, scope: .provider, target: "claude")
+        #expect(store.draftParameters["pass_mode"] == .string("continuous"))
+        // A Moment or a cue may still play one pass.
+        store.beginAssigning(once, scope: .semantic, target: "completion")
+        #expect(store.draftParameters["pass_mode"] == .string("once"))
+        store.windowDidClose()
+    }
+}

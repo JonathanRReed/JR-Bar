@@ -620,15 +620,55 @@ final class EffectStudioStore {
 
     /// Re-reads the sheet's parameter values for the current (scope,
     /// target): the stored assignment's own parameters when one exists,
-    /// else the catalog defaults. Runs when the sheet opens and whenever
-    /// scope or target changes, so "keep the parameters" means the
-    /// pair's tuning — not what was last edited for another target.
+    /// else what that provider already plays this effect with (its values
+    /// in Settings), else the catalog defaults. Runs when the sheet opens
+    /// and whenever scope or target changes, so "keep the parameters"
+    /// means the pair's tuning — not what was last edited for another
+    /// target. A provider's draft is always the loop it will play.
     private func hydrateDraftParameters(for effect: EffectDefinition? = nil) {
         guard let effect = effect ?? selected else { draftParameters = [:]; return }
         let target = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
-        draftParameters = assignments?.draftParameters(for: effect, scope: draftScope, targetID: target)
+        var values = assignments?.draftParameters(for: effect, scope: draftScope, targetID: target)
             ?? effect.defaultParameters
+        if draftScope == .provider, let provider = target {
+            if assignments?.assignment(scope: .provider, targetID: provider) == nil,
+               let live = Self.liveValues(for: effect, provider: provider, settings: core.settings?.document) {
+                values = live
+            }
+            values = Self.loopingDraft(values, for: effect)
+        }
+        draftParameters = values
         scheduleRender(effect, values: draftParameters, color: draftColor)
+    }
+
+    /// What `provider` already plays `effect` with when no assignment
+    /// says so: the values stored beside the motion Settings gave it
+    /// (`colors.provider_animation_parameters`). A motion picked on the
+    /// Lighting page, or the tempo an older settings file was seeded with
+    /// (breathe 5.5 s, blink 1.6 s), has no assignment row, and the sheet
+    /// would otherwise preview the catalog's 2.2 s while the strip plays
+    /// its own. Nil when the provider plays something else.
+    nonisolated static func liveValues(for effect: EffectDefinition, provider: String,
+                                       settings: JSONValue?) -> [String: JSONValue]? {
+        let document = SettingsDocument(settings ?? .object([:]))
+        let motion = SettingsPath(segments: [.key("colors"), .key("provider_animation"), .key(provider)])
+        let stored = SettingsPath(segments: [.key("colors"), .key("provider_animation_parameters"), .key(provider)])
+        guard document.string(motion) == effect.id, let values = document.object(stored) else { return nil }
+        return effect.normalizedParameters(values)
+    }
+
+    /// `values` as a working loop plays them: a pass count (`pass_mode`
+    /// once or twice, which a Moment or a cue can use) means nothing to a
+    /// light that runs for as long as the agent works. The daemon drops it
+    /// on assignment, so the sheet previews the loop the strip will play,
+    /// not one pass and then dark.
+    nonisolated static func loopingDraft(_ values: [String: JSONValue],
+                                         for effect: EffectDefinition) -> [String: JSONValue] {
+        guard let pass = effect.parameters.first(where: { $0.name == "pass_mode" }) else { return values }
+        let loop = pass.choices.contains("continuous") ? "continuous" : (pass.choices.first ?? "continuous")
+        var looping = values
+        looping[pass.name] = .string(loop)
+        return looping
     }
 
     /// The assignment already stored at the draft's (scope, target), if
