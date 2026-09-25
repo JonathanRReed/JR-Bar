@@ -3815,6 +3815,36 @@ def test_the_dot_plan_reads_both_devices_directions(headless, tmp_path: Path, mo
     assert seen[-1]["strip_direction"] == "forward"
 
 
+def test_the_reboot_watch_runs_for_a_dot_on_its_own(headless, tmp_path: Path, monkeypatch) -> None:
+    """The reboot watch rides the keepalive's worker. Once the keepalive
+    left the Dot alone, a Mac with only a Dot plugged in had nothing to keep
+    awake and returned before the watch ran, so the Dot was never checked
+    for a reboot. Every device is checked now; only the keepalive itself
+    needs a card reader."""
+    controller = headless
+    pro, dot, controllers, _submitted = _tmp_pair(controller, tmp_path)
+    del controllers[pro.device_id]
+    # Nothing to keep awake -- and never the real volumes on this Mac.
+    controller.status_keepalive_targets = lambda: []
+    checked: list[float] = []
+    controllers[dot.device_id]._device_rebooted_since_last_write = lambda now: checked.append(now) and False
+    started: list = []
+
+    class Worker:
+        def __init__(self, *, target, daemon, name=None, args=()):
+            self.target = target
+
+        def start(self) -> None:
+            started.append(self.target)
+
+    monkeypatch.setattr(threading, "Thread", Worker)
+    controller.poke_led_devices()
+    assert len(started) == 1, "no worker started for a Dot on its own"
+    started[0]()
+    assert len(checked) == 1, "the Dot's reboot check never ran"
+    assert controller._keepalive_poke_in_flight is False
+
+
 def test_the_keepalive_touches_only_sd_reader_devices(headless, tmp_path: Path) -> None:
     """The card reader powers the Pro off when idle; the Dot on USB-C has
     no reader, and touching it once hung its I/O for more than two seconds."""

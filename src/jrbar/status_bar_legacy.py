@@ -15546,6 +15546,12 @@ class StatusBarController(NSObject):
 
         if not self.leds_enabled:
             return
+        self.poke_led_devices()
+
+    def poke_led_devices(self) -> None:
+        """The SD keepalive and the firmware-reboot watch, off the main
+        thread: every device's reboot check (the Dot's included), then a
+        keepalive read or touch for each SD-card-reader device."""
         # SD-card pokes were file I/O ON THE MAIN THREAD up to 4x/s --
         # a busy or slow card froze the whole UI ("clicked Devices, took
         # five seconds to register a scroll"). Worker thread, in-flight
@@ -15553,7 +15559,10 @@ class StatusBarController(NSObject):
         if getattr(self, "_keepalive_poke_in_flight", False):
             return
         targets = self.status_keepalive_targets()
-        if not targets:
+        # The reboot watch covers every device, the Dot included, even
+        # with no SD-card reader to keep awake: a Dot on its own used to
+        # lose it when the keepalive stopped touching the Dot.
+        if not targets and not self.agent_led_controllers_by_device:
             return
         self._keepalive_poke_in_flight = True
 
@@ -15580,6 +15589,8 @@ class StatusBarController(NSObject):
                                 )
                         except Exception:
                             pass
+                if not targets:
+                    return
                 read_any = False
                 for target in targets:
                     if self._keepalive_fresh_read(target, poke_now):
