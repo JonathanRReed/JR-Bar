@@ -1802,7 +1802,13 @@ class AgentLedController:
         ``echo``, a second JR-Bar); ``False``: our program is still there;
         ``None``: nothing to compare or the read failed. Runs only at the
         reassert cadence, never faster (upstream b675ff5 and gourneau's
-        contention badge are the prior art)."""
+        contention badge are the prior art).
+
+        Only a device that reasserts on its own is checked: the strip, and a
+        Dot drawing its own display. A linked Dot is written only with a
+        strip restart or by the closed loop, both forced, and reading it
+        there would put a Dot read back on the write worker the strip
+        shares (a stalled one held the strip's next command)."""
         expected = self.last_device_bytes
         if not expected or self.device_path is None or self.dry_run:
             return None
@@ -1891,6 +1897,9 @@ class AgentLedController:
             # Our own new program: whatever another writer did, the person's
             # state changed and has to show.
             self.foreign_write_paused = False
+        # A forced write (a linked Dot's, which only ever rides a strip
+        # restart or the closed loop) is never checked: see
+        # ``_foreign_write_seen``.
         if reassert:
             foreign = self._foreign_write_seen(now)
             if foreign and self.foreign_write_paused:

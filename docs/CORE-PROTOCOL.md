@@ -706,7 +706,11 @@ end) and with every refresh.
   another writer (upstream's app, a shell `echo`). The first is written
   over at that reassert and noted here; a second inside ten minutes sets
   `paused` and the daemon stops rewriting that device until its own next
-  change, so two apps never fight over the flash.
+  change, so two apps never fight over the flash. The strip and a Dot
+  drawing its own display are checked. A linked Dot is not: it is only
+  written with a strip restart or by the closed loop, and reading it on the
+  write worker the strip shares would stall the strip, so its card never
+  carries this receipt.
   `no_dot`/`no_strip`/`failed` are the states a settings toggle cannot
   express: unplugging the strip the Dot was extending forgets the strip's
   last program with it — the Dot's next request falls through to its own

@@ -854,6 +854,29 @@ def test_the_lights_frame_carries_the_foreign_write_receipt(rig: Rig) -> None:
     assert rig.dot.device_id not in receipts
 
 
+def test_a_linked_dot_is_never_read_for_a_foreign_write(rig: Rig) -> None:
+    """The watch runs where a device reasserts on its own: the strip, and a
+    Dot drawing its own display. A linked Dot is only ever written with a
+    strip restart or by the closed loop, both forced, and checking it there
+    would read the Dot on the write worker the strip shares -- a stalled Dot
+    read held the strip's next command for half a second, which is why that
+    worker never reads the Dot. So a strip reassert reads the strip, never
+    the Dot, and the Dot's card carries no receipt."""
+    first = rig.plan()
+    assert first["dot"], "the linked Dot was never written"
+    strip_reads: list[Path] = []
+    dot_reads: list[Path] = []
+    rig.pro_controller.foreign_status_reader = lambda path: strip_reads.append(path) or path.read_text()
+    rig.dot_controller.foreign_status_reader = lambda path: dot_reads.append(path) or "#FF00FF\n"
+    rig.pro_controller.last_attempt_monotonic -= rig.pro_controller.reassert_after_seconds + 1
+    rewritten = rig.dot_controller.last_device_bytes
+    rig.plan()
+    assert len(strip_reads) == 1, "the strip's reassert did not check the strip"
+    assert rig.dot_controller.last_device_bytes != rewritten, "the strip restart did not rewrite the Dot"
+    assert dot_reads == []
+    assert rig.dot.device_id not in (rig.controller._core_build_lights().get("device_receipts") or {})
+
+
 # --- Creator Micro 2 and Stream Deck receipts -----------------------------------------
 
 

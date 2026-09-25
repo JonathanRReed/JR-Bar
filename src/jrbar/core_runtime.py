@@ -7140,7 +7140,10 @@ def build_headless_controller_class() -> type:
             (upstream's app, a shell ``echo``, a second JR-Bar) changed the
             device's program behind our back, found by a fresh read at the
             reassert cadence. Twice in ten minutes and JR-Bar stops
-            rewriting it, so the two never fight over the flash."""
+            rewriting it, so the two never fight over the flash. The strip
+            and a Dot drawing its own display are checked; a linked Dot is
+            not (``AgentLedController._foreign_write_seen`` says why), so
+            its card never carries this receipt."""
             receipts: dict[str, Any] = {}
             window = 600.0
             now = time.monotonic()
