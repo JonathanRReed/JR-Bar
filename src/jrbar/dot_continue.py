@@ -36,6 +36,13 @@ that goes missing or lights early is off by the whole head. A spelling
 that fails, or light that does not travel, returns ``None`` and the Dot
 mirrors. The work is cached per compiled program: the planner asks on
 every Dot write.
+
+A fill (the Stack motion: each LED switches on a step after the one before,
+then the whole bar drains) travels too, but no LED's timeline is its
+neighbour's shifted -- they all drain at once -- so it is read from when
+each LED lights up instead. The Dot's LEDs switch on one and two steps
+after LED 7 with the strip's own rise and drain with the strip, reaching
+its resting colour when it does: the bar fills on into the Dot.
 """
 
 from __future__ import annotations
@@ -44,6 +51,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import pairwise
 from typing import Final
 
 from .animation import (
@@ -273,7 +281,8 @@ def _luma(color) -> float:
 def travel_ms(program: str, led_count: int) -> float | None:
     """How long light takes to move one LED, signed: positive when it runs
     toward the last LED, negative toward the first. ``None`` when the LEDs
-    do not follow one another (a breathe, a blink, a solid colour).
+    do not follow one another (a breathe, a blink, a solid colour), and for
+    a fill, whose LEDs switch on in turn but drain together (``_fill``).
 
     Matched on brightness over at most 160 samples a lap, then refined on
     the fine samples within one coarse step either side -- a comet's step
@@ -570,6 +579,216 @@ def _pass_program(
     return program, origin
 
 
+# --- a fill ------------------------------------------------------------------
+
+#: A cosine ease spends this share of its length between 10% and 90% of
+#: the way: the fill's rise and drain are measured by that span and spelled
+#: as cosine eases of the same steepness.
+_COSINE_10_90: Final = (math.acos(-0.8) - math.acos(0.8)) / math.pi
+#: The shortest drain a Dot may be given, and the least share of the
+#: strip's own drain: a fill that leaves the Dot less than this to empty in
+#: mirrors instead of blinking out.
+_MIN_FILL_DRAIN_MS: Final = 40.0
+_MIN_FILL_DRAIN_SHARE: Final = 0.25
+#: A hold shorter than this is rounding, not a hold: the drain starts at
+#: the last rise's end instead of spending a line on it.
+_MIN_FILL_HOLD_MS: Final = 5
+
+
+@dataclass(frozen=True, slots=True)
+class _Fill:
+    """A progress bar: each LED switches on a step after the one before and
+    holds, then the whole bar drains together. Times are strip phases (ms
+    into the lap)."""
+
+    #: How far apart neighbouring LEDs switch on, signed as ``travel_ms``.
+    step_ms: float
+    #: When each LED is half way up.
+    on_ms: tuple[float, ...]
+    #: How long one LED's rise and the bar's drain take, as cosine eases.
+    rise_ms: float
+    drain_ms: float
+    #: When the bar is half way down.
+    off_ms: float
+
+
+def _crossings(values: list[float], level: float) -> tuple[list[float], list[float]]:
+    """Where a looping series crosses ``level`` going up and going down, as
+    fractional sample indexes."""
+    count = len(values)
+    ups: list[float] = []
+    downs: list[float] = []
+    for index in range(count):
+        before, after = values[index - 1], values[index]
+        if before < level <= after:
+            ups.append((index - 1 + (level - before) / (after - before)) % count)
+        elif before >= level > after:
+            downs.append((index - 1 + (before - level) / (before - after)) % count)
+    return ups, downs
+
+
+def _fill(timeline: _Timeline, led_count: int) -> _Fill | None:
+    """The strip's loop read as a fill, from when each LED lights up rather
+    than from its whole timeline: a fill's LEDs switch on a step apart but
+    all drain at once, so no one LED's timeline is its neighbour's shifted,
+    and ``travel_ms`` rightly finds no travel. ``None``: not a fill -- an
+    LED lights twice a lap, the LEDs do not all drain together, or they do
+    not switch on evenly one after another."""
+    if led_count < 3:
+        return None
+    count = len(timeline.frames)
+    spacing = timeline.spacing
+    lap = timeline.lap_ms
+    lumas = [[_luma(frame[led]) for frame in timeline.frames] for led in range(led_count)]
+    spans = [max(values) - min(values) for values in lumas]
+    if min(spans) < 8.0 or min(spans) < 0.7 * max(spans):
+        return None
+    ons: list[float] = []
+    offs: list[float] = []
+    rises: list[float] = []
+    drains: list[float] = []
+    for values, span in zip(lumas, spans):
+        low = min(values)
+        middle = _crossings(values, low + 0.5 * span)
+        foot = _crossings(values, low + 0.1 * span)
+        top = _crossings(values, low + 0.9 * span)
+        if any(len(ups) != 1 or len(downs) != 1 for ups, downs in (middle, foot, top)):
+            return None
+        ons.append(middle[0][0] * spacing)
+        offs.append(middle[1][0] * spacing)
+        rises.append(((top[0][0] - foot[0][0]) % count) * spacing / _COSINE_10_90)
+        drains.append(((foot[1][0] - top[1][0]) % count) * spacing / _COSINE_10_90)
+    together = max(2.0 * spacing, 0.05 * lap)
+    if any(abs(_wrap(off - offs[0], lap)) > together for off in offs):
+        return None
+    off = offs[0]
+    # Each LED's switch-on, counted from the drain: a fill's run up in order.
+    since = [(on - off) % lap for on in ons]
+    steps = [later - earlier for earlier, later in pairwise(since)]
+    step = sum(steps) / len(steps)
+    if abs(step) < 2.0 * spacing:
+        return None
+    if any(abs(each - step) > max(2.0 * spacing, 0.15 * abs(step)) for each in steps):
+        return None
+    rises.sort()
+    drains.sort()
+    return _Fill(
+        step_ms=step,
+        on_ms=tuple(ons),
+        rise_ms=rises[len(rises) // 2],
+        drain_ms=drains[len(drains) // 2],
+        off_ms=off,
+    )
+
+
+def _wrap(value: float, lap: float) -> float:
+    """``value`` folded into half a lap either side of zero."""
+    return (value + lap / 2.0) % lap - lap / 2.0
+
+
+def _fill_continuation(
+    timeline: _Timeline,
+    *,
+    source_leds: int,
+    led_count: int,
+    side: str,
+    order: list[int],
+    lead: list,
+) -> _Spelling | None:
+    """A fill carried on into the Dot: its LEDs switch on one and two steps
+    after the strip's end LED, with the strip's own rise, hold, and drain
+    with the strip so the bar empties as one. The strip drains the moment
+    its last LED is up, so the Dot's LEDs are still rising then; they empty
+    in what is left of the lap and reach the strip's resting colour when it
+    does. A fill running away from the Dot's end, or one that leaves the
+    Dot too little of the lap to empty in, returns ``None`` (it mirrors)."""
+    fill = _fill(timeline, source_leds)
+    if fill is None:
+        return None
+    toward = (fill.step_ms > 0) == (side != "before_first")
+    if not toward:
+        return None
+    lap = timeline.lap_ms
+    lap_int = int(round(lap))
+    end_led = source_leds - 1 if side != "before_first" else 0
+    step = abs(fill.step_ms)
+    half_rise = fill.rise_ms / 2.0
+    drain_end = fill.off_ms + fill.drain_ms / 2.0
+    # The program starts where the strip rests: the drain has just ended.
+    origin = drain_end % lap
+
+    def since_origin(moment: float) -> float:
+        return (moment - origin) % lap
+
+    starts = [since_origin(fill.on_ms[end_led] + (hop + 1) * step - half_rise) for hop in range(led_count)]
+    if any(later <= earlier for earlier, later in pairwise(starts)):
+        return None
+    risen = starts[-1] + fill.rise_ms
+    drain_from = max(since_origin(fill.off_ms - fill.drain_ms / 2.0), risen)
+    if lap - drain_from < max(_MIN_FILL_DRAIN_MS, _MIN_FILL_DRAIN_SHARE * fill.drain_ms):
+        return None
+    moments = range(len(timeline.frames))
+    peak = timeline.frames[max(moments, key=lambda index: _luma(timeline.frames[index][end_led]))][end_led]
+    floor = timeline.frames[min(moments, key=lambda index: _luma(timeline.frames[index][end_led]))][end_led]
+    rise = max(1, int(round(fill.rise_ms)))
+    steps: list = list(lead)
+    settle = int(round(starts[0]))
+    if settle >= 1:
+        steps.append(PaintStep((WholeBar(_bar(_hex(floor)), Timing(duration_ms=settle)),)))
+    segments = []
+    for dot_led, source in enumerate(order):
+        delay = int(round(starts[source])) - settle
+        segments.append(
+            IndexedPaint(
+                ((dot_led, _hex(peak)),),
+                Timing(duration_ms=rise, easing="cosine", delay_ms=delay or None),
+            )
+        )
+    rising = _compact(PaintStep(tuple(segments)), led_count)
+    steps.append(rising)
+    used = settle + step_duration_ms(rising)
+    hold = int(round(drain_from)) - used
+    if hold >= _MIN_FILL_HOLD_MS:
+        steps.append(PaintStep((WholeBar(_hex(peak), Timing(duration_ms=hold)),)))
+        used += hold
+    if lap_int - used < 1:
+        return None
+    steps.append(PaintStep((WholeBar(_bar(_hex(floor)), Timing(duration_ms=lap_int - used, easing="cosine")),)))
+    steps.append(RepeatStep())
+    program = render_animation(Animation("continue", tuple(steps)))
+    animation, problems = read_program(program, led_count=led_count)
+    if animation is None or errors_only(problems) or loop_duration_ms(animation) != lap_int:
+        return None
+    rises_at = [origin + start for start in starts]
+    drains_at = origin + float(used)
+
+    def truth(time_ms: float) -> list[tuple[float, float, float]]:
+        """Each Dot LED as the fill would carry on: the strip's end LED's
+        own rise a step or two later, held, then a cosine drain to rest."""
+        out = []
+        for source in order:
+            local = (time_ms - rises_at[source]) % lap
+            drain = (time_ms - drains_at) % lap
+            if local < fill.rise_ms:
+                out.append(timeline.at(time_ms - (source + 1) * step, end_led))
+            elif drain < lap_int - used:
+                weight = _pulse_weight(drain, lap_int - used)
+                out.append(tuple(f + (p - f) * weight for p, f in zip(peak, floor)))  # type: ignore[misc]
+            elif (time_ms - rises_at[source]) % lap < (drains_at - rises_at[source]) % lap:
+                out.append(tuple(float(v) for v in peak))  # type: ignore[misc]
+            else:
+                out.append(floor)
+        return out
+
+    span = max(
+        max(frame[end_led][channel] for frame in timeline.frames)
+        - min(frame[end_led][channel] for frame in timeline.frames)
+        for channel in range(3)
+    )
+    arrivals = [[rises_at[source] + fill.rise_ms] for source in order]
+    return _judge(program, origin, truth, lap_ms=lap, arrivals=arrivals, led_count=led_count, span=float(span))
+
+
 def _judge(
     program: str,
     origin_ms: float,
@@ -658,23 +877,32 @@ def _continuation(
     spelled truly enough. Cached: it depends only on its arguments."""
     step = travel_ms(compiled, source_leds)
     timeline = _timeline(compiled, source_leds)
-    if step is None or timeline is None:
+    if timeline is None:
         return None
-    end_led = source_leds - 1 if side != "before_first" else 0
-    # Light moving toward the Dot's end arrives later at each Dot LED; light
-    # moving away passed it earlier. ``outward`` is +1 when it moves toward.
-    outward = 1.0 if (step > 0) == (side != "before_first") else -1.0
-    lags = [outward * (index + 1) * abs(step) for index in range(led_count)]
     order = list(range(led_count))[::-1] if dot_direction == "reversed" else list(range(led_count))
-
-    def truth(time_ms: float) -> list[tuple[float, float, float]]:
-        return [timeline.at(time_ms - lags[source], end_led) for source in order]
-
     lead = [
         BrightnessStep(level=s.level)
         for s in read_program(compiled, led_count=source_leds)[0].steps
         if type(s) is BrightnessStep
     ][:1]
+    if step is None:
+        # No LED's timeline is its neighbour's shifted, but a fill's LEDs
+        # still switch on one after another: it completes into the Dot.
+        spelling = _fill_continuation(
+            timeline, source_leds=source_leds, led_count=led_count, side=side, order=order, lead=lead
+        )
+        if spelling is None or not spelling.acceptable or not _cuts_fit(spelling.program, led_count):
+            return None
+        return spelling
+    end_led = source_leds - 1 if side != "before_first" else 0
+    # Light moving toward the Dot's end arrives later at each Dot LED; light
+    # moving away passed it earlier. ``outward`` is +1 when it moves toward.
+    outward = 1.0 if (step > 0) == (side != "before_first") else -1.0
+    lags = [outward * (index + 1) * abs(step) for index in range(led_count)]
+
+    def truth(time_ms: float) -> list[tuple[float, float, float]]:
+        return [timeline.at(time_ms - lags[source], end_led) for source in order]
+
     lumas = [_luma(frame[end_led]) for frame in timeline.frames]
     peak_times = [at * timeline.spacing for at in _peaks(lumas)]
     arrivals = [[peak + lags[source] for peak in peak_times] for source in order]

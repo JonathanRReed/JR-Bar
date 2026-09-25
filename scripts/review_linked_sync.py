@@ -31,7 +31,7 @@ through the last two rows. Below it, the Dot as it should look (the true
 continuation), then the phase error.
 
     .venv/bin/python scripts/review_linked_sync.py --out build/linked-sync
-    .venv/bin/python scripts/review_linked_sync.py --look continue --effects comet,chase,idle_roll
+    .venv/bin/python scripts/review_linked_sync.py --look continue --effects comet,chase,stack
 """
 
 from __future__ import annotations
@@ -278,6 +278,10 @@ def simulate(
                         for hop in (1, 2)
                     ]
                 )
+            elif look == "continue":
+                # A fill: no LED is its neighbour shifted, so the truth is
+                # the Dot's own continuation on a perfect clock.
+                result.truth.append(expected)
             next_column += column_every_s
     return result
 
@@ -340,10 +344,12 @@ def render_continue(
     """The Pro and the Dot as one ten-LED timeline, thirty seconds from
     minute one at 20 ms a column: rows 0-7 the Pro, a hairline, rows 8-9 the
     Dot as the engine played it. A comet leaving LED 7 should carry straight
-    on as the same diagonal through the last two rows, pass for pass. Below,
-    what rows 8 and 9 would be on a strip two LEDs longer (the Pro's LED 7
-    one and two travel steps ago), then the phase error. ``zoom`` widens
-    every column and row that many times."""
+    on as the same diagonal through the last two rows, pass for pass, and a
+    fill's staircase should climb two more steps. Below, what rows 8 and 9
+    would be on a strip two LEDs longer (the Pro's LED 7 one and two travel
+    steps ago; for a fill, the Dot's continuation on a perfect clock), then
+    the phase error. ``zoom`` widens every column and row that many
+    times."""
     from review_effects import _png_bytes
 
     background = (18, 18, 22)

@@ -413,6 +413,105 @@ def test_continue_carries_every_pass_onto_the_dot__and_1_more(effect: str) -> No
         assert fits_budget(timed.program)
 
 
+def _rises(series: list[tuple[int, float]]) -> list[float]:
+    """The moments a sampled LED crosses half way up, between samples."""
+    values = [value for _moment, value in series]
+    level = (min(values) + max(values)) / 2.0
+    found = []
+    for (before_at, before), (after_at, after) in pairwise(series):
+        if before < level <= after:
+            found.append(before_at + (after_at - before_at) * (level - before) / (after - before))
+    return found
+
+
+def test_continue_completes_a_fill_into_the_dot__and_2_more() -> None:
+    # --- scenario: the_stack_motion_switches_the_dot_on_one_and_two_steps_after_led_7
+    """The app's own Stack motion (``motion_shapes.fill``) lights each LED a
+    step after the one before and drains the whole bar at once, so no LED's
+    timeline is its neighbour's shifted and it used to mirror. Written the
+    way the daemon writes a linked Dot and played on the firmware beside the
+    strip, the Dot's first LED switches on one step after LED 7 and its
+    second a step after that, both reach the fill's colour, and the Dot is
+    back at rest when LED 0 starts the next lap."""
+    from jrbar import motion_shapes as shapes
+    from jrbar.dot_continue import continue_program
+    from jrbar.led_wasm import RawSdLedWasmController
+    from jrbar.presentation_compiler import compile_presentation_program
+
+    for cycle in (2200, 3000):
+        program = "\n".join([*shapes.fill("#00E5FF", "#001418", led_count=8, cycle_ms=cycle), "repeat"])
+        strip = compile_presentation_program(program, led_count=8).program
+        locked = continue_program(program, source_leds=8)
+        assert locked is not None and locked.rung == "continue", cycle
+        lap = locked.lap_ms
+        assert lap == _lap(strip, 8)
+        joined_at = 3.217
+        timed = apply_device_timing(
+            locked.program,
+            DeviceTiming(anchor=0.0, rate=1.0, trim_ms=-locked.origin_ms),
+            led_count=2,
+            now=joined_at,
+            latency_ms=0.0,
+        )
+        assert timed.rotation == "exact" and fits_budget(timed.program)
+        pro = RawSdLedWasmController(8)
+        dot = RawSdLedWasmController(2)
+        assert pro.parse(strip, 0).ok and dot.parse(timed.program, int(joined_at * 1000)).ok
+        series: dict[str, list[tuple[int, float]]] = {name: [] for name in ("led0", "led6", "led7", "dot0", "dot1")}
+        laps_from = 2 * lap
+        for moment in range(0, 5 * lap, 4):
+            pro_frame = pro.step(moment)
+            dot_frame = dot.step(moment) if moment >= joined_at * 1000 else None
+            if moment < laps_from or dot_frame is None:
+                continue
+            series["led0"].append((moment, _luma(pro_frame[0])))
+            series["led6"].append((moment, _luma(pro_frame[6])))
+            series["led7"].append((moment, _luma(pro_frame[7])))
+            series["dot0"].append((moment, _luma(dot_frame[0])))
+            series["dot1"].append((moment, _luma(dot_frame[1])))
+        led6, led7 = _rises(series["led6"]), _rises(series["led7"])
+        first, second = _rises(series["dot0"]), _rises(series["dot1"])
+        assert len(led7) == len(first) == len(second) == 3, (cycle, led7, first, second)
+        step = led7[0] - led6[0]
+        assert 100 <= step <= 300
+        frame = 17
+        for exit_at, onward, further in zip(led7, first, second):
+            assert abs(onward - (exit_at + step)) <= frame, (cycle, exit_at, onward)
+            assert abs(further - (exit_at + 2 * step)) <= frame, (cycle, exit_at, further)
+        top = max(value for _moment, value in series["led7"])
+        rest = min(value for _moment, value in series["led7"])
+        for name in ("dot0", "dot1"):
+            assert max(value for _moment, value in series[name]) >= 0.95 * top, (cycle, name)
+            # Back at rest as LED 0 starts the next lap.
+            for boundary in range(laps_from + lap, 5 * lap, lap):
+                at_boundary = min(series[name], key=lambda sample, at=boundary: abs(sample[0] - at))[1]
+                assert at_boundary <= rest + 0.05 * (top - rest), (cycle, name, boundary)
+
+    # --- scenario: a_fill_running_away_from_the_dot_mirrors
+    """Set before LED 0, the Dot is where the fill starts, not where it
+    finishes: there is nothing to complete into it, so it mirrors."""
+    assert continue_program(program, source_leds=8, side="before_first") is None
+
+    # --- scenario: cut_anywhere_the_fill_still_fits_exactly
+    """Wherever the strip is when the Dot is written, the rotation is exact
+    and inside the firmware's budget, with the Dot's brightness line in
+    front."""
+    from jrbar.dot_role import apply_brightness_line
+
+    dressed = apply_brightness_line(locked.program, 77)
+    for index in range(40):
+        moment = 0.001 + lap * index / 40 / 1000.0
+        timed = apply_device_timing(
+            dressed,
+            DeviceTiming(anchor=0.0, rate=DOT_RATE, trim_ms=-locked.origin_ms),
+            led_count=2,
+            now=moment,
+            latency_ms=20.0,
+        )
+        assert timed.rotation == "exact", index
+        assert fits_budget(timed.program)
+
+
 def test_continue_mirrors_what_it_cannot_carry__and_1_more() -> None:
     # --- scenario: nothing_travels_so_the_dot_mirrors
     """A breathe lights every LED together; there is nothing to carry on,
