@@ -357,9 +357,11 @@ struct SettingsRenderProofTests {
     func usageHooks() throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         let fixture = try Self.fixture()
+        Self.goLive(fixture.core)
         let model = UsageHooksModel()
         let ninthMinute = Date().timeIntervalSince1970 - 540
-        model.lastResults = ["chime": UsageHookLastResult(sentence: "quota_low: exit 0 in 0.1 s", at: ninthMinute, ok: true)]
+        model.lastResults = ["chime": UsageHookLastResult(sentence: "Quota low: exit 0 in 0.1 s", at: ninthMinute, ok: true,
+                                                          event: "quota_low")]
         model.problems = ["log": "the executable must be an absolute path"]
         for dark in [false, true] where Self.wanted("settings-usage-hooks") {
             let view = Form { UsageHooksSection(store: fixture.settings, model: model) }

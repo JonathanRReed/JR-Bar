@@ -422,6 +422,18 @@ class UsageHookLimiter:
 # --- Running ---------------------------------------------------------------
 
 
+#: The events in words, the same words Settings › Usage › Hooks uses.
+USAGE_HOOK_EVENT_WORDS = {
+    "quota_low": "Quota low",
+    "quota_reached": "Quota reached",
+    "quota_reset": "Window reset",
+    "usage_updated": "Usage updated",
+    "provider_unavailable": "Provider unavailable",
+    "provider_recovered": "Provider recovered",
+    "refresh_failed": "Refresh failed",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class UsageHookResult:
     rule_id: str
@@ -447,15 +459,17 @@ class UsageHookResult:
         return {key: value for key, value in document.items() if value is not None}
 
     def sentence(self) -> str:
-        """The last-result line Settings and the CLI show."""
+        """The last-result line Settings and the CLI show, led by the
+        event in words: "Quota low: exit 0 in 0.1 s"."""
+        event = USAGE_HOOK_EVENT_WORDS.get(self.event, self.event)
         took = "" if self.duration_seconds is None else f" in {self.duration_seconds:.1f} s"
         if self.outcome == "ok":
-            return f"{self.event}: exit 0{took}"
+            return f"{event}: exit 0{took}"
         if self.outcome == "exit":
-            return f"{self.event}: exit {self.exit_code}{took}"
+            return f"{event}: exit {self.exit_code}{took}"
         if self.outcome == "timeout":
-            return f"{self.event}: stopped after {self.duration_seconds or 0:.0f} s (timed out)"
-        return f"{self.event}: {self.detail or self.outcome}"
+            return f"{event}: stopped after {self.duration_seconds or 0:.0f} s (timed out)"
+        return f"{event}: {self.detail or self.outcome}"
 
 
 class UsageHookResults:

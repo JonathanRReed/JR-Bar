@@ -372,7 +372,7 @@ def test_the_cli_adds_enables_lists_and_tests_a_rule(tmp_path: Path, monkeypatch
     assert "Usage hooks: on" in out and "chime" in out and "quota_low · claude" in out
 
     code, out, _ = run("test", "quota_low", "--provider", "claude")
-    assert code == 0 and out.startswith("chime: quota_low: exit 0")
+    assert code == 0 and out.startswith("chime: Quota low: exit 0")
     assert json.loads(captured.read_text())["state"] == "test"
     # A provider the rule does not name matches nothing.
     assert "no rule matches" in run("test", "quota_low", "--provider", "codex")[1]

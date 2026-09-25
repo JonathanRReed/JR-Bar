@@ -71,7 +71,7 @@ struct UsageHookRuleView: View {
                     .foregroundStyle(.orange)
             }
             if let last = model.lastResults[rule.id] {
-                Label(last.line(now: Date()), systemImage: last.ok ? "checkmark.circle" : "xmark.octagon")
+                Label(last.line(now: Date(), ruleEvent: rule.event), systemImage: last.ok ? "checkmark.circle" : "xmark.octagon")
                     .font(.caption)
                     .foregroundStyle(last.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
                     .monospacedDigit()
@@ -154,24 +154,39 @@ struct UsageHookLastResult: Hashable {
     let sentence: String
     let at: Double?
     let ok: Bool
+    /// The event the run answered (`quota_low`), when the monitor says.
+    let event: String?
 
-    init(sentence: String, at: Double?, ok: Bool) {
+    init(sentence: String, at: Double?, ok: Bool, event: String? = nil) {
         self.sentence = sentence
         self.at = at
         self.ok = ok
+        self.event = event
     }
 
     init?(_ value: JSONValue?) {
         guard let object = value?.objectValue, let sentence = object["sentence"]?.stringValue else { return nil }
-        self.init(sentence: sentence, at: object["at"]?.doubleValue, ok: object["outcome"]?.stringValue == "ok")
+        self.init(sentence: sentence, at: object["at"]?.doubleValue, ok: object["outcome"]?.stringValue == "ok",
+                  event: object["event"]?.stringValue)
     }
 
-    /// "Last run: quota_low: exit 0 in 0.1 s · 3m ago".
-    func line(now: Date) -> String {
+    /// The sentence under a rule: the monitor's "Quota low: exit 0 in 0.1 s",
+    /// without the event's words when the rule's own title already says them.
+    func shown(ruleEvent: String?) -> String {
+        guard let event, event == ruleEvent, let words = UsageHookRuleRow.eventWords[event] else { return sentence }
+        let prefix = words + ": "
+        guard sentence.hasPrefix(prefix) else { return sentence }
+        return String(sentence.dropFirst(prefix.count))
+    }
+
+    /// "Last run: exit 0 in 0.1 s · 3m ago" under a Quota low rule;
+    /// "Last run: Quota low: exit 0 in 0.1 s · 3m ago" under an every-event one.
+    func line(now: Date, ruleEvent: String? = nil) -> String {
+        let text = shown(ruleEvent: ruleEvent)
         guard let at, let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: now) else {
-            return "Last run: \(sentence)"
+            return "Last run: \(text)"
         }
-        return "Last run: \(sentence) · \(age) ago"
+        return "Last run: \(text) · \(age) ago"
     }
 }
 

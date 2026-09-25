@@ -1481,7 +1481,7 @@ class World:
         #: usage_hooks_test answers, by rule, for usage_hooks_status.
         self.hook_results: dict[str, dict] = {"chime": {
             "rule": "chime", "event": "quota_low", "provider": "claude", "at": time.time() - 540,
-            "outcome": "ok", "exit_code": 0, "duration_seconds": 0.08, "sentence": "quota_low: exit 0 in 0.1 s"}}
+            "outcome": "ok", "exit_code": 0, "duration_seconds": 0.08, "sentence": "Quota low: exit 0 in 0.1 s"}}
         self.quota_crossed: dict[str, set] = {}
         self.ask_opened_at: dict[str, float] = {}
         self._seed_history(now)
@@ -3288,7 +3288,7 @@ class World:
             event = str(args.get("event") or "quota_low")
             outcome = {"rule": rule_id, "event": event, "provider": str(args.get("provider") or "claude"),
                        "at": time.time(), "outcome": "ok", "exit_code": 0, "duration_seconds": 0.12,
-                       "sentence": f"{event}: exit 0 in 0.1 s"}
+                       "sentence": f"{event.replace('_', ' ').capitalize()}: exit 0 in 0.1 s"}
             with self.lock:
                 self.hook_results[rule_id] = outcome
                 result = {"event": event, "provider": outcome["provider"], "results": [outcome],

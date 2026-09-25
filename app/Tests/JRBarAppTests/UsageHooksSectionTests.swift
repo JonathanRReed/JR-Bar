@@ -50,7 +50,8 @@ struct UsageHooksSectionTests {
             "problem": .null,
             "rules": .array([
                 .object(["id": .string("chime"), "problem": .null,
-                         "last_result": .object(["sentence": .string("quota_low: exit 0 in 0.1 s"),
+                         "last_result": .object(["sentence": .string("Quota low: exit 0 in 0.1 s"),
+                                                 "event": .string("quota_low"),
                                                  "outcome": .string("ok"), "at": .number(1_790_000_000)])]),
                 .object(["id": .string("log"), "problem": .string("the executable must be an absolute path")]),
             ]),
@@ -58,6 +59,9 @@ struct UsageHooksSectionTests {
         #expect(model.lastResults["chime"]?.ok == true)
         #expect(model.problems["log"] == "the executable must be an absolute path")
         let later = Date(timeIntervalSince1970: 1_790_000_180)
-        #expect(model.lastResults["chime"]?.line(now: later).hasPrefix("Last run: quota_low: exit 0") == true)
+        #expect(model.lastResults["chime"]?.line(now: later).hasPrefix("Last run: Quota low: exit 0") == true)
+        // Under its own Quota low rule the event isn't said twice.
+        #expect(model.lastResults["chime"]?.line(now: later, ruleEvent: "quota_low").hasPrefix("Last run: exit 0 in 0.1 s") == true)
+        #expect(model.lastResults["chime"]?.line(now: later, ruleEvent: "*").hasPrefix("Last run: Quota low: exit 0") == true)
     }
 }
