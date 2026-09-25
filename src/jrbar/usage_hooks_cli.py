@@ -134,6 +134,7 @@ class _Store:
 
     def __init__(self) -> None:
         self.via_core = False
+        self.legacy_path = ""
 
     def load(self) -> dict[str, Any]:
         try:
@@ -142,6 +143,7 @@ class _Store:
             with CoreConnection(default_socket_path(), timeout=2.0) as core:
                 document = core.document("settings").get("document") or {}
                 self.via_core = True
+                self.legacy_path = str(document.get("usage_event_hook_path") or "")
                 return normalize_usage_hooks(document.get("usage_hooks"))
         except Exception:
             from .settings import load_settings
@@ -153,8 +155,13 @@ class _Store:
         hooks = normalize_usage_hooks(hooks)
         if self.via_core:
             from .cli_control import CoreConnection, default_socket_path
+            from .usage_source_settings import LEGACY_RULE_ID
 
             with CoreConnection(default_socket_path(), timeout=5.0) as core:
+                # Removing the legacy rule clears the first version's path
+                # first; left set, the settings load would add the rule back.
+                if self.legacy_path.strip() and not any(rule["id"] == LEGACY_RULE_ID for rule in hooks["rules"]):
+                    core.command("set_setting", {"path": "usage_event_hook_path", "value": ""})
                 core.command("set_setting", {"path": "usage_hooks", "value": hooks})
             return
         from .settings import load_settings, save_settings

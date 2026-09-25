@@ -1153,9 +1153,15 @@ class AgentMonitorSettings:
         return replace(self, usage_event_hook_path=cleaned, usage_hooks=hooks)
 
     def with_usage_hooks(self, hooks: object) -> AgentMonitorSettings:
-        from .usage_source_settings import normalize_usage_hooks
+        """The rules as written. Without a ``legacy`` rule the first
+        version's path goes too, or the next load would add the rule back."""
+        from .usage_source_settings import LEGACY_RULE_ID, normalize_usage_hooks
 
-        return replace(self, usage_hooks=normalize_usage_hooks(hooks))
+        normalized = normalize_usage_hooks(hooks)
+        path = self.usage_event_hook_path
+        if not any(rule["id"] == LEGACY_RULE_ID for rule in normalized["rules"]):
+            path = ""
+        return replace(self, usage_hooks=normalized, usage_event_hook_path=path)
 
     def with_usage_display_mode(self, mode: str) -> AgentMonitorSettings:
         if mode not in ("tokens", "cost", "sessions", "percent"):

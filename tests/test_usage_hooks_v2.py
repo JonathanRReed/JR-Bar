@@ -291,6 +291,27 @@ def test_a_legacy_rule_the_person_turned_off_stays_off_while_the_path_is_unchang
     assert settings_from_document(document, scratch_dir=tmp_path).usage_hooks["rules"][0]["executable"] == str(script)
 
 
+def test_removing_the_legacy_rule_from_the_cli_keeps_it_removed(tmp_path: Path, monkeypatch) -> None:
+    import io
+
+    from jrbar.settings import default_settings_path
+    from jrbar.usage_hooks_cli import main
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    script = _script(tmp_path / "chime.sh", "exit 0\n")
+    target = default_settings_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"usage_event_hook_path": str(script)}), encoding="utf-8")
+    assert [rule["id"] for rule in load_settings().usage_hooks["rules"]] == ["legacy"]
+
+    assert main(["remove", "legacy"], stdout=io.StringIO(), stderr=io.StringIO()) == 0
+
+    again = load_settings()
+    assert again.usage_hooks["rules"] == []
+    assert again.usage_event_hook_path == ""
+
+
 def test_duplicate_rule_ids_that_already_end_in_a_number_settle(tmp_path: Path) -> None:
     from jrbar.usage_source_settings import normalize_usage_hooks
 
