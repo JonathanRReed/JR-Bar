@@ -462,8 +462,43 @@ struct BuddyTurnTests {
     func arrival() {
         let start = BuddyArrival(fromScale: 0.5, drift: CGSize(width: 10, height: -4), age: 0)
         #expect(start.scale == 0.5 && start.offset == CGSize(width: 10, height: -4))
+        #expect(start.opacity == 1)
         let end = BuddyArrival(fromScale: 0.5, drift: CGSize(width: 10, height: -4),
                                age: BuddyArrival.duration)
         #expect(end.isOver && end.scale == 1 && end.offset == .zero)
+        let faded = BuddyArrival(fromScale: 0.5, drift: .zero, age: 0, fromOpacity: 0.3)
+        #expect(faded.opacity == 0.3)
+        let halfway = BuddyArrival(fromScale: 0.5, drift: .zero, age: BuddyArrival.duration / 2, fromOpacity: 0.3)
+        #expect(abs(halfway.opacity - 0.65) < 1e-9, "the fade eases on the same curve as the size")
+        #expect(abs(halfway.scale - 0.75) < 1e-9)
+    }
+
+    @Test("a wake mid duck-out grows and brightens back from where the duck-out had got to")
+    func wakeMidTuck() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        toy.isOn = true
+        // Tucked 0.22 s ago: 85 % through the 0.26 s duck-out, at under
+        // half its size and under a third of its opacity.
+        toy.tuckAway(at: Date().addingTimeInterval(-0.22))
+        let wakeAt = Date()
+        let ducking = NotchBuddyView.presence(tuck: toy.tuckProgress(at: wakeAt), arrival: nil,
+                                              docked: true, scale: 1, reduceMotion: false)
+        #expect(ducking.opacity < 0.4 && ducking.scale < 0.55)
+        toy.isOn = true     // woken from the card mid duck-out
+        #expect(toy.tuckProgress(at: wakeAt) == nil)
+        let back = NotchBuddyView.presence(tuck: nil, arrival: toy.arrival(at: wakeAt),
+                                           docked: true, scale: 1, reduceMotion: false)
+        #expect(abs(back.opacity - ducking.opacity) < 0.02, "the fade carries on, it doesn't snap to whole")
+        #expect(abs(back.scale - ducking.scale) < 0.02, "the size carries on, even below the nap's pop-up size")
+        #expect(back.anchor == ducking.anchor && back.offset == ducking.offset)
+        let landed = NotchBuddyView.presence(tuck: nil, arrival: toy.arrival(at: wakeAt.addingTimeInterval(1)),
+                                             docked: true, scale: 1, reduceMotion: false)
+        #expect(landed.opacity == 1 && landed.scale == 1)
     }
 }

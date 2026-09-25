@@ -147,7 +147,8 @@ struct NotchBuddyView: View {
     /// (`tuck` 0 → 1; up under the notch when docked, down to its feet
     /// when floating), or arriving — grown in from the docked size and
     /// drifted in from the docked spot on a hand-off, popped back up
-    /// after a nap. Reduce Motion never ducks out (`tuckAway` puts it
+    /// after a nap, or grown and brightened back from wherever a
+    /// duck-out had got to. Reduce Motion never ducks out (`tuckAway` puts it
     /// away at once) and skips the arrivals too.
     /// `scale` is the home's size: a drift is in screen points and the
     /// figure is drawn at 18 pt and scaled after, so it travels in the
@@ -157,7 +158,7 @@ struct NotchBuddyView: View {
         let anchor: UnitPoint = docked ? .top : .bottom
         if let tuck {
             return Presence(scale: NotchBuddyToy.tuckScale(tuck), anchor: anchor, offset: .zero,
-                            opacity: 1 - tuck * tuck)
+                            opacity: NotchBuddyToy.tuckOpacity(tuck))
         }
         guard !reduceMotion, let arrival else {
             return Presence(scale: 1, anchor: anchor, offset: .zero, opacity: 1)
@@ -165,7 +166,7 @@ struct NotchBuddyView: View {
         let unit = max(1, scale.isFinite ? scale : 1)
         let offset = CGSize(width: arrival.offset.width / unit, height: arrival.offset.height / unit)
         return Presence(scale: arrival.scale, anchor: arrival.drift == .zero ? anchor : .center,
-                        offset: offset, opacity: 1)
+                        offset: offset, opacity: arrival.opacity)
     }
 
     /// The carry's dress: held, the buddy leans toward the travel

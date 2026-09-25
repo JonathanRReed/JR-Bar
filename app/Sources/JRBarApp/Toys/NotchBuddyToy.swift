@@ -87,12 +87,12 @@ final class NotchBuddyToy: Toy {
         get { (store?.state.notchBuddy.enabled ?? false) && !isTucked }
         set {
             let wasTucked = isTucked
-            let comeBack = comeBackScale()
+            let from = comeBack()
             cancelTuck()
             store?.state.notchBuddy.enabled = newValue
             if newValue {
                 store?.state.notchBuddy.tucked = false
-                if wasTucked { arrive(fromScale: comeBack) }
+                if wasTucked { arrive(fromScale: from.scale, fromOpacity: from.opacity) }
             }
             onVisibilityChange?()
         }
@@ -317,7 +317,7 @@ final class NotchBuddyToy: Toy {
     /// was asked for and where the docked figure stood.
     @ObservationIgnored private var pendingHandoff: (at: Date, figureCentre: CGPoint?)?
     /// The arrival the figure is drawing, if any (`BuddyArrival`).
-    @ObservationIgnored private var arrivalStart: (fromScale: Double, drift: CGSize, at: Date)?
+    @ObservationIgnored private var arrivalStart: (fromScale: Double, fromOpacity: Double, drift: CGSize, at: Date)?
     /// How long a hand-off waits for the free panel to claim it.
     static let handoffWindow: TimeInterval = 1
     /// Back from a nap, it pops up from this share of its size.
@@ -332,11 +332,12 @@ final class NotchBuddyToy: Toy {
         return waiting
     }
 
-    /// Grow in from `fromScale` of its size, drifting in by `drift`
-    /// (screen points, SwiftUI's y-down) over `BuddyArrival.duration`.
-    func arrive(fromScale: Double, drift: CGSize = .zero, at now: Date = Date()) {
+    /// Grow in from `fromScale` of its size and brighten from
+    /// `fromOpacity`, drifting in by `drift` (screen points, SwiftUI's
+    /// y-down) over `BuddyArrival.duration`.
+    func arrive(fromScale: Double, fromOpacity: Double = 1, drift: CGSize = .zero, at now: Date = Date()) {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { arrivalStart = nil; return }
-        arrivalStart = (fromScale, drift, now)
+        arrivalStart = (fromScale, fromOpacity, drift, now)
         stayLively(from: now)
     }
 
@@ -344,7 +345,7 @@ final class NotchBuddyToy: Toy {
     func arrival(at now: Date) -> BuddyArrival? {
         guard let start = arrivalStart else { return nil }
         let drawn = BuddyArrival(fromScale: start.fromScale, drift: start.drift,
-                                 age: now.timeIntervalSince(start.at))
+                                 age: now.timeIntervalSince(start.at), fromOpacity: start.fromOpacity)
         return drawn.isOver ? nil : drawn
     }
 
@@ -413,17 +414,23 @@ final class NotchBuddyToy: Toy {
         isOn || (tuckingSince != nil && store?.state.notchBuddy.enabled == true)
     }
 
-    /// The size it comes back from: `wakeScale` after a real nap, or
-    /// wherever a duck-out still in flight had got to, so a wake mid-duck
-    /// grows back from there instead of snapping.
-    private func comeBackScale(at now: Date = Date()) -> Double {
-        guard let tuck = tuckProgress(at: now) else { return Self.wakeScale }
-        return max(Self.wakeScale, Self.tuckScale(tuck))
+    /// Where it comes back from: `wakeScale` after a real nap, or
+    /// wherever a duck-out still in flight had got to, its size and its
+    /// fade both, so a wake mid-duck grows and brightens back from there
+    /// instead of snapping.
+    private func comeBack(at now: Date = Date()) -> (scale: Double, opacity: Double) {
+        guard let tuck = tuckProgress(at: now) else { return (Self.wakeScale, 1) }
+        return (Self.tuckScale(tuck), Self.tuckOpacity(tuck))
     }
 
     /// The duck-out's size at `progress`: an ease-in down to a quarter.
     static func tuckScale(_ progress: Double) -> Double {
         1 - 0.75 * progress * progress
+    }
+
+    /// The duck-out's fade at `progress`: an ease-in to nothing.
+    static func tuckOpacity(_ progress: Double) -> Double {
+        1 - progress * progress
     }
 
     /// 0 → 1 across the duck-out; nil unless one is playing.
@@ -1241,7 +1248,8 @@ final class NotchBuddyToy: Toy {
         guard store?.state.notchBuddy.tucked == true else { return }
         store?.state.notchBuddy.tucked = false
         wakeSnapshot = nil
-        arrive(fromScale: comeBackScale())
+        let from = comeBack()
+        arrive(fromScale: from.scale, fromOpacity: from.opacity)
         cancelTuck()
         onVisibilityChange?()
     }

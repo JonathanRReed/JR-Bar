@@ -249,12 +249,16 @@ struct BuddyArrival: Equatable, Sendable {
     /// (SwiftUI's y-down).
     var drift: CGSize
     var age: TimeInterval
+    /// How visible it starts: whole, or part-faded when it wakes while
+    /// still ducking out for a nap.
+    var fromOpacity: Double = 1
 
     static let duration: TimeInterval = 0.3
 
     var isOver: Bool { !(age < Self.duration) }
     private var eased: Double { BuddyTurn.smooth(age / Self.duration) }
     var scale: Double { fromScale + (1 - fromScale) * eased }
+    var opacity: Double { fromOpacity + (1 - fromOpacity) * eased }
     var offset: CGSize {
         CGSize(width: drift.width * (1 - eased), height: drift.height * (1 - eased))
     }
