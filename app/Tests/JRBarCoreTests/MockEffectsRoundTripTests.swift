@@ -37,7 +37,9 @@ struct MockEffectsRoundTripTests {
     @MainActor
     func usage() async throws {
         let socket = MockCoreIntegrationTests.temporarySocketPath()
-        let mock = try MockCoreIntegrationTests.launchMock(socket: socket, extraArguments: ["--step", "600", "--history-scan", "0.4"])
+        // A day per timeline step: the mock's usage ticks raise every 5h
+        // reading, and on a slow runner one used to land mid-test.
+        let mock = try MockCoreIntegrationTests.launchMock(socket: socket, extraArguments: ["--step", "86400", "--history-scan", "0.4"])
         defer {
             if mock.isRunning { mock.terminate() }
             try? FileManager.default.removeItem(atPath: socket)

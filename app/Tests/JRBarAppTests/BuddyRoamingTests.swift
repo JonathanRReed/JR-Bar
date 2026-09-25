@@ -60,9 +60,24 @@ struct BuddyRoamingTests {
         #expect(toy.tuckingSince == nil, "the card's re-enable calls the duck-out off")
     }
 
+    @Test("with Reduce Motion a tuck lets the panels go at once, with no duck-out")
+    func tuckUnderReduceMotion() {
+        let (toy, store) = makeToy()
+        toy.reduceMotion = { true }
+        toy.isOn = true
+        var syncs = 0
+        toy.onVisibilityChange = { syncs += 1 }
+        toy.tuckAway(at: t0)
+        #expect(store.state.notchBuddy.tucked == true)
+        #expect(syncs == 1, "the panels let it go straight away")
+        #expect(toy.isShowing == false)
+        #expect(toy.tuckProgress(at: t0) == nil)
+    }
+
     @Test("a tuck ducks out before the panels let it go, instead of vanishing")
     func tuckDucksOut() {
         let (toy, store) = makeToy()
+        toy.reduceMotion = { false }
         toy.isOn = true
         var syncs = 0
         toy.onVisibilityChange = { syncs += 1 }

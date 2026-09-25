@@ -294,7 +294,7 @@ struct CoreClientTests {
         let events = EventLog()
         let client = CoreClient(socketPath: path, replyTimeout: 0.4,
                                 helloTimeout: 2, connectTimeout: 1,
-                                writeTimeout: 5) { events.add($0) }
+                                writeTimeout: 30) { events.add($0) }
         client.start()
         defer { client.stop() }
         #expect(await Self.wait { client.isConnected })
@@ -318,7 +318,9 @@ struct CoreClientTests {
         } catch {
             Issue.record("unexpected error: \(error)")
         }
-        #expect(Date().timeIntervalSince(started) < 4,
+        // The deadline is 0.4 s and the write timeout 30 s: anything well
+        // short of 30 proves the deadline fired, even on a loaded runner.
+        #expect(Date().timeIntervalSince(started) < 15,
                 "send stayed blocked on a peer that never reads")
         // The wedged connection is dropped, not parked.
         #expect(await Self.wait { !events.disconnectReasons.isEmpty })

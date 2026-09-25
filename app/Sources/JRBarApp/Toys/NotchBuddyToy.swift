@@ -373,11 +373,15 @@ final class NotchBuddyToy: Toy {
     /// (straight up under the notch when docked, down to its feet when
     /// floating) rather than vanishing in one frame; Reduce Motion, or a
     /// buddy that wasn't showing, goes at once.
+    /// Whether the Mac asks for less motion; a duck-out is skipped then.
+    /// Tests pin it, since a CI runner may have it on.
+    var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
     func tuckAway(at now: Date = Date()) {
         let showing = isOn
         wakeSnapshot = Self.sessionSnapshot(core.state?.sessions ?? [])
         store?.state.notchBuddy.tucked = true
-        guard showing, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard showing, !reduceMotion() else {
             finishTuck()
             return
         }
