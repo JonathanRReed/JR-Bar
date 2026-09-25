@@ -417,9 +417,6 @@ struct SessionsSection: View {
                     VStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
                         ForEach(store.visibleAskRows) { row in
                             AskRow(row: row, store: store)
-                                // An answer on the wire lifts its card, so
-                                // its beam draws over the card below.
-                                .zIndex(store.answerPendingSince(row.ask) == nil ? 0 : 1)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                         ForEach(store.visiblePlainRows) { row in
@@ -1030,8 +1027,8 @@ struct AskRow: View {
                 .opacity(store.selectionByKeyboard && store.selectedID == row.id ? 1 : 0)
         )
         // An answer on the wire past three seconds: a beam round this
-        // card, display only (`AskAnswerDesk.pendingSince`).
-        .waitBeam(since: store.answerPendingSince(row.ask), track: .ring(cornerRadius: AskCardPlate.radius),
+        // card while the panel is open, display only (`askBeamSince`).
+        .waitBeam(since: store.askBeamSince(row.ask), track: .ring(cornerRadius: AskCardPlate.radius),
                   tint: SessionActivity.waiting.tint)
         .padding(.horizontal, 6)
         .contentShape(Rectangle())

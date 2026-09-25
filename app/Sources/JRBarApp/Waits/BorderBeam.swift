@@ -11,8 +11,9 @@ enum BeamTrack: Equatable, Sendable {
 }
 
 /// Whether a beam draws, and whether anything moves. The view reads
-/// this and nothing else, so "nothing animates when inactive" is a fact
-/// a test can check rather than a hope about a view tree.
+/// this and nothing else, so "nothing animates when inactive, or when
+/// nobody can see it" is a fact a test can check rather than a hope
+/// about a view tree.
 enum BeamMotion: Equatable, Sendable {
     /// Inactive: no layer, no clock.
     case off
@@ -20,10 +21,14 @@ enum BeamMotion: Equatable, Sendable {
     case glow
     /// Active: the arc travels, one `TimelineView` driving one `Canvas`.
     case travel
+    /// Active in a window that is not on screen (ordered out, wholly
+    /// covered): the arc drawn once where it stands, and no clock.
+    case held
 
-    static func mode(active: Bool, reduced: Bool) -> BeamMotion {
+    static func mode(active: Bool, reduced: Bool, onScreen: Bool = true) -> BeamMotion {
         guard active else { return .off }
-        return reduced ? .glow : .travel
+        if reduced { return .glow }
+        return onScreen ? .travel : .held
     }
 
     var isAnimating: Bool { self == .travel }
@@ -36,11 +41,18 @@ enum BeamMotion: Equatable, Sendable {
 /// patterns are fixed, so moving the arc is a new dash phase and
 /// nothing else.
 enum BeamGeometry {
-    /// One lap of the border.
-    static let lap: TimeInterval = 2.4
+    /// How fast the head glides along the border, in points a second —
+    /// the same on a small card and a wide field, so a longer border
+    /// takes a longer lap rather than a faster head.
+    static let speed: CGFloat = 140
+    /// The shortest lap, so a small element's beam never whirls.
+    static let minimumLap: TimeInterval = 2.4
+    /// The frame cap: the head moves a couple of points a frame, and a
+    /// clock left uncapped runs faster, not slower, off screen.
+    static let frameInterval: TimeInterval = 1.0 / 60
     /// The fade in and out as the beam comes and goes.
     static let fade: TimeInterval = 0.25
-    /// The bright core's width.
+    /// The head's width.
     static let lineWidth: CGFloat = 1.5
     /// How far the glow may spill past the element on every side.
     static let bleed: CGFloat = 4
@@ -53,9 +65,6 @@ enum BeamGeometry {
     /// The trail's opacity, step by step from the head: a geometric
     /// fall-off, so the steps read as one fading tail.
     static let trailOpacity: [Double] = (0..<trailSteps).map { 0.5 * pow(0.74, Double($0)) }
-    /// The hot centre at the head's front, on a dark surface.
-    static let coreLength: CGFloat = 14
-    static let coreWidth: CGFloat = 0.8
     /// The glow's blur, and the width of the stroke it blurs.
     static let glowBlur: CGFloat = 2.5
     static let glowWidth: CGFloat = 5
@@ -67,18 +76,23 @@ enum BeamGeometry {
     static let headDash: [CGFloat] = [headLength - lineWidth, period - headLength + lineWidth]
     static let glowDash: [CGFloat] = [headLength + trailStep, period - headLength - trailStep]
     static let trailDash: [CGFloat] = [trailStep, period - trailStep]
-    static let coreDash: [CGFloat] = [coreLength - coreWidth, period - coreLength + coreWidth]
     /// Everything the arc draws, head and trail.
     static var visibleLength: CGFloat { headLength + CGFloat(trailSteps) * trailStep }
 
-    /// How far round its lap the head is at `time`, 0…1.
-    static func phase(at time: TimeInterval) -> Double {
-        let laps = time / lap
+    /// One lap of a track `length` long, at `speed`.
+    static func lap(forTrack length: CGFloat) -> TimeInterval {
+        max(minimumLap, TimeInterval(length / speed))
+    }
+
+    /// How far round its lap the head of a track `length` long is at
+    /// `time`, 0…1.
+    static func phase(at time: TimeInterval, trackLength length: CGFloat) -> Double {
+        let laps = time / lap(forTrack: length)
         return laps - floor(laps)
     }
 
     /// The rectangle a ring's stroke runs on: the element's bounds
-    /// (inside the bleed) inset by half the core's width, so the core
+    /// (inside the bleed) inset by half the head's width, so the head
     /// sits on the element's own edge.
     static func ringRect(in size: CGSize) -> CGRect {
         CGRect(origin: .zero, size: size).insetBy(dx: bleed + lineWidth / 2, dy: bleed + lineWidth / 2)
@@ -136,8 +150,9 @@ enum BeamGeometry {
 
 extension View {
     /// A short, soft arc of light travelling round the element's border
-    /// while `active` — about 2.4 s a lap, concentric with its corners,
-    /// fading in and out over a quarter second. Under Reduce Motion it
+    /// while `active` — gliding at a steady `BeamGeometry.speed`,
+    /// concentric with its corners, fading in and out over a quarter
+    /// second. Under Reduce Motion it
     /// is a still glow on the border. Inactive, it draws nothing and no
     /// clock runs.
     func borderBeam(active: Bool, cornerRadius: CGFloat, tint: Color) -> some View {
@@ -166,21 +181,29 @@ struct BorderBeamModifier: ViewModifier {
     /// Which fade is the latest, so a fade-out that finishes after the
     /// beam came back does not take it away again.
     @ViewState private var generation = 0
+    /// The hosting window is on screen (`WindowVisibilityReader`); off
+    /// it, the arc holds still.
+    @ViewState private var onScreen = true
 
     func body(content: Content) -> some View {
         content
             .overlay {
                 if layerPresent {
-                    BorderBeamLayer(track: track, tint: tint,
-                                    motion: BeamMotion.mode(active: layerPresent, reduced: reduceMotion),
-                                    frozenPhase: still?.beamPhase)
+                    BorderBeamLayer(track: track, tint: tint, motion: layerMotion, frozenPhase: still?.beamPhase)
                         .padding(-BeamGeometry.bleed)
                         .opacity(layerOpacity)
+                        .background {
+                            if still == nil { WindowVisibilityReader { onScreen = $0 } }
+                        }
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
             }
             .onChange(of: active, initial: true) { _, isActive in sync(isActive) }
+    }
+
+    private var layerMotion: BeamMotion {
+        BeamMotion.mode(active: layerPresent, reduced: reduceMotion, onScreen: onScreen)
     }
 
     /// A still (a render proof) shows the beam exactly while active,
@@ -222,14 +245,13 @@ struct BorderBeamLayer: View {
 
     var body: some View {
         if motion == .travel, frozenPhase == nil {
-            TimelineView(.animation) { context in
+            TimelineView(.animation(minimumInterval: BeamGeometry.frameInterval)) { context in
                 Canvas { canvas, size in
-                    drawArc(&canvas, size: size,
-                            phase: BeamGeometry.phase(at: context.date.timeIntervalSinceReferenceDate))
+                    drawArc(&canvas, size: size, time: context.date.timeIntervalSinceReferenceDate)
                 }
             }
-        } else if motion == .travel, let frozenPhase {
-            Canvas { canvas, size in drawArc(&canvas, size: size, phase: frozenPhase) }
+        } else if motion == .travel || motion == .held {
+            Canvas { canvas, size in drawArc(&canvas, size: size, phase: frozenPhase ?? 0) }
         } else if motion == .glow {
             Canvas { canvas, size in drawGlow(&canvas, size: size) }
         }
@@ -247,17 +269,30 @@ struct BorderBeamLayer: View {
         var round: Bool
     }
 
+    /// The frame at `time` on the live clock: the phase depends on the
+    /// track's length, which only the canvas knows.
+    private func drawArc(_ canvas: inout GraphicsContext, size: CGSize, time: TimeInterval) {
+        let length = BeamGeometry.trackLength(track, in: size)
+        drawArc(&canvas, size: size, phase: BeamGeometry.phase(at: time, trackLength: length))
+    }
+
     /// One frame of the travelling arc: a blurred glow round the head,
-    /// the trail fading behind it, the head, and on a dark surface its
-    /// hot white centre.
+    /// the trail fading behind it, and the head in exactly the tint —
+    /// only the glow adds light, so a dark surface never bleaches the
+    /// head yellow or white. On a ring the glow stays inside the
+    /// element, so it needs no room round it and nothing clips it.
     private func drawArc(_ canvas: inout GraphicsContext, size: CGSize, phase: Double) {
         let length = BeamGeometry.trackLength(track, in: size)
         guard length > 0 else { return }
         let front = BeamGeometry.headFront(phase: phase, length: length)
         let headStart = front - BeamGeometry.headLength
         let ink = GraphicsContext.Shading.color(tint)
-        if dark { canvas.blendMode = .plusLighter }
-        canvas.drawLayer { glow in
+        var glowing = canvas
+        if case .ring(let cornerRadius) = track {
+            glowing.clip(to: Self.elementShape(size: size, cornerRadius: cornerRadius))
+        }
+        if dark { glowing.blendMode = .plusLighter }
+        glowing.drawLayer { glow in
             glow.addFilter(.blur(radius: BeamGeometry.glowBlur))
             glow.opacity = dark ? 0.55 : 0.4
             let halo = Stretch(start: headStart - BeamGeometry.trailStep,
@@ -276,12 +311,13 @@ struct BorderBeamLayer: View {
         let head = Stretch(start: headStart, length: BeamGeometry.headLength, width: BeamGeometry.lineWidth,
                            dash: BeamGeometry.headDash, round: true)
         draw(head, on: &canvas, ink: ink, size: size, length: length)
-        if dark {
-            canvas.opacity = 0.75
-            let core = Stretch(start: front - BeamGeometry.coreLength, length: BeamGeometry.coreLength,
-                               width: BeamGeometry.coreWidth, dash: BeamGeometry.coreDash, round: true)
-            draw(core, on: &canvas, ink: .color(.white), size: size, length: length)
-        }
+    }
+
+    /// The element's own rounded rectangle, inside the bleed.
+    private static func elementShape(size: CGSize, cornerRadius: CGFloat) -> Path {
+        let rect = CGRect(origin: .zero, size: size).insetBy(dx: BeamGeometry.bleed, dy: BeamGeometry.bleed)
+        let radius = max(0, min(cornerRadius, min(rect.width, rect.height) / 2))
+        return Path(roundedRect: rect, cornerRadius: radius, style: .continuous)
     }
 
     /// A stretch on the track. On a ring, a stretch that crosses the
@@ -318,11 +354,16 @@ struct BorderBeamLayer: View {
         }
     }
 
-    /// Reduce Motion: the whole border softly lit, nothing moving.
+    /// Reduce Motion: the whole border softly lit, nothing moving — on a
+    /// ring, the glow inside the element as the arc's is.
     private func drawGlow(_ canvas: inout GraphicsContext, size: CGSize) {
         let ink = GraphicsContext.Shading.color(tint)
         let width = BeamGeometry.lineWidth
-        canvas.drawLayer { glow in
+        var glowing = canvas
+        if case .ring(let cornerRadius) = track {
+            glowing.clip(to: Self.elementShape(size: size, cornerRadius: cornerRadius))
+        }
+        glowing.drawLayer { glow in
             glow.addFilter(.blur(radius: BeamGeometry.glowBlur + 0.5))
             glow.opacity = dark ? 0.4 : 0.3
             strokeWhole(on: &glow, ink: ink, size: size, width: 4)
