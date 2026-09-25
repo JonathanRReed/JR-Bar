@@ -457,12 +457,14 @@ def test_statusline_with_no_text_file_prints_nothing_and_never_spools(shim: Path
 
 def test_statusline_then_passes_stdin_to_the_wrapped_command(shim: Path, sock_dir: Path) -> None:
     (sock_dir / "statusline.txt").write_text("JR-Bar · idle\n")
-    wrapped = sock_dir / "previous-statusline.sh"
-    # Builtins only, so a busy machine cannot push it past the shim's budget.
-    wrapped.write_text('#!/bin/sh\nIFS= read -r line || true\nprintf "mine: %s\\n" "${#line}"\n')
-    wrapped.chmod(0o755)
+    # Builtins only, and inline rather than a script written for the test:
+    # the shim hands --then to /bin/sh -c as Claude Code does, and a file
+    # made a moment ago can be held at exec by the Mac's malware scanner
+    # past the shim's 3 s budget on a busy machine (the full run lost its
+    # output that way once).
+    wrapped = 'IFS= read -r line || true; printf "mine: %s\\n" "${#line}"'
     payload = json.dumps({"session_id": "abc"})
-    result = _run_statusline(shim, sock_dir, payload, "--then", f"{wrapped}")
+    result = _run_statusline(shim, sock_dir, payload, "--then", wrapped)
     assert result.returncode == 0
     lines = result.stdout.decode().splitlines()
     assert lines == ["JR-Bar · idle", f"mine: {len(payload.encode())}"]
