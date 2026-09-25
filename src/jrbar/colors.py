@@ -309,7 +309,7 @@ PROVIDER_ANIMATION_DESCRIPTIONS: dict[str, str] = {
 #: be told apart by movement as well as colour (J17). Choosing Automatic
 #: (or anything else) for it overrides this like any other choice.
 PROVIDER_DEFAULT_ANIMATIONS: dict[str, tuple[str, dict[str, Any]]] = {
-    "opencode": (MOTION_PENDULUM, {"duration_seconds": 2.4}),
+    "opencode": (MOTION_PENDULUM, {"duration_seconds": 2.2}),
 }
 
 STATE_MOTION: dict[LedDisplayState, str] = {

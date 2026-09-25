@@ -379,7 +379,12 @@ def test_opencode_swings_its_own_motion_until_told_otherwise() -> None:
     assert defaults.agent_color("opencode") == "#AF52DE"
     assert defaults.agent_animation("opencode") == colors_module.MOTION_PENDULUM
     assert defaults.agent_animation("claude") == colors_module.PROVIDER_ANIMATION_AUTO
-    assert defaults.agent_cycle_ms("opencode", 500) == 2400
+    assert defaults.agent_cycle_ms("opencode", 500) == 2200
+    # The tempo it swings at is the one Effect Studio's Pendulum opens at,
+    # so the Assign sheet previews what the strip is already playing.
+    pendulum = get_effect("pendulum")
+    studio = next(p.default for p in pendulum.parameter_metadata if p.name == "duration_seconds")
+    assert defaults.agent_animation_parameters("opencode") == {"duration_seconds": studio}
     preview = colors_module.provider_motion_preview_program(
         "opencode", defaults.agent_color("opencode"), defaults
     )
@@ -432,7 +437,7 @@ def test_clearing_an_assignment_gives_back_the_providers_own_motion() -> None:
     assert colors.provider_animation == {}
     assert colors.provider_animation_parameters == {}
     assert colors.agent_animation("opencode") == colors_module.MOTION_PENDULUM
-    assert colors.agent_cycle_ms("opencode", 500) == 2400
+    assert colors.agent_cycle_ms("opencode", 500) == 2200
     assert colors.agent_animation("claude") == colors_module.PROVIDER_ANIMATION_AUTO
     assert len(host.saved) == 4 and host.published == 4
     # Choosing Automatic in Settings is still a choice, and it sticks.
