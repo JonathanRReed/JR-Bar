@@ -356,7 +356,7 @@ struct ScreenBarPeekTile: View {
                 .foregroundStyle(.white.opacity(0.92))
                 .frame(height: 20)
         } else {
-            Image(nsImage: icon ?? tile.item.owner?.icon
+            Image(nsImage: icon ?? MenuBarAppIcons.icon(for: tile.item)
                   ?? NSImage(systemSymbolName: "questionmark.square.dashed", accessibilityDescription: nil)
                   ?? NSImage())
                 .resizable()

@@ -1255,9 +1255,18 @@ struct MenuBarAppFace: View {
 @MainActor
 enum MenuBarAppIcons {
     private static var cache: [String: NSImage?] = [:]
+    /// `item.owner` is itself a LaunchServices lookup (~26 µs a read), so
+    /// a running app's icon is remembered per (pid, name) too — the name
+    /// rides along so a reused pid can never serve the dead app's icon.
+    private static var pidCache: [String: NSImage?] = [:]
 
     static func icon(for item: MenuBarItem) -> NSImage? {
-        if let running = item.owner?.icon { return running }
+        let pidKey = "\(item.ownerPID)|\(item.ownerName)"
+        if let known = pidCache[pidKey] { return known }
+        if let running = item.owner?.icon {
+            pidCache[pidKey] = running
+            return running
+        }
         guard let bundleID = item.bundleID else { return nil }
         if let known = cache[bundleID] { return known }
         let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
