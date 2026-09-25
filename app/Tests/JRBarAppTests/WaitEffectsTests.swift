@@ -64,7 +64,8 @@ struct WaitEffectsTests {
     func schedule() {
         let dates = WaitPolicy.schedule(since: Self.start)
         let moments = [Self.start, Self.start.addingTimeInterval(2), Self.start.addingTimeInterval(3)]
-        #expect(dates == [.distantPast] + moments + [.distantFuture])
+        let framed: [Date] = [Date.distantPast] + moments + [Date.distantFuture]
+        #expect(dates == framed)
         #expect(moments.map { WaitPolicy.stage(since: Self.start, now: $0) } == [.quiet, .orb, .beam])
         #expect(WaitPolicy.stage(since: Self.start, now: .distantPast) == .quiet)
         #expect(WaitPolicy.schedule(since: nil).isEmpty)
@@ -80,55 +81,43 @@ struct WaitEffectsTests {
     // MARK: AgentActivity
 
     /// Every provider's own spelling of its tools, as the hook reports
-    /// them, and what the orb makes of them.
-    static let providerTools: [(provider: String, tool: String, expected: AgentActivity)] = [
-        // Claude Code
-        ("claude", "Read", .searching), ("claude", "Grep", .searching), ("claude", "Glob", .searching),
-        ("claude", "LS", .searching), ("claude", "WebSearch", .searching), ("claude", "WebFetch", .searching),
-        ("claude", "Edit", .writing), ("claude", "Write", .writing), ("claude", "MultiEdit", .writing),
-        ("claude", "NotebookEdit", .writing), ("claude", "Bash", .running), ("claude", "BashOutput", .running),
-        ("claude", "KillShell", .running), ("claude", "Task", .thinking), ("claude", "Agent", .thinking),
-        ("claude", "TodoWrite", .thinking), ("claude", "Skill", .thinking), ("claude", "SlashCommand", .thinking),
-        ("claude", "AskUserQuestion", .listening), ("claude", "ExitPlanMode", .listening),
-        ("claude", "mcp__github__search_code", .searching), ("claude", "mcp__github__create_issue", .writing),
-        // Codex
-        ("codex", "shell", .running), ("codex", "exec_command", .running), ("codex", "local_shell", .running),
-        ("codex", "unified_exec", .running), ("codex", "write_stdin", .running), ("codex", "exec", .running),
-        ("codex", "apply_patch", .writing), ("codex", "web_search", .searching), ("codex", "view_image", .searching),
-        ("codex", "update_plan", .thinking), ("codex", "mcp__codex_apps__gmail__batch_read_email", .searching),
-        // Gemini CLI
-        ("gemini", "read_file", .searching), ("gemini", "read_many_files", .searching),
-        ("gemini", "list_directory", .searching), ("gemini", "search_file_content", .searching),
-        ("gemini", "glob", .searching), ("gemini", "google_web_search", .searching), ("gemini", "web_fetch", .searching),
-        ("gemini", "write_file", .writing), ("gemini", "replace", .writing),
-        ("gemini", "run_shell_command", .running),
-        // OpenCode
-        ("opencode", "read", .searching), ("opencode", "grep", .searching), ("opencode", "list", .searching),
-        ("opencode", "webfetch", .searching), ("opencode", "edit", .writing), ("opencode", "write", .writing),
-        ("opencode", "patch", .writing), ("opencode", "multiedit", .writing), ("opencode", "bash", .running),
-        ("opencode", "todowrite", .thinking), ("opencode", "task", .thinking),
-        // Cursor
-        ("cursor", "run_terminal_cmd", .running), ("cursor", "edit_file", .writing),
-        ("cursor", "codebase_search", .searching), ("cursor", "grep_search", .searching),
-        ("cursor", "file_search", .searching), ("cursor", "search_replace", .writing),
-        ("cursor", "delete_file", .writing), ("cursor", "list_dir", .searching),
-        // Devin
-        ("devin", "run_subagent", .thinking), ("devin", "sidekick", .thinking), ("devin", "view", .searching),
-        ("devin", "str_replace", .writing), ("devin", "find", .searching), ("devin", "exec", .running),
-        // Kiro
-        ("kiro", "fs_read", .searching), ("kiro", "fs_write", .writing), ("kiro", "execute_bash", .running),
-        // The daemon's own classification tables (`mailbox._*_TOOLS`)
-        ("jrbar", "open_file", .searching), ("jrbar", "read_text_file", .searching), ("jrbar", "readfile", .searching),
-        ("jrbar", "rg", .searching), ("jrbar", "search_files", .searching), ("jrbar", "search", .searching),
-        ("jrbar", "powershell", .running), ("jrbar", "run_terminal_command", .running), ("jrbar", "terminal", .running),
-        ("jrbar", "zsh", .running), ("jrbar", "think", .thinking), ("jrbar", "reason", .thinking),
+    /// them — Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Devin,
+    /// Kiro, and the daemon's own tables (`mailbox._*_TOOLS`) — by the
+    /// activity the orb makes of them.
+    static let searchingNames: [String] = [
+        "Read", "Grep", "Glob", "LS", "WebSearch", "WebFetch", "mcp__github__search_code",
+        "web_search", "view_image", "mcp__codex_apps__gmail__batch_read_email",
+        "read_file", "read_many_files", "list_directory", "search_file_content", "glob", "google_web_search",
+        "web_fetch", "read", "grep", "list", "webfetch", "codebase_search", "grep_search", "file_search",
+        "list_dir", "view", "find", "fs_read", "open_file", "read_text_file", "readfile", "rg", "search_files",
+        "search",
     ]
+    static let writingNames: [String] = [
+        "Edit", "Write", "MultiEdit", "NotebookEdit", "mcp__github__create_issue", "apply_patch", "write_file",
+        "replace", "edit", "write", "patch", "multiedit", "edit_file", "search_replace", "delete_file",
+        "str_replace", "fs_write",
+    ]
+    static let runningNames: [String] = [
+        "Bash", "BashOutput", "KillShell", "shell", "exec_command", "local_shell", "unified_exec", "write_stdin",
+        "exec", "run_shell_command", "bash", "run_terminal_cmd", "execute_bash", "powershell",
+        "run_terminal_command", "terminal", "zsh",
+    ]
+    static let thinkingNames: [String] = [
+        "Task", "Agent", "TodoWrite", "Skill", "SlashCommand", "update_plan", "todowrite", "task", "run_subagent",
+        "sidekick", "think", "reason",
+    ]
+    static let listeningNames: [String] = ["AskUserQuestion", "ExitPlanMode"]
 
     @Test("every provider's tool names map to the activity they are")
     func providerToolNames() {
-        for entry in Self.providerTools {
-            let got = AgentActivity.from(event: "PreToolUse", tool: entry.tool)
-            #expect(got == entry.expected, "\(entry.provider) \(entry.tool)")
+        let table: [(AgentActivity, [String])] = [
+            (.searching, Self.searchingNames), (.writing, Self.writingNames), (.running, Self.runningNames),
+            (.thinking, Self.thinkingNames), (.listening, Self.listeningNames),
+        ]
+        for (expected, names) in table {
+            for name in names {
+                #expect(AgentActivity.from(event: "PreToolUse", tool: name) == expected, "\(name)")
+            }
         }
     }
 
@@ -347,7 +336,8 @@ struct WaitEffectsTests {
     func rowSlotIsFixed() {
         var sizes: Set<CGFloat> = []
         for activity in SessionActivity.allCases {
-            for doing in [nil] + AgentActivity.allCases.map(Optional.some) {
+            let doings: [AgentActivity?] = [nil] + AgentActivity.allCases.map { $0 }
+            for doing in doings {
                 let kind = SessionRowMark.kind(activity: activity, agentActivity: doing)
                 let size = SessionRowMark.slotSize(for: kind)
                 sizes.insert(size.width)
