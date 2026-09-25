@@ -2,6 +2,7 @@ import AppKit
 import JRBarCore
 import JRBarUI
 import SwiftUI
+import Synchronization
 
 /// How a provider looks everywhere in the app: its name, the accent the
 /// Python app assigns it today (`sidepulse.colors.default_agent_color`),
@@ -56,10 +57,21 @@ struct ProviderStyle: Hashable, Sendable {
 
     /// The accent as a mark's ink on `surface`: the accent itself where it
     /// reads, lifted or deepened to 3:1 where it would vanish (Grok's grey
-    /// on a dark tile, Cursor's yellow on a light one).
+    /// on a dark tile, Cursor's yellow on a light one). The contrast
+    /// bisection is a pure function of (accent, surface), so the answer is
+    /// kept — the Overview graph asks for it per node per drawn frame.
     func markInk(on surface: ProviderMarkInk.Surface) -> Color {
-        Color(nsColor: ProviderMarkInk.ink(for: nsAccent, on: surface))
+        let key = "\(accentHex)|\(surface)"
+        let color = Self.inkCache.withLock { cache in
+            if let hit = cache[key] { return hit }
+            let made = ProviderMarkInk.ink(for: nsAccent, on: surface)
+            cache[key] = made
+            return made
+        }
+        return Color(nsColor: color)
     }
+
+    private static let inkCache = Mutex<[String: NSColor]>([:])
 
     /// A tile's ink in the given colour scheme.
     func markInk(dark: Bool) -> Color { markInk(on: dark ? .darkPlate : .lightPlate) }

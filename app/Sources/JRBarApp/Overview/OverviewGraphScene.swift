@@ -647,20 +647,26 @@ private struct GraphPainter {
             return
         }
         let side = glyph.size
-        let box = CGRect(x: center.x - side / 2, y: center.y - side / 2, width: side, height: side)
-        let mark = Path(logo.path(in: box))
+        // The mark is the shared unit path under a transform — fitting a
+        // copy per node per frame walked every element (Hermes ~880).
+        var layer = context
+        layer.translateBy(x: center.x - side / 2, y: center.y - side / 2)
+        layer.scaleBy(x: side, y: side)
+        let mark = Path(logo.unitPath)
         // The hairline small marks get, judged at their size on screen.
         let weight = ProviderLogo.hairline(for: logo.id, side: side * camera.scale) / max(camera.scale, 0.01)
         let ink: Color
         if glyph.solid {
-            context.fill(mark.offsetBy(dx: 0, dy: 0.5), with: .color(.black.opacity(0.18)))
+            var shadow = layer
+            shadow.translateBy(x: 0, y: 0.5 / side)
+            shadow.fill(mark, with: .color(.black.opacity(0.18)))
             ink = .white
         } else {
             ink = style.markInk(dark: dark)
         }
-        context.fill(mark, with: .color(ink))
+        layer.fill(mark, with: .color(ink))
         if weight > 0 {
-            context.stroke(mark, with: .color(ink), style: StrokeStyle(lineWidth: weight, lineJoin: .round))
+            layer.stroke(mark, with: .color(ink), style: StrokeStyle(lineWidth: weight / side, lineJoin: .round))
         }
     }
 
