@@ -87,7 +87,7 @@ struct WaitEffectsRenderProofTests {
 
     @Test(.enabled(if: WaitEffectsRenderProofTests.enabled))
     func orbs() throws {
-        let size = CGSize(width: 440, height: 170)
+        let size = CGSize(width: 440, height: 140)
         for dark in [false, true] {
             for scale in [1, 2] as [CGFloat] {
                 let name = "orbs-\(dark ? "dark" : "light")-\(Int(scale))x"
