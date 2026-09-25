@@ -393,6 +393,58 @@ struct AquariumTurnLayoutTests {
         }
     }
 
+    @Test("a finished run's eaters are the fish nearest where its pellets really fall")
+    func completionMealPicksTheNearest() throws {
+        var leaver = makeFish("near-leaver", since: t0 - 100)
+        let eaters: [Fish] = (0..<3).map { i in
+            Fish(id: "near-eater-\(i)", label: "eater", providerID: "codex", state: .swimming,
+                 lane: 0.3, speed: 0.08, direction: 1, stateSince: Date(timeIntervalSince1970: t0 - 100),
+                 enteredAt: .distantPast, species: .clownfish)
+        }
+        var roster = [leaver] + eaters
+        let tank = makeTank(roster)
+        var t = t0
+        tank.stepSwim(roster, in: size, t: t, now: Date(timeIntervalSince1970: t))
+        // The leaver swims off from where its state began: by the time it
+        // finishes it is far across the tank.
+        let began = try #require(tank.motion.anchors[leaver.id])
+        var lb = tank.motion.bodies[leaver.id]!
+        lb.x = began.x < 0.5 ? 0.8 : 0.2
+        lb.y = 0.3
+        tank.motion.bodies[leaver.id] = lb
+        // One mate waits where the leaver started, the others near where
+        // it really is now.
+        for (i, eater) in eaters.enumerated() {
+            var b = tank.motion.bodies[eater.id]!
+            b.x = i == 0 ? began.x : lb.x + (i == 1 ? -0.06 : 0.06)
+            b.y = i == 0 ? began.y : 0.42
+            tank.motion.bodies[eater.id] = b
+        }
+        t += dt
+        leaver.state = .leaving
+        leaver.stateSince = Date(timeIntervalSince1970: t)
+        roster = [leaver] + eaters
+        let spots = tank.motion.bodies
+        let now = Date(timeIntervalSince1970: t)
+        tank.stepSwim(roster, in: size, t: t, now: now)
+        let meal = try #require(tank.completionMeals(in: size, now: now, roster: roster).first)
+        // The meal falls where the leaver was when it finished.
+        #expect(abs(meal.spawn.x - lb.x * size.width) < 1 && abs(meal.spawn.y - lb.y * size.height) < 1,
+                "the meal fell at \(meal.spawn), the leaver was at \(lb.x * size.width), \(lb.y * size.height)")
+        // Each pellet went to the nearest mate still free, measured from
+        // where the mates really were.
+        var free = Set(eaters.map(\.id))
+        for (i, pellet) in meal.pellets.enumerated() where !free.isEmpty {
+            func gap(_ id: String) -> Double {
+                let b = spots[id]!
+                return hypot(b.x * size.width - pellet.rest.x, b.y * size.height - pellet.rest.y)
+            }
+            let nearest = free.min { gap($0) < gap($1) }!
+            #expect(pellet.eater == nearest, "pellet \(i) went to \(pellet.eater ?? "nobody"), not \(nearest)")
+            free.remove(nearest)
+        }
+    }
+
     @Test("at the biggest Fish size no fin pokes out of the top of the tank")
     func bigFishStayInTheWater() {
         for species in [FishSpecies.shark, .angelfish, .clownfish] {
