@@ -2,9 +2,11 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-/// `AquariumSteering` is the tank's motion (docs/TOYS.md): wander
-/// noise, a soft boundary turn, a direct food seek and a weak school
-/// pull — pure functions of body, clock and seed.
+/// `AquariumSteering` is the tank's motion (docs/TOYS.md): wander at a
+/// gentle rate, the glass seen coming and turned from in one committed
+/// U-turn, a dart at food through its own turn, a station swum to and
+/// hovered at, and a weak school pull — pure functions of body, clock
+/// and seed.
 @Suite("Aquarium steering")
 struct AquariumSteeringTests {
     private func body(x: Double = 0.5, y: Double = 0.5, heading: Double = 0,
@@ -34,36 +36,15 @@ struct AquariumSteeringTests {
         #expect(d < 0.1)
     }
 
-    @Test("steer takes the shortest arc and respects the turn cap")
-    func steer() {
-        // A quarter turn, room to make it (π/2 < 2).
-        let turned = AquariumSteering.steer(0, toward: .pi / 2, maxTurn: 2)
-        #expect(abs(turned - .pi / 2) < 1e-9)
-        // The short way around: +π → −π is the same seam, so 0 → 3π/2
-        // goes backwards.
-        let wrapped = AquariumSteering.steer(0, toward: .pi * 1.5, maxTurn: 10)
-        #expect(abs(wrapped - (-.pi / 2)) < 1e-9)
-        // The cap binds.
-        #expect(abs(AquariumSteering.steer(0, toward: .pi, maxTurn: 0.2) - 0.2) < 1e-9)
-    }
-
-    @Test("the boundary turns a fish back into the tank before the wall")
+    @Test("the glass turns a fish back into the tank, and nothing leaves the water")
     func boundary() {
-        var b = body(x: 0.05, heading: .pi)   // nose at the left glass
-        let desired = AquariumSteering.boundaryDesired(b, bounds: SwimBounds())
-        #expect(desired != nil)
-        // The correction points right-ish: cos > 0.
-        #expect(cos(desired!) > 0)
-        // Stepped, it turns and the x grows.
+        var b = body(x: 0.08, heading: .pi)   // nose at the left glass
         let ctx = SwimContext(wander: 0)
-        for _ in 0..<120 {
-            AquariumSteering.step(&b, dt: 1.0 / 30, t: 0, seed: 1, context: ctx)
+        for i in 0..<120 {
+            AquariumSteering.step(&b, dt: 1.0 / 30, t: Double(i) / 30, seed: 1, context: ctx)
         }
-        #expect(cos(b.heading) > 0)
-        #expect(b.x > 0.05)
-        // Deep water gives no correction.
-        let clear = body(x: 0.5, heading: .pi)
-        #expect(AquariumSteering.boundaryDesired(clear, bounds: SwimBounds()) == nil)
+        #expect(b.dir == 1, "it came round")
+        #expect(b.x > 0.08)
         // And nothing ever leaves the water.
         var hugger = body(x: 0.02, y: 0.05, heading: .pi * 0.9, speed: 0.5)
         for i in 0..<300 {
@@ -321,7 +302,7 @@ struct AquariumSteeringTests {
                 distances.append(dist)
             }
             #expect(reversals <= 3, "\(reversals) reversals holding station")
-            // Never more than one about-face in any ten seconds.
+            // Never two about-faces within three seconds.
             for (a, later) in zip(turnTimes, turnTimes.dropFirst()) {
                 #expect(later - a >= 3, "two turns \(later - a) s apart")
             }

@@ -90,14 +90,17 @@ public struct SwimBody: Equatable, Sendable {
     }
 }
 
-/// The swimmable rectangle in unit space, plus the soft margin inside
-/// it where the boundary avoidance starts turning the fish away.
+/// The swimmable rectangle in unit space, plus the band inside its top
+/// and bottom where the surface and the sand start easing a fish's
+/// climb level. The side glass is seen coming by the fish's own speed
+/// and length instead, and turned from in one U-turn.
 public struct SwimBounds: Equatable, Sendable {
     public var minX: Double
     public var minY: Double
     public var maxX: Double
     public var maxY: Double
-    /// Distance from a wall where the soft turn begins.
+    /// How far under the surface and over the sand the climb starts
+    /// easing level.
     public var margin: Double
 
     public init(minX: Double = 0.04, minY: Double = 0.07,
@@ -231,37 +234,6 @@ public enum AquariumSteering {
         if d > .pi { d -= .pi * 2 }
         if d < -.pi { d += .pi * 2 }
         return d
-    }
-
-    /// Rotate `heading` toward `desired`, at most `maxTurn` radians.
-    /// The fish can never snap — it arcs.
-    public static func steer(_ heading: Double, toward desired: Double,
-                             maxTurn: Double) -> Double {
-        let d = turnDelta(from: heading, to: desired)
-        return heading + min(maxTurn, max(-maxTurn, d))
-    }
-
-    /// The boundary's preferred heading, or nil while the fish is clear
-    /// of every wall. Inside the margin the fish is steered straight
-    /// off the wall: the correction vector points into the tank,
-    /// growing as the wall nears, and the resulting heading blends the
-    /// repulsion with the fish's own direction so the turn reads as a
-    /// bank rather than a bounce.
-    public static func boundaryDesired(_ body: SwimBody, bounds: SwimBounds) -> Double? {
-        let m = bounds.margin
-        var rx = 0.0
-        var ry = 0.0
-        if body.x < bounds.minX + m { rx += (bounds.minX + m - body.x) / m }
-        if body.x > bounds.maxX - m { rx -= (body.x - (bounds.maxX - m)) / m }
-        if body.y < bounds.minY + m { ry += (bounds.minY + m - body.y) / m }
-        if body.y > bounds.maxY - m { ry -= (body.y - (bounds.maxY - m)) / m }
-        guard rx != 0 || ry != 0 else { return nil }
-        // Blend the repulsion with the current travel direction so a
-        // fish skimming the wall keeps swimming along it instead of
-        // stalling nose-into-the-glass.
-        let vx = cos(body.heading) + rx * 2.2
-        let vy = sin(body.heading) + ry * 2.2
-        return atan2(vy, vx)
     }
 
     /// The new fish's body, from its id's seed: somewhere inside the
