@@ -393,6 +393,9 @@ struct NotchCardView: View {
     /// The card's width — fixed on glass, the slot's measure on the
     /// island.
     var width: CGFloat = NotchCardView.width
+    /// Lay out the grown card whether or not the model is pinned yet —
+    /// the island's height probe, warmed before the grow.
+    var pinnedLayout = false
     /// The custom-timer popover — `ViewState`, not `@State`: the
     /// Command Line Tools ship no `SwiftUIMacros` plugin.
     @ViewState private var timerEntryShown = false
@@ -417,7 +420,7 @@ struct NotchCardView: View {
     static let islandBottomContentInset = NotchSilhouetteGeometry.maximumExpandedRadius + 2
 
     var body: some View {
-        if model.pinned {
+        if model.pinned || pinnedLayout {
             card
         } else {
             // The peek is a glance: the header alone, still padded so

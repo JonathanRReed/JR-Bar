@@ -60,4 +60,27 @@ struct NotchCardRevealTests {
         #expect(steps.pageBar >= 2)
     }
 
+    @Test("the probe warmed before the pin measures the grown card exactly")
+    func prewarmedProbeMeasuresTheGrownCard() {
+        let model = makeTestCardModel()
+        model.rows = [
+            NotchIslandRow(id: "claude:1", label: "fix-tests", provider: "claude", activity: .working),
+            NotchIslandRow(id: "codex:1", label: "ship-it", provider: "codex", activity: .working),
+        ]
+        model.meters = [NotchIslandMeter(id: "claude", provider: "claude", window: "5h", percent: 40)]
+        let warm = NSHostingView(rootView: NotchCardView(model: model, style: .island, width: 320,
+                                                         pinnedLayout: true))
+        warm.layoutSubtreeIfNeeded()
+        let warmHeight = warm.fittingSize.height
+        model.pinned = true
+        let pinned = NSHostingView(rootView: NotchCardView(model: model, style: .island, width: 320))
+        pinned.layoutSubtreeIfNeeded()
+        #expect(warmHeight > 60, "the grown card, not the peek")
+        #expect(abs(warmHeight - pinned.fittingSize.height) < 0.5)
+        // The warmed probe re-rooted as the pinned card keeps its size.
+        warm.rootView = NotchCardView(model: model, style: .island, width: 320)
+        warm.layoutSubtreeIfNeeded()
+        #expect(abs(warm.fittingSize.height - pinned.fittingSize.height) < 0.5)
+        model.pinned = false
+    }
 }

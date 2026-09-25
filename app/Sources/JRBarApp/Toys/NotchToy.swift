@@ -712,11 +712,14 @@ final class NotchToy: Toy {
                     expandWork = work
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay,
                                                  execute: work)
+                    armPrewarm(before: delay)
                 }
             }
         } else {
             expandWork?.cancel()
             expandWork = nil
+            prewarmWork?.cancel()
+            prewarmWork = nil
             if !islandExpanded {
                 reframeCurrent(
                     animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -730,7 +733,47 @@ final class NotchToy: Toy {
     /// a held hover grows at all.
     private func hoverExpandFired() {
         expandWork = nil
+        prewarmWork?.cancel()
+        prewarmWork = nil
         applyHover()
+    }
+
+    // MARK: Prewarm
+
+    /// How long a pointer rests before the card is got ready — past a
+    /// cursor sweeping across the notch, well inside the hover's pause.
+    static let prewarmDelay: TimeInterval = 0.04
+    /// How long after the island first shows its card is built once.
+    static let launchPrewarmDelay: TimeInterval = 3
+    @ObservationIgnored var prewarmWork: DispatchWorkItem?
+
+    /// The hover's pause before the grow is idle time: a pointer still
+    /// resting after `prewarmDelay` gets the card's rows fed and the
+    /// grown card measured then, so the grow's own frame only flips the
+    /// island's face. Nothing private is read: the calendar, reminders
+    /// and who holds the microphone wait for the pin, as before.
+    private func armPrewarm(before delay: TimeInterval) {
+        prewarmWork?.cancel()
+        prewarmWork = nil
+        guard delay > Self.prewarmDelay * 1.5 else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.prewarmWork = nil
+                guard self.hoverHeld, self.activeCapsule == nil, self.activeOverlay == nil else { return }
+                self.prewarmCard()
+            }
+        }
+        prewarmWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.prewarmDelay, execute: work)
+    }
+
+    /// Feed the card and measure it grown, ahead of the grow. Internal
+    /// so the perf harness and the tests can run it without a pointer.
+    func prewarmCard() {
+        guard isDrawingIsland, !islandExpanded, let island else { return }
+        feedCard()
+        island.prewarmExpandedCard(width: expandedCardWidth)
     }
 
     /// The leave debounce a hover-grown card folds on — shared by the
@@ -1280,7 +1323,15 @@ final class NotchToy: Toy {
             parkIsland()
             return
         }
-        if island == nil { island = NotchIslandWindow(toy: self) }
+        if island == nil {
+            island = NotchIslandWindow(toy: self)
+            // The first grow in a process builds everything the card
+            // draws for the first time — 65 ms. Pay it once, a moment
+            // after launch, into the windowless probe.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.launchPrewarmDelay) { [weak self] in
+                MainActor.assumeIsolated { self?.prewarmCard() }
+            }
+        }
         // Content-driven size changes — a dot arriving, the media strip
         // coming or going, the grown card's rows refilling — ease like
         // any face morph: `reframe` keeps the no-change guard and the
@@ -1327,6 +1378,8 @@ final class NotchToy: Toy {
         island?.cancelSpring()
         expandWork?.cancel()
         expandWork = nil
+        prewarmWork?.cancel()
+        prewarmWork = nil
         peekWork?.cancel()
         peekWork = nil
         // A parked island forgets it was shake-summoned — the pending
