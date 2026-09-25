@@ -563,9 +563,12 @@ struct RailAskVerbs: View {
         let now = Date()
         if RailHoldRing.fraction(of: ask, at: now) != nil, let until = ask.decision?.holdUntil {
             // Ticks only while the deadline runs, and once more as it
-            // passes, to take the ring and the held verbs down.
-            TimelineView(.explicit(RailHoldRing.ticks(from: now, until: Date(timeIntervalSince1970: until),
-                                                      every: reduceMotion ? RailHoldRing.step : 1))) { context in
+            // passes, to take the ring and the held verbs down — framed
+            // (`ExplicitTimeline`), since a schedule's last date never
+            // fires on its own.
+            TimelineView(.explicit(ExplicitTimeline.moments(RailHoldRing.ticks(
+                from: now, until: Date(timeIntervalSince1970: until),
+                every: reduceMotion ? RailHoldRing.step : 1)))) { context in
                 verbs(at: context.date)
             }
         } else {
