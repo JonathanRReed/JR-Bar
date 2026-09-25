@@ -271,13 +271,16 @@ struct WaitEffectsTests {
         }
     }
 
+    /// The widest gap between two dots in any of their measures.
+    static func gap(_ lhs: OrbDot, _ rhs: OrbDot) -> Double {
+        let across: Double = max(abs(lhs.x - rhs.x), abs(lhs.y - rhs.y))
+        let drawn: Double = max(abs(lhs.radius - rhs.radius), abs(lhs.opacity - rhs.opacity))
+        return max(across, drawn)
+    }
+
     static func sameDots(_ lhs: [OrbDot], _ rhs: [OrbDot]) -> Bool {
         guard lhs.count == rhs.count else { return false }
-        return zip(lhs, rhs).allSatisfy { pair in
-            let (a, b) = pair
-            let apart = [a.x - b.x, a.y - b.y, a.radius - b.radius, a.opacity - b.opacity].map(abs).max() ?? 0
-            return apart < 1e-6
-        }
+        return zip(lhs, rhs).allSatisfy { pair in Self.gap(pair.0, pair.1) < 1e-6 }
     }
 
     @Test("an animated orb actually moves, and loops")
@@ -296,11 +299,21 @@ struct WaitEffectsTests {
     /// The ink's centre height: each dot weighed by its area and how
     /// dark it draws, in the orb's unit space.
     static func inkCentre(_ dots: [OrbDot]) -> Double {
-        let floor = OrbLayout.opacityFloor(dark: false)
-        let weights = dots.map { $0.radius * $0.radius * (floor + (1 - floor) * $0.opacity) }
-        let total = weights.reduce(0, +)
-        let moments = zip(dots, weights).map { $0.0.y * $0.1 }
-        return moments.reduce(0, +) / total
+        var total: Double = 0
+        var moment: Double = 0
+        for dot in dots {
+            let weight = Self.inkWeight(dot)
+            total += weight
+            moment += dot.y * weight
+        }
+        return moment / total
+    }
+
+    /// A dot's share of the ink: its area times how dark it draws.
+    static func inkWeight(_ dot: OrbDot) -> Double {
+        let floor: Double = OrbLayout.opacityFloor(dark: false)
+        let darkness: Double = floor + (1 - floor) * dot.opacity
+        return dot.radius * dot.radius * darkness
     }
 
     /// Level: within 0.12 of the orb's reach, about 0.7 pt at the row's
