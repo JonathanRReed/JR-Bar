@@ -68,6 +68,14 @@ enum UtilityRivals {
 
         func handoff(for role: Role) -> Handoff? { handoffs[role] }
 
+        /// Whether the index holds this rival: one of its bundle ids, or
+        /// an app carrying one of its names — `matches`, as lookups.
+        @MainActor
+        func isRunning(in index: RunningApps) -> Bool {
+            if bundleIDs.contains(where: index.isRunning(bundleID:)) { return true }
+            return ([name] + otherNames).contains(where: index.isRunning(named:))
+        }
+
         /// Whether a running app is this rival: its bundle id, or its
         /// name for the ids nobody pinned.
         func matches(bundleID: String?, name appName: String?) -> Bool {
@@ -128,15 +136,32 @@ enum UtilityRivals {
         }
     }
 
-    /// The same, from the workspace right now.
+    /// The same, from the running apps right now — set lookups in the
+    /// `RunningApps` index, so a view body or a reconcile can ask freely.
     @MainActor
     static func running(for role: Role) -> [Rival] {
-        running(for: role, in: runningApps())
+        running(for: role, among: RunningApps.shared)
+    }
+
+    /// The rivals for `role` the index says are running, in table order.
+    @MainActor
+    static func running(for role: Role, among index: RunningApps) -> [Rival] {
+        known.filter { rival in
+            rival.roles.contains(role) && rival.isRunning(in: index)
+        }
     }
 
     @MainActor
     static func runningApps() -> [(bundleID: String?, name: String?)] {
-        NSWorkspace.shared.runningApplications.map { ($0.bundleIdentifier, $0.localizedName) }
+        RunningApps.shared.apps.map { ($0.bundleID, $0.name) }
+    }
+
+    /// Whether any rival at all is among `apps` — a launch or a quit that
+    /// isn't one changes no rival note.
+    nonisolated static func anyRival(in apps: [RunningApp]) -> Bool {
+        apps.contains { app in
+            known.contains { $0.matches(bundleID: app.bundleID, name: app.name) }
+        }
     }
 
     /// Ask a rival to quit — the note's explicit button, never automatic.
@@ -171,24 +196,30 @@ enum UtilityRivals {
     }
 }
 
-/// App launches and quits, as one observable counter — what makes a
-/// rival's note appear the moment it opens without anybody polling.
-/// Notification-driven, so it costs nothing between launches.
+/// A rival's launch or quit, as one observable counter — what makes a
+/// rival's note appear the moment it opens without anybody polling. It
+/// follows the `RunningApps` index and moves only when the app that
+/// launched or quit is a rival, so the notes that read it are not
+/// redrawn for every helper the system starts.
 @MainActor
 @Observable
 final class UtilityRivalsWatch {
-    static let shared = UtilityRivalsWatch()
+    static let shared = UtilityRivalsWatch(index: RunningApps.shared)
 
     private(set) var version = 0
-    @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
-    private init() {
-        let center = NSWorkspace.shared.notificationCenter
-        for name in [NSWorkspace.didLaunchApplicationNotification,
-                     NSWorkspace.didTerminateApplicationNotification] {
-            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.version &+= 1 }
-            })
+    private let index: RunningApps
+    private var listener: Int?
+
+    init(index: RunningApps) {
+        self.index = index
+        listener = index.addListener { [weak self] change in
+            guard UtilityRivals.anyRival(in: change.launched + change.quit) else { return }
+            self?.version &+= 1
         }
+    }
+
+    isolated deinit {
+        if let listener { index.removeListener(listener) }
     }
 }

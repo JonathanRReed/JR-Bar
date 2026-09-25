@@ -53,7 +53,8 @@ struct DockTickPark: Equatable {
 /// previews … AX to hit-test the Dock, SCScreenshotManager one-shots
 /// per window, no stream so no purple indicator").
 ///
-/// The watch is a 20 Hz timer, not an event tap. Per tick it reads the
+/// The watch is a tick the pointer's moves run (`PointerWatcher`) — a
+/// 20 Hz timer where the watcher hears nothing. Per tick it reads the
 /// pointer and compares it against a *cached* dock-list frame — the AX
 /// walk to the Dock process runs at most once a second while the
 /// pointer is away, and per-item hit-testing only while it is inside.
@@ -80,7 +81,7 @@ final class DockEnhanceController {
     /// `refreshPermissions`.
     nonisolated static let permissionTTL: TimeInterval = 3
 
-    static let pollInterval: TimeInterval = 0.05
+    nonisolated static let pollInterval: TimeInterval = 0.05
     /// The cadence while the pointer is far from every screen edge a
     /// Dock could live on — 8 Hz keeps the idle read near-free (the
     /// AX walk stays TTL-bound, not poll-bound) while halving the
@@ -109,6 +110,14 @@ final class DockEnhanceController {
     }
 
     @ObservationIgnored private var timer: Timer?
+    /// Where pointer moves come from. While it hears them the tick runs
+    /// on a move near a screen edge or the Dock, and keeps its 20 Hz
+    /// beat only while the pointer rests where a preview can be at stake
+    /// (`tickEngaged`) — a still pointer anywhere else costs nothing.
+    /// Where it can't, the tick polls as it always did.
+    @ObservationIgnored var pointerWatch: any PointerWatching = PointerWatcher.shared
+    /// The subscription while `pointerWatch` hears moves for the Dock.
+    @ObservationIgnored private var moveToken: Int?
     /// Displays asleep, locked, switched away: the tick stops until the
     /// matching wake (`DockTickPark`).
     @ObservationIgnored private(set) var presence = DockTickPark()
@@ -301,7 +310,7 @@ final class DockEnhanceController {
         }
         installGestureMonitors()
         watchPresence()
-        scheduleTick(after: Self.pollInterval)
+        armPointerWatch()
         schedulePanelWarmup(layoutOnly: panel != nil)
     }
 
@@ -347,8 +356,7 @@ final class DockEnhanceController {
     func notePresence(_ event: DockTickPark.Event) {
         switch presence.note(event) {
         case .park?:
-            timer?.invalidate()
-            timer = nil
+            disarmPointerWatch()
             if tracker.shown != nil {
                 tracker.reset()
                 hidePreview()
@@ -357,14 +365,17 @@ final class DockEnhanceController {
         case .resume?:
             guard running else { return }
             Self.log.notice("preview tick resumed: \(String(describing: event), privacy: .public)")
-            scheduleTick(after: Self.pollInterval)
+            armPointerWatch()
         case nil:
             break
         }
     }
 
-    /// Whether the pointer poll is armed — the tests read it.
-    var isTicking: Bool { timer != nil }
+    /// Whether the pointer watch is armed — the subscription or the
+    /// poll — the tests read it.
+    var isTicking: Bool { timer != nil || moveToken != nil }
+    /// Whether the tick's own timer is armed right now.
+    var tickTimerArmed: Bool { timer != nil }
 
     /// The Dock-icon gestures the card asks for: a middle-click monitor
     /// under the Middle Click trigger, a scroll monitor with scroll
@@ -430,8 +441,7 @@ final class DockEnhanceController {
     func stop() {
         guard running else { return }
         running = false
-        timer?.invalidate()
-        timer = nil
+        disarmPointerWatch()
         unwatchPresence()
         panelWarmupTimer?.invalidate()
         panelWarmupTimer = nil
@@ -511,6 +521,77 @@ final class DockEnhanceController {
 
     // MARK: The tick
 
+    /// Start watching the pointer: the watcher's moves when it hears
+    /// them, else the poll. The first tick runs at the near cadence
+    /// either way.
+    private func armPointerWatch() {
+        if moveToken == nil,
+           let token = pointerWatch.subscribe({ [weak self] in self?.pointerMovedByWatch() }) {
+            moveToken = token
+        }
+        scheduleTick(after: Self.pollInterval)
+    }
+
+    private func disarmPointerWatch() {
+        if let moveToken { pointerWatch.unsubscribe(moveToken) }
+        moveToken = nil
+        timer?.invalidate()
+        timer = nil
+    }
+
+    /// A move the watcher heard — already paced to 20 Hz. Near a screen
+    /// edge, over the Dock or with a preview at stake it ticks now and
+    /// keeps the beat going; anywhere else a moving pointer has nothing
+    /// to do with the Dock.
+    private func pointerMovedByWatch() {
+        guard moveToken != nil, running, !presence.parked, timer == nil else { return }
+        let axPoint = DockEnhanceMath.axPoint(NSEvent.mouseLocation,
+                                              mainScreenHeight: DockDisplays.primaryHeight())
+        guard Self.nearScreenEdge(axPoint) || tickEngaged(at: axPoint) else { return }
+        runTick()
+    }
+
+    /// Wake a resting tick — a preview opened from the keyboard or a
+    /// gesture, with the pointer perhaps nowhere near the Dock.
+    private func wakeTick() {
+        guard moveToken != nil, running, !presence.parked, timer == nil else { return }
+        scheduleTick(after: Self.pollInterval)
+    }
+
+    /// Whether a still pointer still needs the beat: a preview up or
+    /// about to open, the pointer on the panel, over the Dock's reach,
+    /// or on the very edge an auto-hidden Dock slides in from.
+    private func tickEngaged(at axPoint: CGPoint) -> Bool {
+        if tracker.shown != nil || tracker.hovered != nil || keyboardPinned { return true }
+        if panel?.isVisible == true || pointerInPanel() { return true }
+        if let list = cachedList, Self.listReach(of: list.frame).contains(axPoint) { return true }
+        return Self.atScreenEdge(axPoint)
+    }
+
+    /// One tick, and the wait it earns.
+    private func runTick() {
+        tick()
+        let axPoint = DockEnhanceMath.axPoint(NSEvent.mouseLocation,
+                                              mainScreenHeight: DockDisplays.primaryHeight())
+        let watching = moveToken != nil
+        let engaged = watching && tickEngaged(at: axPoint)
+        let overDock = cachedList.map { Self.listReach(of: $0.frame).contains(axPoint) } ?? false
+        let near = !watching && (Self.nearScreenEdge(axPoint) || overDock
+            || tracker.shown != nil || pointerInPanel())
+        if let wait = Self.nextTickWait(watching: watching, engaged: engaged, near: near) {
+            scheduleTick(after: wait)
+        }
+    }
+
+    /// The wait the next tick earns, pure so a test pins it: under the
+    /// watcher, the 20 Hz beat while something is at stake and none
+    /// otherwise — the next move near the Dock picks it up again;
+    /// polling, 20 Hz near the Dock's edges and 8 Hz elsewhere.
+    nonisolated static func nextTickWait(watching: Bool, engaged: Bool, near: Bool) -> TimeInterval? {
+        if watching { return engaged ? pollInterval : nil }
+        return near ? pollInterval : farPollInterval
+    }
+
     /// One-shot, re-armed at the cadence the pointer's position earns:
     /// 20 Hz near a screen edge, inside the dock's own reach, or while
     /// a panel is up — the band a first hover can land in — 8 Hz
@@ -521,14 +602,10 @@ final class DockEnhanceController {
         self.timer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.running, !self.presence.parked else { return }
-                self.tick()
-                let axPoint = DockEnhanceMath.axPoint(NSEvent.mouseLocation,
-                                                      mainScreenHeight: DockDisplays.primaryHeight())
-                let overDock = self.cachedList.map { Self.listReach(of: $0.frame).contains(axPoint) } ?? false
-                let near = Self.nearScreenEdge(axPoint) || overDock
-                    || self.tracker.shown != nil || self.pointerInPanel()
-                self.scheduleTick(after: near ? Self.pollInterval : Self.farPollInterval)
+                guard let self else { return }
+                self.timer = nil
+                guard self.running, !self.presence.parked else { return }
+                self.runTick()
             }
         }
         // A tenth of the period (5 ms near, 12.5 ms far) lets these
@@ -587,7 +664,7 @@ final class DockEnhanceController {
                 return
             }
             quitTargetsStamp = (cached.at, list.frame)
-            let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+            let running = RunningApps.shared.bundleIDs
             targets = Self.quickQuitTargets(
                 cached.items.map { ($0.frame, $0.kind, $0.url.flatMap(bundleID(forTile:))) },
                 running: running)
@@ -670,6 +747,22 @@ final class DockEnhanceController {
         return (list, frame)
     }
 
+    /// How close to a screen edge a resting pointer keeps the tick's
+    /// beat: an auto-hidden Dock slides in under a pointer parked on the
+    /// edge, with no move to say so.
+    nonisolated static let edgeRestReach: CGFloat = 4
+
+    /// Whether an AX-space point rests on the bottom, left or right edge
+    /// of the screen that holds it.
+    private static func atScreenEdge(_ axPoint: CGPoint) -> Bool {
+        let height = DockDisplays.primaryHeight()
+        let appKit = CGPoint(x: axPoint.x, y: height - axPoint.y)
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(appKit) }) else { return false }
+        let f = screen.frame
+        return appKit.y - f.minY < Self.edgeRestReach || appKit.x - f.minX < Self.edgeRestReach
+            || f.maxX - appKit.x < Self.edgeRestReach
+    }
+
     /// Whether an AX-space point is within `edgeReach` of the bottom,
     /// left or right edge of the screen that holds it — where an
     /// auto-hidden Dock lives.
@@ -699,6 +792,9 @@ final class DockEnhanceController {
 
     private func showPreview(for item: DockAXItem) {
         generation += 1
+        // A preview is at stake from here: the tick keeps its beat even
+        // if the pointer never moves again.
+        defer { wakeTick() }
         liveStill.stop()
         let generationAtShow = generation
         if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }

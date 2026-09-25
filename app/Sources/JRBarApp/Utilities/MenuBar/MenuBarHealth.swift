@@ -141,12 +141,11 @@ enum MenuBarRivals {
         }
     }
 
-    /// The same, from the workspace.
+    /// The same, from the running apps — the `RunningApps` index, so
+    /// the card's body can ask on every render.
     @MainActor
     static func runningNow() -> [Rival] {
-        running(in: NSWorkspace.shared.runningApplications.map {
-            ($0.bundleIdentifier, $0.localizedName)
-        })
+        running(in: RunningApps.shared.apps.map { ($0.bundleID, $0.name) })
     }
 
     /// Ask a rival to quit — the card's explicit button, never automatic.

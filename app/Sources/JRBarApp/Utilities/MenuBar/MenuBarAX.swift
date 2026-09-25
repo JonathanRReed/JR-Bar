@@ -12,7 +12,7 @@ import JRBarCore
 ///
 /// Two jobs:
 ///   * `items(targets:row:)` — the listing `MenuBarItemLister` caches,
-///     one bounded AX query per running app, run concurrently because a
+///     one bounded AX query per running app, a few at a time because a
 ///     slow app must never stall the whole scan.
 ///   * `press(_:)` — the Item Bar tile's click-through: re-resolve the
 ///     item's element and `AXPress` it, which reaches covered *and*
@@ -29,11 +29,25 @@ enum MenuBarAX {
         let pid: pid_t
         let name: String
         var bundleID: String? = nil
+        /// How long this app may take to answer: `messagingTimeout` for
+        /// an app known to own items, `quickTimeout` for the rest of a
+        /// full walk.
+        var timeout: TimeInterval = MenuBarAX.messagingTimeout
     }
 
     /// How long one app may take to answer an AX query before the scan
     /// gives up on it.
     nonisolated static let messagingTimeout: TimeInterval = 1.0
+    /// The wait for an app not known to own an item — most of a full
+    /// walk. A slow one that runs out is asked again on the next scan
+    /// with `messagingTimeout` (`Scan.timedOut`), so an owner that was
+    /// merely busy is late by one scan, not missed.
+    nonisolated static let quickTimeout: TimeInterval = 0.25
+    /// How many apps a scan asks at once. Each query blocks a thread in
+    /// IPC until its app answers; a pool as wide as the CPUs woke a
+    /// dozen threads for 150 apps, where four keep a hung app from
+    /// stalling the scan just as well.
+    nonisolated static let maxConcurrentQueries = 4
 
     // MARK: Scanning
 
@@ -72,45 +86,111 @@ enum MenuBarAX {
         value(element, kAXRoleAttribute) as? String
     }
 
+    /// One extras-bar child with the attributes the listing reads.
+    struct ExtrasElement {
+        let element: AXUIElement
+        let role: String?
+        let position: CGPoint
+        let size: CGSize
+        let title: String?
+        let identifier: String?
+    }
+
+    /// The attributes an extras child is read for, in one request.
+    private nonisolated static let elementAttributes: [String] = [
+        kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXTitleAttribute, "AXIdentifier",
+    ]
+
+    /// Role, position, size, title and identifier of one element in a
+    /// single round trip — five separate copies were five, each one a
+    /// Mach message pair and a wake of the owner's main thread. Falls
+    /// back to the separate copies if the owner refuses the batch.
+    private nonisolated static func read(_ element: AXUIElement) -> ExtrasElement {
+        var values: CFArray?
+        if AXUIElementCopyMultipleAttributeValues(element, elementAttributes as CFArray, AXCopyMultipleAttributeOptions(),
+                                                  &values) == .success,
+           let list = values as? [AnyObject], list.count == 5 {
+            func entry(_ i: Int) -> CFTypeRef? {
+                let v = list[i] as CFTypeRef
+                // A missing attribute comes back as an AXValue carrying
+                // the error — nil, as the single copy would give.
+                if CFGetTypeID(v) == AXValueGetTypeID(), AXValueGetType(v as! AXValue) == .axError { return nil }
+                return v
+            }
+            var position = CGPoint.zero
+            if let v = entry(1), CFGetTypeID(v) == AXValueGetTypeID() {
+                AXValueGetValue(v as! AXValue, .cgPoint, &position)
+            }
+            var size = CGSize.zero
+            if let v = entry(2), CFGetTypeID(v) == AXValueGetTypeID() {
+                AXValueGetValue(v as! AXValue, .cgSize, &size)
+            }
+            return ExtrasElement(element: element,
+                                 role: entry(0) as? String,
+                                 position: position, size: size,
+                                 title: (entry(3) as? String).flatMap { $0.isEmpty ? nil : $0 },
+                                 identifier: (entry(4) as? String).flatMap { $0.isEmpty ? nil : $0 })
+        }
+        return ExtrasElement(element: element, role: role(element),
+                             position: point(element, kAXPositionAttribute),
+                             size: size(element, kAXSizeAttribute),
+                             title: string(element, kAXTitleAttribute),
+                             identifier: string(element, "AXIdentifier"))
+    }
+
     /// The extras-bar children of one app that are menu bar items —
     /// `AXMenuBarItem`s directly, or grouped one level under an
     /// `AXGroup` (some apps wrap theirs) — plus any `AXButton` the bar
     /// fields directly: that is how MenuBarAgent exposes its overflow
-    /// control, and the plan needs its frame.
-    private nonisolated static func extrasItems(of pid: pid_t) -> [AXUIElement] {
+    /// control, and the plan needs its frame. `timedOut` says the app
+    /// did not answer the first question in time.
+    private nonisolated static func extrasElements(of pid: pid_t,
+                                                   timeout: TimeInterval = messagingTimeout)
+        -> (elements: [ExtrasElement], timedOut: Bool) {
         let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, Float(messagingTimeout))
+        AXUIElementSetMessagingTimeout(app, Float(timeout))
         var extras: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &extras) == .success,
-              let extras, CFGetTypeID(extras) == AXUIElementGetTypeID() else { return [] }
+        let error = AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &extras)
+        guard error == .success, let extras, CFGetTypeID(extras) == AXUIElementGetTypeID()
+        else { return ([], error == .cannotComplete) }
         let bar = extras as! AXUIElement
-        AXUIElementSetMessagingTimeout(bar, Float(messagingTimeout))
-        guard let children = value(bar, kAXChildrenAttribute) as? [AXUIElement] else { return [] }
-        var items: [AXUIElement] = []
+        AXUIElementSetMessagingTimeout(bar, Float(timeout))
+        var childrenValue: CFTypeRef?
+        let childrenError = AXUIElementCopyAttributeValue(bar, kAXChildrenAttribute as CFString, &childrenValue)
+        // A stall on the children copy earns the retry as much as one
+        // on the extras question — a would-be owner that only ever ran
+        // out the quick wait would otherwise be skipped every walk.
+        guard let children = childrenValue as? [AXUIElement]
+        else { return ([], childrenError == .cannotComplete) }
+        var items: [ExtrasElement] = []
         for child in children {
-            AXUIElementSetMessagingTimeout(child, Float(messagingTimeout))
-            let childRole = role(child)
-            if childRole == "AXMenuBarItem" || childRole == "AXButton" {
-                items.append(child)
-            } else if childRole == "AXGroup",
+            AXUIElementSetMessagingTimeout(child, Float(timeout))
+            let entry = Self.read(child)
+            if entry.role == "AXMenuBarItem" || entry.role == "AXButton" {
+                items.append(entry)
+            } else if entry.role == "AXGroup",
                       let sub = value(child, kAXChildrenAttribute) as? [AXUIElement] {
-                items.append(contentsOf: sub.filter { role($0) == "AXMenuBarItem" })
+                for element in sub {
+                    AXUIElementSetMessagingTimeout(element, Float(timeout))
+                    let item = Self.read(element)
+                    if item.role == "AXMenuBarItem" { items.append(item) }
+                }
             }
         }
-        return items
+        return (items, false)
     }
 
     /// One app's extras items → `MenuBarItem`s (identities not yet
     /// assigned — that happens in `items(from:)`, which sees all
     /// owners at once).
     private nonisolated static func rawItems(of target: Target,
-                                             rows: [CGRect]) -> [MenuBarItem] {
-        extrasItems(of: target.pid).enumerated().compactMap { index, element in
-            let position = point(element, kAXPositionAttribute)
-            let size = size(element, kAXSizeAttribute)
+                                             rows: [CGRect]) -> (items: [MenuBarItem], timedOut: Bool) {
+        let answer = extrasElements(of: target.pid, timeout: target.timeout)
+        let items = answer.elements.enumerated().compactMap { index, element -> MenuBarItem? in
+            let size = element.size
             guard size.width >= MenuBarItemLister.minItemWidth,
                   size.height > 0 else { return nil }
-            let bounds = CGRect(origin: position, size: size)
+            let bounds = CGRect(origin: element.position, size: size)
             // An item reports either on a row or parked below it;
             // anything else is a transient non-item (mid-teardown).
             // Multi-display: the check holds against every bar's strip —
@@ -119,32 +199,56 @@ enum MenuBarAX {
                 bounds.minY < $0.maxY + 2 || bounds.minY > $0.maxY + 100
             }) else { return nil }
             return MenuBarItem(id: "", ownerPID: target.pid, ownerName: target.name,
-                               bounds: bounds, title: string(element, kAXTitleAttribute),
+                               bounds: bounds, title: element.title,
                                windowID: 0,
-                               identifier: string(element, "AXIdentifier"),
+                               identifier: element.identifier,
                                extrasIndex: index,
-                               isNativeOverflowControl: role(element) == "AXButton",
+                               isNativeOverflowControl: element.role == "AXButton",
                                bundleID: target.bundleID)
         }
+        return (items, answer.timedOut)
     }
 
     /// Every target's extras items, identities assigned, sorted left to
     /// right (parked items sort last — their offscreen positions are
-    /// not bar order). Runs a bounded query per app concurrently so a
-    /// hung app costs `messagingTimeout`, not the whole scan.
+    /// not bar order).
     nonisolated static func items(targets: [Target], rows: [CGRect]) -> [MenuBarItem] {
-        /// Lock-guarded accumulation for the concurrent per-app queries.
+        scan(targets: targets, rows: rows).items
+    }
+
+    /// A scan's answer: the items, and the apps that ran out of time.
+    struct Scan: Sendable {
+        var items: [MenuBarItem]
+        var timedOut: Set<pid_t>
+    }
+
+    /// `items(targets:rows:)` with the apps that ran out of time. Asks
+    /// `maxConcurrentQueries` apps at once, each bounded by its target's
+    /// timeout, so a hung app costs its timeout, not the whole scan.
+    nonisolated static func scan(targets: [Target], rows: [CGRect]) -> Scan {
+        /// Lock-guarded work queue and accumulation for the workers.
         final class Box: @unchecked Sendable {
             let lock = NSLock()
+            var next = 0
             var items: [MenuBarItem] = []
+            var timedOut: Set<pid_t> = []
         }
         let box = Box()
-        DispatchQueue.concurrentPerform(iterations: targets.count) { i in
-            let items = rawItems(of: targets[i], rows: rows)
-            guard !items.isEmpty else { return }
-            box.lock.lock()
-            box.items.append(contentsOf: items)
-            box.lock.unlock()
+        let workers = min(maxConcurrentQueries, targets.count)
+        DispatchQueue.concurrentPerform(iterations: workers) { _ in
+            while true {
+                box.lock.lock()
+                let i = box.next
+                box.next += 1
+                box.lock.unlock()
+                guard i < targets.count else { return }
+                let answer = rawItems(of: targets[i], rows: rows)
+                guard !answer.items.isEmpty || answer.timedOut else { continue }
+                box.lock.lock()
+                box.items.append(contentsOf: answer.items)
+                if answer.timedOut { box.timedOut.insert(targets[i].pid) }
+                box.lock.unlock()
+            }
         }
         let collected = box.items
         let onRow = collected.filter { item in rows.contains { $0.intersects(item.bounds) } }
@@ -155,7 +259,7 @@ enum MenuBarAX {
         var totals: [String: Int] = [:]
         for item in ordered { totals[MenuBarItemLister.base(of: item), default: 0] += 1 }
         var seen: [String: Int] = [:]
-        return ordered.map { item in
+        let items = ordered.map { item in
             let base = MenuBarItemLister.base(of: item)
             var id = base
             if totals[base, default: 0] > 1 {
@@ -169,6 +273,7 @@ enum MenuBarAX {
                                isNativeOverflowControl: item.isNativeOverflowControl,
                                bundleID: item.bundleID)
         }
+        return Scan(items: items, timedOut: box.timedOut)
     }
 
     /// The front app's menu extras' right edge — where its menus stop
@@ -209,16 +314,17 @@ enum MenuBarAX {
     /// Returns nil when the owner is gone or the item moved beyond
     /// recognition.
     private nonisolated static func resolve(_ item: MenuBarItem) -> AXUIElement? {
-        let elements = extrasItems(of: item.ownerPID)
+        let elements = extrasElements(of: item.ownerPID).elements
         if let identifier = item.identifier,
-           let match = elements.first(where: { string($0, "AXIdentifier") == identifier }) {
-            return match
+           let match = elements.first(where: { $0.identifier == identifier }) {
+            return match.element
         }
         if let title = item.title,
-           let match = elements.first(where: { string($0, kAXTitleAttribute) == title }) {
-            return match
+           let match = elements.first(where: { $0.title == title }) {
+            return match.element
         }
-        return elements.indices.contains(item.extrasIndex) ? elements[item.extrasIndex] : elements.first
+        return elements.indices.contains(item.extrasIndex) ? elements[item.extrasIndex].element
+            : elements.first?.element
     }
 
     /// The tile's click-through: `AXPress` the item's element. Works on

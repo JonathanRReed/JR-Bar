@@ -48,9 +48,9 @@ enum SessionWindowLocator {
     /// the session has no mark or none of its hosts is running.
     static func hosts(sessionID: String, marks: [DockAgentMark]) -> [Host] {
         guard let target = marks.first(where: { $0.sessionID == sessionID }) else { return [] }
-        return NSWorkspace.shared.runningApplications.compactMap { app in
-            guard let id = app.bundleIdentifier, target.hosts.contains(id), !app.isTerminated else { return nil }
-            return Host(pid: app.processIdentifier, name: app.localizedName ?? "App", bundleID: id)
+        return RunningApps.shared.apps.compactMap { app in
+            guard let id = app.bundleID, target.hosts.contains(id) else { return nil }
+            return Host(pid: app.pid, name: app.name ?? "App", bundleID: id)
         }
     }
 

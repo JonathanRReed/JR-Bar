@@ -355,7 +355,7 @@ final class MenuBarStateRunner {
     /// the rest.
     static func seedLevels() -> MenuBarLevels {
         var levels = MenuBarLevels()
-        levels.running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        levels.running = RunningApps.shared.bundleIDs
         levels.frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         levels.screenLocked = screenIsLocked()
         levels.displayCount = NSScreen.screens.count

@@ -347,23 +347,33 @@ struct DockSwitcherTests {
         tap.handle(type: .keyDown, event: event)?.takeUnretainedValue() != nil
     }
 
+    /// A bare key down. An event made with no source copies whatever
+    /// modifiers the Mac's session holds right now — a ⌘ held anywhere
+    /// turned every "bare" key here into a ⌘-chord — so the flags are
+    /// cleared.
+    private func bareKey(_ code: CGKeyCode) throws -> CGEvent {
+        let event = try #require(CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true))
+        event.flags = []
+        return event
+    }
+
     @Test("the preview's keys are the tap's while its panel floats")
     func previewKeyRouting() throws {
         let tap = SwitcherKeyTap()
-        let arrow = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 124, keyDown: true))
+        let arrow = try bareKey(124)
         // No flag set: the arrow passes through to the front app.
         #expect(passes(tap, arrow))
         tap.setPreviewOpen(true)
         #expect(!passes(tap, arrow),
                 "the panel can't take key status — the tap eats its arrows")
-        let esc = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: true))
-        let enter = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true))
+        let esc = try bareKey(53)
+        let enter = try bareKey(36)
         #expect(!passes(tap, esc))
         #expect(passes(tap, enter), "no card walked: Return is the front app's")
         tap.setPreviewChars([SwitcherKeyTap.walkedMarker])
         #expect(!passes(tap, enter), "a walked card: Return raises it")
         // A letter still passes — the preview owns only its keys.
-        let a = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        let a = try bareKey(0)
         #expect(passes(tap, a))
         tap.setPreviewOpen(false)
         #expect(passes(tap, arrow), "closing the panel hands the keys back")
@@ -411,7 +421,7 @@ struct DockSwitcherTests {
     @Test("` under the open strip is the scope toggle, not a typed character")
     func scopeKey() throws {
         let tap = SwitcherKeyTap()
-        let grave = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 50, keyDown: true))
+        let grave = try bareKey(50)
         #expect(passes(tap, grave), "closed: ` types as usual")
         tap.setOpen(true)
         #expect(!passes(tap, grave))
