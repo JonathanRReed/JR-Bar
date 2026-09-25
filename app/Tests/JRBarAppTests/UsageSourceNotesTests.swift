@@ -82,6 +82,14 @@ struct UsageSourceNotesTests {
         #expect(UsageCenterStore.forecast(for: hub, window: window, core: core, now: Self.now).workingAgents == nil)
     }
 
+    @Test @MainActor func aProviderWithNoQuotaSourceClaimsNoFidelity() {
+        let none = CoreProviderUsage(id: "opencode", fidelity: "official", state: "unsupported", quotaSource: false)
+        let metered = CoreProviderUsage(id: "opencode", fidelity: "official", state: "ready",
+                                        account: UsageAccount(plan: "Go"))
+        #expect(UsageCenterStore.accountLine(none, history: nil) == "")
+        #expect(UsageCenterStore.accountLine(metered, history: nil) == "Go · Official")
+    }
+
     @Test func aStandInSourceIsNamed() {
         var statusLine = CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 42)
         statusLine.source = "claude-statusline"
@@ -90,6 +98,9 @@ struct UsageSourceNotesTests {
         let direct = CoreProviderUsage(id: "claude", windows: [CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 42)])
         #expect(UsageSourceNotes.sourceCaption(viaClaudeCode) == "via Claude Code")
         #expect(UsageSourceNotes.sourceCaption(hub) == "via CLIProxyAPI")
+        // With the "CLIProxyAPI" badge in the header, the caption would say it twice.
+        #expect(UsageSourceNotes.sourceCaption(hub, badgeShown: true) == nil)
+        #expect(UsageSourceNotes.sourceCaption(viaClaudeCode, badgeShown: true) == "via Claude Code")
         #expect(UsageSourceNotes.sourceCaption(direct) == nil)
         #expect(UsageSourceNotes.instanceBadge("cliproxy:3f2a9c1b0d4e") == "CLIProxyAPI")
         #expect(UsageSourceNotes.instanceBadge("work") == "work")

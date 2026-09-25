@@ -45,10 +45,15 @@ enum UsageSourceNotes {
     /// own usage endpoint: Claude Code's status line stands in while the
     /// OAuth read is rate limited or signed out, and CLIProxyAPI reads an
     /// account this Mac does not sign in to itself. Nil for a direct read.
-    static func sourceCaption(_ provider: CoreProviderUsage) -> String? {
+    /// `badgeShown` is true when the card's header already carries the
+    /// instance badge, which for a hub account reads "CLIProxyAPI"; the
+    /// caption would only say it twice.
+    static func sourceCaption(_ provider: CoreProviderUsage, badgeShown: Bool = false) -> String? {
         let sources = Set(provider.windows.compactMap(\.source))
         if sources.contains("claude-statusline") { return "via Claude Code" }
-        if sources.contains("cliproxy") || isHubInstance(provider.instance) { return "via CLIProxyAPI" }
+        let hub = isHubInstance(provider.instance)
+        if badgeShown && hub { return nil }
+        if sources.contains("cliproxy") || hub { return "via CLIProxyAPI" }
         return nil
     }
 

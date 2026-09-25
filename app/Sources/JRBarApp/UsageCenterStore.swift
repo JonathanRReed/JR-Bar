@@ -763,7 +763,11 @@ final class UsageCenterStore {
             if let reason = provider.reason, !reason.isEmpty { parts.append(reason.replacingOccurrences(of: "_", with: " ")) }
             return parts.joined(separator: " · ")
         }
-        parts.append(fidelityLabel(provider.fidelity ?? account?.fidelity))
+        // With no quota source there is no figure for "Official" to vouch
+        // for; the card's own sentence says why.
+        if provider.quotaSource {
+            parts.append(fidelityLabel(provider.fidelity ?? account?.fidelity))
+        }
         return parts.joined(separator: " · ")
     }
 }

@@ -266,7 +266,7 @@ struct ProviderUsageCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text(style.name).font(.title3.weight(.semibold))
-                    if duplicated, let instance = provider.instance, !instance.isEmpty, instance != "default" {
+                    if showsInstanceBadge, let instance = provider.instance {
                         Text(UsageSourceNotes.instanceBadge(instance))
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
@@ -292,9 +292,11 @@ struct ProviderUsageCard: View {
                             .help("The provider's status feed reports: \(incident)")
                     }
                 }
-                Text(accountText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let accountText {
+                    Text(accountText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             if let primary {
@@ -322,12 +324,22 @@ struct ProviderUsageCard: View {
         }
     }
 
+    /// Whether the header carries the instance badge: only when two cards
+    /// of one provider need telling apart.
+    private var showsInstanceBadge: Bool {
+        guard duplicated, let instance = provider.instance else { return false }
+        return !instance.isEmpty && instance != "default"
+    }
+
     /// The account line, with where the numbers came from when that is not
     /// the provider's own endpoint ("Max 20× · official · via Claude Code").
-    private var accountText: String {
+    /// Nil when there is nothing to say (a provider with no quota source
+    /// and no plan or account name).
+    private var accountText: String? {
         let line = UsageCenterStore.accountLine(provider, history: history)
-        guard let caption = UsageSourceNotes.sourceCaption(provider) else { return line }
-        return line + " · " + caption
+        let caption = UsageSourceNotes.sourceCaption(provider, badgeShown: showsInstanceBadge)
+        let parts = [line, caption ?? ""].filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var stateBadge: (text: String, color: Color)? {
