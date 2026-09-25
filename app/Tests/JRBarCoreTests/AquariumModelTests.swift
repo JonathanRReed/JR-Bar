@@ -416,7 +416,7 @@ struct AquariumModelTests {
         #expect(kinds.filter { $0 == .rock }.count >= 2)
     }
 
-    @Test("owned decor slots never overlap on their row, at either proof size")
+    @Test("owned decor slots never overlap on their row, at the proof sizes and the first window")
     func decorSlotSpacing() {
         let items: [ShopItem] = [
             .shipwreck, .amphora, .sunkenStatue, .ruinedColumns, .volcano, .alienBeacon,
@@ -424,7 +424,7 @@ struct AquariumModelTests {
         ]
         // Footprints are fractions of the tank's height; a piece's
         // rect is centred on its x on its row's dune line.
-        for (width, height) in [(1200.0, 700.0), (800.0, 450.0)] {
+        for (width, height) in [(1200.0, 700.0), (800.0, 450.0), (640.0, 400.0)] {
             for row in [true, false] {
                 let slots = items.compactMap { AquariumModel.decorSlot(for: $0) }
                     .filter { $0.back == row }
@@ -443,6 +443,30 @@ struct AquariumModelTests {
                 }
             }
         }
+    }
+
+    @Test("nothing bought keeps its middle behind the shop castle's keep, at the proof sizes and the first window")
+    func decorClearsTheCastle() {
+        // The castle (`drawShopDecorStill`): its gate at 0.885 across,
+        // one unit a 242nd of the tank's height, from the round tower's
+        // cone at -33 units to the side tower's wall at 27. It is the
+        // shop piece tall enough to hide what stands behind it.
+        let castleX = 0.885, castleLeft = 33.0 / 242, castleRight = 27.0 / 242
+        let items = ShopItem.allCases.filter { AquariumModel.decorSlot(for: $0) != nil }
+        #expect(items.contains(.alienBeacon) && items.contains(.volcano))
+        for (width, height) in [(1200.0, 700.0), (800.0, 450.0), (640.0, 400.0)] {
+            let keep = (castleX * width - castleLeft * height)...(castleX * width + castleRight * height)
+            for item in items {
+                guard let slot = AquariumModel.decorSlot(for: item) else { continue }
+                // The middle half of the footprint: the volcano's crater,
+                // the beacon's mast and light.
+                let middle = (slot.x * width - slot.w * height / 4)...(slot.x * width + slot.w * height / 4)
+                #expect(!middle.overlaps(keep),
+                        "\(width)×\(height): \(item.rawValue)'s middle \(middle) sits on the keep \(keep)")
+            }
+        }
+        // The beacon stands in front of the castle, not behind it.
+        #expect(AquariumModel.decorSlot(for: .alienBeacon)?.back == false)
     }
 }
 

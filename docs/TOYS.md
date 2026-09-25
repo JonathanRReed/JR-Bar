@@ -339,9 +339,12 @@ depth rows so nothing overlaps: the shipwreck, statue, columns,
 amphora and volcano sit back behind the fish lane (the volcano's lava
 glows and breathes embers after dark), while driftwood, the coral
 garden, an anemone bed whose tentacles sway, a bubble wall's rising
-curtain and a moon-jelly lamp pulsing every six seconds hold the
-front row — each pooled under its own shadow on the dune line like
-the originals. Bought pets swim their own errands on the mover pass:
+curtain, a moon-jelly lamp pulsing every six seconds and the alien
+beacon, just right of the castle, hold the front row — each pooled
+under its own shadow on the dune line like the originals. Nothing
+bought keeps its middle behind the castle's keep, so the volcano's
+crater clears the round tower and the beacon's light stands in front
+of the side tower. Bought pets swim their own errands on the mover pass:
 the turtle glides midwater and climbs to sip the surface, the octopus
 keeps house in the amphora (or a rock's lee) and crawls out every few
 minutes, the cleaner shrimp hops aboard an idle fish every half a

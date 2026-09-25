@@ -162,10 +162,10 @@ extension AquariumView {
         a.stroke(smile, with: .color(ink), style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
     }
 
-    /// The alien beacon on the far dune: a squat rock with a little
-    /// dish on a mast, its tip light blinking — on for one of the still
-    /// pass's two-second ticks, off for the next — and brighter while an
-    /// alien is waiting to come.
+    /// The alien beacon at the front of the bed, just right of the
+    /// castle: a squat rock with a little dish on a mast, its tip light
+    /// blinking — on for one of the still pass's two-second ticks, off
+    /// for the next — and brighter while an alien is waiting to come.
     func drawBeacon(canvas: inout GraphicsContext, size: CGSize, slot: AquariumModel.DecorSlot,
                     t: Double) {
         let tone = decorTone()

@@ -641,9 +641,14 @@ public enum AquariumModel {
     /// The owned-decor layout: every decor `ShopItem` gets one slot,
     /// interleaved with the seeded bed and the shop's original four
     /// (plant .115, rock .315, chest .68, castle .885 on the front
-    /// crest) so nothing overlaps whatever the tank owns. Sizes are
-    /// fractions of the tank height — at 1200×700 the shipwreck reads
-    /// ~240 px wide, the volcano ~170, the coral garden ~160.
+    /// crest) so nothing overlaps whatever the tank owns. The castle is
+    /// the one shop piece tall enough to hide what stands behind it, so
+    /// no slot keeps its middle behind the keep: the volcano's crater
+    /// clears its round tower, and the alien beacon stands in front of
+    /// its side tower rather than behind it — at 1200×700, 800×450 and
+    /// the 640×400 a tank first opens at. Sizes are fractions of the
+    /// tank height — at 1200×700 the shipwreck reads ~240 px wide, the
+    /// coral garden ~160, the volcano ~155.
     public static func decorSlot(for item: ShopItem) -> DecorSlot? {
         switch item {
         // Back row — behind the fish lane, on the far dune. Tall
@@ -651,15 +656,15 @@ public enum AquariumModel {
         case .shipwreck: return DecorSlot(x: 0.13, back: true, w: 0.34, h: 0.27)
         case .amphora: return DecorSlot(x: 0.31, back: true, w: 0.09, h: 0.075)
         case .sunkenStatue: return DecorSlot(x: 0.44, back: true, w: 0.14, h: 0.16)
-        case .ruinedColumns: return DecorSlot(x: 0.62, back: true, w: 0.25, h: 0.19)
-        case .volcano: return DecorSlot(x: 0.82, back: true, w: 0.24, h: 0.16)
-        case .alienBeacon: return DecorSlot(x: 0.95, back: true, w: 0.07, h: 0.12)
+        case .ruinedColumns: return DecorSlot(x: 0.61, back: true, w: 0.25, h: 0.19)
+        case .volcano: return DecorSlot(x: 0.76, back: true, w: 0.22, h: 0.16)
         // Front row — over the fish lane like the original shop set.
         case .bubbleWall: return DecorSlot(x: 0.08, back: false, w: 0.10, h: 0.28)
         case .driftwood: return DecorSlot(x: 0.22, back: false, w: 0.21, h: 0.07)
         case .anemoneBed: return DecorSlot(x: 0.40, back: false, w: 0.14, h: 0.09)
         case .moonJellyLamp: return DecorSlot(x: 0.55, back: false, w: 0.11, h: 0.14)
         case .coralGarden: return DecorSlot(x: 0.74, back: false, w: 0.23, h: 0.11)
+        case .alienBeacon: return DecorSlot(x: 0.97, back: false, w: 0.08, h: 0.14)
         default: return nil
         }
     }
