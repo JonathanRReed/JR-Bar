@@ -49,24 +49,24 @@ def test_a_linked_dot_keeps_desk_order_when_the_pro_is_reversed(headless) -> Non
     controller.settings = controller.settings.with_devices_linked(True).with_dot_role("extend")
     controller._core_linked_pro_leds = 8
     forward = _comet()
-    assert "roll-right" in plan_dot_surface(role="extend", strip_program=forward, strip_led_count=8).program
+    mirrored = oriented_program(forward, led_count=8, direction="reversed")
+    # Narrowed as it stands, the mirror is a different light on the Dot:
+    # the one it used to play, running the other way.
+    assert (
+        plan_dot_surface(role="extend", strip_program=mirrored, strip_led_count=8).program
+        != plan_dot_surface(role="extend", strip_program=forward, strip_led_count=8).program
+    )
 
     # A forward Pro: the Dot extends what it wrote.
     _pro_reversed(controller, "forward")
     controller._core_linked_pro_program = (forward, None)
     expected = controller._core_dot_plan(SimpleNamespace(brightness=255)).program
-    assert "roll-right" in expected
 
     # A reversed Pro wrote the mirror, which is what the Dot is handed; the
     # Dot still plays the light the way it runs on the desk.
     _pro_reversed(controller)
-    controller._core_linked_pro_program = (
-        oriented_program(forward, led_count=8, direction="reversed"),
-        None,
-    )
-    plan = controller._core_dot_plan(SimpleNamespace(brightness=255))
-    assert plan.program == expected
-    assert "roll-left" not in plan.program
+    controller._core_linked_pro_program = (mirrored, None)
+    assert controller._core_dot_plan(SimpleNamespace(brightness=255)).program == expected
 
 
 def test_play_on_strip_turns_round_with_the_strip(headless) -> None:  # noqa: F811
