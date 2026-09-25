@@ -21,7 +21,9 @@ struct NotchReconcileInputs: Equatable {
     var focus: CoreFocus?
     /// `core.settings?.generation` — the int, not the document, so the
     /// gate's compare stays O(1). A republished identical doc reconciles
-    /// once extra; the daemon rarely does that.
+    /// once extra; the daemon rarely does that. It leans on the feed's
+    /// contract: every document the daemon pushes carries a bumped
+    /// generation, so a changed doc can never arrive under a stale one.
     var settingsGeneration: Int?
     var screenBarShown: Bool
     var displayVersion: Int
