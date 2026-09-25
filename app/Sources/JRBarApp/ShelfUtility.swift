@@ -83,6 +83,7 @@ final class ShelfUtilityModel {
         power = powerMonitor.current
         outputVolume = SystemLevelReader.outputVolume().map(Double.init)
         refreshOutputs()
+        startWatchingOutputs()
         adapterWatts = power.onAC ? readAdapterWatts() : nil
         weather.start()
         toggles.refresh()
@@ -108,15 +109,37 @@ final class ShelfUtilityModel {
 
     // MARK: Output route
 
-    /// The output devices and the default among them, read as the card
-    /// opens and after a pick — the route picker's list. A test hands in
-    /// its own reader and writer so no suite moves the Mac's sound.
+    /// The output devices and the default among them — the route
+    /// picker's list, read as the card opens, after a pick, and whenever
+    /// the HAL says a device came or went or the default moved while the
+    /// card is up. A test hands in its own reader, writer and watch so no
+    /// suite moves the Mac's sound.
     private(set) var outputs: [CoreAudioOutputs.Device] = []
     private(set) var defaultOutput: AudioDeviceID?
     @ObservationIgnored var readOutputs: () -> (devices: [CoreAudioOutputs.Device], current: AudioDeviceID?) = {
         (CoreAudioOutputs.all(), CoreAudioDefaults.defaultOutput)
     }
     @ObservationIgnored var writeOutput: (AudioDeviceID) -> Bool = { CoreAudioOutputs.setDefault($0) }
+    /// Starts listening for device changes and hands back how to stop.
+    @ObservationIgnored var watchOutputs: @MainActor (@escaping @MainActor () -> Void) -> (@MainActor () -> Void) = { changed in
+        let watch = CoreAudioOutputsWatch(changed)
+        return { watch.stop() }
+    }
+    @ObservationIgnored private var outputWatchStop: (@MainActor () -> Void)?
+    /// The route watch is listening — only while the card is up.
+    var watchingOutputs: Bool { outputWatchStop != nil }
+
+    /// The card opened: listen for devices and the default moving.
+    func startWatchingOutputs() {
+        guard outputWatchStop == nil else { return }
+        outputWatchStop = watchOutputs { [weak self] in self?.refreshOutputs() }
+    }
+
+    /// The card folded: the listeners go.
+    func stopWatchingOutputs() {
+        outputWatchStop?()
+        outputWatchStop = nil
+    }
 
     func refreshOutputs() {
         let read = readOutputs()
@@ -152,6 +175,7 @@ final class ShelfUtilityModel {
         if let feedToken { feed.unsubscribe(feedToken) }
         feedToken = nil
         powerMonitor.stop()
+        stopWatchingOutputs()
         weather.stop()
         lyrics.reset()
         // Keep-awake deliberately survives the fold: the user's

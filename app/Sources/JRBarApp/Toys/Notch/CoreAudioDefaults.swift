@@ -129,7 +129,10 @@ nonisolated enum CoreAudioOutputs {
         }
     }
 
-    /// Every device with an output stream, by name.
+    /// Every device the sound can be sent to, by name: it plays (an
+    /// output stream), it isn't hidden, and macOS lets it be the default
+    /// output — the list Sound settings shows. An aggregate's private
+    /// parts or a capture-only driver would only refuse the pick.
     static func all() -> [Device] {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
                                                  mScope: kAudioObjectPropertyScopeGlobal,
@@ -140,11 +143,38 @@ nonisolated enum CoreAudioOutputs {
         var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
                                          0, nil, &size, &ids) == noErr else { return [] }
-        return ids.filter(hasOutput).compactMap { id in
+        return ids.filter(isOffered).compactMap { id in
             guard let name = CoreAudioDefaults.name(of: id) else { return nil }
             return Device(id: id, name: name, transport: CoreAudioDefaults.transport(of: id))
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Whether the picker offers a device, from what the HAL says of it.
+    /// A device that doesn't say whether it's hidden is shown; one that
+    /// doesn't say whether it can be the default is left out, since the
+    /// pick would be refused.
+    static func offers(hasOutput: Bool, hidden: Bool?, canBeDefault: Bool?) -> Bool {
+        hasOutput && hidden != true && canBeDefault == true
+    }
+
+    static func isOffered(_ device: AudioDeviceID) -> Bool {
+        offers(hasOutput: hasOutput(device),
+               hidden: flag(kAudioDevicePropertyIsHidden, of: device, scope: kAudioObjectPropertyScopeGlobal),
+               canBeDefault: flag(kAudioDevicePropertyDeviceCanBeDefaultDevice, of: device,
+                                  scope: kAudioObjectPropertyScopeOutput))
+    }
+
+    /// A yes-or-no property of a device; nil where the device lacks it.
+    private static func flag(_ selector: AudioObjectPropertySelector, of device: AudioDeviceID,
+                             scope: AudioObjectPropertyScope) -> Bool? {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectHasProperty(device, &address) else { return nil }
+        var value = UInt32(0)
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return value != 0
     }
 
     /// Whether the device plays sound: it has at least one output stream.
@@ -165,5 +195,41 @@ nonisolated enum CoreAudioOutputs {
         var id = device
         return AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
                                           UInt32(MemoryLayout<AudioDeviceID>.size), &id) == noErr
+    }
+}
+
+/// The route picker's ears while the card is open: the HAL's device list
+/// and its default output. AirPods that connect, a display that is
+/// plugged in, or a switch made in Control Center reach the picker at
+/// once. Nothing is polled; the two listeners go when `stop` runs.
+@MainActor
+final class CoreAudioOutputsWatch {
+    private var listeners: [(selector: AudioObjectPropertySelector, block: AudioObjectPropertyListenerBlock)] = []
+
+    init(_ changed: @escaping @MainActor () -> Void) {
+        for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultOutputDevice] {
+            var address = Self.address(selector)
+            let block: AudioObjectPropertyListenerBlock = { _, _ in
+                MainActor.assumeIsolated { changed() }
+            }
+            if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
+                                                   DispatchQueue.main, block) == noErr {
+                listeners.append((selector, block))
+            }
+        }
+    }
+
+    func stop() {
+        for listener in listeners {
+            var address = Self.address(listener.selector)
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
+                                                   DispatchQueue.main, listener.block)
+        }
+        listeners.removeAll()
+    }
+
+    private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                   mElement: kAudioObjectPropertyElementMain)
     }
 }

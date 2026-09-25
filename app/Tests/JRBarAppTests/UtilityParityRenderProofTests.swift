@@ -320,6 +320,7 @@ struct UtilityParityRenderProofTests {
                                               transport: kAudioDeviceTransportTypeBluetooth)
         let studio = CoreAudioOutputs.Device(id: 90, name: "Studio Display Speakers", transport: nil)
         model.utility.readOutputs = { ([airpods, speakers, studio], 77) }
+        model.utility.watchOutputs = { _ in {} }
         model.focus = ScreenBarFocus(style: ProviderStyle.style(for: "claude"), label: "review-patch",
                                      word: "Working", clickSession: "claude:1")
         model.pinned = true

@@ -63,6 +63,7 @@ struct UtilityOffCostTests {
         #expect(toy.expandWork == nil && toy.peekWork == nil && toy.capsuleWork == nil,
                 "no timer left armed")
         #expect(!toy.cardModel.utility.running, "the card's media and power reads are down")
+        #expect(!toy.cardModel.utility.watchingOutputs, "no sound-device listener left")
         toy.runtimeEnabled = false
     }
 
