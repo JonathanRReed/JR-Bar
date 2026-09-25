@@ -292,6 +292,54 @@ extension AquariumView {
     func drawCleanerShrimp(canvas: inout GraphicsContext, size: CGSize,
                                    t: Double, layouts: [String: Layout],
                                    roster: [Fish], now: Date) {
+        let spot = cleanerShrimpSpot(size: size, t: t, layouts: layouts, roster: roster)
+        var c = canvas
+        c.translateBy(x: spot.at.x, y: spot.at.y)
+        c.opacity = 0.95
+        // The feelers whisk harder while it works.
+        PetArt.cleanerShrimp(&c, whisk: spot.riding && !reduceMotion ? sin(t * 9) * 2 : 0)
+    }
+
+    /// Where the cleaner shrimp is at `t`, and whether it is riding a
+    /// fish. When the fish it was headed for or riding changes — another
+    /// idler comes first, or its client wakes up and swims off — it
+    /// springs over from where it was last drawn instead of appearing on
+    /// the new one.
+    func cleanerShrimpSpot(size: CGSize, t: Double, layouts: [String: Layout],
+                           roster: [Fish]) -> (at: CGPoint, riding: Bool) {
+        let aim = cleanerShrimpAim(size: size, t: t, layouts: layouts, roster: roster)
+        let memory = motion.swim
+        var trail = memory.shrimp ?? TankSwimMemory.ShrimpTrail(client: aim.client, x: aim.at.x, y: aim.at.y,
+                                                                  t: t, dx: 0, dy: 0, since: -.infinity,
+                                                                  length: 0)
+        if trail.client != aim.client, t - trail.t < 0.5 {
+            let gap = hypot(trail.x - aim.at.x, trail.y - aim.at.y)
+            trail.dx = trail.x - aim.at.x
+            trail.dy = trail.y - aim.at.y
+            trail.since = t
+            trail.length = min(1.4, max(0.5, gap / 300))
+        }
+        trail.client = aim.client
+        var at = aim.at
+        if t >= trail.since, trail.length > 0 {
+            let e = smooth(clamp01((t - trail.since) / trail.length))
+            let gap = hypot(trail.dx, trail.dy)
+            at.x += trail.dx * (1 - e)
+            at.y += trail.dy * (1 - e) - sin(e * .pi) * min(24, gap * 0.25)
+        }
+        trail.x = at.x
+        trail.y = at.y
+        trail.t = t
+        memory.shrimp = trail
+        return (at, aim.riding)
+    }
+
+    /// Where the cleaner shrimp's round puts it at `t`, before any
+    /// change of client eases in: its perch, on its way to or from the
+    /// first idling fish, or riding it. `client` is that fish while the
+    /// round is out with it, else nil.
+    private func cleanerShrimpAim(size: CGSize, t: Double, layouts: [String: Layout],
+                                  roster: [Fish]) -> (at: CGPoint, riding: Bool, client: String?) {
         // Station: the first seeded coral or rock's top.
         let station: CGPoint
         if let perch = Self.decor.first(where: { $0.kind == .coral || $0.kind == .rock }) {
@@ -301,7 +349,7 @@ extension AquariumView {
             station = CGPoint(x: size.width * 0.2,
                               y: sandTop(atX: size.width * 0.2, in: size) - 10)
         }
-        // The client: the shallowest idling fish.
+        // The client: the first idling adult in the tank's draw order.
         let client = roster.first(where: { $0.state == .idling && !$0.isFry })
         let clientPt = client.flatMap { layouts[$0.id] }
             .map { CGPoint(x: $0.x, y: $0.y - 10) }
@@ -310,7 +358,9 @@ extension AquariumView {
         let p = frac(t / 40)
         var pos = station
         var riding = false
-        if let clientPt {
+        var outWith: String?
+        if let clientPt, p < 0.70 {
+            outWith = client?.id
             if p < 0.15 {
                 let k = smooth(clamp01(p / 0.15))
                 pos = CGPoint(x: station.x + (clientPt.x - station.x) * k,
@@ -326,11 +376,7 @@ extension AquariumView {
                                   - sin(k * .pi) * 30)
             }
         }
-        var c = canvas
-        c.translateBy(x: pos.x, y: pos.y)
-        c.opacity = 0.95
-        // The feelers whisk harder while it works.
-        PetArt.cleanerShrimp(&c, whisk: riding && !reduceMotion ? sin(t * 9) * 2 : 0)
+        return (pos, riding, outWith)
     }
 
     /// The manta: a rare wide shadow crossing the back layer every

@@ -79,8 +79,25 @@ final class TankSwimMemory {
     /// Keyed by the leaver's id.
     var meals: [String: Meal] = [:]
     var rolls: [String: Roll] = [:]
+    /// The cleaner shrimp's last drawn spot and the fish its round was
+    /// out with then, plus the leftover of its last change of client —
+    /// the gap from where it was to where the new round puts it, easing
+    /// away over `length` seconds from `since`.
+    struct ShrimpTrail {
+        var client: String?
+        var x: Double
+        var y: Double
+        var t: Double
+        var dx: Double
+        var dy: Double
+        var since: Double
+        var length: Double
+    }
+
     /// Keyed by the fry's id.
     var orbits: [String: Orbit] = [:]
+    /// The cleaner shrimp's, while the tank has one.
+    var shrimp: ShrimpTrail?
     /// The swim settings as this frame read them.
     var settings: AquariumSettings?
     /// The swim clock as it stood when the Swimming speed last moved:

@@ -311,6 +311,37 @@ struct AquariumTurnLayoutTests {
         #expect(octopus.contains { $0.peek == 1 }, "it peeked")
     }
 
+    @Test("the cleaner shrimp springs over when its client changes, never appearing on the new one")
+    func shrimpChangesClient() {
+        let tank = makeTank([])
+        let near = makeFish("shrimp-near", state: .idling, since: t0 - 100)
+        let far = makeFish("shrimp-far", state: .idling, since: t0 - 100)
+        var spots: [String: AquariumView.Layout] = [:]
+        for (fish, x, y) in [(near, 200.0, 220.0), (far, 700.0, 150.0)] {
+            var l = AquariumView.Layout()
+            l.x = x
+            l.y = y
+            spots[fish.id] = l
+        }
+        // A whole 40 s round, starting while it rides the near fish: the
+        // far one comes first a few seconds in, then nobody idles at all.
+        var t = t0 + 8
+        var frames: [AquariumView.Layout] = []
+        var rodeFar = false
+        for i in 0..<(30 * 40) {
+            t += dt
+            let roster: [Fish] = i < 30 * 4 ? [near, far] : (i < 30 * 12 ? [far, near] : [])
+            let spot = tank.cleanerShrimpSpot(size: size, t: t, layouts: spots, roster: roster)
+            if spot.riding, hypot(spot.at.x - 700, spot.at.y - 140) < 1 { rodeFar = true }
+            var l = AquariumView.Layout()
+            l.x = spot.at.x
+            l.y = spot.at.y
+            frames.append(l)
+        }
+        expectSmooth(frames, speed: 600, "shrimp")
+        #expect(rodeFar, "it got to the new client")
+    }
+
     @Test("the hover box matches the drawn size at every stage and fish size")
     func hitBoxFollowsTheDrawing() {
         let fish = makeFish("boxed", since: t0 - 100)
