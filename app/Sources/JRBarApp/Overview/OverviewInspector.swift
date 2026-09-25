@@ -117,6 +117,21 @@ struct OverviewLinkGlyph: View {
     }
 }
 
+/// The "waiting Nm" trailing line of the ask section — its own view so
+/// the 1 s `now` tick re-reads this leaf and not the inspector around
+/// it, the same cut `OverviewQuietCell` and `OverviewAttentionCell`
+/// make on the roster's side.
+struct OverviewWaitingText: View {
+    let entry: CoreRosterEntry
+    let store: OverviewStore
+
+    var body: some View {
+        if let waiting = OverviewStore.waitingText(entry, now: store.now) {
+            Text(waiting).font(.system(size: 10.5)).monospacedDigit().foregroundStyle(.secondary)
+        }
+    }
+}
+
 // MARK: - A session
 
 /// The selected row's inspector: who and what state, the ask waiting on
@@ -300,9 +315,7 @@ struct OverviewSessionInspector: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(SessionActivity.waiting.tint)
                 Spacer(minLength: 4)
-                if let waiting = OverviewStore.waitingText(entry, now: store.now) {
-                    Text(waiting).font(.system(size: 10.5)).monospacedDigit().foregroundStyle(.secondary)
-                }
+                OverviewWaitingText(entry: entry, store: store)
             }
             Text(ask.summary ?? "This session has an open question.")
                 .font(.system(size: 12.5, weight: .medium))

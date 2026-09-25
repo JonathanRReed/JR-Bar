@@ -138,6 +138,9 @@ final class PanelController {
             panel.setFrameOrigin(NSPoint(x: frame.origin.x, y: frame.origin.y + rise))
         }
         let duration = reduced ? PanelMotion.reducedDuration : PanelMotion.unfoldDuration
+        // This arrival's stamp — a reopen inside the animation leaves a
+        // completion that must not arm marks mid-arrival.
+        let opened = openedAt
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
@@ -146,14 +149,13 @@ final class PanelController {
             if rise > 0 { panel.animator().setFrame(frame, display: true) }
         }, completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, self.isOpen else { return }
+                guard let self, self.isOpen, self.openedAt == opened else { return }
                 // The rise ends exactly on the computed frame, whatever the animator did.
                 if self.panel.frame != frame { self.panel.setFrame(frame, display: true) }
                 // From here on, data changes may animate.
                 self.store.animationsArmed = true
             }
         })
-        let opened = openedAt
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.isOpen, self.openedAt == opened else { return }

@@ -228,17 +228,28 @@ final class OverviewStore {
     /// What the chips draw from the clock, at the precision they draw it:
     /// the minute (ages are written in minutes and up), the same
     /// staleness verdict the panel uses — the chip's "connected" must
-    /// admit a quiet daemon — and, while quiet, the age it prints.
+    /// admit a quiet daemon — and the words themselves where an age
+    /// prints seconds: "Connected for 47s" and "captured 3s ago" must
+    /// move the tick or they sit stale for up to a minute.
     struct LinksTime: Hashable {
         var minute: Int
         var stale: Bool
         var staleAge: String?
+        var connectedAge: String?
+        var captureAge: String?
     }
 
     func linksTime(at clock: Date) -> LinksTime {
         let stale = core.stateIsStale(at: clock)
         let age = stale ? core.stateAge(at: clock).map(AgentMonitorFeed.ageText) : nil
-        return LinksTime(minute: Int(clock.timeIntervalSince1970 / 60), stale: stale, staleAge: age)
+        let connectedAge = core.isLive ? core.connectedAt.map {
+            AgentMonitorFeed.ageText(clock.timeIntervalSince($0))
+        } : nil
+        let captureAge = hoarderHealth?.archive.lastCapturedAt.map {
+            AgentMonitorFeed.ageText(max(0, clock.timeIntervalSince($0)))
+        }
+        return LinksTime(minute: Int(clock.timeIntervalSince1970 / 60), stale: stale,
+                         staleAge: age, connectedAge: connectedAge, captureAge: captureAge)
     }
 
     /// The tick's half of `linksClock`: move it only when what the chips
