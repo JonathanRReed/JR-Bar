@@ -420,9 +420,12 @@ depth rows so nothing overlaps: the shipwreck, statue, columns,
 amphora and volcano sit back behind the fish lane (the volcano's lava
 glows and breathes embers after dark), while driftwood, the coral
 garden, an anemone bed whose tentacles sway, a bubble wall's rising
-curtain and a moon-jelly lamp pulsing every six seconds hold the
-front row — each pooled under its own shadow on the dune line like
-the originals. Bought pets swim their own errands on the mover pass:
+curtain, a moon-jelly lamp pulsing every six seconds and the alien
+beacon, just right of the castle, hold the front row — each pooled
+under its own shadow on the dune line like the originals. Nothing
+bought keeps its middle behind the castle's keep, so the volcano's
+crater clears the round tower and the beacon's light stands in front
+of the side tower. Bought pets swim their own errands on the mover pass:
 the turtle glides midwater and climbs to sip the surface, the octopus
 keeps house in the amphora (or a rock's lee) and crawls out every few
 minutes, the cleaner shrimp hops aboard an idle fish every half a
@@ -568,8 +571,11 @@ body is five rows:
   eats, a clink for a pearl or coin, a chime for a purchase or a reward
   card, a whoosh for a visitor (`AquariumSound`, synthesized, no asset).
   Only for a tap or a window event, only in the open, uncovered window,
-  never on the wallpaper or the screensaver, never while the toys are
-  hushed (Focus, quiet hours, a call), at the Sounds page's volume.
+  never on the wallpaper or the screensaver, at the Sounds page's
+  volume. It stays quiet during a Focus, quiet hours or a call whether
+  or not the Toys page hushes the toys, and, while the Sounds page
+  keeps quiet on calls, whenever another app has the microphone
+  (`AquariumSound.held`).
 
 A folded **Fine-tune** holds the numbers, led by the three swim rows
 (**Swim pace**, **Fish size** and **Swimming speed**, `AquariumSwimRows`;

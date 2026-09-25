@@ -61,4 +61,25 @@ struct AquariumTankToyTests {
         #expect(file.load().game.pets.count == 799)
         withExtendedLifetime(toys) {}
     }
+
+    @Test("the work tick that opens the oyster says so, not just \"+1 pearl\"")
+    func oysterToastWins() {
+        let file = scratch()
+        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        let core = CoreModel()
+        let toys = store(core)
+        let tank = AquariumToy(core: core, store: toys, saveFile: file)
+        let now = Date()
+        // The work tick's own order, then the other way round.
+        for batch: [AquariumGameEffect] in [[.pearlsEarned(1), .oysterReady],
+                                            [.oysterReady, .pearlsEarned(2)]] {
+            tank.dismissToast()
+            tank.note(batch, now: now)
+            #expect(tank.toast?.text == "The oyster opened — there's a pearl inside")
+        }
+        // A batch without the oyster still counts its pearls.
+        tank.note([.pearlsEarned(3)], now: now)
+        #expect(tank.toast?.text == "+3 pearls")
+        withExtendedLifetime(toys) {}
+    }
 }

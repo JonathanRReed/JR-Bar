@@ -288,6 +288,22 @@ struct AquariumRenderProofTests {
         let alienTank = AquariumView(fixture: alien)
         alienTank.motion.puffs = [(x: 0.58, y: 0.24, bornAt: Date().addingTimeInterval(-0.15))]
         if try Self.writePNG(alienTank, size: tank, name: "aquarium-alien", into: dir) { written += 1 }
+        // The castle with the volcano and the alien beacon: the crater
+        // clears the round tower and the beacon stands in front of the
+        // side tower — by day at full size, and at night in the small
+        // window a tank first opens at.
+        let keepShots: [(name: String, night: Double, size: CGSize)] = [
+            ("aquarium-beacon-castle", 0, tank),
+            ("aquarium-beacon-castle-night", 1, CGSize(width: 640, height: 400)),
+        ]
+        for shot in keepShots {
+            var keep = Self.fixture(themeID: "classic", substrateID: "classic", backdropID: "classic",
+                                    night: shot.night, visitor: nil)
+            keep.game?.inventory = ["castle": 1, "alienBeacon": 1, "volcano": 1, "coralGarden": 1,
+                                    "ruinedColumns": 1]
+            if try Self.writePNG(AquariumView(fixture: keep), size: shot.size, name: shot.name,
+                                 into: dir) { written += 1 }
+        }
         // The oyster open with its pearl, and the snail at its errands.
         if try Self.writePNG(Self.sandPets(), size: CGSize(width: 640, height: 360),
                              name: "aquarium-oyster-open", into: dir) { written += 1 }
@@ -387,7 +403,7 @@ struct AquariumRenderProofTests {
                 written += 1
             }
         }
-        #expect(written == shots.count + 23)
+        #expect(written == shots.count + 25)
     }
 
     // MARK: The Arcade tank

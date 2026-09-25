@@ -277,7 +277,9 @@ struct AquariumView: View {
                     // The passers-by and the sand/mid-water pets
                     // live behind the fish lane.
                     drawVisitor(canvas: &canvas, size: size, t: t, now: context.date)
-                    drawManta(canvas: &canvas, size: size, t: t)
+                    if owns(.manta) {
+                        drawManta(canvas: &canvas, size: size, t: t)
+                    }
                     if owns(.seaTurtle) {
                         drawSeaTurtle(canvas: &canvas, size: size, t: t)
                     }

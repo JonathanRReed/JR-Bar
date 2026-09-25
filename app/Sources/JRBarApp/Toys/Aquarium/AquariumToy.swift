@@ -515,12 +515,19 @@ final class AquariumToy: Toy {
     }
 
     /// The tank's voice, when Sound is on — and only for a person
-    /// watching: the window open and uncovered, the room not hushed.
-    /// Never from the wallpaper or the screensaver, which don't call.
+    /// watching: the window open and uncovered, and never during a
+    /// Focus, JR-Bar's quiet or a call, whatever the Toys page's hush
+    /// switch says (`AquariumSound.held`). Never from the wallpaper or
+    /// the screensaver, which don't call.
     func playSound(_ voice: AquariumSound.Voice) {
-        guard store?.state.aquarium.sound == true, isOn, windowController != nil,
-              !windowOccluded, !hushed else { return }
-        AquariumSound.play(voice, volume: SoundPreferences.load().volume)
+        guard let store, store.state.aquarium.sound, isOn, windowController != nil,
+              !windowOccluded else { return }
+        let preferences = SoundPreferences.load()
+        guard !AquariumSound.held(focus: core.state?.focus, onCall: store.onCall,
+                                  quietOnCalls: preferences.quietOnCalls,
+                                  micLive: { MicrophoneCapture.isLive() }, now: Date())
+        else { return }
+        AquariumSound.play(voice, volume: preferences.volume)
     }
 
     /// Apply an owned theme.
@@ -615,11 +622,15 @@ final class AquariumToy: Toy {
     /// Effects worth surfacing: the away summary becomes the panel,
     /// the rest fold into the toast line. An achievement or a new tank
     /// level is a milestone, and asks Confetti for a burst — the toy
-    /// decides whether its Milestones trigger is on.
-    private func note(_ effects: [AquariumGameEffect], now: Date) {
+    /// decides whether its Milestones trigger is on. The oyster opening
+    /// and the alien zipping off outrank the pearl count, so the work
+    /// tick that fills the oyster doesn't bury it under "+1 pearl".
+    /// Internal so the tests can hand it a batch.
+    func note(_ effects: [AquariumGameEffect], now: Date) {
         let toastBefore = toast?.at
         let noticeBefore = notice?.id
         var earned = 0
+        var oysterOpened = false
         var shooed: Int?
         var milestone = game.tankLevel > knownLevel
         knownLevel = max(knownLevel, game.tankLevel)
@@ -652,7 +663,7 @@ final class AquariumToy: Toy {
             case .visitorDeparted(let v):
                 toast = ("The \(v.displayName) drifts on", now)
             case .oysterReady:
-                toast = ("The oyster opened — there's a pearl inside", now)
+                oysterOpened = true
             case .alienShooed(let bounty):
                 shooed = bounty
             case .variantEarned(let id, let variant):
@@ -665,6 +676,9 @@ final class AquariumToy: Toy {
         }
         if earned > 0 {
             toast = ("+\(earned) pearl\(earned == 1 ? "" : "s")", now)
+        }
+        if oysterOpened {
+            toast = ("The oyster opened — there's a pearl inside", now)
         }
         if let shooed {
             toast = ("The alien zips off · +\(shooed) pearls", now)

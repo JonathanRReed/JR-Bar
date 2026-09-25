@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import JRBarCore
 @testable import JRBarApp
 
 /// The tank's five synthesized voices: each is the same every time,
@@ -43,6 +44,36 @@ struct AquariumSoundTests {
         #expect(!tooSoon)
         #expect(otherVoice, "the limit is per voice")
         #expect(later)
+    }
+
+    @Test("the voice holds for a Focus, JR-Bar's quiet, a call or the daemon's no-sounds, with no hush switch in it")
+    func heldByTheRoom() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func held(_ focus: CoreFocus?, onCall: Bool = false) -> Bool {
+            AquariumSound.held(focus: focus, onCall: onCall, quietOnCalls: false,
+                               micLive: { false }, now: now)
+        }
+        #expect(!held(nil), "a clear room plays")
+        #expect(!held(CoreFocus(mode: "off")))
+        #expect(held(CoreFocus(mode: "dnd", source: "focus")), "a macOS Focus")
+        #expect(held(CoreFocus(mode: "mute", source: "schedule")), "quiet hours")
+        #expect(held(nil, onCall: true), "a call")
+        #expect(held(CoreFocus(mode: "off", source: "call", audibleAllowed: false)),
+                "the daemon's call quiet takes only the sounds")
+        #expect(!held(CoreFocus(mode: "mute", source: "schedule",
+                                until: now.timeIntervalSince1970 - 1)), "an expired quiet has lifted")
+    }
+
+    @Test("a live microphone holds the voice only while Settings › Sounds keeps quiet on calls")
+    func heldByTheMicrophone() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var reads = 0
+        let live = { () -> Bool in reads += 1; return true }
+        #expect(AquariumSound.held(focus: nil, onCall: false, quietOnCalls: true, micLive: live, now: now))
+        #expect(!AquariumSound.held(focus: nil, onCall: false, quietOnCalls: false, micLive: live, now: now))
+        #expect(reads == 1, "the microphone is only asked when it matters")
+        #expect(!AquariumSound.held(focus: nil, onCall: false, quietOnCalls: true,
+                                    micLive: { false }, now: now))
     }
 
     @Test("the WAV header matches the samples")

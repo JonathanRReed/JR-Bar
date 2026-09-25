@@ -62,7 +62,6 @@ extension AquariumView {
             drawVolcano(canvas: &canvas, size: size, slot: s, veil: veil,
                         lit: nightFactor(t: t) > 0.45 || isDarkTheme)
         }
-        if let s = slot(.alienBeacon) { drawBeacon(canvas: &canvas, size: size, slot: s, t: t) }
     }
 
     /// A sunken hull: a listing, broken-backed ship on the dune — lit
@@ -572,8 +571,10 @@ extension AquariumView {
     }
 
     /// The front-row pieces that never move — the driftwood, the coral
-    /// garden, the bubble wall's air stone — baked into the near bed
-    /// with the rest, so the live pass only pays for what sways.
+    /// garden, the bubble wall's air stone and the alien beacon — baked
+    /// into the near bed with the rest, so the live pass only pays for
+    /// what sways. They draw after the shop's castle, so the beacon
+    /// stands in front of its side tower.
     func drawOwnedFrontStill(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
@@ -583,6 +584,7 @@ extension AquariumView {
         if let s = slot(.driftwood) { drawDriftwood(canvas: &canvas, size: size, slot: s, veil: veil) }
         if let s = slot(.coralGarden) { drawCoralGarden(canvas: &canvas, size: size, slot: s, veil: veil) }
         if let s = slot(.bubbleWall) { drawAirStone(canvas: &canvas, size: size, slot: s, veil: veil) }
+        if let s = slot(.alienBeacon) { drawBeacon(canvas: &canvas, size: size, slot: s, t: t) }
     }
 
     /// A water-logged branch half settled into the sand: silvered,
