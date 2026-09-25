@@ -215,14 +215,22 @@ def test_retired_parameters_are_ignored_not_rejected() -> None:
 
 
 def test_spacing_becomes_crests() -> None:
+    """An old ``spacing`` keeps the look it showed (its default of 1 is on
+    every saved assignment) and a wider one never means more crests."""
     chase = get_effect("chase")
     marquee = get_effect("marquee")
-    assert core_effects.normalize_parameters(chase, {"spacing": 1})["crests"] == 1
-    assert core_effects.normalize_parameters(chase, {"spacing": 5})["crests"] == 3
+    for effect in (chase, marquee):
+        crests = [
+            core_effects.normalize_parameters(effect, {"spacing": spacing})["crests"]
+            for spacing in range(1, 9)
+        ]
+        assert crests[0] == core_effects.normalize_parameters(effect, {})["crests"]
+        assert crests == sorted(crests, reverse=True), (effect.identifier, crests)
+    assert core_effects.normalize_parameters(chase, {"spacing": 5})["crests"] == 1
     assert core_effects.normalize_parameters(marquee, {"spacing": 1})["crests"] == 2
     assert core_effects.normalize_parameters(marquee, {"spacing": 6})["crests"] == 1
     # An explicit crests wins over an old spacing.
-    assert core_effects.normalize_parameters(chase, {"spacing": 5, "crests": 1})["crests"] == 1
+    assert core_effects.normalize_parameters(chase, {"spacing": 5, "crests": 3})["crests"] == 3
 
 
 def test_values_that_would_not_fit_fall_back_to_the_defaults() -> None:

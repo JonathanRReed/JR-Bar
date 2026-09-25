@@ -294,15 +294,23 @@ RETIRED_PARAMETERS: Final = frozenset(
 
 def _migrated_spacing(effect: EffectDefinition, values: dict[str, Any]) -> dict[str, Any]:
     """``spacing`` (LEDs between crests, chase 1-6 and marquee 1-8) became
-    ``crests`` (how many waves, 1-3). An old value keeps a look close to
-    what it asked for instead of being thrown away."""
+    ``crests`` (how many waves, 1-3). An old value keeps the look it had
+    and never moves against what it asked for.
+
+    ``spacing`` never reached the light, and every assignment saved with
+    the Studio's values carries its default of 1, so that default means
+    "the look it showed": one crest for Chase, two for Marquee. A wider
+    spacing asked for fewer crests. Marquee can give it one; Chase already
+    has one, so every old Chase value stays at one rather than turning a
+    default into three crests nobody chose.
+    """
     spacing = values.get("spacing")
     if "crests" in values or isinstance(spacing, bool) or not isinstance(spacing, (int, float)):
         return values
     migrated = dict(values)
     migrated.pop("spacing", None)
     if effect.identifier == colors_module.MOTION_CHASE:
-        migrated["crests"] = 1 if spacing <= 2 else (2 if spacing <= 4 else 3)
+        migrated["crests"] = 1
     elif effect.identifier == colors_module.MOTION_MARQUEE:
         migrated["crests"] = 2 if spacing <= 2 else 1
     return migrated
