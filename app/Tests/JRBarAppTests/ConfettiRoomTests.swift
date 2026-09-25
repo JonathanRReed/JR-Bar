@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+import CoreAudio
 import Foundation
 import SwiftUI
 import Testing
@@ -281,6 +283,37 @@ struct ConfettiRoomTests {
         #expect(plan.look.slots.count == ConfettiSeason.valentine.palette.slots.count)
     }
 
+    /// The card re-reads the daemon's state with every document; the
+    /// preview only redraws when what it shows changes.
+    @Test("the card's preview holds still through a document that changes nothing it shows")
+    func previewIgnoresUnrelatedDocuments() {
+        let (toy, store, _) = makeToy()
+        store.focusedProvider = { "claude" }
+        store.core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "a", provider: "claude", mode: "tool_running", lifecycle: "active"),
+        ])))
+        let before = ConfettiPreviewTile(toy: toy)
+        #expect(before.everyone.map(\.id) == ["claude"])
+        // The session moves on and a new one idles: nothing drawn changes.
+        store.core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active"),
+            CoreSession(id: "b", provider: "codex", mode: "idle_ready", lifecycle: "active"),
+        ])))
+        #expect(ConfettiPreviewTile(toy: toy) == before)
+        // Codex starts working: Everyone gains a colour.
+        store.core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active"),
+            CoreSession(id: "b", provider: "codex", mode: "tool_running", lifecycle: "active"),
+        ])))
+        let working = ConfettiPreviewTile(toy: toy)
+        #expect(working != before)
+        store.focusedProvider = { "codex" }
+        #expect(ConfettiPreviewTile(toy: toy) != working, "the focused colour changed")
+        store.focusedProvider = { "claude" }
+        store.state.confetti.palette = .party
+        #expect(ConfettiPreviewTile(toy: toy) != working, "a pick changed")
+    }
+
     @Test("the pop goes through Settings › Sounds, at its volume")
     func popFollowsTheSoundsVolume() throws {
         let (toy, store, _) = makeToy()
@@ -400,4 +433,53 @@ struct ConfettiSoundTests {
         #expect(String(decoding: data[8..<12], as: UTF8.self) == "WAVE")
         #expect(String(decoding: data[36..<40], as: UTF8.self) == "data")
     }
+
+    @Test("on the alert device, the pop plays beside a session's sound instead of cutting it off")
+    func popLeavesTheEventSoundPlaying() throws {
+        _ = try #require(SoundPlayer.url(for: "Glass"))
+        let player = SoundPlayer()
+        player.preferences = {
+            var preferences = SoundPreferences()
+            preferences.useAlertDevice = true
+            return preferences
+        }
+        player.microphoneLive = { false }
+        player.synthesizedFolder = FileManager.default.temporaryDirectory
+            .appending(path: "confetti-sound-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: player.synthesizedFolder) }
+        let events = CuttingAlertOutput()
+        let pops = CuttingAlertOutput()
+        player.alertDevice = AlertDevicePlayer(output: events)
+        player.alertDevice.alertOutputDevice = { 42 }
+        player.synthesizedAlertDevice = AlertDevicePlayer(output: pops)
+        player.synthesizedAlertDevice.alertOutputDevice = { 42 }
+        // A session completes: its sound rings, then the burst's pop.
+        player.play("Glass")
+        #expect(events.files == ["Glass.aiff"])
+        let pop = try #require(ConfettiSound.play(through: player))
+        #expect(pop.alertDevice)
+        #expect(pops.files.count == 1)
+        #expect(events.files == ["Glass.aiff"], "the pop never lands on the event sound's player")
+        #expect(events.isRunning && events.cutShort == 0, "the session's sound plays on")
+    }
+}
+
+/// An alert output that plays nothing and, like the real one, stops
+/// whatever it is playing when a new ring starts — counting each ring it
+/// cuts short.
+@MainActor
+private final class CuttingAlertOutput: AlertDeviceOutput {
+    private(set) var isRunning = false
+    private(set) var files: [String] = []
+    private(set) var cutShort = 0
+
+    func start(_ file: AVAudioFile, on device: AudioObjectID, volume: Float,
+               ended: @escaping @MainActor @Sendable () -> Void) -> Bool {
+        if isRunning { cutShort += 1 }
+        files.append(file.url.lastPathComponent)
+        isRunning = true
+        return true
+    }
+
+    func stop() { isRunning = false }
 }

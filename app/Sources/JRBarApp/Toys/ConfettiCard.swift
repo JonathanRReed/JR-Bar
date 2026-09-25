@@ -25,8 +25,8 @@ private struct ConfettiLookSection: View {
 
     var body: some View {
         CardSectionHeader("Look")
-        ConfettiPreviewTile(settings: toy.settings, shot: toy.shot(for: toy.store?.focusedProvider()),
-                            everyone: toy.workingProviders())
+        ConfettiPreviewTile(toy: toy)
+            .equatable()
             .frame(height: 132)
             .padding(.vertical, 4)
 
@@ -141,7 +141,9 @@ private struct ConfettiPalettePicker: View {
 
 /// Adjust, folded like any `DisclosureRow` — and opened by a Settings
 /// search that lands on Amount or Hang time, so the row it named is
-/// there to see, not folded away inside the card it opened.
+/// there to see, not folded away inside the card it opened. It opens
+/// once per search: fold it, fold the card and open the card again, and
+/// it stays as you left it.
 struct ConfettiAdjustDisclosure: View {
     let toy: ConfettiToy
     @ViewState private var expanded = false
@@ -155,6 +157,17 @@ struct ConfettiAdjustDisclosure: View {
         return rows.contains(hit.title)
     }
 
+    /// Whether Settings' reveal number `request` opens Adjust on `toy`'s
+    /// card: one the card hasn't acted on yet, for one of Adjust's rows.
+    /// Every reveal seen is noted on the toy, which outlives the folded
+    /// card, so a card opened again later doesn't read the same search
+    /// hit as new.
+    static func take(_ request: Int?, hit: SettingsSearchEntry?, on toy: ConfettiToy) -> Bool {
+        guard let request, request != toy.adjustReveal else { return false }
+        toy.adjustReveal = request
+        return opens(for: hit, card: toy.id)
+    }
+
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             ConfettiAdjustRows(toy: toy)
@@ -162,8 +175,8 @@ struct ConfettiAdjustDisclosure: View {
             SettingLabel(title: "Adjust", subtitle: "How many pieces, and how long they hang in the air.")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onChange(of: toy.store?.settings.revealRequest, initial: true) {
-            if Self.opens(for: toy.store?.settings.searchHit, card: toy.id) { expanded = true }
+        .onChange(of: toy.store?.settings.revealRequest, initial: true) { _, request in
+            if Self.take(request, hit: toy.store?.settings.searchHit, on: toy) { expanded = true }
         }
     }
 }
@@ -307,8 +320,10 @@ private struct ConfettiMannersSection: View {
 /// menu bar, notch and desktop — with the burst the settings would
 /// throw, in the focused session's colours. It plays one burst (30 fps,
 /// about two seconds) whenever a pick changes or the pointer comes over
-/// it, then holds still on a frame mid-air, so the card costs nothing
-/// while it's only being read.
+/// it, then holds still on a frame mid-air. The card above it re-reads
+/// the daemon's state with every document, but the tile is only redrawn
+/// when what it shows changes (`==`), so an open card that's only being
+/// read doesn't rebuild the burst.
 struct ConfettiPreviewTile: View {
     let settings: ConfettiSettings
     let shot: ConfettiShot
@@ -365,6 +380,23 @@ struct ConfettiPreviewTile: View {
             return Self.restingFrame
         }
         return elapsed
+    }
+}
+
+extension ConfettiPreviewTile: Equatable {
+    /// The tile as the card shows it: the stored settings, the focused
+    /// session's colour and whoever is working now.
+    init(toy: ConfettiToy) {
+        self.init(settings: toy.settings, shot: toy.shot(for: toy.store?.focusedProvider()),
+                  everyone: toy.workingProviders())
+    }
+
+    /// The same picture: the same settings, the same burst colour and
+    /// glyph, and the same working providers in the same colours.
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.settings == b.settings && a.shot == b.shot
+            && a.everyone.map(\.id) == b.everyone.map(\.id)
+            && a.everyone.map(\.color) == b.everyone.map(\.color)
     }
 }
 
