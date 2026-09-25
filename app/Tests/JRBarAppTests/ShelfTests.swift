@@ -559,6 +559,24 @@ extension ShelfTests {
         #expect(NotchSettings().shelfDragOut == .copy, "copy is the default")
     }
 
+    @Test func aChipScrolledOutOfSightStartsNoDrag() {
+        // The island's card scrolls: a chip below the fold keeps its
+        // bounds under the rows drawn there now.
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let document = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 400))
+        scroll.documentView = document
+        let chip = ShelfDragSource.DragView(frame: NSRect(x: 0, y: 300, width: 80, height: 40))
+        document.addSubview(chip)
+        let middle = NSPoint(x: 40, y: 20)
+        #expect(!chip.takesPress(at: middle), "out of sight: a press there is on another row")
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 280))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        #expect(chip.takesPress(at: middle), "scrolled into sight, it drags again")
+        #expect(!chip.takesPress(at: NSPoint(x: 120, y: 20)), "beside the chip is not the chip")
+        chip.isHidden = true
+        #expect(!chip.takesPress(at: middle))
+    }
+
     @Test func removeAfterDragTakesOnlyTheDraggedChip() {
         let tray = freshTray()
         defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
