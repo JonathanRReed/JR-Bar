@@ -225,9 +225,7 @@ extension MenuBarUtility {
 
     /// What the press took hold of, for the write it can get.
     func dragKind(of item: MenuBarItem) -> MenuBarDragLearn.Grabbed {
-        if MenuBarItemLister.isProtected(item) {
-            return concealableSystemKey(item) != nil ? .systemConcealable : .system
-        }
+        if MenuBarItemLister.isProtected(item) { return .system }
         guard let id = item.bundleID else { return .helper }
         return canConceal(id) ? .app : .appleExtra
     }

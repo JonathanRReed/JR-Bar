@@ -221,10 +221,14 @@ reorder). A drop on the icon itself does nothing.
   The file's shape is unverified until a real grant; the parser takes
   the likely forms.
 - **The clock and Control Center** (`concealSystemItems`, off,
-  experimental, no card row): a ⌘-drag may hide them through the
-  assertion's system item list. Wi-Fi, the battery and sound always
-  stay. It stays off, and out of the card, unless a live probe shows
-  they conceal and come back cleanly.
+  experimental, no card row): only the plan table is built. With the
+  flag on, a clock or Control Center key already in `concealedApps`
+  (the live probe writes it by hand) leaves the assertion's system item
+  list. No pick writes one yet, so a ⌘-drag of either still gets the
+  note: the icon's seat, the Item Bar and the drag would each have to
+  read a hidden clock as concealed first. Wi-Fi, the battery and sound
+  always stay. It stays off, and out of the card, unless a live probe
+  shows they conceal and come back cleanly.
 - **Apple's extras** (`concealAppleExtras`, the card's "Hide Apple's
   extras like apps"): a file that never chose follows the code default,
   and only a choice made on the card is written — so the default can

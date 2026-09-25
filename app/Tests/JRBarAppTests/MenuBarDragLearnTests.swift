@@ -151,7 +151,6 @@ struct MenuBarDragLearnTests {
                                                          note: .wholeApp(name: "iStat Menus", hidden: true)))
         #expect(dropOutcome(.show, .app, current: .hidden, count: 2)
                 == .init(section: .shown, note: .wholeApp(name: "iStat Menus", hidden: false)))
-        #expect(dropOutcome(hide, .systemConcealable) == .init(section: .hidden))
         #expect(dropOutcome(.none, .app) == .init())
         let notes: [MenuBarDropNote] = [.systemItem, .appleExtraCovered, .otherDisplay,
                                         .wholeApp(name: "iStat Menus", hidden: true), .notMoved]
@@ -392,6 +391,23 @@ struct MenuBarDragLearnTests {
         #expect(h.state.concealedApps["com.apple.Passwords.MenuBarExtra"] == .hidden)
         #expect(h.state.sections.isEmpty)
         #expect(h.notes.isEmpty)
+    }
+
+    @MainActor
+    @Test("with concealSystemItems on, the clock is still macOS's own: the drag says so, and no pick writes it")
+    func systemItemsFlagWritesNothing() async throws {
+        var state = MenuBarSettings(enabled: true, concealSeeded: true)
+        state.curation.concealSystemItems = true
+        let h = Harness(state: state)
+        let clockItem = try #require(h.listing.first { $0.identifier == "com.apple.menuextra.clock" })
+        h.fresh = Self.moved(clockItem.id, to: 1045, in: h.listing)
+        await h.drag(from: 1420, to: 1000)
+        #expect(h.notes.last == MenuBarDropNote.systemItem.text)
+        #expect(h.utility.dragKind(of: clockItem) == .system)
+        #expect(h.utility.applySection(.hidden, to: clockItem) == nil, "the pickers never write it either")
+        #expect(h.utility.effectiveSection(for: clockItem) == .shown)
+        #expect(h.writes == 0)
+        #expect(h.state.concealedApps.isEmpty && h.state.sections.isEmpty)
     }
 
     @MainActor

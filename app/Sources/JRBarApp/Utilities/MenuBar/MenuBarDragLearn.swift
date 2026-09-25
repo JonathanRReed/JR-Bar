@@ -142,9 +142,7 @@ enum MenuBarDragLearn {
         case appleExtra
         /// A bare helper with no bundle identifier — a cover too.
         case helper
-        /// The clock or Control Center while `concealSystemItems` is on.
-        case systemConcealable
-        /// Any other of macOS's own items.
+        /// One of macOS's own items: Wi-Fi, the clock, Control Center.
         case system
     }
 
