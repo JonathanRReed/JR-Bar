@@ -149,7 +149,7 @@ class AppendedLine:
     enough for the monitor that owns the log to take the line without
     opening the file again."""
 
-    __slots__ = ("line", "at")
+    __slots__ = ("at", "line")
 
     def __init__(self, line: str, at: tuple[int, int, int, int]) -> None:
         self.line = line

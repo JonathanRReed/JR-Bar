@@ -1941,7 +1941,8 @@ def reduce_operator_state(
         requests_by_work.setdefault(request_key.work_key, []).append(request_key)
     for key, work in tuple(works.items()):
         linked = tuple(sorted(requests_by_work.get(key, ()), key=_request_sort_key))
-        works[key] = replace(work, request_keys=linked)
+        if linked != work.request_keys:
+            works[key] = replace(work, request_keys=linked)
 
     if len(source_watermarks) > MAX_CANONICAL_SOURCES:
         retained_sources = sorted(source_watermarks, key=_source_sort_key)[
