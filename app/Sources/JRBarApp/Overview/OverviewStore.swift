@@ -193,18 +193,17 @@ final class OverviewStore {
             hoarder: hoarderHealth
         )
         if let cached = linksCache, cached.key == key { return cached.value }
-        let now = clock
         let value = OverviewLinkage.links(OverviewLinkage.Snapshot(
             connected: key.connected, connecting: key.connecting,
             offlineReason: key.offlineReason,
             coreVersion: key.coreVersion, corePID: key.corePID,
             connectedAt: key.connectedAt, inFlight: key.inFlight,
-            stateAge: core.stateAge(at: now), stateStale: time.stale,
+            stateAge: core.stateAge(at: clock), stateStale: time.stale,
             localName: Host.current().localizedName ?? "This Mac",
             localSessions: key.localSessions, peers: key.peers,
             devices: key.devices, providers: key.providers, deck: key.deck,
             hoarder: key.hoarder
-        ), now: now)
+        ), now: clock)
         linksCache = (key, value)
         return value
     }
