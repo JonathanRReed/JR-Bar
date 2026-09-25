@@ -350,6 +350,9 @@ final class SettingsStore {
     /// search hit opens its card, and a card stays as the person left
     /// it while the app runs.
     var expandedCards: Set<String> = []
+    /// The folds (`SettingsFoldRow`) open now, by id. They start folded
+    /// and stay as the person leaves them while the app runs.
+    var openFolds: Set<String> = []
     /// The card a search hit landed on, lit on its page until the page
     /// lets it go.
     var highlightedCard: String?
@@ -397,6 +400,7 @@ final class SettingsStore {
     func reveal(_ entry: SettingsSearchEntry) {
         searchHit = entry
         page = entry.page
+        openFolds.formUnion(folds(holding: entry))
         if let card = entry.card {
             expandedCards.insert(card)
             highlightedCard = card
@@ -409,6 +413,27 @@ final class SettingsStore {
     /// Open or fold one card by hand.
     func setCard(_ card: String, expanded: Bool) {
         if expanded { expandedCards.insert(card) } else { expandedCards.remove(card) }
+    }
+
+    func isFoldOpen(_ id: String) -> Bool { openFolds.contains(id) }
+
+    func setFold(_ id: String, open: Bool) {
+        if open { openFolds.insert(id) } else { openFolds.remove(id) }
+    }
+
+    /// The folds a search hit's row sits in: a device card's rows are in
+    /// every device's fold, a group behind one fold is behind that one.
+    func folds(holding entry: SettingsSearchEntry) -> [String] {
+        switch (entry.page, entry.group) {
+        case (.devices, "Devices"): return deviceEntries.map { SettingsFold.device($0.id) }
+        case (.devices, "Screen Bar"): return [SettingsFold.screenBar]
+        case (.devices, "Creator Micro 2"): return [SettingsFold.creatorMicro]
+        case (.devices, "Stream Deck"): return [SettingsFold.streamDeck]
+        case (.lighting, "Provider colours"): return [SettingsFold.providerColours]
+        case (.shortcuts, "Actions"): return [SettingsFold.shortcutActions]
+        case (.shortcuts, "Quick toggles"): return [SettingsFold.quickToggles]
+        default: return []
+        }
     }
 
     /// macOS's answer to the notification permission, asked by the
@@ -1517,6 +1542,17 @@ extension NSColor {
         let r = Int((srgb.redComponent * 255).rounded()), g = Int((srgb.greenComponent * 255).rounded()), b = Int((srgb.blueComponent * 255).rounded())
         return String(format: "#%02X%02X%02X", max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
     }
+}
+
+/// The folds the heavy pages keep their long runs under.
+enum SettingsFold {
+    static func device(_ id: String) -> String { "device:\(id)" }
+    static let screenBar = "devices:screen-bar"
+    static let creatorMicro = "devices:creator-micro"
+    static let streamDeck = "devices:stream-deck"
+    static let providerColours = "lighting:provider-colours"
+    static let shortcutActions = "shortcuts:actions"
+    static let quickToggles = "shortcuts:quick-toggles"
 }
 
 // MARK: - Path-by-path observation

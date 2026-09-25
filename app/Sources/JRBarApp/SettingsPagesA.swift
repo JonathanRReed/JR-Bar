@@ -708,50 +708,10 @@ struct DeviceCard: View {
             if linkedDot {
                 LinkedDotNote()
             }
-            DeviceReceiptRow(store: store, deviceID: device.id, deviceName: device.kind == "dot" ? "Dot" : "SidePulse")
-            SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
-                .disabled(linkedDot)
-            SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded()))%" }
-            SettingToggle(store, "Auto-brightness", subtitle: autoBrightnessSubtitle,
-                          path: "\(device.prefix).auto_brightness_enabled")
-                .disabled(linkedDot && followsStripBrightness)
-            Provided(store, "\(device.prefix).provider_pin") {
-                Picker(selection: store.optionalString("\(device.prefix).provider_pin")) {
-                    ForEach(pinOptions, id: \.value) { Text($0.label).tag($0.value) }
-                } label: {
-                    SettingLabel(title: "Pin to", subtitle: "Shows only that provider's sessions; rests dark otherwise.")
-                }
-                .pickerStyle(.menu)
-            }
-            .disabled(linkedDot)
-            Provided(store, "\(device.prefix).signal_policy") {
-                Toggle(isOn: Binding(
-                    get: { store.values.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
-                    set: { store.set("\(device.prefix).signal_policy", $0 ? .string("asks_only") : .null) }
-                )) {
-                    SettingLabel(title: "Asks only", subtitle: "Mutes courtesy signals; agent status, asks and low battery still show.")
-                }
-                .settingRowStyle()
-            }
-            .disabled(linkedDot)
-            Provided(store, "\(device.prefix).blend_mode") {
-                Picker(selection: store.optionalString("\(device.prefix).blend_mode")) {
-                    Text("Same as Lighting").tag("")
-                    Divider()
-                    ForEach(LightingPage.blendModes, id: \.value) { Text($0.label).tag($0.value) }
-                } label: {
-                    SettingLabel(title: "Blend", subtitle: blendSubtitle)
-                }
-                .pickerStyle(.menu)
-            }
-            .disabled(linkedDot)
-            DeviceCalibrationRow(store: store, deviceID: device.id, prefix: device.prefix)
-            LEDDirectionRow(store: store, device: device)
-            DotTravelStyleRow(store: store, device: device)
-            if device.kind == "dot" {
-                DotRoleControls(store: store, inDeviceCard: true)
-            } else if device.kind == "pro" {
-                EjectGuardRow(store: store)
+            // Folded until asked for: a device's dozen rows and previews
+            // are most of what the page costs to open.
+            SettingsFoldRow(store, id: SettingsFold.device(device.id), title: "Settings", subtitle: foldSubtitle) {
+                settingsRows
             }
         } header: {
             SettingsGroupHeader(title: device.name,
@@ -760,6 +720,65 @@ struct DeviceCard: View {
                                 pill: state.map { $0.isPresent ? "Connected" : ($0.error ?? "Not connected") },
                                 pillTint: state?.isPresent == true ? .green : .orange,
                                 trailing: device.kind == "dot" ? "2 LEDs" : "8 LEDs")
+        }
+    }
+
+    /// Everything the fold holds.
+    @ViewBuilder
+    private var settingsRows: some View {
+        DeviceReceiptRow(store: store, deviceID: device.id, deviceName: device.kind == "dot" ? "Dot" : "SidePulse")
+        SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
+            .disabled(linkedDot)
+        SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded()))%" }
+        SettingToggle(store, "Auto-brightness", subtitle: autoBrightnessSubtitle,
+                      path: "\(device.prefix).auto_brightness_enabled")
+            .disabled(linkedDot && followsStripBrightness)
+        Provided(store, "\(device.prefix).provider_pin") {
+            Picker(selection: store.optionalString("\(device.prefix).provider_pin")) {
+                ForEach(pinOptions, id: \.value) { Text($0.label).tag($0.value) }
+            } label: {
+                SettingLabel(title: "Pin to", subtitle: "Shows only that provider's sessions; rests dark otherwise.")
+            }
+            .pickerStyle(.menu)
+        }
+        .disabled(linkedDot)
+        Provided(store, "\(device.prefix).signal_policy") {
+            Toggle(isOn: Binding(
+                get: { store.values.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
+                set: { store.set("\(device.prefix).signal_policy", $0 ? .string("asks_only") : .null) }
+            )) {
+                SettingLabel(title: "Asks only", subtitle: "Mutes courtesy signals; agent status, asks and low battery still show.")
+            }
+            .settingRowStyle()
+        }
+        .disabled(linkedDot)
+        Provided(store, "\(device.prefix).blend_mode") {
+            Picker(selection: store.optionalString("\(device.prefix).blend_mode")) {
+                Text("Same as Lighting").tag("")
+                Divider()
+                ForEach(LightingPage.blendModes, id: \.value) { Text($0.label).tag($0.value) }
+            } label: {
+                SettingLabel(title: "Blend", subtitle: blendSubtitle)
+            }
+            .pickerStyle(.menu)
+        }
+        .disabled(linkedDot)
+        DeviceCalibrationRow(store: store, deviceID: device.id, prefix: device.prefix)
+        LEDDirectionRow(store: store, device: device)
+        DotTravelStyleRow(store: store, device: device)
+        if device.kind == "dot" {
+            DotRoleControls(store: store, inDeviceCard: true)
+        } else if device.kind == "pro" {
+            EjectGuardRow(store: store)
+        }
+    }
+
+    /// What the fold holds, in the card's own words.
+    private var foldSubtitle: String {
+        switch device.kind {
+        case "dot": return "Display, brightness, pinning, blend, calibration, direction, travel and the Dot's role."
+        case "pro": return "Display, brightness, pinning, blend, calibration, strip direction and the eject guard."
+        default: return "Display, brightness, pinning, blend and calibration."
         }
     }
 
@@ -1008,24 +1027,6 @@ struct CreatorMicroCard: View {
 
     var body: some View {
         SettingGroup(note: "Thirteen session keys per bank, a dial and a joystick with explicit mappings. Pins, banks, the rail, input check and the keymap live in the Control Center; the monitor owns the device.") {
-            Toggle(isOn: Binding(get: { settings.enabled }, set: { set(enabled: $0) })) {
-                SettingLabel(title: "Enable Creator Micro 2",
-                             subtitle: "The monitor drives the approved pad's per-key colours and listens to its inputs.")
-            }
-            .disabled(!live)
-            .settingRowStyle()
-            Toggle(isOn: Binding(get: { settings.sessionMode }, set: { set(sessionMode: $0) })) {
-                SettingLabel(title: "Session keys",
-                             subtitle: "The thirteen keys follow the session board; only the dial, joystick and analog sectors take explicit mappings.")
-            }
-            .disabled(!live || !settings.enabled)
-            .settingRowStyle()
-            Toggle(isOn: Binding(get: { settings.analogEnabled }, set: { set(analogEnabled: $0) })) {
-                SettingLabel(title: "Analog joystick sectors",
-                             subtitle: "Sectors 1–4 (AG20–AG23) count as inputs and can carry mappings in the Control Center.")
-            }
-            .disabled(!live || !settings.enabled)
-            .settingRowStyle()
             LabeledContent {
                 VStack(alignment: .trailing, spacing: 3) {
                     StatusPill(statusText, tint: statusColor)
@@ -1042,57 +1043,12 @@ struct CreatorMicroCard: View {
             } label: {
                 Text("Status")
             }
-            if let deck {
-                DisclosureRow("Details") {
-                    LabeledContent("Keymap") {
-                        Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? .orange : .secondary)
-                    }
-                    LabeledContent("Compact rail") {
-                        Text(deck.rail.edge.label).foregroundStyle(.secondary)
-                    }
-                    LabeledContent("Sessions") {
-                        Text("\(deck.keySlots.filter { !$0.isEmpty }.count) of 13 on this bank · \(deck.banks.title)")
-                            .foregroundStyle(.secondary)
-                    }
-                    LabeledContent("Board scope") {
-                        Text(deck.scope == "automatic" ? "Automatic — all providers"
-                             : ProviderStyle.style(for: deck.scope).name)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let receipt = deck.device?.receipt {
-                        LabeledContent("Last receipt") {
-                            Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)
-                                .multilineTextAlignment(.trailing)
-                        }
-                    }
-                }
-                if !deck.keymap.layers.isEmpty {
-                    DisclosureRow("Layers", subtitle: "Who each hardware layer belongs to. Layer 1 is always JR-Bar's; a layer handed to Codex, Claude or other apps is left to that writer instead of fought over.") {
-                        ForEach(deck.keymap.layers.sorted(by: { $0.layer < $1.layer })) { layer in
-                            if layer.layer == 0 {
-                                LabeledContent("Layer 1") {
-                                    Text("JR-Bar — the auto layer")
-                                        .foregroundStyle(.secondary)
-                                }
-                            } else {
-                                Picker("Layer \(layer.layer + 1)", selection: layerOwnerBinding(layer.layer)) {
-                                    Text("JR-Bar").tag("jrbar")
-                                    ForEach(SettingsKey.providers, id: \.self) { provider in
-                                        Text(ProviderStyle.style(for: provider).name).tag(provider)
-                                    }
-                                    Divider()
-                                    Text("Other apps").tag("everything")
-                                }
-                                .labelsHidden()
-                                .pickerStyle(.menu)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                            }
-                        }
-                    }
-                }
-            }
             SettingRow("Control Center", subtitle: "Pins, banks, the rail, input check and the keymap.") {
                 Button("Control Center…") { store.onOpenControlCenter?() }
+            }
+            SettingsFoldRow(store, id: SettingsFold.creatorMicro, title: "Settings",
+                            subtitle: "The pad's switch, session keys, analog sectors, details and layers.") {
+                switchRows
             }
         } header: {
             SettingsGroupHeader(title: "Creator Micro 2", symbol: "keyboard.fill",
@@ -1100,6 +1056,78 @@ struct CreatorMicroCard: View {
                                 pill: device?.approved == false && device?.connected == true
                                     ? "Approve it in the Control Center" : nil,
                                 pillTint: .orange)
+        }
+    }
+
+    /// The pad's switches, its details and its layers: folded.
+    @ViewBuilder
+    private var switchRows: some View {
+        Toggle(isOn: Binding(get: { settings.enabled }, set: { set(enabled: $0) })) {
+            SettingLabel(title: "Enable Creator Micro 2",
+                         subtitle: "The monitor drives the approved pad's per-key colours and listens to its inputs.")
+        }
+        .disabled(!live)
+        .settingRowStyle()
+        Toggle(isOn: Binding(get: { settings.sessionMode }, set: { set(sessionMode: $0) })) {
+            SettingLabel(title: "Session keys",
+                         subtitle: "The thirteen keys follow the session board; only the dial, joystick and analog sectors take explicit mappings.")
+        }
+        .disabled(!live || !settings.enabled)
+        .settingRowStyle()
+        Toggle(isOn: Binding(get: { settings.analogEnabled }, set: { set(analogEnabled: $0) })) {
+            SettingLabel(title: "Analog joystick sectors",
+                         subtitle: "Sectors 1–4 (AG20–AG23) count as inputs and can carry mappings in the Control Center.")
+        }
+        .disabled(!live || !settings.enabled)
+        .settingRowStyle()
+        if let deck {
+            DisclosureRow("Details") {
+                LabeledContent("Keymap") {
+                    Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? .orange : .secondary)
+                }
+                LabeledContent("Compact rail") {
+                    Text(deck.rail.edge.label).foregroundStyle(.secondary)
+                }
+                LabeledContent("Sessions") {
+                    Text("\(deck.keySlots.filter { !$0.isEmpty }.count) of 13 on this bank · \(deck.banks.title)")
+                        .foregroundStyle(.secondary)
+                }
+                LabeledContent("Board scope") {
+                    Text(deck.scope == "automatic" ? "Automatic — all providers"
+                         : ProviderStyle.style(for: deck.scope).name)
+                        .foregroundStyle(.secondary)
+                }
+                if let receipt = deck.device?.receipt {
+                    LabeledContent("Last receipt") {
+                        Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            }
+            if !deck.keymap.layers.isEmpty {
+                DisclosureRow("Layers", subtitle: "Who each hardware layer belongs to. Layer 1 is always JR-Bar's; a layer handed to Codex, Claude or other apps is left to that writer instead of fought over.") {
+                    ForEach(deck.keymap.layers.sorted(by: { $0.layer < $1.layer })) { layer in
+                        if layer.layer == 0 {
+                            LabeledContent("Layer 1") {
+                                Text("JR-Bar — the auto layer")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Picker("Layer \(layer.layer + 1)", selection: layerOwnerBinding(layer.layer)) {
+                                Text("JR-Bar").tag("jrbar")
+                                ForEach(SettingsKey.providers, id: \.self) { provider in
+                                    Text(ProviderStyle.style(for: provider).name).tag(provider)
+                                }
+                                Divider()
+                                Text("Other apps").tag("everything")
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1116,6 +1144,15 @@ struct ScreenBarCard: View {
 
     var body: some View {
         ScreenBarRightNowRow(store: store)
+        SettingsFoldRow(store, id: SettingsFold.screenBar, title: "Settings",
+                        subtitle: "Show, follow Alcove, full screen, hidden apps, wings, notch shape, mirroring and calibration.") {
+            settingsRows
+        }
+    }
+
+    /// Everything the fold holds.
+    @ViewBuilder
+    private var settingsRows: some View {
         SettingToggle(store, "Show Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
         Provided(store, "screen_bar_show_in_full_screen") {

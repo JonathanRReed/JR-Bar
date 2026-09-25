@@ -582,6 +582,55 @@ struct DisclosureRow<Content: View>: View {
     }
 }
 
+/// A long run of rows folded under one row of its own: the title, a line
+/// on what it holds and the disclosure chevron. Folded, the rows are
+/// neither built nor measured, which is what keeps a heavy page quick to
+/// open; unfolded, they are ordinary rows of the group, as before. The
+/// store keeps each fold as the person left it while the app runs, and a
+/// search hit unfolds the one that holds its row (`SettingsFold`).
+struct SettingsFoldRow<Content: View>: View {
+    @Bindable var store: SettingsStore
+    let id: String
+    let title: String
+    var subtitle: String? = nil
+    @ViewBuilder var content: () -> Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewState private var hovering = false
+
+    init(_ store: SettingsStore, id: String, title: String, subtitle: String? = nil,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.store = store
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content
+    }
+
+    var body: some View {
+        let open = store.isFoldOpen(id)
+        Button {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
+                store.setFold(id, open: !open)
+            }
+        } label: {
+            HStack(alignment: .center, spacing: SettingsMetrics.m) {
+                SettingLabel(title: title, subtitle: subtitle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                DisclosureChevron(open: open, hovering: hovering)
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(open ? "Collapses" : "Expands")
+        if open {
+            content()
+        }
+    }
+}
+
 /// A many-of-many picker as one compact row: the menu's items carry
 /// checkmarks and the button reads "Claude, Codex, +2" — the wall of
 /// per-provider checkboxes, collapsed.

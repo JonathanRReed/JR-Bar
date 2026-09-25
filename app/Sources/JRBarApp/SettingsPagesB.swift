@@ -28,12 +28,17 @@ struct LightingPage: View {
 
     var body: some View {
         SettingGroup("Provider colours") {
-            LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
-                ForEach(SettingsKey.providers, id: \.self) { provider in
-                    ProviderSwatch(store: store, provider: provider)
+            // Twelve colour wells, each with a live preview: folded until
+            // asked for, since they are most of what the page costs to open.
+            SettingsFoldRow(store, id: SettingsFold.providerColours, title: "Colours",
+                            subtitle: "Each provider's colour, beside its working light under the blend below.") {
+                LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
+                    ForEach(SettingsKey.providers, id: \.self) { provider in
+                        ProviderSwatch(store: store, provider: provider)
+                    }
                 }
+                .padding(.vertical, 2)
             }
-            .padding(.vertical, 2)
             ColorVisionNote(store: store, colors: providerColorsInUse)
         }
 
@@ -1394,20 +1399,23 @@ struct StreamDeckCard: View {
 
     var body: some View {
         SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.") {
-            SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
-                          path: "serve_enabled")
             SettingRow("Endpoint") {
                 StatusPill(statusText, tint: statusColor)
             }
-            SettingRow("Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.") {
-                HStack(spacing: 8) {
-                    Text("http://127.0.0.1:8737/status.json")
-                        .font(.callout.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    Button("Copy token") { store.copyServeToken() }
-                        .disabled(!enabled || !store.isLive)
-                        .help("Fetches the endpoint's bearer token from the monitor and copies it")
+            SettingsFoldRow(store, id: SettingsFold.streamDeck, title: "Settings",
+                            subtitle: "Serve status, the status URL and its token.") {
+                SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
+                              path: "serve_enabled")
+                SettingRow("Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.") {
+                    HStack(spacing: 8) {
+                        Text("http://127.0.0.1:8737/status.json")
+                            .font(.callout.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Button("Copy token") { store.copyServeToken() }
+                            .disabled(!enabled || !store.isLive)
+                            .help("Fetches the endpoint's bearer token from the monitor and copies it")
+                    }
                 }
             }
         } header: {

@@ -102,6 +102,8 @@ enum SettingsSearch {
         .init(.devices, "Screen Bar", "Advanced", subtitle: "Phase, geometry and the band's dim floor."),
         .init(.devices, "Screen Bar", "Phase nudge", subtitle: "Shift the bar against the strip if the two are visibly out of step. Positive holds the bar back."),
         .init(.devices, "Screen Bar", "Minimum glow", subtitle: "The band's dim floor; zero is pitch black."),
+        .init(.lighting, "Provider colours", "Provider colours", subtitle: "Each provider's colour, beside its working light.",
+              keywords: ["accent", "color", "swatch", "hue"]),
         .init(.lighting, "Blend", "Blend mode"),
         .init(.lighting, "Blend", "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Effect Studio keeps its own tempo."),
         .init(.lighting, "Blend", "Celebrate completions", subtitle: "A flourish when a session settles into Done."),

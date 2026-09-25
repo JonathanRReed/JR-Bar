@@ -279,4 +279,44 @@ struct SettingsStorePathTests {
             #expect(count <= allowed, "\(file) reads store.document \(count) times; read the path instead")
         }
     }
+
+    @Test("heavy runs start folded, and a search hit unfolds the one holding its row")
+    func revealUnfoldsItsFold() {
+        let (core, store) = Self.store()
+        #expect(store.openFolds.isEmpty)
+        store.reveal(SettingsSearchEntry(.devices, "Screen Bar", "Notch wings"))
+        #expect(store.isFoldOpen(SettingsFold.screenBar))
+        store.reveal(SettingsSearchEntry(.devices, "Devices", "Brightness"))
+        #expect(store.isFoldOpen(SettingsFold.device("sidepulse:pro:A1")), "a device row unfolds the device cards")
+        store.reveal(SettingsSearchEntry(.devices, "Creator Micro 2", "Session keys"))
+        #expect(store.isFoldOpen(SettingsFold.creatorMicro))
+        store.reveal(SettingsSearchEntry(.devices, "Stream Deck", "Status URL"))
+        #expect(store.isFoldOpen(SettingsFold.streamDeck))
+        let colours = SettingsSearch.search("provider colours", in: SettingsSearch.rows).first
+        #expect(colours?.page == .lighting)
+        if let colours { store.reveal(colours) }
+        #expect(store.isFoldOpen(SettingsFold.providerColours))
+        let action = SettingsSearch.shortcutRows.first { $0.group == "Actions" }
+        if let action { store.reveal(action) }
+        #expect(store.isFoldOpen(SettingsFold.shortcutActions))
+        let chip = SettingsSearch.shortcutRows.first { $0.group == "Quick toggles" }
+        if let chip { store.reveal(chip) }
+        #expect(store.isFoldOpen(SettingsFold.quickToggles))
+        let open = store.openFolds
+        store.reveal(SettingsSearchEntry(.notifications, "Power", "Lid closed"))
+        #expect(store.openFolds == open, "a row outside every fold opens none")
+        store.setFold(SettingsFold.screenBar, open: false)
+        #expect(!store.isFoldOpen(SettingsFold.screenBar), "folding by hand is the person's")
+        withExtendedLifetime(core) {}
+    }
+
+    @Test("every listed row on a folded run names a fold to open")
+    func everyFoldedGroupMapsToAFold() {
+        let (core, store) = Self.store()
+        let folded: Set<String> = ["Devices", "Screen Bar", "Creator Micro 2", "Stream Deck"]
+        for row in SettingsSearch.rows where row.page == .devices && folded.contains(row.group) {
+            #expect(!store.folds(holding: row).isEmpty, "\(row.title) sits in a fold the search cannot open")
+        }
+        withExtendedLifetime(core) {}
+    }
 }
