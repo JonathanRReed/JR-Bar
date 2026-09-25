@@ -14,6 +14,10 @@ import SwiftUI
 /// per-frame line, so the log stays quiet at rest.
 enum FoldLog {
     static let log = Logger(subsystem: "devin.jrbar", category: "fold")
+    private static let handle = OSLog(subsystem: "devin.jrbar", category: "fold")
+    /// Someone is streaming debug lines (`log stream --level debug`):
+    /// only then is a debug line worth writing out.
+    static var debugEnabled: Bool { handle.isEnabled(type: .debug) }
 }
 
 /// Fold (docs/TOYS.md): closing the lid folds the desktop. The Duo look
@@ -43,13 +47,34 @@ final class FoldToy: Toy {
     let sensor = LidAngleSensor()
 
     /// The Simulate slider owns the angle while it is held, so the toy
-    /// works on a Mac with no lid sensor at all.
-    private(set) var simulatedAngle: Double?
+    /// works on a Mac with no lid sensor at all. Not observed: it moves
+    /// 60 times a second under a drag or Try it; the slider's own write
+    /// schedules the reconcile, and the card reads `cardAngle`.
+    @ObservationIgnored private(set) var simulatedAngle: Double?
+    /// True while the slider or Try it drives the angle.
+    private(set) var simulating = false
     /// The newest raw sensor reading, jitter unfiltered — the activation
     /// gate checks this so a predicted lead can never open the overlay
     /// early, and a filtered straggler can never hold it open above the
-    /// limit.
-    private(set) var rawAngle: Double?
+    /// limit. Not observed: the engine reads it where it needs it, and
+    /// the card reads `cardAngle`.
+    @ObservationIgnored private(set) var rawAngle: Double?
+    /// What the card shows: the lid in whole degrees (the simulation
+    /// while one plays), the fold's state line, and why it is paused —
+    /// each changed at most ten times a second (`FoldCardFeed`), and only
+    /// when it changed, so a lid at rest redraws nothing.
+    private(set) var cardAngle: Double?
+    /// Whether the card has an angle to show — the label's size follows
+    /// it, and it changes only when the sensor starts or stops reading.
+    private(set) var cardHasAngle = false
+    private(set) var cardDetail = ""
+    private(set) var cardPause: String?
+    @ObservationIgnored private var cardFeed = FoldCardFeed()
+    @ObservationIgnored private var cardFlush: DispatchWorkItem?
+    /// The resting lid's flicker stops here (`FoldRestGate`).
+    @ObservationIgnored private var restGate = FoldRestGate()
+    /// A reconcile asked for by the slider, not yet run.
+    @ObservationIgnored private var reconcileQueued = false
     /// Metal or the shader failed, so the fold is parked — but not for
     /// the app's lifetime: re-enabling the toy clears the flag at once,
     /// and past `rendererRetryCooldown` the next arm attempt tries the
@@ -184,12 +209,13 @@ final class FoldToy: Toy {
     /// Tracks whether the fold was ever up this run, so the restore
     /// click only sounds on a real unwind, not on every at-rest tick.
     @ObservationIgnored private var foldWasUp = false
-    /// The last diagnostic line logged — the log only speaks when the
-    /// machine's state actually changes, so a parked fold stays silent.
-    @ObservationIgnored private var lastDiag = ""
+    /// The last diagnostic line logged, as numbers — the log only speaks
+    /// when the machine's state actually changes, so a parked fold stays
+    /// silent, and no text is built for a pass that changed nothing.
+    @ObservationIgnored private var lastDiag: (state: FoldDiagState, angles: FoldDiagAngles)?
     /// The last notice line's dedup key, angles left out — see
     /// `noteDiag`.
-    @ObservationIgnored private var lastNoticeDiag = ""
+    @ObservationIgnored private var lastNoticeDiag: FoldDiagState?
 
     init(core: CoreModel, store: ToysStore) {
         self.core = core
@@ -268,6 +294,7 @@ final class FoldToy: Toy {
             MainActor.assumeIsolated { self?.tickFrame() }
         }
         observe()
+        publishCard()
     }
 
     let id = "fold"
@@ -312,20 +339,19 @@ final class FoldToy: Toy {
             return sensor.available ? .off : .unavailable("No lid-angle sensor on this Mac")
         }
         if rendererFailed { return .unavailable("Fold can't start its renderer") }
-        if !sensor.available && simulatedAngle == nil {
+        if !sensor.available && !simulating {
             return .unavailable("No lid-angle sensor on this Mac")
         }
         if !FoldCapturePermission.granted && !settings.wallpaperFallback {
             return .needsPermission("Needs Screen Recording")
         }
-        if let reason = pauseReason { return .paused(reason) }
+        // The pause as the card last heard it: reading the live one here
+        // would redraw the chip on every sensor reading.
+        if let reason = cardPause { return .paused(reason) }
         if !FoldCapturePermission.granted { return .limited("Wallpaper only") }
         return .on
     }
 
-    /// Every sensor sample that reached the toy — the card's measured
-    /// read rate.
-    @ObservationIgnored let meter = ToyMeter()
 
     /// The optional creak (`FoldHingeVoice`): it only listens to the
     /// readings the fold already takes.
@@ -347,7 +373,9 @@ final class FoldToy: Toy {
     /// Lid Plane rendering it costs them, not us — no line.
     func cost(at now: TimeInterval) -> String? {
         guard settings.provider == .jrbar else { return nil }
-        let reads = meter.rate(at: now)
+        // Counted on the sensor's queue: a lid at rest keeps its flicker
+        // off the main thread, but every read still counts.
+        let reads = sensor.readRate(at: now)
         return [
             reads < 0.5 ? "Lid sensor idle" : "Lid sensor \(Int(reads.rounded())) reads/s",
             "10 at rest, 120 near the fold",
@@ -429,8 +457,12 @@ final class FoldToy: Toy {
         tracker.omega = isDuo ? 40 : 20
         overlay?.renderer.look = settings.look
         // Every path — off, parked, paused — leaves the vsync link
-        // matching the machine; a parked fold runs no timer.
-        defer { refreshTick() }
+        // matching the machine; a parked fold runs no timer. The card
+        // hears the outcome.
+        defer {
+            refreshTick()
+            publishCard()
+        }
         guard settings.enabled, settings.provider == .jrbar else {
             endBlackout(hide: true)
             edges.reset()
@@ -447,6 +479,7 @@ final class FoldToy: Toy {
             tracker.reset()
             chase.reset()
             moveAnchor.reset()
+            restGate.reset()
             displayedDelta = 0
             standDown()
             sensor.setPolling(false)
@@ -641,34 +674,79 @@ final class FoldToy: Toy {
     /// leave the angles out of that dedup: an angle that moves while
     /// nothing else does is a wobble the filter held back, or a glide
     /// with the delta at 0 and nothing on screen — and a lid parked in
-    /// the band reconciles on every 120 Hz sample.
+    /// the band reconciles on every 120 Hz sample. The reconcile pass
+    /// speaks at debug too: it ran for every flicker of a resting lid,
+    /// and its notice lines were 2.3 persisted lines a second
+    /// (2026-09-25). The other stages — paused, blackout, the gate —
+    /// are rare and stay at notice.
+    ///
+    /// The comparison is on numbers (`FoldDiagState`); the line is only
+    /// written out when the log takes it.
     private func noteDiag(stage: String) {
+        let state = FoldDiagState(
+            enabled: settings.enabled, provider: settings.provider.rawValue, paused: paused,
+            pause: pauseReason, target: Self.milli(targetDelta), shown: Self.milli(displayedDelta),
+            phase: arming.phase, gate: arming.foldGateOpen,
+            capture: capture == nil ? 0 : capture!.hasFrame ? 2 : 1,
+            texture: overlay?.renderer.hasTexture ?? false, visible: overlay?.isVisible ?? false,
+            link: tickLink != nil, blackout: blackout.active)
+        let angles = diagAngles
+        if stage == "tick" {
+            if let last = lastDiag, last.state == state, last.angles == angles { return }
+            lastDiag = (state, angles)
+            guard FoldLog.debugEnabled else { return }
+            let line = diagLine(state)
+            FoldLog.log.debug("\(stage, privacy: .public) \(line, privacy: .public)")
+        } else {
+            guard state != lastNoticeDiag else { return }
+            lastDiag = (state, angles)
+            lastNoticeDiag = state
+            if stage == "reconcile" {
+                guard FoldLog.debugEnabled else { return }
+                let line = diagLine(state)
+                FoldLog.log.debug("\(stage, privacy: .public) \(line, privacy: .public)")
+            } else {
+                let line = diagLine(state)
+                FoldLog.log.notice("\(stage, privacy: .public) \(line, privacy: .public)")
+            }
+        }
+    }
+
+    private static func milli(_ value: Double) -> Int {
+        value.isFinite ? Int((value * 1000).rounded()) : Int.max
+    }
+
+    private static func tenths(_ value: Double?) -> Int? {
+        value.flatMap { $0.isFinite ? Int(($0 * 10).rounded()) : nil }
+    }
+
+    /// The angles and the Duo's numbers, as the line prints them.
+    private var diagAngles: FoldDiagAngles {
+        let p = isDuo ? overlay?.renderer.params : nil
+        return FoldDiagAngles(
+            raw: gateAngle.flatMap { $0.isFinite ? Int($0.rounded()) : nil },
+            render: Self.tenths(renderAngle),
+            duo: isDuo,
+            reference: isDuo ? Self.tenths(duoReference) : nil,
+            motion: Int(((p?.motion ?? 0) * 100).rounded()),
+            endFade: Int(((p?.endFade ?? 0) * 100).rounded()))
+    }
+
+    /// The line itself — built only when the log keeps it.
+    private func diagLine(_ state: FoldDiagState) -> String {
         let raw = gateAngle.map { String(format: "%.0f", $0) } ?? "nil"
         let render = renderAngle.map { String(format: "%.1f", $0) } ?? "nil"
-        // Dedup on the state only — the stage prefix differs between the
-        // reconcile and tick passes, and comparing it would print both
-        // sides of every unchanged frame.
-        let head = "en=\(settings.enabled) prv=\(settings.provider.rawValue) "
-            + "paused=\(paused) pause=\(pauseReason ?? "-") "
+        let head = "en=\(state.enabled) prv=\(state.provider) "
+            + "paused=\(state.paused) pause=\(state.pause ?? "-") "
         let angles = "raw=\(raw) render=\(render) " + duoDiag
+        let cap = state.capture == 0 ? "nil" : state.capture == 2 ? "frame" : "wait"
         let tail = "target=\(String(format: "%.3f", targetDelta)) "
             + "disp=\(String(format: "%.3f", displayedDelta)) "
-            + "arm=\(arming.phase) gate=\(arming.foldGateOpen) "
-            + "cap=\(capture == nil ? "nil" : capture!.hasFrame ? "frame" : "wait") "
-            + "tex=\(overlay?.renderer.hasTexture ?? false) vis=\(overlay?.isVisible ?? false) "
-            + "link=\(tickLink != nil) black=\(blackout.active)"
-        let state = head + angles + tail
-        if stage == "tick" {
-            guard state != lastDiag else { return }
-            lastDiag = state
-            FoldLog.log.debug("\(stage, privacy: .public) \(state, privacy: .public)")
-        } else {
-            let key = head + tail
-            guard key != lastNoticeDiag else { return }
-            lastDiag = state
-            lastNoticeDiag = key
-            FoldLog.log.notice("\(stage, privacy: .public) \(state, privacy: .public)")
-        }
+            + "arm=\(state.phase) gate=\(state.gate) "
+            + "cap=\(cap) "
+            + "tex=\(state.texture) vis=\(state.visible) "
+            + "link=\(state.link) black=\(state.blackout)"
+        return head + angles + tail
     }
 
     /// The Duo's numbers for the log: the look, the reference the fold
@@ -770,6 +848,7 @@ final class FoldToy: Toy {
     /// moves the target.
     private func tickFrame() {
         let now = CACurrentMediaTime()
+        defer { publishCard(now: now) }
         let dt = now - lastDeltaTick
         lastDeltaTick = now
         if smoothsEdges, let drawn = edges.value(at: now) { tracker.feed(drawn) }
@@ -1031,8 +1110,11 @@ final class FoldToy: Toy {
         self.capture = capture
         captureBeganAt = CACurrentMediaTime()
         awaitingFirstFrame = true
-        capture.onFullFrame = { [weak self] buffer in
-            guard let self, let overlay = self.ensureOverlay() else { return }
+        capture.onFullFrame = { [weak self, weak capture] buffer in
+            // A stream already stopped may land one last frame: it is not
+            // the fold's any more, and must not bring the picture back.
+            guard let self, let capture, self.capture === capture,
+                  let overlay = self.ensureOverlay() else { return }
             // Push once per delivered frame; a draw then costs one
             // triangle, not a texture conversion. The overlay is made
             // here, not at show time: on a static screen SCK may deliver
@@ -1070,6 +1152,7 @@ final class FoldToy: Toy {
             self.core.appendLocalLog(level: "error", "Fold capture stopped: \(message)")
             Task { await capture.stop() }
             self.noteDiag(stage: "capture-error")
+            self.publishCard()
         }
         FoldLog.log.notice("capture: starting stream")
         Task { [weak self, weak capture] in
@@ -1117,6 +1200,10 @@ final class FoldToy: Toy {
     private func standDown() {
         hideOverlay()
         stopCapture()
+        // Parked with no stream: the picture and the drawables go, until
+        // the next capture brings a fresh frame. The black hold keeps its
+        // overlay up.
+        if !blackout.active { overlay?.releaseFrames() }
     }
 
     /// Capture stopped, the overlay left as it is — the blackout keeps
@@ -1134,11 +1221,6 @@ final class FoldToy: Toy {
     /// same glide the simulate slider gets — then the filter and tracker
     /// decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
-        meter.tick()
-        rawAngle = sample.angle
-        // The shared hinge signal: published, never read back here.
-        store?.noteHinge(sample.angle)
-        if let angle = sample.angle, simulatedAngle == nil { voice(angle, at: sample.at) }
         // The clamshell flag is the one pause input that changes on
         // this path with no trigger of its own — the angle reconciles
         // on accepted samples, the display facts through observed
@@ -1147,9 +1229,26 @@ final class FoldToy: Toy {
         // is idle, so a rejected sample would otherwise drop the flip
         // and leave the fold paused under a chip that reads on.
         let clamshellChanged = sample.clamshell != nil && sample.clamshell != cachedClamshell
+        // A lid at rest: its whole-degree flicker stops here, and the
+        // sensor is told it may keep the next ones on its own queue.
+        // Nothing in the machine could use them — see `FoldRestGate`.
+        if let angle = sample.angle, simulatedAngle == nil, !clamshellChanged,
+           !restGate.admits(angle, at: sample.at, idle: restingQuietly(at: sample.at),
+                            insideArmingBand: angle <= sensor.armingAngle) {
+            // The shared hinge signal stays fresh on the resting reading.
+            store?.noteHinge(rawAngle ?? angle)
+            sensor.quiet(around: restGate.center)
+            return
+        }
+        sensor.quiet(around: nil)
+        rawAngle = sample.angle
+        // The shared hinge signal: published, never read back here.
+        store?.noteHinge(sample.angle)
+        if let angle = sample.angle, simulatedAngle == nil { voice(angle, at: sample.at) }
         if let clamshell = sample.clamshell { cachedClamshell = clamshell }
         guard let angle = sample.angle, simulatedAngle == nil else {
             if clamshellChanged { reconcile() }
+            publishCard()
             return
         }
         if settings.anchor == .movement {
@@ -1172,11 +1271,74 @@ final class FoldToy: Toy {
             // tracker is spared the wobble. Parked above the band
             // (idle) the reading stops here, unless it carried a
             // clamshell flip.
-            if arming.phase != .idle || clamshellChanged { reconcile() }
+            if arming.phase != .idle || clamshellChanged { reconcile() } else { publishCard() }
             return
         }
         feedTracker(angle, at: sample.at)
         reconcile()
+    }
+
+    /// Nothing a reading could change is live: ours to render and on,
+    /// no simulation, no capture and nothing armed, the fold gate shut
+    /// and nothing on screen, no pause, resume, dwell or blackout under
+    /// way, and the hinge voice quiet. Only then may the rest gate hold
+    /// readings back. The tracker and the edge glide may still be
+    /// settling on the last reading that got through: they draw nothing
+    /// with the gate shut, and the link stands down once they land. (A
+    /// flicker the jitter filter lets through keeps them from ever
+    /// settling, which is why settled cannot be the test.)
+    private func restingQuietly(at now: TimeInterval) -> Bool {
+        let settings = settings
+        guard settings.enabled, settings.provider == .jrbar, simulatedAngle == nil, !tryingIt else { return false }
+        guard !paused, resumeWork == nil, !blackout.active, !dwellPaused, dwellWork == nil else { return false }
+        guard arming.phase == .idle, !arming.foldGateOpen, capture == nil,
+              overlay?.isVisible != true, displayedDelta <= 0.002 else { return false }
+        return !hingeVoice.isRunning
+    }
+
+    // MARK: The card
+
+    /// Offers the card what it shows now: it lands at once, or when the
+    /// last change's tenth of a second is up (`FoldCardFeed`), and only
+    /// the fields that changed are written. Cheap to call on every pass:
+    /// inside the tenth it only makes sure one flush is waiting.
+    private func publishCard(now: TimeInterval = CACurrentMediaTime()) {
+        let due = cardFeed.due(at: now)
+        guard due <= now else {
+            scheduleCardFlush(after: due - now)
+            return
+        }
+        let reading = FoldCardFeed.Reading(angle: measuredAngle, detail: foldDetail, pause: pauseReason)
+        guard let shown = cardFeed.land(reading, at: now) else { return }
+        if shown.angle != cardAngle { cardAngle = shown.angle }
+        if (shown.angle != nil) != cardHasAngle { cardHasAngle = shown.angle != nil }
+        if shown.detail != cardDetail { cardDetail = shown.detail }
+        if shown.pause != cardPause { cardPause = shown.pause }
+    }
+
+    private func scheduleCardFlush(after delay: TimeInterval) {
+        guard cardFlush == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.cardFlush = nil
+                self.publishCard()
+            }
+        }
+        cardFlush = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, delay), execute: work)
+    }
+
+    /// The slider's and Try it's writes run the machine on the next turn,
+    /// once however many landed — as the observation of the angle did.
+    private func scheduleReconcile() {
+        guard !reconcileQueued else { return }
+        reconcileQueued = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.reconcileQueued = false
+            self.reconcile()
+        }
     }
 
     /// An accepted reading into the motion: through the edge
@@ -1200,9 +1362,8 @@ final class FoldToy: Toy {
             // rewrites it, and a second, async reconcile per sample is
             // churn the machine does not need — the sample path calls
             // reconcile itself whenever a reading can matter (accepted,
-            // or inside the band), and the card's own view observes
-            // rawAngle for the live reading.
-            _ = simulatedAngle
+            // or inside the band). The simulated angle's writes schedule
+            // their own reconcile, and the card reads `cardAngle`.
             _ = screenAsleep
             _ = screenLocked
             _ = sessionInactive
@@ -1229,6 +1390,7 @@ final class FoldToy: Toy {
             get: { self.simulatedAngle ?? self.measuredAngle ?? 90 },
             set: {
                 self.simulatedAngle = $0
+                if !self.simulating { self.simulating = true }
                 // The card's demo and the slider preview the voice too.
                 self.voice($0, at: CACurrentMediaTime())
                 // The tracker turns the slider's jumps into the same
@@ -1239,6 +1401,8 @@ final class FoldToy: Toy {
                     // still drag end re-seats the anchor on its own.
                     self.moveAnchor.feed($0, at: CACurrentMediaTime())
                 }
+                self.scheduleReconcile()
+                self.publishCard()
             })
     }
 
@@ -1286,10 +1450,6 @@ final class FoldToy: Toy {
         endSimulate()
     }
 
-    /// The angle the card's lid glyph draws — the simulation while one
-    /// plays, else the sensor.
-    var glyphAngle: Double? { measuredAngle }
-
     func endSimulate() {
         if tryingIt {
             // A hand on the slider ends the demo; the slider's own
@@ -1299,6 +1459,8 @@ final class FoldToy: Toy {
             tryingIt = false
         }
         simulatedAngle = nil
+        if simulating { simulating = false }
+        restGate.reset()
         // The tracker's glide belongs to the real lid — a drag that
         // just jumped the angle 40° must not carry over.
         tracker.reset()
@@ -1314,10 +1476,11 @@ final class FoldToy: Toy {
 
     /// "104°" while anything is driving the angle, "no sensor" on a Mac
     /// without the hinge, "—" for a sensor that has not read yet (the
-    /// poll only runs while the toy is on).
-    var angleText: String {
-        if let angle = measuredAngle { return "\(Int(angle.rounded()))°" }
-        return sensor.available ? "—" : "no sensor"
+    /// poll only runs while the toy is on). The card shows it for
+    /// `cardAngle`.
+    nonisolated static func angleText(_ angle: Double?, sensorAvailable: Bool) -> String {
+        if let angle { return "\(Int(angle.rounded()))°" }
+        return sensorAvailable ? "—" : "no sensor"
     }
 
     /// What the fold is doing right now, or the first link in the chain
@@ -1387,6 +1550,7 @@ final class FoldToy: Toy {
         catchUp.reset()
         chase.reset()
         moveAnchor.reset()
+        restGate.reset()
         displayedDelta = 0
         standDown()
         sensor.setPolling(false)
@@ -1450,69 +1614,95 @@ struct FoldLidGlyph: View {
 
     var body: some View {
         Canvas { context, size in
-            let unit = min(size.width / 44, size.height / 26)
-            let hinge = CGPoint(x: size.width * 0.36, y: size.height - 3 * unit)
-            let lidLength = Double(size.height) - 7 * unit
-            if let activation {
-                // The fold zone: shut up to the start angle.
-                let radius = lidLength + 3 * unit
-                var wedge = Path()
-                wedge.move(to: hinge)
-                wedge.addArc(center: hinge, radius: radius, startAngle: .degrees(0),
-                             endAngle: .degrees(-min(180, max(0, activation))), clockwise: true)
-                wedge.closeSubpath()
-                context.fill(wedge, with: .color(Color.accentColor.opacity(0.1)))
-                var rim = Path()
-                rim.addArc(center: hinge, radius: radius, startAngle: .degrees(0),
-                           endAngle: .degrees(-min(180, max(0, activation))), clockwise: true)
-                context.stroke(rim, with: .color(Color.accentColor.opacity(0.45)),
-                               style: StrokeStyle(lineWidth: max(0.8, unit * 0.6), dash: [2 * unit, 1.6 * unit]))
-                let tick = Self.lidEnd(hinge: hinge, length: radius, degrees: activation)
-                let dot = 1.6 * unit
-                context.fill(Path(ellipseIn: CGRect(x: tick.x - dot, y: tick.y - dot, width: dot * 2, height: dot * 2)),
-                             with: .color(.accentColor))
+            for mark in Self.marks(in: size, angle: angle, activation: activation) {
+                let base = mark.ink == .accent ? Color.accentColor : Color.primary
+                let shading = GraphicsContext.Shading.color(base.opacity(mark.opacity))
+                if let stroke = mark.stroke {
+                    context.stroke(Path(mark.path), with: shading, style: stroke)
+                } else {
+                    context.fill(Path(mark.path), with: shading)
+                }
             }
-            // The deck: the keyboard half, with a lit top edge.
-            var deck = Path()
-            deck.move(to: CGPoint(x: hinge.x, y: hinge.y))
-            deck.addLine(to: CGPoint(x: size.width - 2 * unit, y: hinge.y))
-            context.stroke(deck, with: .color(Color.primary.opacity(0.4)),
-                           style: StrokeStyle(lineWidth: 2.6 * unit, lineCap: .round))
-            context.stroke(deck, with: .color(Color.primary.opacity(0.18)),
-                           style: StrokeStyle(lineWidth: 0.7 * unit, lineCap: .round))
-            // The lid, or its ghost while there is no reading.
-            let degrees = angle ?? 105
-            let end = Self.lidEnd(hinge: hinge, length: lidLength, degrees: degrees)
-            var lid = Path()
-            lid.move(to: hinge)
-            lid.addLine(to: end)
-            guard angle != nil else {
-                context.stroke(lid, with: .color(Color.primary.opacity(0.25)),
-                               style: StrokeStyle(lineWidth: 1.4 * unit, lineCap: .round,
-                                                  dash: [2.4 * unit, 2 * unit]))
-                return
-            }
-            context.stroke(lid, with: .color(Color.primary.opacity(0.85)),
-                           style: StrokeStyle(lineWidth: 2.2 * unit, lineCap: .round))
-            // The screen along the lid's inside face, glowing faintly.
-            let radians = min(180, max(0, degrees)) * .pi / 180
-            let inset = CGSize(width: sin(radians) * 1.9 * unit, height: cos(radians) * 1.9 * unit)
-            var screen = Path()
-            screen.move(to: CGPoint(x: hinge.x + inset.width + (end.x - hinge.x) * 0.12,
-                                    y: hinge.y + inset.height + (end.y - hinge.y) * 0.12))
-            screen.addLine(to: CGPoint(x: end.x + inset.width - (end.x - hinge.x) * 0.06,
-                                       y: end.y + inset.height - (end.y - hinge.y) * 0.06))
-            context.stroke(screen, with: .color(Color.accentColor.opacity(0.25)),
-                           style: StrokeStyle(lineWidth: 3 * unit, lineCap: .round))
-            context.stroke(screen, with: .color(Color.accentColor),
-                           style: StrokeStyle(lineWidth: 0.9 * unit, lineCap: .round))
-            // The hinge itself.
-            let knuckle = 1.5 * unit
-            context.fill(Path(ellipseIn: CGRect(x: hinge.x - knuckle, y: hinge.y - knuckle,
-                                                width: knuckle * 2, height: knuckle * 2)),
-                         with: .color(Color.primary.opacity(0.7)))
         }
         .accessibilityHidden(true)
+    }
+
+    /// One stroke or fill of the glyph, in the frame's own points (y
+    /// down): the Canvas above and the Settings card's layers
+    /// (`FoldLidLayerView`) draw the same list.
+    struct Mark {
+        enum Ink { case primary, accent }
+        let path: CGPath
+        let ink: Ink
+        let opacity: Double
+        /// nil fills the path.
+        let stroke: StrokeStyle?
+    }
+
+    /// The glyph for a frame of `size`: the fold zone in "Set angle"
+    /// mode, the deck, then the lid (or its dashed ghost with no
+    /// reading) with its lit screen and the hinge.
+    nonisolated static func marks(in size: CGSize, angle: Double?, activation: Double?) -> [Mark] {
+        var marks: [Mark] = []
+        let unit = min(size.width / 44, size.height / 26)
+        let hinge = CGPoint(x: size.width * 0.36, y: size.height - 3 * unit)
+        let lidLength = Double(size.height) - 7 * unit
+        if let activation {
+            // The fold zone: shut up to the start angle.
+            let radius = lidLength + 3 * unit
+            let sweep = Angle.degrees(-min(180, max(0, activation)))
+            var wedge = Path()
+            wedge.move(to: hinge)
+            wedge.addArc(center: hinge, radius: radius, startAngle: .degrees(0), endAngle: sweep, clockwise: true)
+            wedge.closeSubpath()
+            marks.append(Mark(path: wedge.cgPath, ink: .accent, opacity: 0.1, stroke: nil))
+            var rim = Path()
+            rim.addArc(center: hinge, radius: radius, startAngle: .degrees(0), endAngle: sweep, clockwise: true)
+            marks.append(Mark(path: rim.cgPath, ink: .accent, opacity: 0.45,
+                              stroke: StrokeStyle(lineWidth: max(0.8, unit * 0.6), dash: [2 * unit, 1.6 * unit])))
+            let tick = lidEnd(hinge: hinge, length: radius, degrees: activation)
+            let dot = 1.6 * unit
+            let knob = CGRect(x: tick.x - dot, y: tick.y - dot, width: dot * 2, height: dot * 2)
+            marks.append(Mark(path: CGPath(ellipseIn: knob, transform: nil), ink: .accent, opacity: 1, stroke: nil))
+        }
+        // The deck: the keyboard half, with a lit top edge.
+        let deck = CGMutablePath()
+        deck.move(to: hinge)
+        deck.addLine(to: CGPoint(x: size.width - 2 * unit, y: hinge.y))
+        marks.append(Mark(path: deck, ink: .primary, opacity: 0.4,
+                          stroke: StrokeStyle(lineWidth: 2.6 * unit, lineCap: .round)))
+        marks.append(Mark(path: deck, ink: .primary, opacity: 0.18,
+                          stroke: StrokeStyle(lineWidth: 0.7 * unit, lineCap: .round)))
+        // The lid, or its ghost while there is no reading.
+        let degrees = angle ?? 105
+        let end = lidEnd(hinge: hinge, length: lidLength, degrees: degrees)
+        let lid = CGMutablePath()
+        lid.move(to: hinge)
+        lid.addLine(to: end)
+        guard angle != nil else {
+            marks.append(Mark(path: lid, ink: .primary, opacity: 0.25,
+                              stroke: StrokeStyle(lineWidth: 1.4 * unit, lineCap: .round, dash: [2.4 * unit, 2 * unit])))
+            return marks
+        }
+        marks.append(Mark(path: lid, ink: .primary, opacity: 0.85,
+                          stroke: StrokeStyle(lineWidth: 2.2 * unit, lineCap: .round)))
+        // The screen along the lid's inside face, glowing faintly.
+        let radians = min(180, max(0, degrees)) * .pi / 180
+        let inset = CGSize(width: sin(radians) * 1.9 * unit, height: cos(radians) * 1.9 * unit)
+        let screen = CGMutablePath()
+        screen.move(to: CGPoint(x: hinge.x + inset.width + (end.x - hinge.x) * 0.12,
+                                y: hinge.y + inset.height + (end.y - hinge.y) * 0.12))
+        screen.addLine(to: CGPoint(x: end.x + inset.width - (end.x - hinge.x) * 0.06,
+                                   y: end.y + inset.height - (end.y - hinge.y) * 0.06))
+        marks.append(Mark(path: screen, ink: .accent, opacity: 0.25,
+                          stroke: StrokeStyle(lineWidth: 3 * unit, lineCap: .round)))
+        marks.append(Mark(path: screen, ink: .accent, opacity: 1,
+                          stroke: StrokeStyle(lineWidth: 0.9 * unit, lineCap: .round)))
+        // The hinge itself.
+        let knuckle = 1.5 * unit
+        let pin = CGRect(x: hinge.x - knuckle, y: hinge.y - knuckle, width: knuckle * 2, height: knuckle * 2)
+        marks.append(Mark(path: CGPath(ellipseIn: pin, transform: nil), ink: .primary, opacity: 0.7, stroke: nil))
+        return marks
     }
 }
 
@@ -1644,7 +1834,9 @@ private struct FoldControlsView: View {
                         if !editing { toy.endSimulate() }
                     }
                     .frame(width: 180)
-                    ValueText(text: toy.simulatedAngle.map { degrees($0) } ?? "—")
+                    // Read only while a simulation plays: the lid's own
+                    // readings never redraw the card.
+                    ValueText(text: toy.simulating ? degrees(toy.cardAngle ?? 0) : "—")
                 }
             } label: {
                 SettingLabel(title: "Simulate a fold", subtitle: "Pretends the lid is moving while you drag.")
@@ -1727,11 +1919,13 @@ private struct FoldControlsView: View {
 
     /// The card's head: the lid drawn large on its own tile, live, beside
     /// its angle, what the fold is doing right now, and the one-click
-    /// demo.
+    /// demo. The lid and the angle follow the sensor in AppKit
+    /// (`FoldLiveLid`, `FoldLiveAngle`), so a moving lid redraws them and
+    /// not the Toys page; the state line changes with the fold's state.
     private var hero: some View {
         HStack(alignment: .center, spacing: 16) {
-            FoldLidGlyph(angle: toy.glyphAngle,
-                         activation: toy.settings.anchor == .angle ? toy.settings.activationAngle : nil)
+            FoldLiveLid(toy: toy,
+                        activation: toy.settings.anchor == .angle ? toy.settings.activationAngle : nil)
                 .frame(width: 118, height: 70)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
@@ -1741,16 +1935,12 @@ private struct FoldControlsView: View {
                     .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5))
             VStack(alignment: .leading, spacing: 6) {
                 SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
-                Text(toy.angleText)
-                    .font(angleFont)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .foregroundStyle(toy.glyphAngle == nil ? .secondary : .primary)
-                Text(toy.foldDetail)
+                FoldLiveAngle(toy: toy)
+                Text(toy.cardDetail)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("Fold state: \(toy.foldDetail)")
+                    .accessibilityLabel("Fold state: \(toy.cardDetail)")
                 Button(toy.tryingIt ? "Folding…" : "Try it") { toy.tryIt() }
                     .controlSize(.regular)
                     .disabled(toy.tryingIt || !toy.isOn || toy.settings.provider != .jrbar)
@@ -1759,14 +1949,6 @@ private struct FoldControlsView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
-    }
-
-    /// The angle in big digits while there is one; a missing reading
-    /// ("no sensor", "—") says so a size down, as a note, not a number.
-    private var angleFont: Font {
-        toy.glyphAngle == nil
-            ? .system(size: 17, weight: .medium, design: .rounded)
-            : .system(size: 26, weight: .semibold, design: .rounded)
     }
 
     /// One slider row: the label, the slider and its readout. A row
@@ -1834,4 +2016,33 @@ private struct FoldControlsView: View {
 private final class TickBox: NSObject {
     var onTick: () -> Void = {}
     @objc func tick() { onTick() }
+}
+
+/// The machine's state as `noteDiag` compares it: the notice line's
+/// fields, with the deltas in thousandths as the line prints them.
+struct FoldDiagState: Equatable {
+    var enabled: Bool
+    var provider: String
+    var paused: Bool
+    var pause: String?
+    var target: Int
+    var shown: Int
+    var phase: FoldArming.Phase
+    var gate: Bool
+    /// 0 no capture, 1 waiting for a frame, 2 has one.
+    var capture: Int
+    var texture: Bool
+    var visible: Bool
+    var link: Bool
+    var blackout: Bool
+}
+
+/// The angles a tick line adds, rounded as the line prints them.
+struct FoldDiagAngles: Equatable {
+    var raw: Int?
+    var render: Int?
+    var duo: Bool
+    var reference: Int?
+    var motion: Int
+    var endFade: Int
 }

@@ -23,9 +23,10 @@ struct AgentAlertRulesTable: View {
             } else {
                 // The table while it fits; at a narrow window each agent
                 // stacks its switches under its name instead of spilling
-                // the page sideways.
-                ViewThatFits(in: .horizontal) {
+                // the page sideways. Only the one shown is built.
+                WidestThatFits(key: providers) {
                     table(providers)
+                } fallback: {
                     stacked(providers)
                 }
                 .padding(.horizontal, SettingsMetrics.m)
@@ -191,5 +192,74 @@ private extension View {
     @ViewBuilder
     func labelsHidden(_ hidden: Bool) -> some View {
         if hidden { labelsHidden() } else { self }
+    }
+}
+
+/// `ViewThatFits` over two layouts that builds only one of them: the
+/// `preferred` one while its ideal width fits the width offered (and
+/// before either is known), the `fallback` once it does not. The
+/// preferred layout's ideal width is read while it shows and remembered,
+/// so a window that grows back past it brings it back; a new `key` (the
+/// content changed) reads it again. `ViewThatFits` builds and measures
+/// both on every pass — the Agent Overview's pickers and switches twice.
+struct WidestThatFits<Preferred: View, Fallback: View>: View {
+    let key: AnyHashable
+    @ViewBuilder var preferred: () -> Preferred
+    @ViewBuilder var fallback: () -> Fallback
+    @ViewState private var ideal: CGFloat?
+    @ViewState private var measured: AnyHashable?
+    @ViewState private var offered: CGFloat?
+
+    init<Key: Hashable>(key: Key, @ViewBuilder preferred: @escaping () -> Preferred,
+                        @ViewBuilder fallback: @escaping () -> Fallback) {
+        self.key = AnyHashable(key)
+        self.preferred = preferred
+        self.fallback = fallback
+    }
+
+    /// Whether the fallback shows for these widths. Pure, for the tests.
+    static func fallsBack(ideal: CGFloat?, offered: CGFloat?, current: Bool) -> Bool {
+        guard current, let ideal, let offered else { return false }
+        return ideal > offered + 0.5
+    }
+
+    var body: some View {
+        let fallsBack = Self.fallsBack(ideal: ideal, offered: offered, current: measured == key)
+        Group {
+            if fallsBack {
+                fallback()
+            } else {
+                IdealWidthLayout {
+                    preferred()
+                    Color.clear
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                            ideal = width
+                            measured = key
+                        }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { offered = $0 }
+    }
+}
+
+/// Lays out its first view as it is offered, and hands its second — a
+/// probe that takes no room — the first one's ideal width, for the probe
+/// to report.
+private struct IdealWidthLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        subviews.first?.sizeThatFits(proposal) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let content = subviews.first else { return }
+        content.place(at: bounds.origin, anchor: .topLeading,
+                      proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+        guard subviews.count > 1 else { return }
+        let ideal = content.sizeThatFits(ProposedViewSize(width: nil, height: proposal.height)).width
+        subviews[1].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: ideal, height: 0))
     }
 }

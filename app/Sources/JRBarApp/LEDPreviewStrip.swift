@@ -1,5 +1,7 @@
+import AppKit
 import JRBarCore
 import JRBarLEDS
+import QuartzCore
 import SwiftUI
 
 /// Parsed programs for the previews, keyed by text and LED count, so a view
@@ -41,10 +43,18 @@ extension EnvironmentValues {
 }
 
 /// A live rendering of a LEDS program: a row of glowing dots (the strip)
-/// or one blended band (the Screen Bar). Driven by a 30 Hz timeline that
-/// pauses for static programs, while its window is out of sight
-/// (`ledPreviewsHeld`) and under Reduce Motion, where the frame shown is
-/// the program's brightest moment instead of a black start.
+/// or one blended band (the Screen Bar).
+///
+/// The dots are Core Animation layers the strip recolours itself, from
+/// its own 30 Hz display link, so SwiftUI sees a still view: a moving
+/// preview never lays the Settings form out again. The link runs only
+/// while the strip is in a window on a screen and that window is
+/// visible — not while it is covered, minimised or on another Space —
+/// and never for a static program, a `paused` preview, while the window
+/// holds its previews (`ledPreviewsHeld`) or under Reduce Motion. A
+/// paused preview and Reduce Motion show the program's brightest moment
+/// instead of a black start. A render proof's still (`renderSnapshot`,
+/// for `ImageRenderer`) draws the same frame in SwiftUI.
 struct LEDStripPreview: View {
     enum Style { case dots, band }
 
@@ -64,7 +74,7 @@ struct LEDStripPreview: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.ledPreviewsHeld) private var held
-    @ViewState private var origin = Date()
+    @Environment(\.renderSnapshot) private var snapshot
 
     private var sampler: LEDSSampler? { LEDPreviewSamplers.sampler(for: program, ledCount: ledCount) }
 
@@ -83,45 +93,110 @@ struct LEDStripPreview: View {
         return (max(2, fitted), max(1, spacing * fitted / dotSize))
     }
 
-    var body: some View {
-        let sampler = self.sampler
-        let still = paused || held || reduceMotion || (sampler?.isStatic ?? true)
-        // A paused preview (a library row that is not selected) shows the
-        // program's brightest moment, not a black first frame.
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: still)) { context in
-            let colors = colors(sampler: sampler, at: context.date, still: paused || reduceMotion)
-            frame(colors)
-        }
-        .onChange(of: program) { _, _ in origin = Date() }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(sampler == nil ? "Program refused" : "LED preview")
+    /// What the layers draw, and what a change to redraws.
+    private var layerConfig: LEDStripLayerView.Config {
+        LEDStripLayerView.Config(program: program, ledCount: ledCount, style: style, dotSize: dotSize,
+                                 spacing: spacing, loops: loops, paused: paused, phase: phase)
     }
 
-    private func colors(sampler: LEDSSampler?, at date: Date, still: Bool) -> [RGB] {
-        guard let sampler else { return Array(repeating: RGB(r: 0.35, g: 0.05, b: 0.05), count: ledCount) }
-        var t = date.timeIntervalSince(origin) + phase
-        if still {
-            // The brightest instant of the first cycle, so a breathe is not shown at its floor.
-            let span = sampler.cycleDuration ?? sampler.motionEndsAt ?? 0
-            if span > 0 {
-                var best = 0.0, bestLevel = -1.0
-                for k in 0..<12 {
-                    let probe = span * Double(k) / 12
-                    let level = sampler.colors(at: probe).map(\.maxChannel).reduce(0, +)
-                    if level > bestLevel { bestLevel = level; best = probe }
+    var body: some View {
+        let sampler = self.sampler
+        staged
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(sampler == nil ? "Program refused" : "LED preview")
+    }
+
+    /// The strip on its stage: the same padding and plate for the
+    /// layers and for a still.
+    @ViewBuilder
+    private var staged: some View {
+        switch style {
+        case .dots:
+            strip
+                .padding(.horizontal, showsBackground ? dotSize * 0.9 : 0)
+                .padding(.vertical, showsBackground ? dotSize * 0.7 : 0)
+                .frame(maxWidth: showsBackground ? .infinity : nil)
+                .background {
+                    if showsBackground { LEDStage(cornerRadius: cornerRadius) }
                 }
-                t = best
-            } else {
-                t = 0
-            }
+        case .band:
+            strip
+                .frame(height: dotSize)
+                .padding(showsBackground ? dotSize * 0.6 : 0)
+                .background {
+                    if showsBackground { LEDStage(cornerRadius: cornerRadius) }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var strip: some View {
+        if snapshot {
+            // `ImageRenderer` draws no AppKit view: the still is the
+            // program's first frame (or its brightest, when still), in
+            // SwiftUI.
+            let colors = LEDStripFrames.colors(sampler: sampler, ledCount: ledCount, elapsed: phase,
+                                               still: paused || reduceMotion, loops: loops)
+            LEDStripStill(colors: colors, style: style, dotSize: dotSize, spacing: spacing)
+        } else {
+            // The layers ride over a clear stand-in of the shapes' size:
+            // an AppKit view brings text baselines of its own, and a row
+            // aligned on baselines would line the strip up by them.
+            let count = sampler?.ledCount ?? max(0, ledCount)
+            let row = LEDStripLayerView.Config.dotsSize(count: count, dotSize: dotSize, spacing: spacing)
+            Color.clear
+                .frame(width: style == .dots ? row.width : nil, height: style == .dots ? row.height : nil)
+                .overlay {
+                    LEDStripLayers(config: layerConfig, held: held, reduceMotion: reduceMotion)
+                }
+        }
+    }
+}
+
+/// The colours a preview shows, shared by the layers and the SwiftUI
+/// still.
+enum LEDStripFrames {
+    /// The colours `elapsed` seconds into the program (its phase
+    /// included). A still preview shows the brightest instant of the
+    /// first cycle, so a breathe is not shown at its floor; a finite
+    /// program that `loops` starts over after it ends, plus a short
+    /// rest. A refused program is a row of dull red.
+    static func colors(sampler: LEDSSampler?, ledCount: Int, elapsed: TimeInterval, still: Bool, loops: Bool) -> [RGB] {
+        guard let sampler else { return Array(repeating: RGB(r: 0.35, g: 0.05, b: 0.05), count: max(0, ledCount)) }
+        var t = elapsed
+        if still {
+            t = brightestInstant(sampler)
         } else if loops, sampler.cycleDuration == nil, let ends = sampler.motionEndsAt, ends > 0 {
             t = t.truncatingRemainder(dividingBy: ends + 0.8)
         }
         return sampler.colors(at: t)
     }
 
-    @ViewBuilder
-    private func frame(_ colors: [RGB]) -> some View {
+    /// The brightest of twelve instants across the first cycle, or the
+    /// start for a program with no motion.
+    static func brightestInstant(_ sampler: LEDSSampler) -> TimeInterval {
+        let span = sampler.cycleDuration ?? sampler.motionEndsAt ?? 0
+        guard span > 0 else { return 0 }
+        var best = 0.0, bestLevel = -1.0
+        for k in 0..<12 {
+            let probe = span * Double(k) / 12
+            let level = sampler.colors(at: probe).map(\.maxChannel).reduce(0, +)
+            if level > bestLevel { bestLevel = level; best = probe }
+        }
+        return best
+    }
+}
+
+/// One frame of the strip drawn by SwiftUI: the still a render proof
+/// takes, where `ImageRenderer` cannot draw the layers. The same glow,
+/// rim and band the layers draw.
+private struct LEDStripStill: View {
+    let colors: [RGB]
+    let style: LEDStripPreview.Style
+    let dotSize: CGFloat
+    let spacing: CGFloat
+
+    var body: some View {
         switch style {
         case .dots:
             HStack(spacing: spacing) {
@@ -134,27 +209,375 @@ struct LEDStripPreview: View {
                         .frame(width: dotSize, height: dotSize)
                 }
             }
-            .padding(.horizontal, showsBackground ? dotSize * 0.9 : 0)
-            .padding(.vertical, showsBackground ? dotSize * 0.7 : 0)
-            .frame(maxWidth: showsBackground ? .infinity : nil)
-            .background {
-                if showsBackground { LEDStage(cornerRadius: cornerRadius) }
-            }
         case .band:
             let stops = colors.enumerated().map { index, rgb in
-                Gradient.Stop(color: Color(red: rgb.r, green: rgb.g, blue: rgb.b), location: colors.count > 1 ? CGFloat(index) / CGFloat(colors.count - 1) : 0.5)
+                Gradient.Stop(color: Color(red: rgb.r, green: rgb.g, blue: rgb.b),
+                              location: colors.count > 1 ? CGFloat(index) / CGFloat(colors.count - 1) : 0.5)
             }
             let glow = colors.map(\.maxChannel).max() ?? 0
+            let middle = colors.isEmpty ? RGB.black : colors[colors.count / 2]
             Capsule()
                 .fill(LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing))
                 .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
-                .shadow(color: Color(red: colors[colors.count / 2].r, green: colors[colors.count / 2].g, blue: colors[colors.count / 2].b).opacity(0.6 * glow), radius: dotSize * 0.4)
-                .frame(height: dotSize)
-                .padding(showsBackground ? dotSize * 0.6 : 0)
-                .background {
-                    if showsBackground { LEDStage(cornerRadius: cornerRadius) }
-                }
+                .shadow(color: Color(red: middle.r, green: middle.g, blue: middle.b).opacity(0.6 * glow),
+                        radius: dotSize * 0.4)
         }
+    }
+}
+
+/// The strip's layers in the SwiftUI tree: a fixed-size row of dots, or
+/// a band as wide as it is offered (a capsule's sizing).
+private struct LEDStripLayers: NSViewRepresentable {
+    let config: LEDStripLayerView.Config
+    let held: Bool
+    let reduceMotion: Bool
+
+    func makeNSView(context: Context) -> LEDStripLayerView {
+        LEDStripLayerView(config: config, held: held, reduceMotion: reduceMotion)
+    }
+
+    func updateNSView(_ view: LEDStripLayerView, context: Context) {
+        view.update(config: config, held: held, reduceMotion: reduceMotion)
+    }
+
+    static func dismantleNSView(_ view: LEDStripLayerView, coordinator: ()) {
+        view.stopAnimating()
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: LEDStripLayerView, context: Context) -> CGSize? {
+        switch config.style {
+        case .dots:
+            return LEDStripLayerView.Config.dotsSize(count: nsView.drawnCount, dotSize: config.dotSize,
+                                                     spacing: config.spacing)
+        case .band:
+            return CGSize(width: proposal.width ?? 10, height: proposal.height ?? config.dotSize)
+        }
+    }
+}
+
+/// The strip itself: one layer per LED — a dot with its rim and its own
+/// glow — or, for the band, one gradient capsule over a layer that
+/// casts the middle LED's glow. SwiftUI lays it out once; the view
+/// recolours its layers from its own display link at 30 Hz and asks
+/// SwiftUI for nothing.
+///
+/// The link runs only while it has work that someone can see (see
+/// `animates`), and `renderFrame(at:)` takes the time, so tests and
+/// the performance harness step it by hand.
+@MainActor
+final class LEDStripLayerView: NSView {
+    struct Config: Equatable {
+        var program: String
+        var ledCount: Int
+        var style: LEDStripPreview.Style
+        var dotSize: CGFloat
+        var spacing: CGFloat
+        var loops: Bool
+        var paused: Bool
+        var phase: TimeInterval
+
+        /// The dots' row: `count` LEDs at `dotSize`, `spacing` apart.
+        static func dotsSize(count: Int, dotSize: CGFloat, spacing: CGFloat) -> CGSize {
+            let n = CGFloat(max(0, count))
+            return CGSize(width: max(0, n * dotSize + (n - 1) * spacing), height: dotSize)
+        }
+    }
+
+    /// The frame rate the previews play at: plenty for a preview, a
+    /// quarter of a ProMotion display's.
+    static let framesPerSecond: Float = 30
+
+    /// Whether the link should run. Pure, for the tests.
+    static func animates(inWindow: Bool, onScreen: Bool, windowVisible: Bool, held: Bool,
+                         reduceMotion: Bool, paused: Bool, moving: Bool) -> Bool {
+        inWindow && onScreen && windowVisible && !held && !reduceMotion && !paused && moving
+    }
+
+    private(set) var config: Config
+    private(set) var held: Bool
+    private(set) var reduceMotion: Bool
+    private var sampler: LEDSSampler?
+    /// When the program started, in `CACurrentMediaTime` seconds; a new
+    /// program starts from its beginning.
+    private var origin: TimeInterval
+    private var link: CADisplayLink?
+    private let linkTarget = LEDStripLinkTarget()
+    private var windowObservers: [NSObjectProtocol] = []
+    private var dotLayers: [CALayer] = []
+    private let bandGlow = CALayer()
+    private let bandLayer = CAGradientLayer()
+    /// The colours on the layers now.
+    private(set) var shownColors: [RGB] = []
+    /// Frames drawn since the view was made.
+    private(set) var framesDrawn = 0
+
+    /// True while the display link is running.
+    var isAnimating: Bool { link != nil }
+
+    /// How many LEDs the strip draws: the sampler's count — a count the
+    /// firmware has no layout for plays as eight — or one dull red dot
+    /// per LED for a refused program.
+    var drawnCount: Int { sampler?.ledCount ?? max(0, config.ledCount) }
+
+    init(config: Config, held: Bool, reduceMotion: Bool, now: TimeInterval = CACurrentMediaTime()) {
+        self.config = config
+        self.held = held
+        self.reduceMotion = reduceMotion
+        self.origin = now
+        super.init(frame: CGRect(x: 0, y: 0, width: 10, height: config.dotSize))
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        setAccessibilityElement(false)
+        linkTarget.view = self
+        sampler = LEDPreviewSamplers.sampler(for: config.program, ledCount: config.ledCount)
+        buildLayers()
+        renderFrame(at: now)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {}
+    /// Clicks go to whatever the strip sits in (a picker row, a library
+    /// row): the dots are a picture.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// SwiftUI's side changed: a new program starts from its beginning,
+    /// a new shape rebuilds the layers, and the link follows.
+    func update(config newConfig: Config, held newHeld: Bool, reduceMotion newReduceMotion: Bool,
+                now: TimeInterval = CACurrentMediaTime()) {
+        let old = config
+        let wasStill = old.paused || reduceMotion
+        config = newConfig
+        held = newHeld
+        reduceMotion = newReduceMotion
+        if old.program != newConfig.program || old.ledCount != newConfig.ledCount {
+            sampler = LEDPreviewSamplers.sampler(for: newConfig.program, ledCount: newConfig.ledCount)
+            origin = now
+        }
+        if old.style != newConfig.style || old.ledCount != newConfig.ledCount
+            || old.dotSize != newConfig.dotSize || old.spacing != newConfig.spacing {
+            buildLayers()
+            needsLayout = true
+        }
+        // A held strip keeps the frame it shows; only a new program or
+        // shape, or a change between moving and still, redraws it here.
+        if old != newConfig || wasStill != (newConfig.paused || newReduceMotion) { renderFrame(at: now) }
+        refreshAnimating()
+    }
+
+    // MARK: Frames
+
+    /// Recolours the layers for host time `time` (`CACurrentMediaTime`
+    /// seconds): the program `time - origin + phase` seconds in.
+    func renderFrame(at time: TimeInterval) {
+        let colors = LEDStripFrames.colors(sampler: sampler, ledCount: config.ledCount,
+                                           elapsed: time - origin + config.phase,
+                                           still: config.paused || reduceMotion, loops: config.loops)
+        apply(colors)
+    }
+
+    /// The layers' animatable properties the strip sets every frame, and
+    /// their geometry: set straight, never eased — a preview frame is a
+    /// frame, and an implicit animation per dot per frame is work.
+    private static let stillActions: [String: any CAAction] = [
+        "backgroundColor": NSNull(), "shadowColor": NSNull(), "shadowOpacity": NSNull(),
+        "colors": NSNull(), "locations": NSNull(), "bounds": NSNull(), "position": NSNull(),
+        "frame": NSNull(), "shadowPath": NSNull(), "cornerRadius": NSNull(), "contentsScale": NSNull(),
+    ]
+
+    private func apply(_ colors: [RGB]) {
+        framesDrawn += 1
+        guard colors != shownColors else { return }
+        let previous = shownColors
+        shownColors = colors
+        switch config.style {
+        case .dots:
+            if dotLayers.count != colors.count { buildLayers() }
+            let compare = previous.count == colors.count
+            for (index, rgb) in colors.enumerated() where index < dotLayers.count {
+                // Most frames move a few LEDs; the rest keep their layer.
+                if compare && previous[index] == rgb { continue }
+                let dot = dotLayers[index]
+                dot.backgroundColor = Self.cgColor(rgb)
+                // The glow's strength rides in its colour's alpha: one
+                // property a frame, not two.
+                dot.shadowColor = Self.cgColor(rgb, alpha: 0.75 * Self.clamped(rgb.maxChannel))
+            }
+        case .band:
+            let stops = colors.isEmpty ? [RGB.black] : colors
+            // A gradient needs two stops; one colour is a flat band.
+            let shown = stops.count == 1 ? [stops[0], stops[0]] : stops
+            bandLayer.colors = shown.map { Self.cgColor($0) }
+            bandLayer.locations = shown.indices.map { NSNumber(value: Double($0) / Double(shown.count - 1)) }
+            let middle = stops[stops.count / 2]
+            let glow = stops.map(\.maxChannel).max() ?? 0
+            let middleColor = Self.cgColor(middle)
+            bandGlow.shadowColor = middleColor
+            bandGlow.backgroundColor = middleColor
+            bandGlow.shadowOpacity = Float(0.6 * Self.clamped(glow))
+        }
+    }
+
+    private static func clamped(_ value: Double) -> Double { min(1, max(0, value.isFinite ? value : 0)) }
+
+    private static func cgColor(_ rgb: RGB, alpha: Double = 1) -> CGColor {
+        CGColor(srgbRed: clamped(rgb.r), green: clamped(rgb.g), blue: clamped(rgb.b), alpha: alpha)
+    }
+
+    // MARK: Layers
+
+    private func buildLayers() {
+        guard let root = layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dotLayers.forEach { $0.removeFromSuperlayer() }
+        dotLayers = []
+        bandGlow.removeFromSuperlayer()
+        bandLayer.removeFromSuperlayer()
+        shownColors = []
+        let rim = CGColor(gray: 1, alpha: 0.10)
+        switch config.style {
+        case .dots:
+            for _ in 0..<drawnCount {
+                let dot = CALayer()
+                dot.actions = Self.stillActions
+                dot.borderColor = rim
+                dot.borderWidth = 0.5
+                dot.shadowOffset = .zero
+                dot.shadowOpacity = 1
+                dot.shadowRadius = config.dotSize * 0.45
+                root.addSublayer(dot)
+                dotLayers.append(dot)
+            }
+        case .band:
+            bandGlow.actions = Self.stillActions
+            bandLayer.actions = Self.stillActions
+            bandGlow.shadowOffset = .zero
+            bandGlow.shadowRadius = config.dotSize * 0.4
+            bandLayer.startPoint = CGPoint(x: 0, y: 0.5)
+            bandLayer.endPoint = CGPoint(x: 1, y: 0.5)
+            bandLayer.borderColor = CGColor(gray: 1, alpha: 0.12)
+            bandLayer.borderWidth = 0.5
+            bandLayer.masksToBounds = true
+            root.addSublayer(bandGlow)
+            root.addSublayer(bandLayer)
+        }
+        CATransaction.commit()
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let scale = window?.backingScaleFactor ?? 2
+        switch config.style {
+        case .dots:
+            let size = config.dotSize
+            let y = (bounds.height - size) / 2
+            for (index, dot) in dotLayers.enumerated() {
+                dot.frame = CGRect(x: CGFloat(index) * (size + config.spacing), y: y, width: size, height: size)
+                dot.cornerRadius = size / 2
+                dot.shadowPath = CGPath(ellipseIn: dot.bounds, transform: nil)
+                dot.contentsScale = scale
+            }
+        case .band:
+            // The glow layer sits a point inside the band, so its fill
+            // never shows past the gradient; its shadow is the band's
+            // whole capsule. (A layer with a shadow path and no fill
+            // draws no shadow in an offscreen still.)
+            let radius = bounds.height / 2
+            let inset = min(1, bounds.height / 4)
+            bandGlow.frame = bounds.insetBy(dx: inset, dy: inset)
+            bandGlow.cornerRadius = max(0, radius - inset)
+            let capsule = CGRect(origin: .zero, size: bounds.size).offsetBy(dx: -inset, dy: -inset)
+            bandGlow.shadowPath = CGPath(roundedRect: capsule, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            bandLayer.frame = bounds
+            bandLayer.cornerRadius = radius
+            bandLayer.contentsScale = scale
+        }
+        CATransaction.commit()
+    }
+
+    // MARK: The link
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        removeWindowObservers()
+        if let window {
+            let center = NotificationCenter.default
+            for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didChangeScreenNotification,
+                         NSWindow.willCloseNotification] {
+                windowObservers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.refreshAnimating() }
+                })
+            }
+        }
+        needsLayout = true
+        refreshAnimating()
+    }
+
+    /// Starts or stops the link to match `animates`. In a window with no
+    /// screen — a still taken off screen — the strip shows its brightest
+    /// instant, a fair picture of what it plays, rather than the black
+    /// first frame many programs start from.
+    func refreshAnimating() {
+        let window = self.window
+        if let window, window.screen == nil, !held {
+            let still = LEDStripFrames.colors(sampler: sampler, ledCount: config.ledCount, elapsed: 0,
+                                              still: true, loops: config.loops)
+            apply(still)
+        }
+        let wanted = Self.animates(inWindow: window != nil, onScreen: window?.screen != nil,
+                                   windowVisible: window?.occlusionState.contains(.visible) ?? false,
+                                   held: held, reduceMotion: reduceMotion, paused: config.paused,
+                                   moving: !(sampler?.isStatic ?? true))
+        if wanted, link == nil {
+            let link = displayLink(target: linkTarget, selector: #selector(LEDStripLinkTarget.tick(_:)))
+            let fps = Self.framesPerSecond
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: fps / 2, maximum: fps, preferred: fps)
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        } else if !wanted, let link {
+            link.invalidate()
+            self.link = nil
+        }
+    }
+
+    /// Stops the link for good: the view is leaving the tree.
+    func stopAnimating() {
+        link?.invalidate()
+        link = nil
+        removeWindowObservers()
+    }
+
+    private func removeWindowObservers() {
+        for observer in windowObservers { NotificationCenter.default.removeObserver(observer) }
+        windowObservers = []
+    }
+
+    fileprivate func linkFired(_ link: CADisplayLink) {
+        // Scrolled out of its window's view: nothing to recolour.
+        guard !visibleRect.isEmpty else { return }
+        renderFrame(at: CACurrentMediaTime())
+    }
+}
+
+/// The display link's target: it holds the view weakly, so a link the
+/// view forgot to stop cannot keep it alive.
+@MainActor
+private final class LEDStripLinkTarget: NSObject {
+    weak var view: LEDStripLayerView?
+
+    @objc func tick(_ link: CADisplayLink) {
+        guard let view else {
+            link.invalidate()
+            return
+        }
+        view.linkFired(link)
     }
 }
 

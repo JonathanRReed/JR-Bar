@@ -225,6 +225,23 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         super.init()
     }
 
+    /// Lets go of the captured picture — the Duo's pyramid, the Room's
+    /// full frame, far wall and depth buckets — when the fold is parked
+    /// with no stream running. Nothing draws it again before the next
+    /// capture lands a fresh frame, and a full-screen pyramid is tens of
+    /// megabytes of graphics memory. A no-op once it is gone; an upload
+    /// still in flight is fenced off by the generation.
+    func releaseFrames() {
+        guard duoPyramid != nil || fullTexture != nil || farTexture != nil || !bucketTextures.isEmpty
+                || hasTexture else { return }
+        duoPyramid = nil
+        fullTexture = nil
+        farTexture = nil
+        bucketTextures = []
+        hasTexture = false
+        textureGeneration &+= 1
+    }
+
     /// The window-card layout, from `FoldCapture`'s CGWindowList poll.
     /// Stays applied across frames; the next full frame restamps it.
     func setCards(_ cards: [PortalDepth.Card]) {

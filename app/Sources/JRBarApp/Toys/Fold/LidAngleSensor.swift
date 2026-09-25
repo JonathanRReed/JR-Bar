@@ -52,6 +52,8 @@ final class LidAngleSensor {
     /// The last polling state actually pushed to the pump — same
     /// dedup reason as `armingAngle`.
     @ObservationIgnored private var pollingPushed = false
+    /// The last quiet spot handed to the pump — same dedup reason.
+    @ObservationIgnored private var quietPushed: Double?
 
     @ObservationIgnored private let pump = SensorPump()
 
@@ -71,6 +73,57 @@ final class LidAngleSensor {
         guard on != pollingPushed else { return }
         pollingPushed = on
         pump.setPolling(on)
+        if !on { quietPushed = nil }
+    }
+
+    /// The lid is resting at `center` and nothing in the fold is moving:
+    /// the pump keeps readings within `SensorPump.quietBand` of it on its
+    /// own queue instead of waking the main thread ten times a second.
+    /// A reading outside the band, one inside the arming band, a failed
+    /// read and the once-a-second clamshell beat still come through, and
+    /// the first reading outside the band ends the quiet by itself. nil
+    /// ends it now. A no-op when nothing changed.
+    func quiet(around center: Double?) {
+        guard center != quietPushed else { return }
+        quietPushed = center
+        pump.setQuiet(center)
+    }
+
+    /// Readings a second over the last few, counted on the pump's queue —
+    /// every read, including the ones a quiet rest keeps off the main
+    /// thread.
+    func readRate(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
+        pump.reads.rate(at: now)
+    }
+}
+
+/// Counts the pump's reads for the card's cost line. Written on the
+/// pump's queue, read on the main thread, so it takes a lock; a read is
+/// ten a second at rest, 120 at most.
+final class SensorReadMeter: @unchecked Sendable {
+    /// The span a rate is measured over, as `ToyMeter`'s.
+    static let window: TimeInterval = 3
+    private let lock = NSLock()
+    private var stamps: [TimeInterval]
+    private var next = 0
+
+    init(capacity: Int = 512) {
+        stamps = Array(repeating: -.infinity, count: max(1, capacity))
+    }
+
+    func tick(at now: TimeInterval) {
+        lock.lock()
+        stamps[next] = now
+        next = (next + 1) % stamps.count
+        lock.unlock()
+    }
+
+    /// Reads a second over the last `window`.
+    func rate(at now: TimeInterval) -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        let since = now - Self.window
+        return Double(stamps.lazy.filter { $0 > since && $0 <= now }.count) / Self.window
     }
 }
 
@@ -99,8 +152,15 @@ final class SensorPump: @unchecked Sendable {
     var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
     /// Publishes the availability fact on the main runloop.
     var publishAvailability: (@MainActor @Sendable (Bool) -> Void)?
+    /// Every read, counted here rather than on the main thread.
+    let reads = SensorReadMeter()
+    /// Degrees either side of a quiet rest that stay on the queue: the
+    /// sensor's whole-degree flicker.
+    static let quietBand: Double = 1
     /// Queue-side state — only ever touched on `io`.
     private var armingAngle: Double = -.infinity
+    /// The resting reading the toy asked to be left alone about, or nil.
+    private var quietCenter: Double?
 
     /// Utility, the parked class's QoS; the armed beat enforces its own.
     private let io = DispatchQueue(label: "devin.jrbar.fold.hid", qos: .utility)
@@ -148,6 +208,20 @@ final class SensorPump: @unchecked Sendable {
         }
     }
 
+    func setQuiet(_ center: Double?) {
+        io.async { self.quietCenter = center }
+    }
+
+    /// Whether a beat's reading can stay on the queue: the toy asked for
+    /// quiet, the reading sits within the band of the resting one, and it
+    /// is outside the arming band — inside it the machine reads every
+    /// sample. A failed read and the clamshell beat always go through.
+    /// Static and pure so the rule is testable with no HID.
+    static func staysQuiet(raw: Double?, center: Double?, armingAngle: Double, clamshellBeat: Bool) -> Bool {
+        guard !clamshellBeat, let raw, let center else { return false }
+        return abs(raw - center) <= quietBand && raw > armingAngle
+    }
+
     func setPolling(_ on: Bool) {
         io.async {
             if on {
@@ -160,6 +234,7 @@ final class SensorPump: @unchecked Sendable {
             } else {
                 self.timer?.cancel()
                 self.timer = nil
+                self.quietCenter = nil
             }
         }
     }
@@ -220,20 +295,32 @@ final class SensorPump: @unchecked Sendable {
     }
 
     /// One poll: read the report, drop the once-a-second clamshell read
-    /// in, re-evaluate the arming band, publish.
+    /// in, re-evaluate the arming band, publish — unless the lid is
+    /// resting quietly and the reading is only the sensor's flicker.
     private func beat() {
         let now = CACurrentMediaTime()
         let raw = readAngle()
+        reads.tick(at: ProcessInfo.processInfo.systemUptime)
         if raw != nil { lastRaw = raw }
         beats += 1
         // Once a second in wall time, not in beats — at 120 Hz that is
         // every 120 fires, at 10 Hz every 10.
+        var clamshellBeat = false
         if Double(beats) * Self.intervals[rateClass] >= 1 {
             beats = 0
             clamshell = ClamshellState.read()
+            clamshellBeat = true
         }
         let next = wantedRateClass
         if next != rateClass { rateClass = next }
+        if Self.staysQuiet(raw: raw, center: quietCenter, armingAngle: armingAngle, clamshellBeat: clamshellBeat) {
+            return
+        }
+        // Anything else that gets through a quiet rest ends it: the toy
+        // decides again once the lid settles.
+        if let center = quietCenter, !clamshellBeat || raw.map({ abs($0 - center) > Self.quietBand }) ?? true {
+            quietCenter = nil
+        }
         let sample = LidAngleSensor.Sample(angle: raw, at: now, clamshell: clamshell)
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.publish?(sample) }

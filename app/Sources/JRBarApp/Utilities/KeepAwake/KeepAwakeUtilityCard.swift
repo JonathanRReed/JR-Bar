@@ -72,7 +72,9 @@ struct KeepAwakeUtilityControls: View {
     /// A fixed moment for proofs; nil is now.
     var now: Date?
     @Environment(SettingsStore.self) private var settings: SettingsStore?
-    @ViewState private var readHolders: [KeepAwakeHolders.Holder] = []
+    /// The last read, shown at once while a fresh one runs off the main
+    /// thread.
+    @ViewState private var readHolders: [KeepAwakeHolders.Holder] = KeepAwakeHolders.lastRead
     @ViewState private var durations: [Int] = KeepAwakeMenu.durations()
     @ViewState private var newMinutes = 45
 
@@ -94,7 +96,7 @@ struct KeepAwakeUtilityControls: View {
             durationRows
             othersRows
         }
-        .task { refreshHolders() }
+        .task { await refreshHolders() }
     }
 
     // MARK: Right now
@@ -218,7 +220,7 @@ struct KeepAwakeUtilityControls: View {
         let shown = holders ?? readHolders
         CardSectionHeader("Other apps")
         LabeledContent {
-            Button("Refresh") { refreshHolders() }
+            Button("Refresh") { _ = Task { await refreshHolders() } }
                 .controlSize(.small)
                 .disabled(holders != nil)
         } label: {
@@ -246,9 +248,12 @@ struct KeepAwakeUtilityControls: View {
         }
     }
 
-    private func refreshHolders() {
+    /// Reads the power assertions off the main thread — the read walks
+    /// every process's assertions and asks LaunchServices about each
+    /// holder, about 150 ms on a busy Mac — and shows the result.
+    private func refreshHolders() async {
         guard holders == nil else { return }
-        readHolders = KeepAwakeHolders.read()
+        readHolders = await KeepAwakeHolders.readInBackground()
     }
 }
 
@@ -319,9 +324,21 @@ enum KeepAwakeHolders {
         return found.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// The holders right now.
+    /// The last holders read, for the next card to show at once.
+    @MainActor static var lastRead: [Holder] = []
+
+    /// The holders right now, read on a background queue; `lastRead`
+    /// keeps the answer.
     @MainActor
-    static func read() -> [Holder] {
+    static func readInBackground() async -> [Holder] {
+        let holders = await Task.detached(priority: .userInitiated) { read() }.value
+        lastRead = holders
+        return holders
+    }
+
+    /// The holders right now. Safe off the main thread: IOKit's
+    /// assertion list and `NSRunningApplication` lookups.
+    nonisolated static func read() -> [Holder] {
         var raw: Unmanaged<CFDictionary>?
         guard IOPMCopyAssertionsByProcess(&raw) == kIOReturnSuccess,
               let dictionary = raw?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return [] }

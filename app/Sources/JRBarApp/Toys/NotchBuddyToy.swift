@@ -1348,6 +1348,8 @@ struct BuddyBurstSchedule: TimelineSchedule {
 private struct BuddyControlsView: View {
     let toy: NotchBuddyToy
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The tile under the pointer: the one character that paces.
+    @ViewState private var hovered: BuddyCharacter?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1479,29 +1481,20 @@ private struct BuddyControlsView: View {
         }
     }
 
-    /// One cell per character, all on the same clock, all in the idle
-    /// patrol pose, at 30 fps rather than the display's 120. Reduce
-    /// Motion stills the strip — pose stays — and the paused schedule
-    /// keeps a stilled strip from ticking at all.
+    /// One tile per character, standing still in its patrol pose; the
+    /// tile under the pointer paces, at 30 fps rather than the display's
+    /// 120. Reduce Motion stills that one too. One row where the card is
+    /// wide enough, two even rows where it is not (`BuddyRosterLayout`),
+    /// so no tile ever runs off the card's edge — decided from the
+    /// offered width, not by building both.
     private var roster: some View {
-        TimelineView(.animation(minimumInterval: BuddyBurstSchedule.rosterInterval,
-                                paused: reduceMotion
-                                    || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
-            // One row where the card is wide enough; two even rows where
-            // it is not, so no tile ever runs off the card's edge.
-            ViewThatFits(in: .horizontal) {
-                rosterRow(BuddyCharacter.allCases, at: context.date)
-                VStack(alignment: .leading, spacing: 8) {
-                    rosterRow(Array(BuddyCharacter.allCases.prefix(Self.rosterHalf)), at: context.date)
-                    rosterRow(Array(BuddyCharacter.allCases.dropFirst(Self.rosterHalf)), at: context.date)
-                }
+        BuddyRosterLayout(cell: Self.rosterCell, inset: Self.rosterInset, rowSpacing: 8) {
+            ForEach(BuddyCharacter.allCases, id: \.self) { c in
+                cell(c)
             }
-            .padding(.vertical, 4)
         }
+        .padding(.vertical, 4)
     }
-
-    /// Where the roster breaks when it takes two rows.
-    private static let rosterHalf = (BuddyCharacter.allCases.count + 1) / 2
 
     /// Each character's column: its tile and the air to the next, wide
     /// enough for "Mushroom" at full size.
@@ -1510,26 +1503,14 @@ private struct BuddyControlsView: View {
     /// The first tile's edge lines up with the labels above it.
     private static let rosterInset: CGFloat = (rosterCell - rosterTile) / 2
 
-    private func rosterRow(_ characters: [BuddyCharacter], at now: Date) -> some View {
-        HStack(spacing: 0) {
-            ForEach(characters, id: \.self) { c in
-                cell(c, at: now)
-            }
-        }
-        .padding(.horizontal, -Self.rosterInset)
-    }
-
     /// One character on a tile of its own, half again the docked size,
     /// with its name under it; the one living in the notch sits lit.
-    private func cell(_ c: BuddyCharacter, at now: Date) -> some View {
+    private func cell(_ c: BuddyCharacter) -> some View {
         let selected = toy.characterBinding.wrappedValue == c
+        let still = reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let tile = RoundedRectangle(cornerRadius: 11, style: .continuous)
         return VStack(spacing: 4) {
-            BuddyFigure(character: c, mood: .pacing, tint: .accentColor,
-                        phase: now.timeIntervalSince1970, hopProgress: nil,
-                        waveAge: nil, slumpAge: nil, leans: false,
-                        still: reduceMotion, askCount: 0, care: .content,
-                        trick: nil, treatAge: nil, crumbAge: nil)
+            BuddyRosterFigure(character: c, pacing: BuddyRosterPaces.paces(c, hovered: hovered, reduceMotion: still))
                 .frame(width: 18, height: 18)
                 .scaleEffect(1.5)
                 .frame(width: Self.rosterTile, height: 38)
@@ -1544,10 +1525,98 @@ private struct BuddyControlsView: View {
         }
         .frame(width: Self.rosterCell)
         .contentShape(Rectangle())
+        .onHover { inside in
+            if inside {
+                hovered = c
+            } else if hovered == c {
+                hovered = nil
+            }
+        }
         .onTapGesture { toy.characterBinding.wrappedValue = c }
         .help("\(c.displayName) — \(c.blurb)")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(c.displayName)\(selected ? ", selected" : "")")
+    }
+}
+
+/// Which roster tile paces.
+enum BuddyRosterPaces {
+    /// Only the hovered tile, and not under Reduce Motion: the rest stand
+    /// still, so an open card asks for no frames at all.
+    static func paces(_ character: BuddyCharacter, hovered: BuddyCharacter?, reduceMotion: Bool) -> Bool {
+        !reduceMotion && hovered == character
+    }
+}
+
+/// A roster tile's figure: the still patrol pose, or — for the tile
+/// under the pointer — the pose pacing on its own 30 fps clock. Only
+/// that one tile's timeline runs; a still tile asks for no frames.
+private struct BuddyRosterFigure: View {
+    let character: BuddyCharacter
+    let pacing: Bool
+
+    var body: some View {
+        if pacing {
+            TimelineView(.animation(minimumInterval: BuddyBurstSchedule.rosterInterval)) { context in
+                figure(phase: context.date.timeIntervalSince1970, still: false)
+            }
+        } else {
+            figure(phase: 0, still: true)
+        }
+    }
+
+    private func figure(phase: TimeInterval, still: Bool) -> some View {
+        BuddyFigure(character: character, mood: .pacing, tint: .accentColor,
+                    phase: phase, hopProgress: nil,
+                    waveAge: nil, slumpAge: nil, leans: false,
+                    still: still, askCount: 0, care: .content,
+                    trick: nil, treatAge: nil, crumbAge: nil)
+    }
+}
+
+/// The roster's tiles in one row when the offered width holds them all,
+/// else in two even rows (the first holding the extra one) — what a
+/// `ViewThatFits` over the two did, without building and measuring both
+/// on every frame. Each tile is `cell` wide; the rows hang `inset` past
+/// the leading edge so the first tile lines up with the labels above.
+struct BuddyRosterLayout: Layout {
+    let cell: CGFloat
+    let inset: CGFloat
+    let rowSpacing: CGFloat
+
+    /// Tiles per row for `count` tiles in `width` points: all of them
+    /// when the one row fits, else half, rounded up.
+    static func perRow(count: Int, cell: CGFloat, inset: CGFloat, width: CGFloat?) -> Int {
+        guard count > 0 else { return 0 }
+        let oneRow = CGFloat(count) * cell - 2 * inset
+        guard let width, width < oneRow else { return count }
+        return (count + 1) / 2
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let perRow = Self.perRow(count: subviews.count, cell: cell, inset: inset, width: proposal.width)
+        guard perRow > 0 else { return .zero }
+        let rows = (subviews.count + perRow - 1) / perRow
+        let height = rowHeight(subviews)
+        let width = CGFloat(perRow) * cell - 2 * inset
+        return CGSize(width: width, height: CGFloat(rows) * height + CGFloat(max(0, rows - 1)) * rowSpacing)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let perRow = Self.perRow(count: subviews.count, cell: cell, inset: inset, width: proposal.width ?? bounds.width)
+        guard perRow > 0 else { return }
+        let height = rowHeight(subviews)
+        for (index, subview) in subviews.enumerated() {
+            let row = index / perRow, column = index % perRow
+            let origin = CGPoint(x: bounds.minX - inset + CGFloat(column) * cell,
+                                 y: bounds.minY + CGFloat(row) * (height + rowSpacing))
+            subview.place(at: origin, anchor: .topLeading,
+                          proposal: ProposedViewSize(width: cell, height: height))
+        }
+    }
+
+    private func rowHeight(_ subviews: Subviews) -> CGFloat {
+        subviews.map { $0.sizeThatFits(ProposedViewSize(width: cell, height: nil)).height }.max() ?? 0
     }
 }
 
