@@ -705,6 +705,15 @@ struct DockPlacement: Equatable {
         coversLabel ? 0 : DockEnhanceMath.nativeLabelClearance(title: title, edge: edge)
     }
 
+    /// The same placement for a line an icon gesture put up. The pointer
+    /// is on the Dock then, so the icon under it swells whenever the Dock
+    /// magnifies, even with a ⌥`-pinned preview open.
+    func onDock(magnifying dockMagnifies: Bool) -> DockPlacement {
+        var place = self
+        place.magnifying = dockMagnifies
+        return place
+    }
+
     /// The magnified icon's reach past `anchor`, when it counts.
     func reach(anchor: CGRect, edge: DockEdge) -> CGFloat {
         guard coversLabel, magnifying else { return 0 }

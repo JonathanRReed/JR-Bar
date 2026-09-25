@@ -102,9 +102,6 @@ struct DockUtilityControls: View {
                              subtitle: "A capture of each window, kept for half a minute. Needs Screen Recording, and a fresh capture flashes macOS's recording dot; off shows icon and title cards.")
             }
 
-            CardSectionHeader("Appearance")
-            appearance
-
             DisclosureGroup(isExpanded: $showPreviewOptions) {
                 previewOptions
             } label: {
@@ -118,6 +115,9 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Never preview",
                              subtitle: Self.exclusionSummary(exclusions.wrappedValue.map(appName(for:))))
             }
+
+            CardSectionHeader("Appearance")
+            appearance
 
             CardSectionHeader("Switching")
             LabeledContent {
