@@ -612,12 +612,6 @@ final class ShelfTrayModel {
         reveal([entry])
     }
 
-    /// AirDrop for one chip; see the pick's version.
-    @discardableResult
-    func sendViaAirDrop(_ entry: ShelfEntry) -> Bool {
-        sendViaAirDrop([entry])
-    }
-
     /// File size for the attach bound — nil when unresolvable.
     func size(of entry: Entry) -> Int64? {
         guard let values = try? entry.url.resourceValues(forKeys: [.fileSizeKey]),
