@@ -236,3 +236,43 @@ features (<https://github.com/abue-ammar/tinycast>). No snapshot studied
 yet, no ideas adopted, no code copied. Recorded here so the attribution
 trail stays complete; a future entry should cite the commit, license, and
 what was taken or deliberately left.
+
+## Provider marks — Simple Icons, LobeHub Icons, OpenClaw, T3 Code, Hermes Agent
+
+Added 2026-09-25, so every surface that names a provider draws that
+provider's real mark. Unlike the rest of this file, these are not ideas
+reimplemented: the marks themselves ship as path data, used under each
+source's licence. The pinned SVGs are in
+[app/Resources/ProviderLogos/](../app/Resources/ProviderLogos/),
+[scripts/gen_provider_logos.py](../scripts/gen_provider_logos.py) turns
+them into `app/Sources/JRBarUI/ProviderLogoData.swift`, and
+[NOTICE.txt](../app/Resources/ProviderLogos/NOTICE.txt) carries the
+licence texts into the app bundle
+(`Contents/Resources/ThirdPartyLicenses/ProviderLogos.txt`).
+
+- **Simple Icons** 16.32.0, commit `3173436c1255ab7cdc9c38ab85ca0fca333688d9`,
+  CC0-1.0 (<https://github.com/simple-icons/simple-icons>): Claude,
+  Gemini, Pi, OpenCode and Cursor. CC0 covers the SVG data, not the
+  trademarks.
+- **LobeHub Icons** (`@lobehub/icons-static-svg` 1.95.1), commit
+  `49a2130df7bfa5eb1b088261bff20a37e2967789`, MIT © 2023 LobeHub
+  (<https://github.com/lobehub/lobe-icons>): the OpenAI blossom (Codex
+  and the OpenAI API), the Codex app mark, Grok, xAI, Devin, Antigravity,
+  Hermes Agent, Kiro and the newer Gemini sparkle. Simple Icons has no
+  OpenAI, Grok or xAI entry.
+- **OpenClaw**, commit `956cca8af6751929df2174b119f2340efaa2418c`, MIT ©
+  2026 OpenClaw Foundation (<https://github.com/openclaw/openclaw>): its
+  18 pt menu-bar critter (`apps/linux/src-tauri/icons/tray-template.svg`)
+  and the full Molty (`apps/macos/Icon.icon/Assets/molty.svg`).
+- **T3 Code**, commit `99641fd09a509feb644b3c8ef718c12c60cf436c`, MIT ©
+  2026 T3 Tools Inc. (<https://github.com/pingdotgg/t3code>): the T3
+  letter mark (`apps/mobile/assets/widget/T3Mark.svg`).
+- **Hermes Agent**, commit `99a16153`, MIT
+  (<https://github.com/NousResearch/hermes-agent>): the official
+  portrait (`assets/icon-master.svg`) we checked LobeHub's path against.
+  No Hermes Agent file ships.
+
+We cross-checked the Claude, OpenAI and Gemini paths against the copies
+CodexBar 0.53.0 bundles (they match) and took none of CodexBar's files.
+Each mark is its owner's trademark and is used only to name that
+provider. None of them appears in JR-Bar's own icon or branding.
