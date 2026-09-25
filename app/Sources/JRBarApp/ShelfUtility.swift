@@ -85,11 +85,28 @@ final class ShelfUtilityModel {
         // wait for the next transition showing the charge it left with.
         power = powerMonitor.current
         outputVolume = SystemLevelReader.outputVolume().map(Double.init)
-        refreshOutputs()
-        startWatchingOutputs()
         adapterWatts = power.onAC ? readAdapterWatts() : nil
         weather.start()
-        toggles.refresh()
+        // The device list is a HAL walk and the switches spawn their
+        // reads: the turn after the card starts to grow does. The list
+        // shows only in the picker's menu while the output has a volume,
+        // and the switches sit on the shelf page, so the grown card's
+        // height does not wait on either. An output with no volume draws
+        // its row from the list, so that list is read now.
+        guard !inlineReads, outputVolume != nil else {
+            refreshOutputs()
+            startWatchingOutputs()
+            toggles.refresh()
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.running else { return }
+                self.refreshOutputs()
+                self.startWatchingOutputs()
+                self.toggles.refresh()
+            }
+        }
     }
 
     /// The card's lyrics offer, clicked: the yes is kept and the playing
@@ -251,7 +268,7 @@ final class ShelfUtilityModel {
     /// A headless card (tests, render proofs) reads and decodes in the
     /// turn it is asked, since it draws in that turn. A live one keeps
     /// the frame the island grows on clear: covers decode off the main
-    /// thread.
+    /// thread, and the output list and the switches wait a turn.
     @ObservationIgnored var inlineReads = false
 
     private func noteArtwork(_ data: Data?) {

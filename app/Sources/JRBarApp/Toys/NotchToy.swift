@@ -228,6 +228,9 @@ final class NotchToy: Toy {
         }
         wireLyrics(cardModel.utility.lyrics)
         cardModel.heldAwake = { [weak self] in self?.core.state?.power?.keepAwake == true }
+        // The card's privacy line starts from the monitor's reading: no
+        // CoreAudio read of its own on the frame the island grows.
+        cardModel.knownSensors = { [weak self] in self?.liveSensorReading }
         // A due timer morphs the island into its capsule, and a nudge
         // about a run only speaks while that run is still working.
         cardModel.timers.onFireNotice = { [weak self] entry in
@@ -1999,6 +2002,13 @@ final class NotchToy: Toy {
     /// Whether the monitor is reading right now, for whichever taker —
     /// the Screen Bar's camera hold has a camera to hold on only then.
     private(set) var sensorsReading = false
+
+    /// The monitor's own reading while it runs, whatever the dots'
+    /// switch says; nil while no monitor reads.
+    var liveSensorReading: NotchSensorState? {
+        guard let monitor = sensorMonitor, monitor.running else { return nil }
+        return monitor.state
+    }
 
     /// Whether any surface can draw the dots right now: the island's own
     /// face when the ears are not drawn, or a surface that asked.

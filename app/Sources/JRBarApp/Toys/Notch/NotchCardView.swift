@@ -161,13 +161,78 @@ final class NotchCardModel {
     /// neither is live. The ears only ever draw the dots; the names are
     /// the card's.
     var privacyLine: String?
-    /// The reader: CoreAudio and CoreMediaIO on a live card, nothing
-    /// on a headless one — the tests stand in a fixed answer.
+    /// A reader that answers in the same turn — the tests' fixed
+    /// answer. Unset on a live card, which reads off the main thread.
     var readPrivacy: (() -> String?)?
+    /// A live card reads the privacy line off the main thread: the
+    /// CoreAudio process list and CoreMediaIO cost ~5 ms, on the very
+    /// frame the island grows.
+    @ObservationIgnored var readsPrivacyOffMain = false
+    /// The island's sensor monitor's reading while it runs — then the
+    /// card knows what is live without a read of its own, and only the
+    /// microphone's holders are looked up. nil while no monitor runs.
+    @ObservationIgnored var knownSensors: @MainActor () -> NotchSensorState? = { nil }
+    /// The off-main reads, on `privacyQueue`; the tests stand in theirs.
+    @ObservationIgnored var readSensorsOffMain: @Sendable () -> NotchSensorState = { NotchSensorMonitor.read() }
+    @ObservationIgnored var readMicrophoneNames: @Sendable () -> [String] = {
+        NotchSensorMonitor.microphoneClientNames()
+    }
+    @ObservationIgnored let privacyQueue = DispatchQueue(label: "jrbar.notch-privacy", qos: .userInitiated)
+    /// Bumps on every refresh: a read that lands after a newer one, or
+    /// after the card folded, is dropped.
+    @ObservationIgnored private var privacyEpoch = 0
+    /// The microphone's holders as last read — said at once on the next
+    /// open while the fresh names are looked up.
+    @ObservationIgnored private var lastMicrophoneNames: [String] = []
 
     func refreshPrivacy() {
-        guard let readPrivacy else { return }
-        let line = pinned ? readPrivacy() : nil
+        privacyEpoch += 1
+        if let readPrivacy {
+            setPrivacyLine(pinned ? readPrivacy() : nil)
+            return
+        }
+        // A headless card has no reader: its line stays as it was set.
+        guard readsPrivacyOffMain else { return }
+        guard pinned else {
+            setPrivacyLine(nil)
+            return
+        }
+        let epoch = privacyEpoch
+        guard let known = knownSensors() else {
+            // No monitor: the whole read goes off the main thread, and
+            // the line arrives a moment after the card.
+            let readSensors = readSensorsOffMain
+            let readNames = readMicrophoneNames
+            privacyQueue.async { [weak self] in
+                let sensors = readSensors()
+                let names = sensors.microphoneInUse ? readNames() : []
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated { self?.privacyRead(sensors, names: names, epoch: epoch) }
+                }
+            }
+            return
+        }
+        // The monitor already says what is live: the line is right at
+        // once, with the names last seen, and the height it takes is
+        // settled before the card grows.
+        setPrivacyLine(known.privacyLine(microphoneApps: known.microphoneInUse ? lastMicrophoneNames : []))
+        guard known.microphoneInUse else { return }
+        let readNames = readMicrophoneNames
+        privacyQueue.async { [weak self] in
+            let names = readNames()
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.privacyRead(known, names: names, epoch: epoch) }
+            }
+        }
+    }
+
+    private func privacyRead(_ sensors: NotchSensorState, names: [String], epoch: Int) {
+        guard epoch == privacyEpoch, pinned else { return }
+        if sensors.microphoneInUse { lastMicrophoneNames = names }
+        setPrivacyLine(sensors.privacyLine(microphoneApps: names))
+    }
+
+    private func setPrivacyLine(_ line: String?) {
         if line != privacyLine { privacyLine = line }
     }
 
@@ -293,7 +358,7 @@ final class NotchCardModel {
         self.utility = utility ?? ShelfUtilityModel()
         self.runtimeEnabled = runtimeEnabled
         self.utility.inlineReads = !runtimeEnabled
-        if runtimeEnabled { readPrivacy = { NotchSensorMonitor.privacyLineNow() } }
+        readsPrivacyOffMain = runtimeEnabled
     }
 }
 
