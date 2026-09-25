@@ -16,14 +16,14 @@ struct DotRoleControls: View {
     /// its card, or — with no Dot in the document — the Pro + Dot section.
     private var carriesControls: Bool { inDeviceCard || !hasDotCard }
 
-    private var chosen: DotRole { DotRole.parse(store.document.string("dot_role")) }
-    private var includeCompletions: Bool { store.document.bool("dot_role_include_completions") ?? false }
+    private var chosen: DotRole { DotRole.parse(store.values.string("dot_role")) }
+    private var includeCompletions: Bool { store.values.bool("dot_role_include_completions") ?? false }
     /// With `devices_linked` off the daemon plans nothing for the Dot, so
     /// no role is in effect whatever the key says. The daemon's `dot_link`
     /// word is the authority when it exists; the setting is the fallback
     /// for a daemon too old to send it.
-    private var link: CoreDotLink? { store.core.lights?.dotLink }
-    private var linked: Bool { store.document.bool("devices_linked") ?? true }
+    private var link: CoreDotLink? { store.dotLink }
+    private var linked: Bool { store.values.bool("devices_linked") ?? true }
     /// `off` is the one state where the picker cannot matter: with the
     /// link merely broken (`no_strip`, `failed`) changing the role is
     /// exactly how the reader fixes it.
@@ -31,11 +31,11 @@ struct DotRoleControls: View {
     /// The daemon's lid reading: shut, an `extend` Dot plays the beacon
     /// by the daemon's own rule, and the readout says so instead of
     /// calling the choice unsettled.
-    private var lidClosed: Bool { store.core.state?.power?.closedLid?.lidClosed == true }
+    private var lidClosed: Bool { store.closedLid?.lidClosed == true }
     private var readout: DotRoleReadout {
         DotRoleReadout.make(chosen: chosen, includeCompletions: includeCompletions, linked: linked,
                             link: link, lidClosed: lidClosed,
-                            dot: store.core.lights?.dot)
+                            dot: store.dotSurface)
     }
 
     var body: some View {
@@ -61,9 +61,9 @@ struct DotRoleControls: View {
                 }
                 .disabled(linkOff || !chosen.usesCompletions)
             }
-            DotRoleReadoutRow(readout: readout, program: store.core.lights?.dot?.program, compact: false)
+            DotRoleReadoutRow(readout: readout, program: store.dotSurface?.program, compact: false)
         } else {
-            DotRoleReadoutRow(readout: readout, program: store.core.lights?.dot?.program, compact: true)
+            DotRoleReadoutRow(readout: readout, program: store.dotSurface?.program, compact: true)
         }
     }
 }

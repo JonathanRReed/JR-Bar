@@ -21,7 +21,7 @@ struct LEDDirectionRow: View {
     ]
 
     private var path: String { "\(device.prefix).led_direction" }
-    private var reversed: Bool { store.document.string(SettingsPath(path)) == "reversed" }
+    private var reversed: Bool { store.values.string(SettingsPath(path)) == "reversed" }
     private var ledCount: Int { device.kind == "dot" ? 2 : 8 }
     /// Linked, the Dot plays the Pro's light; only Continue still reads
     /// which way round the Dot is mounted (`DotLinkReading.directionActs`).

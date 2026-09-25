@@ -11,6 +11,9 @@ import SwiftUI
 /// system's.
 struct SoundsPage: View {
     @Bindable var store: SettingsStore
+    /// The sound folders, read when the page shows rather than on every
+    /// render (a volume drag renders the page per mouse event).
+    @ViewState private var available: (system: [String], custom: [String]) = ([], [])
 
     private func choice(_ role: SoundRole) -> Binding<String> {
         Binding(get: { store.soundPreferences.choices[role] ?? "" },
@@ -18,7 +21,6 @@ struct SoundsPage: View {
     }
 
     var body: some View {
-        let available = SoundPlayer.availableSounds()
         SettingGroup("Event sounds", note: "Sounds stay silent in Pause, Dim and Dark quiet, and when the asking session is already in front.") {
             ForEach(SoundRole.allCases, id: \.self) { role in
                 SettingRow(role.title, subtitle: role.subtitle) {
@@ -49,6 +51,7 @@ struct SoundsPage: View {
                 }
             }
         }
+        .onAppear { available = SoundPlayer.availableSounds() }
 
         SettingGroup("Volume") {
             SettingRow("JR-Bar sounds", subtitle: "Every sound above, apart from the Mac's own volume.") {
@@ -128,7 +131,7 @@ struct SettingsTransferGroup: View {
         .sheet(isPresented: Binding(get: { store.pendingImport != nil },
                                     set: { if !$0 { store.pendingImport = nil } })) {
             if let bundle = store.pendingImport {
-                SettingsImportSheet(bundle: bundle, monitorLive: store.core.isLive,
+                SettingsImportSheet(bundle: bundle, monitorLive: store.isLive,
                                     knownSchema: CoreProtocol.knownSettingsSchema,
                                     apply: { store.applyImport(bundle, categories: $0) },
                                     cancel: { store.pendingImport = nil })
@@ -251,11 +254,15 @@ struct ShortcutsPage: View {
         }
 
         SettingGroup("Actions", note: "No key until you record one. The same actions answer to jrbar:// links, below.") {
-            ForEach(AppShortcutCatalog.actions) { action in
-                ShortcutRow(title: action.title, id: action.id,
-                            chord: store.actionShortcut(action.id), center: center,
-                            onChange: { store.setShortcut($0, for: action.id) },
-                            onTakeOver: { store.setShortcut(nil, for: $0) })
+            // A recorder per action: folded until asked for.
+            SettingsFoldRow(store, id: SettingsFold.shortcutActions, title: "App actions",
+                            subtitle: actionsSummary) {
+                ForEach(AppShortcutCatalog.actions) { action in
+                    ShortcutRow(title: action.title, id: action.id,
+                                chord: store.actionShortcut(action.id), center: center,
+                                onChange: { store.setShortcut($0, for: action.id) },
+                                onTakeOver: { store.setShortcut(nil, for: $0) })
+                }
             }
         }
 
@@ -280,6 +287,14 @@ struct ShortcutsPage: View {
 
         LinksGroup()
         CommandLineGroup()
+    }
+
+    /// "12 actions, 2 with a key".
+    private var actionsSummary: String {
+        let actions = AppShortcutCatalog.actions
+        let bound = actions.filter { store.actionShortcut($0.id) != nil }.count
+        let keys = bound == 0 ? "none with a key yet" : bound == 1 ? "1 with a key" : "\(bound) with a key"
+        return "\(actions.count) actions, \(keys)."
     }
 }
 
@@ -344,33 +359,48 @@ private struct QuickTogglesGroup: View {
 
     var body: some View {
         SettingGroup("Quick toggles", note: "Checked chips show on the notch card's strip, in this order. Each can have its own key.") {
-            ForEach(SystemToggle.allCases, id: \.rawValue) { toggle in
-                let id = AppShortcutCatalog.toggleID(toggle)
-                LabeledContent {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        ShortcutRecorderField(id: id, chord: store.actionShortcut(id), center: center,
-                                              onChange: { store.setShortcut($0, for: id) },
-                                              onTakeOver: { store.setShortcut(nil, for: $0) })
-                        Toggle("Strip", isOn: Binding(get: { toggles.strip.contains(toggle) },
-                                                      set: { toggles.setInStrip(toggle, $0) }))
-                            .toggleStyle(.checkbox)
-                            .help("Show this chip on the notch card")
-                    }
-                } label: {
-                    HStack(spacing: SettingsMetrics.s) {
-                        Image(systemName: toggle.symbol)
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20)
-                        Text(toggle.longTitle)
-                    }
-                }
-                .settingRowStyle()
+            // A recorder and a strip switch per chip: folded until asked for.
+            SettingsFoldRow(store, id: SettingsFold.quickToggles, title: "Chips",
+                            subtitle: stripSummary) {
+                chipRows
             }
             Toggle(isOn: Binding(get: { toggles.awakeKeepsDisplay },
                                  set: { toggles.setAwakeKeepsDisplay($0) })) {
                 SettingLabel(title: "Keep awake holds the display too",
                              subtitle: "No screen saver and no lock while held — for a talk or a long build log. Off keeps only the Mac awake.")
+            }
+            .settingRowStyle()
+        }
+    }
+
+    /// "8 of 11 on the notch card's strip."
+    private var stripSummary: String {
+        "\(toggles.strip.count) of \(SystemToggle.allCases.count) on the notch card's strip."
+    }
+
+    /// A row per chip: its key and whether it sits on the strip.
+    @ViewBuilder
+    private var chipRows: some View {
+        ForEach(SystemToggle.allCases, id: \.rawValue) { toggle in
+            let id = AppShortcutCatalog.toggleID(toggle)
+            LabeledContent {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    ShortcutRecorderField(id: id, chord: store.actionShortcut(id), center: center,
+                                          onChange: { store.setShortcut($0, for: id) },
+                                          onTakeOver: { store.setShortcut(nil, for: $0) })
+                    Toggle("Strip", isOn: Binding(get: { toggles.strip.contains(toggle) },
+                                                  set: { toggles.setInStrip(toggle, $0) }))
+                        .toggleStyle(.checkbox)
+                        .help("Show this chip on the notch card")
+                }
+            } label: {
+                HStack(spacing: SettingsMetrics.s) {
+                    Image(systemName: toggle.symbol)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                    Text(toggle.longTitle)
+                }
             }
             .settingRowStyle()
         }
