@@ -271,8 +271,11 @@ def test_refresh_budget(headless) -> None:
 
 def test_a_failed_settings_save_is_retried_by_the_next_refresh(headless, monkeypatch) -> None:
     """A Settings toggle replies before its save; when the save fails, the
-    next refresh writes it, once nothing is queued on the writer."""
+    next refresh resubmits it to the writer, once nothing is queued there.
+    The harness's fake threads never run the writer, so its submit is
+    driven inline."""
     from jrbar import status_bar_legacy as legacy
+    from jrbar.persistence_writer import PersistenceDisposition
 
     controller = _refreshable(headless)
     saved: list[int] = []
@@ -294,6 +297,12 @@ def test_a_failed_settings_save_is_retried_by_the_next_refresh(headless, monkeyp
     _tick(controller)
     assert saved == [], "a write still queued on the writer is the writer's"
     monkeypatch.setattr(writer, "snapshot", lambda: SimpleNamespace(pending_count=0, running=False))
+
+    def inline_submit(_key, operation, **_kwargs):
+        operation()
+        return PersistenceDisposition.QUEUED
+
+    monkeypatch.setattr(writer, "submit", inline_submit)
     _tick(controller)
     assert saved == [6] and not controller._core_settings_dirty
     _tick(controller)
