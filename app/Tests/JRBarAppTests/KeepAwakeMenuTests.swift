@@ -43,8 +43,11 @@ import Testing
         return (SystemTogglesStore(state: state), state, fake)
     }
 
+    /// Lets the lease's send task land. The deadline is generous because a
+    /// full parallel run can hold the main actor for seconds; a pass
+    /// returns as soon as the send lands.
     private func settle(_ state: SystemTogglesStore.State) async {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(30)
         while state.applying.contains(.keepAwake), Date() < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
