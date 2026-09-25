@@ -486,3 +486,17 @@ def test_two_chosen_gradient_colours_roll_without_a_seam() -> None:
     assert max(gaps) - min(gaps) <= 2, gaps
     # The hue ramp with no chosen colours is drawn as it always was.
     assert shapes.gradient_wave(COLOR, led_count=8, lap_ms=2200)[0].split()[0] != COLOR
+
+
+def test_a_tinted_dot_keeps_the_agents_colour_on_one_led() -> None:
+    """The tool tint on a wiping Dot lights only the LED the light travels
+    to; the one it sets out from keeps the provider's colour."""
+    tool = "#FFD60A"
+    forward = shapes.travelling_wave(COLOR, led_count=2, lap_ms=2200, tail=shapes.DOT_WIPE, head=tool)
+    assert forward[0].startswith(f"0:{COLOR} ") and forward[1].startswith(f"1:{tool} ")
+    backward = shapes.travelling_wave(
+        COLOR, led_count=2, lap_ms=2200, tail=shapes.DOT_WIPE, head=tool, reverse=True
+    )
+    assert backward[0].startswith(f"1:{COLOR} ") and backward[1].startswith(f"0:{tool} ")
+    plain = shapes.travelling_wave(COLOR, led_count=2, lap_ms=2200, tail=shapes.DOT_WIPE)
+    assert tool not in "\n".join(plain) and plain[1].startswith(f"1:{COLOR} ")

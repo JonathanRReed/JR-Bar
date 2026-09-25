@@ -182,11 +182,12 @@ def travelling_wave(
     """
     if tail is DOT_WIPE and int(led_count) <= 2:
         return dot_wipe(
-            head or color,
+            color,
             shade(color, max(float(floor), DOT_WIPE[1])),
             lap_ms=lap_ms,
             laps=laps,
             reverse=reverse,
+            head=head,
         )
     direction = "roll-left" if reverse else "roll-right"
     duration = max(MIN_STEP_MS * max(1, int(led_count)), int(lap_ms))
@@ -732,6 +733,7 @@ def dot_wipe(
     lap_ms: int,
     laps: int = 1,
     reverse: bool = False,
+    head: str | None = None,
 ) -> list[str]:
     """Two LEDs that read as a direction: rise, rise, fall, fall.
 
@@ -739,12 +741,16 @@ def dot_wipe(
     the lap moves one LED with a half-cosine, so there is a moment with both
     lit and a moment with both resting -- the light arrives on one side and
     leaves from it, where the rolled crossfade only ever swaps the two.
+
+    ``head`` (the tool tint) lights only the LED the light travels to; the
+    one it sets out from keeps ``color``, so the Dot still shows whose
+    light it is.
     """
     quarter = max(MIN_STEP_MS * 2, max(1, int(lap_ms)) // 4)
     first, second = (1, 0) if reverse else (0, 1)
     lap = [
         f"{first}:{color} {_time(quarter)} cosine",
-        f"{second}:{color} {_time(quarter)} cosine",
+        f"{second}:{head or color} {_time(quarter)} cosine",
         f"{first}:{floor_color} {_time(quarter)} cosine",
         f"{second}:{floor_color} {_time(quarter)} cosine",
     ]
