@@ -388,9 +388,11 @@ Vocabulary:
   hold away while the demand stands -- `thermal` (the thermal state
   reached `serious` with the lid shut or `critical` with it open, released
   until five cool minutes pass), `battery` (the low-battery floor) or
-  `low_power` (macOS Low Power Mode is on, read from `pmset -g` at most
-  once a minute, while `keep_awake_yield_low_power_mode` is on, the
-  default; heat and the battery floor outrank it);
+  `low_power` (macOS Low Power Mode is on, read from
+  `NSProcessInfo.isLowPowerModeEnabled`, or from `pmset -g`'s `powermode`
+  or `lowpowermode` line when Foundation can't answer, at most once a
+  minute, while `keep_awake_yield_low_power_mode` is on, the default; heat
+  and the battery floor outrank it);
   `thermal` is `nominal`/`fair`/`serious`/`critical` or null.
   `closed_lid` adds `lid_closed` (the daemon's last reading, null while it
   has none or while nothing watches the lid -- the lid is polled only

@@ -368,51 +368,68 @@ def read_thermal_state() -> int | None:
     return value if THERMAL_NOMINAL <= value <= THERMAL_CRITICAL else None
 
 
-#: Low Power Mode changes rarely; one ``pmset -g`` a minute is plenty.
+#: How long one Low Power Mode reading is kept. ``NSProcessInfo`` answers
+#: at once, but the ``pmset -g`` fallback is a subprocess, and the mode
+#: changes rarely.
 LOW_POWER_READ_SECONDS = 60.0
 _low_power_cache: tuple[float, bool | None] | None = None
 
 
 def parse_pmset_low_power(text: str) -> bool | None:
-    """``lowpowermode 1`` in ``pmset -g`` output -> True; absent -> None."""
+    """Low Power Mode from ``pmset -g`` output; None when it doesn't say.
+
+    Older Macs print ``lowpowermode 1``. A Mac with an Energy Mode picker
+    (Low Power, Automatic, High Power) prints ``powermode`` instead, where
+    1 is Low Power, 0 Automatic and 2 High Power.
+    """
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) >= 2 and parts[0].lower() == "lowpowermode":
-            if parts[1] in ("1", "0"):
-                return parts[1] == "1"
+        if len(parts) < 2 or parts[1] not in ("0", "1", "2"):
+            continue
+        key = parts[0].lower()
+        if key == "lowpowermode" and parts[1] in ("0", "1"):
+            return parts[1] == "1"
+        if key == "powermode":
+            return parts[1] == "1"
     return None
+
+
+def _process_info_low_power() -> bool | None:
+    """``NSProcessInfo.isLowPowerModeEnabled``, or None without Foundation."""
+    try:
+        from Foundation import NSProcessInfo
+
+        return bool(NSProcessInfo.processInfo().isLowPowerModeEnabled())
+    except Exception:
+        return None
 
 
 def read_low_power_mode(
     *,
     now: float | None = None,
     runner: Callable[..., object] = subprocess.run,
+    process_info: Callable[[], bool | None] = _process_info_low_power,
 ) -> bool | None:
-    """Whether macOS Low Power Mode is on, from ``pmset -g`` (cached a
-    minute), else ``NSProcessInfo``; None when neither can say."""
+    """Whether macOS Low Power Mode is on: ``NSProcessInfo`` first, the way
+    ``read_thermal_state`` reads heat, then ``pmset -g`` only when
+    Foundation can't answer. Cached a minute; None when neither can say."""
     global _low_power_cache
     moment = time.monotonic() if now is None else now
     cached = _low_power_cache
     if cached is not None and moment - cached[0] < LOW_POWER_READ_SECONDS:
         return cached[1]
-    value: bool | None = None
-    try:
-        completed = runner(
-            ["/usr/bin/pmset", "-g"],
-            capture_output=True,
-            text=True,
-            timeout=2.0,
-            check=False,
-        )
-        value = parse_pmset_low_power(str(getattr(completed, "stdout", "") or ""))
-    except (OSError, subprocess.SubprocessError, ValueError):
-        value = None
+    value = process_info()
     if value is None:
         try:
-            from Foundation import NSProcessInfo
-
-            value = bool(NSProcessInfo.processInfo().isLowPowerModeEnabled())
-        except Exception:
+            completed = runner(
+                ["/usr/bin/pmset", "-g"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+                check=False,
+            )
+            value = parse_pmset_low_power(str(getattr(completed, "stdout", "") or ""))
+        except (OSError, subprocess.SubprocessError, ValueError):
             value = None
     _low_power_cache = (moment, value)
     return value

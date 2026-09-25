@@ -465,6 +465,12 @@ def test_pmset_output_is_read_for_low_power_mode() -> None:
     assert keep_awake.parse_pmset_low_power(sample) is True
     assert keep_awake.parse_pmset_low_power(sample.replace("lowpowermode         1", "lowpowermode         0")) is False
     assert keep_awake.parse_pmset_low_power("sleep 1\n") is None
+    # A Mac with an Energy Mode picker says powermode: 1 Low Power, 0
+    # Automatic, 2 High Power (this Mac16,8 on macOS 26 prints 2).
+    energy = "System-wide power settings:\n Sleep On Power Button 1\n powernap             1\n powermode            {}\n"
+    assert keep_awake.parse_pmset_low_power(energy.format(1)) is True
+    assert keep_awake.parse_pmset_low_power(energy.format(0)) is False
+    assert keep_awake.parse_pmset_low_power(energy.format(2)) is False
 
     calls: list[list[str]] = []
 
@@ -472,8 +478,26 @@ def test_pmset_output_is_read_for_low_power_mode() -> None:
         calls.append(argv)
         return SimpleNamespace(stdout=sample)
 
+    # Without Foundation, pmset answers, at most once a minute.
     keep_awake._low_power_cache = None
-    assert keep_awake.read_low_power_mode(now=100.0, runner=runner) is True
-    assert keep_awake.read_low_power_mode(now=130.0, runner=runner) is True
+    assert keep_awake.read_low_power_mode(now=100.0, runner=runner, process_info=lambda: None) is True
+    assert keep_awake.read_low_power_mode(now=130.0, runner=runner, process_info=lambda: None) is True
     assert calls == [["/usr/bin/pmset", "-g"]], "read once a minute at most"
     keep_awake._low_power_cache = None
+
+
+def test_low_power_mode_is_read_from_process_info_before_any_subprocess() -> None:
+    import jrbar.keep_awake as keep_awake
+
+    calls: list[list[str]] = []
+
+    def runner(argv, **_kwargs):
+        calls.append(argv)
+        raise AssertionError("pmset must not run when NSProcessInfo answers")
+
+    keep_awake._low_power_cache = None
+    assert keep_awake.read_low_power_mode(now=0.0, runner=runner, process_info=lambda: True) is True
+    keep_awake._low_power_cache = None
+    assert keep_awake.read_low_power_mode(now=0.0, runner=runner, process_info=lambda: False) is False
+    keep_awake._low_power_cache = None
+    assert calls == []
