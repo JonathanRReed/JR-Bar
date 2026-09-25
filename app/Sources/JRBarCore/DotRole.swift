@@ -94,16 +94,14 @@ public struct DotRoleReadout: Equatable, Sendable {
     /// `link` is the daemon's `dot_link` word — when present it is the
     /// authority and `linked` (the `devices_linked` setting) is only the
     /// fallback for daemons that predate it. The timing line comes from
-    /// the link's own measurement (`phase_error_ms`, the Dot's clock rate):
-    /// the write gap (`linkedSkewMs` and friends) is still accepted from
-    /// older callers but never quoted, because "in step" from one write's
-    /// gap stopped being true within a second. `lidClosed` is the
+    /// the link's own measurement (`phase_error_ms`, the Dot's clock rate),
+    /// never the gap between two writes: "in step" from one write's gap
+    /// stopped being true within a second. `lidClosed` is the
     /// daemon's lid reading (`state.power.closed_lid.lid_closed`): with it
     /// shut, an `extend` Dot playing the beacon is the daemon's rule for a
     /// lid that hides the strip and the band, not a choice still in flight.
     public static func make(chosen: DotRole, includeCompletions: Bool, linked: Bool = true,
-                            link: CoreDotLink? = nil, linkedSkewMs: Double? = nil,
-                            linkedSkewFresh: Bool = false, linkedSkewCorrectedMs: Double? = nil,
+                            link: CoreDotLink? = nil,
                             lidClosed: Bool = false, now: Date = Date(),
                             dot: CoreLightSurface?) -> DotRoleReadout {
         let active = dot?.role.map(DotRole.parse)

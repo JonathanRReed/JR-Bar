@@ -195,14 +195,13 @@ struct DotRoleTests {
     @Test("the extend readout's timing comes from the measured phase error, never a bare claim")
     func timingLine() {
         let dot = CoreLightSurface(program: "0:#00E5FF 1400ms pulse", ledCount: 2, why: "working", role: "extend")
-        func detail(_ configure: (inout CoreDotLink) -> Void, skew: Double? = nil) -> String {
+        func detail(_ configure: (inout CoreDotLink) -> Void) -> String {
             var link = CoreDotLink(state: "linked", role: "extend")
             configure(&link)
-            return DotRoleReadout.make(chosen: .extend, includeCompletions: false, link: link,
-                                       linkedSkewMs: skew, linkedSkewFresh: skew != nil, dot: dot).detail ?? ""
+            return DotRoleReadout.make(chosen: .extend, includeCompletions: false, link: link, dot: dot).detail ?? ""
         }
-        // Nothing measured yet: nothing claimed, whatever the write gap said.
-        let unmeasured = detail({ _ in }, skew: 11)
+        // Nothing measured yet: nothing claimed.
+        let unmeasured = detail({ _ in })
         #expect(!unmeasured.contains("In step"))
         #expect(!unmeasured.contains("ms of the strip"))
         // Measured and inside the tolerance, with the Dot's clock named.
@@ -230,10 +229,6 @@ struct DotRoleTests {
         for text in [unmeasured, held, drifting, blind, off, checking] {
             #expect(!text.contains("In step") && !text.contains("Kept in step"))
         }
-        // `linked_skew_at` still decides whether an old skew is fresh.
-        let now = Date().timeIntervalSince1970
-        #expect(CoreLights(linkedSkewMs: 11, linkedSkewAt: now).isLinkedSkewFresh)
-        #expect(!CoreLights(linkedSkewMs: 11, linkedSkewAt: now - 31 * 60).isLinkedSkewFresh)
     }
 
     @Test("the real lights frame carries the link's timing and the device receipts")

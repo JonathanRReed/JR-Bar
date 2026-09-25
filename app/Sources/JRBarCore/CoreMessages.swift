@@ -2080,10 +2080,6 @@ public struct CoreLights: Codable, Hashable, Sendable {
     /// When `linkedSkewMs` was measured (epoch seconds); the two travel
     /// together or not at all.
     public var linkedSkewAt: Double?
-    /// The skew the last coupled write baked into the Dot's program so it
-    /// restarts in phase; absent when no correction was applied. Shares
-    /// `linkedSkewAt`'s freshness.
-    public var linkedSkewCorrectedMs: Double?
     public var dotLink: CoreDotLink?
     public var autoDim: CoreAutoDim?
     /// Additive: per-device receipts (`CoreDeviceReceipt`), keyed by id.
@@ -2091,14 +2087,12 @@ public struct CoreLights: Codable, Hashable, Sendable {
 
     public init(surfaces: [String: CoreLightSurface] = [:], linked: Bool? = nil, devicesLinked: Bool? = nil,
                 linkedSkewMs: Double? = nil, linkedSkewAt: Double? = nil,
-                linkedSkewCorrectedMs: Double? = nil,
                 dotLink: CoreDotLink? = nil, autoDim: CoreAutoDim? = nil) {
         self.surfaces = surfaces
         self.linked = linked
         self.devicesLinked = devicesLinked
         self.linkedSkewMs = linkedSkewMs
         self.linkedSkewAt = linkedSkewAt
-        self.linkedSkewCorrectedMs = linkedSkewCorrectedMs
         self.dotLink = dotLink
         self.autoDim = autoDim
     }
@@ -2108,7 +2102,6 @@ public struct CoreLights: Codable, Hashable, Sendable {
         case devicesLinked = "devices_linked"
         case linkedSkewMs = "linked_skew_ms"
         case linkedSkewAt = "linked_skew_at"
-        case linkedSkewCorrectedMs = "linked_skew_corrected_ms"
         case dotLink = "dot_link"
         case autoDim = "auto_dim"
         case deviceReceipts = "device_receipts"
@@ -2124,7 +2117,6 @@ public struct CoreLights: Codable, Hashable, Sendable {
         devicesLinked = try? c.decodeIfPresent(Bool.self, forKey: .devicesLinked)
         linkedSkewMs = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewMs)
         linkedSkewAt = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewAt)
-        linkedSkewCorrectedMs = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewCorrectedMs)
         dotLink = try? c.decodeIfPresent(CoreDotLink.self, forKey: .dotLink)
         autoDim = try? c.decodeIfPresent(CoreAutoDim.self, forKey: .autoDim)
         deviceReceipts = (try? c.decodeIfPresent([String: CoreDeviceReceipt].self, forKey: .deviceReceipts)) ?? [:]
@@ -2133,14 +2125,6 @@ public struct CoreLights: Codable, Hashable, Sendable {
     public var screenBar: CoreLightSurface? { surfaces["screen_bar"] }
     public var hardware: CoreLightSurface? { surfaces["hardware"] }
     public var dot: CoreLightSurface? { surfaces["dot"] }
-
-    /// The skew is a measurement, not a state: past half an hour it is
-    /// old news and says nothing about whether the pair is in step now.
-    public static let linkedSkewFreshSeconds: TimeInterval = 30 * 60
-    public var isLinkedSkewFresh: Bool {
-        guard let linkedSkewAt, linkedSkewMs != nil else { return false }
-        return linkedSkewAt >= Date().timeIntervalSince1970 - Self.linkedSkewFreshSeconds
-    }
 }
 
 // MARK: - event
