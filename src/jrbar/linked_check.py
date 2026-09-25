@@ -46,7 +46,7 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     if not bool(getattr(settings, "devices_linked", True)):
         raise CommandError("not_ready", "Pro and Dot are not linked.")
     if normalize_dot_role(getattr(settings, "dot_role", None)) != DotRole.EXTEND.value:
-        raise CommandError("not_ready", "Check sync needs the Dot to mirror the strip.")
+        raise CommandError("not_ready", "Check sync needs the Dot to extend the strip.")
     dot = runtime._core_linked_dot_device()
     strip_id = runtime._core_followed_strip_id()
     devices = runtime.status_bar_devices(remember=False)
