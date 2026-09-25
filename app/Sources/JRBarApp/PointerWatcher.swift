@@ -242,12 +242,15 @@ final class EventTapPointerSource: PointerMoveSource, @unchecked Sendable {
         }
         thread.name = "JR-Bar pointer watch"
         thread.qualityOfService = .userInteractive
-        thread.start()
-        loop.ready.wait()
+        // The tap and loop are published before the thread can drain an
+        // event — a `tapDisabledBy*` landing in the gap would find no tap
+        // to re-enable, die silently, and leave a live token on a dead tap.
         lock.withLock {
             self.tap = tap
             self.loop = loop
         }
+        thread.start()
+        loop.ready.wait()
         CGEvent.tapEnable(tap: tap, enable: true)
         return true
     }
