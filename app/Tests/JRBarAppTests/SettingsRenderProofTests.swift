@@ -419,45 +419,40 @@ struct SettingsRenderProofTests {
             let rep = try Self.snapshot(view, size: CGSize(width: 560, height: 6000), dark: dark)
             try Self.write(rep, named: "linked-devices-mirror-\(dark ? "dark" : "light")")
         }
-        // The eject guard's words, one row per state it can be in.
+        // The real rows with the monitor live, so Check sync and the eject
+        // guard's buttons are as the person sees them: the Pro & Dot rows,
+        // the Clock disclosure's rows open, and the eject guard in every
+        // state it can be in (seeded, so the row asks nothing).
+        let live = try Self.fixture()
+        live.core.handle(.connected)
+        live.core.apply(.state(CoreState()))
+        live.core.apply(try CoreCodec.decode(frame: Data(Self.linkedLightsFrame.utf8)))
         let readings = [
             EjectGuardReading(installed: false),
-            EjectGuardReading(installed: true, mountedVolumeUUID: "B293"),
-            EjectGuardReading(installed: true, runs: 2, mountedVolumeUUID: "B293"),
-            EjectGuardReading(installed: true, volumeUUID: "B293", mountedVolumeUUID: "B293"),
-            EjectGuardReading(installed: true, volumeUUID: "B293", mountedVolumeUUID: "B293", loaded: true),
-            EjectGuardReading(installed: true, protects: true, volumeUUID: "7F02", mountedVolumeUUID: "B293"),
+            EjectGuardReading(installed: true, mountedVolumeUUID: "5E1F"),
+            EjectGuardReading(installed: true, runs: 2, mountedVolumeUUID: "5E1F"),
+            EjectGuardReading(installed: true, volumeUUID: "5E1F", mountedVolumeUUID: "5E1F"),
+            EjectGuardReading(installed: true, volumeUUID: "5E1F", mountedVolumeUUID: "5E1F", loaded: true),
+            EjectGuardReading(installed: true, protects: true, volumeUUID: "7F02", mountedVolumeUUID: "5E1F"),
             EjectGuardReading(installed: true, protects: true, protectsMounted: true, running: true,
-                              volumeUUID: "B293", mountedVolumeUUID: "B293"),
+                              volumeUUID: "5E1F", mountedVolumeUUID: "5E1F"),
         ]
-        let store = fixture.settings
+        let store = live.settings
         let sheet = Form {
-            // The Clock disclosure's rows, open.
-            SettingGroup("Clock") {
-                SettingToggle(store, "Keep in step",
-                              subtitle: "Times the Dot for its own clock and re-syncs it before it drifts. Off, it only starts on the beat.",
-                              path: "linked_dot_clock_correction", default: true)
-                SettingSlider(store, "Sync tolerance",
-                              subtitle: "How far the Dot may drift before it is re-synced. Wider means fewer Dot rewrites.",
-                              path: "linked_sync_tolerance_ms", in: 20...200, step: 5, default: 40) { "\(Int($0.rounded())) ms" }
-            }
+            SettingGroup("Pro & Dot") { LinkedSyncControls(store: store) }
+            SettingGroup("Clock") { LinkedClockRows(store: store) }
             SettingGroup("Eject guard") {
                 ForEach(Array(readings.enumerated()), id: \.offset) { _, reading in
-                    SettingRow("Eject guard", subtitle: reading.words) {
-                        if reading.canRelease {
-                            Button("Stop protecting") {}
-                        } else {
-                            Button("Protect this SidePulse") {}.disabled(!reading.canProtect)
-                        }
-                    }
+                    EjectGuardRow(store: store, reading: reading)
                 }
             }
         }
         .formStyle(.grouped)
         for dark in [false, true] where Self.wanted("linked-devices") {
-            let rep = try Self.snapshot(sheet, size: CGSize(width: 560, height: 1200), dark: dark)
+            let rep = try Self.snapshot(sheet, size: CGSize(width: 560, height: 1500), dark: dark)
             try Self.write(rep, named: "linked-eject-guard-\(dark ? "dark" : "light")")
         }
         withExtendedLifetime(fixture) {}
+        withExtendedLifetime(live) {}
     }
 }

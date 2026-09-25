@@ -28,12 +28,14 @@ struct LinkedSyncControls: View {
         ("after_last", "To the right"), ("before_first", "To the left"),
     ]
 
-    private var linked: Bool { store.document.bool("devices_linked") ?? true }
-    private var role: DotRole { DotRole.parse(store.document.string("dot_role")) }
     /// Every control here is about the Dot extending the strip.
-    private var extending: Bool { linked && role == .extend }
+    static func isExtending(_ store: SettingsStore) -> Bool {
+        let linked = store.document.bool("devices_linked") ?? true
+        return linked && DotRole.parse(store.document.string("dot_role")) == .extend
+    }
+
+    private var extending: Bool { Self.isExtending(store) }
     private var style: String { store.document.string("dot_extend_style") ?? "continue" }
-    private var correcting: Bool { store.document.bool("linked_dot_clock_correction") ?? true }
 
     var body: some View {
         SettingPicker(store, "Look", subtitle: styleSubtitle, path: "dot_extend_style",
@@ -49,14 +51,7 @@ struct LinkedSyncControls: View {
                       path: "linked_dot_phase_trim_ms", in: -250...250, step: 5, default: 0) { Self.trimText($0) }
             .disabled(!extending)
         DisclosureRow("Clock", subtitle: "How the monitor keeps the Dot's slower clock on the strip's beat.") {
-            SettingToggle(store, "Keep in step",
-                          subtitle: "Times the Dot for its own clock and re-syncs it before it drifts. Off, it only starts on the beat.",
-                          path: "linked_dot_clock_correction", default: true)
-                .disabled(!extending)
-            SettingSlider(store, "Sync tolerance",
-                          subtitle: "How far the Dot may drift before it is re-synced. Wider means fewer Dot rewrites.",
-                          path: "linked_sync_tolerance_ms", in: 20...200, step: 5, default: 40) { "\(Int($0.rounded())) ms" }
-                .disabled(!extending || !correcting)
+            LinkedClockRows(store: store)
         }
         if let until = checkUntil, until > Date() {
             // Ticks only while a check runs, so the row goes back to the
@@ -122,6 +117,26 @@ struct LinkedSyncControls: View {
     }
 }
 
+/// The Clock disclosure's rows: the clock correction itself, and how far
+/// the Dot may drift before the monitor re-syncs it.
+struct LinkedClockRows: View {
+    @Bindable var store: SettingsStore
+
+    private var extending: Bool { LinkedSyncControls.isExtending(store) }
+    private var correcting: Bool { store.document.bool("linked_dot_clock_correction") ?? true }
+
+    var body: some View {
+        SettingToggle(store, "Keep in step",
+                      subtitle: "Times the Dot for its own clock and re-syncs it before it drifts. Off, it only starts on the beat.",
+                      path: "linked_dot_clock_correction", default: true)
+            .disabled(!extending)
+        SettingSlider(store, "Sync tolerance",
+                      subtitle: "How far the Dot may drift before it is re-synced. Wider means fewer Dot rewrites.",
+                      path: "linked_sync_tolerance_ms", in: 20...200, step: 5, default: 40) { "\(Int($0.rounded())) ms" }
+            .disabled(!extending || !correcting)
+    }
+}
+
 /// "Match the strip's brightness": whether a linked Dot takes the strip's
 /// brightness policy (times Dot brightness) instead of its own
 /// auto-brightness, which used to cap it and restart it on every step.
@@ -141,9 +156,18 @@ struct LinkedBrightnessToggle: View {
 /// stop protecting it so Finder can eject it again.
 struct EjectGuardRow: View {
     let store: SettingsStore
+    /// Started on a reading it was handed instead of asking the monitor
+    /// (the render proof draws every state this way).
+    private let seeded: Bool
     @ViewState private var reading: EjectGuardReading?
     @ViewState private var working = false
     @ViewState private var failure: String?
+
+    init(store: SettingsStore, reading: EjectGuardReading? = nil) {
+        self.store = store
+        self.seeded = reading != nil
+        _reading = ViewState(initialValue: reading)
+    }
 
     var body: some View {
         SettingRow("Eject guard", subtitle: subtitle) {
@@ -157,7 +181,9 @@ struct EjectGuardRow: View {
         }
         // Asked again whenever the monitor comes (back) up: asked once, a
         // page opened before the monitor was live said "Asking…" forever.
-        .task(id: store.core.isLive) { await load() }
+        .task(id: store.core.isLive) {
+            if !seeded { await load() }
+        }
     }
 
     private var subtitle: String {
