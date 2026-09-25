@@ -25,7 +25,7 @@ final class ShelfUtilityModel {
     /// Artwork payloads above this are dropped rather than decoded —
     /// a hostile or buggy source can't push an unbounded image into
     /// the card. 4 MiB comfortably covers real album art.
-    static let maxArtworkBytes = 4 * 1024 * 1024
+    nonisolated static let maxArtworkBytes = 4 * 1024 * 1024
 
     private let feed: MediaFeed
     private var feedToken: UUID?
@@ -72,6 +72,9 @@ final class ShelfUtilityModel {
         guard !running else { return }
         running = true
         feedToken = feed.subscribe { [weak self] media in
+            // Every helper line re-sends the whole track — a play, a
+            // pause, a seek — and a row redraws for each assignment.
+            guard self?.media != media else { return }
             self?.media = media
             self?.lyrics.note(media: media)
             self?.noteArtwork(media?.artworkData)
@@ -82,11 +85,28 @@ final class ShelfUtilityModel {
         // wait for the next transition showing the charge it left with.
         power = powerMonitor.current
         outputVolume = SystemLevelReader.outputVolume().map(Double.init)
-        refreshOutputs()
-        startWatchingOutputs()
         adapterWatts = power.onAC ? readAdapterWatts() : nil
         weather.start()
-        toggles.refresh()
+        // The device list is a HAL walk and the switches spawn their
+        // reads: the turn after the card starts to grow does. The list
+        // shows only in the picker's menu while the output has a volume,
+        // and the switches sit on the shelf page, so the grown card's
+        // height does not wait on either. An output with no volume draws
+        // its row from the list, so that list is read now.
+        guard !inlineReads, outputVolume != nil else {
+            refreshOutputs()
+            startWatchingOutputs()
+            toggles.refresh()
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.running else { return }
+                self.refreshOutputs()
+                self.startWatchingOutputs()
+                self.toggles.refresh()
+            }
+        }
     }
 
     /// The card's lyrics offer, clicked: the yes is kept and the playing
@@ -182,6 +202,7 @@ final class ShelfUtilityModel {
         // toggle is an app-level intent, not a card-lifetime lease —
         // and the assertion dies with the process anyway.
         media = nil
+        noteArtwork(nil)
     }
 
     /// Transport commands ride the feed's live path (entitled adapter
@@ -226,13 +247,12 @@ final class ShelfUtilityModel {
         mediaScrubHoldUntil = Date().addingTimeInterval(0.9)
     }
 
-    /// Artwork for the card, or nil when the payload is absent,
-    /// oversized, or not an image — the caller draws the placeholder.
-    var artwork: NSImage? {
-        guard let data = media?.artworkData,
-              data.count <= Self.maxArtworkBytes else { return nil }
-        return NSImage(data: data)
-    }
+    /// Artwork for the card: a thumbnail made off the main thread when
+    /// the cover changes (`NotchArtworkStore`). nil for no art, and for
+    /// a payload that is oversized or not an image — the row draws the
+    /// placeholder. A new cover keeps the last one up for the few
+    /// milliseconds its decode takes.
+    private(set) var artwork: NSImage?
 
     // MARK: Artwork tint
 
@@ -240,31 +260,43 @@ final class ShelfUtilityModel {
     /// the scrubber wear it, OneNotch's artwork-coloured media. nil for
     /// no art, or art too grey to have a colour (the row stays white).
     private(set) var artworkTint: NSColor?
-    /// The artwork the tint was read from — a new track with the same
-    /// cover costs nothing.
-    private var tintSource: Int?
+    /// The cover the artwork and tint are for — the same cover resent
+    /// with a pause or a seek costs nothing.
+    @ObservationIgnored private var artworkSource: Data?
+    /// Where covers are decoded; shared with the island's strip.
+    @ObservationIgnored var artworkStore: NotchArtworkStore = .shared
+    /// A headless card (tests, render proofs) reads and decodes in the
+    /// turn it is asked, since it draws in that turn. A live one keeps
+    /// the frame the island grows on clear: covers decode off the main
+    /// thread, and the output list and the switches wait a turn.
+    @ObservationIgnored var inlineReads = false
 
     private func noteArtwork(_ data: Data?) {
-        let key = data?.hashValue
-        guard key != tintSource else { return }
-        tintSource = key
-        guard let data, data.count <= Self.maxArtworkBytes,
-              let average = Self.averageColor(of: data),
-              let readable = Self.readableTint(red: average.red, green: average.green, blue: average.blue)
-        else {
+        guard data != artworkSource else { return }
+        artworkSource = data
+        guard let data else {
+            artwork = nil
             artworkTint = nil
             return
         }
-        artworkTint = NSColor(hue: readable.hue, saturation: readable.saturation,
-                              brightness: readable.brightness, alpha: 1)
+        artworkStore.art(for: data, inline: inlineReads) { [weak self] art in
+            guard let self, self.artworkSource == data else { return }
+            self.artwork = art?.image
+            self.artworkTint = art?.tint
+        }
     }
 
-    private static let tintContext = CIContext(options: [.workingColorSpace: NSNull()])
+    nonisolated private static let tintContext = CIContext(options: [.workingColorSpace: NSNull()])
 
     /// The artwork's mean colour — one CIAreaAverage pass rendered to a
-    /// single pixel.
-    static func averageColor(of data: Data) -> (red: Double, green: Double, blue: Double)? {
-        guard let image = CIImage(data: data), !image.extent.isEmpty,
+    /// single pixel. Safe off the main thread.
+    nonisolated static func averageColor(of data: Data) -> (red: Double, green: Double, blue: Double)? {
+        guard let image = CIImage(data: data) else { return nil }
+        return averageColor(of: image)
+    }
+
+    nonisolated static func averageColor(of image: CIImage) -> (red: Double, green: Double, blue: Double)? {
+        guard !image.extent.isEmpty,
               let filter = CIFilter(name: "CIAreaAverage",
                                     parameters: [kCIInputImageKey: image,
                                                  kCIInputExtentKey: CIVector(cgRect: image.extent)]),
@@ -311,13 +343,18 @@ final class ShelfUtilityModel {
 
     /// The source app's display name for the card's identity line,
     /// resolved from the reported bundle id; nil stays unlabeled —
-    /// an unnamed source is not "Music".
+    /// an unnamed source is not "Music". Looked up once per player: the
+    /// row asks on every redraw.
     var sourceName: String? {
-        guard let bundle = media?.bundleIdentifier,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else {
-            return nil
+        guard let bundle = media?.bundleIdentifier else { return nil }
+        if let known = sourceNames[bundle] { return known }
+        let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle).map {
+            FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "")
         }
-        return FileManager.default.displayName(atPath: url.path)
-            .replacingOccurrences(of: ".app", with: "")
+        sourceNames[bundle] = .some(name)
+        return name
     }
+    /// Bundle id → display name, nil kept for a player LaunchServices
+    /// does not know.
+    @ObservationIgnored private var sourceNames: [String: String?] = [:]
 }

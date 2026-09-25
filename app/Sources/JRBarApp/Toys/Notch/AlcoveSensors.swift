@@ -63,6 +63,14 @@ final class NotchSensorMonitor {
     /// A poll already queued for this turn — a burst of edges (a call
     /// app starting its IO touches several processes at once) reads once.
     private var pollQueued = false
+    /// The reads are IPC to the audio and camera daemons — about 14 ms,
+    /// every edge and every safety tick — so they run here, never on the
+    /// main thread. Tests stand in their own reader.
+    nonisolated let readQueue = DispatchQueue(label: "jrbar.notch-sensors", qos: .utility)
+    var reader: @Sendable () -> NotchSensorState = { NotchSensorMonitor.read() }
+    /// A read on its way; an edge meanwhile asks for one more after it.
+    private var readInFlight = false
+    private var readAgain = false
 
     /// How many listeners are armed — the tests' window on the
     /// re-arming.
@@ -209,14 +217,37 @@ final class NotchSensorMonitor {
     }
 
     private func poll() {
-        let reading = Self.read()
-        guard reading != state else { return }
-        state = reading
-        onChange?(reading)
+        guard !readInFlight else {
+            readAgain = true
+            return
+        }
+        readInFlight = true
+        let read = reader
+        readQueue.async { [weak self] in
+            let reading = read()
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.land(reading) }
+            }
+        }
+    }
+
+    /// A read came back: an edge if it changed anything, and the read an
+    /// edge asked for while it was out.
+    private func land(_ reading: NotchSensorState) {
+        readInFlight = false
+        guard running else { return }
+        if reading != state {
+            state = reading
+            onChange?(reading)
+        }
+        if readAgain {
+            readAgain = false
+            poll()
+        }
     }
 
     /// The two reads as one snapshot.
-    static func read() -> NotchSensorState {
+    nonisolated static func read() -> NotchSensorState {
         NotchSensorState(microphoneInUse: microphoneInUse(),
                          cameraInUse: cameraInUse())
     }
@@ -224,13 +255,13 @@ final class NotchSensorMonitor {
     /// Whether another app is capturing from a microphone
     /// (`MicrophoneCapture`) — CoreAudio reads, no mic permission needed
     /// (running state isn't capture).
-    static func microphoneInUse() -> Bool {
+    nonisolated static func microphoneInUse() -> Bool {
         MicrophoneCapture.isLive()
     }
 
     /// Whether any camera is running somewhere. A machine with no
     /// cameras — or a read the system refuses — answers false.
-    static func cameraInUse() -> Bool {
+    nonisolated static func cameraInUse() -> Bool {
         var runningAddress = CMIOObjectPropertyAddress(
             mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
@@ -253,7 +284,7 @@ final class NotchSensorMonitor {
     /// visualizer's tap is never named beside the call. Observation
     /// only, like the dot: no device is opened. Empty when the system
     /// refuses the read.
-    static func microphoneClientPIDs() -> [pid_t] {
+    nonisolated static func microphoneClientPIDs() -> [pid_t] {
         MicrophoneCapture.capturingPIDs()
     }
 
@@ -261,7 +292,7 @@ final class NotchSensorMonitor {
     /// process's owning app where macOS says (a browser's audio helper
     /// reads as the browser), else the executable's name. JR-Bar itself
     /// is never listed.
-    static func microphoneClientNames() -> [String] {
+    nonisolated static func microphoneClientNames() -> [String] {
         let me = ProcessInfo.processInfo.processIdentifier
         return microphoneClientPIDs().filter { $0 != me }.compactMap { pid in
             if let app = NSRunningApplication(processIdentifier: pid) {
@@ -276,7 +307,7 @@ final class NotchSensorMonitor {
     }
 
     /// The card's privacy line as of now — nil while nothing is live.
-    static func privacyLineNow() -> String? {
+    nonisolated static func privacyLineNow() -> String? {
         let state = read()
         guard state.anyInUse else { return nil }
         return state.privacyLine(microphoneApps: state.microphoneInUse ? microphoneClientNames() : [])
@@ -284,7 +315,7 @@ final class NotchSensorMonitor {
 
     /// Every camera CoreMediaIO lists — empty on a machine with none, or
     /// a read the system refuses.
-    static func cameraDevices() -> [CMIOObjectID] {
+    nonisolated static func cameraDevices() -> [CMIOObjectID] {
         var listAddress = CMIOObjectPropertyAddress(
             mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),

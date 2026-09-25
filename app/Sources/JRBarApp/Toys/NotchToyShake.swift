@@ -32,7 +32,19 @@ extension NotchToy {
     var shakeYieldingTo: [UtilityRivals.Rival] {
         _ = workspaceVersion
         guard settings.shelfYieldToRivals else { return [] }
-        return shelfRivalsRunning()
+        return shelfRivalsNow()
+    }
+
+    /// The running shelf rivals, asked once per app launch or quit. The
+    /// question lists every running app through LaunchServices — 13 ms
+    /// on the main thread, up to 96 — and `reconcile` used to ask it on
+    /// every daemon doc. Nothing but a launch or a quit can change the
+    /// answer, and both bump `workspaceVersion`.
+    func shelfRivalsNow() -> [UtilityRivals.Rival] {
+        if let memo = shelfRivalsMemo, memo.version == workspaceVersion { return memo.rivals }
+        let rivals = shelfRivalsRunning()
+        shelfRivalsMemo = (workspaceVersion, rivals)
+        return rivals
     }
 
     /// Shake-summon rides the island's own lifecycle: the monitors
@@ -41,10 +53,11 @@ extension NotchToy {
     /// app that owns the shake launches. A launch or a quit re-runs
     /// this (`NotchToy`'s workspace watch).
     func syncShakeMonitor() {
+        let settings = settings
         let wanted = Self.wantsShakeMonitor(
             runtimeEnabled: runtimeEnabled, settings: settings,
             drawingIsland: isDrawingIsland, islandVisible: islandVisible,
-            rivalsRunning: settings.shelfYieldToRivals && !shelfRivalsRunning().isEmpty)
+            rivalsRunning: settings.shelfYieldToRivals && !shelfRivalsNow().isEmpty)
         if wanted, shakeDragMonitor == nil {
             shakeDragMonitor = installShakeMonitor(.leftMouseDragged) { [weak self] event in
                 let x = NSEvent.mouseLocation.x

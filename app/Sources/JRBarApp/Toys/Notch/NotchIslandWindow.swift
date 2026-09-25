@@ -420,8 +420,21 @@ final class NotchIslandWindow: NSPanel {
     /// hosting view — the window's frame is sized by the toy before the
     /// card is on screen, so the layout answers off-screen.
     func expandedCardHeight(width: CGFloat) -> CGFloat {
+        measureCard(width: width, pinnedLayout: false)
+    }
+
+    /// Lays the probe out as the grown card before the card is pinned —
+    /// the hover's pause, or once after launch — so the grow's own frame
+    /// measures a card the probe already built rather than building it.
+    /// The window's own face is untouched.
+    func prewarmExpandedCard(width: CGFloat) {
+        _ = measureCard(width: width, pinnedLayout: true)
+    }
+
+    private func measureCard(width: CGFloat, pinnedLayout: Bool) -> CGFloat {
         guard let toy else { return 0 }
-        let view = NotchCardView(model: toy.cardModel, style: .island, width: width)
+        let view = NotchCardView(model: toy.cardModel, style: .island, width: width,
+                                 pinnedLayout: pinnedLayout)
         // One probe for the window's life — `reconcile` re-measures on
         // every sessions doc, and a fresh hosting view per pass is a
         // whole SwiftUI tree built to be thrown away.

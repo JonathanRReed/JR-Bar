@@ -52,8 +52,17 @@ final class NotchToy: Toy {
     /// media-key tap as the notch gates move.
     var onMediaGateChanged: @MainActor () -> Void = {}
     /// Bumped on every app launch/terminate so the external-provider
-    /// checks re-read `NSWorkspace`.
+    /// checks re-read `NSWorkspace` — and the only thing that renews the
+    /// shelf rivals answer (`shelfRivalsNow`).
     private(set) var workspaceVersion = 0
+
+    /// An app launched or quit: the external-provider checks re-read,
+    /// and Dropover opening or quitting moves the shake's yield at once.
+    /// Internal so the tests can stand in for the workspace's note.
+    func noteWorkspaceChange() {
+        workspaceVersion += 1
+        syncShakeMonitor()
+    }
     /// Bumped on display-parameter changes so the island reframes.
     private(set) var displayVersion = 0
     /// Whether the island panel is ordered in — the view's pulse pauses
@@ -219,6 +228,9 @@ final class NotchToy: Toy {
         }
         wireLyrics(cardModel.utility.lyrics)
         cardModel.heldAwake = { [weak self] in self?.core.state?.power?.keepAwake == true }
+        // The card's privacy line starts from the monitor's reading: no
+        // CoreAudio read of its own on the frame the island grows.
+        cardModel.knownSensors = { [weak self] in self?.liveSensorReading }
         // A due timer morphs the island into its capsule, and a nudge
         // about a run only speaks while that run is still working.
         cardModel.timers.onFireNotice = { [weak self] entry in
@@ -257,11 +269,7 @@ final class NotchToy: Toy {
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.workspaceVersion += 1
-                    // Dropover opening or quitting moves the shake's yield.
-                    self?.syncShakeMonitor()
-                }
+                MainActor.assumeIsolated { self?.noteWorkspaceChange() }
             })
         }
         observers.append(NotificationCenter.default.addObserver(
@@ -707,11 +715,14 @@ final class NotchToy: Toy {
                     expandWork = work
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay,
                                                  execute: work)
+                    armPrewarm(before: delay)
                 }
             }
         } else {
             expandWork?.cancel()
             expandWork = nil
+            prewarmWork?.cancel()
+            prewarmWork = nil
             if !islandExpanded {
                 reframeCurrent(
                     animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -725,7 +736,48 @@ final class NotchToy: Toy {
     /// a held hover grows at all.
     private func hoverExpandFired() {
         expandWork = nil
+        prewarmWork?.cancel()
+        prewarmWork = nil
         applyHover()
+    }
+
+    // MARK: Prewarm
+
+    /// How long a pointer rests before the card is got ready — past a
+    /// cursor sweeping across the notch, well inside the hover's pause.
+    static let prewarmDelay: TimeInterval = 0.04
+    /// How long after the island first shows its card is built once.
+    static let launchPrewarmDelay: TimeInterval = 3
+    @ObservationIgnored var prewarmWork: DispatchWorkItem?
+
+    /// The hover's pause before the grow is idle time: a pointer still
+    /// resting after `prewarmDelay` gets the card's rows fed and the
+    /// grown card measured then, so the grow's own frame only flips the
+    /// island's face. Nothing private is read: the calendar, reminders
+    /// and who holds the microphone wait for the pin, as before.
+    private func armPrewarm(before delay: TimeInterval) {
+        prewarmWork?.cancel()
+        prewarmWork = nil
+        guard delay > Self.prewarmDelay * 1.5 else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.prewarmWork = nil
+                guard self.hoverHeld else { return }
+                self.prewarmCard()
+            }
+        }
+        prewarmWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.prewarmDelay, execute: work)
+    }
+
+    /// Feed the card and measure it grown, ahead of the grow. Internal
+    /// so the perf harness and the tests can run it without a pointer.
+    func prewarmCard() {
+        guard isDrawingIsland, !islandExpanded, let island,
+              activeCapsule == nil, activeOverlay == nil else { return }
+        feedCard()
+        island.prewarmExpandedCard(width: expandedCardWidth)
     }
 
     /// The leave debounce a hover-grown card folds on — shared by the
@@ -953,9 +1005,19 @@ final class NotchToy: Toy {
     @ObservationIgnored var removeShakeMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
     /// The shelf apps that own the same shake, running now
     /// (`UtilityRivals`, `.shelfGesture`); a test hands in its own list.
-    @ObservationIgnored var shelfRivalsRunning: @MainActor () -> [UtilityRivals.Rival] = {
+    /// Asked through `shelfRivalsNow`, once per launch or quit.
+    var shelfRivalsRunning: @MainActor () -> [UtilityRivals.Rival] {
+        get { shelfRivalsReader }
+        set {
+            shelfRivalsReader = newValue
+            shelfRivalsMemo = nil
+        }
+    }
+    @ObservationIgnored private var shelfRivalsReader: @MainActor () -> [UtilityRivals.Rival] = {
         UtilityRivals.running(for: .shelfGesture)
     }
+    /// The last rivals answer and the `workspaceVersion` it was read at.
+    @ObservationIgnored var shelfRivalsMemo: (version: Int, rivals: [UtilityRivals.Rival])?
     /// The app in front while the pointer shakes — the exclusion list's
     /// read.
     @ObservationIgnored var shakeFrontmostApp: @MainActor () -> String? = {
@@ -1091,16 +1153,20 @@ final class NotchToy: Toy {
         if let focus = cardFocus() { cardModel.focus = focus }
         let summary = islandSummary
         cardModel.rows = summary.rows.filter { $0.id != cardModel.focus.focusSession }
-        // Where each live local session works — the shelf gathers its
-        // files under its name.
-        let homes = summary.rows.compactMap { row -> ShelfTrayModel.SessionHome? in
+        let homes = sessionHomes(summary)
+        if cardModel.tray.sessionHomes != homes { cardModel.tray.sessionHomes = homes }
+        cardModel.workingCount = summary.working
+        cardModel.meters = settings.showUsage ? NotchIsland.meters(core.state?.usage) : []
+    }
+
+    /// Where each live local session works — the shelf gathers its files
+    /// under its name.
+    private func sessionHomes(_ summary: NotchIslandSummary) -> [ShelfTrayModel.SessionHome] {
+        summary.rows.compactMap { row -> ShelfTrayModel.SessionHome? in
             guard !CoreSession.isRemoteID(row.id),
                   let cwd = core.state?.session(withID: row.id)?.cwd, !cwd.isEmpty else { return nil }
             return ShelfTrayModel.SessionHome(id: row.id, label: row.label, root: cwd)
         }
-        if cardModel.tray.sessionHomes != homes { cardModel.tray.sessionHomes = homes }
-        cardModel.workingCount = summary.working
-        cardModel.meters = settings.showUsage ? NotchIsland.meters(core.state?.usage) : []
     }
 
     /// Hover on the island grows it — the full card, its Open and
@@ -1130,9 +1196,10 @@ final class NotchToy: Toy {
     /// to see (a session row's label settling by a point) applies
     /// without animation — animating a sub-2 pt delta reads as jitter.
     /// A morph landing mid-pull owns the frame: the pull lets go
-    /// without a verdict rather than fight the spring.
-    func reframe(_ face: NotchIslandFace, animated: Bool) {
-        guard let frame = islandFrame(face: face) else { return }
+    /// without a verdict rather than fight the spring. `measured` is
+    /// `face`'s frame when the caller already took it.
+    func reframe(_ face: NotchIslandFace, measured: NSRect? = nil, animated: Bool) {
+        guard let frame = measured ?? islandFrame(face: face) else { return }
         guard frame != desiredFrame else { return }
         if pullActive {
             pullActive = false
@@ -1213,6 +1280,10 @@ final class NotchToy: Toy {
     /// ordered in and framed while the island is ours, enabled and shown;
     /// fully ordered out otherwise — a parked island runs no timers.
     private func reconcile() {
+        reconcileCount += 1
+        // What this pass leaves behind is what the next doc is measured
+        // against — taken at the end, after the pass moved what it moves.
+        defer { reconciledInputs = reconcileInputs }
         guard runtimeEnabled else { return }
         publishRenderer()
         // The shelf's switch reaches the surfaces that offer to shelve a
@@ -1247,12 +1318,24 @@ final class NotchToy: Toy {
         // unless this open summoned it.
         cardModel.mirror.sync(enabled: cardModel.pinned && settings.mirror && cardModel.mirrorSummoned)
         let s = settings
+        // The frame the guard measures is the one `reframe` would measure
+        // again — for the grown card, a second layout of the height
+        // probe. Reused whenever the window already existed to measure it.
+        let measuredWithWindow = island != nil
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
-              islandFrame(face: currentFace) != nil else {
+              let frame = islandFrame(face: currentFace) else {
             parkIsland()
             return
         }
-        if island == nil { island = NotchIslandWindow(toy: self) }
+        if island == nil {
+            island = NotchIslandWindow(toy: self)
+            // The first grow in a process builds everything the card
+            // draws for the first time — 65 ms. Pay it once, a moment
+            // after launch, into the windowless probe.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.launchPrewarmDelay) { [weak self] in
+                MainActor.assumeIsolated { self?.prewarmCard() }
+            }
+        }
         // Content-driven size changes — a dot arriving, the media strip
         // coming or going, the grown card's rows refilling — ease like
         // any face morph: `reframe` keeps the no-change guard and the
@@ -1260,7 +1343,7 @@ final class NotchToy: Toy {
         // in-flight morph the doc churn used to kill. `applyFrame`
         // itself snaps while the window is ordered out, so a first
         // show still lands unanimated.
-        reframe(currentFace,
+        reframe(currentFace, measured: measuredWithWindow ? frame : nil,
                 animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         if island?.isVisible != true {
             island?.orderFrontRegardless()
@@ -1299,6 +1382,8 @@ final class NotchToy: Toy {
         island?.cancelSpring()
         expandWork?.cancel()
         expandWork = nil
+        prewarmWork?.cancel()
+        prewarmWork = nil
         peekWork?.cancel()
         peekWork = nil
         // A parked island forgets it was shake-summoned — the pending
@@ -1803,6 +1888,7 @@ final class NotchToy: Toy {
             mediaToken = nil
             if islandMedia != nil {
                 islandMedia = nil
+                noteIslandArtwork(nil)
                 reframeCurrent(animated: false)
             }
         }
@@ -1815,10 +1901,31 @@ final class NotchToy: Toy {
     func noteMedia(_ media: AlcoveMedia?) {
         guard media != islandMedia else { return }
         islandMedia = media
+        noteIslandArtwork(media?.artworkData)
         if currentFace != .notice {
             reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         }
         syncAudioTap()
+    }
+
+    /// The idle strip's cover, decoded once off the main thread
+    /// (`NotchArtworkStore`) — the strip draws it on every breath tick.
+    private(set) var islandArtwork: NSImage?
+    /// The cover `islandArtwork` was made from.
+    @ObservationIgnored private var islandArtworkSource: Data?
+
+    private func noteIslandArtwork(_ data: Data?) {
+        guard data != islandArtworkSource else { return }
+        islandArtworkSource = data
+        guard let data else {
+            islandArtwork = nil
+            return
+        }
+        // A headless toy (tests, render proofs) draws in the same turn.
+        NotchArtworkStore.shared.art(for: data, inline: !runtimeEnabled) { [weak self] art in
+            guard let self, self.islandArtworkSource == data else { return }
+            self.islandArtwork = art?.image
+        }
     }
 
     /// The island's swipe transport lands here.
@@ -1897,6 +2004,13 @@ final class NotchToy: Toy {
     /// the Screen Bar's camera hold has a camera to hold on only then.
     private(set) var sensorsReading = false
 
+    /// The monitor's own reading while it runs, whatever the dots'
+    /// switch says; nil while no monitor reads.
+    var liveSensorReading: NotchSensorState? {
+        guard let monitor = sensorMonitor, monitor.running else { return nil }
+        return monitor.state
+    }
+
     /// Whether any surface can draw the dots right now: the island's own
     /// face when the ears are not drawn, or a surface that asked.
     var sensorsDrawable: Bool {
@@ -1974,7 +2088,10 @@ final class NotchToy: Toy {
     }
 
     /// One observation pass over every input, re-armed on each change —
-    /// the same pattern `NotchBuddyToy.observeSessions` uses.
+    /// the same pattern `NotchBuddyToy.observeSessions` uses. `sessions`
+    /// and `asks` hang off the whole `state` document, so every doc the
+    /// daemon sends wakes this; `noteInputsChanged` decides whether it
+    /// moved anything the notch shows.
     private func observe() {
         guard runtimeEnabled else { return }
         withObservationTracking {
@@ -1988,12 +2105,71 @@ final class NotchToy: Toy {
             _ = displayVersion
             _ = cardModel.mirror.state    // the lens going live grows the card to hold it
             _ = cardModel.page            // a page turn re-measures the card
+            _ = cardModel.privacyLine     // the off-main privacy read lands after the grow; re-measure
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.runtimeEnabled else { return }
-                self.reconcile()
+                self.noteInputsChanged()
                 self.observe()
             }
+        }
+    }
+
+    // MARK: Reconcile gate
+
+    /// What `reconcile` reads from the inputs `observe` watches, reduced
+    /// to what the notch shows: the island's summary rather than the raw
+    /// sessions (a working session's `updated_at`, tool and message move
+    /// on nearly every doc), the meters rather than the usage document
+    /// (its refresh stamp moves every time). While the card is grown it
+    /// also carries what `feedCard` refills the card from.
+    var reconcileInputs: NotchReconcileInputs {
+        let settings = settings
+        let summary = islandSummary
+        var inputs = NotchReconcileInputs(
+            notch: settings,
+            summary: summary,
+            asks: core.asks,
+            meters: settings.showUsage ? NotchIsland.meters(core.state?.usage) : [],
+            focus: core.state?.focus,
+            settingsDocument: core.settings?.document,
+            screenBarShown: screenBarShown(),
+            displayVersion: displayVersion,
+            mirror: cardModel.mirror.state,
+            page: cardModel.page)
+        if islandExpanded {
+            inputs.card = NotchReconcileInputs.Card(focus: cardFocus(), homes: sessionHomes(summary))
+        }
+        return inputs
+    }
+
+    /// The inputs the last `reconcile` left behind.
+    @ObservationIgnored private(set) var reconciledInputs: NotchReconcileInputs?
+    /// How many times `reconcile` has run — the tests' window on the gate.
+    @ObservationIgnored private(set) var reconcileCount = 0
+
+    /// An input `observe` watches changed. Most `state` docs change
+    /// nothing the notch shows, and a full `reconcile` on each one landed
+    /// a 13–26 ms stall in whatever the island was animating; those skip
+    /// it. The two checks that age on their own still run on every doc:
+    /// an ask capsule whose ask never reached the state steps down after
+    /// its grace, and a quiet stretch that ended while it could not be
+    /// said gets said. Internal so the tests can drive it without a
+    /// runtime.
+    func noteInputsChanged() {
+        guard reconcileInputs == reconciledInputs else {
+            reconcile()
+            return
+        }
+        noteAskState()
+        noteQuietChange()
+        // The grown card's height also follows what no doc carries — a
+        // timer set, a file shelved, the weather landing — and every doc
+        // used to re-measure it. Still do: with nothing changed the probe
+        // answers from the layout it already has, and the frame guard
+        // makes an unchanged height no request at all.
+        if islandVisible, islandExpanded {
+            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         }
     }
 }

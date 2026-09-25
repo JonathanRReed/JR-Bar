@@ -37,8 +37,15 @@ final class ShelfCalendarModel {
     }
 
     private(set) var state: State = .needsPermission
-    private var store: EKEventStore?
     private var refreshTimer: Timer?
+    /// The permission as it stands; the tests hand in their own.
+    @ObservationIgnored var authorization: () -> EKAuthorizationStatus = {
+        EKEventStore.authorizationStatus(for: .event)
+    }
+    /// The EventKit read — synchronous, so it runs on `readQueue`, never
+    /// on the frame the card grows on. The tests hand in their own.
+    @ObservationIgnored var fetchEvents: @Sendable (Date) -> [Event] = { ShelfCalendarModel.fetchUpcoming(from: $0) }
+    nonisolated let readQueue = DispatchQueue(label: "jrbar.shelf-calendar", qos: .userInitiated)
     /// Bumps on `stop` — the async permission answer can land after the
     /// card unpinned, and a grant must not restart the refresh timer
     /// the stop just killed.
@@ -61,11 +68,9 @@ final class ShelfCalendarModel {
             state = .hidden
             return
         }
-        switch EKEventStore.authorizationStatus(for: .event) {
+        switch authorization() {
         case .fullAccess:
-            let store = self.store ?? EKEventStore()
-            self.store = store
-            loadNext(from: store)
+            loadNext()
         case .denied, .restricted:
             state = .hidden
         default:
@@ -73,19 +78,45 @@ final class ShelfCalendarModel {
         }
     }
 
-    /// The next few timed events in the lookahead window. An empty list
-    /// is an honest "nothing upcoming" — the row says so rather than
-    /// hiding a stale event.
-    private func loadNext(from store: EKEventStore) {
-        let now = Date()
-        let predicate = store.predicateForEvents(withStart: now, end: now.addingTimeInterval(Self.lookahead),
-                                                 calendars: nil)
-        let timed = store.events(matching: predicate)
-            .filter { !$0.isAllDay }
-            .map(Self.project)
-        let next = Self.upcoming(timed, now: now, limit: Self.eventLimit)
-        state = next.isEmpty ? .idle : .events(next)
+    /// The next few timed events in the lookahead window, read off the
+    /// main thread; the row keeps the last reading until it lands. An
+    /// empty list is an honest "nothing upcoming" — the row says so
+    /// rather than hiding a stale event. A reading that lands after the
+    /// card folded (`stop` bumped the epoch) is dropped.
+    private func loadNext() {
+        let epoch = self.epoch
+        let fetch = fetchEvents
+        readQueue.async { [weak self] in
+            let now = Date()
+            let next = ShelfCalendarModel.upcoming(fetch(now), now: now, limit: ShelfCalendarModel.eventLimit)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.epoch == epoch else { return }
+                    self.state = next.isEmpty ? .idle : .events(next)
+                }
+            }
+        }
         scheduleRefresh()
+    }
+
+    /// One store for the glance's reads, made and used on a model's
+    /// `readQueue` only (`fetchUpcoming` runs nowhere else). Two cards
+    /// fetch on two queues, so the lock serializes them against the
+    /// shared store.
+    nonisolated(unsafe) private static var readStore: EKEventStore?
+    nonisolated private static let readStoreLock = NSLock()
+
+    /// The timed events in the lookahead window from `now`, projected.
+    nonisolated static func fetchUpcoming(from now: Date) -> [Event] {
+        readStoreLock.lock()
+        defer { readStoreLock.unlock() }
+        let store = readStore ?? EKEventStore()
+        readStore = store
+        let predicate = store.predicateForEvents(withStart: now, end: now.addingTimeInterval(lookahead),
+                                                 calendars: nil)
+        return store.events(matching: predicate)
+            .filter { !$0.isAllDay }
+            .map(project)
     }
 
     /// Soonest first, ended ones out (a meeting still running stays —
@@ -98,10 +129,7 @@ final class ShelfCalendarModel {
     private func scheduleRefresh() {
         refreshTimer?.invalidate()
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let store = self.store else { return }
-                self.loadNext(from: store)
-            }
+            MainActor.assumeIsolated { self?.loadNext() }
         }
         timer.tolerance = 10
         RunLoop.main.add(timer, forMode: .common)

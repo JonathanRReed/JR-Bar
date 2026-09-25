@@ -655,13 +655,31 @@ public enum NotchMotion {
     /// Dismissal reverses the move, a touch quicker than the entrance.
     public static let noticeFadeOut: TimeInterval = 0.14
 
-    /// The expanded card's content follows its frame: rows wait until
-    /// the spring has carried the frame this far toward the target,
-    /// then fade in staggered — frame leads, content follows.
-    public static let contentRevealThreshold: CGFloat = 0.85
-    public static let rowStagger: TimeInterval = 0.03
+    /// The expanded card's content follows its frame: the header is
+    /// there from the grow's first frame, and the rows under it wait
+    /// until the spring has carried the frame this far toward the
+    /// target, then fade in staggered — frame leads, content follows.
+    public static let contentRevealThreshold: CGFloat = 0.6
+    /// The gap between two rows starting their fade.
+    public static let rowStagger: TimeInterval = 0.02
+    /// The most gaps the stagger takes: a long card's later rows share
+    /// the last step rather than trail in one by one.
+    public static let rowStaggerSteps = 6
     /// One row's own fade once its stagger lands.
-    public static let rowFade: TimeInterval = 0.18
+    public static let rowFade: TimeInterval = 0.12
+
+    /// When the row at `step` starts its fade, counted from the reveal.
+    /// `step` is the row's place among the rows the card draws right
+    /// now, the header not among them.
+    public static func rowRevealDelay(step: Int) -> TimeInterval {
+        let capped = min(max(0, step), rowStaggerSteps)
+        return Double(capped) * rowStagger
+    }
+
+    /// How long after the reveal the card's last row is opaque.
+    public static var revealSpan: TimeInterval {
+        rowRevealDelay(step: rowStaggerSteps) + rowFade
+    }
 
     /// Reduce Motion's whole vocabulary: a quiet crossfade, no travel.
     public static let reduceMotionFade: TimeInterval = 0.15

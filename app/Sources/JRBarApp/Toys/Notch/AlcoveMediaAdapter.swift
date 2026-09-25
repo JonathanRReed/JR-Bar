@@ -51,8 +51,13 @@ final class AlcoveMediaAdapter {
     private var process: Process?
     private var stdin: FileHandle?
     private var stdout: FileHandle?
-    /// Partial-line carry between readability callbacks.
-    private var pending = Data()
+    /// Splits and parses the helper's output off the main thread; a new
+    /// one per launch, so a dead helper's last chunk never reaches the
+    /// next.
+    private var reader: AlcoveMediaLineReader?
+    /// The live reader's token: lines still in flight from a stopped
+    /// helper are dropped rather than read as the new one's.
+    private var readerToken: UUID?
     /// The first line's timer: a live helper prints `null` immediately,
     /// so silence past this means the path is dead.
     private var watchdog: DispatchWorkItem?
@@ -107,7 +112,6 @@ final class AlcoveMediaAdapter {
     func start() {
         guard !running else { return }
         running = true
-        pending = Data()
         guard perlIsInstalled, let dylib = materialize() else {
             fail(perlIsInstalled ? "the helper dylib could not be written" : "no /usr/bin/perl")
             return
@@ -125,11 +129,20 @@ final class AlcoveMediaAdapter {
                 MainActor.assumeIsolated { self?.terminated() }
             }
         }
-        out.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
+        // A line carries the cover as base64 — up to 600 KB — and the
+        // helper re-sends it with every play, pause and seek. The JSON
+        // and the cover are read on the reader's queue; only the parsed
+        // track reaches the main thread.
+        let token = UUID()
+        let reader = AlcoveMediaLineReader { [weak self] media in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.consume(chunk) }
+                MainActor.assumeIsolated { self?.deliver(media, from: token) }
             }
+        }
+        self.reader = reader
+        readerToken = token
+        out.fileHandleForReading.readabilityHandler = { handle in
+            reader.feed(handle.availableData)
         }
         do {
             try process.run()
@@ -177,6 +190,8 @@ final class AlcoveMediaAdapter {
         watchdog = nil
         stdout?.readabilityHandler = nil
         stdout = nil
+        reader = nil
+        readerToken = nil
         let process = self.process
         self.process = nil
         stdin = nil
@@ -204,6 +219,8 @@ final class AlcoveMediaAdapter {
         watchdog = nil
         stdout?.readabilityHandler = nil
         stdout = nil
+        reader = nil
+        readerToken = nil
         process?.terminationHandler = nil
         process?.terminate()
         process = nil
@@ -211,14 +228,12 @@ final class AlcoveMediaAdapter {
         onFailure?()
     }
 
-    /// Append the chunk, split whole lines, parse each into a media.
-    private func consume(_ chunk: Data) {
-        guard running else { return }
-        pending.append(chunk)
-        while let newline = pending.firstIndex(of: UInt8(ascii: "\n")) {
-            let line = pending.prefix(upTo: newline)
-            pending = pending.subdata(in: pending.index(after: newline)..<pending.endIndex)
-            let media = Self.parse(line)
+    /// Lines the reader parsed, in order, on the main thread: the
+    /// evidence trail, the watchdog, the change.
+    private func deliver(_ lines: [AlcoveMedia?], from token: UUID) {
+        guard token == readerToken else { return }
+        for media in lines {
+            guard running else { return }
             let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
             if !sawFirstLine {
                 Self.log.info("Now Playing: \(Self.firstLineNote(after: elapsed, track: media != nil), privacy: .public)")
@@ -239,11 +254,83 @@ final class AlcoveMediaAdapter {
     /// One JSON line → media. `null` (or a payload without a title) is
     /// the helper's "nothing playing"; an unparseable line is shrugged
     /// into nil the same way — the island simply shows no media.
-    static func parse(_ line: Data) -> AlcoveMedia? {
+    nonisolated static func parse(_ line: Data) -> AlcoveMedia? {
+        var cover: AlcoveMediaLineReader.Cover?
+        return parse(line, cover: &cover)
+    }
+
+    /// The same, reusing the last line's cover: a line whose artwork
+    /// string is the one before's takes that line's bytes — no second
+    /// base64 decode, and the same `Data`, which later compares cost
+    /// nothing. `cover` is updated to this line's.
+    nonisolated static func parse(_ line: Data, cover: inout AlcoveMediaLineReader.Cover?) -> AlcoveMedia? {
         let trimmed = line.drop(while: { $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\t") })
         guard !trimmed.isEmpty, trimmed != Data("null".utf8) else { return nil }
         guard let object = try? JSONSerialization.jsonObject(with: trimmed),
-              let payload = object as? [String: Any] else { return nil }
-        return AlcoveMedia.summarize(adapter: payload)
+              var payload = object as? [String: Any] else { return nil }
+        var artwork: Data?
+        if let encoded = payload["artworkData"] as? NSString {
+            payload["artworkData"] = nil
+            if let last = cover, last.encoded.isEqual(to: encoded as String) {
+                artwork = last.data
+            } else {
+                artwork = Data(base64Encoded: encoded as String)
+                cover = artwork.map { AlcoveMediaLineReader.Cover(encoded: encoded, data: $0) }
+            }
+        }
+        var media = AlcoveMedia.summarize(adapter: payload)
+        media?.artworkData = artwork
+        return media
+    }
+}
+
+/// The helper's stdout, split into lines and parsed on a queue of its
+/// own. `feed` takes each chunk as the pipe hands it over, from any
+/// thread; `deliver` gets every whole line's media, in order.
+final class AlcoveMediaLineReader: @unchecked Sendable {
+    /// The last line's cover: its base64 text and its bytes.
+    struct Cover {
+        let encoded: NSString
+        let data: Data
+    }
+
+    private let queue = DispatchQueue(label: "jrbar.alcove-media-reader", qos: .userInitiated)
+    private let deliver: @Sendable ([AlcoveMedia?]) -> Void
+    /// Only ever touched on `queue`.
+    private var pending = Data()
+    private var cover: Cover?
+
+    init(deliver: @escaping @Sendable ([AlcoveMedia?]) -> Void) {
+        self.deliver = deliver
+    }
+
+    func feed(_ chunk: Data) {
+        queue.async { self.consume(chunk) }
+    }
+
+    /// Waits for every chunk fed so far — the tests' way to read the
+    /// result in the same turn.
+    func drain() {
+        queue.sync {}
+    }
+
+    /// Append the chunk, split whole lines, parse each into a media. The
+    /// newline search starts where the last chunk ended, so a long line
+    /// arriving in many chunks is scanned once.
+    private func consume(_ chunk: Data) {
+        let searchFrom = pending.endIndex
+        pending.append(chunk)
+        var lines: [AlcoveMedia?] = []
+        var start = pending.startIndex
+        var from = searchFrom
+        while let newline = pending[from...].firstIndex(of: UInt8(ascii: "\n")) {
+            lines.append(AlcoveMediaAdapter.parse(pending[start..<newline], cover: &cover))
+            start = pending.index(after: newline)
+            from = start
+        }
+        if start != pending.startIndex {
+            pending = pending.subdata(in: start..<pending.endIndex)
+        }
+        if !lines.isEmpty { deliver(lines) }
     }
 }

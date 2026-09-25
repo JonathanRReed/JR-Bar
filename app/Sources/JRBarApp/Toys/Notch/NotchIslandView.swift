@@ -329,7 +329,9 @@ struct NotchIslandView: View {
     private func mediaStrip(_ media: AlcoveMedia) -> some View {
         HStack(spacing: 5) {
             Group {
-                if let data = media.artworkData, let artwork = NSImage(data: data) {
+                // The cover decoded once, small, off the main thread —
+                // this strip redraws on every breath tick.
+                if media.artworkData != nil, let artwork = toy.islandArtwork {
                     Image(nsImage: artwork)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
