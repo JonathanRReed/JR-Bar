@@ -79,8 +79,9 @@ extension MenuBarUtility {
     /// hider paints this pass were cut against its frame from before it
     /// settled: `onPlan` builds the cover runs before `syncConcealer`
     /// seats the mirror, and a face change re-seats it with no plan at
-    /// all. A merged run could then span the new seat, and a shutter at
-    /// the mirror's own level paint over the icon until the next scan.
+    /// all. A merged run could then span the new seat and pave the
+    /// stretch under the icon until the next scan (the icon stands a
+    /// level above the covers, so the run never paints over it).
     /// One reconcile on the next run-loop turn re-cuts them around the
     /// settled frame. Only one: a seat that moves again inside that pass
     /// waits for the next pass of its own, so a re-cut never chains.
@@ -290,7 +291,11 @@ extension MenuBarUtility {
     /// bridged click's lift, the start grace) the target counts as
     /// concealed, so a 0.45 s reflow never walks the icon — unless the
     /// engine is failing to assert it: then macOS draws every target
-    /// app, and a seat that skipped them would stand on one.
+    /// app, and a seat that skipped them would stand on one. An item
+    /// under our own cover is blank bar too (`coverBlanked`): Passwords
+    /// ⌘-dragged left lands just left of JR-Bar's slim slot, and a seat
+    /// that counted its cover as drawn would stand the icon left of the
+    /// hole, putting the hidden item on the shown side.
     private func mirrorSeat(width: CGFloat, row: CGRect) -> CGFloat {
         let clear = mirrorClearOf()
         if settings().curation.mirrorSeat == .slot,
@@ -306,10 +311,12 @@ extension MenuBarUtility {
         let targetOnItsWay = concealer.map { !$0.isConcealing && !$0.activationFailing } ?? true
         let concealed = targetOnItsWay ? concealTarget() : (concealer?.concealedApps ?? [])
         let ourPID = ProcessInfo.processInfo.processIdentifier
+        let blank = Self.coverBlanked(coveredItems, revealed: hider.revealed)
         let drawn = (lastPlan.shown + lastPlan.hidden + lastPlan.alwaysHidden).filter { item in
             item.ownerPID != ourPID && Self.isForeignOwner(item.ownerName)
                 && item.bounds.intersects(row)
                 && !(item.bundleID.map { concealed.contains($0) } ?? false)
+                && !blank.contains(item.id)
         }.map(\.bounds)
         let seat = MenuBarIconMirror.seat(drawn: drawn, clearOf: clear, width: width, rowMaxX: row.maxX)
         if seat != lastMirrorSeat {
@@ -326,6 +333,26 @@ extension MenuBarUtility {
             }
         }
         return seat
+    }
+
+    /// The covered items whose cover stands right now: every one but
+    /// those in a revealed run, which macOS draws again while it shows —
+    /// then the icon stands clear of them. Pure so a test pins it.
+    nonisolated static func coverBlanked(_ covered: [String: MenuBarItemSection],
+                                         revealed: Set<MenuBarItemSection>) -> Set<String> {
+        Set(covered.filter { !revealed.contains($0.value) }.keys)
+    }
+
+    /// The mirror as a cover blocker: it breaks and trims the cover runs
+    /// so none paves the icon — unless it stands over a covered item
+    /// (`coverBlanked`). The mirror is clear, so that item's cover must
+    /// stay whole under it or the item's glyph shows through the icon;
+    /// the mirror stands a level above every cover, so the cover can
+    /// never paint over it. Only x is compared: the mirror's frame is
+    /// AppKit's, the items' Quartz's, and the two share x. Pure so a test
+    /// pins it.
+    nonisolated static func mirrorBlocker(_ mirror: CGRect, covered: [CGRect]) -> CGRect? {
+        covered.contains { $0.minX < mirror.maxX && $0.maxX > mirror.minX } ? nil : mirror
     }
 
     /// JR-Bar's own real item on the listing — the slot macOS reserves
@@ -806,6 +833,10 @@ extension MenuBarUtility {
             && onRow(item.bounds) && !agentOwned(item) { coverHidden.append(item) }
         for item in plan.alwaysHidden where listedIDs.contains(item.id)
             && onRow(item.bounds) && !agentOwned(item) { coverAlways.append(item) }
+        var covered: [String: MenuBarItemSection] = [:]
+        for item in coverHidden { covered[item.id] = .hidden }
+        for item in coverAlways { covered[item.id] = .alwaysHidden }
+        coveredItems = covered
         var blockers = plan.shown.map(\.bounds)
         if let boundary = host?.boundaryFrame { blockers.append(boundary) }
         // The island (notch plus shoulders — the ears' home) and the
@@ -816,8 +847,12 @@ extension MenuBarUtility {
         // two spaces share.
         if let island = ScreenBarGeometry.islandScreenRect { blockers.append(island) }
         // The mirror's frame from before this pass seats it: a seat
-        // that then moves re-plans the covers (`recutCovers`).
-        if let mirror = standingMirrorFrame { blockers.append(mirror) }
+        // that then moves re-plans the covers (`recutCovers`). Standing
+        // over a covered item it blocks nothing (`mirrorBlocker`).
+        if let mirror = standingMirrorFrame,
+           let blocker = Self.mirrorBlocker(mirror, covered: (coverHidden + coverAlways).map(\.bounds)) {
+            blockers.append(blocker)
+        }
         plan.hiddenCovers = MenuBarItemHider.coverRuns(covered: coverHidden, blockers: blockers)
         plan.alwaysHiddenCovers = MenuBarItemHider.coverRuns(covered: coverAlways, blockers: blockers)
         return plan

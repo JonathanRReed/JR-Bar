@@ -126,7 +126,10 @@ final class MenuBarIconMirror: NSPanel {
         // A panel in an app that is almost never active: the tooltip
         // must not wait for an activation that never comes.
         allowsToolTipsWhenApplicationIsInactive = true
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        // A level above the covers (`statusBar + 1`): the icon may stand
+        // over a covered item, whose cover must blank it under the clear
+        // face and never paint over the icon.
+        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         title = "JR-Bar Icon"
         content.onClick = { [weak self] click, view in self?.route(click, from: view) }

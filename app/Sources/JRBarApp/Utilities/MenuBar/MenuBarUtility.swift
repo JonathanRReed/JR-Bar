@@ -1565,6 +1565,12 @@ final class MenuBarUtility: Toy {
 
     @ObservationIgnored var coverRecutRunning = false
 
+    /// The items the last concealed plan gave a cover, by the section
+    /// whose cover it is — Apple's extras and bare helpers the agent
+    /// cannot take. While their cover stands the icon's seat reads them
+    /// as blank bar.
+    @ObservationIgnored var coveredItems: [String: MenuBarItemSection] = [:]
+
     /// Apps lifted out of the assertion for a moment, and until when: a
     /// tile's press stands its app alone while its menu is read, a
     /// watched item that changed stands alone for the rehide clock.

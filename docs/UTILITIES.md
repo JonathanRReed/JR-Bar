@@ -189,6 +189,13 @@ reorder). A drop on the icon itself does nothing.
   in System Settings › Menu Bar"), an Apple extra that took a
   cover, another display's bar, an app with several items ("Hid all of
   iStat Menus's items"), or a drop macOS did not take.
+- **A cover is blank bar to the icon.** An Apple extra ⌘-dragged left
+  lands just left of JR-Bar's slim slot and takes a cover there. The
+  icon's seat reads a covered item as blank, so the icon stays beside
+  the first shown item and stands over the cover rather than hopping
+  left of it. The icon stands a level above the covers, and a cover
+  under it stays whole so the item never shows through. While its run
+  is revealed the item draws again and the icon stands clear of it.
 - **Limits.** Apps hide as a whole (a platform limit Bartender, Thaw and
   Ice share). Only the main display's bar carries the icon. The start
   of a run (the 2.5 s adoption grace) learns nothing.

@@ -499,4 +499,68 @@ struct MenuBarIconMirrorTests {
         #expect(StatusItemController.itemLength(mirrored: true, hasLabel: false, spacer: 0,
                                                 stripWidth: 62, glyphWidth: 22, slotLength: nil) == floor)
     }
+
+    @MainActor
+    @Test("an item under our own cover is blank bar to the seat: Passwords ⌘-dragged left leaves the icon beside Wi-Fi")
+    func coveredItemIsBlank() throws {
+        // Off every screen, like the frozen-seat proof. Passwords took a
+        // cover just left of JR-Bar's slim slot, which stands between it
+        // and Wi-Fi.
+        let row = CGRect(x: 0, y: 40_000, width: 1512, height: 37)
+        func standing(_ id: String, x: CGFloat, width: CGFloat, bundle: String) -> MenuBarItem {
+            MenuBarItem(id: id, ownerPID: 700, ownerName: id,
+                        bounds: CGRect(x: x, y: 40_006.5, width: width, height: 24), title: nil, windowID: 0,
+                        identifier: nil, bundleID: bundle)
+        }
+        let wifi = standing("Wi-Fi", x: 1165, width: 22, bundle: "com.apple.MenuBarAgent")
+        let passwords = standing("Passwords", x: 1084, width: 39, bundle: "com.apple.Passwords.MenuBarExtra")
+        let utility = MenuBarUtility(runningBundleIDRead: { ["h.app"] })
+        utility.settings = {
+            MenuBarSettings(enabled: true, sections: ["Passwords": .hidden],
+                            concealedApps: ["h.app": .hidden], concealSeeded: true)
+        }
+        // The Agents strip's width: wider than the slim slot's gap, as on
+        // Jonathan's bar.
+        let host = Host()
+        let glyph = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in true }
+        host.face = MenuBarIconFace(image: glyph, length: 66)
+        utility.host = host
+        utility.concealer = MenuBarConcealer(backend: QuietBackend())
+        utility.mirrorPlacementOverride = { (row, 982) }
+        utility.iconMirror = utility.makeIconMirror()
+        defer { utility.iconMirror?.hide() }
+        utility.lastPlan.shown = [wifi]
+        utility.lastPlan.hidden = [passwords]
+        utility.coveredItems = ["Passwords": .hidden]
+        utility.updateIconMirror()
+        let seated = try #require(utility.standingMirrorFrame)
+        #expect(seated.maxX == wifi.bounds.minX - MenuBarIconMirror.itemGap, "flush left of Wi-Fi, over the cover")
+        #expect(seated.width > 42, "too wide for the slot's gap right of the hole")
+        #expect(passwords.bounds.maxX <= seated.maxX, "the covered hole is under the icon, never right of it")
+        // An item with no cover of ours is drawn: the icon stands clear.
+        utility.coveredItems = [:]
+        utility.updateIconMirror()
+        let clear = try #require(utility.standingMirrorFrame)
+        #expect(clear.maxX == passwords.bounds.minX - MenuBarIconMirror.itemGap)
+    }
+
+    @Test("a cover blanks its item unless its run is revealed; the icon trims the covers unless it stands on one")
+    func coverBlankAndBlocker() {
+        let covered: [String: MenuBarItemSection] = ["Passwords": .hidden, "Weather": .alwaysHidden]
+        #expect(MenuBarUtility.coverBlanked(covered, revealed: []) == ["Passwords", "Weather"])
+        #expect(MenuBarUtility.coverBlanked(covered, revealed: [.hidden]) == ["Weather"],
+                "a revealed run draws again, and the icon stands clear of it")
+        #expect(MenuBarUtility.coverBlanked(covered, revealed: [.hidden, .alwaysHidden]).isEmpty)
+        // The mirror's frame in AppKit space, the items' in Quartz: x only.
+        let mirror = CGRect(x: 1085, y: 925, width: 73, height: 24)
+        let passwords = MenuBarItem(id: "Passwords", ownerPID: 304, ownerName: "Passwords",
+                                    bounds: rect(1084, 39), title: nil, windowID: 0,
+                                    identifier: nil, bundleID: "com.apple.Passwords.MenuBarExtra")
+        #expect(MenuBarUtility.mirrorBlocker(mirror, covered: [passwords.bounds]) == nil)
+        #expect(MenuBarUtility.mirrorBlocker(mirror, covered: [rect(1000, 30)]) == mirror)
+        // Trimmed by the icon, Passwords' cover would vanish and its key
+        // show through the clear face; left whole it blanks it.
+        #expect(MenuBarItemHider.coverRuns(covered: [passwords], blockers: [mirror]).isEmpty)
+        #expect(MenuBarItemHider.coverRuns(covered: [passwords], blockers: []) == [1084...1123])
+    }
 }
