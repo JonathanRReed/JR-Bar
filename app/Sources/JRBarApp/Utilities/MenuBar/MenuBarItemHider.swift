@@ -271,6 +271,9 @@ final class MenuBarItemHider {
 
     /// The AX listing's refresh cadence driver.
     private var listingTask: Task<Void, Never>?
+    /// The `RunningApps` listener that tells the listing about launches
+    /// and quits.
+    private var runningAppsListener: Int?
     /// How often the AX listing re-scans while the utility runs.
     nonisolated static let listingInterval: TimeInterval = 2.0
     /// The menu-edge re-reads after an activation (`menuBarChangedHands`).
@@ -339,20 +342,14 @@ final class MenuBarItemHider {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.menuBarChangedHands() }
         })
-        // A launch or a quit changes who owns items: the next scan
-        // walks every app, and after a launch a few later ones do too,
-        // for the extra that draws late; the scans between ask only
-        // known owners.
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { MenuBarItemLister.noteLaunch() }
-        })
-        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { MenuBarItemLister.invalidateOwners() }
-        })
+        // A launch or a quit changes who owns items: the next scan asks
+        // the launched app, and a few later ones do too, for the extra
+        // that draws late; a quit app is nobody's owner. The running-app
+        // index hears helpers and agents the launch notification skips.
+        runningAppsListener = RunningApps.shared.addListener { change in
+            MenuBarItemLister.noteLaunch(pids: change.launched.map(\.pid))
+            MenuBarItemLister.noteQuit(pids: change.quit.map(\.pid))
+        }
         // The listing refreshes off-actor; each completed scan is a
         // reconcile. Skipped entirely without Accessibility — the
         // scan would only collect errors.
@@ -393,6 +390,8 @@ final class MenuBarItemHider {
         settleTask = nil
         menuEdgeTask?.cancel()
         menuEdgeTask = nil
+        if let runningAppsListener { RunningApps.shared.removeListener(runningAppsListener) }
+        runningAppsListener = nil
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
@@ -406,6 +405,7 @@ final class MenuBarItemHider {
         listingTask?.cancel()
         settleTask?.cancel()
         menuEdgeTask?.cancel()
+        if let runningAppsListener { RunningApps.shared.removeListener(runningAppsListener) }
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
             NSWorkspace.shared.notificationCenter.removeObserver(observer)

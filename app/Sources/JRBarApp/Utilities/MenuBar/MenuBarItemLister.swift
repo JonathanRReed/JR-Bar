@@ -319,45 +319,81 @@ enum MenuBarItemLister {
         return trusted
     }
 
-    /// The owners the last full scan found items for. A quick scan asks
-    /// only these — an Accessibility round trip to every running app
-    /// twice a second was the app's whole idle CPU.
+    /// The owners the last full scan found items for, plus any a later
+    /// scan found. A quick scan asks only these — an Accessibility round
+    /// trip to every running app twice a second was the app's whole idle
+    /// CPU.
     @MainActor
     private(set) static var axOwnerPIDs: Set<pid_t> = []
     @MainActor
     private static var lastFullScanAt = Date.distantPast
-    /// The full walks app launches asked for that are still to come.
+    /// The launched apps still to be asked, and when.
     @MainActor
-    private(set) static var launchWalksDue: [Date] = []
+    private(set) static var launchProbes = MenuBarLaunchProbes()
+    /// Apps that ran out of `MenuBarAX.quickTimeout` on the last scan:
+    /// the next one asks them again with the owners' longer wait.
+    @MainActor
+    private static var slowPIDs: Set<pid_t> = []
     /// How long a quick scan may stand in for a full one. A walk asks
     /// every running app — 140-odd Accessibility servers woken for a
-    /// handful of items — and launches and quits force one on their
-    /// own, so this only catches an app that adds its extra later (a
-    /// toggled preference, a call starting) with no launch to say so.
+    /// handful of items — so this only catches an app that adds its
+    /// extra later (a toggled preference, a call starting) with no
+    /// launch to say so.
     nonisolated static let fullScanInterval: TimeInterval = 120
-    /// After a launch, full walks this long after it too: an app draws
-    /// its extra anywhere from a beat to half a minute after the launch
-    /// notification, past the walk the launch itself forces.
+    /// After a launch, the launched app is asked again this long after
+    /// it: an app draws its extra anywhere from a beat to half a minute
+    /// after it starts.
     nonisolated static let launchWalkDelays: [TimeInterval] = [2, 10, 30]
 
     /// Forces the next scan to walk every app.
     @MainActor
     static func invalidateOwners() { lastFullScanAt = .distantPast }
 
-    /// An app launched: the next scan walks every app, and so does the
-    /// first scan after each of `launchWalkDelays`. The listing loop's
-    /// own cadence runs them — no timer of their own.
+    /// Apps launched: the next scan asks each of them, and so does the
+    /// first scan after each of `launchWalkDelays` — the launched apps
+    /// alone, not every running app, since only they can have brought a
+    /// new extra. The listing loop's own cadence runs them — no timer of
+    /// their own.
     @MainActor
-    static func noteLaunch(at now: Date = Date()) {
-        invalidateOwners()
-        launchWalksDue += launchWalkDelays.map { now.addingTimeInterval($0) }
+    static func noteLaunch(pids: [pid_t], at now: Date = Date()) {
+        for pid in pids { launchProbes.noteLaunch(pid, at: now) }
     }
 
-    /// Whether a scan at `now` walks every app: no owners known yet, the
-    /// last full walk `fullScanInterval` old, or a launch's walk due.
-    nonisolated static func walksAll(now: Date, lastFull: Date, ownersKnown: Bool,
-                                     launchWalksDue due: [Date]) -> Bool {
-        !ownersKnown || now.timeIntervalSince(lastFull) >= fullScanInterval || due.contains { $0 <= now }
+    /// Apps quit: they are nobody's owner any more, and nothing is left
+    /// to ask them. Their items leave with the next scan.
+    @MainActor
+    static func noteQuit(pids: [pid_t]) {
+        for pid in pids {
+            axOwnerPIDs.remove(pid)
+            slowPIDs.remove(pid)
+            launchProbes.noteQuit(pid)
+        }
+    }
+
+    /// Whether a scan at `now` walks every app: no owners known yet, or
+    /// the last full walk `fullScanInterval` old.
+    nonisolated static func walksAll(now: Date, lastFull: Date, ownersKnown: Bool) -> Bool {
+        !ownersKnown || now.timeIntervalSince(lastFull) >= fullScanInterval
+    }
+
+    /// What one scan asks, from the running apps: every app on a full
+    /// walk, else the known owners, the launched apps due a look and the
+    /// apps that ran out of time last scan. The owners and the retried
+    /// apps get `MenuBarAX.messagingTimeout`; everyone else the quick
+    /// one, except a launched app that can draw UI. Filtering comes
+    /// first and reads only the index — no app is asked anything here.
+    nonisolated static func scanTargets(apps: [RunningApp], walkAll: Bool, owners: Set<pid_t>,
+                                        launched: Set<pid_t>, slow: Set<pid_t>) -> [MenuBarAX.Target] {
+        apps.compactMap { app in
+            let pid = app.pid
+            let owner = owners.contains(pid) || slow.contains(pid)
+            let fresh = launched.contains(pid)
+            guard walkAll || owner || fresh else { return nil }
+            guard let name = app.name, !name.isEmpty else { return nil }
+            let patient = owner || (fresh && app.policy != .prohibited)
+            return MenuBarAX.Target(pid: pid, name: name, bundleID: app.bundleID,
+                                    timeout: patient ? MenuBarAX.messagingTimeout : MenuBarAX.quickTimeout)
+        }
     }
 
     /// Re-run the AX scan off the main actor and refill `axItems`.
@@ -371,36 +407,40 @@ enum MenuBarItemLister {
         defer { axScanInFlight = false }
         let rows = menuBarRows()
         let now = Date()
-        let walkAll = full || walksAll(now: now, lastFull: lastFullScanAt,
-                                       ownersKnown: !axOwnerPIDs.isEmpty, launchWalksDue: launchWalksDue)
+        let walkAll = full || walksAll(now: now, lastFull: lastFullScanAt, ownersKnown: !axOwnerPIDs.isEmpty)
         // Our own app stays in the scan: its extras (spacers, the agent
         // item, the combined item) list as protected, so they split
         // cover runs instead of disappearing under a merged one.
-        let targets = NSWorkspace.shared.runningApplications.compactMap { app -> MenuBarAX.Target? in
-            guard !app.isTerminated,
-                  let name = app.localizedName, !name.isEmpty else { return nil }
-            if !walkAll, !axOwnerPIDs.contains(app.processIdentifier) { return nil }
-            return MenuBarAX.Target(pid: app.processIdentifier, name: name,
-                                    bundleID: app.bundleIdentifier)
-        }
+        let launched = launchProbes.pids(dueAt: now)
+        let targets = scanTargets(apps: RunningApps.shared.apps, walkAll: walkAll, owners: axOwnerPIDs,
+                                  launched: launched, slow: slowPIDs)
         menuEdgeGeneration += 1
         let edgeToken = menuEdgeGeneration
         let ownerPID = menuBarOwnerApp()?.processIdentifier
         let scanned = await Task.detached {
-            (MenuBarAX.items(targets: targets, rows: rows),
+            (MenuBarAX.scan(targets: targets, rows: rows),
              ownerPID.flatMap { MenuBarAX.frontMenuRightEdge(pid: $0) })
         }.value
-        axItems = scanned.0
+        axItems = scanned.0.items
         // An edge re-read that started after this scan (the menu bar
         // changed hands mid-scan) saw the newer owner and stands.
         if edgeToken == menuEdgeGeneration { appMenuEdge = scanned.1 }
         axGeneration += 1
+        let found = Set(scanned.0.items.map(\.ownerPID))
         if walkAll {
-            axOwnerPIDs = Set(scanned.0.map(\.ownerPID))
+            axOwnerPIDs = found
             lastFullScanAt = now
-            launchWalksDue.removeAll { $0 <= now }
+        } else {
+            // A launched or retried app that answered with items is an
+            // owner from now on.
+            axOwnerPIDs.formUnion(found)
         }
-        return scanned.0
+        // Only a quick wait that ran out earns a retry; an app that
+        // outlasted the long one is left to the next full walk.
+        let quick = Set(targets.lazy.filter { $0.timeout < MenuBarAX.messagingTimeout }.map(\.pid))
+        slowPIDs = scanned.0.timedOut.intersection(quick).subtracting(found)
+        launchProbes.spend(dueAt: now)
+        return scanned.0.items
     }
 
     /// A listing begun after this call — never the snapshot a scan
@@ -433,4 +473,32 @@ enum MenuBarItemLister {
                      rows: menuBarRows(), bundleIDs: bundleIDs)
     }
 
+}
+
+/// The launched apps the listing still has to ask, and when: at once,
+/// then after each of `MenuBarItemLister.launchWalkDelays`. Pure so a
+/// test drives it with a fixed clock.
+struct MenuBarLaunchProbes: Equatable {
+    private(set) var due: [pid_t: [Date]] = [:]
+
+    mutating func noteLaunch(_ pid: pid_t, at now: Date) {
+        due[pid] = [now] + MenuBarItemLister.launchWalkDelays.map { now.addingTimeInterval($0) }
+    }
+
+    mutating func noteQuit(_ pid: pid_t) {
+        due[pid] = nil
+    }
+
+    /// The apps with a look due at `now`.
+    func pids(dueAt now: Date) -> Set<pid_t> {
+        Set(due.compactMap { pid, times in times.contains { $0 <= now } ? pid : nil })
+    }
+
+    /// The looks due at `now` are taken; an app with none left is done.
+    mutating func spend(dueAt now: Date) {
+        for (pid, times) in due {
+            let left = times.filter { $0 > now }
+            due[pid] = left.isEmpty ? nil : left
+        }
+    }
 }

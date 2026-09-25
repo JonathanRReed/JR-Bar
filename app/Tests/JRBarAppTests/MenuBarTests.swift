@@ -94,23 +94,61 @@ struct MenuBarTests {
         #expect(MenuBarItemLister.item(from: info(x: 2400), ownPID: ownPID, rows: [row]) != nil)
     }
 
-    @Test("a scan walks every app on the slow clock, with no owners known, or when a launch's walk is due")
+    @Test("a scan walks every app on the slow clock or with no owners known; a launch asks only the launched app")
     func fullWalkCadence() {
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)
-        func walks(_ seconds: TimeInterval, owners: Bool = true, due: [Date] = []) -> Bool {
+        func walks(_ seconds: TimeInterval, owners: Bool = true) -> Bool {
             MenuBarItemLister.walksAll(now: t0.addingTimeInterval(seconds), lastFull: t0,
-                                       ownersKnown: owners, launchWalksDue: due)
+                                       ownersKnown: owners)
         }
         #expect(!walks(20), "a known owner set carries the quick scans past the old 20 s")
         #expect(!walks(MenuBarItemLister.fullScanInterval - 1))
         #expect(walks(MenuBarItemLister.fullScanInterval))
         #expect(walks(1, owners: false), "nothing known yet: walk")
+
+        var probes = MenuBarLaunchProbes()
         let launch = t0.addingTimeInterval(5)
-        let due = MenuBarItemLister.launchWalkDelays.map { launch.addingTimeInterval($0) }
-        #expect(!walks(6, due: due))
-        #expect(walks(7, due: due), "two seconds after the launch")
-        #expect(walks(35, due: due), "half a minute after it")
+        probes.noteLaunch(4242, at: launch)
+        #expect(probes.pids(dueAt: launch) == [4242], "the next scan asks the launched app")
+        probes.spend(dueAt: launch)
+        #expect(probes.pids(dueAt: t0.addingTimeInterval(6)).isEmpty)
+        #expect(probes.pids(dueAt: t0.addingTimeInterval(7)) == [4242], "two seconds after the launch")
+        probes.spend(dueAt: t0.addingTimeInterval(7))
+        #expect(probes.pids(dueAt: t0.addingTimeInterval(14)).isEmpty)
+        #expect(probes.pids(dueAt: t0.addingTimeInterval(15)) == [4242], "ten seconds after it")
+        probes.spend(dueAt: t0.addingTimeInterval(15))
+        #expect(probes.pids(dueAt: t0.addingTimeInterval(35)) == [4242], "half a minute after it")
+        probes.spend(dueAt: t0.addingTimeInterval(35))
+        #expect(probes.due.isEmpty, "four looks, then the launched app is an owner or nobody")
+        probes.noteLaunch(77, at: launch)
+        probes.noteQuit(77)
+        #expect(probes.due.isEmpty, "a quit app is not asked")
         #expect(MenuBarItemLister.launchWalkDelays == [2, 10, 30])
+    }
+
+    @Test("a scan's targets come from the index, filtered before any app is asked")
+    func scanTargetsFilterFirst() {
+        let apps = [
+            RunningApp(pid: 10, bundleID: "io.example.owner", name: "Owner", policy: .accessory),
+            RunningApp(pid: 11, bundleID: "io.example.quiet", name: "Quiet", policy: .regular),
+            RunningApp(pid: 12, bundleID: "io.example.fresh", name: "Fresh", policy: .regular),
+            RunningApp(pid: 13, bundleID: "io.example.daemon", name: "Daemon", policy: .prohibited),
+            RunningApp(pid: 14, bundleID: "io.example.slow", name: "Slow", policy: .regular),
+            RunningApp(pid: 15, bundleID: nil, name: "", policy: .regular),
+        ]
+        let quick = MenuBarItemLister.scanTargets(apps: apps, walkAll: false, owners: [10],
+                                                  launched: [12, 13], slow: [14])
+        #expect(quick.map(\.pid) == [10, 12, 13, 14], "owners, launched and retried apps only")
+        let wait = Dictionary(uniqueKeysWithValues: quick.map { ($0.pid, $0.timeout) })
+        #expect(wait[10] == MenuBarAX.messagingTimeout, "an owner gets the long wait")
+        #expect(wait[12] == MenuBarAX.messagingTimeout, "a launched app that can draw UI too")
+        #expect(wait[13] == MenuBarAX.quickTimeout, "a launched background process gets the short one")
+        #expect(wait[14] == MenuBarAX.messagingTimeout, "a retry gets the long wait")
+        let full = MenuBarItemLister.scanTargets(apps: apps, walkAll: true, owners: [10],
+                                                 launched: [], slow: [])
+        #expect(full.map(\.pid) == [10, 11, 12, 13, 14], "every named app on a full walk")
+        #expect(full.first { $0.pid == 11 }?.timeout == MenuBarAX.quickTimeout)
+        #expect(full.first { $0.pid == 10 }?.bundleID == "io.example.owner")
     }
 
     @Test("an empty window name is no title")
