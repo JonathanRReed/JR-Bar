@@ -340,7 +340,9 @@ struct BuddyRenderProofTests {
     }
 
     /// The moves between homes and moods, frame by frame: a docked tuck
-    /// ducking up under the notch, a 2× buddy fresh out of the notch
+    /// ducking up under the notch, the same tuck woken most of the way
+    /// through (growing and brightening back from where it had got to),
+    /// a 2× buddy fresh out of the notch
     /// growing in from the docked size (the dashed ring is where the
     /// docked figure stood), a completion hop handing off from the
     /// patrol's right-hand end instead of jumping to centre, the patrol's
@@ -375,6 +377,8 @@ struct BuddyRenderProofTests {
                 .frame(width: 18 * scale, height: 18 * scale)
         }
         let ticks = (0..<6).map { Double($0) / 5 }
+        // Woken by a session change 85 % of the way through a tuck.
+        let wokenAt = 0.85
         for dark in [false, true] {
             let ground = dark ? Color(white: 0.11) : Color(white: 0.93)
             let tile = RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -384,6 +388,18 @@ struct BuddyRenderProofTests {
                 HStack(spacing: 6) {
                     ForEach(ticks.indices, id: \.self) { i in
                         placed(body(), NotchBuddyView.presence(tuck: ticks[i], arrival: nil, docked: true,
+                                                              scale: 3, reduceMotion: false), scale: 3)
+                            .frame(width: 88, height: 66).background(tile.fill(ground))
+                    }
+                }
+                Text("Woken \(Int(wokenAt * NotchBuddyToy.tuckDuration * 1000)) ms into that tuck · 0 → \(Int(BuddyArrival.duration * 1000)) ms")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ticks.indices, id: \.self) { i in
+                        let arrival = BuddyArrival(fromScale: NotchBuddyToy.tuckScale(wokenAt), drift: .zero,
+                                                   age: ticks[i] * BuddyArrival.duration,
+                                                   fromOpacity: NotchBuddyToy.tuckOpacity(wokenAt))
+                        placed(body(), NotchBuddyView.presence(tuck: nil, arrival: arrival, docked: true,
                                                               scale: 3, reduceMotion: false), scale: 3)
                             .frame(width: 88, height: 66).background(tile.fill(ground))
                     }
@@ -482,7 +498,7 @@ struct BuddyRenderProofTests {
             (.slime, .pacing, .slumped, .red, "Slime · pacing → a failure: it melts"),
         ]
         let ticks = (0..<6).map { Double($0) / 5 * BuddyHandoff.duration }
-        func frame(_ row: (character: BuddyCharacter, from: NotchBuddyToy.Mood, to: NotchBuddyToy.Mood,
+        func drawn(_ row: (character: BuddyCharacter, from: NotchBuddyToy.Mood, to: NotchBuddyToy.Mood,
                            tint: Color, words: String), age: Double) -> BuddyFigure {
             BuddyFigure(character: row.character, mood: row.to, tint: row.tint,
                         phase: 2.35, hopProgress: row.to == .celebrating ? age / 1.1 : nil,
@@ -500,7 +516,7 @@ struct BuddyRenderProofTests {
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
                     HStack(spacing: 6) {
                         ForEach(ticks.indices, id: \.self) { i in
-                            frame(rows[r], age: ticks[i])
+                            drawn(rows[r], age: ticks[i])
                                 .frame(width: 18, height: 18)
                                 .scaleEffect(3)
                                 .frame(width: 88, height: 66)

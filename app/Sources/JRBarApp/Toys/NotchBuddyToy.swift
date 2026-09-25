@@ -87,12 +87,12 @@ final class NotchBuddyToy: Toy {
         get { (store?.state.notchBuddy.enabled ?? false) && !isTucked }
         set {
             let wasTucked = isTucked
-            let comeBack = comeBackScale()
+            let from = comeBack()
             cancelTuck()
             store?.state.notchBuddy.enabled = newValue
             if newValue {
                 store?.state.notchBuddy.tucked = false
-                if wasTucked { arrive(fromScale: comeBack) }
+                if wasTucked { arrive(fromScale: from.scale, fromOpacity: from.opacity) }
             }
             onVisibilityChange?()
         }
@@ -317,7 +317,7 @@ final class NotchBuddyToy: Toy {
     /// was asked for and where the docked figure stood.
     @ObservationIgnored private var pendingHandoff: (at: Date, figureCentre: CGPoint?)?
     /// The arrival the figure is drawing, if any (`BuddyArrival`).
-    @ObservationIgnored private var arrivalStart: (fromScale: Double, drift: CGSize, at: Date)?
+    @ObservationIgnored private var arrivalStart: (fromScale: Double, fromOpacity: Double, drift: CGSize, at: Date)?
     /// How long a hand-off waits for the free panel to claim it.
     static let handoffWindow: TimeInterval = 1
     /// Back from a nap, it pops up from this share of its size.
@@ -332,11 +332,12 @@ final class NotchBuddyToy: Toy {
         return waiting
     }
 
-    /// Grow in from `fromScale` of its size, drifting in by `drift`
-    /// (screen points, SwiftUI's y-down) over `BuddyArrival.duration`.
-    func arrive(fromScale: Double, drift: CGSize = .zero, at now: Date = Date()) {
+    /// Grow in from `fromScale` of its size and brighten from
+    /// `fromOpacity`, drifting in by `drift` (screen points, SwiftUI's
+    /// y-down) over `BuddyArrival.duration`.
+    func arrive(fromScale: Double, fromOpacity: Double = 1, drift: CGSize = .zero, at now: Date = Date()) {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { arrivalStart = nil; return }
-        arrivalStart = (fromScale, drift, now)
+        arrivalStart = (fromScale, fromOpacity, drift, now)
         stayLively(from: now)
     }
 
@@ -344,7 +345,7 @@ final class NotchBuddyToy: Toy {
     func arrival(at now: Date) -> BuddyArrival? {
         guard let start = arrivalStart else { return nil }
         let drawn = BuddyArrival(fromScale: start.fromScale, drift: start.drift,
-                                 age: now.timeIntervalSince(start.at))
+                                 age: now.timeIntervalSince(start.at), fromOpacity: start.fromOpacity)
         return drawn.isOver ? nil : drawn
     }
 
@@ -413,17 +414,23 @@ final class NotchBuddyToy: Toy {
         isOn || (tuckingSince != nil && store?.state.notchBuddy.enabled == true)
     }
 
-    /// The size it comes back from: `wakeScale` after a real nap, or
-    /// wherever a duck-out still in flight had got to, so a wake mid-duck
-    /// grows back from there instead of snapping.
-    private func comeBackScale(at now: Date = Date()) -> Double {
-        guard let tuck = tuckProgress(at: now) else { return Self.wakeScale }
-        return max(Self.wakeScale, Self.tuckScale(tuck))
+    /// Where it comes back from: `wakeScale` after a real nap, or
+    /// wherever a duck-out still in flight had got to, its size and its
+    /// fade both, so a wake mid-duck grows and brightens back from there
+    /// instead of snapping.
+    private func comeBack(at now: Date = Date()) -> (scale: Double, opacity: Double) {
+        guard let tuck = tuckProgress(at: now) else { return (Self.wakeScale, 1) }
+        return (Self.tuckScale(tuck), Self.tuckOpacity(tuck))
     }
 
     /// The duck-out's size at `progress`: an ease-in down to a quarter.
     static func tuckScale(_ progress: Double) -> Double {
         1 - 0.75 * progress * progress
+    }
+
+    /// The duck-out's fade at `progress`: an ease-in to nothing.
+    static func tuckOpacity(_ progress: Double) -> Double {
+        1 - progress * progress
     }
 
     /// 0 → 1 across the duck-out; nil unless one is playing.
@@ -447,9 +454,10 @@ final class NotchBuddyToy: Toy {
 
     /// The carry's life, panel-side bookkeeping the view reads: held,
     /// it leans toward the travel direction (`dragTilt`, settling via
-    /// `dragMovedAt`) with its feet up; put down, `landedAt` plays a
-    /// small squash and lets go of whatever lean it still had
-    /// (`landingTilt`). Reduce Motion ignores all of it.
+    /// `dragMovedAt`) with its feet up (`carryLift`); put down,
+    /// `landedAt` plays a small squash and lets go of whatever lean and
+    /// lift it still had (`landingTilt`, `landingLift`). Reduce Motion
+    /// ignores all of it.
     private(set) var isDragged = false
     private(set) var dragTilt: Double = 0
     private(set) var dragMovedAt: Date?
@@ -457,13 +465,44 @@ final class NotchBuddyToy: Toy {
     /// The lean it had the moment it was put down; the landing eases it
     /// upright instead of snapping.
     private(set) var landingTilt: Double = 0
+    /// When the carry began, and the lift drawn at that moment (a
+    /// landing still settling); the pick-up eases up from there.
+    private(set) var dragStartedAt: Date?
+    private(set) var pickUpLift: Double = 0
+    /// The lift it had the moment it was put down; the landing eases it
+    /// back onto its feet.
+    private(set) var landingLift: Double = 0
 
-    func dragStarted() {
+    /// How far a carry lifts it off its feet, in the figure's points
+    /// (SwiftUI's y-down), and how long the pick-up and the landing take.
+    /// At the floating buddy's 3× the lift is 5.4 pt, too far for a frame.
+    static let carryHeight: Double = -1.8
+    static let pickUpTime: TimeInterval = 0.12
+    static let landingTime: TimeInterval = 0.34
+
+    /// The carry's lift at `now`: easing up off its feet over
+    /// `pickUpTime`, held while carried, and easing back down over the
+    /// landing.
+    func carryLift(at now: Date) -> Double {
+        if isDragged {
+            let age = now.timeIntervalSince(dragStartedAt ?? now)
+            return pickUpLift + (Self.carryHeight - pickUpLift) * BuddyTurn.smooth(age / Self.pickUpTime)
+        }
+        guard let landedAt else { return 0 }
+        let age = max(0, now.timeIntervalSince(landedAt))
+        guard age < Self.landingTime else { return 0 }
+        return landingLift * (1 - BuddyTurn.smooth(age / Self.landingTime))
+    }
+
+    func dragStarted(at now: Date = Date()) {
+        pickUpLift = carryLift(at: now)
         isDragged = true
+        dragStartedAt = now
         dragTilt = 0
         dragMovedAt = nil
         landedAt = nil
         landingTilt = 0
+        landingLift = 0
     }
 
     /// `dx` is this event's horizontal travel, not the total. The lean
@@ -495,6 +534,7 @@ final class NotchBuddyToy: Toy {
     /// Put down — the landing beat plays from `landedAt`.
     func dragEnded(at now: Date = Date()) {
         landingTilt = dangle(at: now)
+        landingLift = carryLift(at: now)
         isDragged = false
         dragTilt = 0
         landedAt = now
@@ -507,6 +547,7 @@ final class NotchBuddyToy: Toy {
         isDragged = false
         dragTilt = 0
         landingTilt = 0
+        landingLift = 0
     }
 
     // MARK: Interaction
@@ -1207,7 +1248,8 @@ final class NotchBuddyToy: Toy {
         guard store?.state.notchBuddy.tucked == true else { return }
         store?.state.notchBuddy.tucked = false
         wakeSnapshot = nil
-        arrive(fromScale: comeBackScale())
+        let from = comeBack()
+        arrive(fromScale: from.scale, fromOpacity: from.opacity)
         cancelTuck()
         onVisibilityChange?()
     }
