@@ -82,6 +82,22 @@ def test_the_gate_holds_a_family_for_three_seconds() -> None:
     assert gate.family("Read", 106.2) == "read"
 
 
+def test_each_provider_keeps_its_own_family() -> None:
+    """Two strips pinned to two providers ask the same gate. Each head
+    shows its own agent's tool and keeps it: with one shared family the two
+    took turns, and both heads flipped every three seconds."""
+    gate = ToolTintGate()
+    assert gate.family("Bash", 100.0, "claude") == "shell"
+    assert gate.family("Read", 100.1, "codex") == "read"
+    for moment in (103.5, 107.0, 110.5):
+        assert gate.family("Bash", moment, "claude") == "shell"
+        assert gate.family("Read", moment + 0.1, "codex") == "read"
+    assert gate.held_until("claude") is None and gate.held_until("codex") is None
+    # One provider's floor never holds the other back.
+    assert gate.family("Edit", 111.0, "claude") == "edit"
+    assert gate.family("WebFetch", 111.2, "codex") == "web"
+
+
 def _status(tool: str | None, mode: AgentMode = AgentMode.TOOL_RUNNING) -> AgentStatus:
     return AgentStatus(
         provider="claude",
@@ -184,12 +200,12 @@ def test_a_held_family_comes_back_when_the_floor_ends() -> None:
     assert shown.render_tool_family == "shell" and woken == []
     held = tool_tinted_colors(target, settings, (_status("Edit"),), "claude", now=101.0, gate=gate)
     assert held.render_tool_family == "shell"
-    assert gate.held_until() == 103.0
+    assert gate.held_until("claude") == 103.0
     assert woken == [pytest.approx(2.0)]
     # The wake's render takes the waiting family and asks for nothing more.
     taken = tool_tinted_colors(target, settings, (_status("Edit"),), "claude", now=103.0, gate=gate)
     assert taken.render_tool_family == "edit"
-    assert gate.held_until() is None and len(woken) == 1
+    assert gate.held_until("claude") is None and len(woken) == 1
     # With the tint off nothing is ever held or woken.
     plain = settings.with_tint_by_tool(False)
     tool_tinted_colors(target, plain, (_status("Read"),), "claude", now=103.5, gate=gate)

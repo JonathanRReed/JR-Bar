@@ -16702,7 +16702,7 @@ def tool_tinted_colors(target, colors, statuses, provider, *, now: float | None 
     tint_gate = gate or colors_module.TOOL_TINT_GATE
     tinted = colors_module.with_tool_tint(colors, statuses, provider, now=clock, gate=tint_gate)
     if getattr(colors, "tint_by_tool", False):
-        held = tint_gate.held_until()
+        held = tint_gate.held_until(provider)
         schedule = getattr(target, "schedule_tool_tint_wake", None)
         if held is not None and schedule is not None:
             schedule(held - clock)

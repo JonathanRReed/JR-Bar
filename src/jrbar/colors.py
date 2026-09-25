@@ -1865,8 +1865,13 @@ class ToolTintGate:
     is taken at most once every ``min_seconds``; until then the head keeps
     the family it already shows, and ``held_until`` says when the waiting
     one may show, so the caller can come back then instead of at the next
-    status event. Thread-safe: every device's writer asks the same gate, so
-    the Pro and the Dot agree.
+    status event.
+
+    Each provider has its own family and its own floor. Two strips pinned to
+    two providers each show their own agent's tool; with one shared family
+    they took turns overwriting it, and both heads flipped between the two
+    tool colours every three seconds. Thread-safe: every device's writer
+    asks the same gate, so the Pro and the Dot showing one provider agree.
     """
 
     def __init__(self, min_seconds: float = TOOL_TINT_MIN_REWRITE_SECONDS) -> None:
@@ -1874,32 +1879,29 @@ class ToolTintGate:
 
         self._lock = threading.Lock()
         self._min_seconds = float(min_seconds)
-        self._shown: str | None = None
-        self._changed_at: float | None = None
-        self._held_until: float | None = None
+        # provider -> [family shown, when it changed, when a held one may show]
+        self._by_provider: dict[str | None, list] = {}
 
-    def family(self, tool_name: object, now: float) -> str | None:
+    def family(self, tool_name: object, now: float, provider: str | None = None) -> str | None:
         wanted = tool_family(tool_name)
         with self._lock:
-            if wanted == self._shown:
-                self._held_until = None
-                return self._shown
-            if (
-                self._changed_at is not None
-                and now - self._changed_at < self._min_seconds
-            ):
-                self._held_until = self._changed_at + self._min_seconds
-                return self._shown
-            self._shown = wanted
-            self._changed_at = now
-            self._held_until = None
-            return self._shown
+            entry = self._by_provider.setdefault(provider, [None, None, None])
+            shown, changed_at, _held = entry
+            if wanted == shown:
+                entry[2] = None
+                return shown
+            if changed_at is not None and now - changed_at < self._min_seconds:
+                entry[2] = changed_at + self._min_seconds
+                return shown
+            entry[:] = [wanted, now, None]
+            return wanted
 
-    def held_until(self) -> float | None:
-        """When a family the floor is holding back may show, on the clock
-        ``family`` is given; None while nothing is waiting."""
+    def held_until(self, provider: str | None = None) -> float | None:
+        """When a family the floor is holding back for ``provider`` may
+        show, on the clock ``family`` is given; None while nothing waits."""
         with self._lock:
-            return self._held_until
+            entry = self._by_provider.get(provider)
+            return entry[2] if entry is not None else None
 
 
 #: The one gate every surface asks, so the Pro, the Dot and the Screen Bar
@@ -1934,7 +1936,7 @@ def with_tool_tint(
     when the tool tint is on; unchanged when it is off."""
     if not settings.tint_by_tool or not provider:
         return settings
-    family = (gate or TOOL_TINT_GATE).family(working_tool_name(statuses, provider), now)
+    family = (gate or TOOL_TINT_GATE).family(working_tool_name(statuses, provider), now, provider)
     return settings.with_render_tool_family(family)
 
 
