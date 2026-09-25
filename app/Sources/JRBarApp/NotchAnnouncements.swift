@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import IOBluetooth
 import JRBarCore
 import OSLog
@@ -523,20 +524,73 @@ final class DisplayWatcher {
 
 /// The felt edge a capsule deserves: the system's own Tink, quiet
 /// enough that a volume key run does not turn into a woodblock solo.
+/// It plays off the main thread: stopping and starting a sound waits on
+/// the audio server, 45–60 ms a click, and the click lands just as the
+/// island starts to move.
 @MainActor
 enum NotchSounds {
-    /// Its own copy of Tink: the shared named sound keeps its volume
-    /// for everyone else, and a run of presses restarts the click
-    /// instead of dropping it while the last one still rings.
-    private static let tink: NSSound? = {
-        let sound = NSSound(named: NSSound.Name("Tink"))?.copy() as? NSSound
-        sound?.volume = 0.12
-        return sound
-    }()
+    /// The one player every tick goes to — prepared at launch, so the
+    /// first click does not pay for loading the file. Tests swap in a
+    /// recorder.
+    static var player: any NotchTickPlayer = TinkPlayer()
 
+    /// Where the player is touched, and only there.
+    nonisolated static let queue = DispatchQueue(label: "jrbar.notch-sounds", qos: .userInitiated)
+
+    /// Loads and primes the player off the main thread — `NotchHUD`
+    /// calls it once the app is up.
+    static func prepare() {
+        let player = self.player
+        queue.async { player.prepare() }
+    }
+
+    /// A click. A run of presses restarts it rather than dropping one
+    /// while the last still rings.
     static func tick() {
-        guard let sound = tink else { return }
-        if sound.isPlaying { sound.stop() }
-        sound.play()
+        let player = self.player
+        queue.async { player.play() }
+    }
+}
+
+/// What plays the tick — always called on `NotchSounds.queue`.
+protocol NotchTickPlayer: Sendable {
+    func prepare()
+    func play()
+}
+
+/// Tink from the system's sounds, through its own `AVAudioPlayer`: the
+/// shared named `NSSound` keeps its volume for everyone else. Only ever
+/// touched on `NotchSounds.queue`.
+final class TinkPlayer: NotchTickPlayer, @unchecked Sendable {
+    private let volume: Float
+    private var player: AVAudioPlayer?
+    private var loaded = false
+
+    init(volume: Float = 0.12) {
+        self.volume = volume
+    }
+
+    /// Where Tink lives: the system's sounds first, then the places a
+    /// person's own sounds go.
+    static let candidates = ["/System/Library/Sounds/Tink.aiff",
+                             "/Library/Sounds/Tink.aiff",
+                             NSHomeDirectory() + "/Library/Sounds/Tink.aiff"]
+
+    func prepare() {
+        guard !loaded else { return }
+        loaded = true
+        guard let path = Self.candidates.first(where: { FileManager.default.fileExists(atPath: $0) }),
+              let player = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: path)) else { return }
+        player.volume = volume
+        player.prepareToPlay()
+        self.player = player
+    }
+
+    func play() {
+        prepare()
+        guard let player else { return }
+        if player.isPlaying { player.stop() }
+        player.currentTime = 0
+        player.play()
     }
 }
