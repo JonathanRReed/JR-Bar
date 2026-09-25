@@ -1005,8 +1005,14 @@ public final class CoreModel {
     /// Brings every slice in line with `state`, touching only those that
     /// changed. A disconnect clears them with the document.
     private func applySlices(_ state: CoreState?) {
-        assign(\.sessions, state?.mainSessions ?? [])
-        assign(\.allSessions, state?.sessions ?? [])
+        // `mainSessions` is a pure filter of `sessions` — when the roster
+        // compares unchanged, the mains provably did too, so the second
+        // deep compare is skipped. One session walk per state frame, not two.
+        let all = state?.sessions ?? []
+        if all != allSessions {
+            allSessions = all
+            assign(\.sessions, state?.mainSessions ?? [])
+        }
         assign(\.asks, state?.asks ?? [])
         assign(\.devices, state?.devices ?? [])
         assign(\.usage, state?.usage?.providers ?? [])
