@@ -69,7 +69,7 @@ MAX_SLICE_ERROR_CODES: Final = 2.0
 MAX_SLICE_EXTRA_LINES: Final = 6
 
 #: Where a Dot's clock starts before anything has been measured: the rate
-#: measured on the first Dot (SPD-000120) over sparse reads, 2026-09-24.
+#: measured on the first Dot over sparse reads, 2026-09-24.
 WARM_START_DOT_RATE: Final = 0.9734
 #: No real clock is this far off; a fit outside means the samples are bad.
 MIN_CLOCK_RATE: Final = 0.90

@@ -265,7 +265,7 @@ struct DotRoleTests {
     func ejectGuardWords() {
         let never = EjectGuardReading.parse(.object([
             "installed": .bool(true), "protects": .bool(false), "protects_mounted": .bool(false),
-            "running": .bool(false), "runs": .number(0), "mounted_volume_uuid": .string("B293BB91-193C-3A17-88DC-35CD9BA19B2F"),
+            "running": .bool(false), "runs": .number(0), "mounted_volume_uuid": .string("5E1F0C2A-7B3D-4C8E-9A61-0D2F4B6C8E10"),
         ]))
         #expect(never?.words.contains("never run") == true)
         #expect(never?.canProtect == true)

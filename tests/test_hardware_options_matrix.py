@@ -533,9 +533,9 @@ def test_the_eject_guard_reports_what_launchd_really_has__and_2_more(tmp_path: P
         return SimpleNamespace(started=True)
 
     guard.protect_mounted_sidepulse(
-        tmp_path / "SidePulse", installer=installer, uuid_reader=lambda volume: "B293BB91-193C-3A17-88DC-35CD9BA19B2F"
+        tmp_path / "SidePulse", installer=installer, uuid_reader=lambda volume: "5E1F0C2A-7B3D-4C8E-9A61-0D2F4B6C8E10"
     )
-    assert calls == [{"scope": "user", "volume_uuid": "B293BB91-193C-3A17-88DC-35CD9BA19B2F", "start": True}]
+    assert calls == [{"scope": "user", "volume_uuid": "5E1F0C2A-7B3D-4C8E-9A61-0D2F4B6C8E10", "start": True}]
     with pytest.raises(guard.SdEjectGuardInstallError):
         guard.protect_mounted_sidepulse(tmp_path, installer=installer, uuid_reader=lambda volume: None)
     calls.clear()
@@ -544,13 +544,13 @@ def test_the_eject_guard_reports_what_launchd_really_has__and_2_more(tmp_path: P
 
     # --- scenario: a_plist_with_the_uuid_protects
     paths.plist_path.write_bytes(
-        plistlib.dumps(guard.build_sd_eject_guard_plist(paths, volume_uuid="b293bb91-193c-3a17-88dc-35cd9ba19b2f"))
+        plistlib.dumps(guard.build_sd_eject_guard_plist(paths, volume_uuid="5e1f0c2a-7b3d-4c8e-9a61-0d2f4b6c8e10"))
     )
     status = guard.sd_eject_guard_status(
         user_paths=paths, system_paths=paths, launchctl_print=lambda domain: (0, "state = running\nruns = 3\npid = 4242\n")
     )
     assert status.protects and status.running and status.runs == 3 and status.pid == 4242
-    assert status.volume_uuid == "B293BB91-193C-3A17-88DC-35CD9BA19B2F"
+    assert status.volume_uuid == "5E1F0C2A-7B3D-4C8E-9A61-0D2F4B6C8E10"
 
 
 # --- the Devices page's commands ---------------------------------------------------
@@ -668,10 +668,10 @@ def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_3_more(
         "sd_eject_guard_status",
         lambda: sd_eject_guard_launch.SdEjectGuardStatus(installed=True, runs=0),
     )
-    monkeypatch.setattr(sd_eject_guard_launch, "mounted_volume_uuid", lambda root: "B293BB91-193C-3A17-88DC-35CD9BA19B2F")
+    monkeypatch.setattr(sd_eject_guard_launch, "mounted_volume_uuid", lambda root: "5E1F0C2A-7B3D-4C8E-9A61-0D2F4B6C8E10")
     document = eject_guard_commands.status(rig.controller, {})
     assert document["installed"] is True and document["protects"] is False
-    assert document["mounted_volume_uuid"] == "B293BB91-193C-3A17-88DC-35CD9BA19B2F"
+    assert document["mounted_volume_uuid"] == "5E1F0C2A-7B3D-4C8E-9A61-0D2F4B6C8E10"
     assert document["mounted_name"] == rig.pro.name
     assert document["protects_mounted"] is False
 
@@ -700,7 +700,7 @@ def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_3_more(
         sd_eject_guard_launch,
         "sd_eject_guard_status",
         lambda: sd_eject_guard_launch.SdEjectGuardStatus(
-            installed=True, volume_uuid="B293BB91-193C-3A17-88DC-35CD9BA19B2F", keep_alive=True, loaded=True
+            installed=True, volume_uuid="5E1F0C2A-7B3D-4C8E-9A61-0D2F4B6C8E10", keep_alive=True, loaded=True
         ),
     )
     eject_guard_commands.release(rig.controller, {})

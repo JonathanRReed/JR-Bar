@@ -1318,7 +1318,7 @@ class World:
             "installed": True, "scope": "user", "plist_path": None, "volume_uuid": None,
             "run_at_load": False, "keep_alive": False, "loaded": True, "running": False,
             "runs": 0, "pid": None, "last_exit": "(never exited)", "protects": False,
-            "mounted_volume_uuid": "B293BB91-193C-3A17-88DC-35CD9BA19B2F",
+            "mounted_volume_uuid": "5E1F0C2A-7B3D-4C8E-9A61-0D2F4B6C8E10",
             "mounted_name": "SidePulse", "protects_mounted": False,
         }
         # Deck: the board's ordered identities (a digest per session; new ones
