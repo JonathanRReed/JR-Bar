@@ -33,54 +33,55 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "2026-09-24"
+    static let releaseID = "2026-09-25"
 
     /// The header's one line.
-    static let headline = "A map of your agents, a new Aquarium, and ⌘⇧K works."
+    static let headline = "Tighter Dock previews, a Duo-style Fold, and fish that really turn."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
     static let entries: [WhatsNewEntry] = [
         WhatsNewEntry(
-            id: "palette", symbol: "command",
-            title: "⌘⇧K runs all of JR-Bar",
-            detail: "The command palette opens from any app, and its key keeps working after you run a verb.",
-            tryIt: .menuBar(.commandBar), opens: "Opens the command palette"),
+            id: "dock", symbol: "dock.rectangle",
+            title: "Tighter Dock previews",
+            detail: "Previews sit just off the icon, and Tight, Standard or Roomy spacing is on the Dock card.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where the Dock card is"),
         WhatsNewEntry(
-            id: "graph", symbol: "point.3.connected.trianglepath.dotted",
-            title: "The Overview draws a map",
-            detail: "Every agent, its workers and whatever waits on you, as a living graph you can pan and zoom.",
-            tryIt: .overviewGraph, opens: "Opens the Overview's Graph"),
+            id: "fold", symbol: "laptopcomputer",
+            title: "The Fold, like the Duo",
+            detail: "The desktop holds still while the screen folds through it, darkening away from the hinge.",
+            tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Fold card is"),
         WhatsNewEntry(
             id: "aquarium", symbol: "fish",
-            title: "A brand-new Aquarium",
-            detail: "Every fish, pet and piece of the tank is redrawn, lit from the surface with real depth.",
+            title: "Fish that really turn",
+            detail: "Every fish swims round through a real head-on turn, and an Arcade tank joins the shop.",
             tryIt: .aquarium, opens: "Opens the Aquarium"),
         WhatsNewEntry(
-            id: "open", symbol: "arrow.up.forward.app",
-            title: "Open lands on the session",
-            detail: "A click aims for the session's own conversation, and Claude in Ghostty raises its pane.",
+            id: "drag", symbol: "menubar.rectangle",
+            title: "⌘-drag to hide",
+            detail: "Hold ⌘ and drag a menu bar item across the JR-Bar icon to hide it, or back to show it.",
+            keys: "⌘ drag"),
+        WhatsNewEntry(
+            id: "dot", symbol: "light.strip.2",
+            title: "Pro and Dot, one strip",
+            detail: "Light flows off the SidePulse into the Dot, kept in step with the Dot's slower clock.",
+            tryIt: .settings(page: "devices"), opens: "Opens Settings › Devices, where Pro & Dot is"),
+        WhatsNewEntry(
+            id: "motions", symbol: "waveform.path",
+            title: "New light motions",
+            detail: "Ripple, Pendulum and a Land finish join the strip, and every Effect Studio knob works.",
+            tryIt: .window(.effects), opens: "Opens Effect Studio"),
+        WhatsNewEntry(
+            id: "orbs", symbol: "sparkles",
+            title: "See what agents do",
+            detail: "A working session's orb shows whether it is thinking, searching, writing or running.",
             tryIt: .panel(toggle: false), opens: "Opens the panel, where your sessions are"),
         WhatsNewEntry(
-            id: "approve", symbol: "checkmark.circle",
-            title: "Approve never waits",
-            detail: "Answers go ahead of long usage scans, and a held ask shows its 45-second window as a ring.",
-            tryIt: .panel(toggle: false), opens: "Opens the panel, where asks wait for your click"),
-        WhatsNewEntry(
-            id: "usage", symbol: "chart.bar.xaxis",
-            title: "Usage in a second",
-            detail: "The Usage Center reads a warm index, so fresh numbers arrive in seconds instead of minutes.",
-            tryIt: .window(.usage), opens: "Opens the Usage Center"),
-        WhatsNewEntry(
-            id: "quiet", symbol: "leaf",
-            title: "Idles near zero",
-            detail: "Closed windows stop drawing, and the monitor stays under about half a gigabyte."),
-        WhatsNewEntry(
-            id: "lyrics", symbol: "quote.bubble",
-            title: "Lyrics are opt-in",
-            detail: "Synced lyrics come from LRCLIB on the internet, so they wait for your click now.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where the Notch card's lyrics switch is"),
+            id: "utilities", symbol: "square.grid.2x2",
+            title: "Utilities, tidied up",
+            detail: "Keep Awake gets one duration menu, and each utility steps aside for a rival you run.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities"),
     ]
 }
 

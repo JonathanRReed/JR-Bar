@@ -4,6 +4,102 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.9 (unreleased)
 
+### Round 3 (2026-09-24): from Jonathan's hand test
+
+- **Dock previews are tighter and yours to tune.** Tight spacing by
+  default, sitting 4 pt off the icon over the Dock's own name bubble and
+  clearing a magnified icon. The Dock card has Spacing (Tight, Standard,
+  Roomy, or anything between with Fine spacing), Distance from the Dock
+  and Cover the Dock's name label, with a live sample that never
+  captures the screen. The ⌥⇥ switcher follows the spacing and gains
+  Window order, Apps with no windows and Card faces; cards can take each
+  window's shape (off by default).
+- **The Fold is the iPhone Duo.** The new Duo look (the default) holds the
+  desktop still for a seated eye while the glass folds through it, soft
+  and then dark away from the hinge, black by the time the screen is
+  edge-on; the old look stays as Room. It folds from wherever the lid
+  rests, Hold picture in place is a 0–100 % slider that finally means
+  what it says (the old switch worked backwards), a Goes dark over slider
+  joins it, the 10 Hz hinge sensor no longer makes a steady close pulse,
+  a full close holds black and a reopen unfolds from black, and the
+  recording indicator waits for 3° of real closing.
+- **Fish really turn.** A reversal is one level 0.9 s U-turn: the head
+  leads, a real head-on face shows, the tail kicks out; nothing in the
+  tank mirrors in one frame any more (fry, pets, the turtle, tetras and
+  axolotl included). Steering no longer reverses fish 38 times a minute,
+  an asking fish waits level and half-turned toward you, working fish
+  hover at their stations, and meal pellets go to the fish really
+  nearest them. New: Swim pace, Swimming speed and Fish size.
+- **An Arcade tank and a fuller Aquarium card** (the "insane aquarium"
+  ask, drawn procedurally): bright water, candy gravel, a Toy reef that
+  changes with tank level, coins and gems; a snail that hustles to
+  pearls, an oyster that grows one, and a harmless alien a failed run
+  calls. The card leads with Look, Labels, Day & night and Sound (off by
+  default), with a folded Fine-tune for fish at once, plankton, bubbles,
+  scenery and visitors. Classic is always one tap away, and shop pieces
+  can be put away.
+- **Confetti from the notch.** Bursts pop out of the notch's lip (or the
+  icon, the corners, or as rain), visible from the first frame, tumble in
+  3D with the provider's own glyph, and Rest lands them on the window
+  tops you can actually see. Fall is done in about 4 s. New Origin, Size,
+  palettes, shapes and Adjust; the pop follows Settings › Sounds, and a
+  provider-less burst is no longer grey.
+- **The Notch Buddy eases everything:** turns, moods, sleep, carries and
+  tucks, with Caption on hover, Take walks and Time between walks.
+- **⌘-drag to hide, like Ice.** Drag a menu bar item across the JR-Bar
+  icon with ⌘ held to hide it (left) or show it (right). The drag is
+  confirmed with macOS before anything is written, and a drop that can't
+  be done says why. The icon keeps its seat beside Wi-Fi when an Apple
+  extra is covered. New options: hide Apple's extras like apps, reveal
+  hidden items while ⌘-dragging, drag a tile out of the Item Bar, Item
+  Bar at the pointer, and where new items go.
+- **Utilities, tidied up against the competition.** A utility whose job
+  another running app also does (DockDoor, Alcove, Dropover,
+  Amphetamine…) says so and offers Hand over only on a click; the Shelf's
+  shake steps aside by itself. Keep Awake has one duration menu on the
+  Awake chip, the footer and the Screen Bar ear, and a card naming other
+  apps holding the Mac awake. The Shelf copies on drag-out (⌘ moves),
+  multi-selects, and compresses, converts, copies text and files. The
+  notch gains an Open after delay, a Display pick and an output picker;
+  the Data Hoarder filters every agent and can Resume; the Screen Bar can
+  hide over chosen apps.
+- **The SidePulse and the Dot are one strip.** Light flows off the Pro
+  into the Dot by default (Continue: a comet crosses onto it, a fill
+  climbs onto it), kept in step: every Dot write is timed from the
+  strip's own start and the Dot's measured clock, which runs about 2.7 %
+  slow, and the monitor re-syncs it before it drifts past 40 ms without
+  ever rewriting the strip. Pro & Dot adds a timing trim, a Clock section
+  and Check sync; brightness follows one rule on both; the eject guard,
+  keepalive and reboot detection were fixed, and a write from another app
+  shows on the card.
+- **Light motions that match their previews,** plus new ones. The live
+  strip now plays exactly what the swatch and Effect Studio show (the
+  Scanner sweeps both ways, the Heartbeat beats twice), every Effect
+  Studio knob changes the light, Ripple and Pendulum are new (OpenCode
+  swings a purple Pendulum), a finish can Land or Ripple, Iris lid looks
+  come from upstream SidePulse, and each device has a strip direction.
+- **See what agents are doing.** A working session's orb in the panel
+  moves the way the agent is working (thinking, searching, writing or
+  running a command), read from its latest hook event and tool. Waits
+  follow one rule: nothing under 2 s, an orb from 2 s, a light running
+  round the element doing the work from 3 s (the ⌘⇧K search and an ask
+  whose answer is on its way). Quick loads no longer flash a spinner.
+- **Our open-source side, after T3 Code, CodexBar and CLIProxyAPI.**
+  OpenCode shows a real OpenCode Go quota or says it has none, never an
+  invented lane; a reset is celebrated only once a second reading
+  confirms it; usage hooks v2 (rules, no shell, a small environment, JSON
+  on stdin, `jrbar usage-hooks`, a Hooks section in Settings); `jrbar
+  usage`; `jrbar hooks doctor` shows verified CLI versions; Claude Code's
+  status line can stand in for Claude's usage endpoint (opt-in); a
+  CLIProxyAPI hub (off, loopback only); token history for Pi, Grok, Gemini
+  CLI and OpenClaw; Keep Awake lets go under Low Power Mode; a docs index,
+  `AGENTS.md` and examples, with the dated plans in `docs/archive/`.
+- **Fixed along the way:** a held ask card drew as if its hold had
+  already run out, hiding Always Allow, the question's options and the
+  hold ring (also on the Rail); Copy Text no longer stalls when Vision's
+  accelerator refuses; a reversed Pro no longer sends Continue's light off
+  the far end of the desk.
+
 ### Quality pass (2026-09-24)
 
 - The Overview's Graph is a living map of the fleet. Providers are

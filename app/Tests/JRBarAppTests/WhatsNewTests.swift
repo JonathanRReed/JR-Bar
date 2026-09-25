@@ -53,21 +53,21 @@ import Testing
         }
     }
 
-    @Test func theGraphAndTheAquariumRowsOpenTheThingItself() {
-        let graphRow = WhatsNewCatalog.entries.first { $0.id == "graph" }
+    @Test func theAquariumAndDotRowsOpenTheThingItself() {
         let tankRow = WhatsNewCatalog.entries.first { $0.id == "aquarium" }
-        #expect(graphRow?.tryIt == .overviewGraph)
-        #expect(graphRow?.opens == "Opens the Overview's Graph")
+        let dotRow = WhatsNewCatalog.entries.first { $0.id == "dot" }
         #expect(tankRow?.tryIt == .aquarium)
         #expect(tankRow?.opens == "Opens the Aquarium")
+        #expect(dotRow?.tryIt == .settings(page: "devices"))
     }
 
-    /// The Notch card, and its Synced lyrics switch, sits on the
-    /// Utilities page, so the lyrics row's Try it lands there.
-    @Test func theLyricsRowOpensThePageWithTheNotchCard() {
-        let lyricsRow = WhatsNewCatalog.entries.first { $0.id == "lyrics" }
-        #expect(lyricsRow?.tryIt == .settings(page: "utilities"))
-        #expect(lyricsRow?.opens == "Opens Settings › Utilities, where the Notch card's lyrics switch is")
+    /// A Settings Try it lands on a page that exists, so the link
+    /// never falls back to whatever page was open last.
+    @Test func everySettingsTryItNamesAKnownPage() {
+        for entry in WhatsNewCatalog.entries {
+            guard case .settings(let page)? = entry.tryIt else { continue }
+            #expect(page.map { SettingsPageName.known.contains($0) } ?? true, "\(entry.id): \(page ?? "nil")")
+        }
     }
 
     // MARK: The gate
