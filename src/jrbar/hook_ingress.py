@@ -306,6 +306,7 @@ class HookIngressService:
         decision_broker: object | None = None,
         surface_recorder: object | None = None,
         backlog_cleared: Callable[[], object] | None = None,
+        statusline_enabled: Callable[[], bool] | None = None,
     ) -> None:
         if not callable(process):
             raise ValueError("invalid hook ingress processor")
@@ -323,6 +324,8 @@ class HookIngressService:
             raise ValueError("invalid hook ingress byte bound")
         if backlog_cleared is not None and not callable(backlog_cleared):
             raise ValueError("invalid hook ingress backlog handler")
+        if statusline_enabled is not None and not callable(statusline_enabled):
+            raise ValueError("invalid hook ingress statusline reader")
         if receipt_handler is not None and not callable(receipt_handler):
             raise ValueError("invalid hook ingress receipt handler")
         if rejection_recorder is not None and not callable(rejection_recorder):
@@ -357,6 +360,9 @@ class HookIngressService:
         # Records which Ghostty terminal each session started in
         # (answer_surfaces.py), so opening it later lands on that pane.
         self._surface_recorder = surface_recorder
+        # The daemon hands its live settings flag so each statusline frame
+        # does not stat and parse the settings document behind a 5 s cache.
+        self._statusline_enabled = statusline_enabled
 
         self._condition = threading.Condition()
         self._pending: deque[_AcceptedHook] = deque()
@@ -922,7 +928,8 @@ class HookIngressService:
         try:
             from .claude_statusline_source import ingest
 
-            ingest(request.payload_text)
+            reader = self._statusline_enabled
+            ingest(request.payload_text, enabled=reader() if reader is not None else None)
         except Exception:
             pass
         return HookIngressDisposition.ACCEPTED

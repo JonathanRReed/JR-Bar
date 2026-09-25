@@ -8969,6 +8969,7 @@ class StatusBarController(NSObject):
                 deduplicator_for=self.resident_hook_deduplicators(),
             ),
             receipt_handler=self._record_hook_ingress_receipt,
+            statusline_enabled=lambda: bool(getattr(self.settings, "claude_statusline_source", False)),
         )
         self.hook_ingress_service = service
         try:
