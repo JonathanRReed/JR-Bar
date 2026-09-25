@@ -2,9 +2,11 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-/// `AquariumSteering` is the tank's motion (docs/TOYS.md): wander
-/// noise, a soft boundary turn, a direct food seek and a weak school
-/// pull — pure functions of body, clock and seed.
+/// `AquariumSteering` is the tank's motion (docs/TOYS.md): wander at a
+/// gentle rate, the glass seen coming and turned from in one committed
+/// U-turn, a dart at food through its own turn, a station swum to and
+/// hovered at, and a weak school pull — pure functions of body, clock
+/// and seed.
 @Suite("Aquarium steering")
 struct AquariumSteeringTests {
     private func body(x: Double = 0.5, y: Double = 0.5, heading: Double = 0,
@@ -34,36 +36,15 @@ struct AquariumSteeringTests {
         #expect(d < 0.1)
     }
 
-    @Test("steer takes the shortest arc and respects the turn cap")
-    func steer() {
-        // A quarter turn, room to make it (π/2 < 2).
-        let turned = AquariumSteering.steer(0, toward: .pi / 2, maxTurn: 2)
-        #expect(abs(turned - .pi / 2) < 1e-9)
-        // The short way around: +π → −π is the same seam, so 0 → 3π/2
-        // goes backwards.
-        let wrapped = AquariumSteering.steer(0, toward: .pi * 1.5, maxTurn: 10)
-        #expect(abs(wrapped - (-.pi / 2)) < 1e-9)
-        // The cap binds.
-        #expect(abs(AquariumSteering.steer(0, toward: .pi, maxTurn: 0.2) - 0.2) < 1e-9)
-    }
-
-    @Test("the boundary turns a fish back into the tank before the wall")
+    @Test("the glass turns a fish back into the tank, and nothing leaves the water")
     func boundary() {
-        var b = body(x: 0.05, heading: .pi)   // nose at the left glass
-        let desired = AquariumSteering.boundaryDesired(b, bounds: SwimBounds())
-        #expect(desired != nil)
-        // The correction points right-ish: cos > 0.
-        #expect(cos(desired!) > 0)
-        // Stepped, it turns and the x grows.
+        var b = body(x: 0.08, heading: .pi)   // nose at the left glass
         let ctx = SwimContext(wander: 0)
-        for _ in 0..<120 {
-            AquariumSteering.step(&b, dt: 1.0 / 30, t: 0, seed: 1, context: ctx)
+        for i in 0..<120 {
+            AquariumSteering.step(&b, dt: 1.0 / 30, t: Double(i) / 30, seed: 1, context: ctx)
         }
-        #expect(cos(b.heading) > 0)
-        #expect(b.x > 0.05)
-        // Deep water gives no correction.
-        let clear = body(x: 0.5, heading: .pi)
-        #expect(AquariumSteering.boundaryDesired(clear, bounds: SwimBounds()) == nil)
+        #expect(b.dir == 1, "it came round")
+        #expect(b.x > 0.08)
         // And nothing ever leaves the water.
         var hugger = body(x: 0.02, y: 0.05, heading: .pi * 0.9, speed: 0.5)
         for i in 0..<300 {
@@ -321,7 +302,7 @@ struct AquariumSteeringTests {
                 distances.append(dist)
             }
             #expect(reversals <= 3, "\(reversals) reversals holding station")
-            // Never more than one about-face in any ten seconds.
+            // Never two about-faces within three seconds.
             for (a, later) in zip(turnTimes, turnTimes.dropFirst()) {
                 #expect(later - a >= 3, "two turns \(later - a) s apart")
             }
@@ -339,11 +320,13 @@ struct AquariumSteeringTests {
             b.lastTurnEnd = 10
             var t = 10.0
             var began: Double?
+            var fastestWaiting = 0.0
             for _ in 0..<60 {
                 t += 1.0 / 30
                 AquariumSteering.step(&b, dt: 1.0 / 30, t: t, seed: 5,
                                       context: SwimContext(bounds: Self.tank, food: (0.3, 0.5),
                                                            startled: startled))
+                if b.turn == nil, began == nil { fastestWaiting = max(fastestWaiting, b.throttle) }
                 if let turn = b.turn, began == nil {
                     began = turn.start
                     #expect(turn.kind == kind)
@@ -351,6 +334,14 @@ struct AquariumSteeringTests {
                 }
             }
             #expect(began != nil, "the food turned it")
+            // While it waited its short beat it eased off, food or no:
+            // it never darted away from the pellet, and a scare kept its
+            // dash.
+            if startled {
+                #expect(fastestWaiting > 1, "a scare darts even while it waits")
+            } else {
+                #expect(fastestWaiting <= 1 + 1e-9, "it darted \(fastestWaiting)× away from the food")
+            }
             let start = began ?? 99
             #expect(start - 10 >= AquariumSteering.urgentCooldown - 1e-9)
             #expect(start - 10 <= AquariumSteering.urgentCooldown + 1.0 / 30 + 1e-9,
@@ -522,5 +513,32 @@ struct AquariumSteeringTests {
             #expect(working.turn == nil && working.dir == 1, "the work ahead wins")
         }
         #expect(fed.x > 0.55)
+    }
+
+    @Test("a change of mind never turns a fish from food ahead or from a scare")
+    func whimWaitsForFood() {
+        // A seed and a moment deep in a whim to turn back: facing right,
+        // the whim says left.
+        let seed: UInt64 = 5
+        var t = 0.0
+        while AquariumSteering.whim(seed: seed, at: t) > -0.995 { t += 0.25 }
+        let start = t - 0.5
+        func run(_ food: (x: Double, y: Double)?, startled: Bool = false) -> [SwimTurn.Kind] {
+            var b = SwimBody(x: 0.45, y: 0.5, dir: 1, speed: 0.04, turnRate: 2.4, energy: 1, homeY: 0.5)
+            var clock = start
+            var kinds: [SwimTurn.Kind] = []
+            for _ in 0..<36 {
+                clock += 1.0 / 30
+                let wasTurning = b.turn != nil
+                AquariumSteering.step(&b, dt: 1.0 / 30, t: clock, seed: seed,
+                                      context: SwimContext(bounds: Self.tank, food: food, wander: 0,
+                                                           startled: startled))
+                if let turn = b.turn, !wasTurning { kinds.append(turn.kind) }
+            }
+            return kinds
+        }
+        #expect(run(nil) == [.cruise], "the whim is real here: with nothing to do it turns back")
+        #expect(run((0.62, 0.5)).isEmpty, "food ahead: it swims on to the pellet")
+        #expect(run((0.62, 0.5), startled: true).isEmpty, "a scare ahead: it flees on, away from the tap")
     }
 }

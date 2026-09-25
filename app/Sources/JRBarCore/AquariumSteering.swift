@@ -90,14 +90,17 @@ public struct SwimBody: Equatable, Sendable {
     }
 }
 
-/// The swimmable rectangle in unit space, plus the soft margin inside
-/// it where the boundary avoidance starts turning the fish away.
+/// The swimmable rectangle in unit space, plus the band inside its top
+/// and bottom where the surface and the sand start easing a fish's
+/// climb level. The side glass is seen coming by the fish's own speed
+/// and length instead, and turned from in one U-turn.
 public struct SwimBounds: Equatable, Sendable {
     public var minX: Double
     public var minY: Double
     public var maxX: Double
     public var maxY: Double
-    /// Distance from a wall where the soft turn begins.
+    /// How far under the surface and over the sand the climb starts
+    /// easing level.
     public var margin: Double
 
     public init(minX: Double = 0.04, minY: Double = 0.07,
@@ -233,37 +236,6 @@ public enum AquariumSteering {
         return d
     }
 
-    /// Rotate `heading` toward `desired`, at most `maxTurn` radians.
-    /// The fish can never snap — it arcs.
-    public static func steer(_ heading: Double, toward desired: Double,
-                             maxTurn: Double) -> Double {
-        let d = turnDelta(from: heading, to: desired)
-        return heading + min(maxTurn, max(-maxTurn, d))
-    }
-
-    /// The boundary's preferred heading, or nil while the fish is clear
-    /// of every wall. Inside the margin the fish is steered straight
-    /// off the wall: the correction vector points into the tank,
-    /// growing as the wall nears, and the resulting heading blends the
-    /// repulsion with the fish's own direction so the turn reads as a
-    /// bank rather than a bounce.
-    public static func boundaryDesired(_ body: SwimBody, bounds: SwimBounds) -> Double? {
-        let m = bounds.margin
-        var rx = 0.0
-        var ry = 0.0
-        if body.x < bounds.minX + m { rx += (bounds.minX + m - body.x) / m }
-        if body.x > bounds.maxX - m { rx -= (body.x - (bounds.maxX - m)) / m }
-        if body.y < bounds.minY + m { ry += (bounds.minY + m - body.y) / m }
-        if body.y > bounds.maxY - m { ry -= (body.y - (bounds.maxY - m)) / m }
-        guard rx != 0 || ry != 0 else { return nil }
-        // Blend the repulsion with the current travel direction so a
-        // fish skimming the wall keeps swimming along it instead of
-        // stalling nose-into-the-glass.
-        let vx = cos(body.heading) + rx * 2.2
-        let vy = sin(body.heading) + ry * 2.2
-        return atan2(vy, vx)
-    }
-
     /// The new fish's body, from its id's seed: somewhere inside the
     /// glass at its home depth, facing the way its swim says, at a
     /// calm cruise. `fishSpeed` is the model's per-fish speed; the
@@ -357,10 +329,12 @@ public enum AquariumSteering {
         }
 
         // A change of mind, now and then, well clear of the glass and
-        // well after the last turn.
+        // well after the last turn — never with food, a scare or work
+        // to see to.
         let clear = min(body.x - bounds.minX, bounds.maxX - body.x) > 0.3
             && t - body.lastTurnEnd > 6 / tempo
-        if clear, context.station == nil, whim(seed: seed, at: t) * dir < -0.985 {
+        if clear, context.food == nil, context.station == nil,
+           whim(seed: seed, at: t) * dir < -0.985 {
             backKind = context.idling ? .idle : .cruise
         }
 
@@ -451,9 +425,15 @@ public enum AquariumSteering {
             }
             if !cooled {
                 // Waiting it out: level off and ease back, never
-                // rotating through vertical.
+                // rotating through vertical — and never darting the
+                // wrong way while food behind it waits its short beat.
+                // Only a scare keeps its dash.
                 climbRate = 2 * tempo * (0 - body.climb)
-                if kind == .wall { throttleTarget = min(throttleTarget, 0.15) }
+                if kind == .wall {
+                    throttleTarget = min(throttleTarget, 0.15)
+                } else if kind != .startle {
+                    throttleTarget = min(throttleTarget, 0.3)
+                }
             }
         } else {
             body.backFor = 0
