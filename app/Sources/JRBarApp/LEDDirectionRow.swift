@@ -4,11 +4,12 @@ import SwiftUI
 /// A device card's "Strip direction" row: which way round the strip is
 /// mounted, and a sweep that starts from LED 0 so you can match it to the
 /// strip on your desk. Reversed mirrors every agent light the monitor
-/// draws for this device (`devices.N.led_direction`), so a comet that ran
-/// left to right still does after the strip is turned round. Only the Pro
-/// and the Dot have one (the Screen Bar is drawn on screen, the right way
-/// round already), and a Dot linked to the Pro plays the Pro's light, so
-/// there the row is dimmed and says why.
+/// draws for this device, and Effect Studio's Play on strip, so a comet
+/// that ran left to right still does after the strip is turned round
+/// (`devices.N.led_direction`). Only the Pro and the Dot have one (the
+/// Screen Bar is drawn on screen, the right way round already). A linked
+/// Dot follows the Pro in desk order whichever way the Pro is set, and
+/// while its role drives it the row is dimmed and says why.
 struct LEDDirectionRow: View {
     @Bindable var store: SettingsStore
     let device: SettingsStore.DeviceEntry
@@ -21,7 +22,7 @@ struct LEDDirectionRow: View {
     private var reversed: Bool { store.document.string(SettingsPath(path)) == "reversed" }
     private var ledCount: Int { device.kind == "dot" ? 2 : 8 }
     private var followsPro: Bool { device.kind == "dot" && DotLinkReading.followsPro(store) }
-    private var subtitle: String { followsPro ? DotLinkReading.note : Self.subtitle(reversed: reversed) }
+    private var subtitle: String { followsPro ? DotLinkReading.note(store) : Self.subtitle(reversed: reversed) }
 
     /// The devices whose own strip the monitor draws for.
     static func applies(to kind: String) -> Bool { kind == "pro" || kind == "dot" }

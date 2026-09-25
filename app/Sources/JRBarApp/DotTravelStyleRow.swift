@@ -6,8 +6,9 @@ import SwiftUI
 /// lets go in the same order, so the Dot shows which way the light is
 /// going; Crossfade is the older soft swap. Only a Dot shows it
 /// (`devices.N.dot_travel_style`), and it only acts while the Dot draws
-/// its own display: a Dot linked to the Pro plays the Pro's light, so
-/// there the row is dimmed and says why.
+/// its own display: a Dot linked to the Pro plays the Pro's light (or the
+/// alert beacon, or the call light), so there the row is dimmed and says
+/// which.
 struct DotTravelStyleRow: View {
     @Bindable var store: SettingsStore
     let device: SettingsStore.DeviceEntry
@@ -23,7 +24,7 @@ struct DotTravelStyleRow: View {
     var body: some View {
         if device.kind == "dot" {
             Provided(store, path) {
-                SettingRow("Travel", subtitle: followsPro ? DotLinkReading.note : Self.subtitle(style)) {
+                SettingRow("Travel", subtitle: followsPro ? DotLinkReading.note(store) : Self.subtitle(style)) {
                     HStack(spacing: 10) {
                         LEDStripPreview(program: Self.program(style), ledCount: 2, style: .dots, dotSize: 8, spacing: 5)
                             .frame(width: 52)
@@ -62,14 +63,29 @@ struct DotTravelStyleRow: View {
     }
 }
 
-/// Whether the Dot is drawing its own display or playing the Pro's light.
-/// Linked with the Extend, Asks or Call role, the monitor sends the Dot
-/// the Pro's program narrowed to two LEDs (or the asks beacon), so the
-/// Dot's own Travel and Strip direction have nothing to act on until its
-/// role is Status or the two are unlinked. The daemon's `dot_link` word
-/// wins over the setting when it has one, as in `DotRoleControls`.
+/// Whether the Dot is drawing its own display or playing what its role
+/// gives it. Linked with the Extend role the monitor sends the Dot the
+/// Pro's program narrowed to two LEDs; with Asks, the alert beacon; with
+/// Call, the call light. Either way the Dot's own Travel and Strip
+/// direction have nothing to act on until its role is On its own or the
+/// two are unlinked. The daemon's `dot_link` word wins over the setting
+/// when it has one, as in `DotRoleControls`.
 enum DotLinkReading {
-    static let note = "Linked: the Dot plays the Pro's light. Set its role to Status, or unlink, to use this."
+    /// Why the row is dimmed, in terms of what the Dot is doing instead.
+    static func note(for role: DotRole) -> String {
+        let doing: String
+        switch role {
+        case .asks: doing = "the Dot is the alert beacon"
+        case .call: doing = "the Dot is the call light"
+        case .extend, .status: doing = "the Dot plays the Pro's light"
+        }
+        return "Linked: \(doing). Set its role to On its own, or unlink, to use this."
+    }
+
+    @MainActor
+    static func note(_ store: SettingsStore) -> String {
+        note(for: DotRole.parse(store.document.string("dot_role")))
+    }
 
     @MainActor
     static func followsPro(_ store: SettingsStore) -> Bool {
