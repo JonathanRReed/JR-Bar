@@ -615,11 +615,15 @@ final class AquariumToy: Toy {
     /// Effects worth surfacing: the away summary becomes the panel,
     /// the rest fold into the toast line. An achievement or a new tank
     /// level is a milestone, and asks Confetti for a burst — the toy
-    /// decides whether its Milestones trigger is on.
-    private func note(_ effects: [AquariumGameEffect], now: Date) {
+    /// decides whether its Milestones trigger is on. The oyster opening
+    /// and the alien zipping off outrank the pearl count, so the work
+    /// tick that fills the oyster doesn't bury it under "+1 pearl".
+    /// Internal so the tests can hand it a batch.
+    func note(_ effects: [AquariumGameEffect], now: Date) {
         let toastBefore = toast?.at
         let noticeBefore = notice?.id
         var earned = 0
+        var oysterOpened = false
         var shooed: Int?
         var milestone = game.tankLevel > knownLevel
         knownLevel = max(knownLevel, game.tankLevel)
@@ -652,7 +656,7 @@ final class AquariumToy: Toy {
             case .visitorDeparted(let v):
                 toast = ("The \(v.displayName) drifts on", now)
             case .oysterReady:
-                toast = ("The oyster opened — there's a pearl inside", now)
+                oysterOpened = true
             case .alienShooed(let bounty):
                 shooed = bounty
             case .variantEarned(let id, let variant):
@@ -665,6 +669,9 @@ final class AquariumToy: Toy {
         }
         if earned > 0 {
             toast = ("+\(earned) pearl\(earned == 1 ? "" : "s")", now)
+        }
+        if oysterOpened {
+            toast = ("The oyster opened — there's a pearl inside", now)
         }
         if let shooed {
             toast = ("The alien zips off · +\(shooed) pearls", now)
