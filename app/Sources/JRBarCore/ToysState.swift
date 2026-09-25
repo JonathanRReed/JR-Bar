@@ -569,6 +569,22 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     /// shelf, bought with the tank's pearls. nil wears nothing; the app
     /// checks the item is owned before drawing it.
     public var wearing: String?
+    /// About how many minutes pass between the floating buddy's walks
+    /// while the agents work — the card's "Time between walks". Twelve
+    /// is the cadence the walkabout always had; stored clamped into
+    /// `walkEveryRange`.
+    public var walkEvery: Double = NotchBuddySettings.defaultWalkEvery
+
+    /// The walk dial's reach, in minutes, and where it starts.
+    public static let walkEveryRange: ClosedRange<Double> = 3.0...40.0
+    public static let defaultWalkEvery: Double = 12
+
+    /// Minutes between walks only mean something inside the dial; a
+    /// non-finite value reads as the default.
+    public static func clampedWalkEvery(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultWalkEvery }
+        return min(walkEveryRange.upperBound, max(walkEveryRange.lowerBound, value))
+    }
 
     /// The size slider's reach — 1× is the docked size, 3× is desk-pet.
     public static let scaleRange: ClosedRange<Double> = 1.0...3.0
@@ -617,6 +633,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled, character, presentation, buddyName, care, freePosition, tucked, showCaption, scale
         case wearsStripColor, walkabout, wearing
+        case walkEvery
     }
 
     public init(from decoder: any Decoder) throws {
@@ -637,6 +654,9 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         walkabout = (try? c.decodeIfPresent(Bool.self, forKey: .walkabout)) ?? true
         let worn = (try? c.decodeIfPresent(String.self, forKey: .wearing)) ?? nil
         wearing = worn?.isEmpty == false ? worn : nil
+        // Missing or mistyped is the old cadence; a number off the dial clamps.
+        walkEvery = Self.clampedWalkEvery(
+            (try? c.decodeIfPresent(Double.self, forKey: .walkEvery)) ?? Self.defaultWalkEvery)
     }
 }
 

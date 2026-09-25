@@ -397,4 +397,28 @@ struct ToysStateTests {
         let inState = try decode(ToysState.self, #"{"confetti": {"enabled": true, "origin": "rain"}}"#)
         #expect(inState.confetti.origin == .rain)
     }
+
+    // MARK: lane buddy
+
+    @Test("the buddy's walk dial defaults to the old cadence, clamps and round-trips")
+    func buddyWalkEvery() throws {
+        #expect(NotchBuddySettings().walkEvery == 12)
+        #expect(NotchBuddySettings.defaultWalkEvery == 12)
+        // A file from before the dial walks as it always did.
+        let old = try decode(NotchBuddySettings.self, #"{"enabled": true, "walkabout": true}"#)
+        #expect(old.walkEvery == 12)
+        #expect(old.enabled == true)
+        // Mistyped is the default; off the dial clamps.
+        #expect(try decode(NotchBuddySettings.self, #"{"walkEvery": "often"}"#).walkEvery == 12)
+        #expect(try decode(NotchBuddySettings.self, #"{"walkEvery": 0.5}"#).walkEvery == 3)
+        #expect(try decode(NotchBuddySettings.self, #"{"walkEvery": 900}"#).walkEvery == 40)
+        #expect(NotchBuddySettings.clampedWalkEvery(.nan) == 12)
+        #expect(NotchBuddySettings.clampedWalkEvery(-.infinity) == 12)
+        var settings = NotchBuddySettings(enabled: true)
+        settings.walkEvery = 5
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(NotchBuddySettings.self, from: data)
+        #expect(decoded.walkEvery == 5)
+        #expect(decoded == settings)
+    }
 }

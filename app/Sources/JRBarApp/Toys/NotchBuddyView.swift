@@ -58,43 +58,30 @@ struct NotchBuddyView: View {
             // under the band — a floating buddy never pays for it.
             let seam = docked ? toy.seamTint(at: context.date.timeIntervalSince1970) : nil
             let tint = tint(for: summary, seam: seam)
-            if toy.showsDot {
-                MiniFigure(
-                    mood: summary.mood,
-                    tint: tint,
-                    waiting: summary.waiting,
-                    working: summary.working,
-                    still: reduceMotion,
-                    phase: context.date.timeIntervalSince1970
-                )
-                .help(summary.statusLine)
-            } else {
-            BuddyFigure(
-                character: toy.buddyCharacter,
-                mood: summary.mood,
-                tint: tint,
-                phase: context.date.timeIntervalSince1970,
-                hopProgress: hopProgress(at: context.date),
-                waveAge: waveAge(at: context.date, mood: summary.mood),
-                slumpAge: slumpAge(at: context.date, mood: summary.mood),
-                leans: toy.waveOrdinal % 2 == 0,
-                still: reduceMotion,
-                askCount: summary.waiting,
-                care: summary.care,
-                trick: trick(at: context.date),
-                treatAge: age(of: toy.treatBurstAt, at: context.date),
-                crumbAge: age(of: toy.crumbAt, at: context.date),
-                stride: toy.walkPhase(at: context.date),
-                stage: toy.stage,
-                wearing: toy.wearing,
-                heading: toy.strollHeading
-            )
-            .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
-            .scaleEffect(x: dress.squash.width, y: dress.squash.height, anchor: .bottom)
-            .rotationEffect(.degrees(dress.tilt), anchor: .center)
-            .offset(y: dress.lift)
-            .help(summary.statusLine)
+            let place = self.presence(at: context.date)
+            Group {
+                if toy.showsDot {
+                    MiniFigure(
+                        mood: summary.mood,
+                        tint: tint,
+                        waiting: summary.waiting,
+                        working: summary.working,
+                        still: reduceMotion,
+                        phase: context.date.timeIntervalSince1970
+                    )
+                    .help(summary.statusLine)
+                } else {
+                    figure(summary: summary, tint: tint, at: context.date)
+                        .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
+                        .scaleEffect(x: dress.squash.width, y: dress.squash.height, anchor: .bottom)
+                        .rotationEffect(.degrees(dress.tilt), anchor: .center)
+                        .offset(y: dress.lift)
+                        .help(summary.statusLine)
+                }
             }
+            .scaleEffect(place.scale, anchor: place.anchor)
+            .offset(place.offset)
+            .opacity(place.opacity)
         }
         .frame(width: 18, height: 18)
         .scaleEffect(scale)
@@ -115,18 +102,84 @@ struct NotchBuddyView: View {
         .accessibilityAddTraits(.isButton)
     }
 
+    /// The character with everything the frame reads off the toy: the
+    /// mood's clocks, the tap's trick, the walk's eased turn and the
+    /// mood change it is still handing off from.
+    private func figure(summary: NotchBuddyToy.BuddySummary, tint: Color, at now: Date) -> BuddyFigure {
+        BuddyFigure(
+            character: toy.buddyCharacter,
+            mood: summary.mood,
+            tint: tint,
+            phase: now.timeIntervalSince1970,
+            hopProgress: hopProgress(at: now),
+            waveAge: waveAge(at: now, mood: summary.mood),
+            slumpAge: slumpAge(at: now, mood: summary.mood),
+            leans: toy.waveOrdinal % 2 == 0,
+            still: reduceMotion,
+            askCount: summary.waiting,
+            care: summary.care,
+            trick: trick(at: now),
+            treatAge: age(of: toy.treatBurstAt, at: now),
+            crumbAge: age(of: toy.crumbAt, at: now),
+            stride: toy.walkPhase(at: now),
+            stage: toy.stage,
+            wearing: toy.wearing,
+            turn: toy.turnFrame(at: now, still: reduceMotion),
+            handoff: reduceMotion ? nil : toy.handoff(at: now)
+        )
+    }
+
+    /// Where the whole buddy stands in its home at `now`.
+    private func presence(at now: Date) -> Presence {
+        Self.presence(tuck: toy.tuckProgress(at: now), arrival: toy.arrival(at: now),
+                      docked: docked, scale: scale, reduceMotion: reduceMotion)
+    }
+
+    /// How the whole buddy sits in its home for one frame.
+    struct Presence: Equatable {
+        var scale: Double
+        var anchor: UnitPoint
+        var offset: CGSize
+        var opacity: Double
+    }
+
+    /// Where the whole buddy stands in its home: ducking out for a tuck
+    /// (`tuck` 0 → 1; up under the notch when docked, down to its feet
+    /// when floating), or arriving — grown in from the docked size and
+    /// drifted in from the docked spot on a hand-off, popped back up
+    /// after a nap. Reduce Motion never ducks out (`tuckAway` puts it
+    /// away at once) and skips the arrivals too.
+    /// `scale` is the home's size: a drift is in screen points and the
+    /// figure is drawn at 18 pt and scaled after, so it travels in the
+    /// figure's own units.
+    static func presence(tuck: Double?, arrival: BuddyArrival?, docked: Bool, scale: Double,
+                         reduceMotion: Bool) -> Presence {
+        let anchor: UnitPoint = docked ? .top : .bottom
+        if let tuck {
+            return Presence(scale: NotchBuddyToy.tuckScale(tuck), anchor: anchor, offset: .zero,
+                            opacity: 1 - tuck * tuck)
+        }
+        guard !reduceMotion, let arrival else {
+            return Presence(scale: 1, anchor: anchor, offset: .zero, opacity: 1)
+        }
+        let unit = max(1, scale.isFinite ? scale : 1)
+        let offset = CGSize(width: arrival.offset.width / unit, height: arrival.offset.height / unit)
+        return Presence(scale: arrival.scale, anchor: arrival.drift == .zero ? anchor : .center,
+                        offset: offset, opacity: 1)
+    }
+
     /// The carry's dress: held, the buddy leans toward the travel
     /// direction with its feet off the ground (the tilt settles on a
     /// short time constant while the cursor parks); put down, it lands
-    /// with a small squash. Reduce Motion gets a plain reposition.
+    /// with a small squash and lets go of whatever lean it still had
+    /// over the same beat. Reduce Motion gets a plain reposition.
     private func dragDress(at now: Date) -> (tilt: Double, lift: Double, squash: CGSize) {
         guard !reduceMotion else { return (0, 0, CGSize(width: 1, height: 1)) }
         var tilt = 0.0
         var lift = 0.0
         var squash = CGSize(width: 1, height: 1)
         if toy.isDragged {
-            let settle = BuddyPlacement.tiltDecay(age: now.timeIntervalSince(toy.dragMovedAt ?? now))
-            tilt = toy.dragTilt * settle
+            tilt = toy.dangle(at: now)
             lift = -1.8
             let s = abs(tilt) / 14
             squash = CGSize(width: 1 - 0.05 * s, height: 1 + 0.06 * s)
@@ -138,6 +191,7 @@ struct NotchBuddyView: View {
                 squash.width *= 1 + 0.11 * s
                 squash.height *= 1 - 0.18 * s
                 lift += 0.4 * s
+                tilt += toy.landingTilt * (1 - BuddyTurn.smooth(age / 0.34))
             }
         }
         return (tilt, lift, squash)
@@ -179,14 +233,14 @@ struct NotchBuddyView: View {
     /// jump and the "!" key off this so they play once per ask.
     private func waveAge(at now: Date, mood: NotchBuddyToy.Mood) -> TimeInterval? {
         guard mood == .waving, let since = toy.wavingSince else { return nil }
-        return now.timeIntervalSince(since)
+        return max(0, now.timeIntervalSince(since))
     }
 
     /// Seconds into the slump; nil unless the mood is slumped. The
     /// tumble-in plays once from here.
     private func slumpAge(at now: Date, mood: NotchBuddyToy.Mood) -> TimeInterval? {
         guard mood == .slumped, let since = toy.slumpedSince else { return nil }
-        return now.timeIntervalSince(since)
+        return max(0, now.timeIntervalSince(since))
     }
 
     /// The tap trick mid-flight, or nil. Reduce Motion gets no tricks —
@@ -342,9 +396,13 @@ struct BuddyFigure: View {
     /// What it wears from the tank shop's buddy shelf. The nightcap
     /// replaces it while it sleeps.
     var wearing: ShopItem? = nil
-    /// Strolling along an edge: the way it walks (+1 right, -1 left).
-    /// The patrol and the hops in place give way to a straight walk.
-    var heading: Double? = nil
+    /// Strolling along an edge: the eased turn toward the way it walks
+    /// (`BuddyTurn`). Its weight blends the patrol into a straight walk
+    /// and back; nil is the mood's own pose.
+    var turn: BuddyTurn.Frame? = nil
+    /// A mood change still easing in: the old mood's pose fades into the
+    /// new one's (`BuddyHandoff`). nil is the new mood whole.
+    var handoff: BuddyHandoff? = nil
 
     /// The stage's proportions, applied to the body only — the shadow,
     /// the "!" and the effects keep their places.
@@ -367,7 +425,7 @@ struct BuddyFigure: View {
 
     /// Everything the frame needs, resolved once per tick. The
     /// character renderers read this; only the skeleton writes it.
-    struct Pose {
+    struct Pose: Equatable {
         var offset = CGSize.zero
         var squash = CGSize(width: 1, height: 1)
         var lean = 0.0          // degrees
@@ -379,12 +437,51 @@ struct BuddyFigure: View {
         var mouth = Mouth.none
         var eyesClosed = false  // asleep draws lid lines, not pupils
         var blush = 0.0         // 0 none → 1 fully pink cheeks
+
+        /// `a` handing over to `b`: every measure eased in step, and the
+        /// face's shapes (mouth, shut eyes) taking `b`'s past the midpoint.
+        static func mix(_ a: Pose, _ b: Pose, _ t: Double) -> Pose {
+            let t = min(max(t, 0), 1)
+            func lerp(_ x: Double, _ y: Double) -> Double { x + (y - x) * t }
+            func lerp(_ x: CGSize, _ y: CGSize) -> CGSize {
+                CGSize(width: lerp(x.width, y.width), height: lerp(x.height, y.height))
+            }
+            var pose = t < 0.5 ? a : b
+            pose.offset = lerp(a.offset, b.offset)
+            pose.squash = lerp(a.squash, b.squash)
+            pose.lean = lerp(a.lean, b.lean)
+            pose.spin = lerp(a.spin, b.spin)
+            pose.look = lerp(a.look, b.look)
+            pose.lid = lerp(a.lid, b.lid)
+            pose.air = lerp(a.air, b.air)
+            pose.pupil = lerp(a.pupil, b.pupil)
+            pose.blush = lerp(a.blush, b.blush)
+            return pose
+        }
+
+        /// Several poses at once, each by its share: every measure
+        /// weighted, the face's shapes the heaviest's. Ties go by the
+        /// mood's name, so the pick never flickers between frames.
+        static func blend(_ parts: [(mood: NotchBuddyToy.Mood, pose: Pose, share: Double)]) -> Pose {
+            let ordered = parts.filter { $0.share > 0 }.sorted {
+                $0.share != $1.share ? $0.share > $1.share : $0.mood.rawValue < $1.mood.rawValue
+            }
+            guard let first = ordered.first else { return Pose() }
+            var pose = first.pose
+            var total = first.share
+            for part in ordered.dropFirst() {
+                total += part.share
+                pose = mix(pose, part.pose, part.share / total)
+            }
+            return pose
+        }
     }
 
-    /// The pose, layered: the mood first, then the care feelings, then
-    /// the tap's trick on top. Reduce Motion takes the still mood pose;
-    /// care still applies (a droop is a pose), tricks do not.
-    private var pose: Pose {
+    /// The pose, layered: the mood first (handing off from the last
+    /// one while a change eases in), then the care feelings, then the
+    /// tap's trick on top. Reduce Motion takes the still mood pose; care
+    /// still applies (a droop is a pose), tricks do not.
+    var pose: Pose {
         var pose = still ? stillPose : movingPose
         applyCare(&pose)
         if let trick, !still { applyTrick(trick, &pose) }
@@ -392,15 +489,29 @@ struct BuddyFigure: View {
     }
 
     private var movingPose: Pose {
-        if heading != nil, mood == .pacing || mood == .gathering { return strollPose }
+        let now = moodPose(mood)
+        guard let handoff, !handoff.isOver else { return now }
+        let leaving = handoff.leaving
+        guard leaving != [mood: 1] else { return now }
+        let parts = leaving.map { (mood: $0.key, pose: moodPose($0.key), share: $0.value) }
+        return Pose.mix(Pose.blend(parts), now, handoff.weight)
+    }
+
+    /// One mood's moving pose. Pacing and gathering give way to the walk
+    /// by the turn's weight, so stepping onto an edge and back off it
+    /// blends rather than snaps.
+    private func moodPose(_ mood: NotchBuddyToy.Mood) -> Pose {
+        let own: Pose
         switch mood {
-        case .asleep: return asleepPose
-        case .pacing: return pacingPose
-        case .gathering: return gatheringPose
-        case .waving: return wavingPose
-        case .slumped: return slumpedPose
-        case .celebrating: return celebratingPose
+        case .asleep: own = asleepPose
+        case .pacing: own = pacingPose
+        case .gathering: own = gatheringPose
+        case .waving: own = wavingPose
+        case .slumped: own = slumpedPose
+        case .celebrating: own = celebratingPose
         }
+        guard mood == .pacing || mood == .gathering, let turn, turn.weight > 0 else { return own }
+        return Pose.mix(own, strollPose(turn), turn.weight)
     }
 
     /// The pet's feelings over the mood's pose. `fed` blushes and turns
@@ -529,9 +640,11 @@ struct BuddyFigure: View {
             pose.look = CGSize(width: leg.dir * 0.9, height: -0.2)
         } else {
             // Paused at the end: settle, then the eyes lead the turn back.
+            // The lean swings all the way to the next leg's, through
+            // upright, so the step off never tips it in one frame.
             let settle = 1 - leg.turn
             pose.squash = CGSize(width: 1 + 0.07 * settle, height: 1 - 0.07 * settle)
-            pose.lean = leg.dir * (5 - 7 * leg.turn)
+            pose.lean = leg.dir * (5 - 10 * leg.turn)
             pose.look = CGSize(width: leg.dir * (0.9 - 1.8 * leg.turn), height: -0.2)
         }
         pose.mouth = .flat
@@ -539,13 +652,15 @@ struct BuddyFigure: View {
     }
 
     /// The walkabout's stride: the patrol's step bob and lean, facing
-    /// one way the whole time — the panel does the travelling.
-    private var strollPose: Pose {
+    /// the way the turn has got to — the panel does the travelling. Mid-
+    /// turn the lean passes through upright, the eyes cross ahead of the
+    /// body, and the body narrows a touch at the midpoint.
+    private func strollPose(_ turn: BuddyTurn.Frame) -> Pose {
         var pose = Pose()
-        let dir = heading ?? 1
         pose.offset.height = -abs(sin(walk * .pi * 2.2)) * 0.6
-        pose.lean = dir * 5
-        pose.look = CGSize(width: dir * 0.9, height: -0.2)
+        pose.lean = turn.lean
+        pose.look = CGSize(width: turn.lookWidth, height: -0.2)
+        pose.squash = turn.squash
         pose.mouth = .flat
         return pose
     }

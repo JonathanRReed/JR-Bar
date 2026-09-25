@@ -57,6 +57,59 @@ struct BuddyRoamingTests {
         toy.isOn = true
         #expect(toy.isOn == true)
         #expect(store.state.notchBuddy.tucked == false)
+        #expect(toy.tuckingSince == nil, "the card's re-enable calls the duck-out off")
+    }
+
+    @Test("a tuck ducks out before the panels let it go, instead of vanishing")
+    func tuckDucksOut() {
+        let (toy, store) = makeToy()
+        toy.isOn = true
+        var syncs = 0
+        toy.onVisibilityChange = { syncs += 1 }
+        toy.tuckAway(at: t0)
+        #expect(store.state.notchBuddy.tucked == true, "tucked from the call on")
+        #expect(toy.isShowing == true, "still drawn while it ducks out")
+        #expect(syncs == 0, "the panels wait for the duck-out")
+        #expect(toy.tuckProgress(at: t0) == 0)
+        let half = toy.tuckProgress(at: t0.addingTimeInterval(NotchBuddyToy.tuckDuration / 2)) ?? 0
+        #expect(abs(half - 0.5) < 1e-6)
+        #expect(toy.tuckProgress(at: t0.addingTimeInterval(1)) == 1)
+        toy.finishTuck()
+        #expect(syncs == 1)
+        #expect(toy.isShowing == false)
+        #expect(toy.tuckProgress(at: t0) == nil)
+        // Back from the nap it pops up rather than appearing.
+        toy.isOn = true
+        let popped = toy.arrival(at: Date())
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            #expect(popped?.fromScale == NotchBuddyToy.wakeScale)
+        }
+    }
+
+    @Test("leaving the notch hands off to the free panel once; re-parking doesn't")
+    func handoff() {
+        // The store is weak-held by the toy — keep it in scope.
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        toy.isOn = true
+        let figure = CGPoint(x: 700, y: 860)
+        toy.parkFree(at: CGPoint(x: 700, y: 855), figureCentre: figure, now: t0)
+        let taken = toy.takeHandoff(at: t0.addingTimeInterval(0.1))
+        #expect(taken?.figureCentre == figure)
+        #expect(toy.takeHandoff(at: t0.addingTimeInterval(0.1)) == nil, "claimed once")
+        toy.parkFree(at: CGPoint(x: 300, y: 300), now: t0)
+        #expect(toy.takeHandoff(at: t0) == nil, "already floating: no hand-off")
+        toy.dock()
+        toy.parkFree(at: CGPoint(x: 700, y: 855), now: t0)
+        #expect(toy.takeHandoff(at: t0.addingTimeInterval(5)) == nil, "a stale one is dropped")
+    }
+
+    @Test("the free panel puts the grown figure where the docked one stood")
+    func figureCentres() {
+        let docked = NSRect(x: 100, y: 800, width: 36, height: 40)
+        #expect(BuddyPanel.dockedFigureCentre(in: docked) == CGPoint(x: 118, y: 825))
+        let free = NSRect(x: 100, y: 700, width: 72, height: 77)
+        #expect(BuddyPanel.figureCentre(in: free, scale: 2) == CGPoint(x: 136, y: 747))
     }
 
     @Test("the caption flag persists and re-lays the panel")
@@ -90,6 +143,29 @@ struct BuddyRoamingTests {
         #expect(store.state.notchBuddy.scale == 1)
     }
 
+    @Test("the card's readouts say exactly what the dials hold")
+    func readouts() {
+        // "%.2g" used to print 1.25 as "1.2×" and 2.75 as "2.8×".
+        #expect(NotchBuddyToy.sizeWords(1) == "1×")
+        #expect(NotchBuddyToy.sizeWords(1.25) == "1.25×")
+        #expect(NotchBuddyToy.sizeWords(1.5) == "1.5×")
+        #expect(NotchBuddyToy.sizeWords(2.75) == "2.75×")
+        #expect(NotchBuddyToy.sizeWords(9) == "3×")
+        #expect(NotchBuddyToy.walkWords(12) == "12 min")
+        #expect(NotchBuddyToy.walkWords(1) == "3 min")
+        let (toy, store) = makeToy()
+        toy.walkEveryBinding.wrappedValue = 7.4
+        #expect(store.state.notchBuddy.walkEvery == 7, "whole minutes")
+        toy.walkEveryBinding.wrappedValue = 99
+        #expect(toy.walkEvery == 40)
+        toy.takesWalksBinding.wrappedValue = false
+        #expect(store.state.notchBuddy.walkabout == false)
+        toy.showsCaptionBinding.wrappedValue = true
+        #expect(store.state.notchBuddy.showCaption == true, "setting what it already is keeps it")
+        toy.showsCaptionBinding.wrappedValue = false
+        #expect(store.state.notchBuddy.showCaption == false)
+    }
+
     @Test("with nothing on the clock the caption is the name tag")
     func captionFallback() {
         let (toy, store) = makeToy()
@@ -110,7 +186,7 @@ struct BuddyRoamingTests {
         #expect(titles[2] == "Rename…")
         #expect(titles[3] == "Change character")
         #expect(titles.contains("Float free"))
-        #expect(titles.contains("Show caption"))
+        #expect(titles.contains("Caption on hover"))
         #expect(titles.last == "Tuck away")
         #expect(!titles.contains { $0.hasPrefix("Open") },
                 "no ask is open — no session to open")
@@ -118,7 +194,7 @@ struct BuddyRoamingTests {
         let roster = menu.items[3].submenu
         #expect(roster?.items.count == BuddyCharacter.allCases.count)
         #expect(roster?.items.filter { $0.state == .on }.map(\.title) == ["Dot"])
-        #expect(menu.items.first { $0.title == "Show caption" }?.state == .on)
+        #expect(menu.items.first { $0.title == "Caption on hover" }?.state == .on)
     }
 
     @Test("the menu's dock line flips with where the buddy lives")
@@ -158,15 +234,23 @@ struct BuddyRoamingTests {
         toy.dragStarted()
         #expect(toy.isDragged == true)
         toy.dragMoved(dx: 30, at: t0)
-        #expect(toy.dragTilt == BuddyPlacement.dragTilt(dx: 30))
+        // The dangle heads for the event's tilt rather than taking it whole.
+        #expect(toy.dragTilt > 0 && toy.dragTilt < BuddyPlacement.dragTilt(dx: 30))
         #expect(toy.dragMovedAt == t0)
+        #expect(toy.dangle(at: t0) == toy.dragTilt)
+        #expect(toy.dangle(at: t0.addingTimeInterval(NotchBuddyToy.parkGrace)) == toy.dragTilt,
+                "a gap between mouse events isn't a park")
+        #expect(toy.dangle(at: t0.addingTimeInterval(1)) < toy.dragTilt * 0.05, "parked, it settles")
+        let tilt = toy.dragTilt
         toy.dragEnded(at: t0)
         #expect(toy.isDragged == false)
         #expect(toy.dragTilt == 0)
+        #expect(toy.landingTilt == tilt, "the landing eases out the lean it had")
         #expect(toy.landedAt == t0)
         toy.dragStarted()
         toy.dragCancelled()
         #expect(toy.isDragged == false)
+        #expect(toy.landingTilt == 0)
         #expect(toy.landedAt == nil, "a cancelled carry is no landing")
     }
 }

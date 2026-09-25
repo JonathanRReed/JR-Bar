@@ -1,14 +1,17 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import JRBarCore
 
 /// The floating buddy's calm walkabout (docs/TOYS.md) — neko's manners,
 /// not the goose's. Now and then, while the agents are working and
 /// nothing is asking, it hops up onto the top edge of the frontmost
 /// window (or the bottom of the screen when no window has room), strolls
-/// a little way along it, and comes home to the spot you parked it on.
-/// It only ever moves its own panel: never the cursor, never a window,
-/// and a press on it cancels the stroll. Pure, so the path is pinned.
+/// a little way along it, turns round on the spot, wanders part of the
+/// way back, and comes home to the spot you parked it on. It only ever
+/// moves its own panel: never the cursor, never a window. A press on it
+/// holds it still, and a carry ends the walk. Pure, so the path is
+/// pinned.
 struct BuddyStroll: Equatable {
     /// One straight piece of the path, centre to centre in screen
     /// coordinates (AppKit's bottom-left origin).
@@ -19,6 +22,10 @@ struct BuddyStroll: Equatable {
         /// The stroll itself walks at an even pace; getting there and
         /// back is a hop, eased at both ends.
         var hop: Bool
+        /// The way it faces on this leg when the travel doesn't say:
+        /// the turn on the spot faces the way the next leg walks, so the
+        /// turn plays while it stands.
+        var facing: Double? = nil
     }
 
     var legs: [Leg]
@@ -36,22 +43,46 @@ struct BuddyStroll: Equatable {
     static let maxStroll: Double = 260
     /// The shortest stroll worth the trip.
     static let minStroll: Double = 60
+    /// Standing at the far end while it turns round: the turn itself
+    /// (`BuddyTurn.duration`) and a beat before it sets off back.
+    static let turnPause: TimeInterval = 0.6
+    /// How much of the way out it walks back before hopping home.
+    static let backShare: Double = 0.5
 
     // MARK: When
 
-    /// Minutes between the decision beats' chances, and the chance each
-    /// beat takes once the quiet stretch has passed — about one stroll
-    /// every twelve minutes of work.
-    static let minGap: TimeInterval = 8 * 60
-    static let chance: Double = 0.25
+    /// The quiet stretch after a walk, and the chance each once-a-minute
+    /// beat takes once it has passed, for a walk about every `every`
+    /// minutes (the card's "Time between walks"). At the default twelve
+    /// that is eight quiet minutes and a one-in-four chance a minute —
+    /// the cadence the walkabout has always had.
+    static func minGap(every: Double) -> TimeInterval {
+        NotchBuddySettings.clampedWalkEvery(every) * 60 * 2 / 3
+    }
+
+    static func chance(every: Double) -> Double {
+        min(1, 3 / NotchBuddySettings.clampedWalkEvery(every))
+    }
 
     /// Only a working, unbothered buddy strolls: something is running,
     /// nothing asks or failed, it isn't being carried, and Reduce Motion
     /// is off.
     static func shouldStroll(working: Int, waiting: Int, failed: Int, dragging: Bool,
-                             reduceMotion: Bool, sinceLast: TimeInterval, roll: Double) -> Bool {
+                             reduceMotion: Bool, sinceLast: TimeInterval, roll: Double,
+                             every: Double = NotchBuddySettings.defaultWalkEvery) -> Bool {
         working > 0 && waiting == 0 && failed == 0 && !dragging && !reduceMotion
-            && sinceLast >= minGap && roll < chance
+            && sinceLast >= minGap(every: every) && roll < chance(every: every)
+    }
+
+    /// Whether a walk under way carries on, asked once a second: the
+    /// same calm a walk starts on, the buddy still out and floating,
+    /// walks still allowed (turning "Take walks" off mid-walk sends it
+    /// home), and its edge still standing. The edge is looked up only
+    /// when everything else holds.
+    static func carriesOn(working: Int, waiting: Int, failed: Int, showing: Bool, free: Bool,
+                          takesWalks: Bool, ledgeStands: @autoclosure () -> Bool) -> Bool {
+        guard working > 0, waiting == 0, failed == 0, showing, free, takesWalks else { return false }
+        return ledgeStands()
     }
 
     // MARK: Where
@@ -95,10 +126,16 @@ struct BuddyStroll: Equatable {
         let length = min(maxStroll, room)
         let a = CGPoint(x: start, y: y)
         let b = CGPoint(x: start + (right ? length : -length), y: y)
+        // Out to the far point (the edge's end when the edge is short),
+        // round on the spot, and part of the way back before hopping home.
+        let back = length * backShare
+        let c = CGPoint(x: b.x + (right ? -back : back), y: y)
         return BuddyStroll(legs: [
             hop(home, a),
             Leg(from: a, to: b, duration: length / strollSpeed, hop: false),
-            hop(b, home),
+            Leg(from: b, to: b, duration: turnPause, hop: false, facing: right ? -1 : 1),
+            Leg(from: b, to: c, duration: back / strollSpeed, hop: false),
+            hop(c, home),
         ], ledge: ledge)
     }
 
@@ -132,11 +169,13 @@ struct BuddyStroll: Equatable {
 
     /// Which way the pet faces `elapsed` seconds in: +1 right, -1 left,
     /// nil while it isn't strolling along the edge (the hops keep the
-    /// pose's own patrol).
+    /// pose's own patrol). The figure eases between them (`BuddyTurn`);
+    /// this is the target, not the drawn value.
     func heading(at elapsed: TimeInterval) -> Double? {
         var t = elapsed
         for leg in legs {
             if t < leg.duration {
+                if let facing = leg.facing { return facing }
                 guard !leg.hop, leg.to.x != leg.from.x else { return nil }
                 return leg.to.x > leg.from.x ? 1 : -1
             }
@@ -161,5 +200,66 @@ struct BuddyStroll: Equatable {
     @MainActor
     static func windowFrames() -> [CGRect] {
         OnScreenWindows.frames()
+    }
+}
+
+/// A walk in flight, the way the free panel steps it: the plan, the clock
+/// it runs on, and the holds a press puts in it. The panel reads
+/// `centre(at:)` and `heading(at:)` once a frame and moves its window;
+/// every rule about where the pet is drawn lives here, so the per-frame
+/// motion is pinned by the tests rather than by eye.
+struct BuddyWalk: Equatable {
+    var plan: BuddyStroll
+    /// When (uptime) the plan set off, pushed later by every hold.
+    var began: TimeInterval
+    /// Held still since (uptime): a press on the pet, or its menu open.
+    /// nil while it walks.
+    var heldSince: TimeInterval?
+
+    init(plan: BuddyStroll, began: TimeInterval) {
+        self.plan = plan
+        self.began = began
+    }
+
+    /// How far into the plan it is at `now`; a hold stops the clock.
+    func elapsed(at now: TimeInterval) -> TimeInterval {
+        (heldSince ?? now) - began
+    }
+
+    /// The pet's centre at `now`, or nil once it is home.
+    func centre(at now: TimeInterval) -> CGPoint? {
+        plan.point(at: elapsed(at: now))
+    }
+
+    /// The heading to face at `now` (the figure's turn target).
+    func heading(at now: TimeInterval) -> Double? {
+        plan.heading(at: elapsed(at: now))
+    }
+
+    /// A press landed on it: it stands where it is until the release.
+    mutating func hold(at now: TimeInterval) {
+        if heldSince == nil { heldSince = now }
+    }
+
+    /// The press let go: the walk picks up where it stopped.
+    mutating func release(at now: TimeInterval) {
+        guard let held = heldSince else { return }
+        began += max(0, now - held)
+        heldSince = nil
+    }
+
+    /// Straight home from where it is drawn — an ask opened, the edge
+    /// went, the panel was resized or re-parked. Starting from the drawn
+    /// spot is what keeps the change from jumping.
+    mutating func headHome(from drawn: CGPoint, home: CGPoint, at now: TimeInterval) {
+        plan = BuddyStroll.homeward(from: drawn, home: home)
+        began = now
+        heldSince = nil
+    }
+
+    /// The window origin for a centre, on whole points the way the panel
+    /// sets it.
+    static func origin(for centre: CGPoint, size: CGSize) -> CGPoint {
+        CGPoint(x: (centre.x - size.width / 2).rounded(), y: (centre.y - size.height / 2).rounded())
     }
 }

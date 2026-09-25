@@ -483,17 +483,18 @@ struct NotchHUDView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .fixedSize()
-        } else if let buddy = model.buddy, buddy.isOn, !buddy.isFree {
+        } else if let buddy = model.buddy, buddy.isShowing, !buddy.isFree {
             // The docked slot is the pet itself: the character with its
             // poses, tricks, treats and badges at the notch's fixed
-            // 18pt — stepping back to the bare dot only while a
-            // screen_bar program is playing (the slot is the strip's
-            // extra seam LED) or Mini is picked. Its name tag exists
-            // only under the pointer; the space stays reserved so the
+            // 18pt — the bare dot only when Mini is picked, and dressed
+            // in the band's colour while a screen_bar program plays.
+            // Its caption exists only under the pointer, and only while
+            // "Caption on hover" is on; the space stays reserved so the
             // figure never jumps.
+            let caption = model.hovered && buddy.showsCaption
             VStack(spacing: 1) {
                 NotchBuddyView(toy: buddy, docked: true)
-                Text(model.hovered ? buddy.caption() : " ")
+                Text(caption ? buddy.caption() : " ")
                     .font(.system(size: 8, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
@@ -501,7 +502,7 @@ struct NotchHUDView: View {
                     .truncationMode(.tail)
                     .frame(maxWidth: 130)
                     .frame(height: 9)
-                    .opacity(model.hovered ? 1 : 0)
+                    .opacity(caption ? 1 : 0)
             }
         }
     }

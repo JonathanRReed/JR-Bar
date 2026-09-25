@@ -81,6 +81,9 @@ final class BuddyDragController {
     var dockPoint: @MainActor () -> CGPoint = { .zero }
 
     private weak var source: NSWindow?
+    /// The window whose menu is open right now — popUp tracks until it
+    /// closes, and the walk stands still for it.
+    private weak var menuWindow: NSWindow?
     private var down: NSPoint?
     private var origin: NSPoint = .zero
     private var last: NSPoint?
@@ -93,6 +96,13 @@ final class BuddyDragController {
     /// A carry is in flight — the panels consult it so nothing reframes
     /// the window out from under the mouse.
     var inProgress: Bool { moved }
+
+    /// A press is down on `window`, or its menu is open: a walking buddy
+    /// stands still under the pointer instead of strolling out from
+    /// under it.
+    func holds(_ window: NSWindow) -> Bool {
+        (down != nil && source === window) || menuWindow === window
+    }
 
     /// Whatever owned the press is gone (a toast took the panel): the
     /// carry is cut short and the buddy goes back where the settings put
@@ -184,7 +194,9 @@ final class BuddyDragController {
     }
 
     /// Where the press let go: inside the dock's reach it snaps home,
-    /// anywhere else it is parked.
+    /// anywhere else it is parked. Carried out of the notch, the drop
+    /// says where the docked figure stood, so the free panel can take
+    /// over from exactly there.
     private func drop(_ panel: NSWindow) {
         guard let toy else { return }
         let centre = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
@@ -192,7 +204,8 @@ final class BuddyDragController {
         if BuddyPlacement.docksOnDrop(center: centre, slot: dockPoint()) {
             toy.dock()
         } else {
-            toy.parkFree(at: centre)
+            let figure = panel is BuddyPanel ? nil : BuddyPanel.dockedFigureCentre(in: panel.frame)
+            toy.parkFree(at: centre, figureCentre: figure)
         }
     }
 
@@ -202,7 +215,9 @@ final class BuddyDragController {
         pressWork = nil
         swallowUp = true
         let menu = toy.actionMenu(panelFrame: view.window?.frame)
+        menuWindow = view.window
         menu.popUp(positioning: nil, at: point, in: view)
+        menuWindow = nil
         // The press is spent on the menu either way; `swallowUp` stays
         // set so a stray release can't complete the pending tap.
         down = nil
@@ -219,6 +234,11 @@ final class BuddyPanelModel {
     var toy: NotchBuddyToy?
     /// The pointer is on the pet — the name tag only shows while it is.
     var hovered = false
+    /// The panel is showing the buddy or still fading it out. It outlasts
+    /// the toy's own state on purpose: docked or switched off, the figure
+    /// stays drawn until the fade has played, so a dock crossfades with
+    /// the notch pill fading in instead of blinking out.
+    var drawsBuddy = false
 }
 
 /// The buddy's free-floating home: the pet bare on a transparent
@@ -249,7 +269,7 @@ final class BuddyPanel: NSPanel {
         // A window shadow would hug the caption text and read as a
         // smudge over whatever is behind the pet.
         hasShadow = false
-        ignoresMouseEvents = false   // the draggable one — never click-through
+        ignoresMouseEvents = false   // the draggable one — click-through only while it fades out
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         isExcludedFromWindowsMenu = true
@@ -273,45 +293,116 @@ final class BuddyPanel: NSPanel {
     /// whole pill stays on the visible screen — a spot saved on a
     /// monitor that is no longer there lands somewhere sane instead.
     /// The frame is measured fresh off the hosting view, so a scale
-    /// change lands here already sized.
+    /// change lands here already sized. Fresh out of the notch (a
+    /// hand-off) it shows at once and the figure grows in from where the
+    /// docked one stood; anywhere else it fades in.
     func present(centeredAt point: CGPoint) {
         guard let toy = model.toy, toy.isOn else { dismiss(); return }
         // A carry owns the frame until the drop lands it — a resize
         // mid-carry re-presents on the drop.
         guard buddyDrag?.inProgress != true else { return }
+        // Drawn before it is measured, so a panel coming back from a
+        // fade-out sizes to the pet, not to nothing.
+        model.drawsBuddy = true
+        ignoresMouseEvents = false
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let height = max(26, size.height)
         let width = max(30, size.width)
+        let panelSize = NSSize(width: width, height: height)
         let screen = NSScreen.screens.first { $0.frame.contains(point) }
             ?? ScreenBarGeometry.preferredScreen() ?? NSScreen.main
         let visible = (screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900))
             .insetBy(dx: 2, dy: 2)
-        let centre = BuddyPlacement.clampedCenter(
-            point, size: NSSize(width: width, height: height), inside: visible)
-        // Out on a walk from this very spot: the walk keeps the frame.
-        // Anywhere else (re-parked, resized) ends the walk here.
-        if stroll != nil {
-            if home == centre, frame.size == NSSize(width: width, height: height) { return }
-            endStroll()
+        let centre = BuddyPlacement.clampedCenter(point, size: panelSize, inside: visible)
+        showing = true
+        if walk != nil {
+            // Out on a walk from this very spot: the walk keeps the frame.
+            if home == centre, frame.size == panelSize { return }
+            // Re-parked or resized mid-walk: it heads for the new home
+            // from where it is drawn, at its new size, rather than
+            // jumping there.
+            let here = CGPoint(x: frame.midX, y: frame.midY)
+            home = centre
+            homeVisible = visible
+            walk?.headHome(from: here, home: centre, at: ProcessInfo.processInfo.systemUptime)
+            model.toy?.setStrollHeading(nil)
+            let origin = BuddyWalk.origin(for: here, size: panelSize)
+            setFrame(NSRect(origin: origin, size: panelSize), display: true)
+            return
         }
         home = centre
         homeVisible = visible
-        setFrame(NSRect(x: (centre.x - width / 2).rounded(),
-                        y: (centre.y - height / 2).rounded(),
-                        width: width, height: height), display: true)
-        orderFrontRegardless()
-        animator().alphaValue = 1
+        setFrame(NSRect(origin: BuddyWalk.origin(for: centre, size: panelSize), size: panelSize),
+                 display: true)
+        if let handoff = toy.takeHandoff() {
+            // The docked pill vanished this same turn: be there already,
+            // and let the figure grow in from the docked size.
+            let drift = handoff.figureCentre.map {
+                let own = Self.figureCentre(in: frame, scale: toy.buddyScale)
+                return CGSize(width: $0.x - own.x, height: own.y - $0.y)
+            } ?? .zero
+            toy.arrive(fromScale: 1 / max(1, toy.buddyScale), drift: drift)
+            // At once, and over any fade-out still running from a dock a
+            // moment ago: a zero-length group replaces that animation.
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                self.animator().alphaValue = 1
+            }
+            alphaValue = 1
+            orderFrontRegardless()
+        } else {
+            orderFrontRegardless()
+            animator().alphaValue = 1
+        }
         armWalkabout()
     }
 
+    /// Fades out with the figure still drawn in it, rather than vanishing;
+    /// a present that lands mid-fade keeps the panel. Fading, it lets the
+    /// mouse through: a click meant for the pill fading in under it at
+    /// the notch reaches that one.
     func dismiss() {
-        endStroll()
+        endStroll(reframe: false)
         beat?.invalidate()
         beat = nil
         home = nil
-        alphaValue = 0
-        orderOut(nil)
+        showing = false
+        ignoresMouseEvents = true
+        guard isVisible else {
+            alphaValue = 0
+            letGo()
+            return
+        }
+        NotchSurfaceMotion.dismiss(self, duration: 0.2, reducedDuration: 0.1,
+                                   stillGone: { [weak self] in self?.showing == false },
+                                   then: { [weak self] in self?.letGo() })
+    }
+
+    /// Gone: nothing drawn, and nothing under the pointer. A window that
+    /// is ordered out never hears the pointer leave, so a hover left
+    /// standing would show the caption unasked on the next float.
+    private func letGo() {
+        model.drawsBuddy = false
+        model.hovered = false
+    }
+
+    /// Meant to be on screen; a fade-out only orders the panel out while
+    /// this stays false.
+    private var showing = false
+
+    /// Where the docked slot draws its figure inside a docked pill's
+    /// frame: the 18 pt creature and its padding make a 30 pt block at
+    /// the top of the pill, the hover caption's row under it
+    /// (`NotchHUDView`). A drop out of the notch hands this spot over.
+    static func dockedFigureCentre(in frame: NSRect) -> CGPoint {
+        CGPoint(x: frame.midX, y: frame.maxY - 15)
+    }
+
+    /// The same for this panel: the figure's block is 30 pt at the
+    /// buddy's scale, at the top, the caption row under it.
+    static func figureCentre(in frame: NSRect, scale: Double) -> CGPoint {
+        CGPoint(x: frame.midX, y: frame.maxY - 15 * max(1, scale))
     }
 
     // MARK: Walkabout
@@ -319,8 +410,9 @@ final class BuddyPanel: NSPanel {
     /// The parked centre, and the screen area it was clamped into.
     private var home: CGPoint?
     private var homeVisible: CGRect = .zero
-    /// The walk in progress, and when (uptime) it set off.
-    private var stroll: (plan: BuddyStroll, began: TimeInterval)?
+    /// The walk in progress (`BuddyWalk`: the plan, its clock, a press's
+    /// hold).
+    private var walk: BuddyWalk?
     private var strollTimer: Timer?
     /// The once-a-minute decision beat, alive while the panel shows.
     private var beat: Timer?
@@ -337,7 +429,7 @@ final class BuddyPanel: NSPanel {
     }
 
     private func considerStroll() {
-        guard stroll == nil, isVisible, let home, let toy = model.toy, toy.isOn, toy.isFree,
+        guard walk == nil, isVisible, let home, let toy = model.toy, toy.isOn, toy.isFree,
               toy.takesWalks, !toy.isTucked else { return }
         let digest = toy.sessionDigest()
         let now = ProcessInfo.processInfo.systemUptime
@@ -345,7 +437,8 @@ final class BuddyPanel: NSPanel {
             working: digest.working, waiting: digest.waiting, failed: digest.failed,
             dragging: toy.isDragged || buddyDrag?.inProgress == true,
             reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-            sinceLast: now - lastStrollAt, roll: Double.random(in: 0..<1)),
+            sinceLast: now - lastStrollAt, roll: Double.random(in: 0..<1),
+            every: toy.walkEvery),
               let plan = BuddyStroll.plan(home: home, size: frame.size, visible: homeVisible,
                                           windows: BuddyStroll.windowFrames(),
                                           rightward: Bool.random())
@@ -356,7 +449,7 @@ final class BuddyPanel: NSPanel {
     private func begin(_ plan: BuddyStroll) {
         strollTimer?.invalidate()
         let now = ProcessInfo.processInfo.systemUptime
-        stroll = (plan, now)
+        walk = BuddyWalk(plan: plan, began: now)
         lastLedgeLook = now
         let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.stepStroll() }
@@ -365,52 +458,62 @@ final class BuddyPanel: NSPanel {
         strollTimer = timer
     }
 
-    /// One frame of the walk: the panel moves, the pose faces the way
-    /// it goes. A carry, an ask or a vanished edge sends it home.
+    /// One frame of the walk: the panel moves, the figure turns toward
+    /// the way it goes. A press holds it still, a carry takes it over,
+    /// and an ask or a vanished edge sends it home from where it stands.
     private func stepStroll() {
-        guard let (plan, began) = stroll, let home, let toy = model.toy else { endStroll(); return }
+        guard var walk, let home, let toy = model.toy else { endStroll(); return }
         if toy.isDragged || buddyDrag?.inProgress == true {
             // The carry owns the frame now; the drop parks it.
             endStroll(reframe: false)
             return
         }
         let now = ProcessInfo.processInfo.systemUptime
-        let elapsed = now - began
-        // Once a second: still nothing asking, and the edge still there.
-        if now - lastLedgeLook >= 1, plan.legs.count > 1 {
-            lastLedgeLook = now
-            let digest = toy.sessionDigest()
-            if digest.waiting > 0 || digest.failed > 0 || digest.working == 0
-                || !toy.isOn || !toy.isFree
-                || !BuddyStroll.ledgeStands(plan.ledge, in: BuddyStroll.windowFrames()) {
-                let here = CGPoint(x: frame.midX, y: frame.midY)
-                stroll = (BuddyStroll.homeward(from: here, home: home), now)
-                toy.strollHeading = nil
-                return
-            }
+        if buddyDrag?.holds(self) == true {
+            walk.hold(at: now)
+        } else {
+            walk.release(at: now)
         }
-        guard let point = plan.point(at: elapsed) else {
+        // Once a second: Reduce Motion still off (turned on mid-walk, the
+        // buddy is simply home — a plain reposition), walks still allowed
+        // ("Take walks" turned off mid-walk heads home), nothing asking,
+        // and the edge still there.
+        if now - lastLedgeLook >= 1, NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             endStroll()
             return
         }
-        let heading = plan.heading(at: elapsed)
-        if toy.strollHeading != heading { toy.strollHeading = heading }
-        setFrameOrigin(NSPoint(x: (point.x - frame.width / 2).rounded(),
-                               y: (point.y - frame.height / 2).rounded()))
+        if now - lastLedgeLook >= 1, walk.plan.legs.count > 1 {
+            lastLedgeLook = now
+            let digest = toy.sessionDigest()
+            let ledge = walk.plan.ledge
+            let carriesOn = BuddyStroll.carriesOn(
+                working: digest.working, waiting: digest.waiting, failed: digest.failed,
+                showing: toy.isOn, free: toy.isFree, takesWalks: toy.takesWalks,
+                ledgeStands: BuddyStroll.ledgeStands(ledge, in: BuddyStroll.windowFrames()))
+            if !carriesOn {
+                walk.headHome(from: CGPoint(x: frame.midX, y: frame.midY), home: home, at: now)
+            }
+        }
+        self.walk = walk
+        guard let point = walk.centre(at: now) else {
+            endStroll()
+            return
+        }
+        toy.setStrollHeading(walk.heading(at: now))
+        setFrameOrigin(BuddyWalk.origin(for: point, size: frame.size))
     }
 
     /// Home, and the walk forgotten. `reframe` false leaves the frame to
-    /// whoever took it (a carry).
+    /// whoever took it (a carry, a fade-out).
     private func endStroll(reframe: Bool = true) {
         strollTimer?.invalidate()
         strollTimer = nil
-        guard stroll != nil else { return }
-        stroll = nil
+        guard walk != nil else { return }
+        walk = nil
         lastStrollAt = ProcessInfo.processInfo.systemUptime
-        model.toy?.strollHeading = nil
+        model.toy?.setStrollHeading(nil)
         if reframe, let home {
-            setFrameOrigin(NSPoint(x: (home.x - frame.width / 2).rounded(),
-                                   y: (home.y - frame.height / 2).rounded()))
+            setFrameOrigin(BuddyWalk.origin(for: home, size: frame.size))
         }
     }
 }
@@ -429,32 +532,36 @@ struct BuddyPanelView: View {
         // The buddy view owns its own animation timeline; this layer
         // re-reads the summary only often enough to keep the caption's
         // relative time honest — a display-rate reduce of every session,
-        // just for a one-line caption, was pure churn.
-        if let toy = model.toy, toy.isOn, toy.isFree {
+        // just for a one-line caption, was pure churn. It draws for as
+        // long as the panel shows or fades (`drawsBuddy`), except a buddy
+        // that has finished ducking out for a nap: that one is gone already.
+        if let toy = model.toy, model.drawsBuddy, toy.isShowing || !toy.isTucked {
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 let summary = toy.summary(at: context.date)
                 let scale = toy.buddyScale
                 // The tag grows with the pet but tops out — a caption,
                 // not a headline.
                 let caption = min(11, 7.2 * scale)
+                // The name tag shows only under the pointer, and only
+                // while "Caption on hover" is on. Its row is always laid
+                // out, the way the docked slot keeps its space, so neither
+                // a hover nor the toggle moves the pet.
+                let showsTag = model.hovered && toy.showsCaption
                 VStack(spacing: 0) {
                     NotchBuddyView(toy: toy, scale: scale)
-                    if toy.showsCaption {
-                        Text(summary.focus?.line ?? toy.buddyName)
-                            .font(.system(size: caption, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            // No pill behind it — the shadow keeps the
-                            // tag readable over whatever it parks on.
-                            .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: max(150, 60 * scale))
-                            .frame(height: caption + 2)
-                            .padding(.bottom, 2 * scale)
-                            // The name tag exists only under the pointer;
-                            // the space stays so the pet never jumps.
-                            .opacity(model.hovered ? 1 : 0)
-                    }
+                    Text(summary.focus?.line ?? toy.buddyName)
+                        .font(.system(size: caption, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        // No pill behind it — the shadow keeps the tag
+                        // readable over whatever it parks on.
+                        .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: max(150, 60 * scale))
+                        .frame(height: caption + 2)
+                        .padding(.bottom, 2 * scale)
+                        .opacity(showsTag ? 1 : 0)
+                        .accessibilityHidden(!toy.showsCaption)
                 }
                 .help(summary.statusLine)
             }
