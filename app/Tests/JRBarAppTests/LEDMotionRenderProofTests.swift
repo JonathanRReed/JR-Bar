@@ -57,13 +57,13 @@ struct LEDMotionRenderProofTests {
     // MARK: Always
 
     @Test func everyMotionIsExportedForTheProAndTheDot() throws {
-        let fixtures = try Self.fixtures()
-        let motions = Set(fixtures.map(\.motion))
+        let exported = try Self.fixtures()
+        let motions = Set(exported.map(\.motion))
         #expect(motions.isSuperset(of: ["comet", "scanner", "heartbeat", "ripple", "pendulum", "lid_iris_open", "finish_land"]))
         for motion in motions where !motion.hasPrefix("lid_") && !motion.hasPrefix("finish_") {
             for variant in ["default", "min", "max"] {
                 for leds in [8, 2] {
-                    #expect(fixtures.contains { $0.motion == motion && $0.variant == variant && $0.led_count == leds },
+                    #expect(exported.contains { $0.motion == motion && $0.variant == variant && $0.led_count == leds },
                             "\(motion) \(variant) at \(leds) LEDs")
                 }
             }
@@ -93,8 +93,8 @@ struct LEDMotionRenderProofTests {
     func motionTimelines() throws {
         let directory = Self.directory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fixtures = try Self.fixtures()
-        for fixture in fixtures {
+        let exported = try Self.fixtures()
+        for fixture in exported {
             let modes = fixture.variant == "default" ? [true, false] : [true]
             for dark in modes {
                 let rep = try Self.snapshot(MotionSheet(fixture: fixture), dark: dark)
@@ -102,7 +102,7 @@ struct LEDMotionRenderProofTests {
             }
         }
         for leds in [8, 2] {
-            let defaults = fixtures.filter { $0.variant == "default" && $0.led_count == leds }
+            let defaults = exported.filter { $0.variant == "default" && $0.led_count == leds }
             let rep = try Self.snapshot(MotionOverview(fixtures: defaults, ledCount: leds), dark: true)
             try Self.write(rep, named: "motions-overview-\(leds)led.png")
         }
@@ -137,8 +137,11 @@ struct LEDMotionRenderProofTests {
                            named: "moments-lid-finish-\(suffix).png")
         }
         // The Dot drawing its own display (role Status), then linked in
-        // Extend, where its rows wait and say why. The Screen Bar has none.
-        for (role, name) in [("status", "device-direction-travel"), ("extend", "device-direction-travel-linked")] {
+        // Extend and in Asks, where its rows wait and say what the Dot is
+        // doing instead. The Screen Bar has none.
+        let roles = [("status", "device-direction-travel"), ("extend", "device-direction-travel-linked"),
+                     ("asks", "device-direction-travel-asks")]
+        for (role, name) in roles {
             let rowsCore = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-led-motion-rows.sock")
             rowsCore.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,
                                                   document: Self.deviceDocument(role: role))))
@@ -229,6 +232,9 @@ struct LEDMotionRenderProofTests {
 }
 
 /// One motion: its timeline and the strip at four moments of its cycle.
+/// A loop is drawn from its second pass, which is what the strip plays
+/// for as long as the agent works: the first pass starts from black, and
+/// the seam where one pass hands over to the next is only visible here.
 private struct MotionSheet: View {
     let fixture: LEDMotionRenderProofTests.MotionFixture
 
@@ -236,17 +242,19 @@ private struct MotionSheet: View {
         let sampler = (try? LEDSProgram.parse(fixture.program, ledCount: fixture.led_count))
             .map { LEDSSampler(program: $0, ledCount: fixture.led_count) }
         let span = MotionTimeline.span(sampler)
+        let start = sampler?.cycleDuration ?? 0
+        let shown = start > 0 ? "%.2f s shown, second pass · %d bytes" : "%.2f s shown · %d bytes"
         HStack(alignment: .top, spacing: 18) {
-            MotionTimeline(sampler: sampler, ledCount: fixture.led_count, span: span)
+            MotionTimeline(sampler: sampler, ledCount: fixture.led_count, span: span, start: start)
             VStack(alignment: .leading, spacing: 10) {
                 Text(fixture.name).font(.headline.monospaced())
-                Text(String(format: "%.2f s shown · %d bytes", span, fixture.program.utf8.count))
+                Text(String(format: shown, span, fixture.program.utf8.count))
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach([0.0, 0.25, 0.5, 0.75], id: \.self) { fraction in
                     HStack(spacing: 8) {
                         Text("\(Int(fraction * 100))%").font(.caption.monospaced()).frame(width: 34, alignment: .trailing)
                         LEDStripPreview(program: fixture.program, ledCount: fixture.led_count, style: .dots,
-                                        dotSize: 12, spacing: 7, phase: span * fraction)
+                                        dotSize: 12, spacing: 7, phase: start + span * fraction)
                             .frame(width: fixture.led_count == 2 ? 80 : 190)
                     }
                 }
@@ -284,6 +292,8 @@ private struct MotionTimeline: View {
     let sampler: LEDSSampler?
     let ledCount: Int
     let span: TimeInterval
+    /// Seconds into the program the first row shows.
+    var start: TimeInterval = 0
     var cell: CGFloat = 22
     var rowHeight: CGFloat = 2
 
@@ -298,7 +308,7 @@ private struct MotionTimeline: View {
         Canvas { context, _ in
             guard let sampler else { return }
             for frame in 0..<frames {
-                let codes = sampler.codes(atMilliseconds: Int(Double(frame) * 1000 / 60))
+                let codes = sampler.codes(atMilliseconds: Int(start * 1000) + Int(Double(frame) * 1000 / 60))
                 for (index, code) in codes.enumerated() {
                     let rect = CGRect(x: CGFloat(index) * (cell + 1), y: CGFloat(frame) * rowHeight,
                                       width: cell, height: rowHeight)
