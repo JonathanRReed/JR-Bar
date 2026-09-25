@@ -595,6 +595,10 @@ final class ScreenBarInteraction {
             hideTooltip()
         }
         onPeek(intent)
+        // A peek or pin that just landed under a resting pointer is
+        // engaged now — the defer in `pointerMoved` already ran, so arm
+        // the still-pointer poll here or nothing re-checks it.
+        keepPollingWhileEngaged()
     }
 
     /// What a gesture asking for the peek does about the card — pure: a

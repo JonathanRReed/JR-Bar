@@ -345,10 +345,6 @@ enum MenuBarItemLister {
     /// after it starts.
     nonisolated static let launchWalkDelays: [TimeInterval] = [2, 10, 30]
 
-    /// Forces the next scan to walk every app.
-    @MainActor
-    static func invalidateOwners() { lastFullScanAt = .distantPast }
-
     /// Apps launched: the next scan asks each of them, and so does the
     /// first scan after each of `launchWalkDelays` — the launched apps
     /// alone, not every running app, since only they can have brought a
@@ -426,19 +422,24 @@ enum MenuBarItemLister {
         // changed hands mid-scan) saw the newer owner and stands.
         if edgeToken == menuEdgeGeneration { appMenuEdge = scanned.1 }
         axGeneration += 1
+        // A pid that quit mid-scan is nobody to ask again — `noteQuit`
+        // already struck it, so the answers it left stand only as items.
         let found = Set(scanned.0.items.map(\.ownerPID))
+        let stillRunning = found.filter { RunningApps.shared.app(pid: $0) != nil }
         if walkAll {
-            axOwnerPIDs = found
+            axOwnerPIDs = Set(stillRunning)
             lastFullScanAt = now
         } else {
             // A launched or retried app that answered with items is an
             // owner from now on.
-            axOwnerPIDs.formUnion(found)
+            axOwnerPIDs.formUnion(stillRunning)
         }
         // Only a quick wait that ran out earns a retry; an app that
-        // outlasted the long one is left to the next full walk.
+        // outlasted the long one is left to the next full walk. A pid
+        // gone mid-scan outlasted nothing — it is not asked again.
         let quick = Set(targets.lazy.filter { $0.timeout < MenuBarAX.messagingTimeout }.map(\.pid))
         slowPIDs = scanned.0.timedOut.intersection(quick).subtracting(found)
+            .filter { RunningApps.shared.app(pid: $0) != nil }
         launchProbes.spend(dueAt: now)
         return scanned.0.items
     }

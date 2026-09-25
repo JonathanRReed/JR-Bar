@@ -24,9 +24,12 @@ protocol PointerWatching: AnyObject {
 /// Where moves come from. Started by the first subscriber, stopped by
 /// the last.
 protocol PointerMoveSource: AnyObject, Sendable {
-    /// Start listening; `moved` may be called on any thread. False when
-    /// the source can't listen here.
-    func start(moved: @escaping @Sendable () -> Void) -> Bool
+    /// Start listening; `moved` and `died` may be called on any thread.
+    /// False when the source can't listen here. `died` says the source
+    /// stopped hearing moves for good — subscribers keep their tokens
+    /// but hear nothing, and the next arm is refused and polls as before.
+    func start(moved: @escaping @Sendable () -> Void,
+               died: @escaping @Sendable () -> Void) -> Bool
     func stop()
 }
 
@@ -127,9 +130,25 @@ final class PointerWatcher: PointerWatching {
         guard let source else { return false }
         let now = clock()
         if let failedAt, now - failedAt < Self.retryAfter, now >= failedAt { return false }
-        listening = source.start { [weak self] in self?.moved() }
+        listening = source.start(moved: { [weak self] in self?.moved() },
+                                 died: { [weak self] in self?.sourceDied() })
         failedAt = listening ? nil : now
         return listening
+    }
+
+    /// The source gave up on the watcher's behalf — the tap died when
+    /// Accessibility was pulled. Treated as a failed start: the dead
+    /// source is stopped, and a subscriber's next arm is refused so it
+    /// falls back to its poll until a fresh start can listen again.
+    private nonisolated func sourceDied() {
+        schedule(0) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.listening else { return }
+                self.source?.stop()
+                self.listening = false
+                self.failedAt = self.clock()
+            }
+        }
     }
 
     /// A move, on the source's thread.
@@ -157,6 +176,7 @@ final class EventTapPointerSource: PointerMoveSource, @unchecked Sendable {
     private var tap: CFMachPort?
     private var loop: TapLoop?
     private var moved: (@Sendable () -> Void)?
+    private var died: (@Sendable () -> Void)?
 
     /// Moves and drags: a drag moves the pointer without a single
     /// `mouseMoved`, and a Dock hover during one still counts.
@@ -164,9 +184,13 @@ final class EventTapPointerSource: PointerMoveSource, @unchecked Sendable {
                                             .rightMouseDragged, .otherMouseDragged]
         .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
 
-    func start(moved: @escaping @Sendable () -> Void) -> Bool {
+    func start(moved: @escaping @Sendable () -> Void,
+               died: @escaping @Sendable () -> Void) -> Bool {
+        // Whatever an earlier tap left goes first, so a second start
+        // never leaves a dead tap's thread spinning beside the new one.
+        stop()
         guard AXIsProcessTrusted() else { return false }
-        lock.withLock { self.moved = moved }
+        lock.withLock { self.moved = moved; self.died = died }
         let pointer = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .listenOnly,
@@ -219,6 +243,7 @@ final class EventTapPointerSource: PointerMoveSource, @unchecked Sendable {
                 self.tap = nil
                 self.loop = nil
                 self.moved = nil
+                self.died = nil
             }
             return (self.tap, self.loop)
         }
@@ -238,7 +263,13 @@ final class EventTapPointerSource: PointerMoveSource, @unchecked Sendable {
 
     private func handle(_ type: CGEventType) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = lock.withLock({ tap }) { CGEvent.tapEnable(tap: tap, enable: true) }
+            guard let tap = lock.withLock({ tap }) else { return }
+            CGEvent.tapEnable(tap: tap, enable: true)
+            // The re-enable is a request: an untrusted process — the
+            // Accessibility grant pulled under us — gets nothing, and
+            // its tap hears no move ever again. Say so, so the watcher
+            // lets the surfaces go back to their polls.
+            if !CGEvent.tapIsEnabled(tap: tap) { lock.withLock { died }?() }
             return
         }
         lock.withLock { moved }?()

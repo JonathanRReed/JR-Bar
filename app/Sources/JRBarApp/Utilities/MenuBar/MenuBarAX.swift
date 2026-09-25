@@ -155,7 +155,13 @@ enum MenuBarAX {
         else { return ([], error == .cannotComplete) }
         let bar = extras as! AXUIElement
         AXUIElementSetMessagingTimeout(bar, Float(timeout))
-        guard let children = value(bar, kAXChildrenAttribute) as? [AXUIElement] else { return ([], false) }
+        var childrenValue: CFTypeRef?
+        let childrenError = AXUIElementCopyAttributeValue(bar, kAXChildrenAttribute as CFString, &childrenValue)
+        // A stall on the children copy earns the retry as much as one
+        // on the extras question — a would-be owner that only ever ran
+        // out the quick wait would otherwise be skipped every walk.
+        guard let children = childrenValue as? [AXUIElement]
+        else { return ([], childrenError == .cannotComplete) }
         var items: [ExtrasElement] = []
         for child in children {
             AXUIElementSetMessagingTimeout(child, Float(timeout))

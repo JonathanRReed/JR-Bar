@@ -17,14 +17,18 @@ struct PointerWatcherTests {
         var starts = 0
         var stops = 0
         var moved: (@Sendable () -> Void)?
-        func start(moved: @escaping @Sendable () -> Void) -> Bool {
+        var died: (@Sendable () -> Void)?
+        func start(moved: @escaping @Sendable () -> Void,
+                   died: @escaping @Sendable () -> Void) -> Bool {
             starts += 1
             guard accepts else { return false }
             self.moved = moved
+            self.died = died
             return true
         }
-        func stop() { stops += 1; moved = nil }
+        func stop() { stops += 1; moved = nil; died = nil }
         func move() { moved?() }
+        func die() { died?() }
     }
 
     /// A manual clock and a queue of scheduled work, run by hand.
@@ -118,6 +122,22 @@ struct PointerWatcherTests {
         rig.now += PointerWatcher.retryAfter
         source.accepts = true
         #expect(watcher.subscribe {} != nil)
+        #expect(source.starts == 2)
+    }
+
+    @Test("a source that dies is let go, and the next arm is refused so it polls")
+    func sourceDied() {
+        let source = FakeSource()
+        let rig = Rig()
+        let watcher = Self.makeWatcher(source, rig)
+        #expect(watcher.subscribe {} != nil)
+        source.die()
+        rig.runDue()
+        #expect(!watcher.listening)
+        #expect(source.stops == 1, "the dead source is let go")
+        #expect(watcher.subscribe {} == nil, "the next arm is refused and polls")
+        rig.now += PointerWatcher.retryAfter
+        #expect(watcher.subscribe {} != nil, "the source is asked again after a while")
         #expect(source.starts == 2)
     }
 

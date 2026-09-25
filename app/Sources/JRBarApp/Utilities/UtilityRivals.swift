@@ -208,10 +208,18 @@ final class UtilityRivalsWatch {
 
     private(set) var version = 0
 
+    private let index: RunningApps
+    private var listener: Int?
+
     init(index: RunningApps) {
-        index.addListener { [weak self] change in
+        self.index = index
+        listener = index.addListener { [weak self] change in
             guard UtilityRivals.anyRival(in: change.launched + change.quit) else { return }
             self?.version &+= 1
         }
+    }
+
+    isolated deinit {
+        if let listener { index.removeListener(listener) }
     }
 }
