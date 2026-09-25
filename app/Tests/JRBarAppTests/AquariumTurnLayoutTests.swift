@@ -219,6 +219,49 @@ struct AquariumTurnLayoutTests {
         #expect(zip(frames, frames.dropFirst()).contains { $0.facing != $1.facing }, "it came round")
     }
 
+    @Test("moving the Swimming speed slider never jumps a fry or a sweeping fish")
+    func swimSpeedMovesSmoothly() {
+        // Frame by frame, the slider a notch further every second, the
+        // way a drag moves it.
+        func tuned(_ second: Int) -> AquariumSettings {
+            var tuning = AquariumSettings()
+            tuning.swimSpeed = min(1.6, 0.8 + 0.05 * Double(second))
+            return tuning
+        }
+        // A fry circling its parent, and its parent dozing off halfway.
+        let parent = makeFish("slider-parent", since: t0 - 100)
+        var fry = makeFish("slider-fry", since: t0 - 100)
+        fry.isFry = true
+        fry.anchorID = parent.id
+        let tank = makeTank([parent, fry])
+        var t = t0
+        var frames: [AquariumView.Layout] = []
+        for i in 0..<(30 * 16) {
+            t += dt
+            if i == 30 * 8 { fry.state = .idling }
+            let pl = frame(tank, [parent, fry], parent, t: t)
+            tank.motion.swim.settings = tuned(i / 30)
+            frames.append(tank.layout(of: fry, in: size, at: t, now: Date(timeIntervalSince1970: t),
+                                      parent: (parent, pl)))
+        }
+        expectSmooth(frames, speed: 56 * 0.9 * 1.6 + 60, "fry")
+        // A fish on the patrol sweep (no steering body yet, a fixture's).
+        let sweeper = makeFish("slider-sweeper", since: t0 - 100)
+        let sweep = makeTank([sweeper])
+        t = t0
+        var swept: [AquariumView.Layout] = []
+        for i in 0..<(30 * 16) {
+            t += dt
+            let tuning = tuned(i / 30)
+            sweep.motion.swim.settings = tuning
+            sweep.motion.swim.retime(to: tuning.swimSpeed, at: t)
+            swept.append(sweep.layout(of: sweeper, in: size, at: t, now: Date(timeIntervalSince1970: t)))
+        }
+        // At the quick end of the slider a turn is short, so it comes
+        // round a little further each frame.
+        expectSmooth(swept, speed: 220, "sweeper", yawStep: 0.34)
+    }
+
     @Test("the turtle, the tetras and the axolotl loop without a jump")
     func petsLoop() {
         let tank = makeTank([])

@@ -636,6 +636,7 @@ struct AquariumView: View {
         m.swim.settings = swimSettings
         let tuning = m.swim.settings ?? AquariumSettings()
         let tempo = AquariumSettings.clamped(tuning.swimSpeed, to: AquariumSettings.swimSpeedRange)
+        m.swim.retime(to: tempo, at: t)
         // Reduce Motion ticks once a second: let the sim absorb real
         // elapsed time so sinking food and darting fish still arrive —
         // the motion reads as a stepped drift, not a frozen tank.
