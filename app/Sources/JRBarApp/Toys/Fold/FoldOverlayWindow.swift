@@ -72,6 +72,15 @@ final class FoldOverlayWindow: NSPanel {
         }
     }
 
+    /// The fold is parked with no stream: the renderer drops its picture
+    /// and the view its drawables. Both come back with the next fold.
+    /// Only ever called with the overlay ordered out.
+    func releaseFrames() {
+        guard !isVisible else { return }
+        renderer.releaseFrames()
+        metalView.releaseDrawables()
+    }
+
     /// Keeps the panel matched to the built-in screen's frame after a
     /// display-parameters change.
     func reframe() {

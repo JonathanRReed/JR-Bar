@@ -84,6 +84,36 @@ extension Toy {
     func cost(at now: TimeInterval) -> String? { nil }
 }
 
+/// Runs `body` now, and again after every change to the observable state
+/// it read, on the main actor, until `cancel()`. Outside SwiftUI: an
+/// AppKit view that follows a model this way changes itself and asks
+/// SwiftUI for nothing (the Fold card's lid), and a model that keeps a
+/// small snapshot of a big one writes it only when it changed (the Agent
+/// Overview's providers).
+@MainActor
+final class ObservationLoop {
+    private var active = true
+    private let body: @MainActor () -> Void
+
+    init(_ body: @escaping @MainActor () -> Void) {
+        self.body = body
+        run()
+    }
+
+    func cancel() {
+        active = false
+    }
+
+    private func run() {
+        guard active else { return }
+        withObservationTracking {
+            body()
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.run() }
+        }
+    }
+}
+
 /// A toy's measured background work (docs/TOYS.md): every frame drawn
 /// or sensor read ticks it, and the card reads the rate back over the
 /// last few seconds — so a regression like an uncapped timeline shows
