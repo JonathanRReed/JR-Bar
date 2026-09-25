@@ -459,6 +459,53 @@ struct FoldRenderProofTests {
         try Self.writePNG(try Self.makeStrip(cells, title: title), to: url)
     }
 
+    /// A reopen that stops short of where the lid rested: 110°, down to
+    /// 80°, back up to 104°. The 6° fold follows the lid for a second of
+    /// stillness, then 104° becomes the rest and the fold unwinds from
+    /// the reference it was drawing, so the screen ends clean at the lid's
+    /// own angle instead of holding a soft, dark, shifted top. Driven by
+    /// the real `MoveAnchor` and `DeltaChase` at 60 Hz.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the reopen-settle strip"))
+    func reopenSettleStrip() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let rig = try Self.makeRig(.duo)
+        var anchor = MoveAnchor()
+        anchor.armThreshold = 3
+        anchor.feed(Self.rest, at: 0)
+        for (i, dip) in [95.0, 80, 90, 100].enumerated() {
+            anchor.feed(dip, at: Double(i + 1) * 0.1)
+        }
+        let lid = 104.0
+        let parkedAt = 0.5
+        var chase = DeltaChase()
+        var cells: [(Double, CGImage, CGImage)] = []
+        var captions: [(glass: String, eye: String)] = []
+        let picks: Set<Int> = [0, 30, 59, 60, 61, 62, 75]
+        for frame in 0...75 {
+            let t = parkedAt + Double(frame) / 60
+            anchor.feed(lid, at: t)
+            let reference = anchor.anchor ?? Self.rest
+            let delta = chase.tick(target: max(0, reference - lid) * .pi / 180, dt: 1.0 / 60)
+            guard picks.contains(frame) else { continue }
+            let drawn = Self.rest - delta * 180 / .pi
+            let panel = try Self.renderPanel(rig, angle: drawn)
+            let seen = try Self.renderObserver(rig, panel: panel, angle: lid)
+            cells.append((drawn, try Self.image(panel), try Self.image(seen)))
+            let clock = String(format: "%.2f s", t - parkedAt)
+            let glass = String(format: "%@ · glass %.0f°, rest %.0f°", clock, drawn, reference)
+            captions.append((glass: glass, eye: "seated eye, lid at 104°"))
+        }
+        #expect(anchor.anchor == lid, "the stopped reopen is the new rest")
+        #expect(chase.value == 0, "and the fold has unwound")
+        let title = "Duo reopen that stops short — rested at 110°, dipped to 80°, back to 104°: "
+            + "the fold follows for 1 s of stillness, then 104° is the rest and it unwinds"
+        let url = dir.appendingPathComponent("fold-duo-reopen-settle-strip.png")
+        try Self.writePNG(try Self.makeStrip(cells, title: title, captions: captions), to: url)
+    }
+
     /// A Settings search that lands on a row the current look hides —
     /// Frost in the Duo, Goes dark over in the Room — draws it switched
     /// off, saying which look has it.
@@ -505,8 +552,9 @@ struct FoldRenderProofTests {
     }
 
     /// One column per angle: the panel on top, the observer below, each
-    /// labelled, under a title.
-    static func makeStrip(_ cells: [(Double, CGImage, CGImage)], title: String) throws -> CGImage {
+    /// labelled (by its angle, or by `captions` when given), under a title.
+    static func makeStrip(_ cells: [(Double, CGImage, CGImage)], title: String,
+                          captions: [(glass: String, eye: String)]? = nil) throws -> CGImage {
         let cw = 378, ch = 245, pad = 10, head = 34, label = 22
         let w = cells.count * cw + (cells.count + 1) * pad
         let h = head + 2 * (label + ch + pad) + pad
@@ -533,9 +581,12 @@ struct FoldRenderProofTests {
             let x = pad + i * (cw + pad)
             let panelY = h - head - label - ch
             let observerY = panelY - pad - label - ch
-            text(String(format: "%.0f° glass", cell.0), at: CGPoint(x: x, y: panelY + ch + 3), size: 13)
+            let caption = captions.map { $0[i] }
+            let glassLabel = caption?.glass ?? String(format: "%.0f° glass", cell.0)
+            let eyeLabel = caption?.eye ?? String(format: "%.0f° seated eye", cell.0)
+            text(glassLabel, at: CGPoint(x: x, y: panelY + ch + 3), size: 13)
             ctx.draw(cell.1, in: CGRect(x: x, y: panelY, width: cw, height: ch))
-            text(String(format: "%.0f° seated eye", cell.0), at: CGPoint(x: x, y: observerY + ch + 3), size: 13)
+            text(eyeLabel, at: CGPoint(x: x, y: observerY + ch + 3), size: 13)
             ctx.draw(cell.2, in: CGRect(x: x, y: observerY, width: cw, height: ch))
         }
         return try #require(ctx.makeImage())
