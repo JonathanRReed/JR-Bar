@@ -79,7 +79,9 @@ def test_a_quick_run_loop_is_never_logged__and_3_more() -> None:
     assert len(logged) == 1 and logged[0].startswith("core: run loop stalled for 5.25s and counting:")
     watchdog.pong()
     watchdog.tick()
-    assert len(logged) == 1, "the end of a stall already logged is not logged again"
+    assert len(logged) == 1, (
+        "the stall's final length lands inside the rate window: counted, not logged"
+    )
     assert watchdog.stalls == 1
     # A second stall inside the rate window is counted, then named with the
     # next line that gets through.
@@ -94,7 +96,19 @@ def test_a_quick_run_loop_is_never_logged__and_3_more() -> None:
     watchdog.tick()
     watchdog.pong()
     watchdog.tick()
-    assert len(logged) == 2 and "(+1 stalls not logged)" in logged[1]
+    assert len(logged) == 2 and "(+2 stalls not logged)" in logged[1]
+    # A stall already named "and counting" still gets its final length
+    # once the log window has passed — "and counting" alone never says
+    # how long the run loop actually ran.
+    clock.now += 31.0
+    watchdog.tick()
+    assert len(logged) == 3 and "and counting" in logged[2]
+    clock.now += 31.0
+    watchdog.pong()
+    watchdog.tick()
+    assert len(logged) == 4
+    assert logged[3].startswith("core: run loop stalled 62.")
+    assert "and counting" not in logged[3]
 
     # --- scenario: the_stack_reader_names_the_main_threads_python_frames
     here = threading.get_ident()

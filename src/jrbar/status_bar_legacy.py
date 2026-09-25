@@ -7277,6 +7277,7 @@ class StatusBarController(NSObject):
             # Persist only after that tail has reached the canonical monitor.
             monitor.write_latest_state()
         self.stop_event_server()
+        self.stop_resident_hook_deduplicators()
         self.closed_lid_awake.release()
         self.keep_awake.release()
         with self._capacity_history_lock:
@@ -8950,6 +8951,15 @@ class StatusBarController(NSObject):
                 self._resident_hook_deduplicators = held
         return held
 
+    def stop_resident_hook_deduplicators(self) -> None:
+        """Let go of the deduplicators' held descriptors at shutdown. The
+        standalone hook and the drainer reopen the files on their own."""
+        with _RESIDENT_DEDUPE_LOCK:
+            held = getattr(self, "_resident_hook_deduplicators", None)
+            self._resident_hook_deduplicators = None
+        if held is not None:
+            held.close()
+
     def start_hook_ingress(self) -> None:
         self.stop_hook_ingress()
         service = HookIngressService(
@@ -9135,7 +9145,11 @@ class StatusBarController(NSObject):
             )
             self.schedule_event_refresh()
         except Exception:
+            # The line is durable in the log, so the rereading reconcile
+            # still lands it — dropping the refresh here would leave the
+            # event unseen until the next hint or heartbeat.
             log_status_bar("event_server reconciliation error")
+            self.handle_hook_event_message(hint)
 
     def handle_hook_event_message(self, hint: ProviderRefreshHint) -> None:
         """Reconcile one authenticated hint from the persisted normalized log.

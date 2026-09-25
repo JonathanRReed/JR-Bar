@@ -4532,8 +4532,9 @@ def build_headless_controller_class() -> type:
             previous_asks = self._core_prev_asks
             previous_devices = self._core_prev_devices
             if self._core_settings_dirty and not self._core_settings_write_queued():
-                # The last settings write failed: try again.
-                self._core_flush_settings()
+                # The last settings write failed: the retry belongs on
+                # the writer too, not as an fsync on the run loop.
+                self._core_save_settings_soon()
             # Forget a departed strip BEFORE the legacy refresh plans the
             # Dot's next write: the disconnecting refresh itself would
             # otherwise still submit the ghost program it is reacting to.
@@ -6347,6 +6348,7 @@ def build_headless_controller_class() -> type:
                 setattr(self, name, None)
                 if timer is not None:
                     timer.invalidate()
+            self.stop_resident_hook_deduplicators()
             server = self._core
             self._core = None
             if server is not None:
@@ -6621,7 +6623,6 @@ def build_headless_controller_class() -> type:
                         "core-settings",
                         self._core_flush_settings,
                         replace_pending=True,
-                        use_reserved_drain_tail=True,
                     )
                 except Exception:
                     disposition = None
@@ -6793,9 +6794,6 @@ def build_headless_controller_class() -> type:
             updated_at = getattr(status, "updated_at", None)
             stamp = updated_at.timestamp() if hasattr(updated_at, "timestamp") else None
             return stamp is not None and time.time() - stamp < UNSETTLED_EXTRAS_SECONDS
-
-        def _core_lookup_extras(self, status) -> SessionExtras:
-            return self._core_lookup_extras_from_table(status)[0]
 
         def _core_lookup_extras_from_table(self, status) -> tuple[SessionExtras, bool]:
             """``(extras, settled)``. Reads one registry record and the

@@ -119,8 +119,9 @@ class RunLoopWatchdog:
                         self._record(late * 1000.0)
                     except Exception:
                         pass
-                if not self._reported_ongoing:
-                    self._report(late, ongoing=False)
+                # An "and counting" line without its ending says nothing
+                # — report how long it ran; the rate limit still applies.
+                self._report(late, ongoing=False)
         with self._lock:
             self._sent_at = now
             self._answered_at = None

@@ -1661,7 +1661,6 @@ class LiveAgentMonitor(LiveSessionMemory):
             with self.lock:
                 state = self.operator_state
                 overlays = dict(self._status_overlays_by_work_key)
-                self._latest_state_transition = False
             try:
                 serialized = _serialize_latest_state(
                     state,
@@ -1680,10 +1679,13 @@ class LiveAgentMonitor(LiveSessionMemory):
                     )
                     self._latest_state_digest = digest
             except (OSError, ValueError):
+                # The transition flag stands: a failed write retried at
+                # once, not after the interval, or the edge is lost.
                 return
             with self.lock:
                 if self.operator_state == state:
                     self._latest_state_dirty = False
+                    self._latest_state_transition = False
             self._latest_state_written_at = now_monotonic
 
 
