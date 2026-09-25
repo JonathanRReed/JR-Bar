@@ -4044,6 +4044,9 @@ def build_headless_controller_class() -> type:
             self._core_terminal_by_pid: dict[tuple[int, float | None], dict[str, Any] | None] = {}
             # Reads the process table off the run loop (never a ``ps`` here).
             self._core_process_table = None
+            # Names a run-loop stall while it happens (jrbar.run_loop_watchdog).
+            self._core_watchdog = None
+            self._core_command_in_flight: str | None = None
             self._core_started_at = time.time()
             self._core_pending_drainer = None
             self._core_last_clear_batch = None
@@ -4186,6 +4189,7 @@ def build_headless_controller_class() -> type:
             self.virtual_status_device.hide()
             self._core_pending_drainer.start()
             self._core_housekeeping_timer = _schedule_timer(HOUSEKEEPING_SECONDS, self, "coreHousekeepingTick:", True)
+            self._core_start_watchdog()
             if os.environ.get("JRBAR_SUPERVISED") == "1":
                 self._core_supervision_timer = _schedule_timer(SUPERVISION_SECONDS, self, "coreSupervisionTick:", True)
             _usage_history_warm_later(self)
@@ -4196,6 +4200,34 @@ def build_headless_controller_class() -> type:
             # first state no longer queues behind the pad, the installed
             # agents, the remote peers or a sweep of the logs.
             _schedule_timer(0.0, self, "coreLaunchDeferred:", False)
+
+        def _core_start_watchdog(self) -> None:
+            from .run_loop_watchdog import RunLoopWatchdog
+
+            def post() -> None:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_("coreWatchdogPong:", None, False)
+
+            def record(milliseconds: float) -> None:
+                self._performance().record("run_loop_stall", milliseconds, main_thread=False)
+
+            try:
+                watchdog = RunLoopWatchdog(
+                    post=post,
+                    log=legacy.log_status_bar,
+                    in_flight=lambda: self._core_command_in_flight,
+                    record=record,
+                )
+                watchdog.start()
+            except Exception as exc:
+                legacy.log_status_bar(f"core: run loop watchdog failed to start: {exc.__class__.__name__}")
+                return
+            self._core_watchdog = watchdog
+
+        @objc.IBAction
+        def coreWatchdogPong_(self, _payload) -> None:
+            watchdog = self._core_watchdog
+            if watchdog is not None:
+                watchdog.pong()
 
         def coreLaunchDeferred_(self, _timer) -> None:
             if getattr(self, "_runtime_termination_started", False) or getattr(self, "_core", None) is None:
@@ -6165,6 +6197,10 @@ def build_headless_controller_class() -> type:
             )
 
         def _core_stop_server(self) -> None:
+            watchdog = getattr(self, "_core_watchdog", None)
+            self._core_watchdog = None
+            if watchdog is not None:
+                watchdog.stop()
             drainer = self._core_pending_drainer
             self._core_pending_drainer = None
             if drainer is not None:
@@ -6219,6 +6255,7 @@ def build_headless_controller_class() -> type:
         @objc.IBAction
         def runCoreCommand_(self, box):
             spec = _MAIN_THREAD_COMMANDS.get(box.name)
+            self._core_command_in_flight = box.name
             try:
                 if spec is None:
                     raise CommandError("unknown_command", f"no such command: {box.name}")
@@ -6228,6 +6265,8 @@ def build_headless_controller_class() -> type:
             except Exception as error:
                 legacy.log_status_bar(f"core: command {box.name} failed: {traceback.format_exc(limit=6)}")
                 box.error = CommandError("internal", f"{error.__class__.__name__}: {error}"[:500])
+            finally:
+                self._core_command_in_flight = None
 
         @objc.IBAction
         def runCoreCallable_(self, box):

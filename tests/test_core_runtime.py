@@ -3215,6 +3215,29 @@ def test_a_state_build_never_forks_ps_on_the_run_loop__and_1_more(cleared, monke
     assert not controller._core_extras_awaiting_table
 
 
+def test_the_run_loop_watchdog_starts_with_the_daemon_and_sees_the_command(headless) -> None:
+    """A stall is named with the command the run loop was running; the
+    watchdog's no-op comes back through its own selector."""
+    from jrbar.run_loop_watchdog import RunLoopWatchdog
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    watchdog = controller._core_watchdog
+    assert isinstance(watchdog, RunLoopWatchdog)
+    seen: list[str | None] = []
+    controller._core_legacy = lambda: seen.append(controller._core_command_in_flight) or status_bar
+    box = core_runtime.CoreCommandBox("set_setting", {"path": "alert_burst", "value": 4})
+    controller.runCoreCommand_(box)
+    assert seen and seen[0] == "set_setting"
+    assert controller._core_command_in_flight is None
+    answered: list[bool] = []
+    watchdog.pong = lambda: answered.append(True)
+    controller.coreWatchdogPong_(None)
+    assert answered == [True]
+    controller._core_stop_server()
+    assert controller._core_watchdog is None
+
+
 def test_the_daemon_doctor_never_asks_tccd_about_alcove(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     """Alcove following and its Screen Recording permission are the app's;
     the daemon's doctor says it does not run following rather than spend a
