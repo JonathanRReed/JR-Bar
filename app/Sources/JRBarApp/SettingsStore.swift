@@ -980,6 +980,12 @@ final class SettingsStore {
         refreshDocument()
         refreshFacts()
         _ = deviceListMirror.value
+        if devicesStale {
+            // The edit's recompute waits for the mirror sync, but a read
+            // must not see the pre-edit list even for one turn.
+            devicesStale = false
+            deviceListCache = computeDeviceEntries()
+        }
         return deviceListCache
     }
 
