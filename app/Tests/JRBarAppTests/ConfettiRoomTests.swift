@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+import CoreAudio
 import Foundation
 import SwiftUI
 import Testing
@@ -400,4 +402,53 @@ struct ConfettiSoundTests {
         #expect(String(decoding: data[8..<12], as: UTF8.self) == "WAVE")
         #expect(String(decoding: data[36..<40], as: UTF8.self) == "data")
     }
+
+    @Test("on the alert device, the pop plays beside a session's sound instead of cutting it off")
+    func popLeavesTheEventSoundPlaying() throws {
+        _ = try #require(SoundPlayer.url(for: "Glass"))
+        let player = SoundPlayer()
+        player.preferences = {
+            var preferences = SoundPreferences()
+            preferences.useAlertDevice = true
+            return preferences
+        }
+        player.microphoneLive = { false }
+        player.synthesizedFolder = FileManager.default.temporaryDirectory
+            .appending(path: "confetti-sound-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: player.synthesizedFolder) }
+        let events = CuttingAlertOutput()
+        let pops = CuttingAlertOutput()
+        player.alertDevice = AlertDevicePlayer(output: events)
+        player.alertDevice.alertOutputDevice = { 42 }
+        player.synthesizedAlertDevice = AlertDevicePlayer(output: pops)
+        player.synthesizedAlertDevice.alertOutputDevice = { 42 }
+        // A session completes: its sound rings, then the burst's pop.
+        player.play("Glass")
+        #expect(events.files == ["Glass.aiff"])
+        let pop = try #require(ConfettiSound.play(through: player))
+        #expect(pop.alertDevice)
+        #expect(pops.files.count == 1)
+        #expect(events.files == ["Glass.aiff"], "the pop never lands on the event sound's player")
+        #expect(events.isRunning && events.cutShort == 0, "the session's sound plays on")
+    }
+}
+
+/// An alert output that plays nothing and, like the real one, stops
+/// whatever it is playing when a new ring starts — counting each ring it
+/// cuts short.
+@MainActor
+private final class CuttingAlertOutput: AlertDeviceOutput {
+    private(set) var isRunning = false
+    private(set) var files: [String] = []
+    private(set) var cutShort = 0
+
+    func start(_ file: AVAudioFile, on device: AudioObjectID, volume: Float,
+               ended: @escaping @MainActor @Sendable () -> Void) -> Bool {
+        if isRunning { cutShort += 1 }
+        files.append(file.url.lastPathComponent)
+        isRunning = true
+        return true
+    }
+
+    func stop() { isRunning = false }
 }

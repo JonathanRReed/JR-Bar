@@ -138,7 +138,14 @@ final class SoundPlayer {
     var microphoneLive: () -> Bool = { MicrophoneCapture.isLive() }
     /// Told when a sound is held for a live microphone.
     var onHeldForCall: ((String) -> Void)?
-    private lazy var alertDevice = AlertDevicePlayer()
+    /// The alert device's player for event sounds. A new ring cuts the
+    /// last one short, so a burst of asks never piles up. Tests hand in
+    /// one with an output that plays nothing.
+    lazy var alertDevice = AlertDevicePlayer()
+    /// Synthesized sounds (the confetti's pop) get a player of their own
+    /// on the alert device, so a pop mixes with the event sound it
+    /// follows — a session's completion sound — instead of cutting it off.
+    lazy var synthesizedAlertDevice = AlertDevicePlayer()
     /// Where synthesized sounds (`playSynthesized`) are kept as WAV
     /// files: the app's caches folder. Tests point it at a scratch one.
     var synthesizedFolder: URL = SoundPlayer.defaultSynthesizedFolder
@@ -325,7 +332,7 @@ extension SoundPlayer {
             synthesizedOutput(play)
             return play
         }
-        if play.alertDevice, alertDevice.play(url: file, volume: volume, pan: play.pan) { return play }
+        if play.alertDevice, synthesizedAlertDevice.play(url: file, volume: volume, pan: play.pan) { return play }
         let name = "synthesized:" + file.lastPathComponent
         let player: AVAudioPlayer
         if let cached = players[name] {
