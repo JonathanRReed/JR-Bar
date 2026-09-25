@@ -19,6 +19,12 @@ client uses), with made-up numbers and `example.com` identities. `tests/test_pro
 runs one set of invariants over every file in this folder. Replace a file with a redacted capture once one
 exists; the contract keeps holding.
 
+Checked again on 2026-09-24 for a read-only capture on the owner's Mac, and none was possible without
+something the lane may not do: Grok's saved sign-in had expired on 2026-09-22 (its card read stale), no
+Antigravity language server was running, Devin's token lives in the Keychain (reading it would prompt),
+Cursor and Gemini had no source on this Mac, and the OpenAI API provider was off. Every file here has a row
+in one of these two tables; `tests/test_provider_usage_fixture_contract.py` fails for one that doesn't.
+
 | file | parser | what it pins |
 | --- | --- | --- |
 | `cursor-usage-summary.json` | `parse_cursor_usage` | three bindable plan lanes (`included-plan`, `auto-composer`, `api-models`) from `used`/`limit` and `usedPercent`, extra usage in cents. |

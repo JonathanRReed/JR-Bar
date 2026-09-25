@@ -135,3 +135,9 @@ def test_an_unknown_window_is_unknown_not_zero() -> None:
     lanes = {lane.label: lane for lane in gemini.lanes}
     assert lanes["gemini-2.5-flash-lite"].remaining_percent is None
     assert all(not lane.bindable for lane in gemini.lanes)
+
+
+def test_every_fixture_says_whether_it_was_captured_or_shaped() -> None:
+    readme = (FIXTURES / "README.md").read_text(encoding="utf-8")
+    for path in sorted(FIXTURES.glob("*.json")):
+        assert f"| `{path.name}` |" in readme, f"{path.name} has no row in README.md saying where it came from"
