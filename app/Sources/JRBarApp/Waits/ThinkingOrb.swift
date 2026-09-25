@@ -7,8 +7,7 @@ import SwiftUI
 /// * thinking: dots breathing around a loose ring,
 /// * searching: dots sweeping an arc, like a scan,
 /// * writing: dots stepping along a row, a cursor and its trail,
-/// * running: a quick, tilted orbit round a nucleus,
-/// * listening: a slow pulse leaving a still centre —
+/// * running: a quick, tilted orbit round a nucleus —
 ///
 /// in the tint it is given (a provider's accent, or amber for an ask).
 /// One `Canvas` in one `TimelineView` at 30 fps, only while `animating`;
@@ -135,14 +134,13 @@ enum OrbLayout {
 
     /// The frame a still orb holds — each activity at a moment that
     /// still reads as that activity (the arc mid-swing, the cursor
-    /// mid-row, the pulse mid-way out).
+    /// mid-row).
     static func stillTime(_ activity: AgentActivity) -> TimeInterval {
         switch activity {
         case .thinking: return 0.6
         case .searching: return 0.15
         case .writing: return 2.4 * writingStep
         case .running: return 0.12
-        case .listening: return 1.1
         }
     }
 
@@ -154,7 +152,6 @@ enum OrbLayout {
         case .searching: searching(time, body)
         case .writing: writing(time, body)
         case .running: running(time, body)
-        case .listening: listening(time, body)
         }
     }
 
@@ -188,7 +185,10 @@ enum OrbLayout {
 
     static let searchingDots = 4
     static let searchingSwing: TimeInterval = 2.2
-    static let searchingPivot = 0.18
+    /// The arc's centre, below the orb's: the arc rides its circle's top,
+    /// so a pivot set this low puts the ink's centre on the slot's — over
+    /// a swing, and in the still frame — level with the text beside it.
+    static let searchingPivot = 0.52
 
     private static func searching(_ t: TimeInterval, _ body: (OrbDot) -> Void) {
         let phase = 2 * Double.pi * t / searchingSwing
@@ -198,8 +198,7 @@ enum OrbLayout {
         let velocity = cos(phase)
         let heading: Double = velocity >= 0 ? 1 : -1
         let spacing = 0.5 * velocity + 0.08 * heading
-        // The arc swings round a dim pivot set low, so the whole reads
-        // centred rather than riding the top of its frame.
+        // The arc swings round a dim pivot (`searchingPivot`).
         body(OrbDot(x: 0, y: searchingPivot, radius: 0.15, opacity: 0.35))
         for index in 0..<searchingDots {
             let k = Double(index)
@@ -252,25 +251,6 @@ enum OrbLayout {
             let depth = 0.5 + 0.5 * sin(angle)
             body(OrbDot(x: ex * tiltCos - ey * tiltSin, y: ex * tiltSin + ey * tiltCos,
                         radius: 0.13 + 0.09 * depth, opacity: 0.4 + 0.6 * depth))
-        }
-    }
-
-    // MARK: Listening — a slow pulse
-
-    static let listeningDots = 6
-    static let listeningPulse: TimeInterval = 2.6
-
-    private static func listening(_ t: TimeInterval, _ body: (OrbDot) -> Void) {
-        let beat = t / listeningPulse
-        let progress = beat - floor(beat)
-        let breathe = 0.5 + 0.5 * cos(2 * .pi * progress)
-        body(OrbDot(x: 0, y: 0, radius: 0.23 + 0.06 * breathe, opacity: 0.75 + 0.25 * breathe))
-        let out = 1 - (1 - progress) * (1 - progress)
-        let ring = 0.36 + 0.5 * out
-        for index in 0..<listeningDots {
-            let angle = 2 * Double.pi * Double(index) / Double(listeningDots) - .pi / 2
-            body(OrbDot(x: ring * cos(angle), y: ring * sin(angle),
-                        radius: 0.12, opacity: 0.85 * (1 - progress)))
         }
     }
 }

@@ -3,8 +3,9 @@ import JRBarCore
 
 /// What a working agent is doing right now, read off the hook's last
 /// word (`CoreSession.event`, `CoreSession.tool`) — the vocabulary a
-/// `ThinkingOrb` draws. Never a state of its own: the row is working
-/// (or waiting) by `SessionActivity`; this only says how.
+/// `ThinkingOrb` draws. Never a state of its own: the row is working by
+/// `SessionActivity`; this only says how. There is no word here for
+/// waiting on you — that is an ask, and asks keep their amber mark.
 enum AgentActivity: String, CaseIterable, Sendable {
     /// Reasoning between tool calls: a prompt just landed, a tool just
     /// finished, a sub-agent was sent off.
@@ -15,9 +16,6 @@ enum AgentActivity: String, CaseIterable, Sendable {
     case writing
     /// A shell command or a process of its own.
     case running
-    /// The agent is waiting on you: a permission prompt, a question.
-    /// Asks keep their amber everywhere; this is only the orb's motion.
-    case listening
 
     /// VoiceOver's word for the orb, where no text beside it says it.
     var spokenLabel: String {
@@ -26,7 +24,6 @@ enum AgentActivity: String, CaseIterable, Sendable {
         case .searching: return "Searching"
         case .writing: return "Writing"
         case .running: return "Running"
-        case .listening: return "Listening"
         }
     }
 
@@ -36,13 +33,13 @@ enum AgentActivity: String, CaseIterable, Sendable {
     /// table does not know that names one) says what it is doing. A
     /// finished tool (`PostToolUse`, `PostToolUseFailure`) means the
     /// agent is reading its result — thinking — whatever the tool was.
-    /// A permission prompt, an elicitation or a notification waits on
-    /// you. Everything else, and anything unknown, is thinking: the one
+    /// Everything else, and anything unknown, is thinking: the one
     /// honest word when the hook says nothing more specific.
     static func from(event: String?, tool: String?) -> AgentActivity {
         let hook = event?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if waitingEvents.contains(hook) { return .listening }
-        if finishedEvents.contains(hook) || reasoningEvents.contains(hook) { return .thinking }
+        if finishedEvents.contains(hook) || reasoningEvents.contains(hook) || askEvents.contains(hook) {
+            return .thinking
+        }
         if let tool, let named = from(tool: tool) { return named }
         // Cursor's shell pair canonicalises to PreToolUse without a
         // tool name: a tool is running, and it is a command.
@@ -78,9 +75,13 @@ enum AgentActivity: String, CaseIterable, Sendable {
 
     // MARK: Events
 
-    /// The hook is waiting on the person (canonical names, as the daemon
-    /// sends them in `event`).
-    static let waitingEvents: Set<String> = ["PermissionRequest", "Elicitation", "Notification"]
+    /// A question put to the person (canonical names, as the daemon sends
+    /// them in `event`). An orb only draws on a working row, and a row is
+    /// working only when nothing waits on the person: a prompt still
+    /// named here was settled elsewhere, and a notification is one that
+    /// never needed them — the collector makes every one that does a
+    /// waiting row. Either way the agent is back at its own reasoning.
+    static let askEvents: Set<String> = ["PermissionRequest", "Elicitation", "Notification"]
 
     /// A tool call ended: the agent is back to reasoning.
     static let finishedEvents: Set<String> = ["PostToolUse", "PostToolUseFailure", "PermissionDenied",
@@ -141,7 +142,7 @@ enum AgentActivity: String, CaseIterable, Sendable {
         for name in writeTools { table[name] = .writing }
         for name in runTools { table[name] = .running }
         for name in thinkTools { table[name] = .thinking }
-        for name in askTools { table[name] = .listening }
+        for name in askTools { table[name] = .thinking }
         return table
     }()
 
@@ -170,10 +171,11 @@ enum AgentActivity: String, CaseIterable, Sendable {
     /// Planning and handing work off: still the agent's own reasoning.
     static let thinkTools: [String] = [
         "task", "agent", "run_subagent", "sidekick", "todowrite", "todoread", "todo_write",
-        "update_plan", "think", "reason", "thinking", "skill", "slashcommand",
+        "write_todos", "update_plan", "think", "reason", "thinking", "skill", "slashcommand",
     ]
 
-    /// Tools whose call is a question to the person.
+    /// Tools whose call is a question to the person: until it lands as
+    /// an ask, and the row turns waiting, the agent is still thinking.
     static let askTools: [String] = ["askuserquestion", "exitplanmode"]
 
     static let delegateWords: Set<String> = ["agent", "subagent", "task", "plan", "todo", "think"]
