@@ -754,10 +754,40 @@ def hook_health(intake_report: object) -> dict[str, str]:
 # --- documents ----------------------------------------------------------------
 
 
-def _request_for_status(operator_state: object, status: object):
+class _OperatorIndex:
+    """One build's view of the operator state: works and live requests
+    keyed by their work key, so a session or ask row does not rescan the
+    whole state per row. ``first`` wins for duplicate live requests, the
+    order the old scans kept."""
+
+    __slots__ = ("live_requests_by_work_key", "works_by_key")
+
+    def __init__(self, operator_state: object) -> None:
+        works = getattr(operator_state, "works", ()) or ()
+        works_by_key: dict[object, object] = {}
+        for work in works:
+            key = getattr(work, "key", None)
+            if key is not None and key not in works_by_key:
+                works_by_key[key] = work
+        self.works_by_key = works_by_key
+        live: dict[object, object] = {}
+        for request in getattr(operator_state, "requests", ()) or ():
+            key = getattr(request, "key", None)
+            work_key = getattr(key, "work_key", None)
+            if work_key is None or work_key in live:
+                continue
+            phase = getattr(getattr(request, "phase", None), "value", "")
+            if phase.startswith("live"):
+                live[work_key] = request
+        self.live_requests_by_work_key = live
+
+
+def _request_for_status(operator_state: object, status: object, index: _OperatorIndex | None = None):
     work_key = getattr(status, "work_key", None)
     if operator_state is None or work_key is None:
         return None
+    if index is not None:
+        return index.live_requests_by_work_key.get(work_key)
     for request in getattr(operator_state, "requests", ()) or ():
         key = getattr(request, "key", None)
         if getattr(key, "work_key", None) != work_key:
@@ -768,10 +798,12 @@ def _request_for_status(operator_state: object, status: object):
     return None
 
 
-def _work_for_status(operator_state: object, status: object):
+def _work_for_status(operator_state: object, status: object, index: _OperatorIndex | None = None):
     work_key = getattr(status, "work_key", None)
     if operator_state is None or work_key is None:
         return None
+    if index is not None:
+        return index.works_by_key.get(work_key)
     for work in getattr(operator_state, "works", ()) or ():
         if getattr(work, "key", None) == work_key:
             return work
@@ -880,8 +912,9 @@ def ask_document(
     host_bundle_ids: object = None,
     decision_lane: object = None,
     ask_previews: object = None,
+    operator_index: _OperatorIndex | None = None,
 ) -> dict[str, Any]:
-    request = _request_for_status(operator_state, status)
+    request = _request_for_status(operator_state, status, operator_index)
     kind = getattr(getattr(request, "request_kind", None), "value", None)
     if kind in (None, "unknown"):
         event_name = getattr(status, "event_name", "")
@@ -967,6 +1000,7 @@ def session_document(
     answer_contracts: object = None,
     has_answer_handler: object = None,
     acknowledged: bool = False,
+    operator_index: _OperatorIndex | None = None,
 ) -> dict[str, Any]:
     mode = getattr(status, "mode", AgentMode.UNKNOWN)
     if not isinstance(mode, AgentMode):
@@ -974,7 +1008,7 @@ def session_document(
     agent_id = str(getattr(status, "agent_id", ""))
     stale = bool(getattr(status, "stale", False))
     is_subagent = bool(getattr(status, "is_subagent", False))
-    work = _work_for_status(operator_state, status)
+    work = _work_for_status(operator_state, status, operator_index)
     next_actor = getattr(getattr(work, "next_actor", None), "value", None)
     if next_actor in (None, "unknown", "none"):
         next_actor = (
@@ -1071,6 +1105,7 @@ def session_document(
                 answer_contracts=answer_contracts,
                 has_answer_handler=has_answer_handler,
                 host_bundle_ids=_extras_host_bundle_ids(extras),
+                operator_index=operator_index,
             )
             if agent_id in ask_ids
             else None
@@ -1419,6 +1454,7 @@ def project_session_rows(
     ordered = sorted(statuses, key=lambda status: bool(getattr(status, "is_subagent", False)))
     documents_by_id: dict[str, dict[str, Any]] = {}
     acknowledged_at_by_id = acknowledged_epoch_by_session(acknowledged_keys or ())
+    operator_index = _OperatorIndex(operator_state) if operator_state is not None else None
     for status in ordered:
         agent_id = str(getattr(status, "agent_id", ""))
         parent = getattr(status, "parent_agent_id", None) if getattr(status, "is_subagent", False) else None
@@ -1433,6 +1469,7 @@ def project_session_rows(
             answer_contracts=answer_contracts,
             has_answer_handler=has_answer_handler,
             acknowledged=agent_id in acknowledged_at_by_id,
+            operator_index=operator_index,
         )
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
@@ -1507,6 +1544,7 @@ def build_state_document(
     # longer carries at all. Pinning cannot save a row that was never
     # projected, and a dangling ask is worse than a dropped one -- it is a
     # amber light with nothing behind it.
+    ask_operator_index = _OperatorIndex(operator_state) if operator_state is not None else None
     asks = [
         ask_document(
             status,
@@ -1517,6 +1555,7 @@ def build_state_document(
             host_bundle_ids=_extras_host_bundle_ids(
                 extras_by_id.get(str(getattr(status, "agent_id", "") or ""))
             ),
+            operator_index=ask_operator_index,
         )
         for status in ask_statuses
         if str(getattr(status, "agent_id", "") or "") in listed_ids
