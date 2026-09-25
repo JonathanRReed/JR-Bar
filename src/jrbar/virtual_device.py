@@ -3402,17 +3402,24 @@ class VirtualStatusDevice(NSObject):
             self.view.set_standing_gauges(left_level, right_on)
 
     def set_follow_alcove(self, enabled: bool) -> None:
-        self.follow_alcove_width = bool(enabled)
+        enabled = bool(enabled)
+        # Every settings sync calls this, and the daemon syncs on every
+        # refresh. Only the change to "on" is the point to preflight.
+        turning_on = enabled and getattr(self, "_follow_alcove_requested", None) is not True
+        self._follow_alcove_requested = enabled
+        self.follow_alcove_width = enabled
         if not self.follow_alcove_width:
             self._alcove_relevant = False
             self._stop_alcove_observer()
             self._record_alcove_status(AlcoveCaptureStatus.NOT_FOLLOWING)
-        else:
+        elif turning_on and not getattr(self, "headless", False):
             # THE point following is enabled: ask the system, once, whether
             # we are even allowed to look. Preflight never prompts -- the
             # request call is reserved for a button the user pressed -- and
             # forcing it here refreshes a cache that may be holding a
-            # "denied" the user has since fixed in System Settings.
+            # "denied" the user has since fixed in System Settings. It is a
+            # round trip to tccd (about 11 ms); the headless daemon never
+            # asks, because the app owns the Screen Bar and its permission.
             if screen_recording_granted(force=True) is False:
                 self._record_alcove_status(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED)
         self._publish_presentation_schedule()

@@ -7512,13 +7512,13 @@ def build_headless_controller_class() -> type:
             }
 
         def _core_doctor_document(self) -> dict[str, Any]:
-            from .doctor import collect_diagnostics
+            from .doctor import collect_diagnostics, daemon_probes
             from .install import hook_shim_path
             from .memory_probe import memory_report
 
             checks: list[dict[str, Any]] = []
             try:
-                result = collect_diagnostics()
+                result = collect_diagnostics(probes=daemon_probes())
                 for finding in result.findings:
                     healthy = finding.code.value in _HEALTHY_DIAGNOSTIC_CODES
                     if finding.check.value in _APP_OWNED_DIAGNOSTICS:

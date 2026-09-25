@@ -699,6 +699,24 @@ def _failed_probe_finding(check: DiagnosticCheck) -> DiagnosticFinding:
     return _finding(check, code, 0, 0)
 
 
+def _app_owned_alcove_probe() -> DiagnosticFinding:
+    """The daemon's Alcove line: the app follows Alcove and holds the Screen
+    Recording permission, so the daemon says it does not run following
+    instead of asking tccd on the app's behalf."""
+    return _finding(DiagnosticCheck.ALCOVE_FOLLOW_STATE, DiagnosticCode.NOT_RUNNING, 0, 1)
+
+
+def daemon_probes() -> tuple[DiagnosticProbe, ...]:
+    """The default probes, in manifest order, with the checks the app owns
+    answered without the system round trips they would cost the daemon."""
+    return tuple(
+        DiagnosticProbe(probe.check, _app_owned_alcove_probe)
+        if probe.check is DiagnosticCheck.ALCOVE_FOLLOW_STATE
+        else probe
+        for probe in _default_probes()
+    )
+
+
 def collect_diagnostics(
     *,
     probes: tuple[DiagnosticProbe, ...] | None = None,
@@ -906,6 +924,7 @@ __all__ = [
     "SanitizedFailureClass",
     "collect_diagnostics",
     "core_doctor_document",
+    "daemon_probes",
     "encode_diagnostic_result",
     "render_diagnostic_result",
     "render_performance_section",

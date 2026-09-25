@@ -3215,6 +3215,25 @@ def test_a_state_build_never_forks_ps_on_the_run_loop__and_1_more(cleared, monke
     assert not controller._core_extras_awaiting_table
 
 
+def test_the_daemon_doctor_never_asks_tccd_about_alcove(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Alcove following and its Screen Recording permission are the app's;
+    the daemon's doctor says it does not run following rather than spend a
+    tccd round trip on a line that is healthy by design."""
+    from jrbar import alcove_observation
+
+    asked: list[bool] = []
+    monkeypatch.setattr(
+        alcove_observation, "_preflight_screen_capture_access", lambda: asked.append(True) or True
+    )
+    alcove_observation.reset_screen_recording_cache()
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    checks = {check["name"]: check for check in controller._core_doctor_document()["checks"]}
+    assert asked == []
+    assert checks["alcove_follow_state"]["ok"] is True
+    assert checks["alcove_follow_state"]["detail"].startswith("not_running")
+
+
 def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     """hidapi's IOHIDManager keeps the run loop of whichever thread first
     touched it. A fresh thread per probe leaves it holding a run loop that
