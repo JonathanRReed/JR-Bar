@@ -1,4 +1,5 @@
 import AppKit
+import CoreML
 import ImageIO
 import PDFKit
 import SwiftUI
@@ -179,16 +180,41 @@ enum ShelfActions {
     /// reading order. A photo taken with the phone on its side stores its
     /// pixels sideways and says which way is up; Vision is told, so the
     /// words read the way the photo shows them.
+    ///
+    /// Vision picks the Neural Engine or the GPU, and either can refuse to
+    /// set the model up while other work holds it (its ML runtime throws,
+    /// `e5rtError … 13`). The same request then runs on the CPU, which
+    /// always takes it: slower, and the same words.
     nonisolated static func recognizeText(in url: URL) throws -> String? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let up = orientation(of: source)
+        do {
+            return try recognizeText(in: image, orientation: up, onCPU: false)
+        } catch {
+            return try recognizeText(in: image, orientation: up, onCPU: true)
+        }
+    }
+
+    nonisolated static func recognizeText(in image: CGImage, orientation up: CGImagePropertyOrientation,
+                                          onCPU: Bool) throws -> String? {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
-        try VNImageRequestHandler(cgImage: image, orientation: orientation(of: source), options: [:])
-            .perform([request])
+        if onCPU, let cpu = try cpuDevice(for: request) {
+            try request.setComputeDevice(cpu, for: .main)
+        }
+        try VNImageRequestHandler(cgImage: image, orientation: up, options: [:]).perform([request])
         let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    /// The CPU among the devices Vision may run this request's main stage on.
+    nonisolated static func cpuDevice(for request: VNRequest) throws -> MLComputeDevice? {
+        try request.supportedComputeStageDevices[.main]?.first { device in
+            if case .cpu = device { return true }
+            return false
+        }
     }
 
     /// Which way is up in the image's first frame, from its own metadata;

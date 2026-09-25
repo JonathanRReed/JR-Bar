@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import Testing
 import UniformTypeIdentifiers
+import Vision
 import JRBarCore
 @testable import JRBarApp
 
@@ -647,15 +648,40 @@ extension ShelfTests {
         #expect(FileManager.default.fileExists(atPath: file.path), "the original stays")
     }
 
-    @Test func copyTextReadsAnImageOnThisMac() throws {
+    /// An image's words read the way Copy Text reads them: off the main
+    /// actor. Vision can take many seconds to set its model up on a loaded
+    /// Mac, and read on the main actor that stalled every other test
+    /// waiting there (the panel's sparklines, the presence reporter).
+    nonisolated static func readText(_ url: URL) async throws -> String? {
+        try await Task.detached(priority: .userInitiated) { try ShelfActions.text(of: url) }.value
+    }
+
+    @Test func copyTextReadsAnImageOnThisMac() async throws {
         let folder = try scratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
         let png = folder.appendingPathComponent("words.png")
         try Self.drawText("SHELF READS THIS", to: png)
         #expect(ShelfActions.hasText(png))
-        let text = try #require(try ShelfActions.text(of: png))
+        let text = try #require(try await Self.readText(png))
         #expect(text.uppercased().contains("SHELF"), "read: \(text)")
         #expect(text.uppercased().contains("READS"), "read: \(text)")
+    }
+
+    /// The CPU path Copy Text falls back to when the Neural Engine or the
+    /// GPU refuses Vision's model reads the same words.
+    @Test func copyTextReadsOnTheCPUToo() async throws {
+        let folder = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let png = folder.appendingPathComponent("cpu.png")
+        try Self.drawText("SHELF READS THIS", to: png)
+        #expect(try ShelfActions.cpuDevice(for: VNRecognizeTextRequest()) != nil)
+        let read = try await Task.detached(priority: .userInitiated) { () throws -> String? in
+            guard let source = CGImageSourceCreateWithURL(png as CFURL, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+            return try ShelfActions.recognizeText(in: image, orientation: .up, onCPU: true)
+        }.value
+        let text = try #require(read)
+        #expect(text.uppercased().contains("SHELF"), "read: \(text)")
     }
 
     @Test func convertWritesBesideTheOriginalUnderAFreeName() throws {
@@ -672,7 +698,7 @@ extension ShelfTests {
         #expect(!ShelfActionMenu.verbs(for: [folder.appendingPathComponent("a.zip")]).contains(.copyText))
     }
 
-    @Test func aPhotoTakenSidewaysConvertsTheWayItIsShown() throws {
+    @Test func aPhotoTakenSidewaysConvertsTheWayItIsShown() async throws {
         let folder = try scratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
         // Stored 200 × 900 on its side, shown 900 × 200 by its orientation.
@@ -684,7 +710,7 @@ extension ShelfTests {
                 "the PNG is shown the way the photo was, not turned on its side")
         let source = try #require(CGImageSourceCreateWithURL(photo as CFURL, nil))
         #expect(ShelfActions.orientation(of: source) == .right, "Vision is told which way is up")
-        let text = try #require(try ShelfActions.text(of: photo))
+        let text = try #require(try await Self.readText(photo))
         #expect(text.uppercased().contains("SHELF"), "read: \(text)")
     }
 
