@@ -141,7 +141,9 @@ private struct ConfettiPalettePicker: View {
 
 /// Adjust, folded like any `DisclosureRow` — and opened by a Settings
 /// search that lands on Amount or Hang time, so the row it named is
-/// there to see, not folded away inside the card it opened.
+/// there to see, not folded away inside the card it opened. It opens
+/// once per search: fold it, fold the card and open the card again, and
+/// it stays as you left it.
 struct ConfettiAdjustDisclosure: View {
     let toy: ConfettiToy
     @ViewState private var expanded = false
@@ -155,6 +157,17 @@ struct ConfettiAdjustDisclosure: View {
         return rows.contains(hit.title)
     }
 
+    /// Whether Settings' reveal number `request` opens Adjust on `toy`'s
+    /// card: one the card hasn't acted on yet, for one of Adjust's rows.
+    /// Every reveal seen is noted on the toy, which outlives the folded
+    /// card, so a card opened again later doesn't read the same search
+    /// hit as new.
+    static func take(_ request: Int?, hit: SettingsSearchEntry?, on toy: ConfettiToy) -> Bool {
+        guard let request, request != toy.adjustReveal else { return false }
+        toy.adjustReveal = request
+        return opens(for: hit, card: toy.id)
+    }
+
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             ConfettiAdjustRows(toy: toy)
@@ -162,8 +175,8 @@ struct ConfettiAdjustDisclosure: View {
             SettingLabel(title: "Adjust", subtitle: "How many pieces, and how long they hang in the air.")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onChange(of: toy.store?.settings.revealRequest, initial: true) {
-            if Self.opens(for: toy.store?.settings.searchHit, card: toy.id) { expanded = true }
+        .onChange(of: toy.store?.settings.revealRequest, initial: true) { _, request in
+            if Self.take(request, hit: toy.store?.settings.searchHit, on: toy) { expanded = true }
         }
     }
 }

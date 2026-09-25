@@ -260,4 +260,19 @@ import JRBarCore
         #expect(!ConfettiAdjustDisclosure.opens(for: origin, card: "confetti"))
         #expect(!ConfettiAdjustDisclosure.opens(for: nil, card: "confetti"))
     }
+
+    /// A search opens Adjust once. Folding the card and opening it again
+    /// shows the same reveal and the same hit, and leaves Adjust as the
+    /// person left it; the next search opens it again.
+    @MainActor @Test func aSearchOpensAdjustOnce() {
+        let toy = ConfettiToy()
+        let hangTime = SettingsSearchEntry(.toys, "Confetti", "Hang time", card: "confetti")
+        #expect(!ConfettiAdjustDisclosure.take(0, hit: nil, on: toy), "the card's first showing")
+        #expect(ConfettiAdjustDisclosure.take(1, hit: hangTime, on: toy), "the search opens it")
+        #expect(!ConfettiAdjustDisclosure.take(1, hit: hangTime, on: toy), "the card opened again")
+        #expect(ConfettiAdjustDisclosure.take(2, hit: hangTime, on: toy), "a new search")
+        let origin = SettingsSearchEntry(.toys, "Confetti", "Origin", card: "confetti")
+        #expect(!ConfettiAdjustDisclosure.take(3, hit: origin, on: toy))
+        #expect(!ConfettiAdjustDisclosure.take(nil, hit: hangTime, on: toy), "no settings store")
+    }
 }

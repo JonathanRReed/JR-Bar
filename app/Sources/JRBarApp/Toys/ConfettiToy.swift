@@ -81,6 +81,9 @@ final class ConfettiToy: Toy {
     /// player is made on the first pop, and tests hand in one that
     /// records instead of playing.
     @ObservationIgnored var sounds: SoundPlayer?
+    /// The last Settings search reveal the card's Adjust acted on, kept
+    /// here because the card's rows are gone while it's folded.
+    @ObservationIgnored var adjustReveal: Int?
 
     init() {}
 
