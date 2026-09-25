@@ -71,13 +71,51 @@ struct NotchShakeYieldTests {
         toy.syncShakeMonitor()
         #expect(monitors.installed == 0, "one shake must not open two shelves")
         #expect(toy.shakeYieldingTo.map(\.name) == ["Dropover"])
+        // The workspace's quit note is what re-asks.
         running.rivals = []
-        toy.syncShakeMonitor()
+        toy.noteWorkspaceChange()
         #expect(monitors.live == 2, "Dropover quit: the shake is JR-Bar's again")
-        // Dropover launching again takes the monitors down.
+        // Dropover launching again takes the monitors down at once.
         running.rivals = [Self.dropover]
-        toy.syncShakeMonitor()
+        toy.noteWorkspaceChange()
         #expect(monitors.live == 0)
+    }
+
+    @Test("the rivals are asked once per launch or quit, however often the island reconciles")
+    func rivalsAskedOncePerWorkspaceChange() {
+        let (toy, store, monitors, running) = makeToy()
+        defer { finish(toy, store) }
+        var asks = 0
+        toy.shelfRivalsRunning = {
+            asks += 1
+            return running.rivals
+        }
+        for _ in 0..<20 { toy.syncShakeMonitor() }
+        #expect(asks == 1, "a doc that changes no app list asks LaunchServices nothing")
+        #expect(monitors.live == 2)
+        running.rivals = [Self.dropover]
+        toy.noteWorkspaceChange()
+        #expect(asks == 2, "a launch renews the answer")
+        #expect(monitors.live == 0, "and the shake stands down in the same turn")
+        for _ in 0..<20 { toy.syncShakeMonitor() }
+        _ = toy.shakeYieldingTo
+        #expect(asks == 2)
+    }
+
+    @Test("with the yield switched off nothing asks after the rivals at all")
+    func yieldOffNeverAsks() {
+        let (toy, store, monitors, _) = makeToy()
+        defer { finish(toy, store) }
+        store.state.notch.shelfYieldToRivals = false
+        var asks = 0
+        toy.shelfRivalsRunning = {
+            asks += 1
+            return [Self.dropover]
+        }
+        toy.syncShakeMonitor()
+        toy.noteWorkspaceChange()
+        #expect(asks == 0)
+        #expect(monitors.live == 2)
     }
 
     @Test("with the yield switched off both shelves answer, as before")

@@ -52,8 +52,17 @@ final class NotchToy: Toy {
     /// media-key tap as the notch gates move.
     var onMediaGateChanged: @MainActor () -> Void = {}
     /// Bumped on every app launch/terminate so the external-provider
-    /// checks re-read `NSWorkspace`.
+    /// checks re-read `NSWorkspace` — and the only thing that renews the
+    /// shelf rivals answer (`shelfRivalsNow`).
     private(set) var workspaceVersion = 0
+
+    /// An app launched or quit: the external-provider checks re-read,
+    /// and Dropover opening or quitting moves the shake's yield at once.
+    /// Internal so the tests can stand in for the workspace's note.
+    func noteWorkspaceChange() {
+        workspaceVersion += 1
+        syncShakeMonitor()
+    }
     /// Bumped on display-parameter changes so the island reframes.
     private(set) var displayVersion = 0
     /// Whether the island panel is ordered in — the view's pulse pauses
@@ -257,11 +266,7 @@ final class NotchToy: Toy {
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.workspaceVersion += 1
-                    // Dropover opening or quitting moves the shake's yield.
-                    self?.syncShakeMonitor()
-                }
+                MainActor.assumeIsolated { self?.noteWorkspaceChange() }
             })
         }
         observers.append(NotificationCenter.default.addObserver(
@@ -953,9 +958,19 @@ final class NotchToy: Toy {
     @ObservationIgnored var removeShakeMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
     /// The shelf apps that own the same shake, running now
     /// (`UtilityRivals`, `.shelfGesture`); a test hands in its own list.
-    @ObservationIgnored var shelfRivalsRunning: @MainActor () -> [UtilityRivals.Rival] = {
+    /// Asked through `shelfRivalsNow`, once per launch or quit.
+    var shelfRivalsRunning: @MainActor () -> [UtilityRivals.Rival] {
+        get { shelfRivalsReader }
+        set {
+            shelfRivalsReader = newValue
+            shelfRivalsMemo = nil
+        }
+    }
+    @ObservationIgnored private var shelfRivalsReader: @MainActor () -> [UtilityRivals.Rival] = {
         UtilityRivals.running(for: .shelfGesture)
     }
+    /// The last rivals answer and the `workspaceVersion` it was read at.
+    @ObservationIgnored var shelfRivalsMemo: (version: Int, rivals: [UtilityRivals.Rival])?
     /// The app in front while the pointer shakes — the exclusion list's
     /// read.
     @ObservationIgnored var shakeFrontmostApp: @MainActor () -> String? = {
@@ -1091,16 +1106,20 @@ final class NotchToy: Toy {
         if let focus = cardFocus() { cardModel.focus = focus }
         let summary = islandSummary
         cardModel.rows = summary.rows.filter { $0.id != cardModel.focus.focusSession }
-        // Where each live local session works — the shelf gathers its
-        // files under its name.
-        let homes = summary.rows.compactMap { row -> ShelfTrayModel.SessionHome? in
+        let homes = sessionHomes(summary)
+        if cardModel.tray.sessionHomes != homes { cardModel.tray.sessionHomes = homes }
+        cardModel.workingCount = summary.working
+        cardModel.meters = settings.showUsage ? NotchIsland.meters(core.state?.usage) : []
+    }
+
+    /// Where each live local session works — the shelf gathers its files
+    /// under its name.
+    private func sessionHomes(_ summary: NotchIslandSummary) -> [ShelfTrayModel.SessionHome] {
+        summary.rows.compactMap { row -> ShelfTrayModel.SessionHome? in
             guard !CoreSession.isRemoteID(row.id),
                   let cwd = core.state?.session(withID: row.id)?.cwd, !cwd.isEmpty else { return nil }
             return ShelfTrayModel.SessionHome(id: row.id, label: row.label, root: cwd)
         }
-        if cardModel.tray.sessionHomes != homes { cardModel.tray.sessionHomes = homes }
-        cardModel.workingCount = summary.working
-        cardModel.meters = settings.showUsage ? NotchIsland.meters(core.state?.usage) : []
     }
 
     /// Hover on the island grows it — the full card, its Open and
@@ -1213,6 +1232,10 @@ final class NotchToy: Toy {
     /// ordered in and framed while the island is ours, enabled and shown;
     /// fully ordered out otherwise — a parked island runs no timers.
     private func reconcile() {
+        reconcileCount += 1
+        // What this pass leaves behind is what the next doc is measured
+        // against — taken at the end, after the pass moved what it moves.
+        defer { reconciledInputs = reconcileInputs }
         guard runtimeEnabled else { return }
         publishRenderer()
         // The shelf's switch reaches the surfaces that offer to shelve a
@@ -1974,7 +1997,10 @@ final class NotchToy: Toy {
     }
 
     /// One observation pass over every input, re-armed on each change —
-    /// the same pattern `NotchBuddyToy.observeSessions` uses.
+    /// the same pattern `NotchBuddyToy.observeSessions` uses. `sessions`
+    /// and `asks` hang off the whole `state` document, so every doc the
+    /// daemon sends wakes this; `noteInputsChanged` decides whether it
+    /// moved anything the notch shows.
     private func observe() {
         guard runtimeEnabled else { return }
         withObservationTracking {
@@ -1991,9 +2017,67 @@ final class NotchToy: Toy {
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.runtimeEnabled else { return }
-                self.reconcile()
+                self.noteInputsChanged()
                 self.observe()
             }
+        }
+    }
+
+    // MARK: Reconcile gate
+
+    /// What `reconcile` reads from the inputs `observe` watches, reduced
+    /// to what the notch shows: the island's summary rather than the raw
+    /// sessions (a working session's `updated_at`, tool and message move
+    /// on nearly every doc), the meters rather than the usage document
+    /// (its refresh stamp moves every time). While the card is grown it
+    /// also carries what `feedCard` refills the card from.
+    var reconcileInputs: NotchReconcileInputs {
+        let settings = settings
+        let summary = islandSummary
+        var inputs = NotchReconcileInputs(
+            notch: settings,
+            summary: summary,
+            asks: core.asks,
+            meters: settings.showUsage ? NotchIsland.meters(core.state?.usage) : [],
+            focus: core.state?.focus,
+            settingsDocument: core.settings?.document,
+            screenBarShown: screenBarShown(),
+            displayVersion: displayVersion,
+            mirror: cardModel.mirror.state,
+            page: cardModel.page)
+        if islandExpanded {
+            inputs.card = NotchReconcileInputs.Card(focus: cardFocus(), homes: sessionHomes(summary))
+        }
+        return inputs
+    }
+
+    /// The inputs the last `reconcile` left behind.
+    @ObservationIgnored private(set) var reconciledInputs: NotchReconcileInputs?
+    /// How many times `reconcile` has run — the tests' window on the gate.
+    @ObservationIgnored private(set) var reconcileCount = 0
+
+    /// An input `observe` watches changed. Most `state` docs change
+    /// nothing the notch shows, and a full `reconcile` on each one landed
+    /// a 13–26 ms stall in whatever the island was animating; those skip
+    /// it. The two checks that age on their own still run on every doc:
+    /// an ask capsule whose ask never reached the state steps down after
+    /// its grace, and a quiet stretch that ended while it could not be
+    /// said gets said. Internal so the tests can drive it without a
+    /// runtime.
+    func noteInputsChanged() {
+        guard reconcileInputs == reconciledInputs else {
+            reconcile()
+            return
+        }
+        noteAskState()
+        noteQuietChange()
+        // The grown card's height also follows what no doc carries — a
+        // timer set, a file shelved, the weather landing — and every doc
+        // used to re-measure it. Still do: with nothing changed the probe
+        // answers from the layout it already has, and the frame guard
+        // makes an unchanged height no request at all.
+        if islandVisible, islandExpanded {
+            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         }
     }
 }
