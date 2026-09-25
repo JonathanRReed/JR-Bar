@@ -1517,7 +1517,7 @@ matches the Mac's to 0.02%). So:
 | `linked_dot_clock_correction` | bool | `true` | Retime the Dot for its clock and close the loop. Off, every Dot write still starts on the strip's beat but drifts between writes. |
 | `linked_dot_phase_trim_ms` | number, -250..250 | `0` | A constant nudge of the Dot against the strip; positive runs it ahead. |
 | `linked_sync_tolerance_ms` | number, 20..200 | `40` | How far the Dot may drift before a re-anchor. |
-| `dot_extend_style` | `"continue"` \| `"mirror"` | `"continue"` | Let light run off the end of the strip into the Dot (travelling light only; anything else mirrors), or fold the strip into two bands. |
+| `dot_extend_style` | `"continue"` \| `"mirror"` | `"continue"` | Let light run off the end of the strip into the Dot (travelling light only: a comet or chase crosses it, a fill completes into it; anything else mirrors), or fold the strip into two bands. |
 | `dot_extend_side` | `"after_last"` \| `"before_first"` | `"after_last"` | Continue only: where the Dot sits as you face the pair, `after_last` on the strip's right (past LED 7 on a strip running forward), `before_first` on its left. Each device's `devices[].led_direction` (default `forward`: LED 0 on the left) says which way round it is mounted, so a strip turned round hands its light on from LED 0, and the light enters the Dot at its LED nearest the strip. |
 | `linked_follow_brightness` | bool | `true` | A linked Dot takes the strip's brightness lines times `linked_dot_scale` (in light), capped by its own manual brightness, and ignores its own auto-brightness. |
 
