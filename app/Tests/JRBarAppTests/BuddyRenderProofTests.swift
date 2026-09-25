@@ -498,7 +498,7 @@ struct BuddyRenderProofTests {
             (.slime, .pacing, .slumped, .red, "Slime · pacing → a failure: it melts"),
         ]
         let ticks = (0..<6).map { Double($0) / 5 * BuddyHandoff.duration }
-        func frame(_ row: (character: BuddyCharacter, from: NotchBuddyToy.Mood, to: NotchBuddyToy.Mood,
+        func drawn(_ row: (character: BuddyCharacter, from: NotchBuddyToy.Mood, to: NotchBuddyToy.Mood,
                            tint: Color, words: String), age: Double) -> BuddyFigure {
             BuddyFigure(character: row.character, mood: row.to, tint: row.tint,
                         phase: 2.35, hopProgress: row.to == .celebrating ? age / 1.1 : nil,
@@ -516,7 +516,7 @@ struct BuddyRenderProofTests {
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
                     HStack(spacing: 6) {
                         ForEach(ticks.indices, id: \.self) { i in
-                            frame(rows[r], age: ticks[i])
+                            drawn(rows[r], age: ticks[i])
                                 .frame(width: 18, height: 18)
                                 .scaleEffect(3)
                                 .frame(width: 88, height: 66)

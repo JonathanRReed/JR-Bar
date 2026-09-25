@@ -195,9 +195,9 @@ struct BuddyTurnTests {
         // old value and its tip moves under 2/3 pt a frame at 1×, under
         // 2 pt at the floating buddy's 3×. Before, the crab's claws
         // jumped 3.3 pt in one frame at 1× on every ask.
-        let clawReach = 2.4 + 4.4 * 26 * .pi / 180     // offset + finger swing, pt per unit lift
-        let frondReach = 4.4 * .pi / 180                // pt per degree
-        let capReach = 7.0 * 7.0 * .pi / 180            // pt per unit of the slump's 7° keel
+        let clawReach = 2.4 + 4.4 * 26 * Double.pi / 180     // offset + finger swing, pt per unit lift
+        let frondReach = 4.4 * Double.pi / 180                // pt per degree
+        let capReach = 7.0 * 7.0 * Double.pi / 180            // pt per unit of the slump's 7° keel
         let changes: [(from: NotchBuddyToy.Mood, to: NotchBuddyToy.Mood)] = [
             (.pacing, .waving), (.waving, .asleep), (.pacing, .slumped), (.celebrating, .pacing),
             (.slumped, .asleep),
