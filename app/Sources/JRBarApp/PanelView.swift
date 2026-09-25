@@ -414,7 +414,10 @@ struct SessionsSection: View {
                 SessionsEmptyState(store: store)
             } else {
                 SnapshotScrollView {
-                    VStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
+                    // Lazy: every row is a fixed height (`PanelLayout`), so
+                    // only the rows in the viewport are built and laid out
+                    // when a frame lands, not all sixty.
+                    LazyVStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
                         ForEach(store.visibleAskRows) { row in
                             AskRow(row: row, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
@@ -425,7 +428,7 @@ struct SessionsSection: View {
                         }
                     }
                     .padding(.bottom, CGFloat(PanelLayout.listBottomPadding))
-                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.visibleRows.map(\.id))
+                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.visibleRowIDs)
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.sessionsHeight))
