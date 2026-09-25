@@ -69,6 +69,19 @@ struct UsageSourceNotesTests {
         #expect(try JSONDecoder().decode(CoreUsageWindow.self, from: Data(older.utf8)).detail == false)
     }
 
+    /// A CLIProxyAPI account is spent by whoever uses the proxy: this Mac's
+    /// working Claude agents neither pace its card nor hold it idle.
+    @Test @MainActor func aHubAccountIsNotPacedByThisMacsAgents() {
+        let core = CoreModel(socketPath: "/nonexistent/jrbar-usage-notes.sock")
+        core.handle(.connected)
+        core.apply(.state(CoreState(sessions: [CoreSession(id: "claude:a", provider: "claude", mode: "working")], asks: [])))
+        let window = CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 42, resetsAt: Self.now.timeIntervalSince1970 + 3600)
+        let local = CoreProviderUsage(id: "claude", windows: [window], state: "ready")
+        let hub = CoreProviderUsage(id: "claude", windows: [window], state: "ready", instance: "cliproxy:3f2a9c1b0d4e")
+        #expect(UsageCenterStore.forecast(for: local, window: window, core: core, now: Self.now).workingAgents == 1)
+        #expect(UsageCenterStore.forecast(for: hub, window: window, core: core, now: Self.now).workingAgents == nil)
+    }
+
     @Test func aStandInSourceIsNamed() {
         var statusLine = CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 42)
         statusLine.source = "claude-statusline"
