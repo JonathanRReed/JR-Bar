@@ -85,12 +85,14 @@ struct AquariumTurnRenderProofTests {
     }
 
     /// One recorded frame: the fish as it was then, its layout, and the
-    /// frame clock.
+    /// frame clock — and the pellet it was after, in tank points, while
+    /// there was one.
     private struct Shot {
         var fish: Fish
         var layout: AquariumView.Layout
         var t: Double
         var progress: Double?
+        var food: CGPoint?
     }
 
     /// Step `tank` a frame: the steering, the layout and the bookkeeping
@@ -613,7 +615,12 @@ struct AquariumTurnRenderProofTests {
             for i in 0..<(30 * 3) {
                 t += Self.dt
                 let l = Self.step(view, [fish], t: t)[fish.id]!
-                if i % 6 == 0, shots.count < cols { shots.append(Shot(fish: fish, layout: l, t: t)) }
+                let food = view.motion.pellets.first.map {
+                    CGPoint(x: $0.x * Self.tank.width, y: $0.y * Self.tank.height)
+                }
+                if i % 6 == 0, shots.count < cols {
+                    shots.append(Shot(fish: fish, layout: l, t: t, food: food))
+                }
             }
             rows.append(("a pellet behind the fish: a quick turn, then the dart", view, shots,
                          Array(repeating: nil, count: shots.count)))
@@ -639,6 +646,22 @@ struct AquariumTurnRenderProofTests {
                                           layout: shot.layout, parent: parent, showLabels: false)
                     } else {
                         Self.draw(row.view, shot, on: &c, at: centre)
+                    }
+                    if let food = shot.food {
+                        // The pellet where it really was against the fish;
+                        // one further off than the cell is pinned to the
+                        // cell's edge on its side, ringed.
+                        let spot = CGPoint(x: centre.x + food.x - shot.layout.x,
+                                           y: centre.y + food.y - shot.layout.y)
+                        let cell = CGRect(x: cellW * Double(i), y: top + 18, width: cellW, height: cellH)
+                            .insetBy(dx: 6, dy: 6)
+                        let pinned = CGPoint(x: min(max(spot.x, cell.minX), cell.maxX),
+                                             y: min(max(spot.y, cell.minY), cell.maxY))
+                        CreaturePaint.pellet(&c, at: pinned, r: 3.2, alpha: 1)
+                        if pinned != spot {
+                            c.stroke(Path(ellipseIn: CGRect(x: pinned.x - 6, y: pinned.y - 6, width: 12, height: 12)),
+                                     with: .color(.white.opacity(0.7)), lineWidth: 0.8)
+                        }
                     }
                 }
             }
@@ -693,5 +716,82 @@ struct AquariumTurnRenderProofTests {
             }
         }
         try Self.write(sheet, "fish-turn-pace")
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the turn proof PNGs"))
+    func petsEase() throws {
+        // The octopus's peek and its leaving home, drawn by the tank's own
+        // pass, and the cleaner shrimp springing between clients.
+        let view = Self.grown([])
+        let cellW = 140.0, cellH = 110.0, cols = 8
+        let rock = AquariumView.decor.first { $0.kind == .rock }
+        let den = rock.map { CGPoint(x: $0.x * Self.tank.width - 18, y: view.decorBaseY($0, in: Self.tank) - 2) }
+            ?? CGPoint(x: Self.tank.width * 0.33, y: view.sandTop(atX: Self.tank.width * 0.33, in: Self.tank))
+        func atHome(_ t: Double) -> Bool { view.octopusPose(home: den, size: Self.tank, t: t).out == 0 }
+        var peekAt = (Self.t0 / 68).rounded(.up) * 68
+        while !(atHome(peekAt) && atHome(peekAt + 2)) { peekAt += 68 }
+        let leaveAt = ((Self.t0 / 240).rounded(.down) + 1) * 240 + 0.29 * 240
+        let peeks = (0..<cols).map { peekAt - 0.2 + 0.2 * Double($0) }
+        let leaves = [-0.1, 0, 0.06, 0.12, 0.18, 0.24, 0.3, 3.0].map { leaveAt + $0 }
+        let octopusRows: [(String, [Double])] = [
+            ("the octopus peeks: its eyes ease up over the rim, 0.2 s a frame", peeks),
+            ("the octopus leaves home: the two drawings cross over in 0.3 s, then it crawls", leaves),
+        ]
+
+        // The shrimp riding one idler when another comes first.
+        let near = Self.makeFish("shrimp-near", .clownfish, state: .idling)
+        let far = Self.makeFish("shrimp-far", .clownfish, state: .idling)
+        var spots: [String: AquariumView.Layout] = [:]
+        for (fish, x, y) in [(near, 200.0, 220.0), (far, 700.0, 150.0)] {
+            var l = AquariumView.Layout()
+            l.x = x
+            l.y = y
+            spots[fish.id] = l
+        }
+        let shrimpView = Self.grown([])
+        var shrimpAt: [(t: Double, at: CGPoint)] = []
+        var t = (Self.t0 / 40).rounded(.up) * 40 + 8
+        for i in 0..<(30 * 3) {
+            t += Self.dt
+            let roster = i < 15 ? [near, far] : [far, near]
+            let spot = shrimpView.cleanerShrimpSpot(size: Self.tank, t: t, layouts: spots, roster: roster)
+            if i >= 12, i % 3 == 0 { shrimpAt.append((t, spot.at)) }
+        }
+
+        let shrimpH = 200.0
+        let width = cellW * Double(cols)
+        let height = (cellH + 18) * Double(octopusRows.count) + shrimpH + 18
+        let sheet = Self.sheet(width: width, height: height) { c, _ in
+            for (r, row) in octopusRows.enumerated() {
+                let top = (cellH + 18) * Double(r)
+                Self.label(&c, row.0, at: CGPoint(x: width / 2, y: top + 10), size: 11)
+                for (i, when) in row.1.enumerated() {
+                    let cell = CGRect(x: cellW * Double(i), y: top + 18, width: cellW, height: cellH)
+                    var g = c
+                    g.clip(to: Path(cell))
+                    g.translateBy(x: cell.midX - den.x - 20, y: cell.midY + 20 - den.y)
+                    view.drawOctopus(canvas: &g, size: Self.tank, t: when)
+                }
+            }
+            let top = (cellH + 18) * Double(octopusRows.count)
+            Self.label(&c, "the cleaner shrimp's client changes mid-ride: it springs over, 0.1 s a frame",
+                       at: CGPoint(x: width / 2, y: top + 10), size: 11)
+            var g = c
+            g.translateBy(x: (width - Self.tank.width) / 2, y: top + 18 - 60)
+            for (fish, name) in [(near, "old client"), (far, "new client")] {
+                let l = spots[fish.id]!
+                g.stroke(Path(ellipseIn: CGRect(x: l.x - 22, y: l.y - 12, width: 44, height: 24)),
+                         with: .color(.white.opacity(0.35)), lineWidth: 1)
+                Self.label(&g, name, at: CGPoint(x: l.x, y: l.y + 26), size: 10)
+            }
+            for (k, shot) in shrimpAt.enumerated() {
+                var s = g
+                s.opacity = 0.35 + 0.65 * Double(k + 1) / Double(shrimpAt.count)
+                s.translateBy(x: shot.at.x, y: shot.at.y)
+                PetArt.cleanerShrimp(&s, whisk: 0)
+            }
+        }
+        try Self.write(sheet, "fish-turn-pets-ease")
     }
 }
