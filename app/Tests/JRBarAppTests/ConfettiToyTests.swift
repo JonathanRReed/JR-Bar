@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import SwiftUI
 import Testing
@@ -265,6 +264,9 @@ import JRBarCore
     /// A burst's glyphs are set as type on its first frame and kept: a
     /// later frame drawn with them matches one that sets them afresh, and
     /// new glyphs (a palette pick in the card's preview) are set again.
+    /// "Matches" allows a few levels of antialiasing: under a busy
+    /// parallel run the rasterizer can shade a glyph's edge a step
+    /// differently, while a lost, moved or wrong glyph differs by far more.
     @MainActor @Test func glyphsSetOnceDrawTheSame() throws {
         let everyone = ["claude", "codex", "gemini"].map { (id: $0, color: ProviderStyle.style(for: $0).accent) }
         let look = ConfettiView.look(.everyone, tint: ConfettiView.toysTint, provider: nil, everyone: everyone)
@@ -272,23 +274,34 @@ import JRBarCore
         let stage = ConfettiStage(width: 400, height: 300, notch: nil, menuBarBottom: 24, icon: nil, floor: 300)
         let recipe = ConfettiBurst.Recipe(shapes: .glyphs, slotWeights: look.weights, glyphs: look.glyphs.count)
         let burst = ConfettiBurst(stage: stage, recipe: recipe, seed: 3)
-        func png(_ look: ConfettiLook, _ marks: ConfettiMarks?, at time: Double) throws -> Data {
+        func pixels(_ look: ConfettiLook, _ marks: ConfettiMarks?, at time: Double) throws -> [UInt8] {
             var view = ConfettiView(burst: burst, look: look, flash: false, marks: marks)
             view.frozen = time
             let renderer = ImageRenderer(content: view.frame(width: 400, height: 300))
             renderer.scale = 1
             let image = try #require(renderer.cgImage)
-            return try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            var bytes = [UInt8](repeating: 0, count: 400 * 300 * 4)
+            let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+            bytes.withUnsafeMutableBytes { buffer in
+                let context = CGContext(data: buffer.baseAddress, width: 400, height: 300, bitsPerComponent: 8,
+                                        bytesPerRow: 400 * 4, space: space,
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                context?.draw(image, in: CGRect(x: 0, y: 0, width: 400, height: 300))
+            }
+            return bytes
         }
         let marks = ConfettiMarks()
-        _ = try png(look, marks, at: 0.3)
-        let kept = try png(look, marks, at: 0.6)
+        _ = try pixels(look, marks, at: 0.3)
+        let kept = try pixels(look, marks, at: 0.6)
         #expect(marks.resolves == 1)
-        let fresh = try png(look, nil, at: 0.6)
-        #expect(kept == fresh, "a glyph kept from an earlier frame draws as one set afresh")
+        let fresh = try pixels(look, nil, at: 0.6)
+        let drawn = fresh.contains { $0 > 0 }
+        #expect(drawn, "the frame has pieces in it")
+        let worst = zip(kept, fresh).map { abs(Int($0) - Int($1)) }.max() ?? 0
+        #expect(worst <= 16, "a glyph kept from an earlier frame draws as one set afresh (worst channel \(worst))")
         let claude = ConfettiView.look(.provider, tint: ProviderStyle.style(for: "claude").accent,
                                        provider: "claude")
-        _ = try png(claude, marks, at: 0.6)
+        _ = try pixels(claude, marks, at: 0.6)
         #expect(marks.resolves == 2, "a new palette's glyphs are set again")
     }
 
