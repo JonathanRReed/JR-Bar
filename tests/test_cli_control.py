@@ -47,11 +47,16 @@ class FakeCore:
             except OSError:
                 return
             with connection:
-                self._send(connection, {"t": "hello", "v": 1, "core_version": "0.9.9"})
-                self._send(connection, {"t": "state", "v": 1, **self.state})
-                if self.lights is not None:
-                    self._send(connection, {"t": "lights", "v": 1, **self.lights})
-                self._send(connection, {"t": "settings", "v": 1, "generation": 3, "document": self.settings})
+                try:
+                    self._send(connection, {"t": "hello", "v": 1, "core_version": "0.9.9"})
+                    self._send(connection, {"t": "state", "v": 1, **self.state})
+                    if self.lights is not None:
+                        self._send(connection, {"t": "lights", "v": 1, **self.lights})
+                    self._send(connection, {"t": "settings", "v": 1, "generation": 3, "document": self.settings})
+                except OSError:
+                    # A plain ``status`` leaves once it has the state, and
+                    # the daemon shrugs off a client that goes early too.
+                    continue
                 buffer = b""
                 connection.settimeout(5)
                 while True:

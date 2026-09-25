@@ -317,9 +317,14 @@ def test_service_warm_starts_every_scanned_provider_once_and_survives_a_failing_
     # --- scenario: service_warm_starts_every_scanned_provider_once_and_survives_a_failing_scan
     calls: list[tuple[str, int]] = []
     logged: list[str] = []
+    # The scans hold until both warms have been asked for: an instant scan
+    # could finish before the second warm and let it start its own, which
+    # made "while the first runs" a race the test sometimes lost.
+    running = threading.Event()
 
     def scan(provider: str, days: int) -> list[tuple]:
         calls.append((provider, days))
+        running.wait(5.0)
         if provider == "claude":
             raise OSError("cache unreadable")
         return []
@@ -328,6 +333,8 @@ def test_service_warm_starts_every_scanned_provider_once_and_survives_a_failing_
     service = _service(scan, log=logged.append, threads=threads)
     service.warm()
     service.warm()  # a second warm while the first runs starts nothing new
+    assert service.is_scanning()
+    running.set()
     threads.settle()
     assert sorted(calls) == [("claude", 30), ("codex", 30)]
     assert any("claude 30d failed: OSError" in line for line in logged)
