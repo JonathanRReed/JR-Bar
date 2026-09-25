@@ -219,22 +219,24 @@ struct ConfettiView: View {
     /// The pop, where it can be seen: light spilling out of the notch's
     /// lower lip with a puff at each lower corner (the notch pops, in the
     /// island's own idiom); a ring around the icon; a puff at each bottom
-    /// corner. Rain has no cannon, so no pop. Gone in about a quarter of a
-    /// second, under the pieces.
+    /// corner. Rain has no cannon, so no pop. Gone in about a third of a
+    /// second, under the pieces. The notch is a hole in the screen, so
+    /// the lip's glow and its bright edge sit just below it, where they
+    /// show.
     private func drawPop(_ canvas: inout GraphicsContext, age: Double, strength: Double) {
         guard age >= 0, age < 0.32 else { return }
         let p = age / 0.32
         let ease = 1 - (1 - p) * (1 - p)
-        let fade = (1 - p) * (1 - p) * strength
+        let fade = (1 - p) * strength
         let stage = burst.stage
         switch ConfettiEmitter.resolved(burst.recipe.origin, on: stage) {
         case .notch:
             let lip = ConfettiEmitter.lip(of: stage)
-            glow(&canvas, center: CGPoint(x: lip.midX, y: lip.minY), width: lip.width + 60 * ease,
+            glow(&canvas, center: CGPoint(x: lip.midX, y: lip.minY + 4), width: lip.width + 60 * ease,
                  height: 10 + 26 * ease, opacity: 0.75 * fade)
             var edge = Path()
-            edge.move(to: CGPoint(x: lip.minX + 8, y: lip.minY - 0.5))
-            edge.addLine(to: CGPoint(x: lip.maxX - 8, y: lip.minY - 0.5))
+            edge.move(to: CGPoint(x: lip.minX + 8, y: lip.minY + 1.2))
+            edge.addLine(to: CGPoint(x: lip.maxX - 8, y: lip.minY + 1.2))
             canvas.stroke(edge, with: .color(look.theme.mix(with: .white, by: 0.5).opacity(0.9 * fade)),
                           style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
             for x in [lip.minX + 4, lip.maxX - 4] {
