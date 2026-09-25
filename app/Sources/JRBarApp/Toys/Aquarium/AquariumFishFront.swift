@@ -86,7 +86,7 @@ extension CartoonFish {
                           blink: Double, dead: Bool, pointSize: Double) {
         let art = art(for: species)
         let face = frontFace(species)
-        let lw = outlineWidth(pointSize)
+        let lw = outlineWidth(pointSize, ink: palette.ink)
         let detailed = pointSize >= 38
         let w = face.width
         let h = art.bounds.height

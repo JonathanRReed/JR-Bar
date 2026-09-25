@@ -185,7 +185,7 @@ extension AquariumView {
             queueEventDrain()
         }
         guard let visitor = motion.activeVisitor else { return }
-        let duration: Double = visitor.kind == .whale ? 17 : 14
+        let duration = Self.paradeSeconds(visitor.kind)
         let elapsed = now.timeIntervalSince(visitor.startedAt)
         guard elapsed < duration else {
             motion.activeVisitor = nil
@@ -201,6 +201,7 @@ extension AquariumView {
         case .whale: drawWhale(canvas: &canvas, size: size, t: t, x: x, p: p, presence: presence)
         case .diver: drawDiver(canvas: &canvas, size: size, t: t, x: x, p: p, presence: presence)
         case .submarine: drawSubmarine(canvas: &canvas, size: size, t: t, x: x, presence: presence)
+        case .alien: drawAlien(canvas: &canvas, size: size, t: t, x: x, presence: presence)
         }
     }
 

@@ -6,10 +6,10 @@ import SwiftUI
 extension AquariumView {
     // MARK: Game chrome
 
-    /// Whether the tank owns a shop item — the fixture path owns
-    /// whatever its synthetic game says.
+    /// Whether a shop item is in the tank — owned and not put away.
+    /// The fixture path shows whatever its synthetic game says.
     func owns(_ item: ShopItem) -> Bool {
-        game?.owns(item) ?? false
+        game?.shows(item) ?? false
     }
 
     /// Where the pearl counter sits before it has measured itself — the
@@ -86,7 +86,7 @@ extension AquariumView {
     private func pearlChip(_ game: AquariumGame) -> some View {
         hudChip {
             HStack(spacing: 5) {
-                PearlGlyph(size: 10)
+                PearlGlyph(size: 10, coin: game.themeID == "arcade")
                     .keyframeAnimator(initialValue: 1.0, trigger: game.pearls) { pearl, scale in
                         pearl.scaleEffect(scale)
                     } keyframes: { _ in
@@ -347,6 +347,17 @@ extension AquariumView {
         .opacity(unlocked ? 1 : 0.5)
     }
 
+    /// A floor's tile: its sand, crest to foot, and a gravel's beads.
+    private func sandTile(_ substrate: String) -> some View {
+        Canvas { canvas, size in
+            let rect = CGRect(origin: .zero, size: size)
+            let sand = Gradient(colors: Self.sandSwatch(forSubstrate: substrate))
+            canvas.fill(Path(rect), with: .linearGradient(sand, startPoint: .zero,
+                                                          endPoint: CGPoint(x: 0, y: size.height)))
+            Self.drawSwatchGravel(&canvas, in: rect, substrate: substrate, bead: 2.2)
+        }
+    }
+
     /// The row's tile: a theme shows its own water, a floor its sand,
     /// everything else a glyph on its shelf's colour.
     @ViewBuilder
@@ -360,8 +371,8 @@ extension AquariumView {
                         Capsule().fill(.white.opacity(0.35)).frame(width: 14, height: 2).padding(.bottom, 5)
                     }
             } else if let substrate = item.substrateID {
-                shape.fill(LinearGradient(colors: Self.sandSwatch(forSubstrate: substrate),
-                                          startPoint: .top, endPoint: .bottom))
+                sandTile(substrate)
+                    .clipShape(shape)
             } else if let backdrop = item.backdropID {
                 BackdropSwatch(backdropID: backdrop)
                     .clipShape(shape)
@@ -430,6 +441,8 @@ extension AquariumView {
         case .hatBeanie, .buddyBeanie: return "hat.cap.fill"
         case .hatParty: return "party.popper.fill"
         case .hatCrown: return "crown.fill"
+        case .oyster: return "circle.circle.fill"
+        case .alienBeacon: return "antenna.radiowaves.left.and.right"
         default: return "sparkles"
         }
     }
@@ -498,11 +511,18 @@ extension AquariumView {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-        default:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14))
-                .foregroundStyle(Self.shopAccent)
-                .help("In the tank")
+        case .decor, .pets:
+            // Owned pieces and pets can be put away without selling
+            // them — the switch is whether it's in the tank.
+            Toggle("In tank", isOn: Binding(
+                get: { game.shows(item) },
+                set: { toy?.setStored(item, !$0) }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .font(.system(size: 10.5))
+                .fixedSize()
+                .help(game.shows(item) ? "In the tank — switch off to put it away."
+                                       : "Put away — switch on to bring it back.")
         }
     }
 
@@ -638,8 +658,32 @@ extension AquariumView {
 /// HUD, the shop's purse and its price buttons.
 struct PearlGlyph: View {
     var size: CGFloat
+    /// The Arcade tank's pearls come as coins — the HUD chip follows.
+    var coin = false
 
     var body: some View {
+        if coin { coinBody } else { pearlBody }
+    }
+
+    /// A small gold coin with a dark rim and a hard highlight.
+    private var coinBody: some View {
+        Circle()
+            .fill(LinearGradient(colors: [Color(red: 1.0, green: 0.93, blue: 0.52),
+                                          Color(red: 0.96, green: 0.70, blue: 0.14),
+                                          Color(red: 0.78, green: 0.48, blue: 0.06)],
+                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+            .overlay(Circle().strokeBorder(Color(red: 0.42, green: 0.24, blue: 0.02), lineWidth: max(0.8, size * 0.1)))
+            .overlay(alignment: .topLeading) {
+                Ellipse()
+                    .fill(.white.opacity(0.9))
+                    .frame(width: size * 0.3, height: size * 0.22)
+                    .offset(x: size * 0.18, y: size * 0.16)
+            }
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+
+    private var pearlBody: some View {
         Circle()
             .fill(RadialGradient(colors: [.white, Color(red: 0.96, green: 0.92, blue: 0.84),
                                           Color(red: 0.72, green: 0.66, blue: 0.64)],
@@ -666,9 +710,26 @@ private struct BackdropSwatch: View {
             canvas.fill(Path(CGRect(origin: .zero, size: size)), with: .linearGradient(
                 Gradient(stops: AquariumView.waterStops(forTheme: "classic")),
                 startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+            if backdropID == "toyreef" {
+                // The painted set: three round heads in toy colours with
+                // an ink edge.
+                let heads: [(Double, Double, Double, Color)] = [
+                    (0.22, 0.62, 0.26, Color(red: 1.0, green: 0.50, blue: 0.56)),
+                    (0.58, 0.55, 0.30, Color(red: 0.36, green: 0.82, blue: 0.40)),
+                    (0.88, 0.66, 0.22, Color(red: 1.0, green: 0.64, blue: 0.26)),
+                ]
+                for (x, y, r, color) in heads {
+                    let rect = CGRect(x: size.width * x - size.height * r, y: size.height * y - size.height * r,
+                                      width: size.height * r * 2, height: size.height * r * 2)
+                    canvas.fill(Path(ellipseIn: rect), with: .color(color))
+                    canvas.stroke(Path(ellipseIn: rect), with: .color(.black.opacity(0.55)), lineWidth: 1)
+                }
+            }
             var wall = Path()
             wall.move(to: CGPoint(x: 0, y: size.height))
-            if backdropID == "rocky" {
+            if backdropID == "toyreef" {
+                wall.addLine(to: CGPoint(x: 0, y: size.height * 0.80))
+            } else if backdropID == "rocky" {
                 let peaks: [(Double, Double)] = [(0, 0.55), (0.18, 0.30), (0.34, 0.62), (0.52, 0.40),
                                                  (0.70, 0.66), (0.86, 0.26), (1, 0.50)]
                 for (x, y) in peaks {

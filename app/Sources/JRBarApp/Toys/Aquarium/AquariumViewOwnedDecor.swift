@@ -51,7 +51,7 @@ extension AquariumView {
     func drawOwnedBackDecor(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
-            game.owns(item) ? AquariumModel.decorSlot(for: item) : nil
+            game.shows(item) ? AquariumModel.decorSlot(for: item) : nil
         }
         let veil = atmosphere(depth: Self.backRowDepth, t: t)
         if let s = slot(.shipwreck) { drawShipwreck(canvas: &canvas, size: size, slot: s, veil: veil) }
@@ -62,6 +62,7 @@ extension AquariumView {
             drawVolcano(canvas: &canvas, size: size, slot: s, veil: veil,
                         lit: nightFactor(t: t) > 0.45 || isDarkTheme)
         }
+        if let s = slot(.alienBeacon) { drawBeacon(canvas: &canvas, size: size, slot: s, t: t) }
     }
 
     /// A sunken hull: a listing, broken-backed ship on the dune — lit
@@ -557,14 +558,14 @@ extension AquariumView {
     func drawOwnedFrontDecor(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
-            game.owns(item) ? AquariumModel.decorSlot(for: item) : nil
+            game.shows(item) ? AquariumModel.decorSlot(for: item) : nil
         }
         let tone = decorTone()
         if let s = slot(.anemoneBed) { drawAnemone(canvas: &canvas, size: size, t: t, slot: s, tone: tone) }
         if let s = slot(.moonJellyLamp) { drawJellyLamp(canvas: &canvas, size: size, t: t, slot: s, tone: tone) }
         if let s = slot(.bubbleWall) { drawBubbleWall(canvas: &canvas, size: size, t: t, slot: s) }
         // The volcano's live half rides along when the crater's lit.
-        if let s = game.owns(.volcano) ? AquariumModel.decorSlot(for: .volcano) : nil,
+        if let s = game.shows(.volcano) ? AquariumModel.decorSlot(for: .volcano) : nil,
            nightFactor(t: t) > 0.45 || isDarkTheme {
             drawVolcanoGlow(canvas: &canvas, size: size, t: t, slot: s)
         }
@@ -576,7 +577,7 @@ extension AquariumView {
     func drawOwnedFrontStill(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         func slot(_ item: ShopItem) -> AquariumModel.DecorSlot? {
-            game.owns(item) ? AquariumModel.decorSlot(for: item) : nil
+            game.shows(item) ? AquariumModel.decorSlot(for: item) : nil
         }
         let veil = atmosphere(depth: Self.frontRowDepth, t: t)
         if let s = slot(.driftwood) { drawDriftwood(canvas: &canvas, size: size, slot: s, veil: veil) }
@@ -899,62 +900,215 @@ extension AquariumView {
     }
 
     /// The idle game's collectables (docs/TOYS.md): a full-grown fish
-    /// sheds a pearl now and then; it rests on the sand under where
-    /// the fish was, softly pulsing until tapped or the snail reaches
-    /// it. Each drop's hitbox goes into `motion.dropBoxes` — the tap
-    /// gesture collects through `toy.collectDrop`, which is the only
-    /// mutation; the drawing itself is inert.
+    /// sheds a pearl now and then. It falls from where the fish was
+    /// when the tank first saw it — 1.4 s, easing out with a little
+    /// side wobble — and rests on the sand at that spot for good,
+    /// softly pulsing until tapped or the snail reaches it. A drop the
+    /// tank finds already old (a relaunch) just rests. Each drop's
+    /// hitbox goes into `motion.dropBoxes` — the tap gesture collects
+    /// through `toy.collectDrop`, which is the only mutation; the
+    /// drawing itself is inert.
     func drawDrops(canvas: inout GraphicsContext, size: CGSize, t: Double,
                    layouts: [String: Layout]) {
         guard let game else { return }
         let m = motion
         m.dropBoxes.removeAll(keepingCapacity: true)
-        for drop in game.drops {
-            // Anchor near the minting fish's x if it's still in the
-            // tank; otherwise a stable per-drop spot along the bed.
-            let unitX: Double
-            if let l = layouts[drop.fishID] {
-                unitX = l.x / size.width
-            } else {
-                let h = AquariumModel.stableHash("drop-\(drop.id)")
-                unitX = 0.12 + 0.76 * Double(h & 0xFFFF) / 0xFFFF
-            }
-            let x = min(size.width - 16, max(16, unitX * size.width))
-            let y = sandTop(atX: x, in: size) - 5
-            let pulse = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(t * 2.2 + Double(drop.at.truncatingRemainder(dividingBy: 6)))
-            let r = 5.0 + pulse * 1.0
-            contactShadow(canvas: &canvas, x: x, y: y + r * 0.9, halfW: r * 0.9, alpha: 0.30)
-            // A warm halo under the pearl so it reads as a pick-up.
-            var halo = canvas
-            halo.blendMode = .plusLighter
-            halo.fill(Path(ellipseIn: CGRect(x: x - r * 2.6, y: y - r * 2.6,
-                                             width: r * 5.2, height: r * 5.2)),
-                      with: .radialGradient(
-                        Gradient(colors: [Color(red: 1, green: 0.94, blue: 0.76).opacity(0.24 + 0.14 * pulse),
-                                          .clear]),
-                        center: CGPoint(x: x, y: y), startRadius: 0, endRadius: r * 2.6))
-            let pearl = Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
-            canvas.fill(pearl, with: .radialGradient(
-                Gradient(stops: [
-                    .init(color: .white, location: 0),
-                    .init(color: Color(red: 0.97, green: 0.93, blue: 0.86), location: 0.45),
-                    .init(color: Color(red: 0.86, green: 0.80, blue: 0.84), location: 0.8),
-                    .init(color: Color(red: 0.62, green: 0.56, blue: 0.54), location: 1),
-                ]),
-                center: CGPoint(x: x - r * 0.3, y: y - r * 0.35),
-                startRadius: 0, endRadius: r * 1.2))
-            // Nacre: a faint rose-and-sea sheen across the lower half.
-            var nacre = canvas
-            nacre.clip(to: pearl)
-            nacre.fill(Path(ellipseIn: CGRect(x: x - r * 0.9, y: y, width: r * 1.8, height: r)),
-                       with: .linearGradient(
-                           Gradient(colors: [Color(red: 1.0, green: 0.78, blue: 0.86).opacity(0.25),
-                                             Color(red: 0.70, green: 0.90, blue: 1.0).opacity(0.25)]),
-                           startPoint: CGPoint(x: x - r, y: y), endPoint: CGPoint(x: x + r, y: y)))
-            canvas.fill(Path(ellipseIn: CGRect(x: x - r * 0.55, y: y - r * 0.62, width: r * 0.5, height: r * 0.34)),
-                        with: .color(.white.opacity(0.9)))
-            m.dropBoxes.append((drop.id, CGRect(x: x - 16, y: y - 16, width: 32, height: 32)))
+        if m.dropSpots.count > game.drops.count {
+            let live = Set(game.drops.map(\.id))
+            m.dropSpots = m.dropSpots.filter { live.contains($0.key) }
         }
+        let arcade = themeKey == "arcade"
+        for drop in game.drops {
+            let at = dropPoint(drop, size: size, t: t, layouts: layouts)
+            let seed = Double(drop.at.truncatingRemainder(dividingBy: 6))
+            let pulse = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(t * 2.2 + seed)
+            if arcade {
+                // Arcade pearls come as coins: a fast spin as they fall,
+                // a slow one at rest. A crowned fish's drop is a gem.
+                let rate = at.fall < 1 ? 9.0 : 0.9
+                let spin = reduceMotion ? 1 : abs(cos(t * rate + seed))
+                let gem = motion.dropSpots[drop.id]?.gem ?? false
+                drawCoin(canvas: &canvas, at: at.point, spin: spin, gem: gem, resting: at.fall >= 1)
+            } else {
+                drawPearl(canvas: &canvas, at: at.point, pulse: pulse, resting: at.fall >= 1)
+            }
+            m.dropBoxes.append((drop.id, CGRect(x: at.point.x - 16, y: at.point.y - 16,
+                                                width: 32, height: 32)))
+        }
+    }
+
+    /// Where a drop was first seen and how it came to rest (see
+    /// `drawDrops`); `gem` pins whether a crowned fish minted it.
+    struct DropSpot {
+        var x: Double
+        var fromY: Double?
+        var seenAt: Double
+        var gem = false
+    }
+
+    /// How long a fresh drop takes to reach the sand.
+    static let dropFallSeconds = 1.4
+
+    /// Where a drop rests on the sand: pinned the first time the tank
+    /// sees it, never re-read from its fish.
+    func dropRest(_ drop: PearlDrop, size: CGSize, layouts: [String: Layout],
+                  t: Double) -> CGPoint {
+        let spot = dropSpot(drop, size: size, layouts: layouts, t: t)
+        let x = min(size.width - 16, max(16, spot.x * size.width))
+        return CGPoint(x: x, y: sandTop(atX: x, in: size) - 5)
+    }
+
+    /// The drop this frame: where it is and how far through its fall
+    /// (1 resting).
+    func dropPoint(_ drop: PearlDrop, size: CGSize, t: Double,
+                   layouts: [String: Layout]) -> (point: CGPoint, fall: Double) {
+        let spot = dropSpot(drop, size: size, layouts: layouts, t: t)
+        let rest = dropRest(drop, size: size, layouts: layouts, t: t)
+        guard let fromY = spot.fromY else { return (rest, 1) }
+        let p = clamp01((t - spot.seenAt) / Self.dropFallSeconds)
+        guard p < 1 else { return (rest, 1) }
+        let eased = 1 - (1 - p) * (1 - p) * (1 - p)
+        let startY = min(rest.y, fromY * size.height)
+        let y = startY + (rest.y - startY) * eased
+        let wobble = sin(p * .pi * 3) * 5 * (1 - p)
+        return (CGPoint(x: rest.x + wobble, y: y), p)
+    }
+
+    /// The pinned spot, taken the first frame a drop id shows up: its
+    /// fish's x and y if the fish is in the tank, else a steady hashed
+    /// spot along the bed. Only a fresh drop falls.
+    private func dropSpot(_ drop: PearlDrop, size: CGSize, layouts: [String: Layout],
+                          t: Double) -> DropSpot {
+        if let spot = motion.dropSpots[drop.id] { return spot }
+        let fresh = t - drop.at < 25 && !reduceMotion
+        var spot: DropSpot
+        if let l = layouts[drop.fishID], size.width > 0, size.height > 0 {
+            spot = DropSpot(x: l.x / size.width, fromY: fresh ? l.y / size.height : nil, seenAt: t)
+        } else {
+            let h = AquariumModel.stableHash("drop-\(drop.id)")
+            spot = DropSpot(x: 0.12 + 0.76 * Double(h & 0xFFFF) / 0xFFFF, fromY: nil, seenAt: t)
+        }
+        if let game {
+            let stage = game.pets[drop.fishID]?.stage ?? 0
+            spot.gem = game.hat(for: drop.fishID) == nil
+                && AquariumBehavior.wearsCrown(streakDays: game.streakDays, stage: stage)
+        }
+        motion.dropSpots[drop.id] = spot
+        return spot
+    }
+
+    /// An Arcade coin at `p`: a gold disc with a dark rim, an embossed
+    /// ring and a hard white highlight, squeezed to `spin` (|cos|) as it
+    /// turns — or, for a crowned fish's drop, a faceted cyan gem that
+    /// twinkles instead. Worth the same pearl either way.
+    func drawCoin(canvas: inout GraphicsContext, at p: CGPoint, spin: Double, gem: Bool,
+                  resting: Bool, radius: Double = 6.5) {
+        let r = radius
+        if resting {
+            contactShadow(canvas: &canvas, x: p.x, y: p.y + r * 0.9, halfW: r * 0.9, alpha: 0.32)
+        }
+        var halo = canvas
+        halo.blendMode = .plusLighter
+        let glow = gem ? Color(red: 0.55, green: 0.95, blue: 1.0) : Color(red: 1.0, green: 0.86, blue: 0.40)
+        halo.fill(Path(ellipseIn: CGRect(x: p.x - r * 2.4, y: p.y - r * 2.4, width: r * 4.8, height: r * 4.8)),
+                  with: .radialGradient(Gradient(colors: [glow.opacity(0.30), .clear]),
+                                        center: p, startRadius: 0, endRadius: r * 2.4))
+        if gem {
+            drawGem(canvas: &canvas, at: p, radius: r * 1.05, twinkle: spin)
+            return
+        }
+        let w = max(0.2, spin)
+        var c = canvas
+        c.translateBy(x: p.x, y: p.y)
+        c.scaleBy(x: w, y: 1)
+        let disc = Path(ellipseIn: CGRect(x: -r, y: -r, width: r * 2, height: r * 2))
+        c.fill(disc, with: .linearGradient(
+            Gradient(colors: [Color(red: 1.0, green: 0.93, blue: 0.52), Color(red: 0.96, green: 0.70, blue: 0.14),
+                              Color(red: 0.78, green: 0.48, blue: 0.06)]),
+            startPoint: CGPoint(x: -r, y: -r), endPoint: CGPoint(x: r, y: r)))
+        let ink = Color(red: 0.42, green: 0.24, blue: 0.02)
+        c.stroke(disc, with: .color(ink), lineWidth: 1.3 / w)
+        // The embossed ring and its centre dot.
+        let ring = Path(ellipseIn: CGRect(x: -r * 0.55, y: -r * 0.55, width: r * 1.1, height: r * 1.1))
+        c.stroke(ring, with: .color(Color(red: 0.72, green: 0.44, blue: 0.05).opacity(0.9)), lineWidth: 1.0 / w)
+        c.fill(Path(ellipseIn: CGRect(x: -r * 0.18, y: -r * 0.18, width: r * 0.36, height: r * 0.36)),
+               with: .color(Color(red: 0.72, green: 0.44, blue: 0.05).opacity(0.9)))
+        // The hard highlight blob, upper left.
+        c.fill(Path(ellipseIn: CGRect(x: -r * 0.72, y: -r * 0.78, width: r * 0.52, height: r * 0.40)),
+               with: .color(.white.opacity(0.92)))
+    }
+
+    /// A crowned fish's drop in the Arcade tank: a cut cyan gem with
+    /// lit and shaded facets and a star glint that comes and goes.
+    private func drawGem(canvas: inout GraphicsContext, at p: CGPoint, radius r: Double,
+                         twinkle: Double) {
+        let top = CGPoint(x: p.x, y: p.y - r)
+        let left = CGPoint(x: p.x - r, y: p.y - r * 0.2)
+        let right = CGPoint(x: p.x + r, y: p.y - r * 0.2)
+        let bottom = CGPoint(x: p.x, y: p.y + r)
+        let mid = CGPoint(x: p.x, y: p.y - r * 0.2)
+        func facet(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> Path {
+            var path = Path()
+            path.move(to: a)
+            path.addLine(to: b)
+            path.addLine(to: c)
+            path.closeSubpath()
+            return path
+        }
+        canvas.fill(facet(top, left, mid), with: .color(Color(red: 0.80, green: 1.0, blue: 1.0)))
+        canvas.fill(facet(top, mid, right), with: .color(Color(red: 0.42, green: 0.90, blue: 1.0)))
+        canvas.fill(facet(left, bottom, mid), with: .color(Color(red: 0.20, green: 0.70, blue: 0.95)))
+        canvas.fill(facet(mid, bottom, right), with: .color(Color(red: 0.08, green: 0.45, blue: 0.78)))
+        var outline = Path()
+        outline.move(to: top)
+        outline.addLine(to: right)
+        outline.addLine(to: bottom)
+        outline.addLine(to: left)
+        outline.closeSubpath()
+        canvas.stroke(outline, with: .color(Color(red: 0.02, green: 0.20, blue: 0.40)),
+                      style: StrokeStyle(lineWidth: 1.2, lineJoin: .round))
+        let glint = 0.4 + 0.6 * (1 - twinkle)
+        drawSparkle(canvas: &canvas, at: CGPoint(x: p.x - r * 0.35, y: p.y - r * 0.45),
+                    size: r * 0.9 * glint, alpha: glint)
+    }
+
+    /// One pearl at `p`: a warm halo so it reads as a pick-up, the
+    /// nacre and a highlight, and a contact shadow once it rests.
+    private func drawPearl(canvas: inout GraphicsContext, at p: CGPoint, pulse: Double,
+                           resting: Bool) {
+        let x = p.x, y = p.y
+        let r = 5.0 + pulse * 1.0
+        if resting {
+            contactShadow(canvas: &canvas, x: x, y: y + r * 0.9, halfW: r * 0.9, alpha: 0.30)
+        }
+        var halo = canvas
+        halo.blendMode = .plusLighter
+        halo.fill(Path(ellipseIn: CGRect(x: x - r * 2.6, y: y - r * 2.6,
+                                         width: r * 5.2, height: r * 5.2)),
+                  with: .radialGradient(
+                    Gradient(colors: [Color(red: 1, green: 0.94, blue: 0.76).opacity(0.24 + 0.14 * pulse),
+                                      .clear]),
+                    center: CGPoint(x: x, y: y), startRadius: 0, endRadius: r * 2.6))
+        let pearl = Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+        canvas.fill(pearl, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: .white, location: 0),
+                .init(color: Color(red: 0.97, green: 0.93, blue: 0.86), location: 0.45),
+                .init(color: Color(red: 0.86, green: 0.80, blue: 0.84), location: 0.8),
+                .init(color: Color(red: 0.62, green: 0.56, blue: 0.54), location: 1),
+            ]),
+            center: CGPoint(x: x - r * 0.3, y: y - r * 0.35),
+            startRadius: 0, endRadius: r * 1.2))
+        // Nacre: a faint rose-and-sea sheen across the lower half.
+        var nacre = canvas
+        nacre.clip(to: pearl)
+        nacre.fill(Path(ellipseIn: CGRect(x: x - r * 0.9, y: y, width: r * 1.8, height: r)),
+                   with: .linearGradient(
+                       Gradient(colors: [Color(red: 1.0, green: 0.78, blue: 0.86).opacity(0.25),
+                                         Color(red: 0.70, green: 0.90, blue: 1.0).opacity(0.25)]),
+                       startPoint: CGPoint(x: x - r, y: y), endPoint: CGPoint(x: x + r, y: y)))
+        canvas.fill(Path(ellipseIn: CGRect(x: x - r * 0.55, y: y - r * 0.62, width: r * 0.5, height: r * 0.34)),
+                    with: .color(.white.opacity(0.9)))
     }
 
     /// The tank's silent "bloop": an eaten pellet, a collected drop or
@@ -1001,6 +1155,11 @@ extension AquariumView {
             trail.fill(Path(ellipseIn: CGRect(x: at.x - r * 2.4, y: at.y - r * 2.4, width: r * 4.8, height: r * 4.8)),
                        with: .radialGradient(Gradient(colors: [Color(red: 1, green: 0.95, blue: 0.80).opacity(0.35), .clear]),
                                              center: at, startRadius: 0, endRadius: r * 2.4))
+            if themeKey == "arcade" {
+                let spin = abs(cos(p * 14))
+                drawCoin(canvas: &f, at: at, spin: spin, gem: false, resting: false, radius: 4)
+                continue
+            }
             f.fill(Path(ellipseIn: CGRect(x: at.x - r, y: at.y - r, width: r * 2, height: r * 2)),
                    with: .radialGradient(
                     Gradient(colors: [.white, Color(red: 0.95, green: 0.90, blue: 0.80)]),
@@ -1008,21 +1167,21 @@ extension AquariumView {
         }
     }
 
-    /// The hermit crab shuffles sideways along the sand, pausing to
-    /// tuck into its shell. Reduce Motion parks it near the middle.
+    /// The hermit crab walks the bed one way, sits tucked in its shell,
+    /// turns round — squashing through zero, never a one-frame flip —
+    /// and walks back (`HermitCrabRounds`). Reduce Motion parks it near
+    /// the middle.
     func drawHermitCrab(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         let tone = decorTone()
-        // A slow shuttle across the bed with rest stops: walk 70% of
-        // each ~90 s lap, sit tucked the rest.
-        let lap = reduceMotion ? 0.45 : frac(t / 90 + 0.13)
-        let walking = lap < 0.7
-        let progress = walking ? lap / 0.7 : 1
-        let x = size.width * (0.10 + 0.78 * progress)
+        let rounds = reduceMotion ? (x: 0.45, facing: 1.0, walking: false)
+            : HermitCrabRounds.pose(at: t)
+        let walking = rounds.walking
+        let x = size.width * rounds.x
         let y = sandTop(atX: x, in: size) - 2
         contactShadow(canvas: &canvas, x: x - 1, y: y + 2, halfW: 8, alpha: 0.30)
         var c = canvas
         c.translateBy(x: x, y: y)
-        c.scaleBy(x: 16, y: 12)
+        c.scaleBy(x: 16 * rounds.facing, y: 12)
         let flesh = tone(Color(red: 0.94, green: 0.44, blue: 0.28))
         let fleshDark = tone(Color(red: 0.54, green: 0.16, blue: 0.09))
         let edge = fleshDark.opacity(0.6)
@@ -1092,18 +1251,68 @@ extension AquariumView {
         }
     }
 
-    /// A snail inches along the sand — about four minutes a crossing.
-    /// Reduce Motion sits it mid-tank.
+    /// The snail (`SnailSim`): it hustles to the oldest pearl resting
+    /// on the sand — legs going, a little dust behind — picks it up with
+    /// a clink and a bloop, and otherwise creeps end to end, napping now
+    /// and then with its eyestalks in and a "z" rising. An hour with no
+    /// pearl warms its shell toward red, and it huffs. It turns by
+    /// squashing through zero, never a one-frame flip. The live wallpaper
+    /// and screensaver only watch: their snail never fetches.
     func drawSnail(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let m = motion
+        let dt = m.snailT > 0 ? t - m.snailT : 0
+        m.snailT = t
+        // The oldest pearl that has landed, if the snail may fetch.
+        var target: (id: String, x: Double)?
+        if !ambient, let game, size.width > 0 {
+            let resting = game.drops
+                .filter { !m.snailClaimed.contains($0.id) }
+                .filter { dropPoint($0, size: size, t: t, layouts: [:]).fall >= 1 }
+                .min { $0.at < $1.at }
+            if let drop = resting {
+                target = (drop.id, dropRest(drop, size: size, layouts: [:], t: t).x / size.width)
+            }
+        }
+        let arrived = m.snail.step(dt: dt, pearl: target?.x, still: reduceMotion)
+        if arrived, let target {
+            m.snailClaimed.insert(target.id)
+            m.pendingEvents.append(.snailCollected(target.id))
+            let y = sandTop(atX: target.x * size.width, in: size) - 5
+            m.puffs.append((x: target.x, y: y / max(1, size.height), bornAt: Date(timeIntervalSince1970: t)))
+            m.flights.append((from: CGPoint(x: target.x * size.width, y: y),
+                              bornAt: Date(timeIntervalSince1970: t)))
+            queueEventDrain()
+        }
+        if let game, m.snailClaimed.count > 8 {
+            let live = Set(game.drops.map(\.id))
+            m.snailClaimed = m.snailClaimed.filter { live.contains($0) }
+        }
+        drawSnailBody(canvas: &canvas, size: size, t: t, sim: m.snail)
+    }
+
+    /// The snail at its sim's pose.
+    func drawSnailBody(canvas: inout GraphicsContext, size: CGSize, t: Double, sim: SnailSim) {
         let tone = decorTone()
-        let crawl = reduceMotion ? 0.42 : frac(t * 0.0042 + 0.6)
-        let x = size.width * (0.06 + crawl * 0.88)
+        let x = size.width * sim.x
         // It inches along the dune crest, not the glass bottom.
         let y = sandTop(atX: x, in: size) - 1
+        let still = reduceMotion
         contactShadow(canvas: &canvas, x: x, y: y + 1.5, halfW: 12, alpha: 0.28)
+        // A hustle kicks up a little dust behind it.
+        if sim.hustling && !still {
+            for k in 0..<3 {
+                let ph = frac(t * 2.4 + Double(k) / 3)
+                let dx = -sim.facing * (14 + ph * 10)
+                let r = 1.4 + ph * 2.2
+                canvas.fill(Path(ellipseIn: CGRect(x: x + dx - r, y: y - 3 - ph * 5 - r, width: r * 2, height: r * 2)),
+                            with: .color(TankPaint.color(sandPalette.lit, 0.55 * (1 - ph))))
+            }
+        }
         var s = canvas
         s.translateBy(x: x, y: y)
-        s.scaleBy(x: 25, y: 19)
+        // Hustling, it bobs with its stride.
+        let bob = sim.hustling && !still ? abs(sin(t * 16)) * 0.04 : 0
+        s.scaleBy(x: 25 * sim.facing, y: 19 * (1 - bob))
         let flesh = tone(Color(red: 0.76, green: 0.70, blue: 0.60))
         let fleshDark = tone(Color(red: 0.38, green: 0.32, blue: 0.26))
         var body = Path()
@@ -1115,24 +1324,34 @@ extension AquariumView {
         body.closeSubpath()
         TankPaint.solid(&s, body, lit: tone(Color(red: 0.94, green: 0.90, blue: 0.80)), base: flesh, shade: fleshDark,
                         outline: fleshDark.opacity(0.55), lineWidth: 0.025, rim: 0.3)
-        // Two eyestalks, because it is a screensaver.
+        // Two eyestalks: tall and forward on a hustle, drawn in for a nap.
+        let reach = sim.napping ? 0.45 : (sim.hustling ? 1.15 : 1)
+        let lean = sim.hustling ? 0.06 : 0
         for dx in [0.42, 0.55] {
+            let tip = CGPoint(x: dx + lean, y: -0.14 - 0.28 * reach)
             var stalk = Path()
             stalk.move(to: CGPoint(x: dx - 0.1, y: -0.14))
-            stalk.addQuadCurve(to: CGPoint(x: dx, y: -0.42), control: CGPoint(x: dx - 0.05, y: -0.30))
+            stalk.addQuadCurve(to: tip, control: CGPoint(x: dx - 0.05 + lean * 0.5, y: -0.14 - 0.16 * reach))
             s.stroke(stalk, with: .color(fleshDark), style: StrokeStyle(lineWidth: 0.06, lineCap: .round))
             s.stroke(stalk, with: .color(flesh), style: StrokeStyle(lineWidth: 0.035, lineCap: .round))
-            s.fill(Path(ellipseIn: CGRect(x: dx - 0.05, y: -0.48, width: 0.10, height: 0.10)),
-                   with: .color(tone(Color(red: 0.12, green: 0.10, blue: 0.10))))
-            s.fill(Path(ellipseIn: CGRect(x: dx - 0.015, y: -0.47, width: 0.035, height: 0.035)),
-                   with: .color(.white.opacity(0.9)))
+            let eye = CGRect(x: tip.x - 0.05, y: tip.y - 0.06, width: 0.10, height: sim.napping ? 0.035 : 0.10)
+            s.fill(Path(ellipseIn: eye), with: .color(tone(Color(red: 0.12, green: 0.10, blue: 0.10))))
+            if !sim.napping {
+                s.fill(Path(ellipseIn: CGRect(x: tip.x - 0.015, y: tip.y - 0.05, width: 0.035, height: 0.035)),
+                       with: .color(.white.opacity(0.9)))
+            }
         }
-        // The shell: a banded spiral, lit from above.
+        // The shell: a banded spiral, lit from above — warming toward
+        // red the longer it has gone without a pearl.
+        let huff = sim.huff
         let shellRect = CGRect(x: -0.44, y: -0.66, width: 0.62, height: 0.62)
         let shell = Path(ellipseIn: shellRect)
-        let shellShade = tone(Color(red: 0.36, green: 0.19, blue: 0.08))
-        TankPaint.solid(&s, shell, lit: tone(Color(red: 0.98, green: 0.80, blue: 0.52)),
-                        base: tone(Color(red: 0.76, green: 0.47, blue: 0.23)),
+        func warm(_ r: Double, _ g: Double, _ b: Double) -> Color {
+            tone(Color(red: r + (0.95 - r) * huff, green: g * (1 - 0.55 * huff), blue: b * (1 - 0.6 * huff)))
+        }
+        let shellShade = warm(0.36, 0.19, 0.08)
+        TankPaint.solid(&s, shell, lit: warm(0.98, 0.80, 0.52),
+                        base: warm(0.76, 0.47, 0.23),
                         shade: shellShade, outline: shellShade.opacity(0.6), lineWidth: 0.03, rim: 0.35)
         var spiral = Path()
         let cx = shellRect.midX + 0.03, cy = shellRect.midY + 0.02
@@ -1144,8 +1363,24 @@ extension AquariumView {
         }
         var inner = s
         inner.clip(to: shell)
-        inner.stroke(spiral, with: .color(tone(Color(red: 0.98, green: 0.90, blue: 0.72)).opacity(0.7)), lineWidth: 0.05)
+        inner.stroke(spiral, with: .color(warm(0.98, 0.90, 0.72).opacity(0.7)), lineWidth: 0.05)
         inner.stroke(spiral.offsetBy(dx: 0.012, dy: 0.012),
-                     with: .color(tone(Color(red: 0.30, green: 0.14, blue: 0.06)).opacity(0.55)), lineWidth: 0.025)
+                     with: .color(warm(0.30, 0.14, 0.06).opacity(0.55)), lineWidth: 0.025)
+        // A nap breathes out a "z"; a huff puffs a little cloud.
+        if !still, sim.napping || huff > 0.3 {
+            let ph = frac(t / 2.6)
+            let bx = x + sim.facing * 10 + ph * 6
+            let by = y - 22 - ph * 16
+            var bubble = canvas
+            bubble.opacity = (1 - ph) * 0.85
+            if sim.napping {
+                bubble.draw(Text("z").font(.system(size: 9 + ph * 3, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white), at: CGPoint(x: bx, y: by))
+            } else {
+                let r = 2.5 + ph * 3
+                bubble.fill(Path(ellipseIn: CGRect(x: bx - r, y: by - r, width: r * 2, height: r * 2)),
+                            with: .color(Color(red: 1.0, green: 0.55, blue: 0.45).opacity(0.7 * huff)))
+            }
+        }
     }
 }

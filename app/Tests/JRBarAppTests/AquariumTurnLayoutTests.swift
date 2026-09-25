@@ -265,7 +265,7 @@ struct AquariumTurnLayoutTests {
                 settings.fishScale = scale
                 let tank = AquariumView(fixture: AquariumView.Fixture(
                     fish: [fish], game: AquariumGame(pets: [fish.id: FishCare(stage: stage)]),
-                    swimSettings: settings))
+                    settings: settings))
                 var l = AquariumView.Layout()
                 l.x = 300
                 l.y = 200
@@ -403,7 +403,7 @@ struct AquariumTurnLayoutTests {
             settings.fishScale = AquariumSettings.fishScaleRange.upperBound
             let tank = AquariumView(fixture: AquariumView.Fixture(
                 fish: [fish], game: AquariumGame(pets: [fish.id: FishCare(stage: 2)]), night: 0,
-                swimSettings: settings))
+                settings: settings))
             var t = t0
             var top = Double.infinity
             for i in 0..<(30 * 24) {

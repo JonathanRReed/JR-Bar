@@ -349,6 +349,56 @@ public enum AquariumModel {
         return result
     }
 
+    /// Card › Fish at once: the roster trimmed to at most `max` adult
+    /// fish (0 keeps everyone). Asking, sinking and leaving fish are
+    /// never cut — the tank always shows what needs you or just ended.
+    /// Otherwise residents go first (the least raised first, `stages`
+    /// by fish id), then idle sessions, then working ones, each oldest
+    /// update first. A cut fish takes its fry with it; the rest keep
+    /// their order. A finished fish that has already swum off (retired
+    /// at `now`) stays in the list but takes no place — a row of
+    /// finished sessions never empties the tank.
+    public static func cap(_ fish: [Fish], max: Int, now: Date,
+                           stages: [String: Int] = [:]) -> [Fish] {
+        guard max > 0 else { return fish }
+        let adults = fish.filter { !$0.isFry && !$0.isRetired(at: now) }
+        guard adults.count > max else { return fish }
+        func protected(_ f: Fish) -> Bool {
+            f.state == .surfacing || f.state == .sinking || f.state == .leaving
+        }
+        func tier(_ f: Fish) -> Int {
+            if f.isResident { return 0 }
+            return f.state == .idling ? 1 : 2
+        }
+        let cuttable = adults.filter { !protected($0) }.sorted { a, b in
+            let ta = tier(a), tb = tier(b)
+            if ta != tb { return ta < tb }
+            if ta == 0 {
+                let sa = stages[a.id] ?? 0, sb = stages[b.id] ?? 0
+                if sa != sb { return sa < sb }
+            }
+            let ua = a.lastUpdate ?? .distantPast, ub = b.lastUpdate ?? .distantPast
+            if ua != ub { return ua < ub }
+            return a.id < b.id
+        }
+        let over = adults.count - max
+        let cut = Set(cuttable.prefix(over).map(\.id))
+        return fish.filter { f in
+            if cut.contains(f.id) { return false }
+            if f.isFry, let anchor = f.anchorID, cut.contains(anchor) { return false }
+            return true
+        }
+    }
+
+    /// When `cap` would next answer differently with nothing else
+    /// changing: the moment the first leaving adult finishes swimming
+    /// off and frees its place. Nil when nobody is on the way out.
+    public static func nextRetirement(_ fish: [Fish], after now: Date) -> Date? {
+        fish.filter { !$0.isFry && $0.state == .leaving && !$0.isRetired(at: now) }
+            .map { $0.stateSince.addingTimeInterval(leaveDuration) }
+            .min()
+    }
+
     /// A resident → fish: idling midwater on the swim its session's
     /// fish had (or a fresh deterministic one), under its remembered
     /// name, in its provider's species and colour. No plan — nothing
@@ -603,6 +653,7 @@ public enum AquariumModel {
         case .sunkenStatue: return DecorSlot(x: 0.44, back: true, w: 0.14, h: 0.16)
         case .ruinedColumns: return DecorSlot(x: 0.62, back: true, w: 0.25, h: 0.19)
         case .volcano: return DecorSlot(x: 0.82, back: true, w: 0.24, h: 0.16)
+        case .alienBeacon: return DecorSlot(x: 0.95, back: true, w: 0.07, h: 0.12)
         // Front row — over the fish lane like the original shop set.
         case .bubbleWall: return DecorSlot(x: 0.08, back: false, w: 0.10, h: 0.28)
         case .driftwood: return DecorSlot(x: 0.22, back: false, w: 0.21, h: 0.07)

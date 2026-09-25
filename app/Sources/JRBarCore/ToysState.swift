@@ -300,13 +300,28 @@ public enum DayNightMode: String, Codable, CaseIterable, Sendable {
     /// Sunrise and sunset for the time zone's city, worked out locally;
     /// a zone without a city keeps `realTime`'s hours.
     case sun
+    /// Night while macOS wears Dark mode, day in Light.
+    case appearance
+    /// Always the bright tank.
+    case alwaysDay
+    /// Always the night tank.
+    case alwaysNight
 }
 
 /// Aquarium: every live session is a fish.
 public struct AquariumSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
-    public var showLabels: Bool
-    /// How much plankton/bubbles the tank draws.
+    /// The always-on name chip, kept in step with `labelStyle` (on only
+    /// for `.always`) and still written, so an older build reads it.
+    public var showLabels: Bool {
+        didSet {
+            if showLabels != (labelStyle == .always) {
+                labelStyle = showLabels ? .always : .hover
+            }
+        }
+    }
+    /// How much plankton the tank draws (the card's Plankton). Before
+    /// `bubbles` and `scenery` it also set those two.
     public var density: Double
     /// Provider id → `FishSpecies` raw value — the tank's per-provider
     /// casting, set from a fish's inspector. A missing or unknown entry
@@ -322,9 +337,37 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     public var ambientDisplay: String? = nil
     /// The screensaver wears a quiet clock in its corner. On by default.
     public var saverClock: Bool = true
+    /// Where a fish's name shows: always under it, only on hover, or
+    /// never (the selected fish still names itself).
+    public var labelStyle: AquariumLabelStyle = .always {
+        didSet {
+            if showLabels != (labelStyle == .always) { showLabels = labelStyle == .always }
+        }
+    }
+    /// The tank's little voice — a plop, a gulp, a clink — from taps
+    /// and window events only. Off by default.
+    public var sound: Bool = false
+    /// The most adult fish the tank draws at once; 0 is all of them.
+    /// Asking, failing and leaving fish always show.
+    public var maxFish: Int = 0
+    /// Raised fish keep swimming after their sessions leave.
+    public var keepResidents: Bool = true
+    /// How many ambient bubbles rise; 0 is none.
+    public var bubbles: Double = 1.0
+    /// How much of the seeded dressing (kelp, rocks, shells) shows.
+    public var scenery: AquariumScenery = .full
+    /// The occasional passers-by — whale, diver, submarine, alien.
+    public var visitors: Bool = true
 
     /// The screensaver's choices, in minutes; 0 is off.
     public static let idleFillChoices = [0, 5, 10, 15, 30]
+    /// Fish at once, as the card offers it; 0 is all.
+    public static let maxFishChoices = [0, 6, 10, 16, 24]
+    /// Plankton's range; 0 clears the water. The same track as
+    /// Bubbles, so the two sliders' knobs agree at the same value.
+    public static let densityRange: ClosedRange<Double> = 0...2
+    /// Bubbles' range; 0 turns the stream off.
+    public static let bubblesRange: ClosedRange<Double> = 0...2
 
     public init(enabled: Bool = false, showLabels: Bool = true, density: Double = 1.0,
                 speciesOverrides: [String: String] = [:],
@@ -334,19 +377,22 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         self.density = density
         self.speciesOverrides = speciesOverrides
         self.dayNight = dayNight
+        self.labelStyle = showLabels ? .always : .hover
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, showLabels, density, speciesOverrides, dayNight
         case idleFillMinutes, ambientDisplay, saverClock
         case swimPace, swimSpeed, fishScale
+        case labelStyle, sound, maxFish, keepResidents, bubbles, scenery, visitors
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
         showLabels = (try? c.decodeIfPresent(Bool.self, forKey: .showLabels)) ?? true
-        density = (try? c.decodeIfPresent(Double.self, forKey: .density)) ?? 1.0
+        let rawDensity = (try? c.decodeIfPresent(Double.self, forKey: .density)) ?? 1.0
+        density = Self.clamp(rawDensity, to: Self.densityRange, default: 1.0)
         let raw = (try? c.decodeIfPresent([String: String].self, forKey: .speciesOverrides)) ?? [:]
         speciesOverrides = raw.filter { FishSpecies(rawValue: $0.value) != nil }
         let dayNightRaw = (try? c.decodeIfPresent(String.self, forKey: .dayNight)) ?? nil
@@ -362,6 +408,33 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
                                  to: Self.swimSpeedRange)
         fishScale = Self.clamped((try? c.decodeIfPresent(Double.self, forKey: .fishScale)) ?? 1,
                                  to: Self.fishScaleRange)
+        // The label style: a file from before it existed reads its old
+        // switch — off was really "on hover", since the nameplate still
+        // showed.
+        let styleRaw = (try? c.decodeIfPresent(String.self, forKey: .labelStyle)) ?? nil
+        labelStyle = styleRaw.flatMap(AquariumLabelStyle.init(rawValue:))
+            ?? (showLabels ? .always : .hover)
+        showLabels = labelStyle == .always
+        sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? false
+        let cap = (try? c.decodeIfPresent(Int.self, forKey: .maxFish)) ?? 0
+        maxFish = Self.maxFishChoices.contains(cap) ? cap : 0
+        keepResidents = (try? c.decodeIfPresent(Bool.self, forKey: .keepResidents)) ?? true
+        // Bubbles and scenery split off the old density: a file without
+        // them keeps the tank it had.
+        let rawBubbles = (try? c.decodeIfPresent(Double.self, forKey: .bubbles)) ?? nil
+        bubbles = Self.clamp(rawBubbles ?? rawDensity, to: Self.bubblesRange,
+                             default: 1.0)
+        let sceneryRaw = (try? c.decodeIfPresent(String.self, forKey: .scenery)) ?? nil
+        scenery = sceneryRaw.flatMap(AquariumScenery.init(rawValue:))
+            ?? (density < 1 ? .light : .full)
+        visitors = (try? c.decodeIfPresent(Bool.self, forKey: .visitors)) ?? true
+    }
+
+    /// A finite value pinned to `range`; anything else is `fallback`.
+    private static func clamp(_ value: Double, to range: ClosedRange<Double>,
+                              default fallback: Double) -> Double {
+        guard value.isFinite else { return fallback }
+        return min(range.upperBound, max(range.lowerBound, value))
     }
 
     /// What `provider` swims as: the user's pick when one is stored,
@@ -390,6 +463,35 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     public static func clamped(_ value: Double, to range: ClosedRange<Double>) -> Double {
         guard value.isFinite else { return 1 }
         return min(range.upperBound, max(range.lowerBound, value))
+    }
+}
+
+/// Where the tank shows a fish's name.
+public enum AquariumLabelStyle: String, Codable, CaseIterable, Sendable {
+    /// A small chip under every main fish.
+    case always
+    /// Only the name tag over the fish under the pointer.
+    case hover
+    /// No names at all, except the fish you selected.
+    case never
+}
+
+/// How much of the seeded dressing the tank lays out.
+public enum AquariumScenery: String, Codable, CaseIterable, Sendable {
+    /// Every kelp stand, rock, shell and coral.
+    case full
+    /// About half, the signature pieces first.
+    case light
+    /// Just the chest and the starfish.
+    case bare
+
+    /// The share of `AquariumModel.decorSet` that shows.
+    public var fraction: Double {
+        switch self {
+        case .full: return 1
+        case .light: return 0.5
+        case .bare: return 0.12
+        }
     }
 }
 

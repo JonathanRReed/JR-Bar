@@ -31,8 +31,9 @@ struct AquariumView: View {
         var visitorProgress: Double?
         /// A pinned water mood; nil is calm water.
         var mood: AquariumWaterMood?
-        /// The swim settings a proof shot swims with; nil is the defaults.
-        var swimSettings: AquariumSettings?
+        /// The card's settings for the shot, the swim settings included;
+        /// nil builds them from `showLabels` and `density` above.
+        var settings: AquariumSettings?
     }
 
     let toy: AquariumToy?
@@ -42,14 +43,28 @@ struct AquariumView: View {
     /// fixture's synthetic one.
     var game: AquariumGame? { toy?.game ?? fixture?.game }
 
+    /// The card's settings, read in one place: the toy's store, or the
+    /// fixture's own.
+    var tankSettings: AquariumSettings {
+        if let toy { return toy.store?.state.aquarium ?? AquariumSettings() }
+        if let pinned = fixture?.settings { return pinned }
+        var built = AquariumSettings(showLabels: fixture?.showLabels ?? true,
+                                     density: fixture?.density ?? 1,
+                                     dayNight: .cycle)
+        built.bubbles = built.density
+        built.scenery = built.density < 1 ? .light : .full
+        return built
+    }
+
     /// The water column's theme key — "classic" when there's no game.
     var themeKey: String { game?.themeID ?? "classic" }
     /// The floor's substrate key.
     var substrateKey: String { game?.substrateID ?? "classic" }
     /// The back wall's backdrop key.
     var backdropKey: String { game?.backdropID ?? "classic" }
-    /// Themes dark enough that the warm sun glow cools to moonlight.
-    var isDarkTheme: Bool { themeKey == "midnight" || themeKey == "abyss" }
+    /// Themes dark enough that the warm sun glow cools to moonlight —
+    /// the water's own style says so.
+    var isDarkTheme: Bool { water.style.dark }
     /// The column's floor colour — what deep water attenuates toward.
     var floorColor: Color {
         waterStops.last?.color ?? Color(red: 0.015, green: 0.06, blue: 0.22)
@@ -60,20 +75,29 @@ struct AquariumView: View {
     /// keeps the original four-minute breathe; `realTime` follows the
     /// clock — night from 21:00 to 06:00, dawn & dusk blending the
     /// edges; `sun` blends at the real sunrise and sunset, or keeps the
-    /// clock's hours where the time zone has no city. Reduce Motion
-    /// holds a soft dusk; a fixture can pin it.
+    /// clock's hours where the time zone has no city; `appearance`
+    /// follows Light and Dark mode, easing over two seconds when it
+    /// flips; the two pinned modes hold day or night. Reduce Motion
+    /// holds a soft dusk for the moving modes; a fixture can pin it.
     func nightFactor(t: Double) -> Double {
         if let pinned = fixture?.night { return pinned }
+        let mode = tankSettings.dayNight
+        switch mode {
+        case .alwaysDay: return 0
+        case .alwaysNight: return 1
+        case .appearance: return AquariumNightEase.appearanceNight(at: t, still: reduceMotion)
+        case .cycle, .realTime, .sun: break
+        }
         if reduceMotion { return 0.4 }
         let date = Date(timeIntervalSince1970: t)
-        switch toy?.store?.state.aquarium.dayNight ?? .cycle {
+        switch mode {
         case .cycle:
             return AquariumBehavior.night(at: t)
-        case .realTime:
-            return AquariumBehavior.realTimeNight(at: date, calendar: .current)
         case .sun:
             return AquariumSun.night(at: date)
                 ?? AquariumBehavior.realTimeNight(at: date, calendar: .current)
+        default:
+            return AquariumBehavior.realTimeNight(at: date, calendar: .current)
         }
     }
 
@@ -118,28 +142,46 @@ struct AquariumView: View {
     @ViewState var residentLog: (id: String, log: AquariumResidentLog)?
     /// The shop popover's open flag.
     @ViewState var showShop = false
+    /// Light or Dark, as the window wears it — a flip starts the ease.
+    @Environment(\.colorScheme) private var colorScheme
+    /// When the view last saw Light and Dark flip; nil once the ease
+    /// has landed.
+    @ViewState private var nightFlipAt: Double?
 
     var body: some View {
         // Read the observable surface in `body` so the card's tracked
         // reads stay honest even while the timeline is paused.
         let fish = toy?.fish ?? fixture?.fish ?? []
-        let showLabels = toy?.store?.state.aquarium.showLabels ?? fixture?.showLabels ?? true
-        let density = max(0.1, toy?.store?.state.aquarium.density ?? fixture?.density ?? 1)
+        // One read of the card: the chip under each fish, and the three
+        // amounts — plankton, bubbles, and how much seeded dressing (the
+        // stations use the same share, so a fish never works at a rock
+        // that isn't drawn).
+        let settings = tankSettings
+        let labelStyle = settings.labelStyle
+        let showLabels = labelStyle == .always
+        let plankton = max(0, settings.density)
+        let bubbles = settings.bubbles
+        let density = settings.scenery.fraction
         let paused = ambient ? !ambientVisible
             : (toy?.windowOccluded ?? fixture?.paused ?? false)
+        let stillTick = stillPassTick(settings)
         ZStack {
             // The far tank: water, the back wall, the far bank and the
             // back row of bought pieces — everything behind the plants.
             // A slow two-second tick lets the day/night wash keep
-            // breathing; `.drawingGroup` rasterizes the result, so each
+            // breathing (quicker while a Light & Dark flip eases in —
+            // `stillPassTick`); `.drawingGroup` rasterizes the result, so each
             // live frame costs one texture composite, not the paths.
-            TimelineView(.animation(minimumInterval: 2, paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: stillTick, paused: paused)) { context in
                 Canvas { canvas, size in
                     let t = context.date.timeIntervalSince1970
                     drawWater(canvas: &canvas, size: size, t: t)
                     drawBackdrop(canvas: &canvas, size: size)
                     drawFarSand(canvas: &canvas, size: size)
                     drawNight(canvas: &canvas, size: size, t: t)
+                    // The Toy reef's windows and crystals shine through
+                    // the night, so they draw after it.
+                    drawToyReefLights(canvas: &canvas, size: size, t: t)
                     // Owned back-row pieces root on the far dune —
                     // still, so they bake in with the distance.
                     drawOwnedBackDecor(canvas: &canvas, size: size, t: t)
@@ -163,7 +205,7 @@ struct AquariumView: View {
             // The near bed: the lit sand and every piece on it that
             // doesn't sway, on the same slow tick (which also keeps the
             // caption's decor culling in step with retiring fish).
-            TimelineView(.animation(minimumInterval: 2, paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: stillTick, paused: paused)) { context in
                 Canvas { canvas, size in
                     let t = context.date.timeIntervalSince1970
                     drawSand(canvas: &canvas, size: size, t: t)
@@ -230,8 +272,8 @@ struct AquariumView: View {
                     drawJellyfish(canvas: &canvas, size: size, t: t,
                                   resident: empty || owns(.jellyfish))
                     drawPlankton(canvas: &canvas, size: size, t: t,
-                                 density: density, front: false)
-                    drawBubbles(canvas: &canvas, size: size, t: t, density: density)
+                                 density: plankton, front: false)
+                    drawBubbles(canvas: &canvas, size: size, t: t, density: bubbles)
                     // The passers-by and the sand/mid-water pets
                     // live behind the fish lane.
                     drawVisitor(canvas: &canvas, size: size, t: t, now: context.date)
@@ -317,6 +359,7 @@ struct AquariumView: View {
                                           layouts: layouts, roster: order.ordered,
                                           now: context.date)
                     }
+                    drawOyster(canvas: &canvas, size: size, t: t)
                     drawDrops(canvas: &canvas, size: size, t: t,
                               layouts: layouts)
                     drawGoldBursts(canvas: &canvas, size: size, now: context.date)
@@ -337,7 +380,7 @@ struct AquariumView: View {
                     drawPlants(canvas: &canvas, size: size, t: t, density: density,
                                front: true, keepClear: caption?.rect)
                     drawPlankton(canvas: &canvas, size: size, t: t,
-                                 density: density, front: true)
+                                 density: plankton, front: true)
                     // The surface draws over everything: a surfacing
                     // fish reads as under the waterline, not pasted
                     // on top.
@@ -349,8 +392,11 @@ struct AquariumView: View {
                     let probe = hoverProbe.point
                         ?? (hoverProbe.flashUntil > context.date
                             ? hoverProbe.flashPoint : nil)
+                    // Labels › Never keeps the tag for the fish you
+                    // selected, so the inspector's fish still names itself.
                     if let point = probe,
                        let hit = hoverProbe.boxes.last(where: { $0.rect.contains(point) }),
+                       labelStyle != .never || hit.id == selectedID,
                        let l = layouts[hit.id],
                        let hitFish = order.ordered.first(where: { $0.id == hit.id }) {
                         drawNameplate(canvas: &canvas, size: size,
@@ -373,9 +419,22 @@ struct AquariumView: View {
         // water clears. The flash path still covers a tap that hits
         // nothing selectable.
         .gesture(SpatialTapGesture(coordinateSpace: .local).onEnded { value in
-            // The buried treasure takes the tap first — it's the
-            // rarest thing on the sand; then a pearl drop collects; a
-            // fish selects; open water drops a pinch of food.
+            // The oyster's pearl takes the tap first, then the alien,
+            // then the buried treasure — the rarest thing on the sand;
+            // then a pearl drop collects; a fish selects; open water
+            // drops a pinch of food.
+            if let box = motion.oysterBox, box.contains(value.location), toy?.game.oysterReady == true {
+                toy?.collectOyster()
+                motion.puffs.append((x: box.midX / max(1, motion.size.width),
+                                     y: box.maxY / max(1, motion.size.height) - 0.03, bornAt: Date()))
+                motion.flights.append((from: CGPoint(x: box.midX, y: box.midY), bornAt: Date()))
+                return
+            }
+            if let box = motion.alienBox, box.contains(value.location),
+               let visit = motion.activeVisitor, visit.kind == .alien, motion.alienShooedAt == nil {
+                tapAlien(at: value.location, visit: visit.startedAt)
+                return
+            }
             if let box = motion.treasureBox, box.rect.contains(value.location) {
                 toy?.digTreasure(box.id)
                 let unitX = box.rect.midX / max(1, motion.size.width)
@@ -468,6 +527,33 @@ struct AquariumView: View {
             }
         }
         .coordinateSpace(.named(Self.tankSpace))
+        // The card's Look › Open the shop… lands here: the window's tank
+        // shows its shop as it comes up.
+        .onChange(of: toy?.store?.wantsAquariumShop ?? false, initial: true) { _, wants in
+            guard wants, !ambient, let store = toy?.store else { return }
+            store.wantsAquariumShop = false
+            showShop = true
+        }
+        // Follow Light & Dark: a flip quickens the still passes until
+        // the ease has landed, then they settle back to their slow tick.
+        .onChange(of: colorScheme) {
+            nightFlipAt = Date().timeIntervalSince1970
+        }
+        .task(id: nightFlipAt) {
+            guard nightFlipAt != nil else { return }
+            try? await Task.sleep(for: .seconds(AquariumNightEase.seconds + 0.5))
+            if !Task.isCancelled { nightFlipAt = nil }
+        }
+    }
+
+    /// The still passes' tick: two seconds, or quick while a Follow
+    /// Light & Dark flip eases in, so the water, the back wall and the
+    /// sand dim with the fish instead of stepping once at the end.
+    func stillPassTick(_ settings: AquariumSettings) -> Double {
+        guard settings.dayNight == .appearance, !reduceMotion, fixture?.night == nil else {
+            return AquariumNightEase.restingTick
+        }
+        return AquariumNightEase.stillTick(flipAt: nightFlipAt, at: Date().timeIntervalSince1970)
     }
 
     /// The tank's own coordinate space — the canvas's points, which the
@@ -572,6 +658,26 @@ struct AquariumView: View {
         /// Where each fish was last drawn and how its last change of
         /// state is settling (`TankSwimMemory`).
         let swim = TankSwimMemory()
+        /// Where each pearl drop was first seen, in unit space, and when:
+        /// it falls from there to the sand and rests at that x for good,
+        /// however its fish swims on. `fromY` nil rests at once.
+        var dropSpots: [String: DropSpot] = [:]
+        /// The snail's errands, and the frame clock it last stepped on.
+        var snail = SnailSim()
+        var snailT: Double = 0
+        /// Pearls the snail has picked up whose collection hasn't
+        /// reached the game yet — it won't fetch one twice.
+        var snailClaimed: Set<String> = []
+        /// The oyster's tap box this frame, when it's in the tank.
+        var oysterBox: CGRect?
+        /// The alien's tap box this frame, and the taps it has taken
+        /// this visit (keyed by when the visit started).
+        var alienBox: CGRect?
+        var alienTaps: (visit: Date, count: Int)?
+        /// When the alien was shooed off, so it zips away from there,
+        /// and when the last tap made it wobble.
+        var alienShooedAt: Date?
+        var alienWobbleAt: Date?
     }
 
     /// A game event a draw pass produced — recorded, not applied.
@@ -582,6 +688,8 @@ struct AquariumView: View {
         case visitorShown(AquariumVisitor)
         /// The parade ended — the visitor swam off the far edge.
         case visitorDeparted(AquariumVisitor)
+        /// The snail reached a pearl and picked it up.
+        case snailCollected(String)
     }
 
     /// What a tapped fish shows off (docs/TOYS.md: fish tricks).
@@ -620,6 +728,7 @@ struct AquariumView: View {
             }
         }
         m.puffs.append((x: ux, y: uy, bornAt: Date()))
+        toy?.playSound(.plop)
     }
 
     /// One step of the steering world, run at the top of every live
@@ -909,6 +1018,7 @@ struct AquariumView: View {
                     case .pelletEaten(let fishID): toy?.pelletEaten(by: fishID)
                     case .visitorShown(let visitor): toy?.visitorShown(visitor)
                     case .visitorDeparted(let visitor): toy?.visitorDeparted(visitor)
+                    case .snailCollected(let id): toy?.snailCollected(id)
                     }
                 }
             }

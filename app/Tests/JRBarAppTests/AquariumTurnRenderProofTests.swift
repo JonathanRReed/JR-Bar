@@ -81,7 +81,7 @@ struct AquariumTurnRenderProofTests {
         var pets: [String: FishCare] = [:]
         for f in fish where !f.isFry { pets[f.id] = FishCare(stage: 2) }
         return AquariumView(fixture: AquariumView.Fixture(fish: fish, game: AquariumGame(pets: pets),
-                                                          night: 0, swimSettings: settings))
+                                                          night: 0, settings: settings))
     }
 
     /// One recorded frame: the fish as it was then, its layout, and the
@@ -131,7 +131,7 @@ struct AquariumTurnRenderProofTests {
         big.fishScale = AquariumSettings.fishScaleRange.upperBound
         let view = AquariumView(fixture: AquariumView.Fixture(
             fish: [fish], game: AquariumGame(pets: [fish.id: FishCare(stage: 2)]), night: 0,
-            swimSettings: big))
+            settings: big))
         var t = t0
         _ = step(view, [fish], t: t)
         var body = view.motion.bodies[fish.id]!

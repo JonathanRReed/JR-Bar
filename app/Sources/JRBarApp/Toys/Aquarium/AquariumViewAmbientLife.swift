@@ -156,7 +156,7 @@ extension AquariumView {
     /// (`drawShopPennant`). Nothing here touches session state; it's
     /// pure dressing.
     func drawShopDecor(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        guard let game, game.owns(.plant) else { return }
+        guard let game, game.shows(.plant) else { return }
         let tone = decorTone()
         let x = size.width * 0.115
         let baseY = sandTop(atX: x, in: size) + 1
@@ -202,7 +202,7 @@ extension AquariumView {
     /// tower and pole: a fish crossing the castle passes in front of
     /// all three.
     func drawShopPennant(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        guard let game, game.owns(.castle) else { return }
+        guard let game, game.shows(.castle) else { return }
         var c = canvas
         c.translateBy(x: size.width * 0.885, y: sandTop(atX: size.width * 0.885, in: size))
         c.scaleBy(x: size.height / 242, y: size.height / 242)
@@ -218,7 +218,7 @@ extension AquariumView {
     func drawShopDecorStill(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         guard let game else { return }
         let veil = atmosphere(depth: Self.frontRowDepth, t: t)
-        if game.owns(.rock) {
+        if game.shows(.rock) {
             let x = size.width * 0.315
             let baseY = sandTop(atX: x, in: size) + 2
             let unit = size.height / 700
@@ -241,7 +241,7 @@ extension AquariumView {
                              lineWidth: 0.8 * unit)
             }
         }
-        if game.owns(.treasureChest) {
+        if game.shows(.treasureChest) {
             // A second, smaller chest — the seeded one keeps the
             // milestone plume; this one is the player's trophy, lid
             // cracked on its gold.
@@ -258,7 +258,7 @@ extension AquariumView {
             TankPaint.glow(&c, at: CGPoint(x: 0, y: -16), radius: 22,
                            color: Color(red: 1.0, green: 0.86, blue: 0.46).opacity(0.28))
         }
-        if game.owns(.castle) {
+        if game.shows(.castle) {
             let x = size.width * 0.885
             let baseY = sandTop(atX: x, in: size)
             let unit = size.height / 242

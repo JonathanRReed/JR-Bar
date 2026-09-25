@@ -267,4 +267,100 @@ struct ToysStateTests {
             #expect(back.swimPace == pace)
         }
     }
+
+    // MARK: lane aquarium-tank
+
+    @Test("an old aquarium file keeps its tank: labels off reads as hover, density splits into bubbles and scenery")
+    func aquariumTankMigration() throws {
+        let old = try decode(AquariumSettings.self,
+                             #"{"enabled": true, "showLabels": false, "density": 0.5}"#)
+        #expect(old.labelStyle == .hover)
+        #expect(old.showLabels == false)
+        #expect(old.density == 0.5)
+        #expect(old.bubbles == 0.5)
+        #expect(old.scenery == .light)
+        #expect(old.sound == false)
+        #expect(old.maxFish == 0)
+        #expect(old.keepResidents == true)
+        #expect(old.visitors == true)
+        let dense = try decode(AquariumSettings.self, #"{"density": 1.6}"#)
+        #expect(dense.labelStyle == .always)
+        #expect(dense.bubbles == 1.6)
+        #expect(dense.scenery == .full)
+    }
+
+    @Test("aquarium tank settings clamp to their ranges and fall back when mistyped")
+    func aquariumTankClamps() throws {
+        let wild = try decode(AquariumSettings.self,
+                              #"{"density": 9, "bubbles": -3, "maxFish": 7, "labelStyle": "sometimes", "scenery": 4, "sound": "yes"}"#)
+        #expect(wild.density == AquariumSettings.densityRange.upperBound)
+        #expect(wild.bubbles == 0)
+        #expect(wild.maxFish == 0, "an unknown cap means all")
+        #expect(wild.labelStyle == .always, "an unknown style falls back to the old switch")
+        #expect(wild.scenery == .full)
+        #expect(wild.sound == false)
+        let low = try decode(AquariumSettings.self, #"{"density": -1, "bubbles": 5}"#)
+        #expect(low.density == AquariumSettings.densityRange.lowerBound)
+        #expect(low.bubbles == AquariumSettings.bubblesRange.upperBound)
+        let future = try decode(AquariumSettings.self, #"{"dayNight": "alwaysNight"}"#)
+        #expect(future.dayNight == .alwaysNight)
+    }
+
+    @Test("every new aquarium key round-trips, and the old switch is still written")
+    func aquariumTankRoundTrip() throws {
+        var settings = AquariumSettings(enabled: true)
+        settings.labelStyle = .never
+        settings.sound = true
+        settings.maxFish = 16
+        settings.keepResidents = false
+        settings.density = 0.75
+        settings.bubbles = 0
+        settings.scenery = .bare
+        settings.visitors = false
+        settings.dayNight = .appearance
+        let json = try encode(settings)
+        for key in ["labelStyle", "sound", "maxFish", "keepResidents", "bubbles", "scenery", "visitors"] {
+            #expect(json.contains("\"\(key)\""), "\(key) is written")
+        }
+        #expect(json.contains(#""showLabels":false"#), "an older build still reads its switch")
+        let back = try decode(AquariumSettings.self, json)
+        #expect(back == settings)
+    }
+
+    @Test("the label style and the old switch stay in step")
+    func aquariumLabelsInStep() {
+        var settings = AquariumSettings()
+        settings.labelStyle = .hover
+        #expect(settings.showLabels == false)
+        settings.labelStyle = .always
+        #expect(settings.showLabels == true)
+        settings.showLabels = false
+        #expect(settings.labelStyle == .hover)
+        settings.labelStyle = .never
+        settings.showLabels = false
+        #expect(settings.labelStyle == .never, "writing the same off keeps Never")
+    }
+
+    // MARK: integration aquarium
+
+    @Test("every aquarium key from both lanes round-trips in one file (X1)")
+    func aquariumEveryKeyRoundTrips() throws {
+        var settings = AquariumSettings(enabled: true)
+        settings.swimPace = .calm
+        settings.swimSpeed = 1.3
+        settings.fishScale = 0.8
+        settings.labelStyle = .hover
+        settings.sound = true
+        settings.maxFish = 10
+        settings.keepResidents = false
+        settings.bubbles = 0.4
+        settings.scenery = .light
+        settings.visitors = false
+        let json = try encode(settings)
+        for key in ["swimPace", "swimSpeed", "fishScale", "labelStyle", "sound", "maxFish",
+                    "keepResidents", "bubbles", "scenery", "visitors"] {
+            #expect(json.contains("\"\(key)\""), "\(key) is written")
+        }
+        #expect(try decode(AquariumSettings.self, json) == settings)
+    }
 }

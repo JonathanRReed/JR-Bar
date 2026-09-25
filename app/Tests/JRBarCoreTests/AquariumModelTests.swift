@@ -419,7 +419,7 @@ struct AquariumModelTests {
     @Test("owned decor slots never overlap on their row, at either proof size")
     func decorSlotSpacing() {
         let items: [ShopItem] = [
-            .shipwreck, .amphora, .sunkenStatue, .ruinedColumns, .volcano,
+            .shipwreck, .amphora, .sunkenStatue, .ruinedColumns, .volcano, .alienBeacon,
             .bubbleWall, .driftwood, .anemoneBed, .moonJellyLamp, .coralGarden,
         ]
         // Footprints are fractions of the tank's height; a piece's
@@ -489,5 +489,113 @@ extension AquariumModelTests {
         #expect(!back[0].isResident)
         #expect(back[0].state == .swimming)
         #expect(back[0].lane == swimming[0].lane)
+    }
+}
+
+// MARK: Fish at once
+
+extension AquariumModelTests {
+    private static func fish(_ id: String, _ state: FishState, resident: Bool = false,
+                             updated: Double? = nil, fryOf anchor: String? = nil) -> Fish {
+        var f = Fish(id: id, label: id, providerID: "claude", state: state,
+                     lane: 0.5, speed: 0.1, direction: 1, stateSince: Date(timeIntervalSince1970: 0),
+                     lastUpdate: updated.map { Date(timeIntervalSince1970: $0) })
+        f.isResident = resident
+        if let anchor {
+            f.isFry = true
+            f.anchorID = anchor
+        }
+        return f
+    }
+
+    /// A second after every test fish changed state — no leaver has
+    /// swum off yet.
+    private static let capNow = Date(timeIntervalSince1970: 1)
+
+    @Test("a cap of 0 keeps everyone; under the cap nothing changes")
+    func capOff() {
+        let roster = [Self.fish("a", .swimming), Self.fish("b", .idling)]
+        #expect(AquariumModel.cap(roster, max: 0, now: Self.capNow) == roster)
+        #expect(AquariumModel.cap(roster, max: 6, now: Self.capNow) == roster)
+    }
+
+    @Test("the cap drops residents first, least raised first, then idle, then working — oldest first")
+    func capOrder() {
+        let roster = [
+            Self.fish("work-old", .swimming, updated: 10),
+            Self.fish("work-new", .swimming, updated: 50),
+            Self.fish("idle-old", .idling, updated: 5),
+            Self.fish("idle-new", .idling, updated: 40),
+            Self.fish("res-big", .idling, resident: true),
+            Self.fish("res-small", .idling, resident: true),
+        ]
+        let stages = ["res-big": 2, "res-small": 1]
+        #expect(AquariumModel.cap(roster, max: 5, now: Self.capNow, stages: stages).map(\.id)
+                == ["work-old", "work-new", "idle-old", "idle-new", "res-big"])
+        #expect(AquariumModel.cap(roster, max: 4, now: Self.capNow, stages: stages).map(\.id)
+                == ["work-old", "work-new", "idle-old", "idle-new"])
+        #expect(AquariumModel.cap(roster, max: 3, now: Self.capNow, stages: stages).map(\.id)
+                == ["work-old", "work-new", "idle-new"])
+        #expect(AquariumModel.cap(roster, max: 1, now: Self.capNow, stages: stages).map(\.id) == ["work-new"])
+    }
+
+    @Test("the cap never cuts an asking, sinking or leaving fish, even past the limit")
+    func capKeepsAttention() {
+        let roster = [
+            Self.fish("ask", .surfacing),
+            Self.fish("fail", .sinking),
+            Self.fish("done", .leaving),
+            Self.fish("work", .swimming),
+        ]
+        #expect(AquariumModel.cap(roster, max: 1, now: Self.capNow).map(\.id) == ["ask", "fail", "done"])
+    }
+
+    @Test("fry go with their parent, and don't count toward the cap")
+    func capFry() {
+        let roster = [
+            Self.fish("keep", .swimming, updated: 90),
+            Self.fish("cut", .idling, updated: 1),
+            Self.fish("fry-cut", .swimming, fryOf: "cut"),
+            Self.fish("fry-keep", .swimming, fryOf: "keep"),
+            Self.fish("free-fry", .swimming, fryOf: nil),
+        ]
+        var withFree = roster
+        withFree[4].isFry = true
+        let capped = AquariumModel.cap(withFree, max: 1, now: Self.capNow)
+        #expect(capped.map(\.id) == ["keep", "fry-keep", "free-fry"])
+    }
+
+    @Test("a finished fish that has swum off keeps its row but takes no place")
+    func capSkipsRetiredLeavers() {
+        let roster = [
+            Self.fish("done-1", .leaving),
+            Self.fish("done-2", .leaving),
+            Self.fish("work-old", .swimming, updated: 10),
+            Self.fish("work-new", .swimming, updated: 50),
+            Self.fish("idle", .idling, updated: 5),
+        ]
+        // Still swimming off: the leavers hold their places.
+        #expect(AquariumModel.cap(roster, max: 2, now: Self.capNow).map(\.id) == ["done-1", "done-2"])
+        // Gone past the edge: they stay listed, and the quiet fish come back.
+        let later = Date(timeIntervalSince1970: AquariumModel.leaveDuration + 1)
+        #expect(AquariumModel.cap(roster, max: 2, now: later).map(\.id)
+                == ["done-1", "done-2", "work-old", "work-new"])
+        // As many finished sessions as the cap never empties the tank.
+        #expect(AquariumModel.cap(roster, max: 1, now: later).map(\.id)
+                == ["done-1", "done-2", "work-new"])
+    }
+
+    @Test("the next retirement is the first leaver to clear the edge")
+    func retirementClock() {
+        var late = Self.fish("done-late", .leaving)
+        late.stateSince = Date(timeIntervalSince1970: 3)
+        let roster = [Self.fish("done", .leaving), late, Self.fish("work", .swimming),
+                      Self.fish("fry", .leaving, fryOf: "done")]
+        #expect(AquariumModel.nextRetirement(roster, after: Self.capNow)
+                == Date(timeIntervalSince1970: AquariumModel.leaveDuration))
+        let between = Date(timeIntervalSince1970: AquariumModel.leaveDuration + 1)
+        #expect(AquariumModel.nextRetirement(roster, after: between)
+                == Date(timeIntervalSince1970: 3 + AquariumModel.leaveDuration))
+        #expect(AquariumModel.nextRetirement(roster, after: Date(timeIntervalSince1970: 60)) == nil)
     }
 }

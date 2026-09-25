@@ -100,11 +100,9 @@ extension AquariumView {
         }
     }
 
-    /// The swim settings this tank draws with: the live store's, or a
-    /// fixture's.
-    var swimSettings: AquariumSettings {
-        toy?.store?.state.aquarium ?? fixture?.swimSettings ?? AquariumSettings()
-    }
+    /// The swim settings this tank draws with: the card's own
+    /// (`tankSettings`), from the live store or a fixture.
+    var swimSettings: AquariumSettings { tankSettings }
 
     /// The swim settings as this frame read them — `stepSwim` takes one
     /// read at the top of the frame and everything after uses it.
@@ -610,7 +608,9 @@ extension AquariumView {
             : (golden ? NSColor(srgbRed: 0.98, green: 0.76, blue: 0.22, alpha: 1)
                       : ProviderStyle.style(for: fish.providerID).nsAccent)
         // Depth: deeper lanes wash toward the column's floor colour.
-        let palette = CartoonFish.Palette(accent: base, depth: lane, floor: floorNS)
+        let palette = CartoonFish.Palette(accent: base, depth: lane, floor: floorNS,
+                                          haze: water.style.haze, vivid: water.style.vivid,
+                                          ink: water.style.ink)
 
         // The tail beats on the fish's own clock: faster the faster it
         // really swims, quicker still while its session is busy. A
@@ -695,7 +695,7 @@ extension AquariumView {
             * smooth(clamp01((1.0 - blinkPhase) / 0.025))
         let drowsy = smooth(clamp01((l.sleep - 0.3) / 0.5))
         let blink = dead || reduceMotion ? 0.0 : max(wink, drowsy)
-        let lw = CartoonFish.outlineWidth(length)
+        let lw = CartoonFish.outlineWidth(length, ink: palette.ink)
         let wear = wearables(for: fish, care: care)
         // The barrel roll squashes across the body, through belly-up.
         let across = length * squashY * rollY * l.roll

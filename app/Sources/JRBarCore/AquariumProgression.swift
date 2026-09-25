@@ -221,12 +221,16 @@ public enum AquariumVisitor: String, Codable, CaseIterable, Sendable {
     case diver
     /// Crosses on a quota reset.
     case submarine
+    /// Called by a failed run when the tank has the alien beacon: a
+    /// harmless round alien that bobs by until it's tapped away.
+    case alien
 
     public var displayName: String {
         switch self {
         case .whale: return "whale"
         case .diver: return "diver"
         case .submarine: return "submarine"
+        case .alien: return "alien"
         }
     }
 }
