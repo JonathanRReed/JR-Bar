@@ -152,7 +152,7 @@ struct KeepAwakeUtilityControls: View {
                       subtitle: "While agents run, the screen stays on too — so it never locks mid-run.",
                       path: "keep_display_awake", default: true)
         SettingPicker(settings, "Lid closed",
-                      subtitle: "Needs a charger and an external display, as macOS's own closed-lid mode does.",
+                      subtitle: ClosedLidNote.text(settings.core.state?.power?.closedLid),
                       path: "closed_lid_awake_policy", options: [
                         ("never", "Let it sleep"), ("agents", "Stay awake while agents run"),
                         ("always", "Always stay awake"),
@@ -249,6 +249,25 @@ struct KeepAwakeUtilityControls: View {
     private func refreshHolders() {
         guard holders == nil else { return }
         readHolders = KeepAwakeHolders.read()
+    }
+}
+
+/// What the "Lid closed" row says under its picker, here and in Settings ›
+/// Power: a closed-lid hold rides the privileged sleep helper
+/// (`pmset disablesleep`), not macOS's own closed-lid mode, so it needs no
+/// charger or external display — only the helper, which the monitor
+/// reports on.
+enum ClosedLidNote {
+    static func text(_ lid: CoreClosedLid?) -> String {
+        switch lid?.helperInstalled {
+        case true?:
+            let holding = lid?.holding == true ? " Holding now." : ""
+            return "The sleep helper is installed; closed-lid holds are honoured." + holding
+        case false?:
+            return "Needs the privileged sleep helper, which is not installed. The monitor will offer to install it."
+        default:
+            return "Needs the privileged sleep helper; the monitor reports whether it is installed."
+        }
     }
 }
 
