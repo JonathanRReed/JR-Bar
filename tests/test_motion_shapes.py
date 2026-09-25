@@ -469,3 +469,20 @@ def test_device_direction_and_dot_travel_are_saved_per_device(tmp_path) -> None:
     tolerant = load_settings(target)
     assert tolerant.device_led_direction("dot") == "forward"
     assert tolerant.device_dot_travel_style("dot") == "wipe"
+
+
+def test_two_chosen_gradient_colours_roll_without_a_seam() -> None:
+    """A gradient between two chosen colours goes there and back round the
+    strip: the last LED sits beside the first as gently as any two
+    neighbours, where a straight ramp put B beside A once a lap."""
+    lines = shapes.gradient_wave(COLOR, led_count=8, lap_ms=2200, ends=("#FF2D55", "#5AC8FA"))
+    ring = lines[0].split()[:8]
+    assert ring[0] == "#FF2D55" and ring[4] == "#5AC8FA"
+
+    def gap(left: str, right: str) -> int:
+        return max(abs(a - b) for a, b in zip(shapes._channels(left), shapes._channels(right)))
+
+    gaps = [gap(ring[index], ring[(index + 1) % 8]) for index in range(8)]
+    assert max(gaps) - min(gaps) <= 2, gaps
+    # The hue ramp with no chosen colours is drawn as it always was.
+    assert shapes.gradient_wave(COLOR, led_count=8, lap_ms=2200)[0].split()[0] != COLOR

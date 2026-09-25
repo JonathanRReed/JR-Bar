@@ -216,14 +216,17 @@ def gradient_wave(
 
     The one motion with no dark LED at any instant, so it never reads as a
     flash however fast it is set to run. ``ends`` replaces the hue ramp
-    with a blend between two chosen colours.
+    with a blend between two chosen colours that goes there and back round
+    the strip (A to B to A), so the roll has no seam: a straight A-to-B
+    ramp put B beside A once a lap, and two chosen colours are usually far
+    enough apart for that to show as a hard jump.
     """
     from .presentation_policy import _hue_shifted_color
 
     count = max(1, int(led_count))
     if ends is not None:
         shades = [
-            mix(ends[0], ends[1], index / max(1, count - 1)) for index in range(count)
+            mix(ends[0], ends[1], 1.0 - abs(2.0 * index / count - 1.0)) for index in range(count)
         ]
     else:
         shades = [
