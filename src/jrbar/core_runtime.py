@@ -4574,9 +4574,32 @@ def build_headless_controller_class() -> type:
                 self._core_publish_event(kind, label=name, detail=device_id)
             self._core_prev_devices = devices
             self._core_note_device_inventory(physical, transitions)
+            if (
+                not getattr(self, "_production_last_refresh_admitted", True)
+                and asks.keys() == (previous_asks or {}).keys()
+                and not transitions
+                and not self._core_time_driven_state_live()
+            ):
+                # Admission found nothing changed and no ask or device moved:
+                # the documents would rebuild to what was last sent. The 15 s
+                # heartbeat refresh still publishes whatever time moved.
+                return result
             self._core_publish_state()
             self._core_publish_lights()
             return result
+
+        def _core_time_driven_state_live(self) -> bool:
+            """Whether the documents move with the clock alone right now: a
+            live ask's wait and hold, or an escalation under way. Those keep
+            publishing on every refresh, admitted or not."""
+            if self._core_prev_asks:
+                return True
+            stage = getattr(self, "current_escalation_stage", 0)
+            try:
+                value = stage() if callable(stage) else int(stage or 0)
+            except (TypeError, ValueError):
+                value = 0
+            return bool(value and value > 0)
 
         def record_activity_entries(self, entries) -> None:
             objc.super(JRCoreHeadlessController, self).record_activity_entries(entries)

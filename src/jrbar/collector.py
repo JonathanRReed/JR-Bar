@@ -89,10 +89,13 @@ class LiveAgentMonitor(_LegacyLiveAgentMonitor):
                 > MAX_EXTERNAL_STATUSES_TOTAL
             ):
                 raise ValueError("too many external statuses")
+            previous = self._external_statuses_by_source.get(source_id, ())
             if normalized:
                 self._external_statuses_by_source[source_id] = normalized
             else:
                 self._external_statuses_by_source.pop(source_id, None)
+            if normalized != previous:
+                self.revision += 1
 
     def external_statuses_by_source(self) -> dict[str, tuple[AgentStatus, ...]]:
         with self.lock:

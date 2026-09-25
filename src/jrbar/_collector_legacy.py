@@ -589,6 +589,12 @@ class LiveSessionMemory:
 
     _live_sessions: frozenset[tuple[str, str]] = frozenset()
     _live_sessions_at: float = 0.0
+    #: Counts every change a snapshot could show: an ingested record or
+    #: batch, an acknowledgement folded in, a restore, a new live set. The
+    #: daemon's refresh admission fingerprints this number instead of the
+    #: state, so a hook's change is admitted at once rather than waiting for
+    #: the heartbeat.
+    revision: int = 0
 
     #: Optional callable returning the RequestKeys local triage has
     #: acknowledged (``operator-triage.json`` lives on the controller, not
@@ -634,6 +640,8 @@ class LiveSessionMemory:
         )
         # One rebind of two attributes: readers never need the monitor lock.
         self._live_sessions_at = time.time() if now is None else now
+        if pairs != self._live_sessions:
+            self.revision += 1
         self._live_sessions = pairs
 
     def session_is_live(self, status: AgentStatus) -> bool:
@@ -1296,6 +1304,7 @@ class LiveAgentMonitor(LiveSessionMemory):
                         )
             elif record.event_name in {"Stop", "SessionEnd", "UserPromptSubmit"}:
                 self._pending_permissions_by_key.pop(record.status_key, None)
+            self.revision += 1
         if batch is not None and not ignored:
             self.ingest_batch(batch, clock=clock)
 
@@ -1330,6 +1339,7 @@ class LiveAgentMonitor(LiveSessionMemory):
                 if key in current_keys
             }
             self._latest_state_dirty = True
+            self.revision += 1
         self.maybe_write_latest_state()
 
     def reconcile_refresh_hint(
@@ -1443,6 +1453,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             return
         self.operator_state = updated
         self._latest_state_dirty = True
+        self.revision += 1
 
     def snapshot(self) -> MonitorSnapshot:
         now = _canonical_datetime(self._clock_sampler().wall_epoch)
@@ -1501,6 +1512,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             state_dir=self.latest_state_path.parent,
         )
         self.operator_state = state
+        self.revision += 1
         self._status_overlays_by_work_key = (
             _presentation_overlays_from_document(document)
             if type(document) is dict and document.get("version") == 2
