@@ -158,16 +158,39 @@ def test_refresh_skips_reaping_right_behind_the_worker(headless) -> None:
     assert reaps == []
 
 
-def test_refresh_reaps_when_the_worker_is_stale_or_absent(headless) -> None:
+def test_refresh_kicks_the_worker_when_its_sweep_is_stale_or_absent(headless) -> None:
+    """The sweep forks ``ps``, which took seconds under load, so the run
+    loop never sweeps itself: a stale sweep starts the worker and the
+    refresh carries on."""
+    from jrbar import status_bar_legacy as legacy
+
     controller = _refreshable(headless)
     reaps = []
+    started = []
     controller.reap_dead_agent_processes = lambda: reaps.append(time.monotonic())
-    controller._liveness_worker_sweep_at = time.monotonic() - 10.0
+    controller._liveness_sweep_running = False
+    controller._liveness_worker_sweep_at = time.monotonic() - legacy.LIVENESS_POLL_SECONDS - 1.0
     _tick(controller)
-    assert len(reaps) == 1
-    controller._liveness_worker_sweep_at = None
-    _tick(controller)
-    assert len(reaps) == 2
+    # One interval late is the worker's own timer to answer, not a kick.
+    assert reaps == [] and not controller._liveness_sweep_running
+    controller._liveness_worker_sweep_at = time.monotonic() - legacy.LIVENESS_STALE_SECONDS - 1.0
+    real_thread = legacy.threading.Thread
+    legacy.threading.Thread = lambda target, name, daemon: SimpleNamespace(start=lambda: started.append((name, target)))
+    try:
+        _tick(controller)
+        assert [name for name, _ in started] == ["JRBarLiveness"]
+        assert reaps == [], "the refresh itself never sweeps"
+        # Stamped when the sweep starts, so the next refresh does not kick
+        # a second one while it runs.
+        assert time.monotonic() - controller._liveness_worker_sweep_at < 1.0
+        controller._liveness_sweep_running = False
+        controller._liveness_worker_sweep_at = None
+        _tick(controller)
+        assert len(started) == 2
+    finally:
+        legacy.threading.Thread = real_thread
+    started[0][1]()
+    assert len(reaps) == 1 and not controller._liveness_sweep_running
 
 
 def test_refresh_reads_integration_settings_once_per_change(headless, monkeypatch) -> None:
@@ -244,3 +267,34 @@ def test_refresh_budget(headless) -> None:
     assert builds["state"] == ITERATIONS, "state projection built more than once per refresh"
     assert builds["lights"] == ITERATIONS, "lights projection built more than once per refresh"
     assert p95 < P95_BUDGET_MS, f"refresh p95 {p95:.1f}ms over the {P95_BUDGET_MS:.0f}ms guard"
+
+
+def test_a_failed_settings_save_is_retried_by_the_next_refresh(headless, monkeypatch) -> None:
+    """A Settings toggle replies before its save; when the save fails, the
+    next refresh writes it, once nothing is queued on the writer."""
+    from jrbar import status_bar_legacy as legacy
+
+    controller = _refreshable(headless)
+    saved: list[int] = []
+    failing = [True]
+
+    def flaky(settings):
+        if failing[0]:
+            raise OSError("disk full")
+        saved.append(settings.alert_burst)
+
+    monkeypatch.setattr(legacy, "save_settings", flaky)
+    controller.schedule_event_refresh = lambda: None
+    controller._core_dispatch("set_setting", {"path": "alert_burst", "value": 6})
+    assert controller._core_flush_settings() is False
+    assert controller._core_settings_dirty
+    failing[0] = False
+    writer = controller._persistence_writer
+    monkeypatch.setattr(writer, "snapshot", lambda: SimpleNamespace(pending_count=1, running=False))
+    _tick(controller)
+    assert saved == [], "a write still queued on the writer is the writer's"
+    monkeypatch.setattr(writer, "snapshot", lambda: SimpleNamespace(pending_count=0, running=False))
+    _tick(controller)
+    assert saved == [6] and not controller._core_settings_dirty
+    _tick(controller)
+    assert saved == [6]

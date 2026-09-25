@@ -407,3 +407,17 @@ def test_unsupported_capability_major_remains_visible_but_ineligible__and_1_more
         CapabilityIdentifier("live_agent_events"),
     ) == ()
 
+
+
+def test_the_negotiation_is_computed_once_per_registration_set(monkeypatch) -> None:
+    """Every hook asked for the negotiated sources three times (0.47 ms a
+    call); the answer only changes with the registrations themselves."""
+    first = negotiated_provider_sources()
+    assert negotiated_provider_sources() is first
+    from jrbar import providers
+
+    monkeypatch.setattr(providers, "_PROVIDER_SOURCE_REGISTRATIONS", provider_source_registrations()[:1])
+    narrowed = negotiated_provider_sources()
+    assert narrowed is not first and len(narrowed) < len(first)
+    monkeypatch.undo()
+    assert negotiated_provider_sources() == first

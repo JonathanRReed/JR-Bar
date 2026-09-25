@@ -12,7 +12,7 @@ from . import audit
 from .hook_dedupe import HookEventDeduplicator
 from .ipc import ProviderRefreshHint, send_refresh_hint
 from .origin import annotate_payload_with_origin
-from .private_io import append_private_text
+from .private_io import append_private_text_at
 from .provider_adapters import (
     InertProviderRecord,
     NormalizedProviderRecord,
@@ -144,22 +144,37 @@ def _normalized_hook_record(
     )
 
 
+class AppendedLine:
+    """The exact line a hook appended and ``(device, inode, start, end)``:
+    enough for the monitor that owns the log to take the line without
+    opening the file again."""
+
+    __slots__ = ("at", "line")
+
+    def __init__(self, line: str, at: tuple[int, int, int, int]) -> None:
+        self.line = line
+        self.at = at
+
+
 def write_normalized_hook_record(
     log_path: Path,
     record: NormalizedProviderRecord | InertProviderRecord,
-) -> None:
+) -> AppendedLine | None:
+    """Append one record to the provider's log; returns the line and where
+    it landed, or None when that cannot be said (a compaction rewrote the
+    file, or the write came in pieces)."""
     payload = normalized_provider_record_to_payload(record)
-    append_private_text(
-        log_path.expanduser(),
-        json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
-    )
+    line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
+    at = append_private_text_at(log_path.expanduser(), line)
     # The append is already durable, so a compaction error must not
     # propagate: inside ``run_once`` it would skip token recording and a
     # later drain would append the same event again.
     try:
-        audit.compact_jsonl_file(log_path.expanduser())
+        if audit.compact_jsonl_file(log_path.expanduser()):
+            at = None
     except OSError:
         pass
+    return None if at is None else AppendedLine(line, at)
 
 
 def hook_dedupe_path(log_path: Path) -> Path:
@@ -205,6 +220,8 @@ def process_hook_payload(
     refresh_hint_handler: Callable[[ProviderRefreshHint], object] | None = None,
     logged_at: str | None = None,
     refresh: bool = True,
+    appended_handler: Callable[[ProviderRefreshHint, AppendedLine | None], object] | None = None,
+    deduplicator_for: Callable[[Path], object] | None = None,
 ) -> HookProcessingOutcome:
     """Normalize and persist one payload without owning process stdio.
 
@@ -212,6 +229,11 @@ def process_hook_payload(
     was queued instead of the time it was drained, and ``refresh=False``
     writes it without the refresh hint: it is history for the log, not a
     live turn for the monitor to wake on.
+
+    ``appended_handler`` (the daemon's live ingress) gets the hint with the
+    line just appended, so the monitor can take it without rereading the
+    log; ``deduplicator_for`` hands out the daemon's resident deduplicator
+    for a dedupe file. Both default to the standalone hook's behaviour.
     """
     actual_provider, actual_log_path, line = routed_hook_payload(
         provider,
@@ -226,16 +248,24 @@ def process_hook_payload(
     if hint is None:
         write_normalized_hook_record(actual_log_path, record)
         return HookProcessingOutcome.WRITTEN
-    deduplicator = HookEventDeduplicator(hook_dedupe_path(actual_log_path))
+    dedupe_path = hook_dedupe_path(actual_log_path)
+    deduplicator = (
+        deduplicator_for(dedupe_path)
+        if deduplicator_for is not None
+        else HookEventDeduplicator(dedupe_path)
+    )
+    appended: list[AppendedLine | None] = []
     written = deduplicator.run_once(
         hint.event_token.value,
-        lambda: write_normalized_hook_record(actual_log_path, record),
+        lambda: appended.append(write_normalized_hook_record(actual_log_path, record)),
     )
     if not written:
         return HookProcessingOutcome.DUPLICATE
     if not refresh:
         return HookProcessingOutcome.WRITTEN
-    if refresh_hint_handler is None:
+    if appended_handler is not None:
+        appended_handler(hint, appended[0] if appended else None)
+    elif refresh_hint_handler is None:
         send_refresh_hint(
             hint,
             event_name=_hook_event_name_from_line(line),
@@ -272,6 +302,7 @@ def hook_log_main(provider: str, log_path: Path) -> int:
 
 
 __all__ = [
+    "AppendedLine",
     "HookProcessingOutcome",
     "annotate_hook_line",
     "format_hook_payload",

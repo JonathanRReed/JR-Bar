@@ -22,6 +22,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -141,6 +142,10 @@ class ProcessEntry:
     ppid: int
     started_at_epoch: float | None
     command: str
+    # The controlling terminal (``/dev/ttys003``); None for a process with
+    # none. Read in the same ``ps`` as the rest of the row, so a session's
+    # tab can be found without a second fork per pid.
+    tty: str | None = None
 
     @property
     def basename(self) -> str:
@@ -199,6 +204,11 @@ def _parse_lstart(text: str) -> float | None:
 # runner (tests) bypasses the cache.
 TABLE_CACHE_SECONDS = 10.0
 _table_cache: tuple[float, dict[int, ProcessEntry]] | None = None
+# How soon the table worker may be asked again after a read, and after a
+# read that failed. Under load one ``ps`` took seconds; asking for another
+# while the last answer is still warm would only queue more of them.
+TABLE_RETRY_SECONDS = 2.0
+TABLE_FAILURE_BACKOFF_SECONDS = 10.0
 
 
 def list_processes(runner=subprocess.run, *, fresh: bool = False) -> dict[int, ProcessEntry]:
@@ -206,7 +216,11 @@ def list_processes(runner=subprocess.run, *, fresh: bool = False) -> dict[int, P
 
     ``fresh`` reads past the cache, and refreshes it for everyone: a process
     younger than the cached table -- an agent started a second ago -- is
-    not in it."""
+    not in it.
+
+    This waits on a child process, so it never runs on the daemon's run
+    loop: code there reads ``cached_process_table()`` and asks a
+    ``ProcessTableRefresher`` for a newer one."""
     global _table_cache
     cacheable = runner is subprocess.run
     if cacheable and not fresh and _table_cache is not None:
@@ -219,12 +233,25 @@ def list_processes(runner=subprocess.run, *, fresh: bool = False) -> dict[int, P
     return table
 
 
+def cached_process_table() -> tuple[float, dict[int, ProcessEntry]] | None:
+    """``(monotonic read time, table)`` of the last whole table any caller
+    read, or None before the first. Never forks, whatever its age."""
+    return _table_cache
+
+
+def _tty_path(raw: str) -> str | None:
+    if not raw or raw in ("??", "-"):
+        return None
+    return raw if raw.startswith("/dev/") else f"/dev/{raw}"
+
+
 def _list_processes_uncached(runner) -> dict[int, ProcessEntry]:
     # comm= is the executable path (no arguments), placed last so that a
-    # path with spaces ("Application Support") stays intact.
+    # path with spaces ("Application Support") stays intact. tty= is "??"
+    # for a process without a terminal, so the column is never empty.
     try:
         completed = runner(
-            ["/bin/ps", "-axo", "pid=,ppid=,lstart=,comm="],
+            ["/bin/ps", "-axo", "pid=,ppid=,tty=,lstart=,comm="],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -237,15 +264,16 @@ def _list_processes_uncached(runner) -> dict[int, ProcessEntry]:
         return {}
     table: dict[int, ProcessEntry] = {}
     for line in completed.stdout.splitlines():
-        parts = line.split(None, 2)
-        if len(parts) < 3:
+        parts = line.split(None, 3)
+        if len(parts) < 4:
             continue
         try:
             pid = int(parts[0])
             ppid = int(parts[1])
         except ValueError:
             continue
-        rest = parts[2]
+        tty = _tty_path(parts[2])
+        rest = parts[3]
         # lstart is five whitespace-separated tokens: Wed Sep  9 18:34:49 2026
         tokens = rest.split(None, 5)
         if len(tokens) < 6:
@@ -253,8 +281,86 @@ def _list_processes_uncached(runner) -> dict[int, ProcessEntry]:
         else:
             started = _parse_lstart(" ".join(tokens[:5]))
             command = tokens[5]
-        table[pid] = ProcessEntry(pid, ppid, started, command)
+        table[pid] = ProcessEntry(pid, ppid, started, command, tty)
     return table
+
+
+def _start_daemon_thread(target) -> None:
+    threading.Thread(target=target, name="JRBarProcessTable", daemon=True).start()
+
+
+class ProcessTableRefresher:
+    """Reads the whole process table on a worker thread, one read at a time.
+
+    The daemon's run loop must never wait on ``ps``: under load one fork
+    took seconds, and every Settings toggle queued behind it. Code on the
+    run loop reads ``cached_process_table()`` and calls ``request()`` when
+    that table is missing, stale, or lacks a pid it needs. The read lands
+    in the shared cache and ``on_refreshed`` is told. Requests while a read
+    runs, or within the retry window after one, are dropped; a failed read
+    waits longer before the next.
+    """
+
+    def __init__(
+        self,
+        *,
+        loader=None,
+        start=_start_daemon_thread,
+        clock=time.monotonic,
+        retry_seconds: float = TABLE_RETRY_SECONDS,
+        failure_backoff_seconds: float = TABLE_FAILURE_BACKOFF_SECONDS,
+        on_refreshed=None,
+    ) -> None:
+        self._loader = loader if loader is not None else (lambda: list_processes(fresh=True))
+        self._start = start
+        self._clock = clock
+        self._retry_seconds = retry_seconds
+        self._failure_backoff_seconds = failure_backoff_seconds
+        self._on_refreshed = on_refreshed
+        self._lock = threading.Lock()
+        self._running = False
+        self._not_before: float | None = None
+
+    @property
+    def running(self) -> bool:
+        with self._lock:
+            return self._running
+
+    def request(self) -> bool:
+        """Start a read unless one is running or the last was too recent.
+        True when a read was started."""
+        with self._lock:
+            if self._running:
+                return False
+            now = self._clock()
+            if self._not_before is not None and now < self._not_before:
+                return False
+            self._running = True
+            self._not_before = now + self._retry_seconds
+        try:
+            self._start(self._run)
+        except Exception:
+            with self._lock:
+                self._running = False
+            return False
+        return True
+
+    def _run(self) -> None:
+        table: object = None
+        try:
+            table = self._loader()
+        except Exception:
+            table = None
+        finally:
+            with self._lock:
+                self._running = False
+                if not table:
+                    self._not_before = self._clock() + self._failure_backoff_seconds
+        if table and self._on_refreshed is not None:
+            try:
+                self._on_refreshed()
+            except Exception:
+                pass
 
 
 def process_start_epoch(pid: int, runner=subprocess.run) -> float | None:
@@ -272,37 +378,6 @@ def process_start_epoch(pid: int, runner=subprocess.run) -> float | None:
     if completed.returncode != 0:
         return None
     return _parse_lstart(completed.stdout)
-
-
-def tty_and_start(pid: int, runner=subprocess.run) -> tuple[str | None, float | None]:
-    """``(tty, started_at_epoch)`` for one pid in a single ``ps`` fork.
-
-    The tty alone cannot be cached against pid reuse; the start epoch is
-    the reuse-defeating half of the key (see the module docstring). A
-    dead or unreadable process returns ``(None, None)``.
-    """
-    try:
-        completed = runner(
-            ["/bin/ps", "-o", "tty=,lstart=", "-p", str(pid)],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=PS_TIMEOUT_SECONDS,
-        )
-    except Exception:
-        return None, None
-    if completed.returncode != 0:
-        return None, None
-    tokens = completed.stdout.strip().split()
-    if not tokens:
-        return None, None
-    tty_raw = tokens[0]
-    tty = None
-    if tty_raw and tty_raw not in ("??", "-"):
-        tty = tty_raw if tty_raw.startswith("/dev/") else f"/dev/{tty_raw}"
-    started = _parse_lstart(" ".join(tokens[1:6])) if len(tokens) >= 6 else None
-    return tty, started
 
 
 def pid_exists(pid: int) -> bool:
@@ -710,6 +785,8 @@ __all__ = [
     "DeadAgentProcess",
     "ProcessEntry",
     "ProcessSweeper",
+    "ProcessTableRefresher",
+    "cached_process_table",
     "claude_session_details",
     "claude_session_index",
     "discover_agent_process",

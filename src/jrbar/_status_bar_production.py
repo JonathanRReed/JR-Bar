@@ -709,10 +709,13 @@ else:
             monitor = getattr(self, "monitor", None)
             attention = getattr(self, "current_attention_projection", None)
             values = {
+                # The monitor's revision counts every change a snapshot could
+                # show; without it a hook that only moved the operator state
+                # read as "nothing changed" and waited for the heartbeat.
                 CoreDomain.AGENTS: (
+                    getattr(monitor, "revision", None),
                     getattr(monitor, "statuses_by_key", None),
                     getattr(self, "transcript_watermark", None),
-                    getattr(self, "last_refresh_hint", None),
                 ),
                 CoreDomain.OPERATOR: (
                     getattr(self, "canonical_operator_state", None),
@@ -818,6 +821,9 @@ else:
                 dynamic_display=self._dynamic_display_requires_refresh(),
                 forced=forced,
             )
+            # Whether this attempt ran the refresh; the daemon's tail reads it
+            # to skip rebuilding documents nothing could have changed.
+            self._production_last_refresh_admitted = admission.admitted
             if not admission.admitted:
                 self._performance().record(
                     "refresh_skipped",

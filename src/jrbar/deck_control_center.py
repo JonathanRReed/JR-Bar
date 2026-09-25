@@ -31,16 +31,22 @@ def ensure_deck_board(target) -> DeckSessionBoard:
         return board
 
 
-def refresh_deck_board(target):
+def refresh_deck_board(target, *, statuses=None):
+    """Update the deck's session slots. ``statuses`` is the caller's own
+    list of rows when it has one (the daemon passes the snapshot its state
+    document was built from); otherwise the monitor is asked."""
     board = ensure_deck_board(target)
     if not getattr(target, "_deck_board_ready", False):
         return board.snapshot()
-    monitor = getattr(target, "monitor", None)
-    current = getattr(monitor, "current_statuses_by_key", None)
-    if callable(current):
-        statuses = tuple(current().values())
+    if statuses is not None:
+        statuses = tuple(statuses)
     else:
-        statuses = tuple(getattr(getattr(target, "last_snapshot", None), "statuses", ()))
+        monitor = getattr(target, "monitor", None)
+        current = getattr(monitor, "current_statuses_by_key", None)
+        if callable(current):
+            statuses = tuple(current().values())
+        else:
+            statuses = tuple(getattr(getattr(target, "last_snapshot", None), "statuses", ()))
     from .deck_session_board import session_identity
     from .navigation_policy import NavigationResolutionKind, resolve_navigation
     candidates = getattr(target, "navigation_candidates_by_work_key", {})

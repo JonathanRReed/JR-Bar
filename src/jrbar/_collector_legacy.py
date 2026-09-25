@@ -131,12 +131,14 @@ TRANSCRIPT_FILE_LIST_CACHE_MAX_ENTRIES = 16
 STATUS_RETENTION_SECONDS = 24 * 3600.0
 # latest.json is the restore snapshot and a slow feed: socket clients get
 # every change as it lands, but serve.py's /status.json, doctor and the
-# app's offline fallback read the file. At 1 s the daemon rewrote and
-# fsynced 145 KB about 0.6 times a second while agents worked. A change
-# that lands inside the interval is written by one trailing flush when
-# the interval ends, so the last state of a burst never waits for the
-# next hook event.
-LATEST_STATE_WRITE_INTERVAL_SECONDS = 5.0
+# app's offline fallback read the file. At 5 s the daemon still rewrote
+# 270 KB up to 12.7 times a minute while agents worked (3.4 MB a minute,
+# over macOS's disk-write limit). A change that lands inside the interval
+# is written by one trailing flush when the interval ends, so the last
+# state of a burst never waits for the next hook event; a lifecycle or
+# ask transition (a session starts or ends, an ask opens or resolves) is
+# written at once.
+LATEST_STATE_WRITE_INTERVAL_SECONDS = 30.0
 # Transcript detail is capped before any UI surface (T3 caps at 160 --
 # long tool output in a menu row is noise at best, a leak at worst).
 DETAIL_TEXT_CAP = 160
@@ -589,6 +591,12 @@ class LiveSessionMemory:
 
     _live_sessions: frozenset[tuple[str, str]] = frozenset()
     _live_sessions_at: float = 0.0
+    #: Counts every change a snapshot could show: an ingested record or
+    #: batch, an acknowledgement folded in, a restore, a new live set. The
+    #: daemon's refresh admission fingerprints this number instead of the
+    #: state, so a hook's change is admitted at once rather than waiting for
+    #: the heartbeat.
+    revision: int = 0
 
     #: Optional callable returning the RequestKeys local triage has
     #: acknowledged (``operator-triage.json`` lives on the controller, not
@@ -634,6 +642,8 @@ class LiveSessionMemory:
         )
         # One rebind of two attributes: readers never need the monitor lock.
         self._live_sessions_at = time.time() if now is None else now
+        if pairs != self._live_sessions:
+            self.revision += 1
         self._live_sessions = pairs
 
     def session_is_live(self, status: AgentStatus) -> bool:
@@ -1202,6 +1212,9 @@ class LiveAgentMonitor(LiveSessionMemory):
         self._pending_permissions_by_key: dict[str, set[str]] = {}
         self.restore_health = RestoreHealth.NOT_ATTEMPTED
         self._latest_state_dirty = False
+        # Set by a batch that moved a lifecycle or an ask; cleared by the
+        # write that takes it.
+        self._latest_state_transition = False
         self._latest_state_written_at = 0.0
         self._latest_state_digest: bytes | None = None
         self._latest_state_write_lock = threading.Lock()
@@ -1296,6 +1309,7 @@ class LiveAgentMonitor(LiveSessionMemory):
                         )
             elif record.event_name in {"Stop", "SessionEnd", "UserPromptSubmit"}:
                 self._pending_permissions_by_key.pop(record.status_key, None)
+            self.revision += 1
         if batch is not None and not ignored:
             self.ingest_batch(batch, clock=clock)
 
@@ -1330,6 +1344,11 @@ class LiveAgentMonitor(LiveSessionMemory):
                 if key in current_keys
             }
             self._latest_state_dirty = True
+            if reduced.events:
+                # A session started or ended, an ask opened or resolved:
+                # the restore snapshot takes it now, not at the interval.
+                self._latest_state_transition = True
+            self.revision += 1
         self.maybe_write_latest_state()
 
     def reconcile_refresh_hint(
@@ -1343,17 +1362,7 @@ class LiveAgentMonitor(LiveSessionMemory):
 
         if type(hint) is not ProviderRefreshHint:
             return
-        clock = self._clock_sampler()
-        batches: list[ProviderFactBatch] = []
-        source = next(
-            (
-                registered
-                for registered in negotiated_provider_sources()
-                if registered.source_key == hint.source_key
-                and registered.observation_invocation_allowed
-            ),
-            None,
-        )
+        source = self._hint_source(hint)
         if source is None:
             return
         # Only newly appended bytes (see reconcile_cursors).
@@ -1367,6 +1376,55 @@ class LiveAgentMonitor(LiveSessionMemory):
         )
         if lines is None:
             return
+        self._ingest_hint_lines(hint, source, lines)
+
+    def reconcile_appended_line(
+        self,
+        hint: object,
+        appended: object,
+        *,
+        log_path: Path,
+    ) -> None:
+        """Take the line this process just appended for ``hint`` without
+        reopening the log, when the read cursor stands exactly where the
+        line began; otherwise reread the log as ``reconcile_refresh_hint``
+        does. Either way the lines go through the same parse, ordering and
+        watermark rules."""
+        from .ipc import ProviderRefreshHint
+        from .reconcile_cursors import take_own_append
+
+        if type(hint) is not ProviderRefreshHint:
+            return
+        at = getattr(appended, "at", None)
+        line = getattr(appended, "line", None)
+        source = self._hint_source(hint)
+        if source is None:
+            return
+        if (
+            type(at) is tuple
+            and len(at) == 4
+            and type(line) is str
+            and line.endswith("\n")
+            and take_own_append(self, hint.source_key, at)
+        ):
+            self._ingest_hint_lines(hint, source, line.splitlines())
+            return
+        self.reconcile_refresh_hint(hint, log_path=log_path)
+
+    def _hint_source(self, hint):
+        return next(
+            (
+                registered
+                for registered in negotiated_provider_sources()
+                if registered.source_key == hint.source_key
+                and registered.observation_invocation_allowed
+            ),
+            None,
+        )
+
+    def _ingest_hint_lines(self, hint, source, lines) -> None:
+        clock = self._clock_sampler()
+        batches: list[ProviderFactBatch] = []
         for line in lines:
             normalized = None
             try:
@@ -1443,6 +1501,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             return
         self.operator_state = updated
         self._latest_state_dirty = True
+        self.revision += 1
 
     def snapshot(self) -> MonitorSnapshot:
         now = _canonical_datetime(self._clock_sampler().wall_epoch)
@@ -1501,6 +1560,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             state_dir=self.latest_state_path.parent,
         )
         self.operator_state = state
+        self.revision += 1
         self._status_overlays_by_work_key = (
             _presentation_overlays_from_document(document)
             if type(document) is dict and document.get("version") == 2
@@ -1579,7 +1639,7 @@ class LiveAgentMonitor(LiveSessionMemory):
                 if not self._latest_state_dirty:
                     return
                 elapsed = now_monotonic - self._latest_state_written_at
-                if elapsed < LATEST_STATE_WRITE_INTERVAL_SECONDS:
+                if elapsed < LATEST_STATE_WRITE_INTERVAL_SECONDS and not self._latest_state_transition:
                     # Without this the last change of a burst -- often an
                     # agent's Stop -- sat unwritten until the next hook
                     # event, which can be hours away.
@@ -1608,15 +1668,24 @@ class LiveAgentMonitor(LiveSessionMemory):
                 )
                 digest = hashlib.blake2b(serialized.encode("utf-8"), digest_size=16).digest()
                 # A debounced write of the bytes already on disk is skipped;
-                # the shutdown flush always writes.
+                # the shutdown flush always writes. The directory is not
+                # fsynced: after a crash the restore replays the logs past
+                # whichever version the rename left.
                 if force or digest != self._latest_state_digest:
-                    atomic_private_write(self.latest_state_path, serialized)
+                    atomic_private_write(
+                        self.latest_state_path,
+                        serialized,
+                        durable_directory=False,
+                    )
                     self._latest_state_digest = digest
             except (OSError, ValueError):
+                # The transition flag stands: a failed write retried at
+                # once, not after the interval, or the edge is lost.
                 return
             with self.lock:
                 if self.operator_state == state:
                     self._latest_state_dirty = False
+                    self._latest_state_transition = False
             self._latest_state_written_at = now_monotonic
 
 

@@ -24,6 +24,7 @@ Everything AppKit is imported lazily so importing this module stays inert.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import signal
@@ -76,6 +77,13 @@ EXTRAS_TTL_SECONDS: Final = 30.0
 # own ``SessionEnd`` to land behind its process's exit, short enough that a
 # session that really was killed settles and stops costing a file read.
 UNSETTLED_EXTRAS_SECONDS: Final = 60.0
+# A live session whose pid the last process table has not seen yet (it is
+# younger than the table) is looked up again this soon, or as soon as the
+# table worker brings a newer table, whichever comes first.
+EXTRAS_TABLE_RETRY_SECONDS: Final = 5.0
+# An unchanged widget file is rewritten this often, inside the widget's
+# 90 s freshness window (WidgetSnapshot.freshnessWindow in the app).
+WIDGET_REWRITE_SECONDS: Final = 60.0
 # How long ``answer_ask`` waits on the answer surface's worker before it gives
 # up and says so. A delivery is a few process reads and one posted key; the
 # surface's own budget (answer_local.DELIVERY_BUDGET_SECONDS) is smaller, so
@@ -326,10 +334,73 @@ def _equal_ignoring_volatile(a: Any, b: Any, path: tuple[str, ...], volatile) ->
     return type(a) is type(b) and a == b
 
 
+_VOLATILE_END: Final = object()
+
+
+def _volatile_trie(patterns: tuple[tuple[str, ...], ...]) -> dict:
+    root: dict = {}
+    for pattern in patterns:
+        node = root
+        for segment in pattern:
+            node = node.setdefault(segment, {})
+        node[_VOLATILE_END] = True
+    return root
+
+
+_VOLATILE_TRIES: Final = {kind: _volatile_trie(patterns) for kind, patterns in _VOLATILE_DOC_PATHS.items()}
+
+
+def _trie_children(nodes: tuple[dict, ...], key: str) -> tuple[dict, ...]:
+    children = []
+    for node in nodes:
+        child = node.get(key)
+        if child is not None:
+            children.append(child)
+        star = node.get("*")
+        if star is not None:
+            children.append(star)
+    return tuple(children)
+
+
+def _equal_significant(a: Any, b: Any, nodes: tuple[dict, ...]) -> bool:
+    if not nodes:
+        if not isinstance(a, (dict, list, tuple)):
+            return type(a) is type(b) and a == b
+        # No volatile path runs through this subtree: one comparison in C.
+        # Only when that says "different" does the exact walk run, so a
+        # list against a tuple of the same items still counts as equal.
+        return a == b or _equal_ignoring_volatile(a, b, (), ())
+    if any(_VOLATILE_END in node for node in nodes):
+        return True
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in a.keys() ^ b.keys():
+            if not any(_VOLATILE_END in node for node in _trie_children(nodes, str(key))):
+                return False
+        return all(
+            _equal_significant(a[key], b[key], _trie_children(nodes, str(key)))
+            for key in a.keys() & b.keys()
+        )
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(
+            _equal_significant(x, y, _trie_children(nodes, str(index)))
+            for index, (x, y) in enumerate(zip(a, b))
+        )
+    return type(a) is type(b) and a == b
+
+
 def doc_significant_equal(kind: str, a: Any, b: Any) -> bool:
     """True when two builds of the same document differ only in volatile
-    fields -- the ones that tick without a state change."""
-    return _equal_ignoring_volatile(a, b, (), _VOLATILE_DOC_PATHS.get(kind, ()))
+    fields -- the ones that tick without a state change.
+
+    Only the branches a volatile path runs through are walked in Python;
+    every other subtree is one ``==`` in C (2.2 ms a state document before,
+    about 0.03 ms now). A value compared on its own keeps its type, as
+    before: ``1`` and ``1.0`` differ. Inside a list or mapping that no
+    volatile path runs through, numbers compare by value, so a ``1`` there
+    becoming ``1.0`` (or ``True`` becoming ``1``) with nothing else changed
+    no longer earns a broadcast of an equal value."""
+    trie = _VOLATILE_TRIES.get(kind)
+    return _equal_significant(a, b, (trie,) if trie else ())
 
 
 def screen_bar_anchor(own: float | None, hardware: float | None, *, linked: bool) -> float | None:
@@ -369,26 +440,15 @@ def device_transitions(
 
 
 def settings_from_document(document: dict[str, Any], *, scratch_dir: Path | None = None):
-    """Round a settings dict through the real loader (validation, defaults)."""
-    from . import _settings_legacy as settings_legacy
+    """Round a settings dict through the real loader's rules (validation,
+    defaults, the schema gates), in memory. The JSON round trip hands the
+    loader exactly the values a file on disk would; the temp file this used
+    to write and read back cost a Settings toggle opens, chmods and a
+    virus-scanner pass on the run loop. ``scratch_dir`` is accepted for old
+    callers and no longer written."""
+    from .settings import settings_from_mapping
 
-    scratch = (scratch_dir or default_state_dir()) / "core-tmp"
-    scratch.mkdir(parents=True, exist_ok=True, mode=0o700)
-    try:
-        os.chmod(scratch, 0o700)
-    except OSError:
-        pass
-    target = scratch / f"settings-{os.getpid()}-{threading.get_ident()}.json"
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(document, handle)
-        return settings_legacy.load_settings(target)
-    finally:
-        try:
-            target.unlink()
-        except OSError:
-            pass
+    return settings_from_mapping(json.loads(json.dumps(document)))
 
 
 class HeadlessNotificationClient:
@@ -1110,17 +1170,27 @@ def _cmd_dismiss_session(self, args):
 
 
 def _apply_settings_document(self, document: dict[str, Any], *, touched: list[str]) -> int:
-    legacy = self._core_legacy()
+    """Validate, take and publish a new settings document, then reply.
+
+    The reply no longer waits on the disk or on a refresh: the settings
+    document goes out as soon as ``self.settings`` is set, the save goes to
+    the persistence writer (coalesced, flushed at quit), and the refresh
+    that applies the change runs right after the reply."""
     try:
         candidate = settings_from_document(document)
     except Exception as error:
         raise CommandError("invalid_value", f"settings did not validate: {error}") from error
     self.settings = candidate
-    try:
-        legacy.save_settings(self.settings)
-    except Exception as error:
-        self.settings = legacy.load_settings()
-        raise CommandError("refused", f"could not save settings: {error}") from error
+    save_soon = getattr(self, "_core_save_settings_soon", None)
+    if callable(save_soon):
+        save_soon()
+    else:
+        legacy = self._core_legacy()
+        try:
+            legacy.save_settings(self.settings)
+        except Exception as error:
+            self.settings = legacy.load_settings()
+            raise CommandError("refused", f"could not save settings: {error}") from error
     self._core_after_settings_change(touched)
     return self._core_settings_generation
 
@@ -3961,6 +4031,14 @@ def _cmd_deck_set_settings(self, args):
     }
 
 
+def _freeze_launch_heap() -> None:
+    """Everything alive after launch lives as long as the daemon, and a full
+    collection walked all of it (about 100k objects, 11 to 14 ms with every
+    thread stopped). Frozen, later passes skip it."""
+    gc.collect()
+    gc.freeze()
+
+
 # --- the headless controller ---------------------------------------------------
 
 
@@ -4031,11 +4109,23 @@ def build_headless_controller_class() -> type:
             self._core_prev_asks: dict[str, Any] | None = None
             self._core_prev_devices: dict[str, bool] | None = None
             self._core_extras: dict[str, tuple[float, SessionExtras]] = {}
+            # Rows whose last lookup found a live pid the process table had
+            # not seen yet; the table worker's next read expires them.
+            self._core_extras_awaiting_table: set[str] = set()
             # Keyed by (pid, process start epoch), not pid alone: a reused
             # pid must not inherit the previous owner's terminal. Entries
-            # die with the process; the dicts are pruned when they grow.
-            self._core_tty_by_pid: dict[tuple[int, float | None], str | None] = {}
+            # die with the process; the dict is pruned when it grows.
             self._core_terminal_by_pid: dict[tuple[int, float | None], dict[str, Any] | None] = {}
+            # Reads the process table off the run loop (never a ``ps`` here).
+            self._core_process_table = None
+            # Names a run-loop stall while it happens (jrbar.run_loop_watchdog).
+            self._core_watchdog = None
+            # A settings change the persistence writer has not written yet.
+            self._core_settings_dirty = False
+            # The widget file's last (counts and tiles, wall time) written.
+            self._core_widget_written: tuple[Any, float] | None = None
+            self._core_settings_save_lock = threading.Lock()
+            self._core_command_in_flight: str | None = None
             self._core_started_at = time.time()
             self._core_pending_drainer = None
             self._core_last_clear_batch = None
@@ -4115,6 +4205,12 @@ def build_headless_controller_class() -> type:
             # answers, so the document falls back to the inspected values.
             self._deck_active_layer: int | None = None
             self._deck_active_profile: int | None = None
+            cls = JRCoreHeadlessController
+            if not cls.__dict__.get("_core_instance_names_declared", False):
+                from .controller_attributes import declare_instance_attributes
+
+                declare_instance_attributes(cls, self)
+                cls._core_instance_names_declared = True
             return self
 
         # -- launch (the non-hostile half of the production launch) ---------
@@ -4178,6 +4274,7 @@ def build_headless_controller_class() -> type:
             self.virtual_status_device.hide()
             self._core_pending_drainer.start()
             self._core_housekeeping_timer = _schedule_timer(HOUSEKEEPING_SECONDS, self, "coreHousekeepingTick:", True)
+            self._core_start_watchdog()
             if os.environ.get("JRBAR_SUPERVISED") == "1":
                 self._core_supervision_timer = _schedule_timer(SUPERVISION_SECONDS, self, "coreSupervisionTick:", True)
             _usage_history_warm_later(self)
@@ -4188,6 +4285,34 @@ def build_headless_controller_class() -> type:
             # first state no longer queues behind the pad, the installed
             # agents, the remote peers or a sweep of the logs.
             _schedule_timer(0.0, self, "coreLaunchDeferred:", False)
+
+        def _core_start_watchdog(self) -> None:
+            from .run_loop_watchdog import RunLoopWatchdog
+
+            def post() -> None:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_("coreWatchdogPong:", None, False)
+
+            def record(milliseconds: float) -> None:
+                self._performance().record("run_loop_stall", milliseconds, main_thread=False)
+
+            try:
+                watchdog = RunLoopWatchdog(
+                    post=post,
+                    log=legacy.log_status_bar,
+                    in_flight=lambda: self._core_command_in_flight,
+                    record=record,
+                )
+                watchdog.start()
+            except Exception as exc:
+                legacy.log_status_bar(f"core: run loop watchdog failed to start: {exc.__class__.__name__}")
+                return
+            self._core_watchdog = watchdog
+
+        @objc.IBAction
+        def coreWatchdogPong_(self, _payload) -> None:
+            watchdog = self._core_watchdog
+            if watchdog is not None:
+                watchdog.pong()
 
         def coreLaunchDeferred_(self, _timer) -> None:
             if getattr(self, "_runtime_termination_started", False) or getattr(self, "_core", None) is None:
@@ -4229,6 +4354,10 @@ def build_headless_controller_class() -> type:
                     step()
                 except Exception as exc:
                     legacy.log_status_bar(f"core: deferred launch step {label} failed: {exc}")
+            try:
+                _freeze_launch_heap()
+            except Exception as exc:
+                legacy.log_status_bar(f"core: deferred launch step gc freeze failed: {exc}")
             finished = time.monotonic()
             launch_started = getattr(self, "_core_launch_started", started)
             ready_at = getattr(self, "_core_ready_at", started)
@@ -4251,6 +4380,10 @@ def build_headless_controller_class() -> type:
         def _core_quit_flush(self) -> None:
             """The daemon's last words: the usage sample buffer to disk,
             then every mounted strip off."""
+            # The persistence writer has drained by now; a toggle whose
+            # write failed or never got queued is written here.
+            if self._core_settings_dirty:
+                self._core_flush_settings()
             service = getattr(self, "_core_usage_history_service", None)
             if service is not None:
                 service.close()
@@ -4398,6 +4531,10 @@ def build_headless_controller_class() -> type:
         def refresh_(self, sender):
             previous_asks = self._core_prev_asks
             previous_devices = self._core_prev_devices
+            if self._core_settings_dirty and not self._core_settings_write_queued():
+                # The last settings write failed: the retry belongs on
+                # the writer too, not as an fsync on the run loop.
+                self._core_save_settings_soon()
             # Forget a departed strip BEFORE the legacy refresh plans the
             # Dot's next write: the disconnecting refresh itself would
             # otherwise still submit the ghost program it is reacting to.
@@ -4456,9 +4593,32 @@ def build_headless_controller_class() -> type:
                 self._core_publish_event(kind, label=name, detail=device_id)
             self._core_prev_devices = devices
             self._core_note_device_inventory(physical, transitions)
+            if (
+                not getattr(self, "_production_last_refresh_admitted", True)
+                and asks.keys() == (previous_asks or {}).keys()
+                and not transitions
+                and not self._core_time_driven_state_live()
+            ):
+                # Admission found nothing changed and no ask or device moved:
+                # the documents would rebuild to what was last sent. The 15 s
+                # heartbeat refresh still publishes whatever time moved.
+                return result
             self._core_publish_state()
             self._core_publish_lights()
             return result
+
+        def _core_time_driven_state_live(self) -> bool:
+            """Whether the documents move with the clock alone right now: a
+            live ask's wait and hold, or an escalation under way. Those keep
+            publishing on every refresh, admitted or not."""
+            if self._core_prev_asks:
+                return True
+            stage = getattr(self, "current_escalation_stage", 0)
+            try:
+                value = stage() if callable(stage) else int(stage or 0)
+            except (TypeError, ValueError):
+                value = 0
+            return bool(value and value > 0)
 
         def record_activity_entries(self, entries) -> None:
             objc.super(JRCoreHeadlessController, self).record_activity_entries(entries)
@@ -5692,6 +5852,13 @@ def build_headless_controller_class() -> type:
             return executor
 
         def _core_deck_statuses(self) -> tuple:
+            """The sessions the deck keys map onto: the last refresh's
+            snapshot, live rows then stale ones -- the same rows the state
+            document was just built from. Asking the monitor instead rebuilt
+            a whole second snapshot inside every state build."""
+            snapshot = getattr(self, "last_snapshot", None)
+            if snapshot is not None:
+                return (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ()))
             monitor = getattr(self, "monitor", None)
             current = getattr(monitor, "current_statuses_by_key", None)
             if callable(current):
@@ -5699,7 +5866,7 @@ def build_headless_controller_class() -> type:
                     return tuple(current().values())
                 except Exception:
                     pass
-            return tuple(getattr(getattr(self, "last_snapshot", None), "statuses", ()) or ())
+            return ()
 
         def _core_deck_status_for_identity(self, identity: str):
             from .deck_session_board import session_identity
@@ -5951,8 +6118,9 @@ def build_headless_controller_class() -> type:
             from .deck_control_center import refresh_deck_board
             from .deck_session_board import session_identity
 
+            deck_statuses = self._core_deck_statuses()
             try:
-                snapshot = refresh_deck_board(self)
+                snapshot = refresh_deck_board(self, statuses=deck_statuses)
             except Exception as exc:
                 legacy.log_status_bar(f"core: deck board unavailable: {exc.__class__.__name__}")
                 snapshot = self._core_deck_board().snapshot()
@@ -5994,7 +6162,7 @@ def build_headless_controller_class() -> type:
                 )
             labels = {row["id"]: row.get("label") for row in sessions if isinstance(row, dict) and row.get("id")}
             statuses = {}
-            for status in self._core_deck_statuses():
+            for status in deck_statuses:
                 identity = session_identity(status)
                 if identity is not None:
                     statuses[identity] = status
@@ -6157,6 +6325,10 @@ def build_headless_controller_class() -> type:
             )
 
         def _core_stop_server(self) -> None:
+            watchdog = getattr(self, "_core_watchdog", None)
+            self._core_watchdog = None
+            if watchdog is not None:
+                watchdog.stop()
             drainer = self._core_pending_drainer
             self._core_pending_drainer = None
             if drainer is not None:
@@ -6176,6 +6348,7 @@ def build_headless_controller_class() -> type:
                 setattr(self, name, None)
                 if timer is not None:
                     timer.invalidate()
+            self.stop_resident_hook_deduplicators()
             server = self._core
             self._core = None
             if server is not None:
@@ -6192,7 +6365,8 @@ def build_headless_controller_class() -> type:
 
             hints = getattr(self, "_core_pending_hints", None)
             processor = AppOwnedHookIngressProcessor(
-                hints.note if hints is not None else self.handle_hook_event_message
+                hints.note if hints is not None else self.handle_hook_event_message,
+                deduplicator_for=self.resident_hook_deduplicators(),
             )
             return processor(request)
 
@@ -6211,6 +6385,7 @@ def build_headless_controller_class() -> type:
         @objc.IBAction
         def runCoreCommand_(self, box):
             spec = _MAIN_THREAD_COMMANDS.get(box.name)
+            self._core_command_in_flight = box.name
             try:
                 if spec is None:
                     raise CommandError("unknown_command", f"no such command: {box.name}")
@@ -6220,6 +6395,8 @@ def build_headless_controller_class() -> type:
             except Exception as error:
                 legacy.log_status_bar(f"core: command {box.name} failed: {traceback.format_exc(limit=6)}")
                 box.error = CommandError("internal", f"{error.__class__.__name__}: {error}"[:500])
+            finally:
+                self._core_command_in_flight = None
 
         @objc.IBAction
         def runCoreCallable_(self, box):
@@ -6280,11 +6457,40 @@ def build_headless_controller_class() -> type:
         def _core_publish_widget_snapshot(self, document) -> None:
             """The desktop glance file: a redacted counts-and-tiles view a
             WidgetKit extension reads without holding the socket. Best
-            effort — a disk hiccup must not stall the state pipeline."""
+            effort — a disk hiccup must not stall the state pipeline.
+
+            Projected here, written by the persistence thread (the run loop
+            never waits on the disk), and only when the counts or tiles
+            changed or the last write is near the widget's 90 s freshness
+            window."""
             try:
-                from .widget_snapshot import write_widget_snapshot
-                write_widget_snapshot(
-                    document, default_state_dir(), now=time.time())
+                from .persistence_writer import PersistenceDisposition
+                from .widget_snapshot import widget_snapshot, write_widget_snapshot_payload
+
+                now = time.time()
+                snapshot = widget_snapshot(document, now=now)
+                content = (snapshot["counts"], snapshot["entries"])
+                last = self._core_widget_written
+                if last is not None and last[0] == content and now - last[1] < WIDGET_REWRITE_SECONDS:
+                    return
+                self._core_widget_written = (content, now)
+                payload = json.dumps(snapshot, separators=(",", ":"))
+                state_dir = default_state_dir()
+
+                def write() -> None:
+                    write_widget_snapshot_payload(payload, state_dir)
+
+                writer = getattr(self, "_persistence_writer", None)
+                disposition = (
+                    writer.submit("widget-snapshot", write, replace_pending=True)
+                    if writer is not None
+                    else None
+                )
+                if disposition is None or disposition in (
+                    PersistenceDisposition.REFUSED_FULL,
+                    PersistenceDisposition.REFUSED_CLOSED,
+                ):
+                    write()
             except Exception:
                 legacy.log_status_bar(
                     "core: widget snapshot write failed: "
@@ -6397,7 +6603,66 @@ def build_headless_controller_class() -> type:
                     self.virtual_status_device.hide()
             except Exception as exc:
                 legacy.log_status_bar(f"core: settings side effect failed: {exc}")
-            self.refresh_(None)
+            # After the reply, not before it: a toggle's answer must not wait
+            # on a whole refresh. A burst of toggles coalesces into one.
+            self.schedule_event_refresh()
+
+        def _core_save_settings_soon(self) -> None:
+            """Save the settings on the persistence writer, coalesced: the
+            reply does not wait on two fsyncs, and a burst of toggles writes
+            once. The write takes the settings as they are when it runs, so
+            it never lands an older document over a newer one."""
+            from .persistence_writer import PersistenceDisposition
+
+            self._core_settings_dirty = True
+            writer = getattr(self, "_persistence_writer", None)
+            disposition = None
+            if writer is not None:
+                try:
+                    disposition = writer.submit(
+                        "core-settings",
+                        self._core_flush_settings,
+                        replace_pending=True,
+                    )
+                except Exception:
+                    disposition = None
+            if disposition is None or disposition in (
+                PersistenceDisposition.REFUSED_FULL,
+                PersistenceDisposition.REFUSED_CLOSED,
+            ):
+                self._core_flush_settings()
+
+        def _core_settings_write_queued(self) -> bool:
+            writer = getattr(self, "_persistence_writer", None)
+            try:
+                snapshot = writer.snapshot() if writer is not None else None
+            except Exception:
+                return False
+            return bool(snapshot is not None and (snapshot.pending_count or snapshot.running))
+
+        def _core_flush_settings(self) -> bool:
+            """Write the settings if a change is waiting; True when nothing
+            is left unsaved. Runs on the persistence writer, at quit, and on
+            the next refresh after a failed write."""
+            with self._core_settings_save_lock:
+                for _ in range(3):
+                    if not self._core_settings_dirty:
+                        return True
+                    self._core_settings_dirty = False
+                    current = self.settings
+                    try:
+                        legacy.save_settings(current)
+                    except Exception as exc:
+                        self._core_settings_dirty = True
+                        legacy.log_status_bar(
+                            f"core: settings save failed, retrying on the next refresh: "
+                            f"{exc.__class__.__name__}: {exc}"
+                        )
+                        return False
+                    if self.settings is not current:
+                        # A newer document arrived while this one was written.
+                        self._core_settings_dirty = True
+                return not self._core_settings_dirty
 
         # -- facts -------------------------------------------------------------
 
@@ -6454,14 +6719,58 @@ def build_headless_controller_class() -> type:
                 and not self._core_extras_unsettled(cached[1], status)
             ):
                 return cached[1]
-            extras = self._core_lookup_extras(status)
+            extras, table_has_it = self._core_lookup_extras_from_table(status)
             if len(self._core_extras) > 256:
                 # Session ids never repeat, so the map would grow for the
                 # daemon's uptime; a clear is cheaper than an eviction
                 # policy for a cache this cheap to refill.
                 self._core_extras.clear()
-            self._core_extras[status.agent_id] = (time.monotonic(), extras)
+                self._core_extras_awaiting_table.clear()
+            stamp = time.monotonic()
+            if table_has_it:
+                self._core_extras_awaiting_table.discard(status.agent_id)
+            else:
+                # Its terminal and tty are not known yet: look again after
+                # the table worker's next read, or in a few seconds at most.
+                stamp -= EXTRAS_TTL_SECONDS - EXTRAS_TABLE_RETRY_SECONDS
+                self._core_extras_awaiting_table.add(status.agent_id)
+            self._core_extras[status.agent_id] = (stamp, extras)
             return extras
+
+        def _core_process_table_worker(self):
+            from .process_registry import ProcessTableRefresher
+
+            worker = getattr(self, "_core_process_table", None)
+            if worker is None:
+                worker = ProcessTableRefresher(on_refreshed=self._core_process_table_refreshed)
+                self._core_process_table = worker
+            return worker
+
+        def _core_process_table_refreshed(self) -> None:
+            # On the table worker's thread: hand the news to the run loop.
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "coreProcessTableRefreshed:", None, False
+                )
+            except Exception:
+                pass
+
+        @objc.IBAction
+        def coreProcessTableRefreshed_(self, _payload) -> None:
+            """A newer process table landed: rows that were waiting for their
+            pid in it are looked up again on the next state build."""
+            waiting = self._core_extras_awaiting_table
+            if not waiting:
+                return
+            expired = False
+            for agent_id in tuple(waiting):
+                cached = self._core_extras.get(agent_id)
+                if cached is not None:
+                    self._core_extras[agent_id] = (float("-inf"), cached[1])
+                    expired = True
+            waiting.clear()
+            if expired:
+                self._core_publish_state()
 
         @staticmethod
         def _core_extras_unsettled(extras: SessionExtras, status) -> bool:
@@ -6486,7 +6795,12 @@ def build_headless_controller_class() -> type:
             stamp = updated_at.timestamp() if hasattr(updated_at, "timestamp") else None
             return stamp is not None and time.time() - stamp < UNSETTLED_EXTRAS_SECONDS
 
-        def _core_lookup_extras(self, status) -> SessionExtras:
+        def _core_lookup_extras_from_table(self, status) -> tuple[SessionExtras, bool]:
+            """``(extras, settled)``. Reads one registry record and the
+            last process table; never forks ``ps``, because this runs on the
+            run loop inside every state build. ``settled`` is False when the
+            session's process is alive but the table has not seen it yet:
+            the table worker has been asked for a newer one."""
             from .process_registry import SHARED_HOST_PROVIDERS, load_record, pid_exists
 
             pid = None
@@ -6531,14 +6845,12 @@ def build_headless_controller_class() -> type:
             origin_label = getattr(status, "origin", None)
             origin = origin_document(origin_label if isinstance(origin_label, str) else None)
             terminal = None
+            settled = True
             if pid is not None:
-                terminal = dict(self._core_terminal_for_pid(pid) or {})
-                tty = self._core_tty_for_pid(pid)
-                if tty:
-                    terminal["tty"] = tty
-                if not terminal:
-                    terminal = None
-            return SessionExtras(
+                terminal, settled = self._core_terminal_for_pid(
+                    pid, started_at_epoch=getattr(record, "started_at_epoch", None)
+                )
+            extras = SessionExtras(
                 pid=pid,
                 origin=origin,
                 terminal=terminal,
@@ -6547,6 +6859,7 @@ def build_headless_controller_class() -> type:
                 name=name,
                 provider_ended=provider_ended,
             )
+            return extras, settled
 
         def _core_session_title(self, provider: str, session_id: str, pid: int | None, cwd: str | None):
             """(name, cwd) from the provider's own session record: Claude's
@@ -6570,53 +6883,60 @@ def build_headless_controller_class() -> type:
                 name = None
             return name, cwd
 
-        def _core_tty_for_pid(self, pid: int) -> str | None:
-            from .process_registry import tty_and_start
+        def _core_terminal_for_pid(
+            self, pid: int, *, started_at_epoch: float | None = None
+        ) -> tuple[dict[str, Any] | None, bool]:
+            """``(terminal, settled)`` for a live pid, from the last process
+            table and never a fork: the terminal app the process runs under
+            and its tty, both from the pid's own row and its ancestors.
 
-            tty, started = tty_and_start(pid)
-            if started is None:
-                # No start time means the process is already gone or
-                # unreadable; nothing safe to cache, and a reused pid
-                # could inherit it.
-                return tty
-            key = (pid, started)
-            if key in self._core_tty_by_pid:
-                return self._core_tty_by_pid[key]
-            if len(self._core_tty_by_pid) > 256:
-                self._core_tty_by_pid.clear()
-            self._core_tty_by_pid[key] = tty
-            return tty
+            ``settled`` is False when there is no table yet, or the process
+            is younger than the table (its pid is missing, or the row is an
+            earlier owner of a reused pid); the table worker is asked for a
+            newer one and the caller looks again once it lands."""
+            from .process_registry import START_TOLERANCE_SECONDS, cached_process_table
 
-        def _core_terminal_for_pid(self, pid: int) -> dict[str, Any] | None:
-            from .process_registry import list_processes
-
-            terminal = None
-            started = None
+            cached = cached_process_table()
+            table = cached[1] if cached is not None else None
+            entry = table.get(pid) if table else None
+            if (
+                entry is not None
+                and started_at_epoch is not None
+                and entry.started_at_epoch is not None
+                and abs(entry.started_at_epoch - started_at_epoch) > START_TOLERANCE_SECONDS
+            ):
+                entry = None
+            if entry is None:
+                try:
+                    self._core_process_table_worker().request()
+                except Exception:
+                    pass
+                return None, False
+            key = (pid, entry.started_at_epoch)
+            if key in self._core_terminal_by_pid:
+                return self._core_terminal_by_pid[key], True
+            terminal: dict[str, Any] = {}
             try:
-                table = list_processes()
-                entry = table.get(pid)
-                if entry is None:
-                    return None
-                started = entry.started_at_epoch
-                key = (pid, started)
-                if key in self._core_terminal_by_pid:
-                    return self._core_terminal_by_pid[key]
                 current = pid
                 for _ in range(12):
-                    entry = table.get(current)
-                    if entry is None or current <= 1:
+                    row = table.get(current)
+                    if row is None or current <= 1:
                         break
-                    match = terminal_from_command(entry.command)
+                    match = terminal_from_command(row.command)
                     if match is not None:
                         terminal = {"app": match[0], "bundle_id": match[1]}
                         break
-                    current = entry.ppid
+                    current = row.ppid
             except Exception:
-                return None
+                terminal = {}
+            tty = getattr(entry, "tty", None)
+            if tty:
+                terminal["tty"] = tty
+            result = terminal or None
             if len(self._core_terminal_by_pid) > 256:
                 self._core_terminal_by_pid.clear()
-            self._core_terminal_by_pid[key] = terminal
-            return terminal
+            self._core_terminal_by_pid[key] = result
+            return result, True
 
         def _core_device_facts(self) -> tuple[DeviceFacts, ...]:
             from ._led_status_legacy import led_count_for_target
@@ -7446,13 +7766,13 @@ def build_headless_controller_class() -> type:
             }
 
         def _core_doctor_document(self) -> dict[str, Any]:
-            from .doctor import collect_diagnostics
+            from .doctor import collect_diagnostics, daemon_probes
             from .install import hook_shim_path
             from .memory_probe import memory_report
 
             checks: list[dict[str, Any]] = []
             try:
-                result = collect_diagnostics()
+                result = collect_diagnostics(probes=daemon_probes())
                 for finding in result.findings:
                     healthy = finding.code.value in _HEALTHY_DIAGNOSTIC_CODES
                     if finding.check.value in _APP_OWNED_DIAGNOSTICS:
@@ -7589,6 +7909,12 @@ def build_headless_controller_class() -> type:
                 },
             }
 
+    # Attribute reads on this NSObject subclass walk four classes and the
+    # Objective-C runtime before the instance answers; declared names end
+    # the walk at the first class (jrbar.controller_attributes).
+    from .controller_attributes import DEFAULTS, declare
+
+    declare(JRCoreHeadlessController, DEFAULTS)
     _CLASS_CACHE[base] = JRCoreHeadlessController
     return JRCoreHeadlessController
 

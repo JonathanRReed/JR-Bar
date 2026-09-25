@@ -109,7 +109,7 @@ protocol 1. Timestamps are Unix epoch seconds.
  "escalation":{"stage":"menu_bar","since":1788982800.0},
  "health":{"hooks":{"claude":"ok","codex":"stale","pi":"missing"},
            "detected":{"claude":true,"codex":true,"pi":false},
-           "sources":{"claude":{"fresh":true,"heard_age_seconds":1.4}},
+           "sources":{"claude":{"fresh":true,"heard_age_seconds":1.4,"heard_at":1788982798.6}},
            "intake":{"hook_state":"configured","source_health":"partial","silence_seconds":1.4}},
  "peers":[],
  "unseen_completions":["gemini:session:…"],
@@ -368,6 +368,16 @@ Vocabulary:
   only when the window's percentage was never reported at all or the
   sample buffer is absent. Without a known reset a window heading for
   100 % is `ahead`.
+  `exhausts_at` (here and in `windows[].forecast`) is rounded to the
+  minute (additive precision note, 2026-09-25): the line through the
+  samples moves it with every build, so it changes at most once a minute
+  instead of in every frame. An exhausted window's `exhausts_at` is the
+  build's `now`, rounded the same way.
+- `health.sources.<provider>.heard_at` (additive, 2026-09-25) is the epoch
+  of the last event the daemon accepted from that provider, or null when
+  it never heard one: the moment itself, so a client computes the age on
+  its own clock instead of reading `heard_age_seconds`, which ticks in
+  every frame. `heard_age_seconds` stays, with the same meaning, for now.
 - `focus` is the quiet state in the words a client reads: `mode` is the
   active quiet mode (`mute`, `dim`, `pause`, `asks_only`, `dark`) or the
   literal `off` -- never null -- while nothing quiet is in effect.
@@ -1019,7 +1029,7 @@ the main thread). Unknown args are ignored.
 | `snooze` | session or `all`, seconds, scope (`family`, the default, or `run`) | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until, scope: "family"}`. `scope: "run"` ("Quiet this run") quiets that one row instead -- a main session or a single worker, on its exact work key (`snooze_scope: "run"` in `mailbox-preferences.json`), for exactly `seconds` (a week at most) -- so quieting a sub-agent never silences the session that spawned it, nor its siblings, and the family's shelf stays. It needs a named session (`all` is `invalid_args`) whose row has a work key (else `unsupported`); `seconds: 0` lifts it. `{sessions: [id], until, scope: "run"}`, `until` being whatever now quiets the row (its own deadline, or the family snooze already in force on that key, which a run snooze never replaces since that would wake the rest of the family; null when nothing does). Either way a live ask still breaks through, and the row's `snoozed_until` is the later of its family's deadline and its own. A family unsnooze of a named session (or `all`) also lifts that row's own run snooze, so Unsnooze always clears what the row shows. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
-| `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. A read-only key (`cloud_ingest_token_path`) replies `read_only`. |
+| `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. A read-only key (`cloud_ingest_token_path`) replies `read_only`. The reply comes first: the new `settings` document is out before it, the file is written by the persistence writer right after (a burst writes once; a failed write is retried on the next refresh and at quit), and the refresh runs after the reply, so the `state` and `lights` that show the change follow it. |
 | `reset_settings` | paths[] | Each path back to `AgentMonitorSettings()`'s default. `{generation, reset}`. |
 | `set_brightness` | device or `all`, value 0..1 | `set_device_brightness` (turns auto-brightness off, as the slider does). |
 | `set_device_display` | device, mode | `agent`, `battery`, `studio`, `quota_runway`. |

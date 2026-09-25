@@ -1385,6 +1385,11 @@ CALENDAR_WATCH_RETRY_SECONDS = 300.0
 STATUS_BAR_REFRESH_SECONDS = 15.0
 # How often the app checks that live sessions still have a process.
 LIVENESS_POLL_SECONDS = 5.0
+# The live ingress and the spool drainer create the resident deduplicators
+# on first use, from different threads.
+_RESIDENT_DEDUPE_LOCK = threading.Lock()
+# How old the worker's last sweep may be before a refresh kicks it.
+LIVENESS_STALE_SECONDS = 2 * LIVENESS_POLL_SECONDS
 # The second Mac's own, much slower cadence. A peer fetch is bounded
 # subprocess I/O (up to eight seconds for eight peers), so it never rides
 # the UI tick -- it gets a minute timer and a worker thread.
@@ -3053,12 +3058,14 @@ class StatusBarController(NSObject):
         try:
             self.ingest_transcript_fallback()
             _t_transcripts = time.monotonic()
-            # The worker already sweeps every LIVENESS_POLL_SECONDS; a tick
-            # that lands right behind it would fork a second ``ps`` for the
-            # same answer.
+            # The sweep reads the process table (a ``ps`` fork, seconds under
+            # load), so it runs only on the liveness worker, every
+            # LIVENESS_POLL_SECONDS. A tick that finds the worker's last
+            # sweep more than two intervals old kicks it and carries on with
+            # what the monitor already knows.
             last_sweep = self._liveness_worker_sweep_at
-            if last_sweep is None or time.monotonic() - last_sweep >= LIVENESS_POLL_SECONDS:
-                self.reap_dead_agent_processes()
+            if last_sweep is None or time.monotonic() - last_sweep >= LIVENESS_STALE_SECONDS:
+                self.pollLiveness_(None)
             _t_liveness = time.monotonic()
             try:
                 from .integration_settings import load_integration_settings
@@ -7270,6 +7277,7 @@ class StatusBarController(NSObject):
             # Persist only after that tail has reached the canonical monitor.
             monitor.write_latest_state()
         self.stop_event_server()
+        self.stop_resident_hook_deduplicators()
         self.closed_lid_awake.release()
         self.keep_awake.release()
         with self._capacity_history_lock:
@@ -8931,10 +8939,35 @@ class StatusBarController(NSObject):
                 f"hook_ingress shutdown_timeout sequence={receipt.sequence}"
             )
 
+    def resident_hook_deduplicators(self):
+        """This process's deduplicators, one per dedupe file, shared by the
+        live ingress and the spool drainer (jrbar.hook_dedupe)."""
+        from .hook_dedupe import ResidentDeduplicators
+
+        with _RESIDENT_DEDUPE_LOCK:
+            held = getattr(self, "_resident_hook_deduplicators", None)
+            if held is None:
+                held = ResidentDeduplicators()
+                self._resident_hook_deduplicators = held
+        return held
+
+    def stop_resident_hook_deduplicators(self) -> None:
+        """Let go of the deduplicators' held descriptors at shutdown. The
+        standalone hook and the drainer reopen the files on their own."""
+        with _RESIDENT_DEDUPE_LOCK:
+            held = getattr(self, "_resident_hook_deduplicators", None)
+            self._resident_hook_deduplicators = None
+        if held is not None:
+            held.close()
+
     def start_hook_ingress(self) -> None:
         self.stop_hook_ingress()
         service = HookIngressService(
-            process=AppOwnedHookIngressProcessor(self.handle_hook_event_message),
+            process=AppOwnedHookIngressProcessor(
+                self.handle_hook_event_message,
+                appended_handler=self.handle_appended_hook_line,
+                deduplicator_for=self.resident_hook_deduplicators(),
+            ),
             receipt_handler=self._record_hook_ingress_receipt,
         )
         self.hook_ingress_service = service
@@ -9080,6 +9113,9 @@ class StatusBarController(NSObject):
         if getattr(self, "_liveness_sweep_running", False):
             return
         self._liveness_sweep_running = True
+        # Stamped at the start as well as the end, so a refresh landing
+        # while this sweep runs does not ask for another.
+        self._liveness_worker_sweep_at = time.monotonic()
 
         def _run():
             try:
@@ -9090,6 +9126,30 @@ class StatusBarController(NSObject):
                 self._liveness_sweep_running = False
 
         threading.Thread(target=_run, name="JRBarLiveness", daemon=True).start()
+
+    def handle_appended_hook_line(self, hint: ProviderRefreshHint, appended) -> None:
+        """``handle_hook_event_message`` for a line this process appended
+        itself: the monitor takes the line without reopening the log when
+        nothing else was appended before it, and rereads otherwise."""
+        if type(hint) is not ProviderRefreshHint:
+            return
+        take = getattr(self.monitor, "reconcile_appended_line", None)
+        if not callable(take):
+            self.handle_hook_event_message(hint)
+            return
+        try:
+            take(
+                hint,
+                appended,
+                log_path=detect_log_path(hint.source_key.provider_id),
+            )
+            self.schedule_event_refresh()
+        except Exception:
+            # The line is durable in the log, so the rereading reconcile
+            # still lands it — dropping the refresh here would leave the
+            # event unseen until the next hint or heartbeat.
+            log_status_bar("event_server reconciliation error")
+            self.handle_hook_event_message(hint)
 
     def handle_hook_event_message(self, hint: ProviderRefreshHint) -> None:
         """Reconcile one authenticated hint from the persisted normalized log.

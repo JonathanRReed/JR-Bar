@@ -397,7 +397,7 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     assert codex["windows"][0]["resets_at"] is None
     # The forecast is about the primary (5h) window, from the sample buffer.
     assert claude["forecast"]["window_id"] == "five_hour" and claude["forecast"]["pace"] == "under"
-    assert claude["forecast"]["exhausts_at"] == pytest.approx(NOW + 58.0 / 12.0 * 3600.0, abs=1.0)
+    assert claude["forecast"]["exhausts_at"] == pytest.approx(NOW + 58.0 / 12.0 * 3600.0, abs=30.0)
     assert claude["forecast"]["remaining_pct"] == 58.0 and claude["forecast"]["samples"] == 13
     # No history for codex yet: a measured window reports its absence of
     # pace as a guarded forecast, never a fabricated date (T28).
@@ -603,6 +603,10 @@ def _fixture_is_carried_by(fixture: object, document: object, path: str = "$") -
         for index, (want, got) in enumerate(zip(fixture, document)):
             mismatches += _fixture_is_carried_by(want, got, f"{path}[{index}]")
         return mismatches
+    if path.endswith(".exhausts_at") and isinstance(fixture, float) and isinstance(document, float):
+        # The daemon rounds this to the minute now (CORE-PROTOCOL); the
+        # fixture keeps the finer value the Swift models decode.
+        return [] if abs(fixture - document) <= 30.0 else [f"{path}: {fixture!r} != {document!r}"]
     return [] if fixture == document else [f"{path}: {fixture!r} != {document!r}"]
 
 
@@ -1586,3 +1590,28 @@ def test_session_rows_carry_the_separated_axes() -> None:
         workers=0,
     )
     assert stale_row["axes"]["freshness"] in {"delayed", "unknown"}
+
+
+def test_a_source_names_the_moment_it_was_last_heard() -> None:
+    """``heard_at`` is the last accepted event's epoch: it stays put between
+    events, where ``heard_age_seconds`` ticks in every frame."""
+    inputs = fixture_inputs()
+    inputs["intake_report"] = SimpleNamespace(
+        providers=(
+            SimpleNamespace(
+                provider="claude", installed=True, stuck=False, delivering=True,
+                heard_age_seconds=1.4, event_accepted_at=NOW - 1.4,
+            ),
+            SimpleNamespace(
+                provider="pi", installed=False, stuck=False, delivering=False,
+                heard_age_seconds=None, event_accepted_at=None,
+            ),
+        ),
+        hook_state=SimpleNamespace(code=SimpleNamespace(value="configured")),
+        source_health=SimpleNamespace(code=SimpleNamespace(value="ok")),
+        silence_seconds=1.4,
+    )
+    sources = build_state_document(**inputs)["health"]["sources"]
+    assert sources["claude"]["heard_at"] == pytest.approx(NOW - 1.4)
+    assert sources["claude"]["heard_age_seconds"] == 1.4
+    assert sources["pi"]["heard_at"] is None

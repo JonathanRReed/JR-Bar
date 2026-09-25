@@ -715,6 +715,42 @@ def test_enabling_following_preflights_and_says_permission_is_missing(
     assert snapshot.status is AlcoveCaptureStatus.SCREEN_RECORDING_DENIED
 
 
+def test_every_settings_sync_does_not_preflight_again__and_1_more(monkeypatch) -> None:
+    # --- scenario: every_settings_sync_does_not_preflight_again
+    """The settings sync calls set_follow_alcove on every refresh. Each
+    preflight is a round trip to tccd (about 11 ms), so only the change to
+    "on" asks; turning following off and on again asks once more."""
+    from jrbar import virtual_device
+
+    device = virtual_device.VirtualStatusDevice.alloc().init()
+    seen: list[bool] = []
+
+    def granted(**kwargs) -> bool:
+        seen.append(bool(kwargs.get("force")))
+        return True
+
+    monkeypatch.setattr(virtual_device, "screen_recording_granted", granted)
+    for _ in range(5):
+        device.set_follow_alcove(True)
+    assert seen == [True]
+    device.set_follow_alcove(False)
+    device.set_follow_alcove(True)
+    device.set_follow_alcove(True)
+    assert seen == [True, True]
+
+    # --- scenario: the_headless_daemon_never_preflights
+    """The app owns the Screen Bar and its permission; the daemon only
+    computes the program and never asks tccd."""
+    headless = virtual_device.VirtualStatusDevice.alloc().init()
+    headless.headless = True
+    seen.clear()
+    headless.set_follow_alcove(True)
+    headless.set_follow_alcove(False)
+    headless.set_follow_alcove(True)
+    assert seen == []
+    assert headless.follow_alcove_width is True
+
+
 def test_denied_permission_reports_instead_of_starting_a_capture_thread(
     monkeypatch,
 ) -> None:

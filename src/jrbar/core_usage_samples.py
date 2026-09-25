@@ -177,7 +177,7 @@ def forecast_window(
         "reason": None,
     }
     if used >= EXHAUSTED_PCT:
-        return {**base, "exhausts_at": now, "pace": PACE_EXHAUSTED}
+        return {**base, "exhausts_at": _to_the_minute(now), "pace": PACE_EXHAUSTED}
     fit = _fit(samples, now=now)
     if isinstance(fit, _FitGuard):
         # T28: a measured window whose evidence cannot carry a pace is a
@@ -205,7 +205,13 @@ def forecast_window(
             pace = PACE_ON
         else:
             pace = PACE_UNDER
-    return {**base, "exhausts_at": round(exhausts_at, 1), "pace": pace}
+    return {**base, "exhausts_at": _to_the_minute(exhausts_at), "pace": pace}
+
+
+def _to_the_minute(epoch_seconds: float) -> float:
+    """The line through the samples slides ``exhausts_at`` forward with
+    every build; to the minute, it changes at most once a minute."""
+    return float(round(float(epoch_seconds) / 60.0) * 60)
 
 
 class UsageSampleBuffer:

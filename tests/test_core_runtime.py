@@ -109,7 +109,35 @@ def test_settings_round_trip_validates_through_the_real_loader(tmp_path: Path) -
     assert settings.idle_dim_fraction == 0.42
     # An invalid enum value falls back to the default instead of raising.
     assert settings.closed_lid_awake_policy == AgentMonitorSettings().closed_lid_awake_policy
-    assert not list((tmp_path / "core-tmp").iterdir())
+    # Validated in memory: no scratch file to open, chmod and scan.
+    assert not (tmp_path / "core-tmp").exists()
+
+
+def test_settings_from_document_matches_loading_the_same_file(tmp_path: Path) -> None:
+    """The in-memory check takes exactly what loading a file holding the
+    same document takes, schema gates included."""
+    import json as _json
+
+    from jrbar.settings import AgentMonitorSettings, load_settings
+
+    base = AgentMonitorSettings().to_dict()
+    base["alert_burst"] = 6
+    base["idle_dim_fraction"] = 2.5
+    base["devices"] = [{"id": "sidepulse:pro:serial:1", "name": "Strip", "path": "/Volumes/X", "brightness": 900}]
+    variants = {
+        "plain": dict(base),
+        "newer schema": {**base, "settings_schema_version": 99},
+        "bad schema": {**base, "settings_schema_version": "two"},
+        "ancient schema": {**base, "settings_schema_version": 0},
+        "current schema": {**base, "settings_schema_version": 2},
+    }
+    for label, document in variants.items():
+        target = tmp_path / f"{label}.json"
+        target.write_text(_json.dumps(document), encoding="utf-8")
+        target.chmod(0o600)
+        from_file = load_settings(target)
+        assert settings_from_document(document) == from_file, label
+    assert settings_from_document(variants["bad schema"]) == AgentMonitorSettings()
 
 
 def test_headless_notification_client_never_delivers() -> None:
@@ -130,6 +158,7 @@ class _TimerAPI:
 
 
 REAL_THREAD = threading.Thread
+_FROZEN: list[bool] = []
 
 
 class _Thread:
@@ -138,7 +167,15 @@ class _Thread:
         self.daemon = daemon
         self.name = name
 
+    ident = None
+
     def start(self) -> None:
+        return None
+
+    def is_alive(self) -> bool:
+        return False
+
+    def join(self, timeout=None) -> None:
         return None
 
 
@@ -221,6 +258,9 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(core_runtime, "PendingHookDrainer", _FakeDrainer)
     monkeypatch.setattr(core_runtime.threading, "Thread", _Thread)
     monkeypatch.setattr(core_runtime, "default_state_dir", lambda *_: tmp_path / "state")
+    # The deferred launch freezes the heap; in the test process that would
+    # freeze every test's objects.
+    monkeypatch.setattr(core_runtime, "_freeze_launch_heap", lambda: _FROZEN.append(True))
     _TimerAPI.calls.clear()
     _FakeDrainer.instances.clear()
     _FakeDrainer.order.clear()
@@ -343,7 +383,10 @@ def test_ready_comes_before_the_pad_the_agents_and_the_peers(headless, monkeypat
 
     # One step failing never keeps the next from starting.
     controller.refresh_installed_agent_inventory.side_effect = RuntimeError("roots gone")
+    _FROZEN.clear()
     controller.coreLaunchDeferred_(None)
+    # The launch heap is frozen out of every later full collection.
+    assert _FROZEN == [True]
     assert started == [controller]
     assert controller._jrbar_optional_integration_runtime == "runtime"
     controller._core_deck_probe_now.assert_called_once_with()
@@ -491,6 +534,9 @@ def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_p
     assert reply["path"] == "alert_burst" and reply["value"] == 2
     assert reply["generation"] == controller._core_settings_generation
     assert controller.settings.alert_burst == 2
+    # The write is the persistence writer's (no thread runs in this
+    # harness); flushing it is what the writer does.
+    assert controller._core_flush_settings() is True
     # conftest pins every settings facade to one per-test file.
     assert (tmp_path / "pytest-sidepulse-settings.json").exists()
     reset = controller._core_dispatch("reset_settings", {"paths": ["alert_burst", "no.such.path"]})
@@ -3144,6 +3190,195 @@ def test_shared_host_process_record_cannot_vouch_for_a_session(
     codex_extras = cleared._core_extras_for(codex)
     assert codex_extras.process_alive is True
     assert codex_extras.pid == 424_242
+
+
+_SPAWN_EVENTS = frozenset({"subprocess.Popen", "os.posix_spawn", "os.fork", "os.forkpty", "os.system", "os.exec"})
+_MAIN_THREAD_SPAWNS: list[str] = []
+_SPAWN_WATCH = [False]
+
+
+def _note_main_thread_spawn(event: str, _args) -> None:
+    if _SPAWN_WATCH[0] and event in _SPAWN_EVENTS and threading.current_thread() is threading.main_thread():
+        _MAIN_THREAD_SPAWNS.append(event)
+
+
+sys.addaudithook(_note_main_thread_spawn)
+
+
+def test_a_state_build_never_forks_ps_on_the_run_loop__and_1_more(cleared, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: a_state_build_never_forks_ps_on_the_run_loop
+    """Under load one ``ps`` took seconds, and every Settings toggle waited
+    behind the run loop while it did. A live session's terminal and tty
+    come from the last process table; a row that table has not seen asks
+    the table worker for a newer one and the build carries on."""
+    from jrbar import process_registry
+
+    me = os.getpid()
+    monkeypatch.setattr(
+        process_registry,
+        "load_record",
+        lambda provider, session_id: SimpleNamespace(
+            pid=me, cwd="/tmp/x", started_at_epoch=None, ended_at_epoch=None, end_reason=None
+        ),
+    )
+    monkeypatch.setattr(process_registry, "pid_exists", lambda pid: True)
+    monkeypatch.setattr(process_registry, "_table_cache", None)
+    controller = cleared
+    asked: list[bool] = []
+    controller._core_process_table = SimpleNamespace(request=lambda: asked.append(True) or True)
+    controller._core_extras.clear()
+    _MAIN_THREAD_SPAWNS.clear()
+    _SPAWN_WATCH[0] = True
+    try:
+        document = controller._core_build_state()
+    finally:
+        _SPAWN_WATCH[0] = False
+    assert _MAIN_THREAD_SPAWNS == []
+    assert asked, "the table worker was asked for the table the row needs"
+    live = {row["id"]: row for row in document["sessions"]}["claude:session:live"]
+    assert live["pid"] == me and live["terminal"] is None
+    assert "claude:session:live" in controller._core_extras_awaiting_table
+
+    # --- scenario: the_workers_table_fills_the_row_in
+    """When the worker's read lands, the rows that were waiting are looked
+    up again and published, with the tty from the same table row."""
+    table = {
+        me: process_registry.ProcessEntry(me, 4242, None, "/opt/homebrew/bin/node", "/dev/ttys042"),
+        4242: process_registry.ProcessEntry(4242, 1, None, "/Applications/Ghostty.app/Contents/MacOS/ghostty"),
+    }
+    monkeypatch.setattr(process_registry, "_table_cache", (time.monotonic(), table))
+    published = len(controller._core.published)
+    _SPAWN_WATCH[0] = True
+    try:
+        controller.coreProcessTableRefreshed_(None)
+    finally:
+        _SPAWN_WATCH[0] = False
+    assert _MAIN_THREAD_SPAWNS == []
+    assert len(controller._core.published) == published + 1
+    state = [document for kind, document in controller._core.published if kind == "state"][-1]
+    live = {row["id"]: row for row in state["sessions"]}["claude:session:live"]
+    assert live["terminal"] == {"app": "Ghostty", "bundle_id": "com.mitchellh.ghostty", "tty": "/dev/ttys042"}
+    assert not controller._core_extras_awaiting_table
+
+
+def test_set_setting_replies_before_its_save_and_its_refresh__and_2_more(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: set_setting_replies_before_its_save_and_its_refresh
+    """A toggle used to write a temp file, fsync twice and run a whole
+    refresh (which could wait on ``ps``) before it answered. Now the
+    settings document goes out, the save is queued and the refresh runs
+    after the reply."""
+    from jrbar import status_bar_legacy as legacy
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    saved: list[int] = []
+    monkeypatch.setattr(legacy, "save_settings", lambda settings: saved.append(settings.alert_burst))
+    scheduled: list[str] = []
+    controller.schedule_event_refresh = lambda: scheduled.append("refresh")
+    controller.refresh_.reset_mock()
+    published = len(controller._core.published)
+    reply = controller._core_dispatch("set_setting", {"path": "alert_burst", "value": 2})
+    assert reply["value"] == 2
+    controller.refresh_.assert_not_called()
+    assert scheduled == ["refresh"]
+    assert saved == []
+    assert controller._persistence_writer.snapshot().pending_count == 1
+    settings_frames = [doc for kind, doc in controller._core.published[published:] if kind == "settings"]
+    assert settings_frames and settings_frames[-1]["document"]["alert_burst"] == 2
+
+    # --- scenario: a_burst_of_toggles_writes_once_with_the_last_value
+    for value in (3, 4, 5):
+        controller._core_dispatch("set_setting", {"path": "alert_burst", "value": value})
+    assert controller._persistence_writer.snapshot().pending_count == 1
+    assert controller._core_flush_settings() is True
+    assert saved == [5]
+    assert controller._core_flush_settings() is True
+    assert saved == [5], "nothing new to write"
+
+    # --- scenario: an_unsaved_toggle_is_written_at_quit
+    import dataclasses
+
+    controller.settings = dataclasses.replace(controller.settings, alert_burst=7)
+    controller._core_settings_dirty = True
+    controller._core_quit_flush()
+    assert saved[-1] == 7 and not controller._core_settings_dirty
+
+
+def test_the_run_loop_watchdog_starts_with_the_daemon_and_sees_the_command(headless) -> None:
+    """A stall is named with the command the run loop was running; the
+    watchdog's no-op comes back through its own selector."""
+    from jrbar.run_loop_watchdog import RunLoopWatchdog
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    watchdog = controller._core_watchdog
+    assert isinstance(watchdog, RunLoopWatchdog)
+    seen: list[str | None] = []
+    controller._core_after_settings_change = lambda touched: seen.append(controller._core_command_in_flight)
+    box = core_runtime.CoreCommandBox("set_setting", {"path": "alert_burst", "value": 4})
+    controller.runCoreCommand_(box)
+    assert seen and seen[0] == "set_setting"
+    assert controller._core_command_in_flight is None
+    answered: list[bool] = []
+    watchdog.pong = lambda: answered.append(True)
+    controller.coreWatchdogPong_(None)
+    assert answered == [True]
+    controller._core_stop_server()
+    assert controller._core_watchdog is None
+
+
+def test_the_widget_file_is_written_off_the_run_loop_and_only_when_it_changed(
+    headless, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every state publish rewrote widget-snapshot.json on the run loop.
+    The projection stays here; the write goes to the persistence thread,
+    and an unchanged glance is rewritten only inside the widget's 90 s
+    freshness window."""
+    import json as _json
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    queued: list[tuple[str, object]] = []
+    controller._persistence_writer = SimpleNamespace(
+        submit=lambda key, operation, **kwargs: queued.append((key, operation)) or "queued"
+    )
+    clock = [1_000.0]
+    monkeypatch.setattr(core_runtime.time, "time", lambda: clock[0])
+    state = {"sessions": [{"provider": "claude", "mode": "working", "axes": {}, "label": "private"}]}
+    target = tmp_path / "state" / "widget-snapshot.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    controller._core_publish_widget_snapshot(state)
+    assert [key for key, _ in queued] == ["widget-snapshot"] and not target.exists()
+    queued[0][1]()
+    written = _json.loads(target.read_text())
+    assert written["counts"]["working"] == 1 and "label" not in _json.dumps(written)
+    clock[0] += 10.0
+    controller._core_publish_widget_snapshot(state)
+    assert len(queued) == 1, "same glance, fresh enough: no write"
+    clock[0] += core_runtime.WIDGET_REWRITE_SECONDS
+    controller._core_publish_widget_snapshot(state)
+    assert len(queued) == 2, "rewritten before the widget calls it stale"
+    controller._core_publish_widget_snapshot({"sessions": []})
+    assert len(queued) == 3, "a changed glance is written at once"
+
+
+def test_the_daemon_doctor_never_asks_tccd_about_alcove(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Alcove following and its Screen Recording permission are the app's;
+    the daemon's doctor says it does not run following rather than spend a
+    tccd round trip on a line that is healthy by design."""
+    from jrbar import alcove_observation
+
+    asked: list[bool] = []
+    monkeypatch.setattr(
+        alcove_observation, "_preflight_screen_capture_access", lambda: asked.append(True) or True
+    )
+    alcove_observation.reset_screen_recording_cache()
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    checks = {check["name"]: check for check in controller._core_doctor_document()["checks"]}
+    assert asked == []
+    assert checks["alcove_follow_state"]["ok"] is True
+    assert checks["alcove_follow_state"]["detail"].startswith("not_running")
 
 
 def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.MonkeyPatch) -> None:
