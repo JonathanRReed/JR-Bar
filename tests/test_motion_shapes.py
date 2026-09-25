@@ -500,3 +500,20 @@ def test_a_tinted_dot_keeps_the_agents_colour_on_one_led() -> None:
     assert backward[0].startswith(f"1:{COLOR} ") and backward[1].startswith(f"0:{tool} ")
     plain = shapes.travelling_wave(COLOR, led_count=2, lap_ms=2200, tail=shapes.DOT_WIPE)
     assert tool not in "\n".join(plain) and plain[1].startswith(f"1:{COLOR} ")
+
+
+def test_every_slider_end_changes_the_light() -> None:
+    """A single-crest Marquee takes its palette rotation (the tail behind
+    the head turns), and Tide's range and floor act all the way to the top
+    of their sliders, with the default look unchanged."""
+    def draw(motion: str, **params) -> list[str]:
+        return shapes.render_motion(motion, COLOR, FLOOR, led_count=8, cycle_ms=2200, params=params)
+
+    assert draw("marquee", crests=1, palette_rotation_degrees=90.0) != draw("marquee", crests=1)
+    assert draw("marquee", crests=2) == draw("marquee")
+
+    shipped = shapes.travelling_wave(COLOR, led_count=8, lap_ms=4400, tail=shapes.TIDE_TAIL, laps=6)
+    assert draw("tide") == shipped
+    assert draw("tide", fill_range=0.8) != draw("tide")
+    assert draw("tide", fill_floor=0.7) != draw("tide", fill_floor=0.8)
+    assert draw("tide", fill_floor=0.8) != draw("tide", fill_floor=0.8, fill_range=0.5)

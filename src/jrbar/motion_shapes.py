@@ -1491,13 +1491,9 @@ def _motion_lines(
             lines[0] = _rotated_bands(lines[0], peak, rotation, crests=crests, led_count=count)
         return lines
     if motion == TIDE:
-        low = _number(params, "fill_floor", 0.15, 0.0, 0.8)
-        span = _number(params, "fill_range", 0.85, 0.1, 1.0)
-        profile = scaled_tail(
-            TIDE_TAIL,
-            low=min(1.0, low * 0.22 / 0.15),
-            high=min(1.0, low * 0.22 / 0.15 + span * 0.78 / 0.85),
-        )
+        ebb = tide_ebb(_number(params, "fill_floor", 0.15, 0.0, 0.8))
+        span = _number(params, "fill_range", TIDE_FULL_RANGE, 0.1, TIDE_FULL_RANGE)
+        profile = scaled_tail(TIDE_TAIL, low=ebb, high=ebb + (1.0 - ebb) * span / TIDE_FULL_RANGE)
         return travelling_wave(peak, led_count=count, lap_ms=2 * cycle, tail=profile, laps=laps)
     if motion == GRADIENT:
         palette = _palette(params, "palette", most=2)
@@ -1562,9 +1558,30 @@ def _motion_lines(
     return breath(peak, rest, cycle_ms=cycle)
 
 
+#: ``tide.fill_range`` at which the tide reaches full light: its default and
+#: its top, so no part of the slider sits past full doing nothing.
+TIDE_FULL_RANGE = 0.85
+
+
+def tide_ebb(floor: float) -> float:
+    """How low the tide ebbs, as a share of the crest, for ``fill_floor``.
+
+    The default floor (0.15) keeps the shipped ebb (0.22, ``TIDE_TAIL``'s
+    own low point). Above it the ebb climbs to 0.8 at the top of the
+    slider, where it used to reach full light at 0.68 and leave the rest of
+    the slider a flat, fully lit strip.
+    """
+    level = max(0.0, min(0.8, float(floor)))
+    if level <= 0.15:
+        return round(level * 0.22 / 0.15, 4)
+    return round(0.22 + (level - 0.15) * (0.8 - 0.22) / (0.8 - 0.15), 4)
+
+
 def _rotated_bands(line: str, peak: str, degrees: float, *, crests: int, led_count: int) -> str:
     """A marquee profile line whose alternate crests are hue-rotated, so the
-    bar carries a small palette instead of one colour."""
+    bar carries a small palette instead of one colour. A single crest has
+    no alternate to turn, so everything behind its bright head takes the
+    second colour instead: a head in one colour trailing the other."""
     from .presentation_policy import _hue_shifted_color
 
     tokens = line.split()
@@ -1572,9 +1589,10 @@ def _rotated_bands(line: str, peak: str, degrees: float, *, crests: int, led_cou
     colors, timing = tokens[:count], tokens[count:]
     other = _hue_shifted_color(peak, degrees)
     waves = max(1, int(crests))
+    head = max(1, count // 4)
     painted = []
     for index, color in enumerate(colors):
-        band = int((index * waves / count) % waves)
+        band = int((index * waves / count) % waves) if waves > 1 else int(index >= head)
         if band % 2 == 1:
             level = max(_channels(color)) / max(1, max(_channels(peak)))
             painted.append(shade(other, level))

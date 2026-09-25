@@ -646,7 +646,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     colors_module.MOTION_TIDE: (
         _duration(minimum=0.5),
         _number("fill_floor", 0.15, "Minimum filled fraction before the tide rises.", 0.0, 0.8),
-        _number("fill_range", 0.85, "Additional filled fraction at full tide.", 0.1, 1.0),
+        _number("fill_range", 0.85, "Additional filled fraction at full tide.", 0.1, 0.85),
     ),
     colors_module.MOTION_EMBER: (
         _duration(minimum=1.0),

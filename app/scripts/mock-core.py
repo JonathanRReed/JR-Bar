@@ -321,7 +321,7 @@ PROVIDER_ANIMATIONS = [
     ]),
     ("tide", "Tide", "The bar rises to full, then the water pulls back. Shared strips ride it as the full swell.", "capacity", "medium", [
         _duration(0.5), _num("fill_floor", 0.15, "Minimum filled fraction before the tide rises.", 0.0, 0.8),
-        _num("fill_range", 0.85, "Additional filled fraction at full tide.", 0.1, 1.0),
+        _num("fill_range", 0.85, "Additional filled fraction at full tide.", 0.1, 0.85),
     ]),
     ("marquee", "Marquee", "A palette seeded from the color, endlessly rotating around the bar. Shared strips ride it as a narrow travelling flare.", "identity", "medium", [
         _duration(0.5), _int("spacing", 1, "LED spacing between palette bands.", 1, 8),

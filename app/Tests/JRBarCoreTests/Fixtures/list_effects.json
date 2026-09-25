@@ -357,7 +357,7 @@
    "catalog": "provider_animation",
    "role": "mechanical",
    "preview": {
-    "program": "#000203 160ms cosine\n0:#000203 128ms cosine; 1:#007280 256ms pulse; 2:#007280 256ms pulse 85ms; 3:#007280 256ms pulse 170ms; 4:#007280 256ms pulse 255ms; 5:#007280 256ms pulse 340ms; 6:#007280 256ms pulse 425ms; 7:#007280 128ms cosine 595ms\n7:#000203 128ms cosine; 6:#007280 256ms pulse; 5:#007280 256ms pulse 85ms; 4:#007280 256ms pulse 170ms; 3:#007280 256ms pulse 255ms; 2:#007280 256ms pulse 340ms; 1:#007280 256ms pulse 425ms; 0:#007280 128ms cosine 595ms\nrepeat",
+    "program": "0:#000203 128ms cosine; 1:#007280 256ms pulse; 2:#007280 256ms pulse 85ms; 3:#007280 256ms pulse 170ms; 4:#007280 256ms pulse 255ms; 5:#007280 256ms pulse 340ms; 6:#007280 256ms pulse 425ms; 7:#007280 128ms cosine 595ms\n7:#000203 128ms cosine; 6:#007280 256ms pulse; 5:#007280 256ms pulse 85ms; 4:#007280 256ms pulse 170ms; 3:#007280 256ms pulse 255ms; 2:#007280 256ms pulse 340ms; 1:#007280 256ms pulse 425ms; 0:#007280 128ms cosine 595ms\nrepeat",
     "led_count": 8
    }
   },
@@ -404,7 +404,7 @@
    "catalog": "provider_animation",
    "role": "mechanical",
    "preview": {
-    "program": "#000203 160ms cosine\n0:#000203 244ms cosine; 1:#007280 488ms pulse; 2:#007280 488ms pulse 122ms; 3:#007280 488ms pulse 244ms; 4:#007280 488ms pulse 366ms; 5:#007280 488ms pulse 488ms; 6:#007280 488ms pulse 610ms; 7:#007280 244ms cosine 854ms\n7:#000203 244ms cosine; 6:#007280 488ms pulse; 5:#007280 488ms pulse 122ms; 4:#007280 488ms pulse 244ms; 3:#007280 488ms pulse 366ms; 2:#007280 488ms pulse 488ms; 1:#007280 488ms pulse 610ms; 0:#007280 244ms cosine 854ms\nrepeat",
+    "program": "0:#000203 244ms cosine; 1:#007280 488ms pulse; 2:#007280 488ms pulse 122ms; 3:#007280 488ms pulse 244ms; 4:#007280 488ms pulse 366ms; 5:#007280 488ms pulse 488ms; 6:#007280 488ms pulse 610ms; 7:#007280 244ms cosine 854ms\n7:#000203 244ms cosine; 6:#007280 488ms pulse; 5:#007280 488ms pulse 122ms; 4:#007280 488ms pulse 244ms; 3:#007280 488ms pulse 366ms; 2:#007280 488ms pulse 488ms; 1:#007280 488ms pulse 610ms; 0:#007280 244ms cosine 854ms\nrepeat",
     "led_count": 8
    }
   },
@@ -443,7 +443,7 @@
    "catalog": "provider_animation",
    "role": "mechanical",
    "preview": {
-    "program": "#000203 160ms cosine\n0:#000203 419ms cosine; 1:#006571 491ms pulse 118ms; 2:#005863 274ms pulse 312ms; 3:#004B54 219ms pulse 408ms; 4:#004B54 219ms pulse 472ms; 5:#005863 274ms pulse 513ms; 6:#006571 491ms pulse 490ms; 7:#007280 419ms cosine 681ms\n7:#000203 419ms cosine; 6:#006571 491ms pulse 118ms; 5:#005863 274ms pulse 312ms; 4:#004B54 219ms pulse 408ms; 3:#004B54 219ms pulse 472ms; 2:#005863 274ms pulse 513ms; 1:#006571 491ms pulse 490ms; 0:#007280 419ms cosine 681ms\nrepeat",
+    "program": "0:#000203 419ms cosine; 1:#006571 491ms pulse 118ms; 2:#005863 274ms pulse 312ms; 3:#004B54 219ms pulse 408ms; 4:#004B54 219ms pulse 472ms; 5:#005863 274ms pulse 513ms; 6:#006571 491ms pulse 490ms; 7:#007280 419ms cosine 681ms\n7:#000203 419ms cosine; 6:#006571 491ms pulse 118ms; 5:#005863 274ms pulse 312ms; 4:#004B54 219ms pulse 408ms; 3:#004B54 219ms pulse 472ms; 2:#005863 274ms pulse 513ms; 1:#006571 491ms pulse 490ms; 0:#007280 419ms cosine 681ms\nrepeat",
     "led_count": 8
    }
   },
@@ -955,7 +955,7 @@
      "default": 0.85,
      "description": "Additional filled fraction at full tide.",
      "minimum": 0.1,
-     "maximum": 1.0
+     "maximum": 0.85
     }
    ],
    "safety": "safe",
@@ -1522,7 +1522,7 @@
    "pack": "nightlab",
    "pack_name": "Night Lab",
    "preview": {
-    "program": "#030202 160ms cosine\n0:#030202 310ms cosine; 1:#807458 620ms pulse; 2:#807458 620ms pulse 155ms; 3:#807458 620ms pulse 310ms; 4:#807458 620ms pulse 465ms; 5:#807458 620ms pulse 620ms; 6:#807458 620ms pulse 775ms; 7:#807458 310ms cosine 1085ms\n7:#030202 310ms cosine; 6:#807458 620ms pulse; 5:#807458 620ms pulse 155ms; 4:#807458 620ms pulse 310ms; 3:#807458 620ms pulse 465ms; 2:#807458 620ms pulse 620ms; 1:#807458 620ms pulse 775ms; 0:#807458 310ms cosine 1085ms\nrepeat",
+    "program": "0:#030202 310ms cosine; 1:#807458 620ms pulse; 2:#807458 620ms pulse 155ms; 3:#807458 620ms pulse 310ms; 4:#807458 620ms pulse 465ms; 5:#807458 620ms pulse 620ms; 6:#807458 620ms pulse 775ms; 7:#807458 310ms cosine 1085ms\n7:#030202 310ms cosine; 6:#807458 620ms pulse; 5:#807458 620ms pulse 155ms; 4:#807458 620ms pulse 310ms; 3:#807458 620ms pulse 465ms; 2:#807458 620ms pulse 620ms; 1:#807458 620ms pulse 775ms; 0:#807458 310ms cosine 1085ms\nrepeat",
     "led_count": 8
    }
   },
