@@ -36,7 +36,7 @@ enum WhatsNewCatalog {
     static let releaseID = "2026-09-25"
 
     /// The header's one line.
-    static let headline = "Tighter Dock previews, a Duo-style Fold, and fish that really turn."
+    static let headline = "Every agent's real mark, a faster Settings, and a notch card that keeps up."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
@@ -78,10 +78,10 @@ enum WhatsNewCatalog {
             detail: "A working session's orb shows whether it is thinking, searching, writing or running.",
             tryIt: .panel(toggle: false), opens: "Opens the panel, where your sessions are"),
         WhatsNewEntry(
-            id: "utilities", symbol: "square.grid.2x2",
-            title: "Utilities, tidied up",
-            detail: "Keep Awake gets one duration menu, and each utility steps aside for a rival you run.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities"),
+            id: "marks", symbol: "star",
+            title: "Every agent's real mark",
+            detail: "Claude, Codex, ChatGPT, Gemini, Pi, Grok, Devin and the rest draw their own logos wherever a provider appears.",
+            tryIt: .panel(toggle: false), opens: "Opens the panel, where the marks sit beside each session"),
     ]
 }
 

@@ -4,6 +4,66 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.9 (unreleased)
 
+### Round 4 (2026-09-25): the performance pass
+
+- **Settings opens faster and stays smooth.** Devices shows in about a
+  third of the time and every other page is 15–45 % quicker; a slider
+  drag redraws only its own row, and the monitor's echo of a change
+  costs almost nothing. Long pages fold their heavy runs — the device
+  cards on Devices, the provider colours on Lighting, the actions on
+  Shortcuts — and a search result opens the fold its row lives in. LED
+  previews hold still while the window is covered, minimised or on
+  another Space, launch-at-login is read off the main thread, and a
+  Settings window that was never opened no longer computes facts on
+  every daemon push.
+- **The notch card keeps up.** The header is there as the island grows
+  and every row is in within about a quarter second — roughly 0.47 s
+  from the hover, down from 1.13 s. An update that changes nothing on
+  the notch skips the island's refresh, the check for shelf apps like
+  Dropover runs only when an app opens or quits, album art is decoded
+  once and off the main thread, and the announcement click, the
+  microphone check and the calendar read no longer ride the frame the
+  island grows on.
+- **Every provider wears its real mark.** Claude's spark, the OpenAI
+  blossom for Codex and the OpenAI API, and the marks for Gemini, Pi,
+  Grok, Devin, OpenCode, OpenClaw, Antigravity, Cursor, Hermes Agent,
+  Kiro and T3 Code replace the generic letters — on the panel, the
+  notch, the Screen Bar ears, the menu-bar meters, the Usage Center,
+  Settings, the palette, the Overview graph, the Dock panel, the
+  Aquarium card and confetti. The marks ship inside the app, are never
+  downloaded, are credited in `docs/PRIOR-ART.md` with their licences
+  in the bundle, and keep a contrast floor so none vanishes on a dark
+  tile. A menu-bar meter draws its mark about 25× faster, and confetti
+  rasters each mark once per burst instead of filling the path per
+  fleck per frame.
+- **The app idles lighter.** The Dock previews, the Screen Bar and the
+  menu-bar reveal read the pointer when it moves instead of polling it
+  up to 20 times a second — a still pointer costs nothing, and a dead
+  event tap falls back to the old polls. One running-apps index follows
+  launches and quits for the notch, the menu bar and the Dock instead
+  of asking every app its name on each update, and the menu-bar utility
+  asks only the app that launched instead of waking every running app.
+- **The panel and the Overview redraw less.** The panel builds its rows
+  once per change and lays out only the rows on screen; a closed panel
+  stops animating its working and waiting marks. The Overview's clock
+  wakes only its time cells (and its under-a-minute ages stay current),
+  ⌘⇧K reopens the palette it already has, and the aquarium saves on a
+  background queue.
+- **The toys cost less.** The LED strip draws through layers at display
+  cadence with motion gated by visibility and Reduce Motion, the Fold
+  card takes rounded angle feeds and fixed-width labels, and a resting
+  lid stops polling the hinge sensor. The Buddy roster animates only
+  the tile you hover, Agent Overview cards read snapshots, and Keep
+  Awake's hardware and process reads moved off the main thread.
+- **The daemon answers at once and writes less.** A Settings toggle
+  replies before its save lands — the reply never waits on `ps` or a
+  Screen Recording check — and a session's change reaches the app
+  straight away instead of at the 15-second heartbeat. `latest.json`
+  writes every 30 s (at once when a session starts or ends), hook
+  dedupe lives in memory with one fsync per hook instead of two, a
+  SidePulse whose `diskutil` probe times out keeps its identity, and a
+  stalled run loop names the command and the Python frames in the log.
+
 ### Round 3 (2026-09-24): from Jonathan's hand test
 
 - **Dock previews are tighter and yours to tune.** Tight spacing by
