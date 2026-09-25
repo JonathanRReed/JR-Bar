@@ -356,6 +356,33 @@ struct PaletteTests {
         #expect(cmd(kVK_UpArrow, "\u{F700}", .shift) == .passThrough)
     }
 
+    // MARK: Reuse
+
+    @Test("a reopen reuses its panel and shows the rows the sources give now")
+    func reopenReusesThePanel() {
+        final class Round { var n = 1 }
+        let round = Round()
+        let controller = PaletteController()
+        // The build-and-reuse path, with nothing ordered onto a screen.
+        controller.orderFront = { _ in }
+        controller.sources = { [PaletteClosureSource(build: { [self.row("r\(round.n)", "Round \(round.n)")] })] }
+        controller.open()
+        #expect(controller.panelBuilds == 1)
+        #expect(controller.model.items.map(\.id) == ["r1"])
+        let opens = controller.model.opens
+        controller.close()
+        round.n = 2
+        controller.open()
+        #expect(controller.panelBuilds == 1, "the kept panel comes back")
+        #expect(controller.model.items.map(\.id) == ["r2"], "with the rows gathered now")
+        #expect(controller.model.opens == opens + 1, "and its view hears the new open")
+        controller.close()
+        controller.prompt = "Search something else…"
+        controller.open()
+        #expect(controller.panelBuilds == 2, "a new prompt builds a panel that says it")
+        controller.close()
+    }
+
     // MARK: Controller key routing
 
     @Test("Return runs the first verb and records the row; ⌘↩ the second; a chord its own")

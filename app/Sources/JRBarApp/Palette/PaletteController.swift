@@ -219,7 +219,19 @@ final class PaletteController {
 
     let model = PaletteModel()
     let hud = PaletteHUD()
+    /// The panel on screen, while the palette is open.
     private var panel: PalettePanel?
+    /// The panel kept between opens, and the prompt its view was built
+    /// with: a reopen reloads the model and orders this one front again
+    /// rather than building a window, a hosting view and its SwiftUI
+    /// graph afresh (about 50 ms a warm open).
+    private var keptPanel: (panel: PalettePanel, prompt: String)?
+    /// How many panels were built — a test hook proving a reopen reuses
+    /// the one it has.
+    private(set) var panelBuilds = 0
+    /// Puts the panel in front. Tests swap in a no-op so the build and
+    /// reuse path runs with nothing on anyone's screen.
+    var orderFront: @MainActor (PalettePanel) -> Void = { $0.makeKeyAndOrderFront(nil) }
     private(set) var isOpen = false
     private var openedAtUptime: TimeInterval = 0
     private var monitors: [Any] = []
@@ -252,6 +264,22 @@ final class PaletteController {
             isOpen = true
             return
         }
+        let panel = reusablePanel()
+        let visible = (NSScreen.screenWithMouse ?? NSScreen.main)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        panel.setFrameOrigin(PalettePanel.origin(on: visible))
+        orderFront(panel)
+        self.panel = panel
+        isOpen = true
+        openedAtUptime = ProcessInfo.processInfo.systemUptime
+        installMonitors()
+    }
+
+    /// The kept panel when its view still says the current prompt, else
+    /// a new one, kept for the next open. The view reads the model, which
+    /// `open` has just reloaded, so a kept panel shows fresh rows.
+    private func reusablePanel() -> PalettePanel {
+        if let kept = keptPanel, kept.prompt == prompt { return kept.panel }
         let view = PaletteView(
             model: model, prompt: prompt,
             onQueryChange: { [weak self] in self?.queryChanged() },
@@ -262,14 +290,10 @@ final class PaletteController {
             onSubmitInput: { [weak self] in self?.submitInput() },
             onCancelInput: { [weak self] in self?.cancelInput() })
         let panel = PalettePanel(content: view)
-        let visible = (NSScreen.screenWithMouse ?? NSScreen.main)?.visibleFrame
-            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        panel.setFrameOrigin(PalettePanel.origin(on: visible))
-        panel.makeKeyAndOrderFront(nil)
-        self.panel = panel
-        isOpen = true
-        openedAtUptime = ProcessInfo.processInfo.systemUptime
-        installMonitors()
+        panelBuilds += 1
+        keptPanel?.panel.orderOut(nil)
+        keptPanel = (panel, prompt)
+        return panel
     }
 
     /// Every source's rows, read under observation: whatever a builder
@@ -344,6 +368,9 @@ final class PaletteController {
         isOpen = false
         activeSources = []
         model.endInput()
+        // The kept panel's wait marks read this: a search cut off by the
+        // close must not leave an orb or a beam running out of sight.
+        model.noteSearching(false)
         PaletteAppIcons.reset()
     }
 
@@ -351,6 +378,7 @@ final class PaletteController {
         for monitor in monitors { NSEvent.removeMonitor(monitor) }
         if let workspaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver) }
         panel?.orderOut(nil)
+        keptPanel?.panel.orderOut(nil)
     }
 
     // MARK: Running verbs
