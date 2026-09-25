@@ -1109,8 +1109,11 @@ struct AskRow: View {
 
     /// The card's verbs, re-drawn once more at the hold's end. A render
     /// proof's still is taken at the store's clock, not the timeline's.
+    /// The schedule is framed (`ExplicitTimeline`): a lone future date
+    /// drew the verbs as of the hold's end from the first frame, and
+    /// never fired.
     private var verbRow: some View {
-        TimelineView(.explicit(holdEnd.map { [$0] } ?? [])) { context in
+        TimelineView(.explicit(ExplicitTimeline.moments(holdEnd.map { [$0] } ?? []))) { context in
             verbs(now: snapshot ? store.now : max(store.now, context.date))
         }
     }
