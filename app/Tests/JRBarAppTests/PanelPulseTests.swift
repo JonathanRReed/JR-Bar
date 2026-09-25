@@ -21,7 +21,7 @@ struct PanelPulseTests {
         return (window, hosting)
     }
 
-    @Test("a closed panel runs no pulse")
+    @Test("marks start moving once the panel has arrived and stop when it closes")
     func closedPanelIsStill() {
         let rows = [PanelRowsMemoTests.session("a", mode: "waiting"), PanelRowsMemoTests.session("b", mode: "idle")]
         let (_, store) = PanelRowsMemoTests.liveStore(rows)
@@ -31,7 +31,10 @@ struct PanelPulseTests {
         store.isOpen = true
         let (window, hosting) = Self.host(store)
         hosting.layoutSubtreeIfNeeded()
-        #expect(PanelPulses.running > baseline, "an open panel's waiting row pulses")
+        #expect(PanelPulses.running == baseline, "nothing moves while the panel is still arriving")
+        store.animationsArmed = true
+        hosting.layoutSubtreeIfNeeded()
+        #expect(PanelPulses.running > baseline, "an arrived panel's waiting row pulses")
         store.panelDidClose()
         hosting.layoutSubtreeIfNeeded()
         #expect(PanelPulses.running == baseline, "closing takes every pulse away with its view")

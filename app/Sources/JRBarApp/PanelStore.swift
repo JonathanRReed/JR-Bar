@@ -294,6 +294,10 @@ final class PanelStore {
     /// arriving: nothing inside animates before then (the first frame is
     /// the final frame). The controller arms it.
     var animationsArmed = false
+    /// The rows' marks, their orbs and the connecting dot move only in an
+    /// open panel that has finished arriving: the open's first frame is
+    /// its final frame, and starting them is not work the open pays for.
+    var marksMove: Bool { isOpen && animationsArmed }
     /// The visible height of the screen the panel opens on; the layout caps
     /// the panel at a fraction of it.
     var screenHeight: Double = 900

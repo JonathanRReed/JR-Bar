@@ -363,7 +363,7 @@ struct PanelHeader: View {
                     .help(quietLabel)
                     .accessibilityLabel("Quiet: \(quietLabel)")
             }
-            ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion, active: store.isOpen)
+            ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion, active: store.marksMove)
                 .help(store.connectionDescription)
         }
         .padding(.horizontal, 14)
@@ -899,7 +899,7 @@ struct SessionRowView: View {
                             .lineLimit(1)
                             .contentTransition(.opacity)
                         SessionRowMark(activity: row.activity, agentActivity: row.agentActivity, accent: row.style.accent,
-                                       reduced: store.reduceMotion, active: store.isOpen, quiet: row.isQuiet(now: store.now))
+                                       reduced: store.reduceMotion, active: store.marksMove, quiet: row.isQuiet(now: store.now))
                     }
                     Text(row.elapsedText(now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
@@ -1083,7 +1083,7 @@ struct AskRow: View {
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
                     AskWaitMark(since: store.answerPendingSince(row.ask), accent: row.style.accent,
-                                reduced: store.reduceMotion, active: store.isOpen && !snoozed)
+                                reduced: store.reduceMotion, active: store.marksMove && !snoozed)
                         .padding(.top, 3)
                     Text(PanelStore.elapsed(since: row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since, now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
