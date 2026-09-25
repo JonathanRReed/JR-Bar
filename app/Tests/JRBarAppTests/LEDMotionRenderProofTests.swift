@@ -217,9 +217,12 @@ struct LEDMotionRenderProofTests {
     // MARK: Drawing
 
     static func snapshot<V: View>(_ view: V, dark: Bool) throws -> NSBitmapImageRep {
+        // `ImageRenderer` draws no AppKit view, so the strips draw their
+        // SwiftUI still.
         let backed = view
             .background(Color(white: dark ? 0.12 : 0.95))
             .environment(\.colorScheme, dark ? .dark : .light)
+            .environment(\.renderSnapshot, true)
         let renderer = ImageRenderer(content: backed)
         renderer.scale = 2
         return NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
