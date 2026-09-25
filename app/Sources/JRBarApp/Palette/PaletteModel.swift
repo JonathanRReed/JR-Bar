@@ -25,7 +25,15 @@ final class PaletteModel {
     /// older query is dropped rather than shown under the wrong words.
     private(set) var searchedQuery = ""
     /// A slower source is still working on the current query.
-    private(set) var searching = false
+    private(set) var searching = false {
+        didSet { if searching != oldValue { searchingSince = searching ? clock() : nil } }
+    }
+    /// When the slower sources started reading — the wait rule's clock
+    /// (an orb in the footer from 2 s, a beam under the field from 3 s);
+    /// nil while none is reading.
+    private(set) var searchingSince: Date?
+    /// The clock `searchingSince` reads; tests drive their own.
+    @ObservationIgnored var clock: @MainActor () -> Date = { Date() }
     var usage = PaletteUsage()
     var now = Date()
     /// The rows a query spells with an argument ("quiet 45m"), asked on
@@ -114,6 +122,10 @@ final class PaletteModel {
         refilter(keepSelection: true)
     }
 
+    /// The wait's clock runs from when the slower sources start reading
+    /// until they are done (`searching`'s own edges): typing on while
+    /// they read is the same wait, so the orb and the beam stay put
+    /// rather than drop out and come back.
     func noteSearching(_ on: Bool) { searching = on }
 
     func refilter(keepSelection: Bool) {

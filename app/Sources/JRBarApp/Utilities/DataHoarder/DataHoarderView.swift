@@ -14,7 +14,7 @@ struct DataHoarderView: View {
                     Text("Your traces, kept on this Mac.").foregroundStyle(.secondary)
                 }
                 Spacer()
-                if model.busy { ProgressView().controlSize(.small) }
+                if model.busy { DelayedWait() }
                 Button("Find History…", systemImage: "magnifyingglass") {
                     Task { await model.discoverHistory() }
                 }
@@ -110,7 +110,7 @@ struct DataHoarderView: View {
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Search archive")
                         if model.searching {
-                            ProgressView().controlSize(.small).accessibilityLabel("Searching archive")
+                            DelayedWait(activity: .searching).accessibilityLabel("Searching archive")
                         }
                         if !model.query.isEmpty {
                             Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill") }
@@ -152,7 +152,7 @@ struct DataHoarderView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                if model.measuringStorage { ProgressView().controlSize(.mini) }
+                if model.measuringStorage { DelayedWait(size: 12) }
                 Button { Task { await model.refreshStorage() } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -726,7 +726,7 @@ struct DataHoarderView: View {
     @ViewBuilder private var timelinePane: some View {
         if model.detailLoading && model.reconstruction == nil {
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+                DelayedWait()
                 Text("Rebuilding the session timeline…")
                     .font(.callout).foregroundStyle(.secondary)
             }

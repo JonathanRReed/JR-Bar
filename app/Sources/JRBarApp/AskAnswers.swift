@@ -350,6 +350,11 @@ final class AskAnswerDesk {
 
     /// Sessions with an answer in flight.
     private(set) var pending: Set<String> = []
+    /// When each in-flight answer left — the wait rule's clock for the
+    /// panel's ask card (an orb from 2 s, a beam from 3 s).
+    private(set) var pendingStarts: [String: Date] = [:]
+    /// The clock `pendingStarts` reads; tests drive their own.
+    @ObservationIgnored var clock: @MainActor () -> Date = { Date() }
     /// Session → the last answer's line.
     private(set) var notes: [String: Note] = [:]
     /// Ask (by its request pin) → the picks so far.
@@ -375,6 +380,7 @@ final class AskAnswerDesk {
     }
 
     func isPending(_ session: String?) -> Bool { session.map(pending.contains) ?? false }
+    func pendingSince(_ session: String?) -> Date? { session.flatMap { pendingStarts[$0] } }
     func note(for session: String?) -> Note? { session.flatMap { notes[$0] } }
 
     private static func pickKey(_ ask: CoreAsk) -> String { ask.request ?? ask.id }
@@ -423,7 +429,11 @@ final class AskAnswerDesk {
         if let line = refusal(ask, verdict) { return Outcome(ok: false, line: line) }
         guard let session = ask.session else { return Outcome(ok: false, line: Self.noSession) }
         pending.insert(session)
-        defer { pending.remove(session) }
+        pendingStarts[session] = clock()
+        defer {
+            pending.remove(session)
+            pendingStarts[session] = nil
+        }
         clearNote(for: session)
         do {
             let reply = try await send(session, verdict, ask.request)

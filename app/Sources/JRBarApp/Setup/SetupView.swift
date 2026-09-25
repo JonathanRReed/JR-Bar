@@ -300,7 +300,8 @@ struct SetupAgentRow: View {
             Spacer()
             Button { store.installHooks(for: agent.id) } label: {
                 if store.hookBusy.contains(agent.id) {
-                    ProgressView().controlSize(.mini).frame(width: 58)
+                    DelayedWait(size: 12) { Text(agent.hookStatus == "ok" ? "Reinstall" : "Install") }
+                        .frame(width: 58)
                 } else {
                     Text(agent.hookStatus == "ok" ? "Reinstall" : "Install").frame(width: 58)
                 }

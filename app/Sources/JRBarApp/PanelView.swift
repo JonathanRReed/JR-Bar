@@ -697,8 +697,9 @@ struct SessionRowView: View {
         return trailingWidth(for: rows.map(\.activity), quiet: quiet)
     }
 
-    /// The word's HStack spacing and the 8 pt mark.
-    static let markRoom: CGFloat = 5 + 8
+    /// The word's HStack spacing and the mark's slot, which an orb and
+    /// every mark share (`SessionRowMark.slot`).
+    static let markRoom: CGFloat = 5 + SessionRowMark.slot
 
     /// Each state word in the trailing column's type.
     static let wordWidths: [SessionActivity: CGFloat] = {
@@ -822,7 +823,8 @@ struct SessionRowView: View {
                             .foregroundStyle(Self.wordColor(row.activity))
                             .lineLimit(1)
                             .contentTransition(.opacity)
-                        ActivityMark(activity: row.activity, accent: row.style.accent, reduced: store.reduceMotion, active: store.isOpen)
+                        SessionRowMark(activity: row.activity, agentActivity: row.agentActivity, accent: row.style.accent,
+                                       reduced: store.reduceMotion, active: store.isOpen, quiet: row.isQuiet(now: store.now))
                     }
                     Text(row.elapsedText(now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
@@ -1005,7 +1007,8 @@ struct AskRow: View {
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
-                    ActivityMark(activity: .waiting, accent: row.style.accent, reduced: store.reduceMotion, active: store.isOpen && !snoozed)
+                    AskWaitMark(since: store.answerPendingSince(row.ask), accent: row.style.accent,
+                                reduced: store.reduceMotion, active: store.isOpen && !snoozed)
                         .padding(.top, 3)
                     Text(PanelStore.elapsed(since: row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since, now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
@@ -1023,6 +1026,10 @@ struct AskRow: View {
                 .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
                 .opacity(store.selectionByKeyboard && store.selectedID == row.id ? 1 : 0)
         )
+        // An answer on the wire past three seconds: a beam round this
+        // card while the panel is open, display only (`askBeamSince`).
+        .waitBeam(since: store.askBeamSince(row.ask), track: .ring(cornerRadius: AskCardPlate.radius),
+                  tint: SessionActivity.waiting.tint)
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .onTapGesture { store.open(row) }
@@ -1099,8 +1106,11 @@ struct AskRow: View {
 
     /// The card's verbs, re-drawn once more at the hold's end. A render
     /// proof's still is taken at the store's clock, not the timeline's.
+    /// The schedule is framed (`ExplicitTimeline`): a lone future date
+    /// drew the verbs as of the hold's end from the first frame, and
+    /// never fired.
     private var verbRow: some View {
-        TimelineView(.explicit(holdEnd.map { [$0] } ?? [])) { context in
+        TimelineView(.explicit(ExplicitTimeline.moments(holdEnd.map { [$0] } ?? []))) { context in
             verbs(now: snapshot ? store.now : max(store.now, context.date))
         }
     }

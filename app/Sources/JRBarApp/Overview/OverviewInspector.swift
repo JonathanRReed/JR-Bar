@@ -452,7 +452,7 @@ struct OverviewSessionInspector: View {
 
     private var timelineControls: some View {
         HStack(spacing: 10) {
-            if store.timelineLoading { ProgressView().controlSize(.mini) }
+            if store.timelineLoading { DelayedWait(size: 12) }
             Button {
                 Task { await store.refreshTimeline() }
             } label: {
@@ -512,7 +512,7 @@ struct OverviewSessionInspector: View {
                 }
             } else if store.timelineLoading {
                 HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
+                    DelayedWait(size: 12)
                     Text("Reading transcript…").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
             }

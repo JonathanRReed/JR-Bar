@@ -590,7 +590,7 @@ struct HistoryRowView: View {
             }
         } else if store.isLoadingTimeline(row) {
             HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
+                DelayedWait(size: 12)
                 Text("Reading the transcript…").font(.system(size: 11)).foregroundStyle(.tertiary)
             }
         }

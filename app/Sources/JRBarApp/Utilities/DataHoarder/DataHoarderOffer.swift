@@ -247,7 +247,7 @@ struct DataHoarderOfferSheet: View {
     private var sourceList: some View {
         if offer.loading || !offer.loaded {
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+                DelayedWait(activity: .searching)
                 Text("Looking for agent folders…").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, minHeight: 60)

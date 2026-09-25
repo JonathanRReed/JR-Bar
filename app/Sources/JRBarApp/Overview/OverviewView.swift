@@ -33,7 +33,7 @@ struct OverviewView: View {
                         store.compareSelected()
                     } label: {
                         if store.comparing {
-                            ProgressView().controlSize(.mini)
+                            DelayedWait(size: 12) { Label("Compare", systemImage: "arrow.left.arrow.right") }
                         } else {
                             Label("Compare", systemImage: "arrow.left.arrow.right")
                         }
@@ -981,7 +981,7 @@ private struct ReplyPromptSheet: View {
                 .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 8))
                 .accessibilityLabel("Reply text")
             HStack {
-                if sending { ProgressView().controlSize(.mini) }
+                if sending { DelayedWait(size: 12) }
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)

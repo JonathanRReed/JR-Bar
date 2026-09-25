@@ -114,6 +114,9 @@ struct PaletteView: View {
         }
         .padding(.horizontal, 18)
         .frame(height: 52)
+        // The wait rule: a search still reading past three seconds runs a
+        // beam along the field's bottom edge until its answers are in.
+        .waitBeam(since: model.searchingSince, track: .baseline, tint: .accentColor)
     }
 
     // MARK: List
@@ -222,6 +225,7 @@ struct PaletteView: View {
             Text((model.inputItem ?? model.selected)?.section.title ?? "JR-Bar")
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            PaletteWaitNote(since: model.searchingSince)
             Spacer(minLength: 8)
             if let input {
                 let words = model.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
