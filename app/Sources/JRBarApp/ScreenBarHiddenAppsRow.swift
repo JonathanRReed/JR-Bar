@@ -16,7 +16,7 @@ struct ScreenBarHiddenAppsRow: View {
 
     static let path = "screen_bar_hidden_apps"
 
-    private var apps: [String] { store.document.strings(SettingsPath(Self.path)) ?? [] }
+    private var apps: [String] { store.values.strings(SettingsPath(Self.path)) ?? [] }
 
     var body: some View {
         Provided(store, Self.path) {

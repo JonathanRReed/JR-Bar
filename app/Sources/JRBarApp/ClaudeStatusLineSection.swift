@@ -26,7 +26,7 @@ struct ClaudeStatusLineSection: View {
     @ViewState private var askToWrap: String?
     @ViewState private var failure: String?
 
-    private var on: Bool { store.document.bool("claude_statusline_source") ?? false }
+    private var on: Bool { store.values.bool("claude_statusline_source") ?? false }
 
     /// `askToWrap` and `failure` start empty in the app; the render proof
     /// passes them to draw the question and the refusal.

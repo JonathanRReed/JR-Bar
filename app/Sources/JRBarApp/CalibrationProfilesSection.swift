@@ -134,7 +134,7 @@ struct FocusProfileRow: View {
     let name: String
     let saved: [String]
 
-    private var rule: String { store.document.object("focus_profile_rules")?[focusID]?.stringValue ?? "" }
+    private var rule: String { store.values.object("focus_profile_rules")?[focusID]?.stringValue ?? "" }
 
     var body: some View {
         Provided(store, "focus_profile_rules") {

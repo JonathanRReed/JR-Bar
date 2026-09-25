@@ -165,6 +165,14 @@ final class SettingsStore {
     /// or unechoed edits (`pending`) laid over it.
     @ObservationIgnored private var daemonDocument = SettingsDocument()
     @ObservationIgnored private var overlaidDocument = SettingsDocument()
+    /// An overlay edit left bookkeeping for the sync: the device list
+    /// (`devicesStale`, set only when the edit touched `devices`) and the
+    /// whole-document version compare. Settling them once a turn keeps a
+    /// slider's `set` stream off the document walk.
+    @ObservationIgnored private var overlayBookkeepingStale = false
+    @ObservationIgnored private var devicesStale = false
+    /// The root the device list is built from.
+    private static let devicesPath = SettingsPath("devices")
     @ObservationIgnored private var daemonHasDocument = false
     @ObservationIgnored private var daemonGeneration = 0
     @ObservationIgnored private var daemonSchema: Int?
@@ -682,14 +690,25 @@ final class SettingsStore {
         if factsInUse { refreshFactsCache() }
         if documentMirrorsStale {
             documentMirrorsStale = false
+            deviceListCache = computeDeviceEntries()
             for (path, cell) in cells {
                 cell.update(value: overlaidDocument.value(at: path), provided: daemonDocument.contains(path))
             }
             bumpDocumentVersionIfChanged()
             hasDocumentMirror.update(daemonHasDocument)
+            overlayBookkeepingStale = false
+            devicesStale = false
             generationMirror.update(daemonGeneration)
             schemaMirror.update(daemonSchema)
             revisionMirror.update(daemonRevision)
+        }
+        if overlayBookkeepingStale {
+            overlayBookkeepingStale = false
+            if devicesStale {
+                devicesStale = false
+                deviceListCache = computeDeviceEntries()
+            }
+            bumpDocumentVersionIfChanged()
         }
         if factsMirrorsStale {
             factsMirrorsStale = false
@@ -722,20 +741,21 @@ final class SettingsStore {
     }
 
     /// A local edit or a dropped one: the overlay moved at `path`, so only
-    /// the cells on that path (above or below it) can have changed.
+    /// the cells on that path (above or below it) can have changed, and
+    /// they are told now — a read must not wait a turn. The device list
+    /// and the whole-document version compare wait for the run loop's
+    /// sync, so a slider's stream of `set` calls pays them once a turn,
+    /// not once a tick.
     private func overlayChanged(at path: SettingsPath) {
         refreshDocument()
         overlaidDocument = overlay(daemonDocument)
-        deviceListCache = computeDeviceEntries()
-        if documentMirrorsStale {
-            syncMirrors()
-            return
-        }
+        if path.overlaps(Self.devicesPath) { devicesStale = true }
+        overlayBookkeepingStale = true
+        scheduleMirrorSync()
+        guard !documentMirrorsStale else { return }
         for (cellPath, cell) in cells where cellPath.overlaps(path) {
             cell.update(value: overlaidDocument.value(at: cellPath), provided: cell.provided)
         }
-        deviceListMirror.update(deviceListCache)
-        bumpDocumentVersionIfChanged()
     }
 
     // MARK: Writes

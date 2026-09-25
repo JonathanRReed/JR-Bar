@@ -30,12 +30,12 @@ struct LinkedSyncControls: View {
 
     /// Every control here is about the Dot extending the strip.
     static func isExtending(_ store: SettingsStore) -> Bool {
-        let linked = store.document.bool("devices_linked") ?? true
-        return linked && DotRole.parse(store.document.string("dot_role")) == .extend
+        let linked = store.values.bool("devices_linked") ?? true
+        return linked && DotRole.parse(store.values.string("dot_role")) == .extend
     }
 
     private var extending: Bool { Self.isExtending(store) }
-    private var style: String { store.document.string("dot_extend_style") ?? "continue" }
+    private var style: String { store.values.string("dot_extend_style") ?? "continue" }
 
     var body: some View {
         SettingPicker(store, "Look", subtitle: styleSubtitle, path: "dot_extend_style",
@@ -123,7 +123,7 @@ struct LinkedClockRows: View {
     @Bindable var store: SettingsStore
 
     private var extending: Bool { LinkedSyncControls.isExtending(store) }
-    private var correcting: Bool { store.document.bool("linked_dot_clock_correction") ?? true }
+    private var correcting: Bool { store.values.bool("linked_dot_clock_correction") ?? true }
 
     var body: some View {
         SettingToggle(store, "Keep in step",
@@ -147,7 +147,7 @@ struct LinkedBrightnessToggle: View {
         SettingToggle(store, "Match the strip's brightness",
                       subtitle: "The Dot follows the strip's brightness, dimmed by Dot brightness above, and ignores its own auto-brightness.",
                       path: "linked_follow_brightness", default: true)
-            .disabled(!(store.document.bool("devices_linked") ?? true))
+            .disabled(!(store.values.bool("devices_linked") ?? true))
     }
 }
 
