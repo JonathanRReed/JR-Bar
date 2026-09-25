@@ -69,6 +69,34 @@ def test_an_existing_statusline_is_never_clobbered(places) -> None:
     assert settings.read_text() == before
 
 
+def test_settings_gets_its_own_words_and_a_line_it_cannot_keep_is_refused_before_asking(places, monkeypatch) -> None:
+    import jrbar.claude_statusline_source as source
+    import jrbar.install as install
+
+    settings, state, shim = places
+    monkeypatch.setattr(install, "hook_shim_path", lambda: shim)
+    monkeypatch.setattr(source, "claude_settings_path", lambda *_args, **_kwargs: settings)
+    monkeypatch.setattr("jrbar.state_paths.default_state_dir", lambda: state)
+    applied: list[bool] = []
+    monkeypatch.setattr(source, "_apply_source_setting", lambda _controller, value: applied.append(value))
+
+    settings.write_text(json.dumps({"statusLine": {"type": "command", "command": "bun x ccusage statusline"}}))
+    asked = source.core_install_command(None, {"wrap": False})
+    assert asked["installed"] is False and asked["needs_wrap"] is True
+    assert "--wrap" not in asked["message"] and "Run again" not in asked["message"]
+
+    # A status line that isn't a command can't be kept, so the reply is a
+    # refusal Settings shows, not a question whose yes would fail.
+    settings.write_text(json.dumps({"statusLine": {"type": "static", "text": "hi"}}))
+    before = settings.read_text()
+    for wrap in (False, True):
+        refused = source.core_install_command(None, {"wrap": wrap})
+        assert refused["installed"] is False and refused["needs_wrap"] is False
+        assert "isn't a command" in refused["message"]
+    assert settings.read_text() == before
+    assert applied == []
+
+
 def test_wrap_then_unwrap_restores_it_exactly(places) -> None:
     settings, state, shim = places
     theirs = {"type": "command", "command": "bash ~/.claude/my status.sh", "padding": 1, "refreshInterval": 5}

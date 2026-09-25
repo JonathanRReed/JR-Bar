@@ -28,6 +28,14 @@ struct ClaudeStatusLineSection: View {
 
     private var on: Bool { store.document.bool("claude_statusline_source") ?? false }
 
+    /// `askToWrap` and `failure` start empty in the app; the render proof
+    /// passes them to draw the question and the refusal.
+    init(store: SettingsStore, askToWrap: String? = nil, failure: String? = nil) {
+        self.store = store
+        _askToWrap = ViewState(initialValue: askToWrap)
+        _failure = ViewState(initialValue: failure)
+    }
+
     var body: some View {
         SettingGroup("Claude Code status line", note: Self.note) {
             Provided(store, "claude_statusline_source") {
@@ -80,10 +88,16 @@ struct ClaudeStatusLineSection: View {
                     failure = reply.error?.message ?? "The monitor could not install the status line."
                     return
                 }
+                let message = reply.result?["message"]?.stringValue
                 if reply.result?["needs_wrap"]?.boolValue == true {
-                    askToWrap = reply.result?["message"]?.stringValue ?? "Claude Code already has a status line."
-                } else {
-                    askToWrap = nil
+                    askToWrap = message ?? "Claude Code already has a status line."
+                    return
+                }
+                askToWrap = nil
+                // Refused without a question (a status line JR-Bar can't
+                // keep): say why, or the switch just springs back.
+                if reply.result?["installed"]?.boolValue == false {
+                    failure = message ?? "Claude Code's status line was left as it is."
                 }
             } catch {
                 failure = "The monitor did not answer."

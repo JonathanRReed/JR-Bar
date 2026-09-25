@@ -423,7 +423,25 @@ STATUSLINE_FLAG = "--statusline"
 
 
 class StatusLineInstallError(ValueError):
-    """A refused install or uninstall, in words."""
+    """A refused install or uninstall, in words. ``reason`` says which
+    refusal it was, so Settings can put it in its own words: ``needs_wrap``
+    (a status line is there and could be kept) or ``not_command`` (one is
+    there that JR-Bar can't run after its own)."""
+
+    def __init__(self, message: str, *, reason: str = "refused") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+#: What Settings says for each refusal. The CLI's own words mention its
+#: --wrap flag, which means nothing in a window with a button.
+_SETTINGS_WORDS = {
+    "needs_wrap": "Claude Code already has a status line. JR-Bar can keep it and show its own line above it.",
+    "not_command": (
+        "Claude Code's status line isn't a command JR-Bar can run after its own, so it was left as it is. "
+        "Remove it from ~/.claude/settings.json to use JR-Bar's."
+    ),
+}
 
 
 def _quote(text: str) -> str:
@@ -499,13 +517,18 @@ def install_statusline(
         return {"changed": False, "wrapped": " --then " in str(current.get("command")), "settings": str(settings_path)}
     previous_command = None
     if current is not None:
+        # Checked first: asking "keep yours?" is only fair when yes can work.
+        if not isinstance(current, dict) or current.get("type") != "command" or not isinstance(current.get("command"), str):
+            raise StatusLineInstallError(
+                "the existing statusLine is not a command JR-Bar can wrap; nothing was changed",
+                reason="not_command",
+            )
         if not wrap:
             raise StatusLineInstallError(
                 "Claude Code already has a statusLine; JR-Bar will not replace it. "
-                "Run again with --wrap to keep it and show JR-Bar's line above it."
+                "Run again with --wrap to keep it and show JR-Bar's line above it.",
+                reason="needs_wrap",
             )
-        if not isinstance(current, dict) or current.get("type") != "command" or not isinstance(current.get("command"), str):
-            raise StatusLineInstallError("the existing statusLine is not a command JR-Bar can wrap")
         previous_command = current["command"]
     entry: dict[str, Any] = dict(current) if isinstance(current, dict) else {"type": "command"}
     entry["type"] = "command"
@@ -601,7 +624,11 @@ def core_install_command(controller, args: dict[str, Any]) -> dict[str, Any]:
             shim=shim, settings_path=claude_settings_path(), state_dir=default_state_dir(), wrap=wrap
         )
     except StatusLineInstallError as error:
-        return {"installed": False, "needs_wrap": not wrap, "message": str(error)}
+        return {
+            "installed": False,
+            "needs_wrap": error.reason == "needs_wrap",
+            "message": _SETTINGS_WORDS.get(error.reason, str(error)),
+        }
     except (OSError, ValueError) as error:
         raise CommandError("refused", f"could not write Claude's settings: {error}") from error
     _apply_source_setting(controller, True)
