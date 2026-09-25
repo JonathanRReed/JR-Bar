@@ -4128,6 +4128,12 @@ def build_headless_controller_class() -> type:
             # answers, so the document falls back to the inspected values.
             self._deck_active_layer: int | None = None
             self._deck_active_profile: int | None = None
+            cls = JRCoreHeadlessController
+            if not cls.__dict__.get("_core_instance_names_declared", False):
+                from .controller_attributes import declare_instance_attributes
+
+                declare_instance_attributes(cls, self)
+                cls._core_instance_names_declared = True
             return self
 
         # -- launch (the non-hostile half of the production launch) ---------
@@ -7763,6 +7769,12 @@ def build_headless_controller_class() -> type:
                 },
             }
 
+    # Attribute reads on this NSObject subclass walk four classes and the
+    # Objective-C runtime before the instance answers; declared names end
+    # the walk at the first class (jrbar.controller_attributes).
+    from .controller_attributes import DEFAULTS, declare
+
+    declare(JRCoreHeadlessController, DEFAULTS)
     _CLASS_CACHE[base] = JRCoreHeadlessController
     return JRCoreHeadlessController
 
