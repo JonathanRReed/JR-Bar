@@ -419,10 +419,12 @@ final class FoldToy: Toy {
         let settings = settings
         jitter.tolerance = settings.jitterTolerance
         moveAnchor.tolerance = settings.jitterTolerance
-        // The Duo arms on 3° of real travel, so a nudge never flashes the
-        // Screen Recording indicator, and its tracker runs stiffer: the
-        // edge interpolator already smooths what it chases.
-        moveAnchor.armThreshold = isDuo ? max(3, settings.jitterTolerance) : nil
+        // Both looks arm on 3° of real travel down, so a nudge never
+        // flashes the Screen Recording indicator, and neither does
+        // tilting the screen back: neither look folds on the way up. The
+        // Duo's tracker runs stiffer: the edge interpolator already
+        // smooths what it chases.
+        moveAnchor.armThreshold = max(3, settings.jitterTolerance)
         tracker.omega = isDuo ? 40 : 20
         overlay?.renderer.look = settings.look
         // Every path — off, parked, paused — leaves the vsync link

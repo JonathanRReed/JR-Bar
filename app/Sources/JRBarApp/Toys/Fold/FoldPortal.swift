@@ -159,10 +159,10 @@ struct MoveAnchor: Sendable {
     /// The stillness deadband in degrees — the sensor's jitter window.
     var tolerance = 1.5
     /// How far off the anchor counts as a real move — what arms the
-    /// capture. nil uses `tolerance`, either way off the anchor. The Duo
-    /// sets 3° and counts only a move down: a nudge never flashes the
-    /// Screen Recording indicator, and neither does tilting the screen
-    /// back, which has nothing to fold.
+    /// capture. nil uses `tolerance`, either way off the anchor. The toy
+    /// sets 3° in both looks and counts only a move down: a nudge never
+    /// flashes the Screen Recording indicator, and neither does tilting
+    /// the screen back, which has nothing to fold.
     var armThreshold: Double?
     /// How far below the anchor counts as folded: past this the
     /// reference freezes until the lid returns.
