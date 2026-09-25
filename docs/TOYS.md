@@ -370,9 +370,9 @@ faint diagonal glass highlight.
 
 Deeper lanes hold smaller, dimmer, slower fish. Movement is
 steering-based (`AquariumSteering`): wander, arrive, seek-food and
-flee compose into smooth paths — fish bank into turns instead of
-pivoting, ease into curved U-turns at the glass instead of
-mirror-flipping, and new sessions swim in from an edge; a recently updated session's tail beats faster. An
+flee compose into smooth paths — fish arc gently, stay level, and
+turn back in one U-turn (the head leads, a beat head-on, the tail
+kicks out) instead of mirror-flipping, and new sessions swim in from an edge; a recently updated session's tail beats faster. An
 idle session holds midwater on a slow drift and rises to sip the
 surface every half-minute or so. An ask rises to the glass — a little
 closer to the viewer — trailing small bubbles, bobs there with a
@@ -412,9 +412,11 @@ its climb stays under about 26° and its drawn pitch is eased and
 clamped, so it never noses straight up or down. Turning back is its own
 behaviour — a committed U-turn (`SwimTurn`) — started by the glass seen
 far enough ahead that the turn fits, by food or a tap behind it, or by a
-whim that has lasted a beat; a turn is followed by a cooldown before the
-next whim, so a cruising fish reverses about twice a minute at Natural,
-mostly at the glass, with the odd mid-tank change of mind. A fish at a
+whim that has lasted a beat (never with food, a scare or work to see
+to); a turn is followed by a cooldown, and a fish that wants to turn
+back before it is up levels off and slows while it waits, so a cruising
+fish reverses about twice a minute at Natural, mostly at the glass, with
+the odd mid-tank change of mind. A fish at a
 work station swims to it and hovers once it is close, nosing at the
 point instead of circling it; its fins lift and sink it with the point,
 so it only turns back when the point is well behind it, after a longer
@@ -442,11 +444,13 @@ through a narrow side view instead.
 Everything else that used to mirror in one frame turns too: fry squash
 through zero at each end of their orbit, a completing fish facing left
 turns round before it corkscrews out, the fish that come for a finished
-run's pellets are picked once, when the run finishes, and each swims
-over through its own turn and eats its pellet when its mouth gets there,
-the turtle comes round over 1.4 s with a small dip, each tetra turns on
-its own beat, and the axolotl ambles back with a turn instead of jumping
-home. An ask holds the turn about a third of the way round, level, both
+run's pellets are picked once, when the run finishes, from where every
+fish really is, and each swims over through its own turn and eats its
+pellet when its mouth gets there, the turtle comes round over 1.4 s with
+a small dip, each tetra turns on its own beat, the axolotl ambles back
+with a turn instead of jumping home, the octopus eases its peeks over
+the rim and crosses over as it leaves home and comes back, and the
+cleaner shrimp springs over when its client changes. An ask holds the turn about a third of the way round, level, both
 eyes on you, whatever the fish was doing when it came; answering swims
 it back down from the glass. Every change of state starts from where the
 fish was last drawn — its place, its turn, its size, its tail and its
@@ -461,7 +465,8 @@ section): **Swim pace** — Calm, Natural (the default) or Lively — sets
 how hard the wander bends, how long a fish waits between turns, how long
 a turn takes and how fast it cruises; **Swimming speed** (0.5–1.6×)
 speeds swimming and turning together, so the paths keep their shape and
-only run faster; **Fish size** (0.6–1.6×) scales every fish, and the
+only run faster — moving it changes how fast everything swims from that
+moment, never where a fish or a fry is; **Fish size** (0.6–1.6×) scales every fish, and the
 hover box with it, and a big fish swims and asks far enough under the
 surface that no fin pokes out of the tank.
 
