@@ -578,4 +578,59 @@ struct SettingsRenderProofTests {
         withExtendedLifetime(fixture) {}
         withExtendedLifetime(live) {}
     }
+
+    // MARK: lane oss
+
+    /// Settings › Usage › Hooks: a rule that runs, with its last result,
+    /// and one that never will, with the reason, over the mock's rules.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the usage hooks PNGs"))
+    func usageHooks() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        Self.goLive(fixture.core)
+        let model = UsageHooksModel()
+        let ninthMinute = Date().timeIntervalSince1970 - 540
+        model.lastResults = ["chime": UsageHookLastResult(sentence: "Quota low: exit 0 in 0.1 s", at: ninthMinute, ok: true,
+                                                          event: "quota_low")]
+        model.problems = ["log": "the executable must be an absolute path"]
+        for dark in [false, true] where Self.wanted("settings-usage-hooks") {
+            let view = Form { UsageHooksSection(store: fixture.settings, model: model) }
+                .formStyle(.grouped)
+            let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 900), dark: dark)
+            try Self.write(rep, named: "settings-usage-hooks-\(dark ? "dark" : "light")")
+        }
+        withExtendedLifetime(fixture) {}
+    }
+
+    /// Settings › Usage › Claude Code status line with a monitor that
+    /// answers: the question asked before someone's own status line is
+    /// kept, and the refusal for one JR-Bar can't keep.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the status line PNGs"))
+    func usageStatusLine() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        Self.goLive(fixture.core)
+        let ask = "Claude Code already has a status line. JR-Bar can keep it and show its own line above it."
+        let refused = "Claude Code's status line isn't a command JR-Bar can run after its own, so it was left as it is. "
+            + "Remove it from ~/.claude/settings.json to use JR-Bar's."
+        let states: [(name: String, ask: String?, failure: String?)] = [
+            ("settings-usage-statusline", ask, nil),
+            ("settings-usage-statusline-refused", nil, refused),
+        ]
+        for state in states where Self.wanted(state.name) {
+            for dark in [false, true] {
+                let view = Form { ClaudeStatusLineSection(store: fixture.settings, askToWrap: state.ask, failure: state.failure) }
+                    .formStyle(.grouped)
+                let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 520), dark: dark)
+                try Self.write(rep, named: "\(state.name)-\(dark ? "dark" : "light")")
+            }
+        }
+        withExtendedLifetime(fixture) {}
+    }
+
+    /// A monitor that answers, so buttons that need one draw enabled.
+    private static func goLive(_ core: CoreModel) {
+        core.handle(.connected)
+        core.apply(.state(CoreState(sessions: [], asks: [])))
+    }
 }

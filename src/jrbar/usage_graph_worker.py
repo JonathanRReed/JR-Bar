@@ -24,6 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import usage_percent_history, usage_stats
+from .provider_homes import home_scan_roots, opencode_data_root, scan_usage_all_homes
 from .providers import default_state_dir
 from .t3_compat import T3ReadOnlyPolicy, _open_read_only, t3_database_path
 from .usage_heatmap import build_usage_heatmap
@@ -362,16 +363,16 @@ def _build_payload(
     mode = settings.usage_display_mode
     provider_ids = tuple(settings.usage_graph_providers)
     period_start = _period_start(days)
-    totals = usage_stats.scan_usage(
-        Path.home() / ".claude" / "projects",
+    # Every Claude and Codex home (CLAUDE_CONFIG_DIR, CODEX_HOME and
+    # provider_extra_homes), each real folder once (provider_homes).
+    totals = scan_usage_all_homes(
         default_state_dir() / "usage-scan-cache.json",
         since_epoch=period_start.timestamp(),
-        codex_root=Path.home() / ".codex" / "sessions",
         provider_ids=provider_ids,
     )
     opencode_records = (
         _scan_opencode_records(
-            Path.home() / ".local" / "share" / "opencode" / "opencode.db",
+            opencode_data_root() / "opencode.db",
             period_start.timestamp(),
         )
         if "opencode" in provider_ids
@@ -389,6 +390,16 @@ def _build_payload(
     )
     totals.records.extend(opencode_records)
     totals.records.extend(t3code_records)
+    # Pi, Grok, Gemini CLI and OpenClaw keep their own session files; each
+    # record is that agent's own and never adds to Claude or Codex.
+    from .local_token_history import LOCAL_HISTORY_PROVIDERS, scan_local_records
+
+    totals.records.extend(
+        scan_local_records(
+            [provider for provider in provider_ids if provider in LOCAL_HISTORY_PROVIDERS],
+            period_start.timestamp(),
+        )
+    )
 
     # T3 statistics have their own explicit opt-in, separate from the provider
     # switches. Merely discovering another source must not re-enable its line.
@@ -454,6 +465,8 @@ def _build_payload(
 
     labels = {descriptor.provider_id: descriptor.label for descriptor in provider_descriptors()}
     labels["t3code"] = "T3 Code"
+    labels["pi"] = "Pi"
+    labels["openclaw"] = "OpenClaw"
     if mode == "sessions":
         parts = [
             f"{labels.get(series['provider_id'], series['provider_id'])} "
@@ -518,13 +531,13 @@ def _file_fingerprint(path: Path) -> dict:
     }
 
 
-def _tree_fingerprint(root: Path) -> dict:
-    """Stat-only fingerprint of every ``.jsonl`` under ``root``.
+def _tree_fingerprint(root: Path, suffix: str = ".jsonl") -> dict:
+    """Stat-only fingerprint of every ``suffix`` file under ``root``.
 
     Same file filter as the usage scan's walk (regular, non-symlinked
-    ``.jsonl``); count+bytes+newest-mtime catch append/delete, and the
-    inode xor catches a same-size same-mtime replacement that the per-
-    file parse cache would also accept.
+    ``.jsonl``, or ``.json`` for Gemini CLI's chats); count+bytes+newest-
+    mtime catch append/delete, and the inode xor catches a same-size
+    same-mtime replacement that the per-file parse cache would also accept.
     """
     files = 0
     total_bytes = 0
@@ -541,7 +554,7 @@ def _tree_fingerprint(root: Path) -> dict:
         for directory, _dirnames, filenames in walker:
             base = Path(directory)
             for name in filenames:
-                if not name.endswith(".jsonl"):
+                if not name.endswith(suffix):
                     continue
                 try:
                     info = (base / name).lstat()
@@ -558,6 +571,32 @@ def _tree_fingerprint(root: Path) -> dict:
     return {"files": files, "bytes": total_bytes, "newest_ns": newest_ns, "inos": inode_xor}
 
 
+def _local_history_fingerprint(provider_id: str, root: Path) -> dict:
+    """What ``local_token_history`` reads for one agent, as stat tuples.
+
+    Gemini CLI keeps its chats as ``.json``, not ``.jsonl``. OpenClaw's main
+    store is one SQLite database per agent, where a new event can land in
+    the write-ahead log without touching the database file itself.
+    """
+    if provider_id == "gemini":
+        return _tree_fingerprint(root, suffix=".json")
+    fingerprint = _tree_fingerprint(root)
+    if provider_id == "openclaw":
+        agents = root / "agents"
+        try:
+            databases = sorted(agents.glob("*/agent/openclaw-agent.sqlite"))[:64] if agents.is_dir() else []
+        except OSError:
+            databases = []
+        fingerprint["databases"] = {
+            str(database.relative_to(root)): {
+                "db": _file_fingerprint(database),
+                "wal": _file_fingerprint(database.with_name(database.name + "-wal")),
+            }
+            for database in databases
+        }
+    return fingerprint
+
+
 def _corpus_fingerprint(
     snapshot: _UsageGraphSettingsSnapshot,
     *,
@@ -566,16 +605,23 @@ def _corpus_fingerprint(
     """Every input ``_build_payload`` can read, reduced to stat tuples."""
     providers = set(snapshot.usage_graph_providers)
     fingerprint: dict[str, object] = {}
-    if "claude" in providers:
-        fingerprint["claude"] = _tree_fingerprint(Path.home() / ".claude" / "projects")
-    if "codex" in providers:
-        fingerprint["codex"] = _tree_fingerprint(Path.home() / ".codex" / "sessions")
+    for provider_id, roots in home_scan_roots(
+        [name for name in ("claude", "codex") if name in providers]
+    ).items():
+        # The primary home keeps its old key, so a cache written before
+        # extra homes existed still matches; each extra home adds its own.
+        fingerprint[provider_id] = _tree_fingerprint(roots[0])
+        for index, root in enumerate(roots[1:], start=1):
+            fingerprint[f"{provider_id}:{index}"] = {"root": str(root), **_tree_fingerprint(root)}
     if "opencode" in providers:
-        fingerprint["opencode"] = _file_fingerprint(
-            Path.home() / ".local" / "share" / "opencode" / "opencode.db"
-        )
+        fingerprint["opencode"] = _file_fingerprint(opencode_data_root() / "opencode.db")
     if t3_policy is not None and t3_policy.may_scan_activity_statistics:
         fingerprint["t3"] = _file_fingerprint(t3_database_path(t3_policy.base_dir))
+    from .local_token_history import roots as local_history_roots
+
+    for provider_id, root in local_history_roots().items():
+        if provider_id in providers:
+            fingerprint[f"local:{provider_id}"] = _local_history_fingerprint(provider_id, root)
     if snapshot.usage_display_mode == "sessions":
         from .session_history import TRANSCRIPT_SESSION_PROVIDERS
 
@@ -644,6 +690,22 @@ def _usage_doc_cache_write(entries: dict) -> None:
         pass
 
 
+#: Agents with a local token history but no provider card (and so no
+#: place in the stored provider set): charted when their files exist.
+AGENT_HISTORY_PROVIDERS = ("pi", "openclaw")
+
+
+def _agent_histories_found() -> tuple[str, ...]:
+    from .local_token_history import roots as local_history_roots
+
+    found = local_history_roots()
+    return tuple(
+        provider_id
+        for provider_id in AGENT_HISTORY_PROVIDERS
+        if found.get(provider_id) is not None and found[provider_id].is_dir()
+    )
+
+
 def usage_graph_document(
     settings,
     *,
@@ -696,6 +758,19 @@ def usage_graph_document(
     )
     if not resolved_providers:
         raise ValueError("providers must be a nonempty tuple")
+    if provider_ids is None and resolved_metric != "percent":
+        # Pi and OpenClaw have no provider card, so the registry the
+        # picker lists never names them. When their session folders are
+        # on this Mac the default chart includes them; the reply then
+        # names them, the picker offers them, and a click takes them out.
+        resolved_providers = (
+            *resolved_providers,
+            *(
+                provider_id
+                for provider_id in _agent_histories_found()
+                if provider_id not in resolved_providers
+            ),
+        )
     resolved_snapshot = _UsageGraphSettingsSnapshot(
         usage_graph_days=resolved_days,
         usage_display_mode=resolved_metric,

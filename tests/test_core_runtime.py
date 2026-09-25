@@ -911,8 +911,11 @@ def test_serve_server_tracks_serve_enabled_and_the_token__and_2_more(headless, m
     with pytest.raises(CommandError) as bad_range:
         controller._core_dispatch("usage_history", {"provider": "claude", "range": "2d"})
     assert bad_range.value.code == "invalid_range"
+    # Grok has its own session files now: it is scanned like Claude.
+    controller._core_dispatch("usage_history", {"provider": "grok", "range": "7d"})
+    assert calls[-1] == ("grok", 7)
     with pytest.raises(CommandError) as unknown:
-        controller._core_dispatch("usage_history", {"provider": "grok", "range": "7d"})
+        controller._core_dispatch("usage_history", {"provider": "cursor", "range": "7d"})
     assert unknown.value.code == "not_found"
     # Gemini has no configured account and no transcripts to scan here, but
     # it has a price table: the window still gets a rate card, marked

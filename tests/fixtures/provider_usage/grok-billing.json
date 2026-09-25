@@ -1,0 +1,10 @@
+{
+  "config": {
+    "creditUsagePercent": 25,
+    "currentPeriod": {"start": "2026-09-01T00:00:00Z", "end": "2026-10-01T00:00:00Z"},
+    "planName": "SuperGrok"
+  },
+  "onDemandUsed": {"val": 5},
+  "onDemandCap": {"val": 20},
+  "email": "user@example.com"
+}

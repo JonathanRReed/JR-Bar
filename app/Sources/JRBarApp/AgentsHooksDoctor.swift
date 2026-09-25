@@ -23,6 +23,11 @@ struct HooksDoctorEntry: Equatable, Sendable {
     let lastEventAt: Double?
     let pendingLines: Int
     let error: String?
+    /// The CLI's own `--version`, when the doctor found it.
+    var version: String? = nil
+    /// How that version stands against what JR-Bar verified: "verified",
+    /// "newer than verified (2.1.263)", … A note, never a warning.
+    var compatibilityNote: String? = nil
 
     init(provider: String, installed: Bool = false, hookEvents: Int = 0, registered: [String] = [],
          wouldInstall: String? = nil, decide: String? = nil, lastEventAt: Double? = nil,
@@ -49,6 +54,8 @@ struct HooksDoctorEntry: Equatable, Sendable {
                   lastEventAt: value["last_event_at"]?.doubleValue,
                   pendingLines: value["pending_lines"]?.intValue ?? 0,
                   error: value["error"]?.stringValue)
+        version = value["version"]?.stringValue
+        compatibilityNote = value["compatibility"]?["note"]?.stringValue
     }
 }
 
@@ -78,6 +85,14 @@ enum HooksDoctor {
         return nil
     }
 
+    /// "v2.1.280, newer than verified (2.1.263)": the CLI's version with
+    /// the doctor's note, told plainly, never as a problem.
+    static func versionWords(_ entry: HooksDoctorEntry) -> String? {
+        guard let version = entry.version, !version.isEmpty else { return nil }
+        guard let note = entry.compatibilityNote, !note.isEmpty, note != "verified" else { return "v\(version)" }
+        return "v\(version), \(note)"
+    }
+
     /// "12 events hooked · last event 4 min ago · 3 queued · answers
     /// from JR-Bar" — nil for a provider with nothing installed, which
     /// the row's own "Not installed" already says.
@@ -95,6 +110,9 @@ enum HooksDoctor {
         }
         if entry.decide == "installed" {
             parts.append("answers from JR-Bar")
+        }
+        if let version = versionWords(entry) {
+            parts.append(version)
         }
         return parts.joined(separator: " · ")
     }

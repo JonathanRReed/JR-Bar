@@ -76,19 +76,51 @@ def _default_provider_local_scan(
     )
     if source is None:
         return None
+    from .provider_homes import (
+        _home_cache_path,
+        configured_extra_homes,
+        extra_scan_roots,
+        primary_claude_projects,
+        primary_codex_sessions,
+    )
+
+    # CODEX_HOME / CLAUDE_CONFIG_DIR first, then ~/.codex or ~/.claude.
     root = (
-        Path(home) / ".codex" / "sessions"
+        primary_codex_sessions(home=home)
         if provider_id == "codex"
-        else Path(home) / ".claude" / "projects"
+        else primary_claude_projects(home=home)
     )
     cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
+    since = max(0.0, observed_at - 30 * 24 * 60 * 60)
     try:
         result, totals = usage_stats._scan_provider_usage_with_totals(
             source,
             root,
             cache,
-            since_epoch=max(0.0, observed_at - 30 * 24 * 60 * 60),
+            since_epoch=since,
         )
+        # Token totals count every home of this provider (provider_extra_homes),
+        # each real folder once; the quota evidence stays the primary account's.
+        extras = extra_scan_roots(
+            provider_id,
+            home=home,
+            extras=configured_extra_homes().get(provider_id, ()),
+        )
+        if extras:
+            parts = [totals]
+            for extra in extras:
+                _extra_result, extra_totals = usage_stats._scan_provider_usage_with_totals(
+                    source,
+                    extra,
+                    _home_cache_path(cache, extra),
+                    since_epoch=since,
+                )
+                parts.append(extra_totals)
+            merged = usage_stats._merge_usage_totals(tuple(parts))
+            merged.codex_rate_limit_evidence = totals.codex_rate_limit_evidence
+            merged.codex_rate_limit_observed_at = totals.codex_rate_limit_observed_at
+            totals = merged
+            result = usage_stats._provider_result(source.source_key, totals)
     except Exception:
         return None
     records = tuple(
@@ -459,6 +491,10 @@ def collect_codex(
             account_plan=account_plan,
             source_id=source_id,
         )
+        credits = live.get("reset_credits") if isinstance(live, dict) else None
+        if isinstance(credits, int) and not isinstance(credits, bool):
+            # A count only: JR-Bar never redeems a reset credit.
+            snapshot = replace(snapshot, reset_credits=credits)
         return _codex_reading_freshness(
             snapshot, observed_evidence_at, observed_at=observed_at
         )
@@ -492,6 +528,63 @@ def _with_local_usage(
         return snapshot
 
 
+#: How long the OAuth endpoint rests after it failed while Claude Code's
+#: status line can stand in: a 429 is how one STAYS rate limited if asked
+#: again at once. Keyed by the failure's reason.
+_OAUTH_REST_SECONDS = {
+    "rate_limited": 600.0,
+    "authentication_required": 1800.0,
+    "usage_connection_required": 1800.0,
+    "network_unavailable": 120.0,
+    "invalid_provider_response": 300.0,
+}
+_oauth_rest_until: dict[str, float] = {}
+
+
+def _default_statusline_reader(observed_at: float):
+    from .claude_statusline_source import current_reading
+
+    return current_reading(observed_at)
+
+
+def _statusline_stand_in(
+    failure: ProviderUsageSnapshot,
+    *,
+    reading,
+    local: dict[str, object] | None,
+    observed_at: float,
+    home: Path,
+) -> ProviderUsageSnapshot:
+    """Claude Code's own status line reading in place of a failed OAuth
+    read (claude_statusline_source): its lanes say where they came from,
+    and the token totals are the local scan's."""
+    from .claude_statusline_source import snapshot_from_reading
+
+    if reading is None:
+        return _with_local_usage(failure, local)
+    values = local or {}
+    try:
+        from .claude_quota import plan_from_claude_config
+
+        account_plan = plan_from_claude_config(Path(home))
+    except Exception:
+        account_plan = None
+    try:
+        return snapshot_from_reading(
+            reading,
+            observed_at=observed_at,
+            account_plan=account_plan,
+            input_tokens=max(0, int(values.get("input_tokens", 0))),
+            cached_input_tokens=max(0, int(values.get("cached_input_tokens", 0))),
+            output_tokens=max(0, int(values.get("output_tokens", 0))),
+            model_count=max(0, int(values.get("model_count", 0))),
+            estimated_cost_usd=values.get("estimated_cost_usd"),
+            cache_savings_usd=values.get("cache_savings_usd"),
+        )
+    except (TypeError, ValueError):
+        return _with_local_usage(failure, local)
+
+
 def collect_claude(
     preference: ProviderPreference,
     *,
@@ -500,9 +593,54 @@ def collect_claude(
     credentials,
     quota_fetcher: Callable[[str], list[dict]] = _default_claude_quota_fetch,
     local_scanner: Callable[[Path, float], dict[str, object] | None] = _default_claude_local_scan,
+    statusline_reader: Callable[[float], object] | None = None,
 ) -> ProviderUsageSnapshot:
+    # Claude Code's status line describes the account signed in on this Mac,
+    # so it can only stand in for the default instance.
+    default_instance = getattr(preference, "source_instance_id", "default") == "default"
     del preference
     local = local_scanner(Path(home), observed_at)
+    reader = _default_statusline_reader if statusline_reader is None else statusline_reader
+    try:
+        reading = reader(observed_at) if default_instance else None
+    except Exception:
+        reading = None
+    rest_key = str(Path(home))
+    if reading is not None and observed_at < _oauth_rest_until.get(rest_key, 0.0):
+        # OAuth failed a moment ago and is resting; the status line is fresh.
+        return _statusline_stand_in(
+            _failure(
+                "claude",
+                observed_at=observed_at,
+                state=ProviderSourceState.RATE_LIMITED,
+                reason="rate_limited",
+                action="Retry later",
+            ),
+            reading=reading,
+            local=local,
+            observed_at=observed_at,
+            home=Path(home),
+        )
+    snapshot = _collect_claude_oauth(home=home, observed_at=observed_at, credentials=credentials,
+                                     quota_fetcher=quota_fetcher, local=local)
+    if snapshot.state is ProviderSourceState.READY:
+        _oauth_rest_until.pop(rest_key, None)
+        return snapshot
+    if reading is None:
+        return snapshot
+    _oauth_rest_until[rest_key] = observed_at + _OAUTH_REST_SECONDS.get(snapshot.reason_code or "", 300.0)
+    return _statusline_stand_in(snapshot, reading=reading, local=local, observed_at=observed_at, home=Path(home))
+
+
+def _collect_claude_oauth(
+    *,
+    home: Path,
+    observed_at: float,
+    credentials,
+    quota_fetcher: Callable[[str], list[dict]],
+    local: dict[str, object] | None,
+) -> ProviderUsageSnapshot:
+    """The OAuth usage endpoint's reading, or the failure that says why not."""
     # Re-read BEFORE asking when JR-Bar's copy is stale. This is a
     # read-only sync under a previously recorded standing grant. Claude
     # Code remains the sole owner of refresh and Keychain mutation.

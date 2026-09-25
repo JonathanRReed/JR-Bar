@@ -42,6 +42,9 @@ class AdaptiveRefreshReason(str, Enum):
     AMBIENT_USAGE = "ambient_usage"
     DEGRADED_SOURCE = "degraded_source"
     RESET_WATCH = "reset_watch"
+    #: A jump in remaining is waiting for the read that confirms it as a
+    #: reset (provider_usage_qol.confirm_reset_events).
+    RESET_CONFIRM = "reset_confirm"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,11 +103,33 @@ def plan_adaptive_refresh_cadence(
     menu_last_opened_at: float | None = None,
     constrained: bool = False,
     ambient_usage_visible: bool = False,
+    reset_confirm_until: float | None = None,
 ) -> AdaptiveRefreshPlan:
-    """Explain the existing cadence without reading clocks or system state."""
+    """Explain the existing cadence without reading clocks or system state.
+
+    ``reset_confirm_until`` is the last moment a waiting reset candidate
+    can still be confirmed. Until then the next read comes within
+    ``RESET_WATCH_INTERVAL_SECONDS``, even when the Mac is constrained:
+    it is one read per jump, and without it the idle half hour lets the
+    confirmation window close and the reset is never announced.
+    """
     observed = float(observed_at)
     if not math.isfinite(observed):
         raise ValueError("invalid adaptive refresh observation time")
+    confirming = False
+    if reset_confirm_until is not None:
+        until = float(reset_confirm_until)
+        if not math.isfinite(until):
+            raise ValueError("invalid adaptive refresh reset confirmation time")
+        confirming = observed < until
+    if constrained and confirming:
+        return AdaptiveRefreshPlan(
+            RESET_WATCH_INTERVAL_SECONDS,
+            AdaptiveRefreshReason.RESET_CONFIRM,
+            None,
+            True,
+            bool(ambient_usage_visible),
+        )
     if constrained:
         return AdaptiveRefreshPlan(
             CONSTRAINED_INTERVAL_SECONDS,
@@ -147,7 +172,10 @@ def plan_adaptive_refresh_cadence(
         )
 
     if interval > RESET_WATCH_INTERVAL_SECONDS:
-        if reset_watch:
+        if confirming:
+            interval = RESET_WATCH_INTERVAL_SECONDS
+            reason = AdaptiveRefreshReason.RESET_CONFIRM
+        elif reset_watch:
             interval = RESET_WATCH_INTERVAL_SECONDS
             reason = AdaptiveRefreshReason.RESET_WATCH
         elif degraded_source:

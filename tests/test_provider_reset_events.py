@@ -212,6 +212,7 @@ def test_quota_reset_wire_event_carries_the_lane__and_1_more() -> None:
                 "instance": "acct",
                 "label": "Weekly reset",
                 "lane": "weekly",
+                "event_id": "claude:acct:weekly:boundary",
             },
         ),
         (
@@ -221,6 +222,7 @@ def test_quota_reset_wire_event_carries_the_lane__and_1_more() -> None:
                 "instance": "acct",
                 "label": "Weekly reset",
                 "lane": "five-hour",
+                "event_id": "claude:acct:five-hour:boundary",
             },
         ),
     ]

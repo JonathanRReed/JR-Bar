@@ -14,6 +14,7 @@ import re
 import shlex
 import socket
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -149,7 +150,14 @@ def socket_answers(path: Path, timeout: float = 0.3) -> bool:
         probe.close()
 
 
-def hook_doctor_report(home: Path | None = None) -> dict[str, Any]:
+def hook_doctor_report(
+    home: Path | None = None,
+    *,
+    compatibility: Callable[[list[str], Path], dict[str, dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """The report. ``compatibility`` reads each CLI's version and how it
+    stands against what JR-Bar verified (hook_compatibility); by default it
+    runs for the real home only, so a test home never spawns a real CLI."""
     state_dir = default_state_dir(home)
     shim = hook_shim_path()
     providers: list[dict[str, Any]] = []
@@ -208,6 +216,30 @@ def hook_doctor_report(home: Path | None = None) -> dict[str, Any]:
             for item in pending
             if item["file"].split(".", 1)[0] == entry["provider"]
         )
+    if compatibility is None and home is None:
+        from .hook_compatibility import compatibility_rows
+
+        def compatibility(names: list[str], directory: Path) -> dict[str, dict[str, Any]]:
+            return compatibility_rows(names, state_dir=directory)
+
+    try:
+        versions = (
+            compatibility([entry["provider"] for entry in providers], state_dir)
+            if compatibility is not None
+            else {}
+        )
+    except Exception:
+        versions = {}
+    for entry in providers:
+        row = versions.get(entry["provider"], {})
+        # The CLI's version and how it stands against the verified ones:
+        # "newer than verified" is a neutral note, never a warning.
+        entry["version"] = row.get("version")
+        entry["compatibility"] = row.get("compatibility") or {
+            "status": "unknown",
+            "note": "version not read",
+            "verified": None,
+        }
     ingress = state_dir / "hook-ingress.sock"
     core = default_core_socket_path()
     return {
@@ -242,10 +274,13 @@ def render_hook_doctor(report: dict[str, Any]) -> str:
         state = "installed" if entry.get("installed") else "not installed"
         registered = ",".join(entry.get("registered", []))
         decide = f" decide={entry['decide']}" if "decide" in entry else ""
+        version = entry.get("version") or "-"
+        note = (entry.get("compatibility") or {}).get("note") or ""
         lines.append(
             f"  {entry['provider']:<12} {state:<14} runs={registered:<8} "
             f"next install={entry.get('would_install')}{decide}"
         )
+        lines.append(f"      version {version}" + (f" ({note})" if note else ""))
         for command in entry.get("registered_commands", []):
             lines.append(f"      {command}")
     return "\n".join(lines)

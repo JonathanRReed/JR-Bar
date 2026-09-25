@@ -32,6 +32,11 @@ else:
         begin_reset_delivery,
         next_reset_retry_delay,
         reset_event_is_terminal,
+        with_reset_candidates,
+    )
+    from .provider_reset_settings_action import (
+        note_reset_candidates,
+        reset_delivery_state,
     )
     from .provider_usage_controller_actions import (
         apply_provider_usage_settings_snapshot,
@@ -39,9 +44,7 @@ else:
         profile_session_action,
         toggle_provider_menu_visibility,
     )
-    from .provider_usage_event_store import (
-        save_reset_delivery_state,
-    )
+    from .provider_usage_event_store import save_reset_delivery_state
     from .provider_usage_feedback_actions import (
         alert_connection_loss,
         alert_new_critical_pace,
@@ -49,6 +52,7 @@ else:
         report_reconnect_outcome,
     )
     from .provider_usage_qol import (
+        confirm_reset_events,
         detect_reset_events,
         merged_edge_baseline,
         threshold_crossings,
@@ -74,9 +78,10 @@ else:
     )
     from .settings_destination_refresh import refresh_settings_destination
     from .usage_event_hooks import (
+        config_for_settings,
         detect_usage_hook_events,
+        dispatch_usage_hooks,
         hook_path_message,
-        run_usage_hooks,
     )
     from .usage_percent_history import record_state_observations
 
@@ -114,6 +119,8 @@ def _publish_reset_wire_events(controller, reset_events) -> None:
                 instance=event.source_instance_id,
                 label=event.label,
                 lane=event.lane_id,
+                # The same id the celebration and the usage hook carry.
+                event_id=event.event_id,
             )
         except Exception:
             pass
@@ -296,12 +303,17 @@ else:
             service = getattr(self, "_jrbar_provider_usage_service", None)
             if type(service) is ProviderUsageService:
                 return service
+            from .cliproxy_hub import HubSource
+
             service = ProviderUsageService(
                 settings_loader=load_provider_usage_settings,
                 credentials=ProviderCredentialStore(),
                 home=Path.home(),
                 state_loader=load_provider_usage_state,
                 state_saver=save_provider_usage_state,
+                # The CLIProxyAPI hub's accounts (off unless cliproxy_hub
+                # is enabled; loopback only, every 5 min at most).
+                extra_source=HubSource(settings_loader=lambda: self.settings),
             )
             self._jrbar_provider_usage_service = service
             self._jrbar_provider_usage_state = service.snapshot()
@@ -396,17 +408,37 @@ else:
                 is False
             ):
                 self._provider_usage_log("usage percent history write not queued")
-            delivery_state = getattr(self, "_jrbar_reset_delivery_state", ResetDeliveryState())
+            # The saved deliveries and the jumps still waiting for
+            # confirmation, loaded once for this and refresh_'s delivery
+            # alike, so a restart mid-candidate neither drops nor repeats
+            # a reset.
+            delivery_state = reset_delivery_state(self)
             seen = {
                 event.event_id
                 for event in delivery_state.events
                 if reset_event_is_terminal(delivery_state, event.event_id)
             }
-            reset_events = detect_reset_events(
-                previous_state.snapshots,
+            # One reset rule for everything that reacts to a reset: TIMING
+            # fires at once, a JUMP waits for a confirming read.
+            confirmation = confirm_reset_events(
+                detect_reset_events(
+                    previous_state.snapshots,
+                    state.snapshots,
+                    seen_event_ids=frozenset(seen),
+                ),
                 state.snapshots,
+                candidates=delivery_state.candidates,
                 seen_event_ids=frozenset(seen),
             )
+            reset_events = confirmation.events
+            if confirmation.candidates != delivery_state.candidates:
+                delivery_state = with_reset_candidates(delivery_state, confirmation.candidates)
+                self._jrbar_reset_delivery_state = delivery_state
+                if not reset_events:
+                    self._persist_reset_delivery_state()
+            # A waiting jump needs its confirming read within half an
+            # hour; the idle cadence alone would usually miss it.
+            note_reset_candidates(self, confirmation.candidates)
             reset_preferences = {preference.identity: preference for preference in settings.providers}
             if reset_events:
                 for event in reset_events:
@@ -437,16 +469,18 @@ else:
                 state.snapshots,
                 thresholds,
             )
-            # Edge-triggered user hooks: transitions only, never states,
-            # so a chime/webhook script needs no rate limiting of its own.
-            hook_path = str(getattr(self.settings, "usage_event_hook_path", "") or "")
-            if hook_path:
-                run_usage_hooks(
-                    hook_path,
+            # Usage hooks (usage_event_hooks): edges only, never states, run
+            # by rule with a small environment and JSON on stdin. Their
+            # quota_reset events are the confirmed ones above.
+            hook_config = config_for_settings(self.settings)
+            if hook_config.enabled and hook_config.rules:
+                dispatch_usage_hooks(
+                    hook_config,
                     detect_usage_hook_events(
                         previous_state.snapshots,
                         state.snapshots,
                         thresholds=thresholds,
+                        reset_events=reset_events,
                     ),
                 )
             # Pace as an interruption, not just a color: a lane that
@@ -626,7 +660,7 @@ else:
             celebrate_quota_resets(self, events, legacy=_legacy)
 
         def _persist_reset_delivery_state(self) -> None:
-            state = getattr(self, "_jrbar_reset_delivery_state", ResetDeliveryState())
+            state = reset_delivery_state(self)
             disposition = self._persistence_writer.submit(
                 "provider-reset-events",
                 lambda: save_reset_delivery_state(state),

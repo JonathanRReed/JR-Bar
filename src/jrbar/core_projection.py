@@ -1122,6 +1122,27 @@ def _provider_supports_quota(provider_id: object) -> bool:
     return False
 
 
+def _snapshot_has_quota_source(snapshot: object) -> bool:
+    """Whether THIS reading could carry a quota: the provider has a quota
+    collector, and the collector did not say this account has none.
+
+    OpenCode is the case that needs the second half: its collector exists,
+    but without an OpenCode Go key (or with a Zen key that has no Go
+    subscription) it reports ``unsupported``. The app must then draw no
+    meter at all rather than an empty one.
+    """
+    if not _provider_supports_quota(getattr(snapshot, "provider_id", None)):
+        return False
+    state = getattr(getattr(snapshot, "state", None), "value", getattr(snapshot, "state", None))
+    return state != "unsupported"
+
+
+def _is_detail_lane(lane: object) -> bool:
+    from .provider_usage_parsers import DETAIL_LANE_IDS
+
+    return getattr(lane, "lane_id", None) in DETAIL_LANE_IDS
+
+
 def usage_document(
     usage_state: object,
     *,
@@ -1188,6 +1209,14 @@ def usage_document(
                     # (S6.1: unclassified lanes must not drive decisions).
                     "bindable": getattr(lane, "bindable", True) is not False,
                     "forecast": window_forecast,
+                    # Which source read this window ("claude-oauth",
+                    # "claude-statusline", "cliproxy"): the card names a
+                    # stand-in source instead of passing it off as direct.
+                    "source": getattr(lane, "source_id", None),
+                    # True for a figure the provider reports only for
+                    # reference (OpenCode Go's monthly): a line under the
+                    # rings, never a ring of its own.
+                    "detail": _is_detail_lane(lane),
                 }
             )
         state = getattr(getattr(snapshot, "state", None), "value", None)
@@ -1224,7 +1253,7 @@ def usage_document(
                 "instance": getattr(snapshot, "source_instance_id", "default"),
                 # False for a provider with no quota collector at all, so a
                 # "show meters" control can hide instead of drawing dead.
-                "quota_source": _provider_supports_quota(provider_id),
+                "quota_source": _snapshot_has_quota_source(snapshot),
                 # The app's UsageAccount block: {plan, label, fidelity}.
                 # `plan` is the provider's own word for the subscription
                 # ("pro", "Max 20x"), never inferred from which windows
@@ -1250,6 +1279,9 @@ def usage_document(
                 # None on a stale or unanswered feed, so the wire never
                 # invents one.
                 "incident": getattr(snapshot, "incident", None),
+                # Unused limit-reset credits the provider reports (a Codex
+                # reset credit): a count only; nothing here redeems one.
+                "reset_credits": getattr(snapshot, "reset_credits", None),
                 "reason": getattr(snapshot, "reason_code", None),
                 "action": getattr(snapshot, "action_label", None),
                 "observed_at": epoch(getattr(snapshot, "observed_at", None)),

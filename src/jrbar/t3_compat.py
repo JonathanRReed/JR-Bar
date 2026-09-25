@@ -33,12 +33,16 @@ T3_QUERY_TIMEOUT_SECONDS = 0.5
 T3_POLL_INTERVAL_SECONDS = 2.0
 T3_MAX_THREADS = 512
 T3_MAX_TITLE_LENGTH = 160
-T3_SOURCE_COMMIT = "ea646c0834a3394ecb0be4a30c5d367e5a9002bd"
-T3_LAST_TESTED_SOURCE_COMMIT = "bab4b6f02b8bdaf15fd32636a97f69ff657cec50"
+# Re-pinned 2026-09-24 against T3 Code Nightly 0.0.43 (source cb1a3f34,
+# tag v0.0.43-nightly.20260924.2200): migrations 050-053 only add tables
+# and columns, and a read-only probe of the owner's 0.0.43-nightly.20260922
+# database (migration 53) found every required column.
+T3_SOURCE_COMMIT = "cb1a3f34670b06148d88806a9534772879c30ecd"
+T3_LAST_TESTED_SOURCE_COMMIT = "cb1a3f34670b06148d88806a9534772879c30ecd"
 T3_MINIMUM_VERSION = "0.0.33"
-T3_MAXIMUM_TESTED_VERSION = "0.0.33"
+T3_MAXIMUM_TESTED_VERSION = "0.0.43"
 # Source review is not a claimed live application or test-suite verification.
-T3_SOURCE_REVIEW_COMMIT = "ea646c0834a3394ecb0be4a30c5d367e5a9002bd"
+T3_SOURCE_REVIEW_COMMIT = "cb1a3f34670b06148d88806a9534772879c30ecd"
 T3_REASON_MISSING = "t3_database_missing"
 T3_REASON_UNSUPPORTED = "t3_schema_unsupported"
 T3_REASON_BUSY = "t3_database_busy"

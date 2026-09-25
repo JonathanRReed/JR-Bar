@@ -1,0 +1,13 @@
+{
+  "sessionId": "gem-1",
+  "projectHash": "5f1c0a",
+  "startTime": "2026-09-20T12:00:00.000Z",
+  "lastUpdated": "2026-09-20T12:05:00.000Z",
+  "messages": [
+    {"id": "u1", "type": "user", "timestamp": "2026-09-20T12:00:01.000Z", "content": "(never read)"},
+    {"id": "g1", "type": "gemini", "timestamp": "2026-09-20T12:00:03.000Z", "model": "gemini-3.1-pro-preview",
+     "tokens": {"input": 2000, "output": 150, "cached": 1500, "thoughts": 50, "tool": 0, "total": 2200}},
+    {"id": "g2", "type": "gemini", "timestamp": "2026-09-20T12:01:00.000Z", "model": "gemini-3-flash-preview",
+     "tokens": {"input": 500, "output": 40, "cached": 0, "thoughts": 0, "tool": 0, "total": 540}}
+  ]
+}

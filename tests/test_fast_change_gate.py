@@ -25,6 +25,7 @@ def test_fast_gate_has_explicit_ordered_evidence_layers__and_2_more() -> None:
         "Import smoke",
         "Contract tests",
         "Tracked secret scan",
+        "Doc links",
         "Fixture validation",
         "Focused tests",
         "Bytecode compilation",

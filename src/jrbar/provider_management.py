@@ -46,6 +46,9 @@ CREDENTIAL_ACCOUNTS: dict[str, tuple[str, ...]] = {
     "devin": ("token",),
     "grok": ("token",),
     "openai-api": ("admin-key",),
+    # The CLIProxyAPI hub's management key (cliproxy_hub). Not a provider:
+    # it lets the hub read the accounts the proxy signs in to.
+    "cliproxy": ("management",),
 }
 
 

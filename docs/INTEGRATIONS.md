@@ -68,7 +68,15 @@ versions, fixture version, connection mode); `jrbar integrations status
 
 | Integration | Minimum | Maximum tested | Mode |
 | --- | ---: | ---: | --- |
-| T3 Code | 0.0.33 | 0.0.33 | `sqlite-readonly-v1` |
+| T3 Code | 0.0.33 | 0.0.43 | `sqlite-readonly-v1` |
+
+Re-pinned 2026-09-24: T3 Code Nightly 0.0.43 (source `cb1a3f34`) adds
+migrations 050-053 (`projection_thread_pull_requests`,
+`projection_thread_messages.context_json`, `projection_threads.title_state_json`
+and `pull_request_files_viewed`). All four only add, and a read-only probe of
+the owner's 0.0.43 database found every column JR-Bar reads, so the
+projection is unchanged. `tests/test_t3_compat.py` keeps a 0.0.43-shaped
+schema (fixture version 3).
 
 ## Alcove
 

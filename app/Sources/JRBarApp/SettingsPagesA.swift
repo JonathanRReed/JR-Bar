@@ -577,6 +577,8 @@ struct UsagePage: View {
             }
         }
 
+        UsageExtrasSections(store: store)
+
         SettingGroup("History") {
             SettingToggle(store, "Keep history", subtitle: "Stores usage samples locally so graphs can look back.", path: "capacity_history_enabled")
             SettingIntPicker(store, "Keep for", path: "capacity_history_retention_days", options: [

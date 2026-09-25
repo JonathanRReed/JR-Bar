@@ -450,7 +450,9 @@ final class UsageCenterStore {
             ?? (primary ? provider.forecast : provider.forecast.map { CoreUsageForecast(exhaustsAt: nil, pace: $0.pace) })
         let samples = core.usageSamples.samples(provider: provider.identity, window: window.name)
         let forecast = UsageForecaster.forecast(window: window, daemon: daemon, samples: samples, now: now.timeIntervalSince1970)
-        guard core.isLive else { return forecast }
+        // A hub account is spent by whoever uses the proxy, not by this
+        // Mac's agents: they neither pace it nor hold it idle.
+        guard core.isLive, !UsageSourceNotes.isHubInstance(provider.instance) else { return forecast }
         return SessionAwarePace.adjust(forecast, working: workingAgents(provider: provider.id, core: core))
     }
 
@@ -761,7 +763,11 @@ final class UsageCenterStore {
             if let reason = provider.reason, !reason.isEmpty { parts.append(reason.replacingOccurrences(of: "_", with: " ")) }
             return parts.joined(separator: " · ")
         }
-        parts.append(fidelityLabel(provider.fidelity ?? account?.fidelity))
+        // With no quota source there is no figure for "Official" to vouch
+        // for; the card's own sentence says why.
+        if provider.quotaSource {
+            parts.append(fidelityLabel(provider.fidelity ?? account?.fidelity))
+        }
         return parts.joined(separator: " · ")
     }
 }

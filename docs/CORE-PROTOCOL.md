@@ -309,7 +309,17 @@ Vocabulary:
   lane knows it; `bindable` is false for a lane the provider's own catalog
   does not know — evidence only, never an applicable constraint;
   `fidelity` is `stale` when the source is stale, else
-  `official`; `state` is the `ProviderSourceState` value.
+  `official`; `state` is the `ProviderSourceState` value. `source`
+  (additive, 2026-09-24) is the lane's source id — `claude-oauth`,
+  `claude-statusline` (Claude Code's own statusLine report, standing in
+  while OAuth is rate limited or signed out), `cliproxy` (read through the
+  CLIProxyAPI hub), `opencode-go-api`, … — so a card can name a stand-in
+  source instead of passing it off as a direct read. `detail` (additive,
+  2026-09-24) is true for a figure the provider reports only for reference
+  (today only OpenCode Go's monthly window, `go-monthly`): the app lists it
+  under the rings instead of drawing a ring. A window that is merely not
+  `bindable` (a model's own cap such as `7d Fable`, a Codex Spark sub-cap)
+  keeps its ring.
 - `usage.providers[].constrained` is the window the daemon says is worth
   watching — not the name convention but the least headroom among the
   `bindable` windows that were actually measured: `{id, name, used_pct,
@@ -318,10 +328,21 @@ Vocabulary:
   Null when nothing applicable was measured. The app's card leads with
   this window and explains the pick when it departs from the `5h`
   convention; an unclassified lane cannot win it even at 1 % left.
-- `usage.providers[].quota_source` is whether a quota collector exists for
-  the provider at all (read off `provider_usage_platform`'s descriptors,
-  not the snapshot's claims), so a "show meters" control can hide instead
-  of drawing dead.
+- `usage.providers[].quota_source` is whether this reading can carry a
+  quota at all: a quota collector exists for the provider (read off
+  `provider_usage_platform`'s descriptors), AND the snapshot is not
+  `unsupported` (since 2026-09-24, per snapshot). OpenCode is the case
+  that needs the second half: without an OpenCode Go key, or with a Zen
+  key that has no Go subscription (`reason` `opencode_no_quota_source` /
+  `opencode_go_not_subscribed`), it reports `unsupported` with its token
+  totals and no windows. A "show meters" control hides instead of drawing
+  dead, and the Usage Center says why in words.
+- `usage.providers[].reset_credits` (additive, 2026-09-24) is how many unused
+  limit-reset credits the provider reports for this account, or null when no
+  source stated a count: Codex's own `account/rateLimits/read`
+  (`rateLimitResetCredits.availableCount`), the CLIProxyAPI hub's credit list
+  for a hub account, or a Grok billing answer that carries its coupons. A
+  count to show; nothing in JR-Bar redeems a credit.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
   names it): `exhausts_at` (epoch, or null when nothing is burning),
@@ -371,7 +392,12 @@ Vocabulary:
   while the agents' hold is in it; `suspended` names a yield that took the
   hold away while the demand stands -- `thermal` (the thermal state
   reached `serious` with the lid shut or `critical` with it open, released
-  until five cool minutes pass) or `battery` (the low-battery floor);
+  until five cool minutes pass), `battery` (the low-battery floor) or
+  `low_power` (macOS Low Power Mode is on, read from
+  `NSProcessInfo.isLowPowerModeEnabled`, or from `pmset -g`'s `powermode`
+  or `lowpowermode` line when Foundation can't answer, at most once a
+  minute, while `keep_awake_yield_low_power_mode` is on, the default; heat
+  and the battery floor outrank it);
   `thermal` is `nominal`/`fair`/`serious`/`critical` or null.
   `closed_lid` adds `lid_closed` (the daemon's last reading, null while it
   has none or while nothing watches the lid -- the lid is polled only
@@ -383,7 +409,7 @@ Vocabulary:
   `always` policy), `last_sleep_at` and `sleep_error`. `last_release` is
   the newest release worth reading, `{kind, reason, at, duration,
   finished, slept_at}`: `kind` `lease_ended` (`reason`
-  `expired`/`finished`), `suspended` (`thermal`/`battery`),
+  `expired`/`finished`), `suspended` (`thermal`/`battery`/`low_power`),
   `lid_hold_ended` (`duration` the held stretch, `finished` how many runs
   the activity ledger saw finish during it) or `slept` (carrying the
   stretch it closed, so one row reads "ran 2 h 40 m closed, 3 finished,
@@ -755,9 +781,13 @@ range: a `usage_history` reply that went out `pending` or `stale` now has
 a fresh document behind it, ask again); `quota_reset` (`provider`,
 `instance`, `label` such as "Weekly reset", `lane`: the usage lane that
 refilled, `weekly` / `five-hour` / a product-scoped id ending in
-`-weekly`; published on every detected reset regardless of the
+`-weekly`, and `event_id`, the same id the celebration delivery and the
+usage hooks carry; published on every confirmed reset regardless of the
 celebration preferences, so the Usage Center can pulse the card and the
-Confetti toy can fire on the weekly one); `quota_pace` (`provider`,
+Confetti toy can fire on the weekly one. A reset whose boundary passed
+between two reads fires at once; a jump of 50 points or more without the
+boundary passing waits for a confirming read 60 s to 30 min later whose
+reset time matches within two minutes — `provider_usage_qol.confirm_reset_events`); `quota_pace` (`provider`,
 `lane`, `label` the lane's name, `remaining_percent`, `runs_out_at` and
 `resets_at` as epochs, and `detail` in words, "30% left · runs out around
 3:40 PM · resets 5:30 PM"; once per reset window, when a lane is newly
@@ -776,7 +806,7 @@ than 10 s. Revealing an ask puts it on the panel; it never answers it.
 `power` goes out once per power-log entry worth a line: `power` is the
 entry's kind (`lease_ended`, `suspended`, `lid_hold_ended`, `slept`),
 `detail` its reason (`expired`, `finished`, `thermal`, `battery`,
-`agents_idle`, `policy`), `label` History's words for it ("Keep awake let
+`low_power`, `agents_idle`, `policy`), `label` History's words for it ("Keep awake let
 go", "Put the Mac to sleep"), `duration` the held stretch where there
 is one and, on `lid_hold_ended`, `finished` the runs that finished during
 it -- the lid-open report's "3 finished".
@@ -849,6 +879,39 @@ Keys the app catalogued first and the daemon serves since 2026-09-10:
   `milestone_odometer_steps` (positive ints, sorted, deduplicated, at
   most 16, default `[10, 25, 50, 100]`). All default off/empty-consented;
   an enabled odometer with no valid step stays dark.
+
+Usage-source keys (additive, 2026-09-24; each decoded tolerantly by
+`usage_source_settings.py`, so a bad field falls back to its default and
+never costs the rest of the file):
+
+- `usage_hooks`: `{enabled: false, rules: [{id, enabled, event (one of the
+  seven, or "*"), provider (or null), threshold_remaining (or null),
+  executable, arguments[], timeout_seconds (0.1–300, default 15), argv
+  ("json" or "legacy")}]}`. `set_setting` writes it whole or by dot path
+  (`usage_hooks.enabled`). A settings file with no `usage_hooks` but a v1
+  `usage_event_hook_path` loads as one enabled rule with id `legacy` and
+  `argv: "legacy"`. After that the rule follows the old key on every load:
+  a new `usage_event_hook_path` (from `set_setting`, a hand edit or the
+  legacy window's field) becomes the `legacy` rule's executable and turns
+  the rule and hooks on, an empty one removes the rule, and a path with no
+  `legacy` rule left adds it back. A rule the runner refuses stays in the
+  document; `usage_hooks_status` says why.
+- `claude_statusline_source` (default false) lets Claude Code's statusLine
+  readings stand in for OAuth; `statusline_text_enabled` (default true)
+  keeps `statusline.txt` written while the source is on.
+- `cliproxy_hub`: `{enabled: false, url: "http://127.0.0.1:8317",
+  min_interval_seconds: 300}`. A non-loopback URL is kept but refused at
+  collection time; the interval is clamped to 300–3600. The management key
+  is never here: it is the Keychain's (`providers credential set cliproxy
+  management`).
+- `provider_extra_homes`: `{claude: [absolute folders], codex: [...]}`,
+  extra account homes scanned beside `CLAUDE_CONFIG_DIR` / `CODEX_HOME`
+  and the defaults; homes that resolve to one folder count once.
+- `pricing_overrides`: `{model: {input, output, cache_read?,
+  cache_write?}}` in USD per million tokens; a model needs an input and an
+  output price. An override wins over `resources/model_pricing.json`.
+- `keep_awake_yield_low_power_mode` (default true): a keep-awake lease is
+  suspended with reason `low_power` while macOS Low Power Mode is on.
 
 ```json
 {"t":"settings","v":1,"generation":17,"schema":3,"document":{…}}
@@ -966,6 +1029,8 @@ the main thread). Unknown args are ignored.
 | `end_calibration_preview` | device | Drops the held preview(s) that device owns -- its own and a companion strip's -- clears the dedupe identity the preview bytes left, and re-arms the live program. Idempotent: `{device, ended}`. |
 | `apply_effect` | effect, scope, target, parameters? | Effect Studio assignment (`EffectAssignmentRecord.create`); `effect` null or `"none"` removes it. Protocol-1 alias of `set_assignment`/`clear_assignment`: answers the same fuller assignment document, parameters sidecar included. |
 | `refresh_usage` | providers[] | Forces a provider usage refresh; the next `state` carries the result. |
+| `usage_hooks_status` | — | The Settings Hooks section's truth (lane oss, 2026-09-24): `{enabled, problem, events[], rules[{id, enabled, event, provider, threshold_remaining, executable, arguments[], timeout_seconds, argv, problem, last_result}]}`. `problem` on a rule says why it will never run (a relative executable, an unknown event, more than 32 arguments, a string over 4 KiB); `problem` on the document is set when more than 32 rules make every rule refuse (fail closed). `last_result` is `{rule, event, provider, at, outcome (ok, exit, timeout, refused, error), exit_code?, duration_seconds?, detail?, sentence}`, kept in memory while the daemon runs. Off the main thread. |
+| `usage_hooks_test` | event (one of the seven), provider, rule? | Runs the rules a made-up event would match (or just `rule`), whatever the master switch says, with `state: "test"` in the event, and waits at most 8 s: `{event, provider, results[…last_result shape…], status}`. `invalid_args` for an unknown event or rule. The Test button. Off the main thread. |
 | `list_providers` | provider?, instance? | The inspect surface behind `jrbar providers status`: one row per configured provider *instance* — `{id, instance, label, enabled, menu_visible, browser_sources_enabled, supports_browser_sources, supports_local_tokens, supports_quota, source_order, options, consents[], credentials[], imported_credential, state, reason, action, account_label, observed_at}`. `consents` carry `source_instance_id` so a row only lists the grants its own instance holds; `credentials` report `{account, available}` — availability, never the secret; `imported_credential` says the stored token came from a consented browser import (the only credential a revoke may remove). `state`/`reason`/`action` mirror the live snapshot for that exact instance. |
 | `set_provider_enabled` | provider, enabled, instance? | Persists the per-instance enabled flag through the settings document's optimistic concurrency — a concurrent edit answers `settings_changed`, never a silent merge; `unknown_instance` when no configured instance exists. `{provider}` is the row as persisted, and an enable triggers a usage refresh for that provider. |
 | `provider_consent` | action (`list`/`grant`/`revoke`), provider?, browser?, profile?, instance?, background_repair? | The exact-scope consent store. `grant` binds provider + browser + profile + the provider's declared domain/field allowlist and imports nothing — the import remains its own action. `list` returns `{consents[]}`; grant/revoke return `{consent}` with the bound scope, `was_granted`, and on revoke `imported_data`: `removed`/`replaced`/`retained`/`none` — the imported credential is deleted only while the stored value still matches the import's digest, so a user-replaced token survives. `unsupported` for providers with no consented browser source. |
@@ -1280,6 +1345,34 @@ answer, and any queued payloads; for Claude and Codex it also says whether
 the decide lane is installed (`decide=installed|missing|not_installed`).
 An install from before the lane existed keeps working and reads `missing`
 until Settings › Agents reinstalls the hooks.
+
+### Claude Code's status line (`--statusline`)
+
+`jrbar-hook --statusline [--then <command>]` is Claude Code's `statusLine`
+command when the person turns on Settings › Usage › Claude Code status line
+(or runs `jrbar agent-monitor install claude-statusline [--wrap]`). It sends
+the statusLine JSON as one frame whose header carries `"kind":"statusline"`
+(provider `claude`). The daemon never treats that frame as a hook event:
+it keeps only `session_id`, `model.id` and `rate_limits.five_hour` /
+`rate_limits.seven_day` (`used_percentage`, `resets_at`), drops a window
+whose reset has passed, and never touches session liveness, because the
+status line re-renders while Claude is idle (`claude_statusline_source`).
+The Claude collector uses that reading only when the OAuth usage endpoint
+is rate limited, signed out, unavailable or not connected; its lanes carry
+`source: "claude-statusline"`, and after an OAuth failure the endpoint
+rests (10 min after a 429) while the status line covers for it. Nothing
+is spooled when the daemon is down. The shim then prints
+`$XDG_STATE_HOME/jrbar/statusline.txt` (one line, at most 256 bytes, e.g.
+`JR-Bar · 2 working · 1 needs you · 5h 58% left`; empty while
+`statusline_text_enabled` is off), and with `--then` runs the person's
+previous statusLine command through `/bin/sh` with the same stdin and
+prints its output after JR-Bar's line (3 s and 4 KiB at most). Install
+never replaces an existing `statusLine`: without `--wrap` it is refused;
+with it, the old command moves into `--then`, and uninstall puts the old
+value back exactly. `claude_statusline_install {wrap}` and
+`claude_statusline_uninstall` are the Settings switch's commands; the
+first answers `{installed, wrapped, needs_wrap, message}` and asks before
+wrapping.
 
 ### Pi and Gemini CLI
 

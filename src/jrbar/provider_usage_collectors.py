@@ -17,7 +17,7 @@ import sqlite3
 import ssl
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -31,6 +31,7 @@ from .provider_usage_parsers import (
     parse_gemini_usage,
     parse_grok_usage,
     parse_openai_api_usage,
+    parse_opencode_go_usage,
 )
 from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot, UsageLane
 from .provider_usage_settings import ProviderPreference
@@ -837,7 +838,7 @@ def _validated_loopback_endpoint(value: str | None) -> str | None:
 _cached_antigravity_connection: dict[str, Any] = {}
 _cached_antigravity_creds: tuple[float, str | None] | None = None
 _cached_antigravity_tokens: tuple[float, int] | None = None
-_cached_opencode_mtime: float | None = None
+_cached_opencode_mtime: tuple[str, float] | None = None
 _cached_opencode_totals: tuple[int, int, int] | None = None
 
 
@@ -1188,74 +1189,84 @@ def collect_openai_api(
         )
 
 
-def collect_opencode(
-    preference: ProviderPreference,
-    *,
-    observed_at: float,
-    home: Path | None = None,
-) -> ProviderUsageSnapshot:
-    del preference
-    root = (home or Path.home()) / ".local" / "share" / "opencode"
-    db_path = root / "opencode.db"
-    auth_path = root / "auth.json"
-    if not db_path.is_file() and not auth_path.is_file():
-        return _failure(
-            "opencode",
-            observed_at=observed_at,
-            state=ProviderSourceState.SOURCE_NOT_FOUND,
-            reason="opencode_data_not_found",
-            action="Open OpenCode",
-        )
+#: OpenCode Go's usage endpoint. T3 Code (MIT) documents it through its
+#: own client; OpenCode has not published it, so every failure is
+#: classified and none can invent a lane.
+OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
+OPENCODE_GO_TIMEOUT_SECONDS = 8.0
+OPENCODE_AUTH_MAX_BYTES = 256 * 1024
+#: An error OpenCode itself logged about running out, looked for in the
+#: last hour of messages. It is a fact about a moment, so it becomes the
+#: card's incident line, never a quota lane.
+OPENCODE_LIMIT_LOOKBACK_SECONDS = 3600.0
 
-    account_label = None
-    if auth_path.is_file():
+
+def _read_opencode_go_key(auth_path: Path, env) -> str | None:
+    """The OpenCode Go API key: ``auth.json["opencode-go"]`` of type
+    ``api``, else ``OPENCODE_API_KEY`` from the daemon's environment.
+
+    Other keys in ``auth.json`` (github-copilot, google, a Zen key) are
+    other providers' sign-ins. None of them is a quota source for
+    OpenCode, so none is read.
+    """
+    try:
+        info = auth_path.lstat()
+    except OSError:
+        info = None
+    if (
+        info is not None
+        and auth_path.is_file()
+        and not auth_path.is_symlink()
+        and info.st_size <= OPENCODE_AUTH_MAX_BYTES
+    ):
         try:
-            with auth_path.open("r", encoding="utf-8") as f:
-                auth_data = json.load(f)
-                if isinstance(auth_data, dict):
-                    for p_key in ("github-copilot", "google", "opencode"):
-                        if p_key in auth_data:
-                            account_label = p_key
-                            break
-                    if not account_label and auth_data:
-                        account_label = next(iter(auth_data.keys()))
-        except Exception:
-            pass
+            document = json.loads(auth_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            document = None
+        entry = document.get("opencode-go") if isinstance(document, dict) else None
+        if isinstance(entry, dict) and entry.get("type") == "api":
+            key = _valid_secret(entry.get("key"))
+            if key is not None:
+                return key
+    return _valid_secret((env or {}).get("OPENCODE_API_KEY"))
 
-    is_rate_limited = False
-    rate_limit_reset_at = None
-    remaining_percent = 100.0
-    state = ProviderSourceState.READY
-    reason_code = None
-    action_label = None
-    input_tokens = 0
-    output_tokens = 0
-    model_count = 0
 
-    if db_path.is_file():
-        try:
-            db_mtime = db_path.stat().st_mtime
-            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            one_hour_ago = int((observed_at - 3600.0) * 1000)
-            cursor = con.execute(
-                "SELECT time_created, data FROM message WHERE time_created >= ? AND (data LIKE '%FreeUsageLimitError%' OR data LIKE '%Rate limit exceeded%') ORDER BY time_created DESC LIMIT 1",
-                (one_hour_ago,),
-            )
-            row = cursor.fetchone()
-            if row:
-                err_time_ms, _err_data = row
-                err_epoch = err_time_ms / 1000.0 if err_time_ms > 1e10 else float(err_time_ms)
-                cooldown_window = 3600.0
-                elapsed = observed_at - err_epoch
-                if 0 <= elapsed < cooldown_window:
-                    is_rate_limited = True
-                    rate_limit_reset_at = err_epoch + cooldown_window
-                    remaining_percent = max(0.0, min(100.0, (elapsed / cooldown_window) * 100.0))
-                    state = ProviderSourceState.RATE_LIMITED
-                    reason_code = "rate_limit_exceeded"
-                    action_label = "Open OpenCode"
+def _opencode_local_facts(db_path: Path, observed_at: float) -> tuple[int, int, int, str | None]:
+    """(input tokens, output tokens, models, incident) from OpenCode's DB.
 
-            global _cached_opencode_mtime, _cached_opencode_totals
+    Read-only and best effort: a locked or unfamiliar database gives zeros
+    and no incident, never an error card.
+    """
+    global _cached_opencode_mtime, _cached_opencode_totals
+    if not db_path.is_file():
+        return 0, 0, 0, None
+    input_tokens = output_tokens = model_count = 0
+    incident = None
+    try:
+        # Keyed by the file as well as its mtime: two databases touched in
+        # the same second must not share one set of totals.
+        db_mtime = (str(db_path), db_path.stat().st_mtime)
+        uri = f"file:{quote(str(db_path))}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=1.0) as con:
+            con.execute("PRAGMA query_only=ON")
+            since_ms = int((observed_at - OPENCODE_LIMIT_LOOKBACK_SECONDS) * 1000)
+            try:
+                row = con.execute(
+                    "SELECT time_created FROM message WHERE time_created >= ? AND "
+                    "(data LIKE '%FreeUsageLimitError%' OR data LIKE '%Rate limit exceeded%') "
+                    "ORDER BY time_created DESC LIMIT 1",
+                    (since_ms,),
+                ).fetchone()
+            except sqlite3.Error:
+                row = None
+            if row and isinstance(row[0], (int, float)):
+                seen_at = row[0] / 1000.0 if row[0] > 1e10 else float(row[0])
+                minutes = max(0, int((observed_at - seen_at) // 60))
+                incident = (
+                    "OpenCode: a usage limit was hit just now"
+                    if minutes < 1
+                    else f"OpenCode: a usage limit was hit {minutes} min ago"
+                )
             if (
                 _cached_opencode_mtime is not None
                 and _cached_opencode_mtime == db_mtime
@@ -1263,54 +1274,135 @@ def collect_opencode(
             ):
                 input_tokens, output_tokens, model_count = _cached_opencode_totals
             else:
-                session_cursor = con.execute(
+                s_row = con.execute(
                     "SELECT SUM(tokens_input), SUM(tokens_output), COUNT(DISTINCT model) FROM session"
-                )
-                s_row = session_cursor.fetchone()
+                ).fetchone()
                 if s_row:
-                    input_tokens = int(s_row[0] or 0)
-                    output_tokens = int(s_row[1] or 0)
-                    model_count = int(s_row[2] or 0)
+                    input_tokens = max(0, int(s_row[0] or 0))
+                    output_tokens = max(0, int(s_row[1] or 0))
+                    model_count = max(0, int(s_row[2] or 0))
                 _cached_opencode_mtime = db_mtime
                 _cached_opencode_totals = (input_tokens, output_tokens, model_count)
-            con.close()
-        except Exception:
-            pass
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        return 0, 0, 0, None
+    return input_tokens, output_tokens, model_count, incident
 
-    lane_label = "Free Tier" if (is_rate_limited or not account_label or "free" in account_label.lower()) else f"{account_label.title()} Quota"
-    lane = UsageLane(
-        provider_id="opencode",
-        lane_id="free-tier",
-        label=lane_label,
-        remaining_percent=remaining_percent,
-        reset_at=rate_limit_reset_at,
-        scope="session",
-        model=None,
-        feature=None,
-        bindable=True,
-        source_id="opencode-db",
-    )
 
+def _opencode_unsupported(
+    *,
+    observed_at: float,
+    reason: str,
+    tokens: tuple[int, int, int, str | None],
+) -> ProviderUsageSnapshot:
+    input_tokens, output_tokens, model_count, incident = tokens
     return ProviderUsageSnapshot(
         provider_id="opencode",
-        account_label=account_label or "Free Tier",
+        account_label=None,
         observed_at=observed_at,
-        state=state,
-        reason_code=reason_code,
-        action_label=action_label,
-        lanes=(lane,),
+        state=ProviderSourceState.UNSUPPORTED,
+        reason_code=reason,
+        action_label=None,
+        lanes=(),
         input_tokens=input_tokens,
         cached_input_tokens=0,
         output_tokens=output_tokens,
-        model_count=max(1, model_count),
+        model_count=model_count,
         estimated_cost_usd=None,
         cache_savings_usd=None,
         credits_remaining=None,
-        incident=None,
+        incident=incident,
     )
 
 
+def collect_opencode(
+    preference: ProviderPreference,
+    *,
+    observed_at: float,
+    home: Path | None = None,
+    env=None,
+    http_json: Callable[..., object] = _default_http_json,
+) -> ProviderUsageSnapshot:
+    """OpenCode's token totals, plus OpenCode Go's quota when there is one.
+
+    OpenCode itself reports no quota. The only real quota source is an
+    OpenCode Go subscription, read from ``opencode.ai`` with the Go API
+    key. That is a request off this Mac, so it runs only while the
+    provider is enabled (the runtime never calls a disabled collector),
+    a key exists, and ``--option go_usage=off`` has not turned it off.
+
+    Without a key the card says there is no quota source and keeps the
+    token totals; a Zen key without a Go subscription answers 403, which
+    says the same thing. Nothing here ever invents a lane.
+    """
+    from .provider_homes import opencode_data_root
+
+    environment = os.environ if env is None else env
+    root = opencode_data_root(env=environment, home=home)
+    db_path = root / "opencode.db"
+    auth_path = root / "auth.json"
+    go_enabled = (preference.option("go_usage") or "on").strip().lower() != "off"
+    key = _read_opencode_go_key(auth_path, environment) if go_enabled else None
+    if key is None and not db_path.is_file() and not auth_path.is_file():
+        return _failure(
+            "opencode",
+            observed_at=observed_at,
+            state=ProviderSourceState.SOURCE_NOT_FOUND,
+            reason="opencode_data_not_found",
+            action="Open OpenCode",
+        )
+    local = _opencode_local_facts(db_path, observed_at)
+    if key is None:
+        return _opencode_unsupported(
+            observed_at=observed_at,
+            reason="opencode_no_quota_source",
+            tokens=local,
+        )
+    try:
+        payload = http_json(
+            "GET",
+            OPENCODE_GO_USAGE_URL,
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=OPENCODE_GO_TIMEOUT_SECONDS,
+        )
+    except ProviderHttpError as error:
+        if error.status == 403:
+            # A valid Zen key without a Go subscription: no quota exists.
+            return _opencode_unsupported(
+                observed_at=observed_at,
+                reason="opencode_go_not_subscribed",
+                tokens=local,
+            )
+        if error.status == 401:
+            return _failure(
+                "opencode",
+                observed_at=observed_at,
+                state=ProviderSourceState.NEEDS_SIGN_IN,
+                reason="authentication_required",
+                action="Check your OpenCode Go key",
+            )
+        return _http_failure("opencode", observed_at, error)
+    input_tokens, output_tokens, model_count, incident = local
+    try:
+        snapshot = parse_opencode_go_usage(
+            payload,
+            observed_at=observed_at,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model_count=model_count,
+        )
+    except ValueError:
+        return _failure(
+            "opencode",
+            observed_at=observed_at,
+            state=ProviderSourceState.ERROR,
+            reason="invalid_provider_response",
+            action="Retry",
+        )
+    return replace(snapshot, incident=incident) if incident else snapshot
+
+
 __all__ = [
+    "OPENCODE_GO_USAGE_URL",
     "ProviderHttpError",
     "collect_antigravity",
     "collect_cursor",

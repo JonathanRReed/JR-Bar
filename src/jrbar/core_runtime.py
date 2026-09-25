@@ -2284,7 +2284,7 @@ def _cmd_usage_history(self, args):
     if (
         account is None
         and source_state is None
-        and provider not in core_usage_history.SCANNED_PROVIDERS
+        and provider not in core_usage_history.HISTORY_PROVIDERS
         and provider not in core_usage_history.REFERENCE_MODEL
     ):
         raise CommandError("not_found", f"no usage source for {provider}")
@@ -2324,6 +2324,37 @@ def _cmd_refresh_usage(self, args):
     providers = tuple(p for p in (args.get("providers") or []) if isinstance(p, str))
     self._request_provider_usage(force=True, providers=providers or None)
     return {"requested_at": time.time(), "providers": list(providers)}
+
+
+# Usage hooks (lane oss): the Settings Hooks section's rules and Test button.
+@command("usage_hooks_status", main_thread=False)
+def _cmd_usage_hooks_status(self, args):
+    from .usage_hooks_cli import core_status_command
+
+    return core_status_command(self, args)
+
+
+@command("usage_hooks_test", main_thread=False)
+def _cmd_usage_hooks_test(self, args):
+    from .usage_hooks_cli import core_test_command
+
+    return core_test_command(self, args)
+
+
+# The Claude statusLine switch (lane oss): writes ~/.claude/settings.json,
+# never over someone else's statusLine.
+@command("claude_statusline_install")
+def _cmd_claude_statusline_install(self, args):
+    from .claude_statusline_source import core_install_command
+
+    return core_install_command(self, args)
+
+
+@command("claude_statusline_uninstall")
+def _cmd_claude_statusline_uninstall(self, args):
+    from .claude_statusline_source import core_uninstall_command
+
+    return core_uninstall_command(self, args)
 
 
 def _provider_credentials(self):
@@ -6235,6 +6266,10 @@ def build_headless_controller_class() -> type:
             server.publish_state(document)
             self._core_note_frame(self._core_state_frame_times)
             self._core_publish_widget_snapshot(document)
+            # Claude statusLine text (lane oss): the shim prints this line.
+            from .claude_statusline_source import publish_statusline_text
+
+            publish_statusline_text(self, document)
 
         def _core_publish_widget_snapshot(self, document) -> None:
             """The desktop glance file: a redacted counts-and-tiles view a

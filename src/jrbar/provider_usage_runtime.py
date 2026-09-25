@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections import deque
@@ -329,6 +330,7 @@ class ProviderUsageService:
         state_saver: Callable[[ProviderUsageState], object] | None = None,
         receipt_handler: Callable[[RefreshPublicationReceipt], object] | None = None,
         incident_lookup: IncidentLookup = _default_incident_lookup,
+        extra_source: Callable[..., tuple[ProviderUsageSnapshot, ...]] | None = None,
     ) -> None:
         self._settings_loader = settings_loader
         self._credentials = credentials
@@ -340,6 +342,9 @@ class ProviderUsageService:
             raise ValueError("invalid refresh receipt handler")
         self._receipt_handler = receipt_handler
         self._incident_lookup = incident_lookup
+        #: Snapshots from outside the configured providers: the CLIProxyAPI
+        #: hub's accounts (cliproxy_hub.HubSource), each its own instance.
+        self._extra_source = extra_source
         self._lock = threading.RLock()
         self._closed = False
         self._settings_snapshot: ProviderUsageSettings | None = None
@@ -377,6 +382,9 @@ class ProviderUsageService:
         self._menu_last_opened_at: float | None = None
         #: True while the LED bar renders Quota Runway.
         self._ambient_usage_visible = False
+        #: While a jump waits for its confirming read, the last moment it
+        #: can still be confirmed (note_reset_candidates); None otherwise.
+        self._reset_confirm_until: float | None = None
         self._last_cadence_plan = plan_adaptive_refresh_cadence(
             (),
             observed_at=0.0,
@@ -386,6 +394,22 @@ class ProviderUsageService:
         """Tell the cadence whether a usage number is on screen already."""
         with self._lock:
             self._ambient_usage_visible = bool(visible)
+            self._replan_cached_cadence_locked(float(self._clock()))
+
+    def note_reset_candidates(self, confirm_until: float | None) -> None:
+        """Tell the cadence a jump in remaining is waiting to be confirmed.
+
+        A jump is announced only after a second read 1 to 30 minutes
+        later agrees (provider_usage_qol.confirm_reset_events). The idle
+        cadence is 30 minutes, so without this the confirming read would
+        usually come too late. Until ``confirm_until`` the next read comes
+        within two minutes; None when nothing is waiting.
+        """
+        with self._lock:
+            until = None if confirm_until is None else float(confirm_until)
+            if until is not None and not math.isfinite(until):
+                until = None
+            self._reset_confirm_until = until
             self._replan_cached_cadence_locked(float(self._clock()))
 
     def note_menu_opened(self, *, now: float | None = None) -> None:
@@ -403,6 +427,7 @@ class ProviderUsageService:
             menu_last_opened_at=self._menu_last_opened_at,
             constrained=self._last_cadence_plan.constrained,
             ambient_usage_visible=self._ambient_usage_visible,
+            reset_confirm_until=self._reset_confirm_until,
         )
         next_refresh_at = self._state.next_refresh_at
         if next_refresh_at is not None:
@@ -515,6 +540,7 @@ class ProviderUsageService:
         }
         snapshots: list[ProviderUsageSnapshot] = []
         refreshed_provider_ids: set[str] = set()
+        collector_incidents: dict[tuple[str, str], str] = {}
         for preference in collection_settings.providers:
             if generation is not None:
                 with self._lock:
@@ -619,6 +645,8 @@ class ProviderUsageService:
                     action="Retry",
                     source_instance_id=preference.source_instance_id,
                 )
+            if candidate.incident:
+                collector_incidents[identity] = candidate.incident
             if candidate.state in _TERMINAL_FAILURE_STATES:
                 failure_gates[identity] = note_failure(
                     gate,
@@ -659,6 +687,12 @@ class ProviderUsageService:
             elif candidate.state is ProviderSourceState.READY:
                 last_known_good[identity] = candidate
                 snapshots.append(candidate)
+            elif candidate.state is ProviderSourceState.UNSUPPORTED:
+                # The source says this account HAS no quota (OpenCode
+                # without a Go subscription). Old lanes are not a stale
+                # reading of something that exists; they must go.
+                last_known_good.pop(identity, None)
+                snapshots.append(candidate)
             elif candidate.state is ProviderSourceState.STALE and candidate.lanes:
                 # A stale-but-real reading is NEWER information than the
                 # last known good one, and it is the same numbers wearing
@@ -686,13 +720,26 @@ class ProviderUsageService:
         incident_snapshots = [
             replace(
                 snapshot,
-                incident=incident_decisions[snapshot.provider_id],
+                # The status feed's outage wins; a collector's own note
+                # (OpenCode logging a limit error) stands when it is quiet.
+                incident=(
+                    incident_decisions[snapshot.provider_id]
+                    or collector_incidents.get(snapshot.identity)
+                ),
             )
             if snapshot.provider_id in incident_decisions
             else snapshot
             for snapshot in snapshots
         ]
         ordered = tuple(incident_snapshots)
+        if self._extra_source is not None:
+            ordered = self._with_extra_snapshots(
+                ordered,
+                previous_state,
+                observed_at=observed_at,
+                force=force,
+                wanted=selected is None or bool({"claude", "codex"} & selected_provider_ids),
+            )
         cadence_plan = plan_adaptive_refresh_cadence(
             ordered,
             observed_at=observed_at,
@@ -701,6 +748,7 @@ class ProviderUsageService:
             ambient_usage_visible=bool(
                 getattr(self, "_ambient_usage_visible", False)
             ),
+            reset_confirm_until=getattr(self, "_reset_confirm_until", None),
         )
         state = ProviderUsageState(
             snapshots=ordered,
@@ -747,6 +795,38 @@ class ProviderUsageService:
             error_code=publication_error,
         )
         return result, publication_outcome
+
+    def _with_extra_snapshots(
+        self,
+        ordered: tuple[ProviderUsageSnapshot, ...],
+        previous_state: ProviderUsageState,
+        *,
+        observed_at: float,
+        force: bool,
+        wanted: bool,
+    ) -> tuple[ProviderUsageSnapshot, ...]:
+        """The extra source's snapshots after the configured ones; a refresh
+        scoped elsewhere keeps the last ones. A configured identity always
+        wins over an extra one."""
+        taken = {snapshot.identity for snapshot in ordered}
+        if wanted:
+            try:
+                extra = tuple(self._extra_source(observed_at, force=force))
+            except Exception:
+                extra = ()
+        else:
+            extra = tuple(
+                snapshot
+                for snapshot in previous_state.snapshots
+                if snapshot.source_instance_id.startswith("cliproxy")
+            )
+        kept: list[ProviderUsageSnapshot] = []
+        for snapshot in extra:
+            if type(snapshot) is not ProviderUsageSnapshot or snapshot.identity in taken:
+                continue
+            taken.add(snapshot.identity)
+            kept.append(snapshot)
+        return (*ordered, *kept)
 
     def refresh_now(
         self,

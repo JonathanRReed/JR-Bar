@@ -571,3 +571,36 @@ def test_idle_transport_is_not_inferred_success(tmp_path, turn_state, expected):
 
 def test_gemini_is_not_silently_rebranded_as_antigravity():
     assert t3_compat._normalize_provider("gemini", "antigravity-main", "gemini-model") == "other"
+
+
+def test_a_t3_0_0_43_schema_stays_compatible(tmp_path: Path) -> None:
+    """The additive columns T3 Code 0.0.43's migrations 050-053 brought
+    (seen read-only on the owner's database, 2026-09-24) change nothing JR-Bar
+    reads: the snapshot stays compatible and the thread still projects."""
+    database = _database(tmp_path)
+    _insert_thread(database)
+    connection = sqlite3.connect(database)
+    for table, columns in {
+        "projection_projects": ("auto_pull", "default_model_selection_json", "favicon_path", "scripts_json"),
+        "projection_thread_sessions": ("provider_session_id",),
+        "projection_threads": (
+            "title_state_json",
+            "linked_pull_request_json",
+            "branch_pull_request_json",
+            "pinned_at",
+            "snoozed_until",
+            "unsettled_at",
+        ),
+    }.items():
+        for column in columns:
+            connection.execute(f'ALTER TABLE {table} ADD COLUMN "{column}" TEXT')
+    connection.execute("CREATE TABLE projection_thread_pull_requests (thread_id TEXT, number INTEGER)")
+    connection.execute("CREATE TABLE pull_request_files_viewed (path TEXT)")
+    connection.commit()
+    connection.close()
+
+    snapshot = read_t3_snapshot(base_dir=tmp_path)
+
+    assert snapshot.compatible is True
+    assert [thread.thread_id for thread in snapshot.threads] == ["thread-1"]
+    assert t3_compat.T3_MAXIMUM_TESTED_VERSION == "0.0.43"

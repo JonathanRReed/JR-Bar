@@ -194,15 +194,64 @@ GEMINI_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
 CACHE_READ_RATE = 0.1
 CACHE_WRITE_RATE = 1.25
 
+# The tables above are the hand-kept fallback. The packaged snapshot
+# (resources/model_pricing.json, written by scripts/update_model_pricing.py;
+# model_pricing.load_snapshot) prices by default when it loads, and a
+# person's pricing_overrides win over both. Nothing here fetches a price.
+HAND_MODEL_PRICING = MODEL_PRICING
+HAND_GPT_MODEL_PRICING = GPT_MODEL_PRICING
+HAND_GEMINI_MODEL_PRICING = GEMINI_MODEL_PRICING
+HAND_CACHE_READ_RATE_OVERRIDES = dict(CACHE_READ_RATE_OVERRIDES)
+
+
+def _apply_pricing_snapshot() -> bool:
+    global MODEL_PRICING, GPT_MODEL_PRICING, GEMINI_MODEL_PRICING, CACHE_READ_RATE_OVERRIDES
+    from .model_pricing import load_snapshot
+
+    snapshot = load_snapshot()
+    if snapshot is None:
+        return False
+    MODEL_PRICING = snapshot["anthropic"]
+    GPT_MODEL_PRICING = snapshot["openai"]
+    GEMINI_MODEL_PRICING = snapshot["gemini"]
+    CACHE_READ_RATE_OVERRIDES = dict(snapshot["cache_read_overrides"])
+    return True
+
+
+PRICING_SNAPSHOT_LOADED = _apply_pricing_snapshot()
+
+
+def _override_rates(model: str) -> tuple[float, float] | None:
+    from .model_pricing import override_for
+
+    prices = override_for(model)
+    return None if prices is None else (prices["input"], prices["output"])
+
 
 def cache_read_rate_for_model(model: str) -> float:
-    """The cache-read multiplier for ``model``: an override when the
-    model has one, else ``CACHE_READ_RATE``."""
+    """The cache-read multiplier for ``model``: the person's override when
+    they set one, else a table override, else ``CACHE_READ_RATE``."""
+    from .model_pricing import override_for
+
+    prices = override_for(model)
+    if prices is not None and "cache_read" in prices and prices["input"] > 0:
+        return prices["cache_read"] / prices["input"]
     lowered = str(model or "").lower()
     for marker, rate in CACHE_READ_RATE_OVERRIDES.items():
         if marker in lowered:
             return rate
     return CACHE_READ_RATE
+
+
+def cache_write_rate_for_model(model: str, default: float = CACHE_WRITE_RATE) -> float:
+    """The cache-write multiplier for ``model``: the person's override when
+    they set one, else ``default`` (1.25x for Anthropic)."""
+    from .model_pricing import override_for
+
+    prices = override_for(model)
+    if prices is not None and "cache_write" in prices and prices["input"] > 0:
+        return prices["cache_write"] / prices["input"]
+    return default
 
 
 class PricingCoverage(str, Enum):
@@ -514,6 +563,9 @@ def _pricing_key_for_model(model: str) -> str:
 
 
 def _pricing_for_model(model: str) -> tuple[float, float] | None:
+    override = _override_rates(model)
+    if override is not None:
+        return override
     pricing_key = _pricing_key_for_model(model)
     for marker, input_rate, output_rate in MODEL_PRICING:
         if marker == pricing_key:
@@ -522,6 +574,9 @@ def _pricing_for_model(model: str) -> tuple[float, float] | None:
 
 
 def _gpt_pricing_for_model(model: str) -> tuple[float, float] | None:
+    override = _override_rates(model)
+    if override is not None:
+        return override
     lowered = str(model or "").lower()
     for marker, input_rate, output_rate in GPT_MODEL_PRICING:
         if marker in lowered:
@@ -530,6 +585,9 @@ def _gpt_pricing_for_model(model: str) -> tuple[float, float] | None:
 
 
 def _gemini_pricing_for_model(model: str) -> tuple[float, float] | None:
+    override = _override_rates(model)
+    if override is not None:
+        return override
     lowered = str(model or "").lower()
     for marker, input_rate, output_rate in GEMINI_MODEL_PRICING:
         if marker in lowered:
@@ -2516,7 +2574,7 @@ def _scan_inventory_usage_with_index(
         totals.estimated_cost_usd += (
             inp * input_rate
             + cached_in * input_rate * cache_read_rate
-            + cache_create * input_rate * CACHE_WRITE_RATE
+            + cache_create * input_rate * cache_write_rate_for_model(model)
             + out * output_rate
         ) / 1_000_000.0
         totals.estimated_cache_savings_usd += (cached_in * input_rate * (1.0 - cache_read_rate)) / 1_000_000.0
@@ -2906,7 +2964,7 @@ def daily_buckets(records, days: int = 7, *, now: datetime | None = None):
             cost = (
                 inp * input_rate
                 + cached_in * input_rate * cache_read_rate_for_model(model)
-                + cache_create * input_rate * CACHE_WRITE_RATE
+                + cache_create * input_rate * cache_write_rate_for_model(model)
                 + out * output_rate
             ) / 1_000_000.0
             provider_bucket["cost"] += cost

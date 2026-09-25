@@ -104,6 +104,9 @@ HOLD_STATE_MANUAL = "manual"
 
 SUSPENDED_THERMAL = "thermal"
 SUSPENDED_BATTERY = "battery"
+#: macOS Low Power Mode is on and ``keep_awake_yield_low_power_mode`` says a
+#: hold gives way to it. The wire word the app maps to "Low Power Mode is on".
+SUSPENDED_LOW_POWER = "low_power"
 
 
 class LeaseRefusedError(ValueError):
@@ -365,6 +368,73 @@ def read_thermal_state() -> int | None:
     return value if THERMAL_NOMINAL <= value <= THERMAL_CRITICAL else None
 
 
+#: How long one Low Power Mode reading is kept. ``NSProcessInfo`` answers
+#: at once, but the ``pmset -g`` fallback is a subprocess, and the mode
+#: changes rarely.
+LOW_POWER_READ_SECONDS = 60.0
+_low_power_cache: tuple[float, bool | None] | None = None
+
+
+def parse_pmset_low_power(text: str) -> bool | None:
+    """Low Power Mode from ``pmset -g`` output; None when it doesn't say.
+
+    Older Macs print ``lowpowermode 1``. A Mac with an Energy Mode picker
+    (Low Power, Automatic, High Power) prints ``powermode`` instead, where
+    1 is Low Power, 0 Automatic and 2 High Power.
+    """
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or parts[1] not in ("0", "1", "2"):
+            continue
+        key = parts[0].lower()
+        if key == "lowpowermode" and parts[1] in ("0", "1"):
+            return parts[1] == "1"
+        if key == "powermode":
+            return parts[1] == "1"
+    return None
+
+
+def _process_info_low_power() -> bool | None:
+    """``NSProcessInfo.isLowPowerModeEnabled``, or None without Foundation."""
+    try:
+        from Foundation import NSProcessInfo
+
+        return bool(NSProcessInfo.processInfo().isLowPowerModeEnabled())
+    except Exception:
+        return None
+
+
+def read_low_power_mode(
+    *,
+    now: float | None = None,
+    runner: Callable[..., object] = subprocess.run,
+    process_info: Callable[[], bool | None] = _process_info_low_power,
+) -> bool | None:
+    """Whether macOS Low Power Mode is on: ``NSProcessInfo`` first, the way
+    ``read_thermal_state`` reads heat, then ``pmset -g`` only when
+    Foundation can't answer. Cached a minute; None when neither can say."""
+    global _low_power_cache
+    moment = time.monotonic() if now is None else now
+    cached = _low_power_cache
+    if cached is not None and moment - cached[0] < LOW_POWER_READ_SECONDS:
+        return cached[1]
+    value = process_info()
+    if value is None:
+        try:
+            completed = runner(
+                ["/usr/bin/pmset", "-g"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+                check=False,
+            )
+            value = parse_pmset_low_power(str(getattr(completed, "stdout", "") or ""))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            value = None
+    _low_power_cache = (moment, value)
+    return value
+
+
 def thermal_word(state: int | None) -> str | None:
     if state is None or not THERMAL_NOMINAL <= state <= THERMAL_CRITICAL:
         return None
@@ -440,6 +510,7 @@ _POWER_HISTORY_LABELS = {
 _POWER_REASON_WORDS = {
     SUSPENDED_THERMAL: "Mac too hot",
     SUSPENDED_BATTERY: "battery low",
+    SUSPENDED_LOW_POWER: "Low Power Mode",
     LEASE_END_EXPIRED: "time up",
     LEASE_END_FINISHED: "agents finished",
     "agents_idle": "agents finished",
@@ -656,6 +727,8 @@ class KeepAwakeController:
         self.thermal_state: int | None = None
         self.lid_closed: bool | None = None
         self.battery_floor = False
+        #: Low Power Mode is on and the setting says a hold yields to it.
+        self.low_power = False
         self.pending_ids: frozenset[str] | None = None
         self.working_count = 0
         #: The agents alone want the Mac awake (working, or in the grace).
@@ -787,6 +860,7 @@ class KeepAwakeController:
         battery_floor: bool = False,
         thermal_state: int | None = None,
         lid_closed: bool | None = None,
+        low_power: bool = False,
     ) -> None:
         """What the hold yields to, read by the daemon before each sync:
         which sessions are still running (for "until these agents finish"),
@@ -797,6 +871,7 @@ class KeepAwakeController:
         self.battery_floor = bool(battery_floor)
         self.thermal_state = thermal_state
         self.lid_closed = lid_closed
+        self.low_power = bool(low_power)
 
     def effective_display(self) -> bool:
         lease = self.lease
@@ -814,11 +889,15 @@ class KeepAwakeController:
 
     def _observe_suspension(self, now: float) -> str | None:
         hot = self.thermal.observe(self.thermal_state, lid_closed=self.lid_closed, now=now)
+        # Heat first, then a dying battery, then Low Power Mode: the most
+        # urgent reason is the one History and the chip name.
         suspension = (
             SUSPENDED_THERMAL
             if hot
             else SUSPENDED_BATTERY
             if self.battery_floor
+            else SUSPENDED_LOW_POWER
+            if self.low_power
             else None
         )
         if suspension != self.suspension:
@@ -1001,6 +1080,8 @@ class KeepAwakeController:
             return "Keep awake let go: the Mac is too hot"
         if self.suspension == SUSPENDED_BATTERY:
             return "Keep awake let go: battery low"
+        if self.suspension == SUSPENDED_LOW_POWER:
+            return "Keep awake let go: Low Power Mode is on"
         if self.lease is not None:
             return f"Keep awake held by you ({self.lease.kind})"
         if not self.enabled:

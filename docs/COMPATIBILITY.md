@@ -46,7 +46,7 @@ makes a false zero. Detail per provider is in
 
 | Integration | Claim |
 | --- | --- |
-| T3 Code | Read-only SQLite projection, `sqlite-readonly-v1`, reviewed window 0.0.33 through 0.0.33 as recorded in the packaged `integration_compatibility.json`. Additive columns are accepted; a missing required column fails closed as unsupported. Never writes, never runs T3 commands, never reads T3 credentials. |
+| T3 Code | Read-only SQLite projection, `sqlite-readonly-v1`, reviewed window 0.0.33 through 0.0.43 as recorded in the packaged `integration_compatibility.json`. Additive columns are accepted; a missing required column fails closed as unsupported. Never writes, never runs T3 commands, never reads T3 credentials. |
 | Alcove | The Screen Bar reads Alcove's capsule width through the window list (Screen Recording permission) and follows it; verified with Alcove 1.7.9. Without permission or without Alcove the bar keeps its measured notch geometry. |
 | Tailscale | Optional. Used only to discover peers; the transport is `sftp` over SSH, never a remote command. |
 | CodexBar | An engineering reference for the forecast and refresh discipline; nothing is exchanged at runtime. |

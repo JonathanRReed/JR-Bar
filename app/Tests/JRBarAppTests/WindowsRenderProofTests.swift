@@ -299,7 +299,7 @@ struct WindowsRenderProofTests {
     /// directory — never the installed daemon's — paused at timeline step
     /// `startAt`, with history answered whole. It watches this test
     /// process and stops by itself if the run is killed before `terminate`.
-    static func mock(startAt: Int, deck: String = "approved") async throws -> (CoreModel, Process) {
+    static func mock(startAt: Int, deck: String = "approved", extra: [String] = []) async throws -> (CoreModel, Process) {
         let socket = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("jrbar-proof-\(UUID().uuidString.prefix(8)).sock")
         let script = URL(fileURLWithPath: #filePath)
@@ -309,7 +309,7 @@ struct WindowsRenderProofTests {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["python3", script.path, "--socket", socket, "--step", "600", "--hot-history",
                              "--start-at", "\(startAt)", "--deck", deck,
-                             "--parent-pid", "\(ProcessInfo.processInfo.processIdentifier)"]
+                             "--parent-pid", "\(ProcessInfo.processInfo.processIdentifier)"] + extra
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
@@ -394,6 +394,26 @@ struct WindowsRenderProofTests {
         store.windowDidClose()
         let offline = UsageCenterStore(core: CoreModel(socketPath: "/nonexistent.sock"))
         try Self.write("usage-center-offline", size: CGSize(width: 760, height: 440)) { UsageCenterView(store: offline) }
+    }
+
+    /// The focused usage scenarios (`mock-core.py --usage-scenario`):
+    /// OpenCode with a Go subscription beside a Mac with no quota source,
+    /// Claude read from Claude Code's status line, and accounts read
+    /// through the CLIProxyAPI hub.
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func usageCenterSources() async throws {
+        let scenarios: [(name: String, height: Double)] = [("opencode", 1000), ("statusline", 1000), ("hub", 1560)]
+        for scenario in scenarios {
+            let (core, process) = try await Self.mock(startAt: 6, extra: ["--usage-scenario", scenario.name])
+            defer { process.terminate(); core.stop() }
+            let store = UsageCenterStore(core: core)
+            store.windowDidOpen()
+            try await Self.settle { !store.providers.isEmpty && store.providers.allSatisfy { store.history(for: $0) != nil } }
+            try Self.write("usage-center-\(scenario.name)", size: CGSize(width: 780, height: scenario.height)) {
+                UsageCenterView(store: store)
+            }
+            store.windowDidClose()
+        }
     }
 
     // MARK: Effect Studio

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -491,6 +492,19 @@ def parse_grok_usage(payload: object, *, observed_at: float) -> ProviderUsageSna
         source_id="grok-billing",
     )
     raw_plan = config.get("planName", config.get("tier", payload.get("plan")))
+    # SuperGrok's usage-limit reset coupons usually live on a separate
+    # grok.com billing call JR-Bar does not make; a count is read only when
+    # this payload itself carries one.
+    coupons = payload.get("remainingResets", config.get("remainingResets"))
+    reset_credits = (
+        len(coupons) if isinstance(coupons, list) and len(coupons) <= 10_000
+        else coupons if isinstance(coupons, int) and not isinstance(coupons, bool) and 0 <= coupons <= 10_000
+        else None
+    )
+    return replace(_grok_snapshot(payload, lane, raw_plan, observed_at), reset_credits=reset_credits)
+
+
+def _grok_snapshot(payload: dict, lane: UsageLane, raw_plan: object, observed_at: float) -> ProviderUsageSnapshot:
     return _snapshot(
         "grok",
         observed_at=observed_at,
@@ -693,6 +707,78 @@ def parse_gemini_usage(
     )
 
 
+#: OpenCode Go's three windows, in the order the endpoint names them. The
+#: rolling window is five hours and the weekly one a week: both are the
+#: subscription's own limits, so both may drive the lights. The monthly
+#: figure is shown as detail only.
+_OPENCODE_GO_WINDOWS = (
+    ("rolling", "go-rolling", "5-hour", True),
+    ("weekly", "go-weekly", "Weekly", True),
+    ("monthly", "go-monthly", "Monthly", False),
+)
+
+#: Lanes a provider reports only for reference, which the app lists as a
+#: line of detail under the rings instead of drawing a ring. Only OpenCode
+#: Go's monthly figure so far. Other unbound lanes (a model's own weekly
+#: cap, a Codex Spark sub-cap) are real limits on that model and keep
+#: their rings; they just never drive the lights.
+DETAIL_LANE_IDS = frozenset({"go-monthly"})
+
+
+def parse_opencode_go_usage(
+    payload: object,
+    *,
+    observed_at: float,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    model_count: int = 0,
+) -> ProviderUsageSnapshot:
+    """``GET opencode.ai/zen/go/v1/usage`` -> three lanes.
+
+    The body is ``{"usage": {"rolling"|"weekly"|"monthly": {"percent",
+    "resetsAt"}}}``, where ``percent`` is the share USED. A window the body
+    leaves out gets no lane; a window present without a number keeps its
+    lane with no reading. Only a stated number becomes a percentage.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("usage"), dict):
+        raise ValueError("invalid OpenCode Go usage payload")
+    usage = payload["usage"]
+    lanes: list[UsageLane] = []
+    for key, lane_id, label, bindable in _OPENCODE_GO_WINDOWS:
+        entry = usage.get(key)
+        if not isinstance(entry, dict):
+            continue
+        used = _number(entry.get("percent"))
+        lanes.append(
+            UsageLane(
+                provider_id="opencode",
+                lane_id=lane_id,
+                label=label,
+                remaining_percent=(
+                    None if used is None else max(0.0, min(100.0, 100.0 - used))
+                ),
+                reset_at=_reset_epoch(entry.get("resetsAt", entry.get("resets_at"))),
+                scope="all",
+                model=None,
+                feature=None,
+                bindable=bindable,
+                source_id="opencode-go-api",
+            )
+        )
+    return _snapshot(
+        "opencode",
+        observed_at=observed_at,
+        lanes=tuple(lanes),
+        # The endpoint names no account, and the card already says
+        # OpenCode: the plan alone reads "Go · Official".
+        account_label=None,
+        account_plan="Go",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        model_count=model_count,
+    )
+
+
 __all__ = [
     "parse_antigravity_usage",
     "parse_claude_usage",
@@ -702,4 +788,5 @@ __all__ = [
     "parse_gemini_usage",
     "parse_grok_usage",
     "parse_openai_api_usage",
+    "parse_opencode_go_usage",
 ]

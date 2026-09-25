@@ -1,0 +1,4 @@
+{"type":"session","id":"s1","timestamp":"2026-09-20T10:00:00.000Z","cwd":"/Users/me/src/api"}
+{"type":"message","id":"m1","timestamp":"2026-09-20T10:00:05.000Z","message":{"role":"user","content":"(prompt text is never read)"}}
+{"type":"message","id":"m2","timestamp":"2026-09-20T10:00:09.000Z","message":{"role":"assistant","model":"claude-sonnet-5","usage":{"input":1200,"output":300,"cacheRead":5000,"cacheWrite":200,"totalTokens":6700,"cost":{"total":0.02}}}}
+{"type":"message","id":"m3","timestamp":"2026-09-20T10:01:00.000Z","message":{"role":"assistant","model":"gpt-5.6-sol","usage":{"input":800,"output":100,"cacheRead":0,"cacheWrite":0,"totalTokens":900}}}

@@ -1,0 +1,21 @@
+{
+  "response": {
+    "planName": "Pro",
+    "accountEmail": "user@example.com",
+    "groups": [
+      {
+        "displayName": "Gemini models",
+        "buckets": [
+          {"bucketId": "gemini-five-hour", "displayName": "5 hour", "remaining": {"remainingFraction": 0.6}, "resetTime": "2026-09-11T02:00:00Z"},
+          {"bucketId": "gemini-weekly", "displayName": "Weekly", "remaining": {"remainingFraction": 0.9}, "resetTime": "2026-09-15T00:00:00Z"}
+        ]
+      },
+      {
+        "displayName": "Claude and GPT models",
+        "buckets": [
+          {"bucketId": "claude-gpt-weekly", "displayName": "Weekly", "remainingFraction": 0.45, "resetTime": "2026-09-15T00:00:00Z"}
+        ]
+      }
+    ]
+  }
+}

@@ -51,10 +51,13 @@ def test_package_installs_payload_without_mutating_external_integrations__and_2_
     assert "status-bar stop" not in text
     assert "com.jonathanreed.jrbar.app io.sidepulse.agentstatus com.sidepulse.agentstatus" in text
     assert '/bin/launchctl bootout "gui/$TARGET_UID" "$plist"' in text
-    # Both the current and the pre-rename CLI link are removed only when they
-    # point at our executable.
-    assert 'for link in "$CLI_LINK" "$LEGACY_CLI_LINK"' in text
-    assert 'readlink "$link"' in text
+    # The user's ~/.local/bin link, the older /usr/local/bin one and the
+    # pre-rename name are each removed only when they point into a JR-Bar
+    # bundle (tests/test_uninstall_script.py runs it).
+    assert '"$TARGET_HOME/.local/bin/jrbar /usr/local/bin/jrbar"' in text
+    assert 'for link in $CLI_LINKS /usr/local/bin/sidepulse' in text
+    assert 'points_into_jrbar "$link"' in text
+    assert '*/JR-Bar.app/Contents/*|*/JR-Bar-dev.app/Contents/*' in text
     assert "--purge-state" in text
     assert "--keep-app" in text
     assert 'PACKAGE_ID="com.jonathanreed.jrbar"' in text

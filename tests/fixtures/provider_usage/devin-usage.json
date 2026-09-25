@@ -1,0 +1,8 @@
+{
+  "daily_percentage": 0.35,
+  "daily_reset_at": "2026-09-11T00:00:00Z",
+  "weekly_percentage": 62,
+  "weekly_reset_at": "2026-09-14T00:00:00Z",
+  "organization": "org/acme",
+  "plan": "team"
+}

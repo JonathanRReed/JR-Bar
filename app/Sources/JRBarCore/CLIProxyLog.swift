@@ -476,3 +476,32 @@ public enum CLIProxyRedactor {
         return out
     }
 }
+
+// MARK: - The request-log note (lane oss)
+
+extension CLIProxyLogParser {
+    /// The Data Hoarder's note under its CLIProxyAPI source, from the text
+    /// of CLIProxyAPI's config (`~/.cli-proxy-api/config.yaml` or the
+    /// Homebrew `cliproxyapi.conf`): with `request-log` off the proxy only
+    /// writes error logs, so the archive holds a few failures and none of
+    /// the ordinary requests. Nil when request logging is on, or when there
+    /// is no config to read (nothing can be said either way).
+    public static func requestLogNote(config: String?) -> String? {
+        guard let config else { return nil }
+        for raw in config.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = String(raw)
+            // A top-level key only: an indented `request-log:` belongs to
+            // some other block.
+            guard let first = line.first, !first.isWhitespace, first != "#" else { continue }
+            let body = line.split(separator: "#", maxSplits: 1).first.map(String.init) ?? line
+            let parts = body.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2,
+                  parts[0].trimmingCharacters(in: .whitespaces).lowercased() == "request-log" else { continue }
+            let value = parts[1].trimmingCharacters(in: .whitespaces).lowercased()
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            if ["true", "yes", "on"].contains(value) { return nil }
+            break
+        }
+        return "CLIProxyAPI is only writing error logs. Set request-log: true in its config to archive every request."
+    }
+}

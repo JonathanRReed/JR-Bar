@@ -702,6 +702,36 @@ class AgentMonitorSettings:
     # ``linked_dot_scale`` and ignores its own auto-brightness, which used
     # to cap it (and restart it on every auto step).
     linked_follow_brightness: bool = True
+    # --- Usage hooks and sources (lane oss, 2026-09-24) ------------------
+    # Usage hooks v2: {"enabled": bool, "rules": [...]} (usage_event_hooks).
+    # Off until the person turns it on; a v1 usage_event_hook_path
+    # migrates to one "legacy" rule on load.
+    usage_hooks: dict[str, Any] = field(
+        default_factory=lambda: {"enabled": False, "rules": []}
+    )
+    # Claude Code's statusLine as a quota source (claude_statusline_source):
+    # opt-in, set by `jrbar agent-monitor install claude-statusline`.
+    claude_statusline_source: bool = False
+    # Whether the statusline shim prints JR-Bar's line; off means it only
+    # feeds the daemon.
+    statusline_text_enabled: bool = True
+    # The CLIProxyAPI hub (cliproxy_hub): off, loopback only, every 5 min
+    # at most. Its management key lives in the Keychain, never here.
+    cliproxy_hub: dict[str, Any] = field(
+        default_factory=lambda: {
+            "enabled": False,
+            "url": "http://127.0.0.1:8317",
+            "min_interval_seconds": 300,
+        }
+    )
+    # Extra Claude and Codex homes (claude-swap and friends), absolute paths.
+    provider_extra_homes: dict[str, list[str]] = field(
+        default_factory=lambda: {"claude": [], "codex": []}
+    )
+    # Model id -> {input, output, cache_read, cache_write} USD per M tokens.
+    pricing_overrides: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Keep-awake lets go while macOS Low Power Mode is on (keep_awake).
+    keep_awake_yield_low_power_mode: bool = True
 
     def transcript_enabled(self, provider: str) -> bool:
         if provider == "codex":
@@ -1179,7 +1209,30 @@ class AgentMonitorSettings:
         return replace(self, escalation_webhook_url=str(url).strip())
 
     def with_usage_event_hook_path(self, path: str) -> AgentMonitorSettings:
-        return replace(self, usage_event_hook_path=str(path).strip())
+        """The legacy window's one hook path, kept in step with the
+        ``legacy`` usage-hook rule it now stands for."""
+        from .usage_source_settings import legacy_usage_hook_rule, normalize_usage_hooks
+
+        cleaned = str(path).strip()
+        hooks = normalize_usage_hooks(self.usage_hooks)
+        rules = [rule for rule in hooks["rules"] if rule["id"] != "legacy"]
+        if cleaned:
+            rules.insert(0, legacy_usage_hook_rule(cleaned))
+            hooks = {"enabled": True, "rules": rules}
+        else:
+            hooks = {"enabled": hooks["enabled"] and bool(rules), "rules": rules}
+        return replace(self, usage_event_hook_path=cleaned, usage_hooks=hooks)
+
+    def with_usage_hooks(self, hooks: object) -> AgentMonitorSettings:
+        """The rules as written. Without a ``legacy`` rule the first
+        version's path goes too, or the next load would add the rule back."""
+        from .usage_source_settings import LEGACY_RULE_ID, normalize_usage_hooks
+
+        normalized = normalize_usage_hooks(hooks)
+        path = self.usage_event_hook_path
+        if not any(rule["id"] == LEGACY_RULE_ID for rule in normalized["rules"]):
+            path = ""
+        return replace(self, usage_hooks=normalized, usage_event_hook_path=path)
 
     def with_usage_display_mode(self, mode: str) -> AgentMonitorSettings:
         if mode not in ("tokens", "cost", "sessions", "percent"):
@@ -1971,7 +2024,28 @@ class AgentMonitorSettings:
             "dot_extend_style": _extend_style(self.dot_extend_style),
             "dot_extend_side": _extend_side(self.dot_extend_side),
             "linked_follow_brightness": self.linked_follow_brightness,
+            **_usage_source_settings_document(self),
         }
+
+
+def _usage_source_settings_document(settings: AgentMonitorSettings) -> dict[str, Any]:
+    """The usage-hook and usage-source keys, each through its normaliser."""
+    from .usage_source_settings import (
+        normalize_cliproxy_hub,
+        normalize_pricing_overrides,
+        normalize_provider_extra_homes,
+        normalize_usage_hooks,
+    )
+
+    return {
+        "usage_hooks": normalize_usage_hooks(settings.usage_hooks),
+        "claude_statusline_source": bool(settings.claude_statusline_source),
+        "statusline_text_enabled": bool(settings.statusline_text_enabled),
+        "cliproxy_hub": normalize_cliproxy_hub(settings.cliproxy_hub),
+        "provider_extra_homes": normalize_provider_extra_homes(settings.provider_extra_homes),
+        "pricing_overrides": normalize_pricing_overrides(settings.pricing_overrides),
+        "keep_awake_yield_low_power_mode": bool(settings.keep_awake_yield_low_power_mode),
+    }
 
 
 def _config_home(home: Path | None) -> Path:
@@ -2497,7 +2571,40 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         dot_extend_style=_extend_style(data.get("dot_extend_style")),
         dot_extend_side=_extend_side(data.get("dot_extend_side")),
         linked_follow_brightness=_bool_setting(data.get("linked_follow_brightness"), True),
+        **_usage_source_settings_from(data),
     )
+
+
+def _usage_source_settings_from(data: dict) -> dict[str, Any]:
+    """Tolerant decode of the usage-hook and usage-source keys: missing or
+    mistyped values fall back to their defaults (usage_source_settings)."""
+    from .usage_source_settings import (
+        normalize_cliproxy_hub,
+        normalize_pricing_overrides,
+        normalize_provider_extra_homes,
+        normalize_usage_hooks,
+        sync_legacy_usage_hook,
+    )
+
+    legacy_path = (
+        str(data.get("usage_event_hook_path") or "") if "usage_event_hook_path" in data else None
+    )
+    hooks = normalize_usage_hooks(data.get("usage_hooks"), legacy_path=legacy_path or "")
+    if isinstance(data.get("usage_hooks"), dict):
+        # Every save writes usage_hooks, so after the first one the old key
+        # would be ignored: a new path set there must still reach the rule.
+        hooks = sync_legacy_usage_hook(hooks, legacy_path)
+    return {
+        "usage_hooks": hooks,
+        "claude_statusline_source": _bool_setting(data.get("claude_statusline_source"), False),
+        "statusline_text_enabled": _bool_setting(data.get("statusline_text_enabled"), True),
+        "cliproxy_hub": normalize_cliproxy_hub(data.get("cliproxy_hub")),
+        "provider_extra_homes": normalize_provider_extra_homes(data.get("provider_extra_homes")),
+        "pricing_overrides": normalize_pricing_overrides(data.get("pricing_overrides")),
+        "keep_awake_yield_low_power_mode": _bool_setting(
+            data.get("keep_awake_yield_low_power_mode"), True
+        ),
+    }
 
 
 def save_settings(

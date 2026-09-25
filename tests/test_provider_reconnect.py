@@ -225,6 +225,8 @@ def test_codex_app_server_probe_parses_replies():
         "resets_at": 1788286790.0,
         "window_minutes": None,
         "version": "0.149.1",
+        # No rateLimitResetCredits in the reply: no count, not zero.
+        "reset_credits": None,
     }
     assert codex_app_server_probe(runner=lambda: None) is None
     assert codex_app_server_probe(runner=lambda: "not json") is None
@@ -324,6 +326,8 @@ def test_codex_app_server_probe_keeps_transport_open_until_rate_limits_arrive(
         "resets_at": 1788286790.0,
         "window_minutes": 10080,
         "version": "0.149.1",
+        # No rateLimitResetCredits in the reply: no count, not zero.
+        "reset_credits": None,
     }
     assert '"method": "account/rateLimits/read"' in process.stdin.getvalue()
     assert process.terminated is True

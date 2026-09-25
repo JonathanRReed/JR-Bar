@@ -937,6 +937,14 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// evidence, never an applicable constraint (it must not drive the
     /// featured-window pick or an interruption).
     public var bindable: Bool
+    /// Which source read this window when the daemon says (`claude-oauth`,
+    /// `claude-statusline`, `cliproxy`, `opencode-go-api`); nil from a
+    /// daemon that predates the field.
+    public var source: String? = nil
+    /// True for a figure the provider reports only for reference (OpenCode
+    /// Go's monthly window): a line under the rings, never a ring. False
+    /// from a daemon that predates the field.
+    public var detail: Bool = false
 
     public var id: String { key ?? name }
 
@@ -974,6 +982,8 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         case usedPct = "used_pct"
         case resetsAt = "resets_at"
         case forecast
+        case source
+        case detail
     }
 
     public init(from decoder: Decoder) throws {
@@ -988,6 +998,8 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         resetsAt = try c.decodeIfPresent(Double.self, forKey: .resetsAt)
         forecast = try? c.decodeIfPresent(CoreUsageForecast.self, forKey: .forecast)
         bindable = (try? c.decodeIfPresent(Bool.self, forKey: .bindable)) ?? true
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        detail = (try? c.decodeIfPresent(Bool.self, forKey: .detail)) ?? false
     }
 }
 
@@ -1149,6 +1161,10 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// here is current by construction. An outage on the vendor's side,
     /// never a quota verdict.
     public var incident: String?
+    /// Unused limit-reset credits the provider reports (a Codex reset
+    /// credit): a count to show, never something the app redeems. Nil
+    /// when no source stated one.
+    public var resetCredits: Int? = nil
 
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
@@ -1194,6 +1210,8 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         observedAt = try? c.decodeIfPresent(Double.self, forKey: .observedAt)
         constrained = try? c.decodeIfPresent(CoreConstrainedLane.self, forKey: .constrained)
         incident = try? c.decodeIfPresent(String.self, forKey: .incident)
+        let credits = try? c.decodeIfPresent(Int.self, forKey: .resetCredits)
+        resetCredits = credits.map { max(0, $0) }
     }
 
     /// Stable identity across multi-account rows of the same provider;
@@ -1209,6 +1227,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         case estimatedCostUSD = "estimated_cost_usd"
         case creditsRemaining = "credits_remaining"
         case observedAt = "observed_at"
+        case resetCredits = "reset_credits"
     }
 
     /// `not_signed_in`, `signed_out`, `unauthenticated`, `no_auth`: the CLI

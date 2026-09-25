@@ -20,12 +20,17 @@ from pathlib import Path
 from typing import Any, Final
 
 from . import usage_stats
+from .local_token_history import LOCAL_HISTORY_PROVIDERS
 from .state_paths import default_state_dir
 
 RANGE_DAYS: Final = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 HOURS_SHOWN: Final = 7 * 24
 #: Providers whose transcripts ``scan_usage`` reads.
 SCANNED_PROVIDERS: Final = ("claude", "codex")
+#: Every provider with a local token history: Claude and Codex, plus Pi,
+#: Grok, Gemini CLI and OpenClaw, whose own session files
+#: ``local_token_history`` reads.
+HISTORY_PROVIDERS: Final = (*SCANNED_PROVIDERS, *LOCAL_HISTORY_PROVIDERS)
 #: Codex transcripts record the model as the literal ``codex``; the price
 #: is the configured default model's (``~/.codex/config.toml``).
 CODEX_RECORD_MODEL: Final = "codex"
@@ -85,6 +90,11 @@ def default_codex_model(home: Path | None = None) -> str | None:
     return model.strip() if isinstance(model, str) and model.strip() else None
 
 
+#: Words that name a model's maker, for agents that run on someone else's
+#: models (Pi, OpenClaw): the record is priced at that maker's list price.
+_ANTHROPIC_WORDS: Final = ("claude", "opus", "sonnet", "haiku", "fable", "mythos")
+
+
 def _table_rates(provider: str, model: str) -> tuple[float, float] | None:
     if provider == "codex":
         return usage_stats._gpt_pricing_for_model(model)
@@ -92,6 +102,14 @@ def _table_rates(provider: str, model: str) -> tuple[float, float] | None:
         return usage_stats._gemini_pricing_for_model(model)
     if provider == "claude":
         return usage_stats._pricing_for_model(model)
+    if provider in ("pi", "openclaw"):
+        lowered = str(model or "").lower()
+        if "gpt" in lowered or "codex" in lowered:
+            return usage_stats._gpt_pricing_for_model(model)
+        if "gemini" in lowered:
+            return usage_stats._gemini_pricing_for_model(model)
+        if any(word in lowered for word in _ANTHROPIC_WORDS):
+            return usage_stats._pricing_for_model(model)
     return None
 
 
@@ -130,7 +148,8 @@ def quote_cost(provider: str, quote: PriceQuote | None, inp: int, cached_in: int
         return 0.0
     input_rate, output_rate, cache_rate = quote.input_per_mtok, quote.output_per_mtok, quote.cache_read_per_mtok
     # OpenAI bills cache writes at the plain input rate; Anthropic at 1.25x.
-    write_rate = input_rate if provider == "codex" else input_rate * usage_stats.CACHE_WRITE_RATE
+    default_write = 1.0 if provider == "codex" else usage_stats.CACHE_WRITE_RATE
+    write_rate = input_rate * usage_stats.cache_write_rate_for_model(quote.model, default_write)
     return (inp * input_rate + cached_in * cache_rate + cache_create * write_rate + out * output_rate) / 1_000_000.0
 
 
@@ -269,16 +288,24 @@ def usage_history_document(
 
 def scan_provider_records(provider: str, *, days: int, home: Path | None = None) -> list[tuple]:
     """The local transcript records for one provider over the last ``days``."""
+    from .local_token_history import scan_local_records
+
+    start = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if provider in LOCAL_HISTORY_PROVIDERS:
+        # Pi, Grok, Gemini CLI and OpenClaw: their own session files.
+        return scan_local_records((provider,), start.timestamp(), home=home)
     if provider not in SCANNED_PROVIDERS:
         return []
     base = Path(home) if home is not None else Path.home()
-    start = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    totals = usage_stats.scan_usage(
-        base / ".claude" / "projects",
+    from .provider_homes import scan_usage_all_homes
+
+    # Every home of this provider (CLAUDE_CONFIG_DIR, CODEX_HOME and
+    # provider_extra_homes), each real folder once.
+    totals = scan_usage_all_homes(
         default_state_dir() / "usage-scan-cache.json",
         since_epoch=start.timestamp(),
-        codex_root=base / ".codex" / "sessions",
         provider_ids=(provider,),
+        home=base,
     )
     return [record for record in totals.records if record and record[0] == provider]
 
@@ -361,7 +388,7 @@ class UsageHistoryService:
         days = range_days(range_name)
         if days is None:
             raise ValueError("range must be one of " + ", ".join(RANGE_DAYS))
-        if provider not in SCANNED_PROVIDERS:
+        if provider not in HISTORY_PROVIDERS:
             return self._finish(
                 usage_history_document([], provider=provider, range_name=range_name, codex_default_model=self._codex_default_model()),
                 account, state, pending=False, stale=False, scanned_at=self._clock(),
@@ -393,7 +420,7 @@ class UsageHistoryService:
         now = self._clock()
         with self._state_lock:
             for provider in providers:
-                if provider in SCANNED_PROVIDERS:
+                if provider in HISTORY_PROVIDERS:
                     key = (provider, days)
                     self._start_locked(key, self._entries.setdefault(key, _Entry()), now)
 
@@ -480,6 +507,7 @@ class UsageHistoryService:
 __all__ = [
     "CODEX_RECORD_MODEL",
     "FRESH_SECONDS",
+    "HISTORY_PROVIDERS",
     "HOURS_SHOWN",
     "RANGE_DAYS",
     "READY_EVENT",

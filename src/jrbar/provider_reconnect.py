@@ -919,6 +919,13 @@ def codex_app_server_probe(
             windows.append(window)
         if len(windows) >= 32:
             break
+    # Unused Codex limit-reset credits, a count only (never redeemed here).
+    reset_credits: int | None = None
+    credits_block = rate_limits.get("rateLimitResetCredits") if isinstance(rate_limits, dict) else None
+    if isinstance(credits_block, dict):
+        count = credits_block.get("availableCount", credits_block.get("available_count"))
+        if isinstance(count, int) and not isinstance(count, bool) and 0 <= count <= 10_000:
+            reset_credits = count
     authenticated: bool | None = None
     account = replies.get(3)
     if account is not None:
@@ -938,6 +945,7 @@ def codex_app_server_probe(
         "resets_at": resets_at,
         "window_minutes": window_minutes,
         "version": version,
+        "reset_credits": reset_credits,
     }
 
 

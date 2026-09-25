@@ -132,7 +132,9 @@ _PROVIDER_DESCRIPTORS: Final = (
     ProviderDescriptor(
         "opencode",
         "OpenCode",
-        ("opencode-db", "opencode-auth"),
+        # OpenCode Go's usage endpoint is the only quota source; the local
+        # database gives token totals only.
+        ("opencode-go-api", "opencode-db"),
         False,
         True,
         True,
@@ -244,9 +246,17 @@ class ProviderUsageSnapshot:
     #: carried as a fact rather than inferred from which lanes happened to
     #: arrive. None means no source stated it; it is never guessed.
     account_plan: str | None = None
+    #: Unused limit-reset credits the provider says this account holds (a
+    #: Codex reset credit), counted read-only: JR-Bar never redeems one.
+    #: None when no source stated a count.
+    reset_credits: int | None = None
 
     def __post_init__(self) -> None:
         provider_descriptor(self.provider_id)
+        if self.reset_credits is not None and (
+            type(self.reset_credits) is not int or not 0 <= self.reset_credits <= 10_000
+        ):
+            raise ValueError("reset_credits must be a small nonnegative integer")
         try:
             instance_key = ProviderInstanceKey(
                 self.provider_id,
