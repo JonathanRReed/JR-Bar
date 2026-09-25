@@ -21,8 +21,11 @@ struct LinkedSyncControls: View {
     @ViewState private var requestedUntil: Date?
 
     static let styles: [(value: String, label: String)] = [("continue", "Continue"), ("mirror", "Mirror")]
+    /// Where the Dot sits as you face the pair. Each device's Strip
+    /// direction says which of its ends that is, so a strip turned round
+    /// still hands its light to the Dot at the end the Dot is on.
     static let sides: [(value: String, label: String)] = [
-        ("after_last", "Past LED 7"), ("before_first", "Before LED 0"),
+        ("after_last", "To the right"), ("before_first", "To the left"),
     ]
 
     private var linked: Bool { store.document.bool("devices_linked") ?? true }
@@ -37,7 +40,7 @@ struct LinkedSyncControls: View {
                       options: Self.styles, default: "continue", segmented: true)
             .disabled(!extending)
         if style == "continue" {
-            SettingPicker(store, "The Dot sits", subtitle: "Which end of the strip the Dot carries on from.",
+            SettingPicker(store, "The Dot sits", subtitle: Self.sideSubtitle,
                           path: "dot_extend_side", options: Self.sides, default: "after_last")
                 .disabled(!extending)
         }
@@ -81,6 +84,8 @@ struct LinkedSyncControls: View {
                 .disabled(!extending || !store.core.isLive || sending || running)
         }
     }
+
+    static let sideSubtitle = "Which side of the strip, as you face them. The light runs on from that end."
 
     private var styleSubtitle: String {
         if style == "continue" {

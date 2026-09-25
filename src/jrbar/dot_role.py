@@ -891,8 +891,9 @@ def shift_program_phase(
 #: ``continue`` shows for light that does not travel.
 DOT_EXTEND_STYLES: Final = ("continue", "mirror")
 DEFAULT_DOT_EXTEND_STYLE: Final = "continue"
-#: Where the Dot sits for ``continue``: past the strip's last LED, or
-#: before its first.
+#: Where the Dot sits for ``continue``, as you face the pair:
+#: ``after_last`` at the strip's right-hand end (past LED 7 on a strip that
+#: runs forward), ``before_first`` at its left-hand end.
 DOT_EXTEND_SIDES: Final = ("after_last", "before_first")
 DEFAULT_DOT_EXTEND_SIDE: Final = "after_last"
 
@@ -905,6 +906,28 @@ def normalize_extend_style(value: object) -> str:
 def normalize_extend_side(value: object) -> str:
     text = str(value or "").strip().lower()
     return text if text in DOT_EXTEND_SIDES else DEFAULT_DOT_EXTEND_SIDE
+
+
+def continue_geometry(extend_side: object, strip_direction: object, dot_direction: object) -> tuple[str, str]:
+    """Where the Dot joins the strip, in the programs' own LED numbers.
+
+    ``dot_extend_side`` is where the Dot sits on the desk, and each
+    device's ``led_direction`` says which way round it is mounted
+    (``forward``: LED 0 on the left). A strip turned round has its LED 0 at
+    the right-hand end, so a Dot sitting there carries on from LED 0, not
+    LED 7. And the light enters the Dot at its LED nearest the strip: LED 0
+    for a forward Dot on the right, LED 1 for one on the left, and the other
+    way round for a Dot that is reversed.
+
+    Returns ``(side, dot_direction)`` for ``dot_continue.continue_program``:
+    the strip's end the light leaves by, and ``reversed`` when the Dot's
+    LED 1 is the one nearest the strip."""
+    on_right = normalize_extend_side(extend_side) == "after_last"
+    strip_forward = str(strip_direction or "").strip().lower() != "reversed"
+    dot_forward = str(dot_direction or "").strip().lower() != "reversed"
+    side = "after_last" if on_right == strip_forward else "before_first"
+    nearest_is_led_0 = on_right == dot_forward
+    return side, "forward" if nearest_is_led_0 else "reversed"
 
 
 def plan_dot_surface(
@@ -924,6 +947,7 @@ def plan_dot_surface(
     include_completions: bool = False,
     led_count: int = DOT_LED_COUNT,
     describe_only: bool = False,
+    strip_direction: str = "forward",
 ) -> DotSurfacePlan | None:
     """The Dot's whole surface for this instant, or ``None`` to fall through.
 
@@ -949,7 +973,10 @@ def plan_dot_surface(
     line in LIGHT (``linked_dot_scale``) and ``brightness`` is then the
     Dot's own cap by the shared rule; ``finalize`` is the Dot's write
     transfer, so the ladder judges exactly the text the write boundary will.
-    The plan carries no phase: every extend write is rotated and retimed at
+    ``led_direction`` is the Dot's own mounting and ``strip_direction`` the
+    followed strip's (``DeviceDisplaySetting.led_direction``); with
+    ``extend_side`` they place a ``continue`` Dot on the desk
+    (``continue_geometry``). The plan carries no phase: every extend write is rotated and retimed at
     the write boundary from the strip's recorded start
     (``linked_sync.apply_device_timing``), so the plan is the same whenever
     it is written.
@@ -1019,12 +1046,13 @@ def plan_dot_surface(
     if style == "continue":
         from .dot_continue import continue_program
 
+        side, dot_direction = continue_geometry(extend_side, strip_direction, led_direction)
         locked = continue_program(
             strip_program or "",
             source_leds=source_leds,
             led_count=led_count,
-            side=normalize_extend_side(extend_side),
-            dot_direction=led_direction,
+            side=side,
+            dot_direction=dot_direction,
             finalize=judged,
         )
     if locked is None:
@@ -1083,6 +1111,7 @@ __all__ = [
     "DotSurfacePlan",
     "apply_brightness_line",
     "beacon_program",
+    "continue_geometry",
     "downsample_program",
     "downsample_segment",
     "migrated_role_for_display",

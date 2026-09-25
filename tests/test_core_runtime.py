@@ -3748,6 +3748,41 @@ def test_the_sync_tick_reanchors_at_most_once_in_twenty_seconds(headless, tmp_pa
     assert link_doc["clock_rate"] is not None and link_doc["tolerance_ms"] == 40.0
 
 
+def test_the_dot_plan_reads_both_devices_directions(headless, tmp_path: Path, monkeypatch) -> None:
+    """Which way round each device is mounted (lane 9's ``led_direction``)
+    decides which strip end a Continue Dot carries on from and which of its
+    LEDs the light enters first. The planner reads the Dot's own and the
+    strip's -- the strip whose start the link recorded, since this runs on
+    the write worker, where the device list is not to be read."""
+    from dataclasses import replace
+
+    from jrbar import dot_role
+    from jrbar.linked_runtime import LinkedEpoch
+
+    controller = headless
+    pro, dot, _controllers, _submitted = _tmp_pair(controller, tmp_path)
+    controller.settings = replace(
+        controller.settings,
+        devices=(
+            SimpleNamespace(device_id=pro.device_id, led_direction="reversed"),
+            SimpleNamespace(device_id=dot.device_id, led_direction="sideways"),
+        ),
+    )
+    seen: list[dict] = []
+    monkeypatch.setattr(dot_role, "plan_dot_surface", lambda **kwargs: seen.append(kwargs))
+    controller.status_bar_devices = lambda *, remember=True: (_ for _ in ()).throw(
+        AssertionError("the planner read the device list")
+    )
+    controller._core_linked.note_epoch(LinkedEpoch(10.0, 1000.0, pro.device_id))
+    controller._core_dot_plan(SimpleNamespace(brightness=255), "#FFFFFF 500ms\nrepeat", device=dot)
+    assert seen[-1]["strip_direction"] == "reversed"
+    assert seen[-1]["led_direction"] == "forward"
+    # No strip start recorded yet: the strip reads as forward.
+    controller._core_linked.forget()
+    controller._core_dot_plan(SimpleNamespace(brightness=255), "#FFFFFF 500ms\nrepeat", device=dot)
+    assert seen[-1]["strip_direction"] == "forward"
+
+
 def test_the_keepalive_touches_only_sd_reader_devices(headless, tmp_path: Path) -> None:
     """The card reader powers the Pro off when idle; the Dot on USB-C has
     no reader, and touching it once hung its I/O for more than two seconds."""

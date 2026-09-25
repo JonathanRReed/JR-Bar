@@ -62,7 +62,7 @@ enum SettingsSearch {
         .init(.devices, "Pro & Dot", "Dot brightness", subtitle: "Two nearby LEDs read much brighter than eight across a desk. The alert beacon is never dimmed."),
         .init(.devices, "Pro & Dot", "Match the strip's brightness", subtitle: "The Dot follows the strip's brightness, dimmed by Dot brightness above, and ignores its own auto-brightness."),
         .init(.devices, "Pro & Dot", "Look", subtitle: "Light that runs off the end of the strip into the Dot, or the strip's eight LEDs folded into the Dot's two."),
-        .init(.devices, "Pro & Dot", "The Dot sits", subtitle: "Which end of the strip the Dot carries on from."),
+        .init(.devices, "Pro & Dot", "The Dot sits", subtitle: "Which side of the strip, as you face them. The light runs on from that end."),
         .init(.devices, "Pro & Dot", "Timing trim", subtitle: "Nudges the Dot if the two still read apart; plus runs it ahead."),
         .init(.devices, "Pro & Dot", "Keep in step", subtitle: "Times the Dot for its own clock and re-syncs it before it drifts. Off, it only starts on the beat."),
         .init(.devices, "Pro & Dot", "Sync tolerance", subtitle: "How far the Dot may drift before it is re-synced. Wider means fewer Dot rewrites."),

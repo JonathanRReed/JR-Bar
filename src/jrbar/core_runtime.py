@@ -4788,11 +4788,13 @@ def build_headless_controller_class() -> type:
                     brightness = min(strip_level, manual) if follow else min(strip_level, own)
                 transfer = getattr(controller, "_for_strip", None)
                 finalize = transfer if callable(transfer) else None
-            led_direction = "forward"
-            if device is not None:
-                for entry in getattr(self.settings, "devices", ()) or ():
-                    if getattr(entry, "device_id", None) == device.device_id:
-                        led_direction = str(getattr(entry, "led_direction", "forward") or "forward")
+            # Each device's own mounting (lane 9's ``led_direction``): the
+            # Dot's, and the followed strip's from the epoch its last start
+            # recorded -- the device list is main-thread state, and this
+            # runs on the write worker.
+            epoch = getattr(getattr(self, "_core_linked", None), "epoch", None)
+            led_direction = self._core_led_direction(device.device_id if device is not None else None)
+            strip_direction = self._core_led_direction(epoch.device_id if epoch is not None else None)
             return plan_dot_surface(
                 role=getattr(self.settings, "dot_role", None),
                 semantic=getattr(getattr(self, "_current_resolved_glance", None), "semantic", None),
@@ -4809,7 +4811,20 @@ def build_headless_controller_class() -> type:
                     getattr(self.settings, "dot_role_include_completions", False)
                 ),
                 describe_only=describe_only,
+                strip_direction=strip_direction,
             )
+
+        def _core_led_direction(self, device_id: str | None) -> str:
+            """``forward`` or ``reversed``: which way round a device is
+            mounted (``DeviceDisplaySetting.led_direction``, which lane 9
+            defines), ``forward`` when it has none."""
+            if device_id is None:
+                return "forward"
+            for entry in getattr(self.settings, "devices", ()) or ():
+                if getattr(entry, "device_id", None) == device_id:
+                    value = str(getattr(entry, "led_direction", "forward") or "forward")
+                    return "reversed" if value == "reversed" else "forward"
+            return "forward"
 
         def _core_linked_dot_follows(self, request) -> bool:
             """True when this request targets the Dot and its role says the

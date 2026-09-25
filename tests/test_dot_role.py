@@ -962,3 +962,47 @@ def test_the_lights_frame_asks_only_for_role_and_why__and_1_more(monkeypatch) ->
 
     # --- scenario: nothing_to_extend_is_still_nothing
     assert plan_dot_surface(role="extend", strip_program=None, describe_only=True) is None
+
+
+def test_continue_follows_each_device_s_direction__and_1_more() -> None:
+    # --- scenario: the_dot_joins_the_strip_where_it_sits_on_the_desk
+    """``dot_extend_side`` is where the Dot sits as you face the pair, and
+    each device's ``led_direction`` says which way round it is mounted. A
+    strip turned round has LED 0 at its right-hand end, so a Dot on the
+    right carries on from LED 0; the light enters the Dot at its LED
+    nearest the strip, which is LED 1 for a forward Dot on the left."""
+    from jrbar.dot_role import continue_geometry
+
+    cases = {
+        ("after_last", "forward", "forward"): ("after_last", "forward"),
+        ("after_last", "reversed", "forward"): ("before_first", "forward"),
+        ("after_last", "forward", "reversed"): ("after_last", "reversed"),
+        ("after_last", "reversed", "reversed"): ("before_first", "reversed"),
+        ("before_first", "forward", "forward"): ("before_first", "reversed"),
+        ("before_first", "reversed", "forward"): ("after_last", "reversed"),
+        ("before_first", "forward", "reversed"): ("before_first", "forward"),
+        ("before_first", "reversed", "reversed"): ("after_last", "forward"),
+    }
+    for (side, strip, dot), placed in cases.items():
+        assert continue_geometry(side, strip, dot) == placed, (side, strip, dot)
+    assert continue_geometry(None, "sideways", None) == ("after_last", "forward")
+
+    # --- scenario: a_comet_on_a_turned_round_strip_still_runs_on_into_the_dot
+    """Mounted the other way round, the strip is written mirrored (lane 9),
+    so its comet runs from LED 7 to LED 0 and leaves by LED 0, the end the
+    Dot sits at. Read with the strip's direction the Dot carries it on
+    exactly as it does the forward comet; read without it, the comet ran
+    away from LED 7 and the Dot fell back to mirroring."""
+    from jrbar.dot_continue import continue_program
+
+    tail = "#007280 #002B31 #001012 #000606 #000101 #000000 #000000 #000000"
+    rolls = "roll-{0} 1320ms linear\n" * 6
+    comet = f"#000203 160ms cosine\n{tail} 165ms cosine\n{rolls.format('right')}repeat"
+    turned = f"#000203 160ms cosine\n{' '.join(reversed(tail.split()))} 165ms cosine\n{rolls.format('left')}repeat"
+    forward = continue_program(comet, source_leds=8)
+    assert forward is not None
+    plan = plan_dot_surface(role="extend", strip_program=turned, strip_direction="reversed")
+    assert plan is not None and plan.rung == "continue" and "style:continue" in plan.reasons
+    assert plan.program == forward.program
+    unturned = plan_dot_surface(role="extend", strip_program=turned)
+    assert unturned is not None and unturned.rung != "continue"

@@ -675,8 +675,9 @@ class AgentMonitorSettings:
     # the Dot (travelling effects only; anything else mirrors); "mirror"
     # folds the strip's eight LEDs into the Dot's two.
     dot_extend_style: str = "continue"
-    # Continue only: the Dot sits past LED 7 ("after_last") or before
-    # LED 0 ("before_first").
+    # Continue only: the Dot sits on the strip's right as you face them
+    # ("after_last", past LED 7 on a strip running forward) or on its left
+    # ("before_first"); each device's led_direction turns its own end round.
     dot_extend_side: str = "after_last"
     # A linked Dot takes the strip's brightness policy times
     # ``linked_dot_scale`` and ignores its own auto-brightness, which used
