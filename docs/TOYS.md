@@ -484,7 +484,8 @@ what it is watching — "Claude · rename-the-fish — working", or "… —
 waiting on you" — the `BuddyFocus` pick: an open ask first, then
 failed, then the freshest working session, a done row only when
 nothing live remains; its name while nothing runs. "Caption on hover"
-(the card and the menu) turns it off in both homes.
+(the card and the menu) turns it off in both homes; off, the floating
+panel is the pet alone, with nothing unseen beside it to catch clicks.
 
 The floating pet is sizable: the card's Size slider sets
 `NotchBuddySettings.scale` (1…3, default 1), which the free panel reads
@@ -529,15 +530,23 @@ same beat. A mood change (a completion hop, an ask, a slump, waking)
 hands the old pose over to the new one over 0.24 s (`BuddyHandoff`), so
 the patrol's three-point swing never jumps, and a second change inside
 that beat carries on from the blend on screen; the new mood's own
-entrance still plays. The carried dangle follows the cursor on a short
-lag, so a change of direction swings it through upright, and the drop
-eases out whatever lean it had. Dragged out of the notch it takes over in place:
+entrance still plays. The parts each body shapes by mood swing over the
+same beat (the crab's claws, the axolotl's fronds, the cat's ears and
+tail, the owl's tufts and wings, the slime's melt, the mushroom's slump,
+the saucer's beam, the missing-you droop), the nightcap fades in as it
+falls asleep, and falling asleep holds the full frame rate until the
+handoff has played. The carried dangle follows the cursor on a short
+lag, so a change of direction swings it through upright; a carry lifts
+it off its feet over 0.12 s, and the drop sets it down and eases out
+whatever lean it had over the landing's third of a second. Dragged out of the notch it takes over in place:
 no blink, and at 2× it grows from the docked size over 0.3 s instead of
 doubling in a frame. Docked again (a drop on the slot, the menu, the
 card), the floating one fades out with its figure still in it while the
 notch's fades in, and switched off it fades the same way. "Tuck away"
 ducks it out over a quarter second — up under the notch when docked,
-down to its feet when floating — and it pops back up when it wakes.
+down to its feet when floating — and it pops back up when it wakes;
+woken while still ducking out, it grows and brightens back from where
+it had got to.
 Reduce Motion takes every one of these moves in a single step: the tuck
 goes at once, and nothing grows, turns or swings; only the panels'
 short fades stay.
@@ -749,9 +758,12 @@ marketing words. Examples:
   `JRBarAppTests/BuddyRoamingTests.swift`. The walk's path, cadence and
   per-frame motion (no more than a step a frame across a leg change or a
   re-plan) are `JRBarAppTests/BuddyStrollTests.swift`; the eased turn,
-  the mood handoff and the dangle's lag are
+  the mood handoff, the parts each body shapes by mood, the dangle's
+  lag, the carry's lift and a wake mid duck-out are
   `JRBarAppTests/BuddyTurnTests.swift` (≤ 2° of lean and ≤ 0.2 of eye
-  travel per 1/60 s frame through a reversal).
+  travel per 1/60 s frame through a reversal; ≤ 2 pt a frame at 3× for
+  the rest); the frame budget, falling asleep's full-rate beat included,
+  is `JRBarAppTests/BuddyPacingTests.swift`.
 - Fold math: `deltaRadians(angle:reference:)` clamps, jitter filter
   accepts/rejects, pause predicate on each safety input (pure functions
   in `JRBarCore/FoldMath.swift`, tests in `FoldMathTests.swift`).
