@@ -181,7 +181,7 @@ struct BorderBeamModifier: ViewModifier {
     /// Which fade is the latest, so a fade-out that finishes after the
     /// beam came back does not take it away again.
     @ViewState private var generation = 0
-    /// The hosting window is on screen (`WindowVisibilityReader`); off
+    /// The hosting window is on screen (`WaitWindowReader`); off
     /// it, the arc holds still.
     @ViewState private var onScreen = true
 
@@ -193,7 +193,7 @@ struct BorderBeamModifier: ViewModifier {
                         .padding(-BeamGeometry.bleed)
                         .opacity(layerOpacity)
                         .background {
-                            if still == nil { WindowVisibilityReader { onScreen = $0 } }
+                            if still == nil { WaitWindowReader { onScreen = $0 } }
                         }
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)

@@ -112,7 +112,7 @@ struct WaitIndicator: View {
         if let activity {
             ThinkingOrb(activity: activity, tint: tint, size: size, animating: shown && onScreen)
                 .background {
-                    if still == nil { WindowVisibilityReader { onScreen = $0 } }
+                    if still == nil { WaitWindowReader { onScreen = $0 } }
                 }
         } else {
             ProgressView().controlSize(Self.controlSize(for: size))
