@@ -17,6 +17,8 @@ class DeckBoardStore:
         self._last = None
         self._running = False
         self._closed = False
+        self._last_board = None
+        self._last_revision = -1
         self.error = None
 
     def load(self, board) -> None:
@@ -31,9 +33,20 @@ class DeckBoardStore:
             raise ValueError(self.error) from None
 
     def submit(self, board) -> None:
+        # The board's revision covers every serialized field, so an
+        # unchanged revision means an identical payload -- the ~35 KB
+        # ``json.dumps`` is skipped on the caller's thread, not just
+        # the write deduped after it ran.
+        revision = getattr(board, "revision", None)
+        with self._lock:
+            if self.error or self._closed:
+                return
+            if revision is not None and board is self._last_board and revision == self._last_revision:
+                return
+            self._last_board, self._last_revision = board, revision
         payload = json.dumps(board.serialize(), sort_keys=True, separators=(",", ":")) + "\n"
         with self._lock:
-            if self.error or self._closed or (not self._running and payload == self._last):
+            if not self._running and payload == self._last:
                 return
             self._pending = payload
             if self._running:

@@ -190,7 +190,19 @@ class DeckSessionBoard:
         if type(edge) is not str or edge not in RAIL_EDGES:
             raise ValueError("invalid compact rail edge")
         with self._lock:
+            if edge == self._rail_edge:
+                return
             self._rail_edge = edge
+            # The edge persists in ``serialize`` -- the store's
+            # revision gate only works if every persisted field bumps.
+            self._revision += 1
+
+    @property
+    def revision(self) -> int:
+        """The structural version covering every field ``serialize``
+        emits: unchanged, the serialized payload is identical."""
+        with self._lock:
+            return self._revision
 
     def serialize(self) -> dict:
         with self._lock:
