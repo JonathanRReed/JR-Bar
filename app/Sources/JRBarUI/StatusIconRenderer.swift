@@ -840,9 +840,22 @@ public final class StatusIconRenderer: @unchecked Sendable {
             // The same share of the box the symbol's point size took.
             let side = box.height * 0.82
             let rect = NSRect(x: box.midX - side / 2, y: box.midY - side / 2, width: side, height: side)
-            color.setFill()
-            color.setStroke()
-            logo.fill(in: rect, context: context, weight: ProviderLogo.hairline(for: id, side: side))
+            let weight = ProviderLogo.hairline(for: id, side: side)
+            let alpha = color.alphaComponent
+            guard weight > 0, alpha < 1 else {
+                color.set()
+                logo.fill(in: rect, context: context, weight: weight)
+                return
+            }
+            // A see-through hairline over its own fill would darken the
+            // mark's rim: draw both opaque in a layer, faded as one.
+            context.saveGState()
+            context.setAlpha(alpha)
+            context.beginTransparencyLayer(in: rect.insetBy(dx: -weight, dy: -weight), auxiliaryInfo: nil)
+            color.withAlphaComponent(1).set()
+            logo.fill(in: rect, context: context, weight: weight)
+            context.endTransparencyLayer()
+            context.restoreGState()
         case .symbol(let name):
             let configuration = NSImage.SymbolConfiguration(pointSize: box.height * 0.82, weight: .semibold)
             guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) else {
