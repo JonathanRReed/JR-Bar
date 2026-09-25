@@ -447,9 +447,10 @@ final class NotchBuddyToy: Toy {
 
     /// The carry's life, panel-side bookkeeping the view reads: held,
     /// it leans toward the travel direction (`dragTilt`, settling via
-    /// `dragMovedAt`) with its feet up; put down, `landedAt` plays a
-    /// small squash and lets go of whatever lean it still had
-    /// (`landingTilt`). Reduce Motion ignores all of it.
+    /// `dragMovedAt`) with its feet up (`carryLift`); put down,
+    /// `landedAt` plays a small squash and lets go of whatever lean and
+    /// lift it still had (`landingTilt`, `landingLift`). Reduce Motion
+    /// ignores all of it.
     private(set) var isDragged = false
     private(set) var dragTilt: Double = 0
     private(set) var dragMovedAt: Date?
@@ -457,13 +458,44 @@ final class NotchBuddyToy: Toy {
     /// The lean it had the moment it was put down; the landing eases it
     /// upright instead of snapping.
     private(set) var landingTilt: Double = 0
+    /// When the carry began, and the lift drawn at that moment (a
+    /// landing still settling); the pick-up eases up from there.
+    private(set) var dragStartedAt: Date?
+    private(set) var pickUpLift: Double = 0
+    /// The lift it had the moment it was put down; the landing eases it
+    /// back onto its feet.
+    private(set) var landingLift: Double = 0
 
-    func dragStarted() {
+    /// How far a carry lifts it off its feet, in the figure's points
+    /// (SwiftUI's y-down), and how long the pick-up and the landing take.
+    /// At the floating buddy's 3× the lift is 5.4 pt, too far for a frame.
+    static let carryHeight: Double = -1.8
+    static let pickUpTime: TimeInterval = 0.12
+    static let landingTime: TimeInterval = 0.34
+
+    /// The carry's lift at `now`: easing up off its feet over
+    /// `pickUpTime`, held while carried, and easing back down over the
+    /// landing.
+    func carryLift(at now: Date) -> Double {
+        if isDragged {
+            let age = now.timeIntervalSince(dragStartedAt ?? now)
+            return pickUpLift + (Self.carryHeight - pickUpLift) * BuddyTurn.smooth(age / Self.pickUpTime)
+        }
+        guard let landedAt else { return 0 }
+        let age = max(0, now.timeIntervalSince(landedAt))
+        guard age < Self.landingTime else { return 0 }
+        return landingLift * (1 - BuddyTurn.smooth(age / Self.landingTime))
+    }
+
+    func dragStarted(at now: Date = Date()) {
+        pickUpLift = carryLift(at: now)
         isDragged = true
+        dragStartedAt = now
         dragTilt = 0
         dragMovedAt = nil
         landedAt = nil
         landingTilt = 0
+        landingLift = 0
     }
 
     /// `dx` is this event's horizontal travel, not the total. The lean
@@ -495,6 +527,7 @@ final class NotchBuddyToy: Toy {
     /// Put down — the landing beat plays from `landedAt`.
     func dragEnded(at now: Date = Date()) {
         landingTilt = dangle(at: now)
+        landingLift = carryLift(at: now)
         isDragged = false
         dragTilt = 0
         landedAt = now
@@ -507,6 +540,7 @@ final class NotchBuddyToy: Toy {
         isDragged = false
         dragTilt = 0
         landingTilt = 0
+        landingLift = 0
     }
 
     // MARK: Interaction

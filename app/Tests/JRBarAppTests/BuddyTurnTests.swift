@@ -276,6 +276,52 @@ struct BuddyTurnTests {
         withExtendedLifetime(store) {}
     }
 
+    @Test("a carry lifts it off its feet and sets it down over a beat, not a frame")
+    func carryLiftEases() {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        // At the floating buddy's 3× a frame may move it at most 2 pt;
+        // the old lift of 1.8 switched on and off whole: 5.4 pt.
+        let most = 2.0 / 3
+        #expect(abs(NotchBuddyToy.carryHeight) > most)
+        toy.dragStarted(at: t0)
+        #expect(toy.carryLift(at: t0) == 0, "picked up from its feet")
+        var last = 0.0
+        var now = t0
+        while now <= t0.addingTimeInterval(NotchBuddyToy.pickUpTime + Self.frame) {
+            now = now.addingTimeInterval(Self.frame)
+            let lift = toy.carryLift(at: now)
+            #expect(abs(lift - last) <= most, "the pick-up jumped at \(now.timeIntervalSince(t0))s")
+            last = lift
+        }
+        #expect(toy.carryLift(at: t0.addingTimeInterval(1)) == NotchBuddyToy.carryHeight)
+
+        let down = t0.addingTimeInterval(1)
+        toy.dragEnded(at: down)
+        #expect(toy.carryLift(at: down) == NotchBuddyToy.carryHeight, "put down from where it was held")
+        last = NotchBuddyToy.carryHeight
+        now = down
+        while now <= down.addingTimeInterval(NotchBuddyToy.landingTime + Self.frame) {
+            now = now.addingTimeInterval(Self.frame)
+            let lift = toy.carryLift(at: now)
+            #expect(abs(lift - last) <= most, "the landing jumped at \(now.timeIntervalSince(down))s")
+            last = lift
+        }
+        #expect(last == 0, "back on its feet")
+
+        // Picked up again mid-landing: the lift starts from where it is.
+        toy.dragEnded(at: down.addingTimeInterval(2))
+        let again = down.addingTimeInterval(2.1)
+        let drawn = toy.carryLift(at: again)
+        toy.dragStarted(at: again)
+        #expect(abs(toy.carryLift(at: again) - drawn) < 1e-9)
+    }
+
     @Test("a stale reader can't replay a landed hop or start an ask in the past")
     func staleReaders() {
         let core = CoreModel()
