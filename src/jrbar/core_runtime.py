@@ -3269,9 +3269,11 @@ def _cmd_session_usage(self, args):
     I/O. A remote row, an unknown id, a provider without a transcript
     reader, and a transcript that is not on disk each come back as a named
     gap rather than a zero. ``since`` (epoch) adds ``tokens_since`` per
-    session -- the Usage Center's "who is burning this window".
+    session -- the Usage Center's "who is burning this window". Every
+    session also carries ``window_tokens``, counted from when its
+    provider's primary usage window opened (the Agent Overview's share).
     """
-    from .session_usage import SESSION_USAGE_MAX_IDS, session_usage_document
+    from .session_usage import SESSION_USAGE_MAX_IDS, session_usage_document, window_openings
 
     raw_ids = args.get("ids")
     if isinstance(raw_ids, str):
@@ -3310,7 +3312,11 @@ def _cmd_session_usage(self, args):
             str(session_id) if session_id else None,
             str(cwd) if cwd else None,
         ))
-    document = session_usage_document(requests, since=since)
+    try:
+        openings = window_openings(getattr(self, "provider_usage_state", None))
+    except Exception:
+        openings = {}
+    document = session_usage_document(requests, since=since, window_opened=openings)
     document["gaps"].update(remote)
     return document
 

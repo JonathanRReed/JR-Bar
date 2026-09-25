@@ -41,6 +41,14 @@ dollars at all for a provider without a table. Context is the size of the
 newest main-chain turn's prompt; Codex states its window
 (``model_context_window``), Claude does not, so a Claude window is
 ``inferred`` from what the transcript has already shown fitting in it.
+
+``window_tokens`` is the session's share of its provider's quota window in
+tokens: what it spent since that provider's primary usage window opened
+(``resets_at`` minus the window's length, the window the Usage Center's
+card leads with). The Agent Overview divides it by every session's figure
+for the same provider and shows the share marked derived. It is null when
+the provider reports no window, the session has no token timeline, or only
+a tail was read that starts inside the window.
 """
 
 from __future__ import annotations
@@ -50,7 +58,7 @@ import math
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -357,6 +365,7 @@ def _read_session(
     since: float | None,
     deadline: float,
     clock: Callable[[], float],
+    window_opened: float | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """(document, None) once the file is read up to its size, else a gap.
 
@@ -383,7 +392,7 @@ def _read_session(
                 return None, "transcript_unreadable"
             if not caught_up:
                 return None, "reading"
-        return usage_document(provider, state, since=since), None
+        return usage_document(provider, state, since=since, window_opened=window_opened), None
     finally:
         state.lock.release()
 
@@ -459,7 +468,81 @@ def _context_window(state: _FileUsage) -> tuple[int | None, str | None]:
     return None, None
 
 
-def usage_document(provider: str, state: _FileUsage, *, since: float | None = None) -> dict[str, Any]:
+#: A usage window's length in seconds, by its id or name: the app's
+#: ``UsageWindowLabel.windowSpan``, so both count back from a reset alike.
+_WINDOW_SPANS: Final = {
+    **dict.fromkeys(("5h", "five_hour", "5_hour", "fivehour", "five_hours", "5_hours", "5hr", "5hrs"), 5 * 3600),
+    **dict.fromkeys(("7d", "seven_day", "7_day", "sevenday", "seven_days", "7_days", "weekly", "week"), 7 * 86400),
+    **dict.fromkeys(("daily", "day", "24h", "1d", "one_day"), 86400),
+    **dict.fromkeys(("monthly", "month", "30d"), 30 * 86400),
+}
+
+
+def window_span(*names: object) -> float | None:
+    """Seconds in the window an id or name ("5h", "seven_day", "Weekly")
+    stands for; None for one that names no length."""
+    for name in names:
+        key = str(name or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if key in _WINDOW_SPANS:
+            return float(_WINDOW_SPANS[key])
+    return None
+
+
+def window_openings(usage_state: object) -> dict[str, float]:
+    """Provider id -> when its primary usage window opened (epoch).
+
+    The primary window is the one the Usage Center's card leads with
+    (``core_projection.primary_window``: the 5h one when reported, else the
+    first), on this Mac's own account (the ``default`` instance; a
+    CLIProxyAPI account is someone else's quota). A window with no reset
+    time, or a name that says no length, opens nothing.
+    """
+    from .core_projection import epoch, primary_window, usage_window_name
+
+    openings: dict[str, float] = {}
+    for snapshot in getattr(usage_state, "snapshots", ()) or ():
+        provider = getattr(snapshot, "provider_id", None)
+        instance = getattr(snapshot, "source_instance_id", "default") or "default"
+        if not isinstance(provider, str) or instance != "default" or provider in openings:
+            continue
+        windows = [
+            {
+                "id": getattr(lane, "lane_id", None),
+                "name": usage_window_name(
+                    getattr(lane, "lane_id", None), getattr(lane, "label", None), getattr(lane, "model", None)
+                ),
+                "resets_at": epoch(getattr(lane, "reset_at", None)),
+            }
+            for lane in getattr(snapshot, "lanes", ()) or ()
+        ]
+        primary = primary_window(windows)
+        if primary is None or primary["resets_at"] is None:
+            continue
+        span = window_span(primary["id"], primary["name"])
+        if span is not None:
+            openings[provider] = float(primary["resets_at"]) - span
+    return openings
+
+
+def _window_tokens(state: _FileUsage, opened: float | None) -> int | None:
+    """Tokens from the turns at or after ``opened``; None with no window, no
+    turns, or a read that cannot see back to where the window opened (a
+    tail read, or a timeline cut to its newest turns, starting inside it)."""
+    if opened is None or not state.turns:
+        return None
+    cut = state.partial or len(state.turns) >= _MAX_TURNS
+    if cut and state.turns[0][0] > opened:
+        return None
+    return sum(tokens for at, tokens in state.turns if at >= opened)
+
+
+def usage_document(
+    provider: str,
+    state: _FileUsage,
+    *,
+    since: float | None = None,
+    window_opened: float | None = None,
+) -> dict[str, Any]:
     """One session's usage as the wire carries it."""
     inp = sum(parts[0] for parts in state.models.values())
     cached = sum(parts[1] for parts in state.models.values())
@@ -491,6 +574,7 @@ def usage_document(provider: str, state: _FileUsage, *, since: float | None = No
         "first_at": state.first_at,
         "last_at": state.last_at,
         "partial": state.partial,
+        "window_tokens": _window_tokens(state, window_opened),
     }
     if since is not None:
         document["tokens_since"] = sum(tokens for at, tokens in state.turns if at >= since)
@@ -506,17 +590,22 @@ def session_usage(
     home: Path | None = None,
     deadline: float = math.inf,
     clock: Callable[[], float] = time.monotonic,
+    window_opened: float | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """(document, None) for a readable transcript, else (None, gap).
 
     ``deadline`` is on ``clock``; without one the file is read to its end.
+    ``window_opened`` (epoch) is when the provider's primary usage window
+    opened, for ``window_tokens``.
     """
     if provider not in SUPPORTED_PROVIDERS:
         return None, "unsupported_provider"
     path, gap = _locate(provider, session_id, cwd=cwd, home=home, may_search=clock() < deadline)
     if path is None:
         return None, gap
-    return _read_session(provider, path, since=since, deadline=deadline, clock=clock)
+    return _read_session(
+        provider, path, since=since, deadline=deadline, clock=clock, window_opened=window_opened
+    )
 
 
 def session_usage_document(
@@ -526,6 +615,7 @@ def session_usage_document(
     home: Path | None = None,
     budget: float = SESSION_USAGE_REPLY_BUDGET_SECONDS,
     clock: Callable[[], float] = time.monotonic,
+    window_opened: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """The ``session_usage`` reply for ``(id, provider, session, cwd)`` rows.
 
@@ -534,6 +624,8 @@ def session_usage_document(
     transcript" from "this provider keeps none" without guessing. The
     ``budget`` is shared by the whole request and checked between lines
     and between files; ids it did not reach answer ``reading``.
+    ``window_opened`` maps a provider to when its primary usage window
+    opened (``window_openings``), for each session's ``window_tokens``.
     """
     from . import usage_stats
 
@@ -547,6 +639,7 @@ def session_usage_document(
         document, gap = session_usage(
             provider, session_id, cwd=cwd, since=since, home=home,
             deadline=deadline, clock=clock,
+            window_opened=(window_opened or {}).get(provider),
         )
         if document is None:
             gaps[agent_id] = gap or "transcript_not_found"

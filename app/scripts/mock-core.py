@@ -1409,6 +1409,33 @@ def scenario_usage(name: str, now: float) -> list[dict]:
     return []
 
 
+def mock_session_usage(session: dict, *, since: object = None, now: float) -> dict:
+    """One session's ``session_usage`` document, fixed per provider: the
+    Claude main session spent 340k tokens of its 5 h window; Codex has no
+    window figure (``window_tokens`` null)."""
+    claude = session["provider"] == "claude"
+    worker = session.get("kind") == "worker"
+    tokens = ({"input": 18_400, "cached_input": 1_204_000, "cache_creation": 96_000, "output": 41_300}
+              if claude else {"input": 212_000, "cached_input": 1_560_000, "cache_creation": 0, "output": 38_900})
+    if worker:
+        tokens = {key: value // 6 for key, value in tokens.items()}
+    total = sum(tokens.values())
+    model = "claude-opus-4-5-20251101" if claude else "gpt-5.6-sol"
+    document = {
+        "provider": session["provider"], "model": model, "models": {model: total}, "tokens": tokens,
+        "turns": 7 if worker else 42, "estimated_cost_usd": 4.12 if claude else 2.87,
+        "cost_estimated": False, "unpriced_models": [],
+        "context_tokens": 84_000 if claude else 131_000,
+        "context_window": 200_000 if claude else 258_400,
+        "context_window_source": "inferred" if claude else "reported",
+        "first_at": session.get("since"), "last_at": now, "partial": False,
+        "window_tokens": (60_000 if worker else 340_000) if claude else None,
+    }
+    if isinstance(since, (int, float)) and not isinstance(since, bool):
+        document["tokens_since"] = document["window_tokens"] or total // 3
+    return document
+
+
 class World:
     """Everything the daemon knows, plus the timeline that mutates it."""
 
@@ -2986,6 +3013,33 @@ class World:
                 # marked partial (the daemon's `stale` answer).
                 result = usage_history(provider, range_name, time.time(), partial=inflight)
             result["state"] = self.usage[provider]["state"] if provider in self.usage else "ready"
+        elif name == "session_usage":
+            # The daemon's per-session usage (session_usage.py), fixed: the
+            # Claude session spent its share of the 5 h window, and the Codex
+            # one answers with no window figure (null), as a session whose
+            # provider reports no window, or whose read cannot see back to
+            # where it opened, does. Gemini keeps no transcript reader.
+            ids = args.get("ids")
+            ids = [ids] if isinstance(ids, str) else ids
+            if not isinstance(ids, list) or not [i for i in ids if isinstance(i, str) and i]:
+                return self._error(cid, "invalid_value", "ids must be a nonempty list of session ids")
+            since = args.get("since")
+            sessions: dict[str, dict] = {}
+            gaps: dict[str, str] = {}
+            with self.lock:
+                for sid in [i for i in ids if isinstance(i, str) and i][:64]:
+                    session = self.sessions.get(sid)
+                    if sid.startswith("remote:"):
+                        gaps[sid] = "remote"
+                    elif session is None:
+                        gaps[sid] = "not_found"
+                    elif session["provider"] not in ("claude", "codex"):
+                        gaps[sid] = "unsupported_provider"
+                    else:
+                        sessions[sid] = mock_session_usage(session, since=since, now=time.time())
+            result = {"schema": 1, "sessions": sessions, "gaps": gaps, "since": since,
+                      "pricing": {"as_of": "2026-09-24", "table_version": 1,
+                                  "semantics": "api_equivalent_estimate"}}
         elif name == "usage_graph":
             # The shared-axis chart the Overview's Usage pane shows —
             # same document shape as the daemon's scan, built from the

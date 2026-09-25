@@ -354,3 +354,98 @@ def test_a_line_past_the_line_cap_is_skipped_not_held(tmp_path, monkeypatch):
     doc, _ = session_usage.session_usage("claude", SID, cwd="/tmp/work", home=tmp_path)
     assert doc["turns"] == 2
     assert doc["tokens"]["output"] == 100
+
+
+def _lane(lane_id, reset_at, *, label=None, model=None):
+    return SimpleNamespace(lane_id=lane_id, label=label, model=model, reset_at=reset_at)
+
+
+def test_window_tokens_count_only_what_the_session_spent_inside_the_window(tmp_path):
+    """A session that started before its provider's 5 h window opened: only
+    the turns inside the window count, so an old run never takes the share
+    of one that did the spending. Without a window there is nothing to
+    count from, which is null, never a zero."""
+    path = _claude_path(tmp_path)
+    _write(path, [
+        _assistant("msg_1", at="2026-09-13T04:00:00Z", inp=100, cache_read=0, cache_create=0, out=100),
+        _assistant("msg_2", at="2026-09-13T06:30:00Z", inp=10, cache_read=5, cache_create=0, out=15),
+        _assistant("msg_3", at="2026-09-13T09:59:00Z", inp=1, cache_read=0, cache_create=0, out=2),
+    ])
+    opened = session_usage._epoch("2026-09-13T05:00:00Z")
+    doc, _ = session_usage.session_usage(
+        "claude", SID, cwd="/tmp/work", home=tmp_path, window_opened=opened
+    )
+    assert doc["window_tokens"] == 30 + 3
+    assert doc["tokens"]["input"] == 111  # the whole run is still the whole run
+
+    session_usage.reset_cache()
+    bare, _ = session_usage.session_usage("claude", SID, cwd="/tmp/work", home=tmp_path)
+    assert bare["window_tokens"] is None
+
+
+def test_a_tail_read_that_starts_inside_the_window_has_no_window_tokens(tmp_path):
+    """A transcript read from its tail cannot see back to where the window
+    opened, so it claims no figure rather than an undercount."""
+    state = session_usage._FileUsage(provider="claude", device=1, inode=1, partial=True)
+    state.turns = [(1_000.0, 5), (2_000.0, 7)]
+    assert session_usage.usage_document("claude", state, window_opened=500.0)["window_tokens"] is None
+    assert session_usage.usage_document("claude", state, window_opened=1_500.0)["window_tokens"] == 7
+    state.partial = False
+    assert session_usage.usage_document("claude", state, window_opened=500.0)["window_tokens"] == 12
+    empty = session_usage._FileUsage(provider="claude", device=1, inode=2)
+    assert session_usage.usage_document("claude", empty, window_opened=500.0)["window_tokens"] is None
+
+
+def test_the_window_opens_at_the_primary_reset_less_its_length():
+    """The window the Usage Center's card leads with (5h when reported),
+    on this Mac's own account: a CLIProxyAPI account is another quota."""
+    from datetime import datetime, timezone
+
+    resets = datetime(2026, 9, 13, 10, 0, tzinfo=timezone.utc)
+    state = SimpleNamespace(snapshots=[
+        SimpleNamespace(provider_id="claude", source_instance_id="cliproxy:3f2a", lanes=[_lane("five_hour", resets)]),
+        SimpleNamespace(provider_id="claude", source_instance_id="default", lanes=[
+            _lane("seven_day", resets), _lane("five_hour", resets),
+        ]),
+        SimpleNamespace(provider_id="gemini", source_instance_id="default", lanes=[_lane("daily", resets)]),
+        SimpleNamespace(provider_id="cursor", source_instance_id="default", lanes=[_lane("credits", resets)]),
+        SimpleNamespace(provider_id="codex", source_instance_id="default", lanes=[_lane("seven_day", None)]),
+    ])
+    openings = session_usage.window_openings(state)
+    assert openings == {
+        "claude": resets.timestamp() - 5 * 3600,
+        "gemini": resets.timestamp() - 86400,
+    }
+    assert session_usage.window_openings(None) == {}
+    assert session_usage.window_span("Weekly") == 7 * 86400
+    assert session_usage.window_span("credits", "30d") == 30 * 86400
+    assert session_usage.window_span("credits") is None
+
+
+def test_the_command_counts_each_session_from_its_provider_s_window(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from jrbar.core_runtime import _cmd_session_usage
+
+    sid = "34343434-5656-7878-9090-121212121212"
+    _write(tmp_path / ".claude" / "projects" / "-tmp-work" / f"{sid}.jsonl", [
+        _assistant("msg_1", at="2026-09-13T04:00:00Z", inp=100, cache_read=0, cache_create=0, out=0),
+        _assistant("msg_2", at="2026-09-13T08:00:00Z", inp=40, cache_read=0, cache_create=0, out=2),
+    ])
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    status = SimpleNamespace(agent_id="claude:w", provider="claude", session_id=sid, cwd="/tmp/work")
+    resets = datetime(2026, 9, 13, 10, 0, tzinfo=timezone.utc)
+    controller = SimpleNamespace(
+        last_snapshot=SimpleNamespace(statuses=[status], stale_statuses=[]),
+        provider_usage_state=SimpleNamespace(snapshots=[
+            SimpleNamespace(provider_id="claude", source_instance_id="default", lanes=[_lane("five_hour", resets)]),
+        ]),
+    )
+
+    reply = _cmd_session_usage(controller, {"ids": ["claude:w"]})
+    assert reply["sessions"]["claude:w"]["window_tokens"] == 42
+
+    controller.provider_usage_state = None
+    session_usage.reset_cache()
+    reply = _cmd_session_usage(controller, {"ids": ["claude:w"]})
+    assert reply["sessions"]["claude:w"]["window_tokens"] is None

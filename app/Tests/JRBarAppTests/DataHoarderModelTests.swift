@@ -629,4 +629,16 @@ struct DataHoarderModelTests {
         #expect(DataHoarderProviders.resumeRefusal(remote, title: "review") == remote.message)
         #expect(DataHoarderProviders.resumeRefusal(nil, title: "review") == "Could not resume review")
     }
+
+    /// X18: the CLIProxyAPI source's note is the OSS lane's rule, read from
+    /// the config this seat finds -- a proxy writing only error logs gets
+    /// the sentence, one logging every request and a Mac with no config
+    /// get none.
+    @Test func theRequestLogNoteIsTheDaemonLanesRule() {
+        let note = DataHoarderProviders.requestLogNote { "port: 8317\nrequest-log: false\n" }
+        #expect(note == CLIProxyLogParser.requestLogNote(config: "request-log: false"))
+        #expect(note?.contains("request-log: true") == true)
+        #expect(DataHoarderProviders.requestLogNote { "request-log: true\n" } == nil)
+        #expect(DataHoarderProviders.requestLogNote { nil } == nil)
+    }
 }

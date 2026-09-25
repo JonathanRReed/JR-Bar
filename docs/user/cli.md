@@ -32,7 +32,7 @@ jrbar providers credential set cliproxy management --stdin   # a key into the Ke
 ## Agents and hooks
 
 ```sh
-jrbar status                   # sessions and asks right now (--json)
+jrbar status                   # sessions and asks right now (--json, with a linked Dot's dot_link timing)
 jrbar hooks doctor             # what each provider's config runs, its version, the sockets (--json)
 jrbar agent-monitor install claude-statusline [--wrap]   # see claude-statusline.md
 jrbar usage-hooks list         # see usage-hooks.md

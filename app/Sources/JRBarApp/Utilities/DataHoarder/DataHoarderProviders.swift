@@ -110,12 +110,11 @@ enum DataHoarderProviders {
 
     /// The note under the CLIProxyAPI source while its proxy writes only
     /// error logs, so the archive holds a few failures and none of the
-    /// ordinary requests. The sentence and the rule belong to the daemon
-    /// lane: at integration this returns
-    /// `CLIProxyLogParser.requestLogNote(config: readConfig())` (X18).
-    /// Until then there is no note, and the config is never read.
+    /// ordinary requests. The sentence and the rule are the OSS lane's
+    /// (`CLIProxyLogParser.requestLogNote(config:)`, X18); this seat only
+    /// finds the config. No config, or `request-log` on, means no note.
     static func requestLogNote(readConfig: () -> String? = { cliProxyConfig() }) -> String? {
-        nil
+        CLIProxyLogParser.requestLogNote(config: readConfig())
     }
 
     // MARK: Agent Sessions

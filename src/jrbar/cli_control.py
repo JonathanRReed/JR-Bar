@@ -223,6 +223,14 @@ class CoreConnection:
                 return frame
         raise ControlError(f"the monitor sent no {kind}", 1)  # pragma: no cover - loop exits by raising
 
+    def seen(self, kind: str) -> dict[str, Any] | None:
+        """A frame of ``kind`` that has already arrived, without waiting for
+        one: the monitor sends only the documents it has."""
+        for frame in self._seen:
+            if frame.get("t") == kind:
+                return frame
+        return None
+
     def command(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Send one command and return its reply's ``result``; a refused
         reply raises with the daemon's own words."""
@@ -320,8 +328,21 @@ def cmd_status(args: argparse.Namespace, connect: Callable[[], CoreConnection]) 
     with connect() as core:
         hello = core.document("hello")
         state = core.document("state")
+        lights = None
+        if args.json:
+            # A client's first frames are state, lights (when the monitor
+            # has one) and settings: once settings is in, lights was sent
+            # or never will be.
+            core.document("settings")
+            lights = core.seen("lights")
     if args.json:
         body = {key: value for key, value in state.items() if key not in ("t", "v")}
+        # The linked Dot's timing from the lights frame (``phase_error_ms``,
+        # ``clock_rate``, ``sync_writes_hour``...), for scripts and the
+        # post-install check; absent without a linked pair.
+        dot_link = lights.get("dot_link") if isinstance(lights, dict) else None
+        if isinstance(dot_link, dict):
+            body["dot_link"] = dot_link
         print(json.dumps(body, indent=2, sort_keys=True))
     else:
         print(render_status(state, hello))

@@ -127,3 +127,28 @@ def test_health_detected_and_hook_install(world) -> None:
     results = reply["result"]["results"]
     assert results["claude"]["ok"] is True and results["claude"]["detected"] is True
     assert results["grok"]["ok"] is False and results["grok"]["detected"] is False
+
+
+def test_session_usage_speaks_the_daemons_document(world) -> None:
+    """X15: the mock's ``session_usage`` carries the daemon's keys, with one
+    session that has ``window_tokens`` and one whose figure is null, so the
+    app's Agent Overview window share is exercised both ways."""
+    from jrbar import session_usage
+
+    daemon_keys = set(
+        session_usage.usage_document(
+            "claude", session_usage._FileUsage(provider="claude", device=1, inode=1), since=0.0
+        )
+    )
+    claude = next(sid for sid, s in world.sessions.items() if s["provider"] == "claude" and s["kind"] == "main")
+    codex = next(sid for sid, s in world.sessions.items() if s["provider"] == "codex")
+    gemini = next(sid for sid, s in world.sessions.items() if s["provider"] == "gemini")
+    reply = _call(world, "session_usage", {"ids": [claude, codex, gemini, "remote:studio:claude:x"], "since": 0})
+    assert reply["ok"] is True
+    result = reply["result"]
+    assert set(result["sessions"][claude]) == daemon_keys
+    assert set(result["sessions"][codex]) == daemon_keys
+    assert result["sessions"][claude]["window_tokens"] == 340_000
+    assert result["sessions"][codex]["window_tokens"] is None
+    assert result["gaps"] == {gemini: "unsupported_provider", "remote:studio:claude:x": "remote"}
+    assert _error(_call(world, "session_usage", {"ids": []}))["code"] == "invalid_value"

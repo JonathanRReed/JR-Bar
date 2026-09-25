@@ -22,9 +22,11 @@ class FakeCore:
     way the daemon does on connect, then answers each command from
     ``replies`` (a name -> reply-body map) and records what it was sent."""
 
-    def __init__(self, path: Path, *, state: dict, settings: dict, replies: dict[str, dict]) -> None:
+    def __init__(self, path: Path, *, state: dict, settings: dict, replies: dict[str, dict],
+                 lights: dict | None = None) -> None:
         self.path = path
         self.state = state
+        self.lights = lights
         self.settings = settings
         self.replies = replies
         self.commands: list[dict] = []
@@ -47,6 +49,8 @@ class FakeCore:
             with connection:
                 self._send(connection, {"t": "hello", "v": 1, "core_version": "0.9.9"})
                 self._send(connection, {"t": "state", "v": 1, **self.state})
+                if self.lights is not None:
+                    self._send(connection, {"t": "lights", "v": 1, **self.lights})
                 self._send(connection, {"t": "settings", "v": 1, "generation": 3, "document": self.settings})
                 buffer = b""
                 connection.settimeout(5)
@@ -136,6 +140,25 @@ def test_status_json_is_the_state_document(core, capsys) -> None:
     body = json.loads(capsys.readouterr().out)
     assert body["generation"] == 7
     assert "t" not in body and "v" not in body
+
+
+def test_status_json_carries_the_linked_dots_timing(core, capsys) -> None:
+    """``dot_link`` from the lights frame rides along (the post-install
+    check reads ``dot_link.phase_error_ms``); a monitor with no lights frame,
+    or no linked pair, adds nothing."""
+    assert run(["status", "--json"], core) == 0
+    assert "dot_link" not in json.loads(capsys.readouterr().out)
+
+    core.lights = {"surfaces": {}, "dot_link": {"state": "linked", "role": "extend", "phase_error_ms": -18.4,
+                                                 "clock_rate": 0.9734, "sync_writes_hour": 3}}
+    assert run(["status", "--json"], core) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["dot_link"]["phase_error_ms"] == -18.4
+    assert body["generation"] == 7
+
+    core.lights = {"surfaces": {}, "dot_link": None}
+    assert run(["status", "--json"], core) == 0
+    assert "dot_link" not in json.loads(capsys.readouterr().out)
 
 
 def test_quiet_sends_the_daemons_command(core, capsys) -> None:
