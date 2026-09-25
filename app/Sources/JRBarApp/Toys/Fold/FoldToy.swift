@@ -479,6 +479,7 @@ final class FoldToy: Toy {
             tracker.reset()
             chase.reset()
             moveAnchor.reset()
+            restGate.reset()
             displayedDelta = 0
             standDown()
             sensor.setPolling(false)
@@ -1549,6 +1550,7 @@ final class FoldToy: Toy {
         catchUp.reset()
         chase.reset()
         moveAnchor.reset()
+        restGate.reset()
         displayedDelta = 0
         standDown()
         sensor.setPolling(false)
