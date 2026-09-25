@@ -117,6 +117,22 @@ struct ProviderMarkTests {
         #expect(abs((cursor?.hueComponent ?? 0) - 48.0 / 360) < 0.01)
     }
 
+    @Test func theOverviewGraphStampsNoSymbolForAProviderWithAMark() {
+        let known = [
+            OverviewGraphNode(id: "a", project: "p", provider: "claude", activity: .working, label: "A"),
+            OverviewGraphNode(id: "b", project: "p", provider: "hermes", activity: .idle, label: "B"),
+        ]
+        let unknown = OverviewGraphNode(id: "c", project: "p", provider: "mystery", activity: .idle, label: "C")
+        func model(_ nodes: [OverviewGraphNode]) -> GraphSceneModel {
+            GraphSceneModel(layout: OverviewGraphLayout.make(nodes), previous: nil,
+                            nodes: Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) }),
+                            captions: [:], hubCaptions: [:], unseen: [], selectedID: nil, lit: nil, now: 0)
+        }
+        #expect(GraphGlyph.all(for: model(known)).isEmpty, "marks are filled as paths, not symbol views")
+        let stamped = GraphGlyph.all(for: model(known + [unknown]))
+        #expect(!stamped.isEmpty && stamped.allSatisfy { $0.provider == "mystery" })
+    }
+
     /// `view` through ImageRenderer at 2x, as a bitmap to read back.
     @MainActor static func render(_ view: some View) throws -> NSBitmapImageRep {
         let renderer = ImageRenderer(content: view)

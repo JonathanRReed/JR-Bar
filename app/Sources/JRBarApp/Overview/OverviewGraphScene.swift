@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// The words under a session's title: its state, then how long and what
@@ -537,9 +538,7 @@ private struct GraphPainter {
                 Gradient(colors: [.white.opacity(0.5), .white.opacity(0)]),
                 startPoint: CGPoint(x: shine.midX, y: shine.minY), endPoint: CGPoint(x: shine.midX, y: shine.maxY)))
             c.stroke(orb, with: .color(.white.opacity(dark ? 0.22 : 0.35)), lineWidth: hairline)
-            if let glyph = c.resolveSymbol(id: GraphGlyph(provider: hub.id, tier: .hub, solid: true).tag) {
-                c.draw(glyph, at: center)
-            }
+            drawMark(&c, GraphGlyph(provider: hub.id, tier: .hub, solid: true), at: center)
             if let caption = c.resolveSymbol(id: "hub." + hub.id) {
                 drawLabel(&c, caption, in: CGRect(x: center.x - 80, y: center.y + radius + 9, width: 160, height: 30),
                           anchor: .top)
@@ -633,9 +632,35 @@ private struct GraphPainter {
             context.fill(orb, with: .color(accent.opacity(dark ? 0.2 : 0.14)))
             context.stroke(orb, with: .color(accent.opacity(0.28)), lineWidth: hairline)
         }
-        let glyph = GraphGlyph(provider: node.provider, tier: worker ? .worker : .session, solid: alive)
-        if let symbol = context.resolveSymbol(id: glyph.tag) {
-            context.draw(symbol, at: center)
+        drawMark(&context, GraphGlyph(provider: node.provider, tier: worker ? .worker : .session, solid: alive),
+                 at: center)
+    }
+
+    /// A provider's mark on its orb. A real mark is its cached path filled
+    /// straight into the canvas: white over a soft drop on a lit orb, its
+    /// ink on a pale one (lifted where the accent would vanish, as on a
+    /// tile). A provider without one gets its symbol view, stamped.
+    private func drawMark(_ context: inout GraphicsContext, _ glyph: GraphGlyph, at center: CGPoint) {
+        let style = ProviderStyle.style(for: glyph.provider)
+        guard case .logo(let logo) = style.mark else {
+            if let symbol = context.resolveSymbol(id: glyph.tag) { context.draw(symbol, at: center) }
+            return
+        }
+        let side = glyph.size
+        let box = CGRect(x: center.x - side / 2, y: center.y - side / 2, width: side, height: side)
+        let mark = Path(logo.path(in: box))
+        // The hairline small marks get, judged at their size on screen.
+        let weight = ProviderLogo.hairline(for: logo.id, side: side * camera.scale) / max(camera.scale, 0.01)
+        let ink: Color
+        if glyph.solid {
+            context.fill(mark.offsetBy(dx: 0, dy: 0.5), with: .color(.black.opacity(0.18)))
+            ink = .white
+        } else {
+            ink = style.markInk(dark: dark)
+        }
+        context.fill(mark, with: .color(ink))
+        if weight > 0 {
+            context.stroke(mark, with: .color(ink), style: StrokeStyle(lineWidth: weight, lineJoin: .round))
         }
     }
 
@@ -830,8 +855,10 @@ enum GraphDots {
 
 // MARK: - Symbols
 
-/// A provider's glyph at one of three sizes, white on a lit orb or in
-/// its own colour on a pale one — drawn once, stamped wherever it appears.
+/// A provider's mark at one of three sizes, white on a lit orb or in
+/// its own colour on a pale one. A real mark is filled as a path where
+/// it is drawn; a provider without one has its symbol drawn once as a
+/// view and stamped wherever it appears.
 struct GraphGlyph: Hashable {
     enum Tier: Hashable { case hub, session, worker }
     let provider: String
@@ -840,6 +867,17 @@ struct GraphGlyph: Hashable {
 
     var tag: String { "glyph.\(provider).\(tier).\(solid)" }
 
+    /// The mark's side (a symbol's point size), in graph points.
+    var size: CGFloat {
+        switch tier {
+        case .hub: 25
+        case .session: 15
+        case .worker: 10.5
+        }
+    }
+
+    /// The symbol views the canvas registers: only for providers without
+    /// a real mark, since a mark is filled straight from its path.
     static func all(for model: GraphSceneModel) -> [GraphGlyph] {
         var glyphs: Set<GraphGlyph> = Set(model.hubsDrawn.map { GraphGlyph(provider: $0.id, tier: .hub, solid: true) })
         for node in model.nodes.values {
@@ -847,17 +885,16 @@ struct GraphGlyph: Hashable {
             glyphs.insert(GraphGlyph(provider: node.provider, tier: worker ? .worker : .session,
                                      solid: GraphSceneModel.moves(node.activity)))
         }
-        return glyphs.sorted { $0.tag < $1.tag }
+        let stamped = glyphs.filter { glyph in
+            if case .logo = ProviderStyle.style(for: glyph.provider).mark { return false }
+            return true
+        }
+        return stamped.sorted { $0.tag < $1.tag }
     }
 
     @ViewBuilder
     var view: some View {
         let style = ProviderStyle.style(for: provider)
-        let size: CGFloat = switch tier {
-        case .hub: 25
-        case .session: 15
-        case .worker: 10.5
-        }
         let color = solid ? Color.white : style.accent
         Group {
             switch style.mark {
