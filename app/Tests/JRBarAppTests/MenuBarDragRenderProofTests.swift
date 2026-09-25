@@ -158,9 +158,12 @@ struct MenuBarDragRenderProofTests {
         // The drag's reveal never draws under the band.
         let brought = Self.revealedRun(endingAt: frozenSeat)
         #expect(!brought.isEmpty && brought.allSatisfy { $0.x >= Self.clearOf })
-        // A cover-drop: the icon settles left of the covered hole.
+        // A cover-drop: the covered hole is blank bar to the seat, so the
+        // icon keeps its place beside Wi-Fi and stands over the hole.
         let drop = Self.coverDrop(Self.passwords, in: Self.today)
-        #expect(Self.gapSeat(drop.run, width: mirrorWidth) + mirrorWidth <= drop.item.x)
+        let dropSeat = Self.gapSeat(drop.drawn, width: mirrorWidth)
+        #expect(abs(dropSeat + mirrorWidth - (Self.wifi.x - MenuBarIconMirror.itemGap)) < 0.01)
+        #expect(dropSeat < drop.item.x + drop.item.width, "the hole is under the icon, never right of it")
     }
 
     // MARK: Proof shots
@@ -191,7 +194,7 @@ struct MenuBarDragRenderProofTests {
                          run: Self.today.filter { $0.x != Self.passwords.x }, hidden: 10, seat: { _ in todaySeat },
                          dragged: Self.passwords, pointerX: dragPointer),
                 BarState(name: "after-hide",
-                         caption: "Tailscale ⌘-dragged back left: hidden through macOS, the icon holds its x a beat, then settles",
+                         caption: "Tailscale ⌘-dragged back left: hidden through macOS, the icon holds its x a beat, then settles as Today",
                          run: Self.today, hidden: 10, seat: { _ in shownSeat }),
                 BarState(name: "drag-reveal",
                          caption: "Show hidden items while ⌘-dragging: what fits comes in beside the icon, the ‹ a divider",
@@ -203,8 +206,8 @@ struct MenuBarDragRenderProofTests {
                          run: Self.today, hidden: 10, seat: { Self.gapSeat(Self.today, width: $0) },
                          note: MenuBarDropNote.systemItem.text),
                 BarState(name: "note-covered",
-                         caption: "Passwords dropped left: macOS moved it past JR-Bar's slot, a cover (dashed) blanks it there",
-                         run: covered.run, hidden: 10, seat: { Self.gapSeat(covered.run, width: $0) },
+                         caption: "Passwords dropped left: its cover (dashed) is blank bar, so the icon keeps its seat beside Wi-Fi, over it",
+                         run: covered.run, hidden: 10, seat: { Self.gapSeat(covered.drawn, width: $0) },
                          covered: [covered.item], note: MenuBarDropNote.appleExtraCovered.text),
                 BarState(name: "seat-slot",
                          caption: "The slot seat: the icon on JR-Bar's own slot (dashed), sized to it",
@@ -244,15 +247,15 @@ struct MenuBarDragRenderProofTests {
 
     /// A cover-drop of `item` left of the icon: macOS moves it just past
     /// JR-Bar's slim slot, which stays right of it, and the run packs
-    /// from the right. The covered item still counts as drawn for the
-    /// seat, so the icon settles left of the hole.
-    static func coverDrop(_ item: BarItem, in run: [BarItem]) -> (run: [BarItem], item: BarItem) {
+    /// from the right. `run` is the bar with the covered item in it;
+    /// `drawn` leaves it out, as the seat does (`coverBlanked`).
+    static func coverDrop(_ item: BarItem, in run: [BarItem]) -> (run: [BarItem], drawn: [BarItem], item: BarItem) {
         let rest = run.filter { $0.x != item.x }
         let next = rest.filter { $0.x > item.x }.map(\.x).min() ?? item.x + item.width
         let slotMinX = next - MenuBarIconMirror.itemGap - StatusItemController.anchorSlimLength
         var moved = item
         moved.x = slotMinX - MenuBarIconMirror.itemGap - item.width
-        return ((rest + [moved]).sorted { $0.x < $1.x }, moved)
+        return ((rest + [moved]).sorted { $0.x < $1.x }, rest, moved)
     }
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the menu bar card PNGs"))

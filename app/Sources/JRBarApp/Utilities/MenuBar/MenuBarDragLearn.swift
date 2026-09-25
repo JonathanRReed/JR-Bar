@@ -33,7 +33,7 @@ enum MenuBarDropNote: Equatable, Sendable {
     var text: String {
         switch self {
         case .systemItem:
-            return "macOS keeps Wi-Fi, the clock and Control Center — hide them in System Settings › Control Center"
+            return "macOS keeps Wi-Fi, the clock and Control Center — hide them in System Settings › Menu Bar"
         case .appleExtraCovered:
             return "Covered: macOS won't hide Apple's own extras yet"
         case .otherDisplay:
@@ -142,9 +142,7 @@ enum MenuBarDragLearn {
         case appleExtra
         /// A bare helper with no bundle identifier — a cover too.
         case helper
-        /// The clock or Control Center while `concealSystemItems` is on.
-        case systemConcealable
-        /// Any other of macOS's own items.
+        /// One of macOS's own items: Wi-Fi, the clock, Control Center.
         case system
     }
 

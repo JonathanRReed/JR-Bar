@@ -186,9 +186,16 @@ reorder). A drop on the icon itself does nothing.
 - **Never silent.** A drop that asked for something says what happened
   for four seconds under the icon, in the Item Bar's own glass: macOS's
   own item ("macOS keeps Wi-Fi, the clock and Control Center — hide them
-  in System Settings › Control Center"), an Apple extra that took a
+  in System Settings › Menu Bar"), an Apple extra that took a
   cover, another display's bar, an app with several items ("Hid all of
   iStat Menus's items"), or a drop macOS did not take.
+- **A cover is blank bar to the icon.** An Apple extra ⌘-dragged left
+  lands just left of JR-Bar's slim slot and takes a cover there. The
+  icon's seat reads a covered item as blank, so the icon stays beside
+  the first shown item and stands over the cover rather than hopping
+  left of it. The icon stands a level above the covers, and a cover
+  under it stays whole so the item never shows through. While its run
+  is revealed the item draws again and the icon stands clear of it.
 - **Limits.** Apps hide as a whole (a platform limit Bartender, Thaw and
   Ice share). Only the main display's bar carries the icon. The start
   of a run (the 2.5 s adoption grace) learns nothing.
@@ -214,10 +221,14 @@ reorder). A drop on the icon itself does nothing.
   The file's shape is unverified until a real grant; the parser takes
   the likely forms.
 - **The clock and Control Center** (`concealSystemItems`, off,
-  experimental, no card row): a ⌘-drag may hide them through the
-  assertion's system item list. Wi-Fi, the battery and sound always
-  stay. It stays off, and out of the card, unless a live probe shows
-  they conceal and come back cleanly.
+  experimental, no card row): only the plan table is built. With the
+  flag on, a clock or Control Center key already in `concealedApps`
+  (the live probe writes it by hand) leaves the assertion's system item
+  list. No pick writes one yet, so a ⌘-drag of either still gets the
+  note: the icon's seat, the Item Bar and the drag would each have to
+  read a hidden clock as concealed first. Wi-Fi, the battery and sound
+  always stay. It stays off, and out of the card, unless a live probe
+  shows they conceal and come back cleanly.
 - **Apple's extras** (`concealAppleExtras`, the card's "Hide Apple's
   extras like apps"): a file that never chose follows the code default,
   and only a choice made on the card is written — so the default can

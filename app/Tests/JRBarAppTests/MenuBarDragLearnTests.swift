@@ -151,12 +151,11 @@ struct MenuBarDragLearnTests {
                                                          note: .wholeApp(name: "iStat Menus", hidden: true)))
         #expect(dropOutcome(.show, .app, current: .hidden, count: 2)
                 == .init(section: .shown, note: .wholeApp(name: "iStat Menus", hidden: false)))
-        #expect(dropOutcome(hide, .systemConcealable) == .init(section: .hidden))
         #expect(dropOutcome(.none, .app) == .init())
         let notes: [MenuBarDropNote] = [.systemItem, .appleExtraCovered, .otherDisplay,
                                         .wholeApp(name: "iStat Menus", hidden: true), .notMoved]
         #expect(Set(notes.map(\.text)).count == notes.count)
-        #expect(MenuBarDropNote.systemItem.text.contains("System Settings › Control Center"))
+        #expect(MenuBarDropNote.systemItem.text.contains("System Settings › Menu Bar"))
         #expect(MenuBarDropNote.wholeApp(name: "iStat Menus", hidden: true).text == "Hid all of iStat Menus's items")
     }
 
@@ -395,6 +394,23 @@ struct MenuBarDragLearnTests {
     }
 
     @MainActor
+    @Test("with concealSystemItems on, the clock is still macOS's own: the drag says so, and no pick writes it")
+    func systemItemsFlagWritesNothing() async throws {
+        var state = MenuBarSettings(enabled: true, concealSeeded: true)
+        state.curation.concealSystemItems = true
+        let h = Harness(state: state)
+        let clockItem = try #require(h.listing.first { $0.identifier == "com.apple.menuextra.clock" })
+        h.fresh = Self.moved(clockItem.id, to: 1045, in: h.listing)
+        await h.drag(from: 1420, to: 1000)
+        #expect(h.notes.last == MenuBarDropNote.systemItem.text)
+        #expect(h.utility.dragKind(of: clockItem) == .system)
+        #expect(h.utility.applySection(.hidden, to: clockItem) == nil, "the pickers never write it either")
+        #expect(h.utility.effectiveSection(for: clockItem) == .shown)
+        #expect(h.writes == 0)
+        #expect(h.state.concealedApps.isEmpty && h.state.sections.isEmpty)
+    }
+
+    @MainActor
     @Test("never during the start grace, never with the setting off, never our own slot")
     func guards() async {
         let h = Harness()
@@ -480,6 +496,27 @@ struct MenuBarDragLearnTests {
         await h.utility.dragConfirmTask?.value
         #expect(h.writes == 0)
         #expect(h.state.concealedApps.isEmpty)
+    }
+
+    // MARK: The Item Bar at the pointer
+
+    @Test("under the pointer the bar keeps the spot it opened at through every re-frame; under the icon it follows the icon")
+    func pointerAnchorHolds() {
+        let opened = NSRect(x: 900, y: 950, width: 0, height: 0)
+        let later = NSRect(x: 1200, y: 940, width: 0, height: 0)
+        var hang = MenuBarBarAnchor()
+        hang.opened(underPointer: true, spot: opened)
+        let first = hang.current(icon: later)
+        #expect(first.rect == opened && first.centred, "photos landing or a reconcile never chase the hand")
+        hang.closed()
+        #expect(hang.pinned == nil)
+        let icon = NSRect(x: 1085, y: 956, width: 14, height: 24)
+        hang.opened(underPointer: false, spot: icon)
+        let moved = NSRect(x: 1131, y: 956, width: 14, height: 24)
+        let underIcon = hang.current(icon: moved)
+        #expect(underIcon.rect == moved && !underIcon.centred, "under the icon it follows the ‹ as it stands")
+        hang.opened(underPointer: true, spot: later)
+        #expect(hang.current(icon: icon).rect == later, "the next open reads the pointer again")
     }
 
     // MARK: Settings

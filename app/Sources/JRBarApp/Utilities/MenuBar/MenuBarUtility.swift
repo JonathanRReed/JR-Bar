@@ -621,23 +621,18 @@ final class MenuBarUtility: Toy {
         MenuBarConcealPlan.canConcealApp(bundleID, appleExtras: concealsAppleExtras)
     }
 
-    /// The system-item key `concealSystemItems` hides `item` under — its
-    /// AX identifier when it is the clock or Control Center and the flag
-    /// is on; nil for every other item.
-    func concealableSystemKey(_ item: MenuBarItem) -> String? {
-        guard settings().curation.concealSystemItems, MenuBarItemLister.isProtected(item),
-              let identifier = item.identifier,
-              MenuBarConcealPlan.concealableSystemItems[identifier] != nil else { return nil }
-        return identifier
-    }
-
     /// The single write every pick under the concealer makes — the
     /// card's picker, a tile, the menu, the palette, a ⌘-drag: per app
     /// through the agent, on the active profile's delta when that
     /// profile already speaks for the app, else on the base; Apple's
     /// extras and bare helpers as a cover where they sit. Returns where
     /// the pick landed ("base", "profile <id>", "cover"), or nil when the
-    /// item is not one to write — macOS's own, or ours.
+    /// item is not one to write — macOS's own, or ours. The clock and
+    /// Control Center stay macOS's own even with `concealSystemItems` on:
+    /// the flag only narrows the assertion's system items for keys already
+    /// in the map (the live probe writes them by hand), because the seat,
+    /// the plan and the drag would each have to read a hidden clock as
+    /// concealed before a pick could put one there.
     @discardableResult
     func applySection(_ section: MenuBarItemSection, to item: MenuBarItem) -> String? {
         guard concealer != nil else {
@@ -645,11 +640,9 @@ final class MenuBarUtility: Toy {
             return "cover"
         }
         guard !Self.isOwnFamily(item.bundleID) else { return nil }
-        // macOS's own items are never a pick — save the clock and
-        // Control Center while `concealSystemItems` lets them go.
-        let systemKey = concealableSystemKey(item)
-        guard !MenuBarItemLister.isProtected(item) || systemKey != nil else { return nil }
-        let appID = systemKey ?? item.bundleID.flatMap { canConceal($0) ? $0 : nil }
+        // macOS's own items are never a pick.
+        guard !MenuBarItemLister.isProtected(item) else { return nil }
+        let appID = item.bundleID.flatMap { canConceal($0) ? $0 : nil }
         var landed = "base"
         if let appID {
             update { draft in
@@ -706,13 +699,12 @@ final class MenuBarUtility: Toy {
         // it. A standing Hide all / Show all is not a pick and never
         // shows in the pickers.
         let curated = curatedSettings()
-        let systemKey = concealer == nil ? nil : concealableSystemKey(item)
-        return Self.effectiveSection(itemID: item.id, bundleID: systemKey ?? item.bundleID,
+        return Self.effectiveSection(itemID: item.id, bundleID: item.bundleID,
                               sections: curated.sections,
                               concealedApps: curated.concealedApps,
                               concealing: concealer != nil,
                               ownBundleID: Bundle.main.bundleIdentifier,
-                              appleExtras: concealsAppleExtras || systemKey != nil)
+                              appleExtras: concealsAppleExtras)
     }
 
     /// The per-item truth the palette and covers read, pure so a test
@@ -1564,6 +1556,12 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored var coverRecutQueued = false
 
     @ObservationIgnored var coverRecutRunning = false
+
+    /// The items the last concealed plan gave a cover, by the section
+    /// whose cover it is — Apple's extras and bare helpers the agent
+    /// cannot take. While their cover stands the icon's seat reads them
+    /// as blank bar.
+    @ObservationIgnored var coveredItems: [String: MenuBarItemSection] = [:]
 
     /// Apps lifted out of the assertion for a moment, and until when: a
     /// tile's press stands its app alone while its menu is read, a

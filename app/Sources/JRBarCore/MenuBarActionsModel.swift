@@ -379,9 +379,11 @@ public struct MenuBarCuration: Equatable, Codable, Sendable {
     /// Where an app new to the menu bar goes: where macOS puts it (and
     /// the ear asks), straight to Shown, or straight to Hidden.
     public var newItems: MenuBarNewItemsPlacement
-    /// Let a ⌘-drag hide the clock and Control Center through macOS's
-    /// own system-item list. Off until a live probe shows they conceal
-    /// and come back cleanly; Wi-Fi, battery and sound never join.
+    /// Let the clock and Control Center leave macOS's own system-item
+    /// list when their keys are in the map. Only the plan table so far:
+    /// no pick or ⌘-drag writes those keys yet. Off until a live probe
+    /// shows they conceal and come back cleanly; Wi-Fi, battery and
+    /// sound never join.
     public var concealSystemItems: Bool
 
     /// The profile model this build writes.
