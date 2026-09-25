@@ -18,6 +18,7 @@ from jrbar.hook_compatibility import (
     compatibility_rows,
     installed_versions,
     load_compatibility_manifest,
+    node_package_version,
     parse_version,
     range_matches,
 )
@@ -117,6 +118,78 @@ def test_versions_are_read_once_per_binary_and_cached(tmp_path: Path) -> None:
     assert first == {"claude": {"path": str(binary), "version": "2.1.280 (Claude Code)"}}
     assert second == first
     assert calls == [[str(binary), "--version"]]
+
+
+def _node_cli(root: Path, package: str, entry: str, version: str) -> Path:
+    """A node CLI laid out the way npm and Homebrew install one."""
+    package_dir = root / "lib" / "node_modules" / package
+    script = package_dir / entry
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    name = package.rsplit("/", 1)[-1]
+    (package_dir / "package.json").write_text(
+        json.dumps({"name": package, "version": version, "bin": {name: entry}}), encoding="utf-8"
+    )
+    link = root / "bin" / name
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(script)
+    return link
+
+
+def test_a_node_cli_is_read_from_its_package_without_running_it(tmp_path: Path) -> None:
+    pi = _node_cli(tmp_path, "@mariozechner/pi-coding-agent", "dist/cli.js", "0.73.1")
+    gemini = _node_cli(tmp_path / "gemini", "@google/gemini-cli", "bundle/gemini.js", "0.46.0")
+    plain = _node_cli(tmp_path / "plain", "opencode-ai", "./bin/opencode", "1.2.3")
+
+    assert node_package_version(str(pi.resolve())) == "0.73.1"
+    assert node_package_version(str(gemini.resolve())) == "0.46.0"
+    assert node_package_version(str(plain.resolve())) == "1.2.3"
+    # A file the package's bin doesn't name is not the CLI.
+    helper = pi.resolve().parent / "helper.js"
+    helper.write_text("", encoding="utf-8")
+    assert node_package_version(str(helper)) is None
+    assert node_package_version("/usr/bin/true") is None
+
+    def runner(argv: list[str]) -> str:
+        raise AssertionError(f"ran {argv[0]}: a node CLI must be read from its package")
+
+    versions = installed_versions(
+        {"pi": "pi", "gemini": "gemini"},
+        runner=runner,
+        locate=lambda name: str(pi if name == "pi" else gemini),
+    )
+    assert versions["pi"]["version"] == "0.73.1"
+    assert versions["gemini"]["version"] == "0.46.0"
+    rows = compatibility_rows(["pi", "gemini"], runner=runner, locate=lambda name: str(pi if name == "pi" else gemini))
+    assert rows["pi"]["compatibility"]["status"] == "supported"
+    assert rows["gemini"]["compatibility"]["status"] == "supported"
+
+
+def test_a_failed_version_read_is_cached_for_a_day(tmp_path: Path) -> None:
+    binary = tmp_path / "slow"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> str | None:
+        calls.append(argv)
+        return None  # the two seconds ran out
+
+    cache_path = tmp_path / "versions.json"
+
+    def read(now: float) -> dict:
+        return installed_versions(
+            {"slow": "slow"},
+            cache=VersionCache(cache_path),
+            runner=runner,
+            locate=lambda _name: str(binary),
+            clock=lambda: now,
+        )
+
+    assert read(1_000.0)["slow"]["version"] is None
+    assert read(1_000.0 + 3_600)["slow"]["version"] is None
+    assert len(calls) == 1, "Settings › Agents opened again must not start the CLI again"
+    read(1_000.0 + 86_400)
+    assert len(calls) == 2, "a day later it is asked again"
 
 
 def test_the_doctor_json_carries_version_and_compatibility(tmp_path: Path) -> None:

@@ -9,9 +9,11 @@ outside every range is ``unknown``, and one newer than the last verified
 is a neutral note ("newer than verified"), never a warning, because a new
 CLI release usually keeps its hooks.
 
-``jrbar hooks doctor`` reads each CLI's ``--version`` (two seconds at
-most, cached by the binary's path and modification time) and adds the
-version and its compatibility to every provider's row.
+``jrbar hooks doctor`` reads each CLI's version and adds it, with its
+compatibility, to every provider's row. A node CLI (Pi, Gemini CLI) is read
+from its own ``package.json`` without running it; anything else answers
+``--version`` in two seconds at most. Answers, and failed reads for a day,
+are cached by the binary's real path and modification time.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -33,6 +36,10 @@ VERSION_TIMEOUT_SECONDS = 2.0
 _VERSION = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?")
 _COMPARATOR = re.compile(r"(>=|<=|>|<|=)?\s*v?(\d+(?:\.\d+){0,3})")
 _CACHE_NAME = "provider-cli-versions.json"
+#: A binary whose version could not be read is asked again after a day, or
+#: at once when it changes (a new modification time).
+FAILED_READ_RETRY_SECONDS = 86_400.0
+_PACKAGE_JSON_MAX_BYTES = 256 * 1024
 #: Where agent CLIs live on a Mac besides the daemon's own PATH (a login
 #: item's PATH is short).
 _EXTRA_BIN_DIRS = (
@@ -209,9 +216,47 @@ def _default_runner(argv: list[str]) -> str | None:
     return output.splitlines()[0][:200] if output else None
 
 
+def node_package_version(real: str) -> str | None:
+    """A node CLI's version from its own ``package.json``, without running it.
+
+    ``pi --version`` with no terminal prints nothing and never exits, and
+    ``gemini --version`` can take seconds on a busy Mac. When the binary's
+    real path sits inside ``node_modules/<package>/`` (or
+    ``node_modules/@scope/<package>/``) and that package's ``bin`` names
+    this very file, the package's ``version`` is the CLI's version.
+    """
+    parts = Path(real).parts
+    if "node_modules" not in parts:
+        return None
+    index = len(parts) - 1 - parts[::-1].index("node_modules")
+    rest = parts[index + 1:]
+    depth = 2 if rest and rest[0].startswith("@") else 1
+    if len(rest) <= depth:
+        return None
+    package_dir = Path(*parts[: index + 1 + depth])
+    manifest = package_dir / "package.json"
+    try:
+        if manifest.stat().st_size > _PACKAGE_JSON_MAX_BYTES:
+            return None
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    bins = data.get("bin")
+    targets = list(bins.values()) if isinstance(bins, dict) else [bins]
+    relative = Path(*rest[depth:]).as_posix()
+    if not any(isinstance(item, str) and os.path.normpath(item) == relative for item in targets):
+        return None
+    version = data.get("version")
+    return version if isinstance(version, str) and parse_version(version) else None
+
+
 class VersionCache:
-    """``--version`` answers keyed by the binary's real path and mtime,
-    saved under the state directory so a second doctor run is instant."""
+    """Version answers keyed by the binary's real path and mtime, saved
+    under the state directory so a second doctor run is instant. A failed
+    read is kept too, so opening Settings › Agents again doesn't start a
+    slow CLI again; it is retried after a day or when the binary changes."""
 
     def __init__(self, path: Path | None) -> None:
         self.path = path
@@ -230,8 +275,24 @@ class VersionCache:
             return entry["version"]
         return None
 
+    def lookup(self, real: str, mtime: float, now: float) -> tuple[bool, str | None]:
+        """``(True, version)`` for a cached answer, ``(True, None)`` for a
+        recent failed read, ``(False, None)`` when the binary must be read."""
+        entry = self._entries.get(real)
+        if not entry or entry.get("mtime") != mtime:
+            return False, None
+        if isinstance(entry.get("version"), str):
+            return True, entry["version"]
+        failed_at = entry.get("failed_at")
+        if isinstance(failed_at, (int, float)) and 0 <= now - failed_at < FAILED_READ_RETRY_SECONDS:
+            return True, None
+        return False, None
+
     def put(self, real: str, mtime: float, version: str) -> None:
         self._entries[real] = {"mtime": mtime, "version": version}
+
+    def put_failure(self, real: str, mtime: float, now: float) -> None:
+        self._entries[real] = {"mtime": mtime, "version": None, "failed_at": now}
 
     def save(self) -> None:
         if self.path is None:
@@ -250,9 +311,11 @@ def installed_versions(
     cache: VersionCache | None = None,
     runner: Callable[[list[str]], str | None] = _default_runner,
     locate: Callable[[str], str | None] = locate_binary,
+    package_version: Callable[[str], str | None] = node_package_version,
+    clock: Callable[[], float] = time.time,
 ) -> dict[str, dict[str, Any]]:
     """provider -> ``{"path", "version"}`` for each binary found on this
-    Mac (``version`` None when ``--version`` said nothing usable)."""
+    Mac (``version`` None when nothing usable could be read)."""
     found: dict[str, tuple[str, str, float]] = {}
     for provider, binary in binaries.items():
         path = locate(binary)
@@ -264,14 +327,23 @@ def installed_versions(
         except OSError:
             continue
         found[provider] = (path, real, mtime)
+    now = clock()
     results: dict[str, dict[str, Any]] = {}
     pending: list[str] = []
+    changed = False
     for provider, (path, real, mtime) in found.items():
-        cached = cache.get(real, mtime) if cache is not None else None
-        if cached is not None:
+        hit, cached = cache.lookup(real, mtime, now) if cache is not None else (False, None)
+        if hit:
             results[provider] = {"path": path, "version": cached}
-        else:
-            pending.append(provider)
+            continue
+        packaged = package_version(real)
+        if packaged is not None:
+            results[provider] = {"path": path, "version": packaged}
+            if cache is not None:
+                cache.put(real, mtime, packaged)
+                changed = True
+            continue
+        pending.append(provider)
     if pending:
         with ThreadPoolExecutor(max_workers=min(8, len(pending))) as pool:
             answers = dict(zip(pending, pool.map(lambda item: runner([found[item][0], "--version"]), pending)))
@@ -279,11 +351,15 @@ def installed_versions(
             path, real, mtime = found[provider]
             answer = answers.get(provider)
             version = answer if answer and parse_version(answer) else None
-            if version is not None and cache is not None:
-                cache.put(real, mtime, version)
+            if cache is not None:
+                if version is not None:
+                    cache.put(real, mtime, version)
+                else:
+                    cache.put_failure(real, mtime, now)
+                changed = True
             results[provider] = {"path": path, "version": version}
-        if cache is not None:
-            cache.save()
+    if changed and cache is not None:
+        cache.save()
     return results
 
 
@@ -329,6 +405,7 @@ __all__ = [
     "compatibility_rows",
     "installed_versions",
     "load_compatibility_manifest",
+    "node_package_version",
     "locate_binary",
     "parse_version",
     "range_matches",
