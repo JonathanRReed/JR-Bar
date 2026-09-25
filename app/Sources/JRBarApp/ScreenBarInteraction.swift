@@ -23,10 +23,12 @@ struct ScreenBarFocus: Equatable {
 /// which is also why an `NSTrackingArea` cannot do this job (a tracking area
 /// needs the window to take mouse events, and the band shares its strip of
 /// screen with the island, so eating clicks there is not an option).
-/// Instead a `moveInterval` poll reads `NSEvent.mouseLocation` and
-/// hit-tests it against the band's own rounded rect — a global
-/// `mouseMoved` monitor would do the same job but every delivery costs a
-/// `TCCAccessRequest` round trip, which was the tccd flood. Hovering
+/// Instead the band reads `NSEvent.mouseLocation` when the app's
+/// `PointerWatcher` says the pointer moved (or on a `moveInterval` poll
+/// where the watcher hears nothing) and hit-tests it against the band's
+/// own rounded rect — a global `mouseMoved` monitor would do the same job
+/// but every delivery costs a `TCCAccessRequest` round trip, which was
+/// the tccd flood. Hovering
 /// drops the glass notch
 /// card as a peek under the band, clicking pins it open — the card
 /// itself belongs to `NotchCardPresenter`. While the Notch island owns
@@ -166,14 +168,25 @@ final class ScreenBarInteraction {
     var removeMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
     /// The pointer monitors standing right now — none once `stop` ran.
     var monitorCount: Int { globalMonitors.count + localMonitors.count }
+    /// Where pointer moves come from. While it hears them the band reads
+    /// the pointer only when it moves — and at `moveInterval` while a
+    /// hover, a card, a peek or an ear tell is live — so a still pointer
+    /// costs nothing. Where it can't, the band polls as it always did.
+    var pointerWatch: any PointerWatching = PointerWatcher.shared
+    /// The subscription while `pointerWatch` hears moves for the band.
+    private var moveToken: Int?
     /// The hover poll — `moveInterval` cadence, replaces the moved
-    /// event tap whose every delivery cost a `TCCAccessRequest`.
+    /// event tap whose every delivery cost a `TCCAccessRequest`. Under
+    /// `pointerWatch` it runs only while something is engaged.
     private var hoverTimer: Timer?
     /// Nobody can see the band — the display asleep, or stepped aside for
     /// a full-screen video (`ScreenBarVisibility`): the hover poll parks.
     private(set) var parked = false
-    /// The hover poll is armed.
-    var isPolling: Bool { hoverTimer != nil }
+    /// The pointer watch is armed: the subscription, or the poll.
+    var isPolling: Bool { hoverTimer != nil || moveToken != nil }
+    /// Whether the band polls on its own right now — the fallback's
+    /// poll, or the engaged poll beside the subscription.
+    var pollArmed: Bool { hoverTimer != nil }
     private(set) var hovering = false
     private var showWork: DispatchWorkItem?
     private var hideWork: DispatchWorkItem?
@@ -228,14 +241,15 @@ final class ScreenBarInteraction {
         // Global: events bound for other apps (the band is click-through, so
         // that is every pointer event over it while we are not active).
         // Local: the same events when this app happens to be active.
-        // Hover is a poll, not an event tap: a global `mouseMoved` monitor
-        // delivers ~125 events a second and every delivery costs a
-        // `TCCAccessRequest` round trip — that was the tccd flood. Polling
-        // `NSEvent.mouseLocation` at `moveInterval` hits the same code
-        // path for free, and `pointerMoved` reads the live location
-        // rather than an event, so nothing is lost. A parked band arms
-        // it on the edge back instead.
-        if !parked { scheduleMovePoll(after: Self.moveInterval) }
+        // Hover is never a global `mouseMoved` NSEvent monitor: it
+        // delivers ~125 events a second and every delivery cost a
+        // `TCCAccessRequest` round trip — that was the tccd flood. The
+        // app's `PointerWatcher` hears moves off a listen-only tap on its
+        // own thread and hands them on at `moveInterval`; where it hears
+        // nothing, a poll of `NSEvent.mouseLocation` at that cadence
+        // does. `pointerMoved` reads the live location either way, so
+        // nothing is lost. A parked band arms it on the edge back instead.
+        if !parked { armPointerWatch() }
         if let down = installMonitor(true, [.leftMouseDown], { [weak self] event in
             let point = NSEvent.mouseLocation
             Self.diag("global down raw (\(Int(point.x)),\(Int(point.y)))")
@@ -287,10 +301,64 @@ final class ScreenBarInteraction {
         }) { localMonitors.append(scroll) }
     }
 
+    /// Start reading the pointer: the watcher's moves when it hears
+    /// them — one read now, then one per move — else the poll.
+    private func armPointerWatch() {
+        if moveToken == nil,
+           let token = pointerWatch.subscribe({ [weak self] in self?.pointerMovedByWatch() }) {
+            moveToken = token
+            pointerMoved()
+            return
+        }
+        guard moveToken == nil else { return }
+        scheduleMovePoll(after: Self.moveInterval)
+    }
+
+    /// Stop reading the pointer: the subscription and any poll go.
+    private func disarmPointerWatch() {
+        if let moveToken { pointerWatch.unsubscribe(moveToken) }
+        moveToken = nil
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+    }
+
+    /// A move the watcher heard — already paced to `moveInterval`.
+    private func pointerMovedByWatch() {
+        guard moveToken != nil else { return }
+        // The engaged poll reads at the same cadence; one read a beat.
+        if hoverTimer == nil { pointerMoved() }
+    }
+
+    /// Something depends on the pointer even while it rests: a hover, a
+    /// card, a peek or an ear's tell can change under a still pointer —
+    /// the island growing under it, a card's surface flipping — so the
+    /// poll the band always ran keeps running at `moveInterval` while
+    /// one is live, and stops when none is.
+    var engaged: Bool {
+        hovering || isTooltipShown || peekState().shown || hoveredWing != nil
+    }
+
+    private func keepPollingWhileEngaged() {
+        guard moveToken != nil, hoverTimer == nil, engaged else { return }
+        let timer = Timer(timeInterval: Self.moveInterval, repeats: false, block: { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.hoverTimer = nil
+                guard self.moveToken != nil else { return }
+                // `pointerMoved` re-arms this while something is engaged.
+                self.pointerMoved()
+            }
+        })
+        timer.tolerance = Self.moveInterval * 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
+    }
+
     /// One-shot, re-armed at the cadence the pointer's distance earns:
     /// 20 Hz within reach of the bar, 4 Hz far below it. A fifth of the
     /// interval as tolerance lets the far poll coalesce with other
-    /// wakeups; 10 ms near the bar is still under the hover delay.
+    /// wakeups; 10 ms near the bar is still under the hover delay. The
+    /// fallback for when `pointerWatch` hears nothing.
     private func scheduleMovePoll(after interval: TimeInterval) {
         hoverTimer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: false, block: { [weak self] _ in
@@ -319,10 +387,9 @@ final class ScreenBarInteraction {
         let started = !globalMonitors.isEmpty || !localMonitors.isEmpty
         if parked {
             if started { pointerMoved() }
-            hoverTimer?.invalidate()
-            hoverTimer = nil
+            disarmPointerWatch()
         } else if started {
-            scheduleMovePoll(after: Self.moveInterval)
+            armPointerWatch()
         }
     }
 
@@ -333,8 +400,7 @@ final class ScreenBarInteraction {
         for monitor in globalMonitors + localMonitors { removeMonitor(monitor) }
         globalMonitors = []
         localMonitors = []
-        hoverTimer?.invalidate()
-        hoverTimer = nil
+        disarmPointerWatch()
         hovering = false
         swipeStart = nil
         swipeFired = false
@@ -392,6 +458,9 @@ final class ScreenBarInteraction {
     }
 
     private func pointerMoved() {
+        // Under the watcher, whatever this read leaves engaged keeps the
+        // poll beside the subscription running.
+        defer { keepPollingWhileEngaged() }
         // Ownership can flip under a still pointer — the island coming
         // on while a peek or pinned glass card is up, or the utility
         // switching off under one. Every move stream tick re-checks the

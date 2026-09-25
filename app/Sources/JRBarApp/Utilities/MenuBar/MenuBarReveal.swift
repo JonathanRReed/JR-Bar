@@ -12,12 +12,15 @@ import OSLog
 /// arms no clock at all: the reveal stands until a click lands off the
 /// row — the fold `outsideDown` already performs for the timed mode.
 ///
-/// Hover is a poll timer, not an event tap: a global `mouseMoved`
-/// monitor delivers ~125 events a second and every delivery costs a
-/// `TCCAccessRequest` round trip — that was the tccd flood. With hover
-/// reveal switched off the poll idles and reads nothing, and it parks
-/// outright while the displays sleep, the session is switched away or
-/// the screen is locked. One global
+/// Hover follows the app's `PointerWatcher`: the pointer is read when
+/// it moves, and while an entry's dwell runs, never while it rests. It
+/// is never a global `mouseMoved` NSEvent monitor, whose every delivery
+/// cost a `TCCAccessRequest` round trip (the tccd flood); the watcher
+/// listens on a tap of its own thread.
+/// Where the watcher hears nothing the hover is a poll timer as before:
+/// with hover reveal switched off it idles and reads nothing. Either
+/// way it parks outright while the displays sleep, the session is
+/// switched away or the screen is locked. One global
 /// monitor covers the discrete gestures (click, scroll); local
 /// monitors are gone entirely, so a click on our own chevron or Item
 /// Bar can never be mistaken for an empty-space gesture.
@@ -91,6 +94,13 @@ final class MenuBarReveal {
     private var globalMonitor: Any?
     /// The front-app watch behind `RehideMode.focusChange`.
     private var focusObserver: NSObjectProtocol?
+    /// Where pointer moves come from. While it hears them the hover is
+    /// read only when the pointer moves — and at `hoverPollInterval`
+    /// while an entry's dwell runs — so a still pointer costs nothing.
+    /// Where it can't, the poll runs as it always did.
+    var pointerWatch: any PointerWatching = PointerWatcher.shared
+    /// The subscription while `pointerWatch` hears moves for the reveal.
+    private var moveToken: Int?
     private var hoverTimer: Timer?
     /// Whether the hover poll runs — between `startHoverPoll()` and
     /// `stop()`, parked or not.
@@ -179,7 +189,53 @@ final class MenuBarReveal {
     func startHoverPoll() {
         polling = true
         guard !isParked else { return }
+        armPointerWatch()
+    }
+
+    /// Start reading the pointer: the watcher's moves when it hears
+    /// them, else the poll.
+    private func armPointerWatch() {
+        if moveToken == nil,
+           let token = pointerWatch.subscribe({ [weak self] in self?.pointerMovedByWatch() }) {
+            moveToken = token
+            pointerMovedByWatch()
+            return
+        }
+        guard moveToken == nil else { return }
         scheduleHoverPoll(after: Self.hoverPollInterval)
+    }
+
+    /// Stop reading the pointer: the subscription and any poll go.
+    private func disarmPointerWatch() {
+        if let moveToken { pointerWatch.unsubscribe(moveToken) }
+        moveToken = nil
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+    }
+
+    /// A move the watcher heard. An entry arms the dwell, and the dwell
+    /// is read out at the poll's cadence even if the pointer stops —
+    /// the reveal answers a pointer that came to rest in the zone.
+    private func pointerMovedByWatch() {
+        guard moveToken != nil, hoverTimer == nil else { return }
+        _ = hoverTick()
+        keepPollingThroughDwell()
+    }
+
+    private func keepPollingThroughDwell() {
+        guard moveToken != nil, hoverTimer == nil, hoverDwellDeadline != nil else { return }
+        let timer = Timer(timeInterval: Self.hoverPollInterval, repeats: false, block: { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.hoverTimer = nil
+                guard self.moveToken != nil else { return }
+                _ = self.hoverTick()
+                self.keepPollingThroughDwell()
+            }
+        })
+        timer.tolerance = Self.hoverPollInterval * Self.pollTolerance
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
     }
 
     /// One-shot, re-armed at the cadence the last poll earned.
@@ -198,8 +254,11 @@ final class MenuBarReveal {
         hoverTimer = timer
     }
 
-    /// Whether a poll is armed — false while parked or stopped.
-    var hoverPollArmed: Bool { hoverTimer != nil }
+    /// Whether the pointer watch is armed — the subscription or the
+    /// poll; false while parked or stopped.
+    var hoverPollArmed: Bool { hoverTimer != nil || moveToken != nil }
+    /// Whether a timer of the reveal's own is armed right now.
+    var hoverTimerArmed: Bool { hoverTimer != nil }
 
     // MARK: Parking
 
@@ -216,8 +275,7 @@ final class MenuBarReveal {
 
     func park(_ reason: ParkReason) {
         parkReasons.insert(reason)
-        hoverTimer?.invalidate()
-        hoverTimer = nil
+        disarmPointerWatch()
         // Entry is learned afresh on the way back.
         hoverInside = false
         hoverDwellDeadline = nil
@@ -225,7 +283,7 @@ final class MenuBarReveal {
 
     func unpark(_ reason: ParkReason) {
         guard parkReasons.remove(reason) != nil, !isParked, polling else { return }
-        scheduleHoverPoll(after: Self.hoverPollInterval)
+        armPointerWatch()
     }
 
     /// Ice's "smart" rehide: under `.focusChange` a reveal folds when
@@ -293,8 +351,7 @@ final class MenuBarReveal {
         globalMonitor = nil
         if let focusObserver { NSWorkspace.shared.notificationCenter.removeObserver(focusObserver) }
         focusObserver = nil
-        hoverTimer?.invalidate()
-        hoverTimer = nil
+        disarmPointerWatch()
         polling = false
         parkReasons = []
         for observer in presenceObservers { observer.center.removeObserver(observer.token) }
@@ -313,6 +370,7 @@ final class MenuBarReveal {
     isolated deinit {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let focusObserver { NSWorkspace.shared.notificationCenter.removeObserver(focusObserver) }
+        if let moveToken { pointerWatch.unsubscribe(moveToken) }
         hoverTimer?.invalidate()
         for observer in presenceObservers { observer.center.removeObserver(observer.token) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
