@@ -158,6 +158,7 @@ class _TimerAPI:
 
 
 REAL_THREAD = threading.Thread
+_FROZEN: list[bool] = []
 
 
 class _Thread:
@@ -257,6 +258,9 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(core_runtime, "PendingHookDrainer", _FakeDrainer)
     monkeypatch.setattr(core_runtime.threading, "Thread", _Thread)
     monkeypatch.setattr(core_runtime, "default_state_dir", lambda *_: tmp_path / "state")
+    # The deferred launch freezes the heap; in the test process that would
+    # freeze every test's objects.
+    monkeypatch.setattr(core_runtime, "_freeze_launch_heap", lambda: _FROZEN.append(True))
     _TimerAPI.calls.clear()
     _FakeDrainer.instances.clear()
     _FakeDrainer.order.clear()
@@ -379,7 +383,10 @@ def test_ready_comes_before_the_pad_the_agents_and_the_peers(headless, monkeypat
 
     # One step failing never keeps the next from starting.
     controller.refresh_installed_agent_inventory.side_effect = RuntimeError("roots gone")
+    _FROZEN.clear()
     controller.coreLaunchDeferred_(None)
+    # The launch heap is frozen out of every later full collection.
+    assert _FROZEN == [True]
     assert started == [controller]
     assert controller._jrbar_optional_integration_runtime == "runtime"
     controller._core_deck_probe_now.assert_called_once_with()

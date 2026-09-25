@@ -24,6 +24,7 @@ Everything AppKit is imported lazily so importing this module stays inert.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import signal
@@ -4030,6 +4031,14 @@ def _cmd_deck_set_settings(self, args):
     }
 
 
+def _freeze_launch_heap() -> None:
+    """Everything alive after launch lives as long as the daemon, and a full
+    collection walked all of it (about 100k objects, 11 to 14 ms with every
+    thread stopped). Frozen, later passes skip it."""
+    gc.collect()
+    gc.freeze()
+
+
 # --- the headless controller ---------------------------------------------------
 
 
@@ -4345,6 +4354,10 @@ def build_headless_controller_class() -> type:
                     step()
                 except Exception as exc:
                     legacy.log_status_bar(f"core: deferred launch step {label} failed: {exc}")
+            try:
+                _freeze_launch_heap()
+            except Exception as exc:
+                legacy.log_status_bar(f"core: deferred launch step gc freeze failed: {exc}")
             finished = time.monotonic()
             launch_started = getattr(self, "_core_launch_started", started)
             ready_at = getattr(self, "_core_ready_at", started)
