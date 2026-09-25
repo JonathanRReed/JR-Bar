@@ -188,3 +188,20 @@ def test_reset_credits_are_counted_in_words() -> None:
     code, out, _ = run(usage=usage)
     assert code == 0
     assert out.strip() == "Codex  7d 70% left · resets 1h00m · 2 reset credits"
+
+
+def test_only_a_reference_only_window_is_called_detail() -> None:
+    from jrbar.usage_cli import render_lines
+
+    now = 1_790_000_000.0
+    document = {"providers": [
+        {"id": "claude", "state": "ready", "windows": [
+            {"id": "fable-only", "name": "7d Fable", "used_pct": 30.0, "bindable": False, "detail": False},
+        ]},
+        {"id": "opencode", "state": "ready", "windows": [
+            {"id": "go-monthly", "name": "Monthly", "used_pct": 7.0, "bindable": False, "detail": True},
+        ]},
+    ]}
+    fable, monthly = render_lines(document, now=now)
+    assert "detail" not in fable, "a model's own cap is a real limit on that model"
+    assert monthly.endswith("detail")
