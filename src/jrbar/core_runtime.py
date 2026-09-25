@@ -4556,6 +4556,33 @@ def build_headless_controller_class() -> type:
             followed = self._core_followed_strip_id()
             return followed is None or device.device_id == followed
 
+        def _core_linked_pro_desk_program(self, body: str | None) -> str | None:
+            """The Pro's program in desk order, for a linked Dot to follow.
+
+            The strip's program is kept as it was written, and a Pro set to
+            ``reversed`` wrote it mirrored so its light runs the right way
+            on the desk. The Dot narrows whatever it is handed LED by LED,
+            so it played that mirror as it stood: a comet the Pro ran left
+            to right ran right to left on the Dot. Mirroring it once more
+            puts it back the way the person sees it. A Pro that is not
+            reversed, or one the inventory cannot see, hands it on as it is.
+            """
+            if not body:
+                return body
+            devices = getattr(self.settings, "devices", ()) or ()
+            if not any(getattr(entry, "led_direction", "forward") == "reversed" for entry in devices):
+                return body
+            followed = self._core_followed_strip_id()
+            if followed is None:
+                return body
+            from .motion_shapes import oriented_program
+
+            return oriented_program(
+                body,
+                led_count=int(getattr(self, "_core_linked_pro_leds", 8) or 8),
+                direction=self.settings.device_led_direction(followed),
+            )
+
         def _core_held_preview_devices(self) -> frozenset:
             """Device ids a held preview currently owns.
 
@@ -4754,6 +4781,7 @@ def build_headless_controller_class() -> type:
             role = normalize_dot_role(getattr(self.settings, "dot_role", None))
             strip = getattr(self, "_core_linked_pro_program", None)
             body = program if program is not None else (strip[0] if strip else None)
+            body = self._core_linked_pro_desk_program(body)
             brightness = None
             if controller is not None:
                 device = normalize_brightness(getattr(controller, "brightness", 255))
