@@ -22,10 +22,12 @@ struct UsageSourceNotesTests {
     }
 
     @Test func detailWindowsLeaveTheRings() {
+        var monthly = CoreUsageWindow(key: "go-monthly", name: "Monthly", usedPct: 7, bindable: false)
+        monthly.detail = true
         let windows = [
             CoreUsageWindow(key: "go-rolling", name: "5h", usedPct: 42, resetsAt: Self.now.timeIntervalSince1970 + 3600),
             CoreUsageWindow(key: "go-weekly", name: "7d", usedPct: 18),
-            CoreUsageWindow(key: "go-monthly", name: "Monthly", usedPct: 7, bindable: false),
+            monthly,
         ]
         #expect(UsageSourceNotes.ringWindows(windows).map(\.id) == ["go-rolling", "go-weekly"])
         #expect(UsageSourceNotes.detailWindows(windows).map(\.id) == ["go-monthly"])
@@ -33,13 +35,38 @@ struct UsageSourceNotesTests {
         #expect(detail == "Monthly 7% used")
     }
 
-    @Test func aProviderWhoseWindowsAreAllDetailKeepsItsRings() {
-        let pools = [
-            CoreUsageWindow(key: "model-gemini-pro", name: "gemini-pro", usedPct: 12, bindable: false),
-            CoreUsageWindow(key: "model-gemini-flash", name: "gemini-flash", usedPct: 3, bindable: false),
+    /// Jonathan's own Claude reading: "7d Fable" is not bindable, but it is
+    /// Fable's real weekly cap, so it stays a ring (and a column in All
+    /// providers). So does a Codex Spark sub-cap.
+    @Test func anUnboundModelCapKeepsItsRing() {
+        let claude = [
+            CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 42),
+            CoreUsageWindow(key: "weekly", name: "7d", usedPct: 61),
+            CoreUsageWindow(key: "fable-only", name: "7d Fable", usedPct: 30, bindable: false),
         ]
-        #expect(UsageSourceNotes.ringWindows(pools).count == 2)
-        #expect(UsageSourceNotes.detailWindows(pools).isEmpty)
+        #expect(UsageSourceNotes.ringWindows(claude).map(\.id) == ["five-hour", "weekly", "fable-only"])
+        #expect(UsageSourceNotes.detailWindows(claude).isEmpty)
+        let codex = [
+            CoreUsageWindow(key: "weekly", name: "7d", usedPct: 30),
+            CoreUsageWindow(key: "spark-weekly", name: "Spark Weekly", usedPct: 12, bindable: false),
+        ]
+        #expect(UsageSourceNotes.ringWindows(codex).count == 2)
+    }
+
+    @Test func aProviderWhoseWindowsAreAllDetailKeepsItsRings() {
+        var pro = CoreUsageWindow(key: "model-gemini-pro", name: "gemini-pro", usedPct: 12, bindable: false)
+        pro.detail = true
+        var flash = CoreUsageWindow(key: "model-gemini-flash", name: "gemini-flash", usedPct: 3, bindable: false)
+        flash.detail = true
+        #expect(UsageSourceNotes.ringWindows([pro, flash]).count == 2)
+        #expect(UsageSourceNotes.detailWindows([pro, flash]).isEmpty)
+    }
+
+    @Test func theDetailFlagDecodesAndDefaultsToARing() throws {
+        let json = #"{"id":"go-monthly","name":"Monthly","used_pct":7,"bindable":false,"detail":true}"#
+        #expect(try JSONDecoder().decode(CoreUsageWindow.self, from: Data(json.utf8)).detail)
+        let older = #"{"id":"fable-only","name":"7d Fable","used_pct":30,"bindable":false}"#
+        #expect(try JSONDecoder().decode(CoreUsageWindow.self, from: Data(older.utf8)).detail == false)
     }
 
     @Test func aStandInSourceIsNamed() {

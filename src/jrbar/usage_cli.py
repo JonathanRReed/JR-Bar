@@ -133,7 +133,7 @@ def render_lines(document: dict[str, Any], *, now: float) -> list[str]:
             reset = reset_words(window.get("resets_at"), now)
             if reset:
                 parts.append(reset)
-            if window.get("bindable") is False:
+            if window.get("detail") is True:
                 parts.append("detail")
             parts.extend(suffix)
             lines.append(f"{name:<{width}}" + " · ".join(parts))

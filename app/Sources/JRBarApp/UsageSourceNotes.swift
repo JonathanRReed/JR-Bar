@@ -6,10 +6,12 @@ import SwiftUI
 ///
 /// Two honesty rules live here. A provider that has no quota for this
 /// account (OpenCode without an OpenCode Go subscription) says so in a
-/// sentence instead of drawing an empty ring. And a window the provider's
-/// own catalog does not bind (`bindable: false`, OpenCode Go's monthly
-/// figure, a Codex model sub-cap) is shown as a line of detail under the
-/// rings, never as a ring that looks like the account's limit.
+/// sentence instead of drawing an empty ring. And a figure the daemon marks
+/// as reference only (`detail: true`, OpenCode Go's monthly window) is
+/// shown as a line of detail under the rings, never as a ring that looks
+/// like the account's limit. A window that is only unbound (a model's own
+/// cap such as "7d Fable", a Codex Spark sub-cap) is a real limit on that
+/// model, so it keeps its ring.
 enum UsageSourceNotes {
     /// The card's sentence when the daemon says this reading can carry no
     /// quota at all (`quota_source: false`); nil when it can.
@@ -25,19 +27,18 @@ enum UsageSourceNotes {
         }
     }
 
-    /// The windows drawn as rings: the bindable ones when there are any,
-    /// else every window (a provider whose lanes are all detail, such as
-    /// Gemini's per-model pools, still gets its rings).
+    /// The windows drawn as rings: every window but the reference-only
+    /// ones, unless that would leave none (then they are the rings).
     static func ringWindows(_ windows: [CoreUsageWindow]) -> [CoreUsageWindow] {
-        let bound = windows.filter(\.bindable)
-        return bound.isEmpty ? windows : bound
+        let rings = windows.filter { !$0.detail }
+        return rings.isEmpty ? windows : rings
     }
 
-    /// The windows shown as detail under the rings: the unbound ones, but
-    /// only when some window is bound (otherwise they are the rings).
+    /// The windows shown as detail under the rings: the reference-only
+    /// ones, but only when some other window is a ring.
     static func detailWindows(_ windows: [CoreUsageWindow]) -> [CoreUsageWindow] {
-        guard windows.contains(where: \.bindable) else { return [] }
-        return windows.filter { !$0.bindable }
+        guard windows.contains(where: { !$0.detail }) else { return [] }
+        return windows.filter(\.detail)
     }
 
     /// Where the card's numbers came from, when that is not the provider's

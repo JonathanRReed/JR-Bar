@@ -101,6 +101,28 @@ def test_recorded_fixture_gives_three_lanes_two_bindable() -> None:
     assert most_constrained_lane(tight).lane_id == "go-rolling"
 
 
+def test_only_the_monthly_figure_is_marked_detail_on_the_wire() -> None:
+    from jrbar.provider_usage_platform import UsageLane
+
+    snapshot = parse_opencode_go_usage(_fixture(), observed_at=OBSERVED)
+    document = usage_document(ProviderUsageState((snapshot,), OBSERVED, None, False))
+    windows = {window["id"]: window for window in document["providers"][0]["windows"]}
+    assert {key: window["detail"] for key, window in windows.items()} == {
+        "go-rolling": False,
+        "go-weekly": False,
+        "go-monthly": True,
+    }
+    # A model's own cap is not bindable, but it is a real limit on that
+    # model: it keeps its ring (no detail flag).
+    fable = UsageLane(
+        provider_id="claude", lane_id="fable-only", label="Fable", remaining_percent=70.0,
+        reset_at=None, scope="model", model="fable", feature=None, bindable=False, source_id="claude-oauth",
+    )
+    claude = replace(snapshot, provider_id="claude", lanes=(fable,))
+    [window] = usage_document(ProviderUsageState((claude,), OBSERVED, None, False))["providers"][0]["windows"]
+    assert (window["bindable"], window["detail"]) == (False, False)
+
+
 def test_collector_reads_the_go_key_from_auth_json_and_keeps_tokens(tmp_path: Path) -> None:
     root = _data_root(tmp_path)
     _write_auth(root, {"opencode-go": {"type": "api", "key": SYNTHETIC_KEY}, "google": {"type": "api", "key": "x"}})

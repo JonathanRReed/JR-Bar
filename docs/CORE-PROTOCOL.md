@@ -314,7 +314,12 @@ Vocabulary:
   `claude-statusline` (Claude Code's own statusLine report, standing in
   while OAuth is rate limited or signed out), `cliproxy` (read through the
   CLIProxyAPI hub), `opencode-go-api`, … — so a card can name a stand-in
-  source instead of passing it off as a direct read.
+  source instead of passing it off as a direct read. `detail` (additive,
+  2026-09-24) is true for a figure the provider reports only for reference
+  (today only OpenCode Go's monthly window, `go-monthly`): the app lists it
+  under the rings instead of drawing a ring. A window that is merely not
+  `bindable` (a model's own cap such as `7d Fable`, a Codex Spark sub-cap)
+  keeps its ring.
 - `usage.providers[].constrained` is the window the daemon says is worth
   watching — not the name convention but the least headroom among the
   `bindable` windows that were actually measured: `{id, name, used_pct,

@@ -1137,6 +1137,12 @@ def _snapshot_has_quota_source(snapshot: object) -> bool:
     return state != "unsupported"
 
 
+def _is_detail_lane(lane: object) -> bool:
+    from .provider_usage_parsers import DETAIL_LANE_IDS
+
+    return getattr(lane, "lane_id", None) in DETAIL_LANE_IDS
+
+
 def usage_document(
     usage_state: object,
     *,
@@ -1207,6 +1213,10 @@ def usage_document(
                     # "claude-statusline", "cliproxy"): the card names a
                     # stand-in source instead of passing it off as direct.
                     "source": getattr(lane, "source_id", None),
+                    # True for a figure the provider reports only for
+                    # reference (OpenCode Go's monthly): a line under the
+                    # rings, never a ring of its own.
+                    "detail": _is_detail_lane(lane),
                 }
             )
         state = getattr(getattr(snapshot, "state", None), "value", None)

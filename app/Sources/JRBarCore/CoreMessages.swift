@@ -941,6 +941,10 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// `claude-statusline`, `cliproxy`, `opencode-go-api`); nil from a
     /// daemon that predates the field.
     public var source: String? = nil
+    /// True for a figure the provider reports only for reference (OpenCode
+    /// Go's monthly window): a line under the rings, never a ring. False
+    /// from a daemon that predates the field.
+    public var detail: Bool = false
 
     public var id: String { key ?? name }
 
@@ -979,6 +983,7 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         case resetsAt = "resets_at"
         case forecast
         case source
+        case detail
     }
 
     public init(from decoder: Decoder) throws {
@@ -994,6 +999,7 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         forecast = try? c.decodeIfPresent(CoreUsageForecast.self, forKey: .forecast)
         bindable = (try? c.decodeIfPresent(Bool.self, forKey: .bindable)) ?? true
         source = try? c.decodeIfPresent(String.self, forKey: .source)
+        detail = (try? c.decodeIfPresent(Bool.self, forKey: .detail)) ?? false
     }
 }
 

@@ -717,6 +717,13 @@ _OPENCODE_GO_WINDOWS = (
     ("monthly", "go-monthly", "Monthly", False),
 )
 
+#: Lanes a provider reports only for reference, which the app lists as a
+#: line of detail under the rings instead of drawing a ring. Only OpenCode
+#: Go's monthly figure so far. Other unbound lanes (a model's own weekly
+#: cap, a Codex Spark sub-cap) are real limits on that model and keep
+#: their rings; they just never drive the lights.
+DETAIL_LANE_IDS = frozenset({"go-monthly"})
+
 
 def parse_opencode_go_usage(
     payload: object,

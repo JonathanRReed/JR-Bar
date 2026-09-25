@@ -1246,8 +1246,9 @@ USAGE_SCENARIOS = ("opencode", "statusline", "hub")
 
 
 def scenario_usage(name: str, now: float) -> list[dict]:
-    def window(key, label, used, resets_in, *, bindable=True, source=None):
-        row = {"id": key, "name": label, "used_pct": used, "resets_at": now + resets_in, "bindable": bindable}
+    def window(key, label, used, resets_in, *, bindable=True, source=None, detail=False):
+        row = {"id": key, "name": label, "used_pct": used, "resets_at": now + resets_in, "bindable": bindable,
+               "detail": detail}
         if source is not None:
             row["source"] = source
         return row
@@ -1263,7 +1264,7 @@ def scenario_usage(name: str, now: float) -> list[dict]:
              "windows": [window("go-rolling", "5h", 42.5, 3 * 3600 + 1200, source="opencode-go-api"),
                          window("go-weekly", "7d", 18.0, 4 * 86400, source="opencode-go-api"),
                          window("go-monthly", "Monthly", 7.3, 6 * 86400 + 4 * 3600, bindable=False,
-                                source="opencode-go-api")],
+                                source="opencode-go-api", detail=True)],
              "tokens": tokens},
             # This Mac: no Go key, so no quota source at all. Tokens still count.
             {"id": "opencode", "instance": "this-mac", "quota_source": False, "state": "unsupported",
@@ -1289,11 +1290,15 @@ def scenario_usage(name: str, now: float) -> list[dict]:
     if name == "hub":
         return [
             # The local Claude account, read from this Mac's own sign-in.
+            # Fable's own weekly cap is not bindable but is a real limit on
+            # that model, so it keeps its ring.
             {"id": "claude", "instance": "default", "quota_source": True, "state": "ready",
              "fidelity": "official", "observed_at": now - 30,
              "account": {"plan": "Max 20×", "label": "jonathan@…", "fidelity": "official"},
              "windows": [window("five-hour", "5h", 42.0, 2 * 3600 + 900, source="claude-oauth"),
-                         window("weekly", "7d", 61.0, 3 * 86400 + 5 * 3600, source="claude-oauth")],
+                         window("weekly", "7d", 61.0, 3 * 86400 + 5 * 3600, source="claude-oauth"),
+                         window("fable-only", "7d Fable", 30.0, 3 * 86400 + 5 * 3600, bindable=False,
+                                source="claude-oauth")],
              "tokens": tokens},
             # A second Claude account that only CLIProxyAPI signs in to. The
             # proxy's copy of the local account is deduplicated away, so
