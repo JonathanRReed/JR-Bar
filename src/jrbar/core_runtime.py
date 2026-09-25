@@ -6098,8 +6098,44 @@ def build_headless_controller_class() -> type:
                 self._core_deck_probe_done.wait(2.0)
 
         def _core_deck_keymap_document(self, serial: str | None) -> dict[str, Any]:
-            facts = core_deck.keymap_facts(self._core_deck_backup_path(serial))
+            facts = self._core_deck_keymap_facts(serial)
             return {"state": facts.state, "backup_at": facts.backup_at, "generation": self._core_deck_keymap_generation}
+
+        @staticmethod
+        def _core_deck_file_stamp(path):
+            try:
+                info = path.stat()
+            except OSError:
+                return None
+            return (info.st_mtime_ns, info.st_size)
+
+        def _core_deck_keymap_facts(self, serial: str | None):
+            """``keymap_facts`` gated on the two files' stamps: the backup
+            and its journal are read and parsed only when either moved, so
+            a state build costs two stats, not up to ~1 MB of reads."""
+            path = self._core_deck_backup_path(serial)
+            stamps = (
+                self._core_deck_file_stamp(path) if path else None,
+                self._core_deck_file_stamp(path.with_suffix(".recovery.json")) if path else None,
+            )
+            cached = getattr(self, "_core_deck_keymap_facts_memo", None)
+            if cached is not None and cached[0] == path and cached[1] == stamps:
+                return cached[2]
+            facts = core_deck.keymap_facts(path)
+            self._core_deck_keymap_facts_memo = (path, stamps, facts)
+            return facts
+
+        def _core_deck_keymap_layers(self, raw, layer_scopes, layer_owners):
+            """``keymap_layer_rows`` memoized on its exact inputs: the VIA
+            JSON embedded in the backup is parsed once per build set, not
+            once per build."""
+            key = (raw, tuple(sorted(layer_scopes.items())), tuple(sorted(layer_owners.items())))
+            cached = getattr(self, "_core_deck_keymap_layers_memo", None)
+            if cached is not None and cached[0] == key:
+                return cached[1]
+            rows = core_deck.keymap_layer_rows(raw, layer_scopes, layer_owners)
+            self._core_deck_keymap_layers_memo = (key, rows)
+            return rows
 
         @staticmethod
         def _core_deck_backup_path(serial: str | None):
@@ -6181,10 +6217,10 @@ def build_headless_controller_class() -> type:
                         navigable=slot.navigable,
                     )
                 )
-            keymap = core_deck.keymap_facts(self._core_deck_backup_path(serial))
+            keymap = self._core_deck_keymap_facts(serial)
             layer_scopes = dict(getattr(controls, "layer_map", ()) or ())
             layer_owners = dict(getattr(controls, "layer_owners", ()) or ())
-            layers = core_deck.keymap_layer_rows(
+            layers = self._core_deck_keymap_layers(
                 plan.original_json if plan is not None else keymap.original_json,
                 layer_scopes,
                 layer_owners,

@@ -48,6 +48,8 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_claude_credential": None,
         "_claude_needs_sign_in": False,
         "_core_confetti_gate": None,
+        "_core_deck_keymap_facts_memo": None,
+        "_core_deck_keymap_layers_memo": None,
         "_core_detected_agents_cache": None,
         "_core_dot_plan_gap_logged": None,
         "_core_linked_dot_plan_seen": None,
