@@ -232,45 +232,68 @@ enum SettingsSearch {
             .map(String.init)
     }
 
+    /// An entry with its words folded once. A keystroke scores against
+    /// these instead of folding every title, group and keyword again.
+    struct Indexed: Sendable {
+        let entry: SettingsSearchEntry
+        let title: [String]
+        let place: [String]
+        let rest: [String]
+        let joinedTitle: String
+
+        init(_ entry: SettingsSearchEntry) {
+            self.entry = entry
+            title = SettingsSearch.words(entry.title)
+            place = SettingsSearch.words(entry.group) + SettingsSearch.words(entry.page.title)
+            rest = SettingsSearch.words(entry.subtitle ?? "") + entry.keywords.flatMap(SettingsSearch.words)
+            joinedTitle = title.joined(separator: " ")
+        }
+    }
+
     /// How well `entry` answers `query`: every query word must appear
     /// somewhere in it (a word start, or anywhere for three letters or
     /// more); the title counts most, then the group and page, then the
     /// subtitle and keywords. nil when some word matches nothing.
     nonisolated static func score(_ entry: SettingsSearchEntry, query: [String]) -> Int? {
+        score(Indexed(entry), query: query)
+    }
+
+    nonisolated static func score(_ entry: Indexed, query: [String]) -> Int? {
         guard !query.isEmpty else { return nil }
-        let title = words(entry.title)
-        let place = words(entry.group) + words(entry.page.title)
-        let rest = words(entry.subtitle ?? "") + entry.keywords.flatMap(words)
-        let joinedTitle = title.joined(separator: " ")
         var total = 0
         for word in query {
             func hit(_ candidates: [String]) -> Bool {
                 candidates.contains { $0.hasPrefix(word) || (word.count >= 3 && $0.contains(word)) }
             }
-            if hit(title) {
-                total += title.first?.hasPrefix(word) == true ? 30 : 20
-            } else if hit(place) {
+            if hit(entry.title) {
+                total += entry.title.first?.hasPrefix(word) == true ? 30 : 20
+            } else if hit(entry.place) {
                 total += 8
-            } else if hit(rest) {
+            } else if hit(entry.rest) {
                 total += 4
             } else {
                 return nil
             }
         }
         // A title that is the whole query outranks one that merely holds it.
-        if joinedTitle == query.joined(separator: " ") { total += 40 }
+        if entry.joinedTitle == query.joined(separator: " ") { total += 40 }
         return total
     }
 
     /// The best matches for `text`, best first; ties keep page order.
     nonisolated static func search(_ text: String, in entries: [SettingsSearchEntry], limit: Int = 30)
         -> [SettingsSearchEntry] {
+        search(text, in: entries.map(Indexed.init), limit: limit)
+    }
+
+    nonisolated static func search(_ text: String, in index: [Indexed], limit: Int = 30)
+        -> [SettingsSearchEntry] {
         let query = words(text)
         guard !query.isEmpty else { return [] }
         let order = Dictionary(uniqueKeysWithValues: SettingsStore.Page.allCases.enumerated().map { ($1, $0) })
         var seen = Set<String>()
-        return entries
-            .compactMap { entry in score(entry, query: query).map { (entry, $0) } }
+        return index
+            .compactMap { indexed in score(indexed, query: query).map { (indexed.entry, $0) } }
             .sorted { lhs, rhs in
                 if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
                 return (order[lhs.0.page] ?? 0) < (order[rhs.0.page] ?? 0)

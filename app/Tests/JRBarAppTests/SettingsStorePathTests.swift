@@ -319,4 +319,19 @@ struct SettingsStorePathTests {
         }
         withExtendedLifetime(core) {}
     }
+
+    @Test("search lists its hits when the typing pauses, the first letter at once")
+    func searchSettlesOffTheBody() {
+        let (core, store) = Self.store()
+        store.searchQuery = "l"
+        #expect(!store.searchHits.isEmpty, "the first letter lists at once")
+        let first = store.searchHits
+        store.searchQuery = "lid clo"
+        #expect(store.searchHits == first, "later letters wait for the pause")
+        store.settleSearch()
+        #expect(store.searchHits.first?.title == "Lid closed")
+        store.searchQuery = ""
+        #expect(store.searchHits.isEmpty, "clearing the field clears the list at once")
+        withExtendedLifetime(core) {}
+    }
 }

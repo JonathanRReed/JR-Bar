@@ -11,6 +11,9 @@ import SwiftUI
 /// system's.
 struct SoundsPage: View {
     @Bindable var store: SettingsStore
+    /// The sound folders, read when the page shows rather than on every
+    /// render (a volume drag renders the page per mouse event).
+    @ViewState private var available: (system: [String], custom: [String]) = ([], [])
 
     private func choice(_ role: SoundRole) -> Binding<String> {
         Binding(get: { store.soundPreferences.choices[role] ?? "" },
@@ -18,7 +21,6 @@ struct SoundsPage: View {
     }
 
     var body: some View {
-        let available = SoundPlayer.availableSounds()
         SettingGroup("Event sounds", note: "Sounds stay silent in Pause, Dim and Dark quiet, and when the asking session is already in front.") {
             ForEach(SoundRole.allCases, id: \.self) { role in
                 SettingRow(role.title, subtitle: role.subtitle) {
@@ -49,6 +51,7 @@ struct SoundsPage: View {
                 }
             }
         }
+        .onAppear { available = SoundPlayer.availableSounds() }
 
         SettingGroup("Volume") {
             SettingRow("JR-Bar sounds", subtitle: "Every sound above, apart from the Mac's own volume.") {

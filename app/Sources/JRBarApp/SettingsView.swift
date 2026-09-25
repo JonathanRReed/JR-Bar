@@ -79,7 +79,7 @@ struct SettingsSearchResults: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        let results = store.searchResults
+        let results = store.searchHits
         if results.isEmpty {
             Text("No settings match.")
                 .foregroundStyle(.secondary)

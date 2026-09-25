@@ -341,7 +341,15 @@ final class SettingsStore {
     // MARK: Search
 
     /// The sidebar's search text; non-empty swaps the page list for hits.
-    var searchQuery = ""
+    var searchQuery = "" {
+        didSet { if searchQuery != oldValue { scheduleSearch(from: oldValue) } }
+    }
+    /// The hits the sidebar lists for `searchQuery`: worked out when the
+    /// typing pauses for 80 ms (at once for the first letter), never in a
+    /// view's body.
+    private(set) var searchHits: [SettingsSearchEntry] = []
+    @ObservationIgnored private var searchWork: DispatchWorkItem?
+    @ObservationIgnored private var searchIndexCache: (entries: [SettingsSearchEntry], index: [SettingsSearch.Indexed])?
     /// The row a search result was picked for — the page names it at the
     /// top until another page is chosen.
     var searchHit: SettingsSearchEntry?
@@ -390,9 +398,43 @@ final class SettingsStore {
         return entries
     }
 
+    /// `searchEntries` with their words folded, rebuilt only when the
+    /// entries change (a toy or utility comes or goes).
+    private var searchIndex: [SettingsSearch.Indexed] {
+        let entries = searchEntries
+        if let cache = searchIndexCache, cache.entries == entries { return cache.index }
+        let index = entries.map(SettingsSearch.Indexed.init)
+        searchIndexCache = (entries, index)
+        return index
+    }
 
+    /// The hits for the query as it stands, worked out now.
     var searchResults: [SettingsSearchEntry] {
-        SettingsSearch.search(searchQuery, in: searchEntries)
+        SettingsSearch.search(searchQuery, in: searchIndex)
+    }
+
+    private func scheduleSearch(from previous: String) {
+        searchWork?.cancel()
+        searchWork = nil
+        let startingOut = SettingsSearch.words(previous).isEmpty
+        if startingOut || SettingsSearch.words(searchQuery).isEmpty {
+            settleSearch()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.settleSearch() }
+        }
+        searchWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+    }
+
+    /// Lists the hits for the query now; the debounce calls it, and a
+    /// test calls it in place of waiting.
+    func settleSearch() {
+        searchWork?.cancel()
+        searchWork = nil
+        let hits = searchResults
+        if hits != searchHits { searchHits = hits }
     }
 
     /// A result picked: its page, named at the top — and for a row in a
