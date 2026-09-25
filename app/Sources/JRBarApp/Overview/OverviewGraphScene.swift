@@ -898,8 +898,10 @@ struct GraphGlyph: Hashable {
         let color = solid ? Color.white : style.accent
         Group {
             switch style.mark {
-            case .logo(let logo):
-                ProviderLogoMark(logo: logo, size: size)
+            // Unreachable: `all(for:)` leaves out every provider with a
+            // real mark; the canvas fills those straight from their paths.
+            case .logo:
+                EmptyView()
             case .symbol(let name):
                 Image(systemName: name).font(.system(size: size, weight: .bold))
             case .text(let text):
