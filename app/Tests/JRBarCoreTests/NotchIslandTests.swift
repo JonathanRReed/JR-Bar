@@ -366,4 +366,38 @@ struct NotchIslandTests {
         #expect(NotchIslandLayout.expandedTopInset(notchDepth: 0)
                 == NotchIslandLayout.expandedNotchInset)
     }
+
+    @Test("the card's reveal: rows at 60% of the grow, 20 ms apart, never more than six steps")
+    func revealTiming() {
+        #expect(NotchMotion.contentRevealThreshold == 0.6)
+        #expect(NotchMotion.rowStagger == 0.02)
+        #expect(NotchMotion.rowStaggerSteps == 6)
+        #expect(NotchMotion.rowFade == 0.12)
+        #expect(NotchMotion.rowRevealDelay(step: 0) == 0)
+        #expect(abs(NotchMotion.rowRevealDelay(step: 3) - 0.06) < 1e-9)
+        #expect(abs(NotchMotion.rowRevealDelay(step: 6) - 0.12) < 1e-9)
+        #expect(NotchMotion.rowRevealDelay(step: 22) == NotchMotion.rowRevealDelay(step: 6),
+                "a long card's last rows share the last step")
+        #expect(NotchMotion.rowRevealDelay(step: -1) == 0)
+        #expect(abs(NotchMotion.revealSpan - 0.24) < 1e-9, "the whole card within a quarter second of the reveal")
+    }
+
+    @Test("frame leads, content follows: the reveal waits for most of the grow's early travel")
+    func revealFollowsTheFrame() throws {
+        let idle = CGRect(x: 0, y: 0, width: 300, height: 32)
+        let grown = CGRect(x: 0, y: 0, width: 380, height: 520)
+        var spring = NotchFrameSpring(at: idle)
+        spring.retarget(grown, motion: NotchFrameSpring.motion(from: idle, to: grown))
+        var t = 0.0
+        var reveal: Double?
+        while spring.integrate(dt: 1.0 / 240), t < 2 {
+            t += 1.0 / 240
+            if reveal == nil, spring.frame.height / grown.height >= NotchMotion.contentRevealThreshold {
+                reveal = t
+            }
+        }
+        let at = try #require(reveal)
+        #expect(at > 0.05, "the rows never arrive with the frame's first ticks")
+        #expect(at < 0.15, "and never wait for the spring to settle")
+    }
 }

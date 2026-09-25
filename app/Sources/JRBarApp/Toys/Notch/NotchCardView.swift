@@ -330,6 +330,58 @@ extension NotchCardStyle {
     }
 }
 
+/// Where each row the card draws stands in its reveal: counted over the
+/// rows actually drawn right now, so the stagger never waits on a row
+/// that is not there. The header is not among them — it is there from
+/// the grow's first frame. `NotchMotion.rowRevealDelay` caps the steps,
+/// so a long card's later rows arrive together.
+struct NotchCardRevealSteps: Equatable {
+    var hint = 0
+    var sessions = 0
+    var more = 0
+    var meters = 0
+    var privacy = 0
+    var media = 0
+    var battery = 0
+    /// The shelf page's first row; its rows follow on in order.
+    var shelf = 0
+    var pageBar = 0
+
+    @MainActor
+    init(model: NotchCardModel) {
+        self.init(hint: model.wingHint, page: model.page,
+                  sessions: min(model.rows.count, NotchIsland.rowLimit),
+                  more: model.rows.count > NotchIsland.rowLimit,
+                  meters: model.meters.count, privacy: model.privacyLine != nil,
+                  media: model.utility.media != nil, battery: model.utility.power.hasBattery,
+                  shelfRows: 7)
+    }
+
+    /// Pure, for the tests: which rows are drawn, in the card's order.
+    init(hint: Bool, page: NotchCardModel.Page, sessions: Int, more: Bool, meters: Int,
+         privacy: Bool, media: Bool, battery: Bool, shelfRows: Int) {
+        var next = 0
+        func take(_ drawn: Bool, count: Int = 1) -> Int {
+            let step = next
+            if drawn { next += count }
+            return step
+        }
+        self.hint = take(hint)
+        switch page {
+        case .now:
+            self.sessions = take(sessions > 0, count: sessions)
+            self.more = take(more)
+            self.meters = take(meters > 0, count: meters)
+            self.privacy = take(privacy)
+            self.media = take(media)
+            self.battery = take(battery)
+        case .shelf:
+            self.shelf = take(true, count: shelfRows)
+        }
+        self.pageBar = next
+    }
+}
+
 /// The one card under the notch. A band hover shows it as a peek — the
 /// focus header only; pinned, or held open from the island, it is the
 /// full surface: focus, the other live sessions, the shelf rows, the
@@ -343,7 +395,6 @@ struct NotchCardView: View {
     var width: CGFloat = NotchCardView.width
     /// The custom-timer popover — `ViewState`, not `@State`: the
     /// Command Line Tools ship no `SwiftUIMacros` plugin.
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ViewState private var timerEntryShown = false
     @ViewState private var timerEntryName = ""
     @ViewState private var timerEntryMinutes = 10
@@ -379,19 +430,16 @@ struct NotchCardView: View {
     }
 
     /// One row's content-follow fade: hidden until the frame has
-    /// carried the expand, then in on its own stagger — frame leads,
-    /// content follows (`NotchMotion.rowStagger`/`rowFade`). Each row
-    /// settles a few points down out of a soft focus as it arrives;
-    /// under Reduce Motion it only fades.
-    private func revealRow<V: View>(_ index: Int, _ content: V) -> some View {
-        let settled = model.contentRevealed || reduceMotion
+    /// carried the expand, then in on its own step of the stagger —
+    /// frame leads, content follows (`NotchMotion.rowRevealDelay`).
+    /// Opacity alone: a blur or a slide on every row was a dozen
+    /// animated passes in the grow's busiest frames.
+    private func revealRow<V: View>(_ step: Int, _ content: V) -> some View {
+        let fade = Animation.easeOut(duration: NotchMotion.rowFade)
+        let staggered = fade.delay(NotchMotion.rowRevealDelay(step: step))
         return content
             .opacity(model.contentRevealed ? 1 : 0)
-            .offset(y: settled ? 0 : -5)
-            .blur(radius: settled ? 0 : 2.5)
-            .animation(.easeOut(duration: NotchMotion.rowFade)
-                .delay(Double(index) * NotchMotion.rowStagger),
-                       value: model.contentRevealed)
+            .animation(staggered, value: model.contentRevealed)
     }
 
     /// Air between the card's runs — the header, the sessions, the
@@ -399,14 +447,17 @@ struct NotchCardView: View {
     static let runSpacing: CGFloat = 12
 
     private var card: some View {
-        VStack(alignment: .leading, spacing: Self.runSpacing) {
-            revealRow(0, focusHeader(pinned: true))
-            if model.wingHint { revealRow(1, wingHintRow) }
+        let steps = NotchCardRevealSteps(model: model)
+        return VStack(alignment: .leading, spacing: Self.runSpacing) {
+            // The header is there from the grow's first frame: the card
+            // says whose it is before the rows arrive.
+            focusHeader(pinned: true)
+            if model.wingHint { revealRow(steps.hint, wingHintRow) }
             switch model.page {
-            case .now: nowPage
-            case .shelf: shelfPage
+            case .now: nowPage(steps)
+            case .shelf: shelfPage(steps)
             }
-            revealRow(22, pageBar)
+            revealRow(steps.pageBar, pageBar)
         }
         .padding(.horizontal, style == .island ? 16 : 14)
         .padding(.vertical, verticalPad)
@@ -635,15 +686,15 @@ struct NotchCardView: View {
     /// Each run is its own block, so the card reads in three glances,
     /// not one list.
     @ViewBuilder
-    private var nowPage: some View {
+    private func nowPage(_ steps: NotchCardRevealSteps) -> some View {
         if !model.rows.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
                         id: \.element.id) { index, row in
-                    revealRow(2 + index, sessionRow(row))
+                    revealRow(steps.sessions + index, sessionRow(row))
                 }
                 if model.rows.count > NotchIsland.rowLimit {
-                    revealRow(8, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
+                    revealRow(steps.more, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
                         .font(.system(size: 10.5))
                         .foregroundStyle(style.faintColor)
                         .padding(.leading, 15))
@@ -653,26 +704,27 @@ struct NotchCardView: View {
         if !model.meters.isEmpty || model.privacyLine != nil {
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
-                    revealRow(9 + index, meterRow(meter))
+                    revealRow(steps.meters + index, meterRow(meter))
                 }
                 if let privacy = model.privacyLine {
-                    revealRow(12, privacyRow(privacy))
+                    revealRow(steps.privacy, privacyRow(privacy))
                 }
             }
         }
-        revealRow(13, ShelfMediaRow(utility: model.utility, style: style))
-        revealRow(14, ShelfBatteryRow(power: model.utility.power, adapterWatts: model.utility.adapterWatts,
-                                      working: model.workingCount,
-                                      heldAwake: model.heldAwake(), style: style))
+        revealRow(steps.media, ShelfMediaRow(utility: model.utility, style: style))
+        revealRow(steps.battery, ShelfBatteryRow(power: model.utility.power,
+                                                 adapterWatts: model.utility.adapterWatts,
+                                                 working: model.workingCount,
+                                                 heldAwake: model.heldAwake(), style: style))
     }
 
     /// Page two — the shelf and the day: files, timers, the weather
     /// and calendar, reminders, the Mirror when asked for, and the
     /// Control Center strip.
     @ViewBuilder
-    private var shelfPage: some View {
+    private func shelfPage(_ steps: NotchCardRevealSteps) -> some View {
         if model.tray.shelfEnabled() {
-            revealRow(2, ShelfTrayRow(tray: model.tray, style: style,
+            revealRow(steps.shelf, ShelfTrayRow(tray: model.tray, style: style,
                                       handTargets: model.handTargets,
                                       onHand: { picked, session in
                                           model.handToAgent(picked, session: session)
@@ -681,19 +733,19 @@ struct NotchCardView: View {
                                       onDropLanded: { model.onDropLanded?() }))
         }
         if !model.timers.entries.isEmpty {
-            revealRow(3, ShelfTimersRow(timers: model.timers, style: style))
+            revealRow(steps.shelf + 1, ShelfTimersRow(timers: model.timers, style: style))
         }
         // The weather leads the day; on a day with nothing scheduled it
         // is the day, and the calendar's empty line goes.
-        revealRow(4, ShelfWeatherRow(reading: model.utility.weather.reading, style: style))
+        revealRow(steps.shelf + 2, ShelfWeatherRow(reading: model.utility.weather.reading, style: style))
         if !model.weatherInCalendarSlot {
-            revealRow(5, ShelfCalendarRow(calendar: model.calendar, state: model.calendar.state,
-                                          style: style))
+            revealRow(steps.shelf + 3, ShelfCalendarRow(calendar: model.calendar, state: model.calendar.state,
+                                                        style: style))
         }
-        revealRow(6, ShelfRemindersRow(reminders: model.reminders, state: model.reminders.state,
-                                       style: style))
-        revealRow(7, ShelfMirrorRow(mirror: model.mirror, style: style))
-        revealRow(8, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
+        revealRow(steps.shelf + 4, ShelfRemindersRow(reminders: model.reminders, state: model.reminders.state,
+                                                     style: style))
+        revealRow(steps.shelf + 5, ShelfMirrorRow(mirror: model.mirror, style: style))
+        revealRow(steps.shelf + 6, ShelfTogglesRow(toggles: model.utility.toggles, style: style))
     }
 
     /// The card's foot: the two pages as a small switcher — the shelf's
