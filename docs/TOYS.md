@@ -577,9 +577,9 @@ body is five rows:
   keeps quiet on calls, whenever another app has the microphone
   (`AquariumSound.held`).
 
-A folded **Fine-tune** holds the numbers, led by the three swim rows
-(**Swim pace**, **Fish size** and **Swimming speed**, `AquariumSwimRows`;
-see "Swimming" above): **Fish at once** (All, 6, 10,
+A folded **Fine-tune** holds the numbers. The three swim rows come
+first (**Swim pace**, **Fish size** and **Swimming speed**,
+`AquariumSwimRows`; see "Swimming" above), then **Fish at once** (All, 6, 10,
 16, 24 — past it, residents rest first, least raised first, then quiet
 sessions, then working ones; an ask, a failure or a finish always shows,
 a finished fish frees its place once it has swum off, and fry go with

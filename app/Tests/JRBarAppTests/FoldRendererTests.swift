@@ -334,6 +334,11 @@ import Testing
         let sampler = try #require(device.makeSamplerState(descriptor: samplerDesc))
         let queue = try #require(device.makeCommandQueue())
         let out = try Self.makeTarget(device, width: n, height: n)
+        // MPS builds the pyramid on the renderer's own queue and nobody
+        // waits for it; the probe runs on a queue of its own. One render
+        // on the renderer's queue waits the build out, so a loaded run
+        // never probes a level MPS is still writing.
+        #expect(renderer.render(to: out, size: CGSize(width: n, height: n)))
         let base = (0..<(n * n)).map { Double(shapes($0 % n, $0 / n)) }
         for level in [2.0, 3.0] {
             let command = try #require(queue.makeCommandBuffer())
