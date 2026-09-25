@@ -431,8 +431,17 @@ struct NotchControlsView: View {
                 SettingLabel(title: "Step aside for other shelf apps",
                              subtitle: "While Dropover, Yoink or Dropzone runs, a shake is theirs, so one shake never opens two shelves. Dropping on the notch still works.")
             }
-            RivalGuardView(role: .shelfGesture, active: toy.settings.shelfYieldToRivals)
+            // Only while JR-Bar's own shake is live: a Notch that is off,
+            // or drawn by Alcove or Boring Notch, has no shake to step aside.
+            RivalGuardView(role: .shelfGesture, active: shakeYieldLive)
         }
+    }
+
+    /// Whether the shake-yield note has anything to say: the Notch on and
+    /// drawn by JR-Bar, and the step-aside switch on.
+    private var shakeYieldLive: Bool {
+        let settings = toy.settings
+        return settings.enabled && settings.provider == .jrbar && settings.shelfYieldToRivals
     }
 
     /// "Firm", "Normal", "Easy" — the sensitivity in a word.
