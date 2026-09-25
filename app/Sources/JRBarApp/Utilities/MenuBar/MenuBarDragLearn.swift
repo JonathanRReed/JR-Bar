@@ -33,7 +33,7 @@ enum MenuBarDropNote: Equatable, Sendable {
     var text: String {
         switch self {
         case .systemItem:
-            return "macOS keeps Wi-Fi, the clock and Control Center — hide them in System Settings › Control Center"
+            return "macOS keeps Wi-Fi, the clock and Control Center — hide them in System Settings › Menu Bar"
         case .appleExtraCovered:
             return "Covered: macOS won't hide Apple's own extras yet"
         case .otherDisplay:

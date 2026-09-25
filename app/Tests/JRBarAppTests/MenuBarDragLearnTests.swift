@@ -156,7 +156,7 @@ struct MenuBarDragLearnTests {
         let notes: [MenuBarDropNote] = [.systemItem, .appleExtraCovered, .otherDisplay,
                                         .wholeApp(name: "iStat Menus", hidden: true), .notMoved]
         #expect(Set(notes.map(\.text)).count == notes.count)
-        #expect(MenuBarDropNote.systemItem.text.contains("System Settings › Control Center"))
+        #expect(MenuBarDropNote.systemItem.text.contains("System Settings › Menu Bar"))
         #expect(MenuBarDropNote.wholeApp(name: "iStat Menus", hidden: true).text == "Hid all of iStat Menus's items")
     }
 

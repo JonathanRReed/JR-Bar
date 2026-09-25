@@ -186,7 +186,7 @@ reorder). A drop on the icon itself does nothing.
 - **Never silent.** A drop that asked for something says what happened
   for four seconds under the icon, in the Item Bar's own glass: macOS's
   own item ("macOS keeps Wi-Fi, the clock and Control Center — hide them
-  in System Settings › Control Center"), an Apple extra that took a
+  in System Settings › Menu Bar"), an Apple extra that took a
   cover, another display's bar, an app with several items ("Hid all of
   iStat Menus's items"), or a drop macOS did not take.
 - **Limits.** Apps hide as a whole (a platform limit Bartender, Thaw and
