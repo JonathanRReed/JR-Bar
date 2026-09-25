@@ -141,6 +141,51 @@ struct PointerWatcherTests {
         #expect(source.starts == 2)
     }
 
+    @Test("a held subscriber is told the source died, so its surface can poll")
+    func heldSubscriberHearsDeath() {
+        let source = FakeSource()
+        let rig = Rig()
+        let watcher = Self.makeWatcher(source, rig)
+        var lost = 0
+        var reads = 0
+        let token = watcher.subscribe({ reads += 1 }, onLost: { lost += 1 })
+        #expect(token != nil)
+        source.die()
+        rig.runDue()
+        #expect(lost == 1, "the surface heard the token is dead")
+        #expect(watcher.subscriberCount == 0, "the dead tokens are let go")
+        #expect(!watcher.listening)
+        source.move()
+        rig.runDue()
+        #expect(reads == 0, "the dead source delivers nothing")
+        rig.now += PointerWatcher.retryAfter
+        let next = watcher.subscribe({ reads += 1 }, onLost: {})
+        #expect(next != nil, "a fresh arm finds the grant restored")
+        #expect(source.starts == 2)
+        source.move()
+        rig.runDue()
+        #expect(reads == 1)
+        withExtendedLifetime(next) {}
+    }
+
+    @Test("a died the stopped tap posted late cannot kill the live one")
+    func staleDiedCannotKill() {
+        let source = FakeSource()
+        let rig = Rig()
+        let watcher = Self.makeWatcher(source, rig)
+        let token = watcher.subscribe {}
+        #expect(token != nil)
+        // The tap posts its death, is let go, and a fresh subscription
+        // starts the source again — all before the death lands.
+        source.die()
+        watcher.unsubscribe(token!)
+        let next = watcher.subscribe {}
+        #expect(next != nil)
+        rig.runDue()
+        #expect(watcher.listening, "the late death must not kill the new tap")
+        withExtendedLifetime(next) {}
+    }
+
     @Test("the shared watcher hears nothing in a test process")
     func sharedIsDeafInTests() {
         #expect(PointerWatcher.shared.subscribe {} == nil)

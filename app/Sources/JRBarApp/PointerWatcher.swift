@@ -16,9 +16,20 @@ import CoreGraphics
 @MainActor
 protocol PointerWatching: AnyObject {
     /// Starts telling `onMove` about pointer moves. nil when moves can't
-    /// be heard here — the caller then polls as it always did.
-    func subscribe(_ onMove: @escaping @MainActor () -> Void) -> Int?
+    /// be heard here — the caller then polls as it always did. `onLost`
+    /// fires if the source dies under a held token — the token is dead
+    /// then, so drop it and poll; the next subscribe asks again.
+    func subscribe(_ onMove: @escaping @MainActor () -> Void,
+                   onLost: @escaping @MainActor () -> Void) -> Int?
     func unsubscribe(_ token: Int)
+}
+
+extension PointerWatching {
+    /// A subscription with nothing to do when the source dies — the
+    /// token simply goes quiet.
+    func subscribe(_ onMove: @escaping @MainActor () -> Void) -> Int? {
+        subscribe(onMove, onLost: {})
+    }
 }
 
 /// Where moves come from. Started by the first subscriber, stopped by
@@ -26,8 +37,8 @@ protocol PointerWatching: AnyObject {
 protocol PointerMoveSource: AnyObject, Sendable {
     /// Start listening; `moved` and `died` may be called on any thread.
     /// False when the source can't listen here. `died` says the source
-    /// stopped hearing moves for good — subscribers keep their tokens
-    /// but hear nothing, and the next arm is refused and polls as before.
+    /// stopped hearing moves for good — the watcher lets its subscribers
+    /// know, and the next arm is refused and polls as before.
     func start(moved: @escaping @Sendable () -> Void,
                died: @escaping @Sendable () -> Void) -> Bool
     func stop()
@@ -86,8 +97,11 @@ final class PointerWatcher: PointerWatching {
     private nonisolated let gate: Gate
     private nonisolated let clock: @Sendable () -> TimeInterval
     private nonisolated let schedule: @Sendable (TimeInterval, @escaping @Sendable () -> Void) -> Void
-    private var subscribers: [Int: @MainActor () -> Void] = [:]
+    private var subscribers: [Int: (move: @MainActor () -> Void, lost: @MainActor () -> Void)] = [:]
     private var nextToken = 0
+    /// Counts the starts, so a `died` the previous tap posted before it
+    /// stopped cannot kill the one running now.
+    private var startGeneration = 0
     /// Whether the source is listening right now.
     private(set) var listening = false
     /// When a start failed — the next subscriber asks again only after
@@ -111,10 +125,11 @@ final class PointerWatcher: PointerWatching {
 
     var subscriberCount: Int { subscribers.count }
 
-    func subscribe(_ onMove: @escaping @MainActor () -> Void) -> Int? {
+    func subscribe(_ onMove: @escaping @MainActor () -> Void,
+                   onLost: @escaping @MainActor () -> Void) -> Int? {
         guard startIfNeeded() else { return nil }
         nextToken += 1
-        subscribers[nextToken] = onMove
+        subscribers[nextToken] = (move: onMove, lost: onLost)
         return nextToken
     }
 
@@ -130,23 +145,34 @@ final class PointerWatcher: PointerWatching {
         guard let source else { return false }
         let now = clock()
         if let failedAt, now - failedAt < Self.retryAfter, now >= failedAt { return false }
+        startGeneration += 1
+        let generation = startGeneration
         listening = source.start(moved: { [weak self] in self?.moved() },
-                                 died: { [weak self] in self?.sourceDied() })
+                                 died: { [weak self] in self?.sourceDied(generation) })
         failedAt = listening ? nil : now
         return listening
     }
 
     /// The source gave up on the watcher's behalf — the tap died when
     /// Accessibility was pulled. Treated as a failed start: the dead
-    /// source is stopped, and a subscriber's next arm is refused so it
-    /// falls back to its poll until a fresh start can listen again.
-    private nonisolated func sourceDied() {
+    /// source is stopped and every token is let go — the surfaces hear
+    /// `lost` and go back to their polls rather than wait on moves that
+    /// will never come. A stale `died` posted by an earlier tap before
+    /// it stopped is ignored by its generation.
+    private nonisolated func sourceDied(_ generation: Int) {
         schedule(0) { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.listening else { return }
+                guard let self, self.listening,
+                      self.startGeneration == generation else { return }
                 self.source?.stop()
                 self.listening = false
                 self.failedAt = self.clock()
+                let lost = self.subscribers.values.map(\.lost)
+                self.subscribers.removeAll()
+                self.gate.lock.withLock {
+                    self.gate.pacer = PointerMovePacer(interval: self.gate.pacer.interval)
+                }
+                for onLost in lost { onLost() }
             }
         }
     }
@@ -163,7 +189,7 @@ final class PointerWatcher: PointerWatching {
 
     private func deliver() {
         gate.lock.withLock { gate.pacer.delivered(at: clock()) }
-        for onMove in subscribers.values { onMove() }
+        for subscriber in subscribers.values { subscriber.move() }
     }
 }
 

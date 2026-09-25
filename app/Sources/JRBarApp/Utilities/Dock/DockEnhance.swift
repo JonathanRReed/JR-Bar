@@ -525,11 +525,32 @@ final class DockEnhanceController {
     /// them, else the poll. The first tick runs at the near cadence
     /// either way.
     private func armPointerWatch() {
-        if moveToken == nil,
-           let token = pointerWatch.subscribe({ [weak self] in self?.pointerMovedByWatch() }) {
-            moveToken = token
-        }
+        offerPointerWatch()
         scheduleTick(after: Self.pollInterval)
+    }
+
+    /// One offer to the watcher — a granted token drives the ticks;
+    /// nil leaves the poll carrying them.
+    @discardableResult
+    private func offerPointerWatch() -> Bool {
+        guard moveToken == nil,
+              let token = pointerWatch.subscribe(
+                { [weak self] in self?.pointerMovedByWatch() },
+                onLost: { [weak self] in self?.pointerWatchLost() })
+        else { return false }
+        moveToken = token
+        return true
+    }
+
+    /// The watcher's source died under a held token — Accessibility
+    /// pulled. The token hears nothing ever again: drop it so the tick
+    /// falls back to polling, and each tick offers the watcher another
+    /// token — a grant given back hands the moves over on its own.
+    private func pointerWatchLost() {
+        moveToken = nil
+        if running, !presence.parked, timer == nil {
+            scheduleTick(after: Self.pollInterval)
+        }
     }
 
     private func disarmPointerWatch() {
@@ -570,6 +591,9 @@ final class DockEnhanceController {
 
     /// One tick, and the wait it earns.
     private func runTick() {
+        // The watch may be back — a refused subscribe costs nothing —
+        // and granted, its moves drive the ticks again.
+        if moveToken == nil { offerPointerWatch() }
         tick()
         let axPoint = DockEnhanceMath.axPoint(NSEvent.mouseLocation,
                                               mainScreenHeight: DockDisplays.primaryHeight())

@@ -195,13 +195,31 @@ final class MenuBarReveal {
     /// Start reading the pointer: the watcher's moves when it hears
     /// them, else the poll.
     private func armPointerWatch() {
-        if moveToken == nil,
-           let token = pointerWatch.subscribe({ [weak self] in self?.pointerMovedByWatch() }) {
-            moveToken = token
-            pointerMovedByWatch()
-            return
-        }
+        if offerPointerWatch() { return }
         guard moveToken == nil else { return }
+        scheduleHoverPoll(after: Self.hoverPollInterval)
+    }
+
+    /// One offer to the watcher — a granted token drives the reads
+    /// again; nil leaves the poll carrying them.
+    @discardableResult
+    private func offerPointerWatch() -> Bool {
+        guard moveToken == nil,
+              let token = pointerWatch.subscribe(
+                { [weak self] in self?.pointerMovedByWatch() },
+                onLost: { [weak self] in self?.pointerWatchLost() })
+        else { return false }
+        moveToken = token
+        pointerMovedByWatch()
+        return true
+    }
+
+    /// The watcher's source died under a held token — Accessibility
+    /// pulled. The token hears nothing ever again: drop it and poll as
+    /// a refused arm would. Each poll beat offers the watcher another
+    /// token, so a grant given back hands the moves over on its own.
+    private func pointerWatchLost() {
+        moveToken = nil
         scheduleHoverPoll(after: Self.hoverPollInterval)
     }
 
@@ -246,6 +264,10 @@ final class MenuBarReveal {
         let timer = Timer(timeInterval: interval, repeats: false, block: { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.hoverTimer = nil
+                // The watch may be back — a refused subscribe costs
+                // nothing — and granted, its moves carry on from here.
+                if self.offerPointerWatch() { return }
                 self.scheduleHoverPoll(after: self.hoverTick())
             }
         })
