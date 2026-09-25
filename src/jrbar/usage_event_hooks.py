@@ -422,7 +422,7 @@ class UsageHookLimiter:
 # --- Running ---------------------------------------------------------------
 
 
-#: The events in words, the same words Settings › Usage › Hooks uses.
+#: The events in words, the same words the Settings Hooks section uses.
 USAGE_HOOK_EVENT_WORDS = {
     "quota_low": "Quota low",
     "quota_reached": "Quota reached",

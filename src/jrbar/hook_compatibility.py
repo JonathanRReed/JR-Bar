@@ -255,7 +255,7 @@ def node_package_version(real: str) -> str | None:
 class VersionCache:
     """Version answers keyed by the binary's real path and mtime, saved
     under the state directory so a second doctor run is instant. A failed
-    read is kept too, so opening Settings › Agents again doesn't start a
+    read is kept too, so opening the Agents settings again doesn't start a
     slow CLI again; it is retried after a day or when the binary changes."""
 
     def __init__(self, path: Path | None) -> None:
@@ -405,8 +405,8 @@ __all__ = [
     "compatibility_rows",
     "installed_versions",
     "load_compatibility_manifest",
-    "node_package_version",
     "locate_binary",
+    "node_package_version",
     "parse_version",
     "range_matches",
 ]

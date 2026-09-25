@@ -34,15 +34,15 @@ else:
         reset_event_is_terminal,
         with_reset_candidates,
     )
+    from .provider_reset_settings_action import (
+        note_reset_candidates,
+        reset_delivery_state,
+    )
     from .provider_usage_controller_actions import (
         apply_provider_usage_settings_snapshot,
         perform_provider_usage_action,
         profile_session_action,
         toggle_provider_menu_visibility,
-    )
-    from .provider_reset_settings_action import (
-        note_reset_candidates,
-        reset_delivery_state,
     )
     from .provider_usage_event_store import save_reset_delivery_state
     from .provider_usage_feedback_actions import (

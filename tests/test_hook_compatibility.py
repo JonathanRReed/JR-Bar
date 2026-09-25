@@ -187,7 +187,7 @@ def test_a_failed_version_read_is_cached_for_a_day(tmp_path: Path) -> None:
 
     assert read(1_000.0)["slow"]["version"] is None
     assert read(1_000.0 + 3_600)["slow"]["version"] is None
-    assert len(calls) == 1, "Settings › Agents opened again must not start the CLI again"
+    assert len(calls) == 1, "opening the Agents settings again must not start the CLI again"
     read(1_000.0 + 86_400)
     assert len(calls) == 2, "a day later it is asked again"
 
