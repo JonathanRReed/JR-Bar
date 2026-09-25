@@ -559,7 +559,8 @@ far layer drawn first: smaller, slower, a little hazy, no blur. Rects
 runs along them, and the provider's real glyph (Claude's asterisk,
 Gemini's sparkle, Codex's `</>`, set in heavy type so it reads). The
 colours are resolved once per burst in eight steps of light, so a frame
-never mixes one; 60 fps at most.
+never mixes one, and the glyphs are set as type once per burst; 60 fps
+at most.
 
 **The card** (`ConfettiCard.swift`) has three runs. **Look**: a live
 preview (the top middle of the screen at half size, with the notch over
@@ -568,8 +569,8 @@ hover, then holds still; Try it (the focused session's colour, the same
 one `jrbar://confetti` picks); **Origin** — Notch (the lip; the menu
 bar's bottom centre on a screen without one), Icon (under JR-Bar's
 menu-bar icon, only on its screen), Corners (two cannons crossing over
-the middle, Raycast's look) or Rain (a curtain from the top edge, the
-calmest); **Size** — Subtle, Standard or Big (about 90 / 180 / 300
+the middle, Raycast's look) or Rain (a curtain that fades in just under
+the menu bar and never crosses it, the calmest); **Size** — Subtle, Standard or Big (about 90 / 180 / 300
 pieces on a 1512 × 982 screen, scaled by each screen's area, 0.8–1.8×;
 Big throws a second volley and a softer second pop); **Palette** —
 Provider (base, a lighter step, a gold- or cyan-leaning accent, white,
@@ -581,7 +582,8 @@ Lunar New Year, Easter, Halloween and Christmas, that day's colours and
 fleck, read off the Mac's calendar); and under **Adjust**, Amount
 (density, 0.5–2× on top of the Size) and Hang time (0.7–1.5×: how slowly
 pieces fall and how long they rest — never the pop or the spray); a
-Settings search for either opens Adjust.
+Settings search for either opens Adjust, once per search. The preview
+redraws only when what it shows changes, not on every daemon document.
 **When**: the triggers, and **Moment styles** (off: a milestone bursts
 gold, big and from the corners; "All caught up" is a gentle rain).
 **Manners**: the quiet switch and the held burst, Sound, and **Screens**
@@ -623,18 +625,23 @@ unknown-provider grey; a colour set in `colors.agent_colors` wins. From
 outside, `jrbar confetti` (a daemon `confetti` event: the toy must be
 on, one per 3 s) and `jrbar://confetti?provider=|session=` (an explicit
 ask, like Try it and the palette's Fire Confetti) both fire a burst.
+`jrbar confetti` minds the room like a trigger; an explicit ask fires at
+once on every screen the Screens pick allows, a fullscreen one included.
 
 **Manners.** While JR-Bar is quiet, a Focus is on or a call has the mic
 or camera, a burst is held and replayed smaller once the room clears (a
 half-density replay, floored at a quarter, so it is smaller even at the
 lowest Amount) or let go; anything held over 30 minutes is let go, and a
-screen a fullscreen app owns is skipped. The overlay is invisible to
+screen a fullscreen app owns is skipped (both only while the page's
+quiet switch is on). The overlay is invisible to
 screen capture and sharing. Reduce Motion gets one soft glow at the lip
 (or the icon) and nothing moving. The optional pop and rustle is
 synthesized once, cached as a WAV in the caches folder and played
 through `SoundPlayer.playSynthesized` on the app's one player (the event
 sounds' own): Settings › Sounds' volume, the
-alert device when that's picked, held while another app has the
+alert device when that's picked (on an alert-device player of its own,
+so it plays beside a session's completion sound instead of cutting it
+off), held while another app has the
 microphone, a touch higher or lower each burst (±6%), and panned toward
 the icon when it fires from there. The card's cost line quotes the last
 burst's measured frame time (an `os_signpost` interval wraps each draw).
