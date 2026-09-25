@@ -263,25 +263,35 @@ final class ShelfMeetingWatch {
     /// Fetch the window off main — a busy EventKit store has no business
     /// stalling the run loop — then hand the rows to `note`. A read that
     /// lands after a `stop` or a newer fetch is dropped.
+    /// The store handed to the serial fetch queue — EventKit objects are
+    /// not `Sendable`, but the queue is the only thread that ever calls
+    /// them, so the box carries the proof the compiler cannot see.
+    private struct StoreBox: @unchecked Sendable {
+        let store: EKEventStore
+    }
+
     private func read() {
         guard running, let store else { return }
         readGeneration += 1
         let generation = readGeneration
-        fetchQueue.async { [weak self] in
+        fetchQueue.async { [weak self, store = StoreBox(store: store)] in
             let now = Date()
             // Back far enough to catch a long meeting already running.
-            let predicate = store.predicateForEvents(
+            let predicate = store.store.predicateForEvents(
                 withStart: now.addingTimeInterval(-12 * 3600),
                 end: now.addingTimeInterval(ShelfCalendarModel.lookahead),
                 calendars: nil)
-            let events = store.events(matching: predicate)
+            let events = store.store.events(matching: predicate)
                 .filter { !$0.isAllDay }
                 .map(ShelfCalendarModel.project)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, self.running,
                           self.readGeneration == generation else { return }
-                    self.note(events, now: now)
+                    // Due/live windows judge against now at apply time —
+                    // a fetch that queued behind a slow scan does not
+                    // shift the edges by its own latency.
+                    self.note(events, now: Date())
                 }
             }
         }
