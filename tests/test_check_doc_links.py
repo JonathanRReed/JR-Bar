@@ -36,3 +36,15 @@ def test_missing_files_and_headings_are_caught(tmp_path: Path) -> None:
         ("README.md", "docs/ref-missing.md", "no such file"),
     }
     assert script.slug("Usage hooks v2: rules, env & JSON") == "usage-hooks-v2-rules-env--json"
+
+
+def test_agent_worktrees_are_not_this_trees_docs(tmp_path: Path) -> None:
+    """A checkout under ``.claude/worktrees`` is another commit of the repo:
+    its stale links are not this tree's, and its files are not counted."""
+    script = _script()
+    (tmp_path / "README.md").write_text("[ok](README.md)\n")
+    stale = tmp_path / ".claude" / "worktrees" / "lane" / "docs"
+    stale.mkdir(parents=True)
+    (stale / "old.md").write_text("[gone](missing.md)\n")
+    assert script.broken_links(tmp_path) == []
+    assert [path.name for path in script.markdown_files(tmp_path)] == ["README.md"]

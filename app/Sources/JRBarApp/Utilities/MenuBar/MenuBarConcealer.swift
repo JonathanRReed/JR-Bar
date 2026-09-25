@@ -2,7 +2,7 @@ import AppKit
 import JRBarCore
 import OSLog
 
-/// The macOS 27 hiding mechanism (docs/AUDIT-2026-09-16.md): the menu
+/// The macOS 27 hiding mechanism (docs/archive/AUDIT-2026-09-16.md): the menu
 /// bar is one surface `MenuBarAgent` draws, and the only thing that
 /// truly removes another app's item from it is the agent's own
 /// *assessment mode* — the exam-lockdown feature — driven through the

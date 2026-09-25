@@ -1262,7 +1262,7 @@ All notable changes to JR-Bar are documented here.
   `jrbar-notary` profile) turns the concealer on; the card offers
   "Hide the way macOS hides" anyway for a bar without our icon.
   Attribution in docs/PRIOR-ART.md; the audit in
-  docs/AUDIT-2026-09-16.md.
+  docs/archive/AUDIT-2026-09-16.md.
 - Battery. JR-Bar sat in "Using Significant Energy". Measured on an
   idle desk: the app at 3% (an Accessibility round trip to every
   running app twice a second, and three pointer polls at 10–20 Hz) and

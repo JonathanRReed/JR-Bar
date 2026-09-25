@@ -2,7 +2,7 @@
 
 Updated 2026-09-21 from what is installed and running on the owner's Mac
 from `main` (installed build 22, signed, notarized and stapled —
-`docs/finish-2026-09-19.md`). Labels:
+`docs/archive/finish-2026-09-19.md`). Labels:
 
 - **Ships**: reachable in the installed `JR-Bar.app`, exercised on the
   owner's Mac, covered by tests at its seam.

@@ -71,4 +71,4 @@ done
 A later contributor can create new work after this dated inventory. The check
 reports that new work rather than assuming all future branches are included.
 The final source and physical/release acceptance boundaries are recorded in
-[FINAL-TESTING.md](FINAL-TESTING.md).
+[FINAL-TESTING.md](../FINAL-TESTING.md).

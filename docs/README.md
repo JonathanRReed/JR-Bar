@@ -63,17 +63,19 @@ Plans, audits and research notes, kept for provenance. Nothing in the
 build reads them.
 
 - Plans: [0.8 plan](PLAN-0.8.md), [build spec](BUILD-SPEC.md),
-  [vision](VISION.md), [product design](product-design-2026-09-19.md),
-  [upgrade plan 2026-09-24](UPGRADE-PLAN-2026-09-24.md),
-  [finishing pass](finish-2026-09-19.md),
-  [Data Hoarder plan](data-hoarder-implementation-2026-09-19.md),
-  [production task contract](production-task-contract.md),
+  [vision](VISION.md), [production task contract](production-task-contract.md),
   [toy parity](TOY-PARITY.md), [upgrade ledger](upgrade/STATUS.md)
-- Audits: [systems audit 2026-09-16](AUDIT-2026-09-16.md),
-  [audits/](audits/), [rescue report](RESCUE-REPORT.md),
-  [branch consolidation](BRANCH-CONSOLIDATION-2026-09-07.md)
+- Audits: [rescue report](RESCUE-REPORT.md)
 - Research: [ecosystem](ECOSYSTEM-RESEARCH.md),
   [providers](PROVIDER-RESEARCH.md),
   [upstream refresh 2026-08-30](UPSTREAM-REFRESH-2026-08-30.md),
   [upstream sync](UPSTREAM-SYNC.md), [research/](research/)
-- [archive/](archive/): superseded plans and the pre-0.8 specs
+- [archive/](archive/): the dated plans and audits once they are done, the
+  superseded plans and the pre-0.8 specs:
+  - Plans: [product design 2026-09-19](archive/product-design-2026-09-19.md),
+    [finishing pass 2026-09-19](archive/finish-2026-09-19.md),
+    [Data Hoarder plan 2026-09-19](archive/data-hoarder-implementation-2026-09-19.md),
+    [upgrade plan 2026-09-24](archive/UPGRADE-PLAN-2026-09-24.md)
+  - Audits: [systems audit 2026-09-16](archive/AUDIT-2026-09-16.md),
+    [branch consolidation 2026-09-07](archive/BRANCH-CONSOLIDATION-2026-09-07.md),
+    [archive/audits/](archive/audits/) (2026-08-15 to 2026-09-21)

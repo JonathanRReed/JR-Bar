@@ -44,7 +44,7 @@ what comes after, in rough order.
    cost lines stop reading "no price table"; the Dial and Joystick mapping
    editor in Settings › Devices.
 7. **The 2026-09-21 audit's deferred parity work** (see
-   [audits/2026-09-21-systems-audit.md](audits/2026-09-21-systems-audit.md)):
+   [archive/audits/2026-09-21-systems-audit.md](archive/audits/2026-09-21-systems-audit.md)):
    live Dock thumbnails behind an opt-in (SCStream costs the persistent
    recording indicator — stills were the deliberate choice, but the option
    is parity with DockDoor); a widget extension target (the snapshot

@@ -21,7 +21,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-_SKIP_PARTS = frozenset({".git", ".build", "build", "dist", "node_modules", ".venv", ".jrbar-verification"})
+# ``.claude`` holds agent worktrees (other checkouts of this repository, at
+# other commits) and agent state, never this tree's docs.
+_SKIP_PARTS = frozenset(
+    {".git", ".build", "build", "dist", "node_modules", ".venv", ".jrbar-verification", ".claude"}
+)
 _FENCE = re.compile(r"^(```|~~~).*?^\1", re.MULTILINE | re.DOTALL)
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _LINK = re.compile(r"(?<!!)\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
