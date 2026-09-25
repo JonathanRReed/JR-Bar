@@ -162,11 +162,13 @@ def test_rates_persist_per_device_and_warm_start__and_1_more(tmp_path: Path) -> 
 
 def test_fresh_reads_are_bounded__and_2_more(tmp_path: Path) -> None:
     # --- scenario: a_real_file_reads_through
+    """A generous bound here: the default half second is a device's budget,
+    and a busy test machine can take longer than that to start a thread."""
     (tmp_path / "STATUS.TXT").write_text(DOT_STATUS, encoding="utf-8")
-    status = read_fresh_status(tmp_path)
+    status = read_fresh_status(tmp_path, timeout=5.0)
     assert status is not None and status.ticks == 60153710.0
     (tmp_path / "LEDS.LED").write_text("#FF0000\n", encoding="utf-8")
-    assert read_fresh_file(tmp_path / "LEDS.LED") == "#FF0000\n"
+    assert read_fresh_file(tmp_path / "LEDS.LED", timeout=5.0) == "#FF0000\n"
 
     # --- scenario: a_stalled_read_times_out_without_blocking
     """A stalled device answers ``None`` within the timeout, and while the
