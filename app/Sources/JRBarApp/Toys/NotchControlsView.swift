@@ -590,11 +590,14 @@ struct ShelfShakeExclusionsRow: View {
     }
 
     /// The regular apps running now, by name, minus those already listed.
+    /// The index's `policy` is read at launch, so an app that changed its
+    /// activation policy mid-run lists under the policy it launched with —
+    /// the same read the Dock card's own list makes.
     static func candidates(excluding excluded: [String]) -> [(id: String, name: String)] {
-        let apps = NSWorkspace.shared.runningApplications.compactMap { app -> (id: String, name: String)? in
-            guard app.activationPolicy == .regular, let id = app.bundleIdentifier,
+        let apps = RunningApps.shared.apps.compactMap { app -> (id: String, name: String)? in
+            guard app.policy == .regular, let id = app.bundleID,
                   !excluded.contains(id), id != Bundle.main.bundleIdentifier else { return nil }
-            return (id, app.localizedName ?? id)
+            return (id, app.name ?? id)
         }
         return apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }

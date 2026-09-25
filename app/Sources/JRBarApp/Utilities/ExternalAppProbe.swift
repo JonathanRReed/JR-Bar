@@ -35,11 +35,12 @@ struct ExternalAppProbe {
     var installed: Bool { url != nil }
 
     /// Running means a live process — a registered bundle id answers
-    /// directly, an unregistered app matches on its bundle path.
-    var running: Bool {
-        for app in NSWorkspace.shared.runningApplications {
-            if let id = app.bundleIdentifier, bundleIDs.contains(id) { return true }
-        }
+    /// through the running-apps index, an unregistered app falls back to
+    /// matching on its bundle path (the rare path: boring.notch ships no
+    /// id, so only then is the workspace scanned). Main-actor: the index
+    /// is main-actor, and every caller reads this from a card body.
+    @MainActor var running: Bool {
+        if bundleIDs.contains(where: { RunningApps.shared.isRunning(bundleID: $0) }) { return true }
         guard let url else { return false }
         return NSWorkspace.shared.runningApplications.contains {
             $0.bundleURL?.standardizedFileURL == url.standardizedFileURL

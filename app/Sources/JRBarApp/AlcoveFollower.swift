@@ -76,7 +76,7 @@ final class AlcoveFollower {
     private var following: Bool { enabled && Self.rendererChosen }
 
     var isAlcoveRunning: Bool {
-        NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == AlcoveGeometry.bundleIdentifier }
+        RunningApps.shared.isRunning(bundleID: AlcoveGeometry.bundleIdentifier)
     }
 
     var isPolling: Bool { timer != nil }

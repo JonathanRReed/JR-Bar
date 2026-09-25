@@ -329,10 +329,10 @@ final class SystemTogglesStore {
 
         private func observeLease(_ core: CoreModel) {
             let live = core.isLive
-            noteDaemonHold(live ? core.state?.power?.hold : nil, live: live)
+            noteDaemonHold(live ? core.power?.hold : nil, live: live)
             withObservationTracking {
                 _ = core.isLive
-                _ = core.state?.power?.hold
+                _ = core.power?.hold
             } onChange: { [weak self, weak core] in
                 Task { @MainActor [weak self, weak core] in
                     guard let self, let core else { return }
