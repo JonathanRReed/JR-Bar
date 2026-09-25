@@ -159,6 +159,8 @@ final class MenuBarUtility: Toy {
     /// NSWorkspace enumeration is expensive. Notifications invalidate this
     /// snapshot promptly; a bounded refresh still discovers quiet helpers.
     @ObservationIgnored let runningApps: RunningBundleIDCache
+    /// The prune's installed-app answers (`pruneUninstalledConcealedApps`).
+    @ObservationIgnored var installedApps = InstalledBundleCache()
     /// Whether the concealer drives hiding right now.
     var concealing: Bool { concealer != nil }
     /// Whether the agent's mechanism resolves on this macOS at all.

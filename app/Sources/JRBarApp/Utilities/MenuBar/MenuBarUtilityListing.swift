@@ -92,19 +92,24 @@ extension MenuBarUtility {
     /// resolves — uninstalled apps the map still carries. A quit app's
     /// id still resolves on disk, so only genuinely gone entries are
     /// dropped; the user's choices survive an app merely not running.
+    /// Runs after every plan, so the cheap answers go first — the
+    /// running check is the `RunningApps` index's — and the disk lookup
+    /// last, through `installedApps`, which keeps a found app's answer
+    /// for a while instead of asking LaunchServices every pass.
     func pruneUninstalledConcealedApps() {
         let apps = settings().concealedApps
         guard !apps.isEmpty else { return }
+        let running = RunningApps.shared
         let stale = apps.keys.filter { id in
             // The clock's and Control Center's keys are items, not apps:
             // nothing installs them, and nothing uninstalls them.
             MenuBarConcealPlan.concealableSystemItems[id] == nil
-                && NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
-                && NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) == nil
+                && !running.isRunning(bundleID: id)
                 // A helper bundled inside another app resolves neither
                 // lookup but is installed and will be back — an id that
                 // owned an item this session is not "uninstalled".
                 && knownItems[id] == nil
+                && !installedApps.isInstalled(id)
         }
         guard !stale.isEmpty else { return }
         update { draft in
@@ -155,5 +160,40 @@ extension MenuBarUtility {
             }
         }
         return frames
+    }
+}
+
+/// Whether an app is installed, by bundle identifier, for the prune. A
+/// found app stays found for `ttl` — uninstalling one is rare, and the
+/// prune asks after every plan — while a missing one is asked again each
+/// time, so an app installed since is seen at once.
+@MainActor
+final class InstalledBundleCache {
+    nonisolated static let defaultTTL: TimeInterval = 600
+
+    private let ttl: TimeInterval
+    private let lookUp: @MainActor (String) -> Bool
+    private let monotonic: () -> TimeInterval
+    private var foundAt: [String: TimeInterval] = [:]
+
+    init(ttl: TimeInterval = InstalledBundleCache.defaultTTL,
+         lookUp: @escaping @MainActor (String) -> Bool = {
+             NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil
+         },
+         monotonic: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.ttl = ttl
+        self.lookUp = lookUp
+        self.monotonic = monotonic
+    }
+
+    func isInstalled(_ bundleID: String) -> Bool {
+        let now = monotonic()
+        if let at = foundAt[bundleID], now >= at, now - at < ttl { return true }
+        guard lookUp(bundleID) else {
+            foundAt[bundleID] = nil
+            return false
+        }
+        foundAt[bundleID] = now
+        return true
     }
 }
