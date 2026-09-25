@@ -109,7 +109,7 @@ protocol 1. Timestamps are Unix epoch seconds.
  "escalation":{"stage":"menu_bar","since":1788982800.0},
  "health":{"hooks":{"claude":"ok","codex":"stale","pi":"missing"},
            "detected":{"claude":true,"codex":true,"pi":false},
-           "sources":{"claude":{"fresh":true,"heard_age_seconds":1.4}},
+           "sources":{"claude":{"fresh":true,"heard_age_seconds":1.4,"heard_at":1788982798.6}},
            "intake":{"hook_state":"configured","source_health":"partial","silence_seconds":1.4}},
  "peers":[],
  "unseen_completions":["gemini:session:…"],
@@ -368,6 +368,16 @@ Vocabulary:
   only when the window's percentage was never reported at all or the
   sample buffer is absent. Without a known reset a window heading for
   100 % is `ahead`.
+  `exhausts_at` (here and in `windows[].forecast`) is rounded to the
+  minute (additive precision note, 2026-09-25): the line through the
+  samples moves it with every build, so it changes at most once a minute
+  instead of in every frame. An exhausted window's `exhausts_at` is the
+  build's `now`, rounded the same way.
+- `health.sources.<provider>.heard_at` (additive, 2026-09-25) is the epoch
+  of the last event the daemon accepted from that provider, or null when
+  it never heard one: the moment itself, so a client computes the age on
+  its own clock instead of reading `heard_age_seconds`, which ticks in
+  every frame. `heard_age_seconds` stays, with the same meaning, for now.
 - `focus` is the quiet state in the words a client reads: `mode` is the
   active quiet mode (`mute`, `dim`, `pause`, `asks_only`, `dark`) or the
   literal `off` -- never null -- while nothing quiet is in effect.
