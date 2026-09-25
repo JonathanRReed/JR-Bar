@@ -20,10 +20,11 @@ struct BuddyTurnTests {
     /// patrol's clock so only what is under test moves.
     private func figure(mood: NotchBuddyToy.Mood = .pacing, stride: TimeInterval = 0,
                         hopProgress: Double? = nil, turn: BuddyTurn.Frame? = nil,
-                        handoff: BuddyHandoff? = nil, still: Bool = false) -> BuddyFigure {
+                        handoff: BuddyHandoff? = nil, still: Bool = false,
+                        care: BuddyCare.Mood = .content) -> BuddyFigure {
         BuddyFigure(character: .dot, mood: mood, tint: .accentColor, phase: 2.35,
                     hopProgress: hopProgress, waveAge: nil, slumpAge: nil, leans: false,
-                    still: still, askCount: 0, care: .content, trick: nil,
+                    still: still, askCount: 0, care: care, trick: nil,
                     treatAge: nil, crumbAge: nil, stride: stride, turn: turn, handoff: handoff)
     }
 
@@ -184,6 +185,65 @@ struct BuddyTurnTests {
             age += Self.frame
         }
         #expect(BuddyHandoff(from: .pacing, age: BuddyHandoff.duration).isOver)
+    }
+
+    @Test("the parts a body shapes by mood swing over the handoff, never in one frame")
+    func bodyPartsEaseThroughHandoff() {
+        // The crab's claws ride up for an ask, the axolotl's fronds drop
+        // for sleep, the mushroom keels into a slump. Each part is every
+        // mood's own value by its share, so it starts from exactly the
+        // old value and its tip moves under 2/3 pt a frame at 1×, under
+        // 2 pt at the floating buddy's 3×. Before, the crab's claws
+        // jumped 3.3 pt in one frame at 1× on every ask.
+        let clawReach = 2.4 + 4.4 * 26 * .pi / 180     // offset + finger swing, pt per unit lift
+        let frondReach = 4.4 * .pi / 180                // pt per degree
+        let capReach = 7.0 * 7.0 * .pi / 180            // pt per unit of the slump's 7° keel
+        let changes: [(from: NotchBuddyToy.Mood, to: NotchBuddyToy.Mood)] = [
+            (.pacing, .waving), (.waving, .asleep), (.pacing, .slumped), (.celebrating, .pacing),
+            (.slumped, .asleep),
+        ]
+        for change in changes {
+            let start = BuddyMoodShares(change.to, handoff: BuddyHandoff(from: change.from, age: 0))
+            #expect(start.mix(CrabBody.clawLift) == CrabBody.clawLift(change.from), "no jump at the change")
+            #expect(start.mix(AxolotlBody.frillSwing) == AxolotlBody.frillSwing(change.from))
+            var last = start
+            var age = Self.frame
+            while age <= BuddyHandoff.duration + Self.frame {
+                let now = BuddyMoodShares(change.to, handoff: BuddyHandoff(from: change.from, age: age))
+                let lift = abs(now.mix(CrabBody.clawLift) - last.mix(CrabBody.clawLift))
+                let gape = abs(now.mix { CrabBody.gape($0, phase: 0, still: true) }
+                               - last.mix { CrabBody.gape($0, phase: 0, still: true) })
+                let swing = abs(now.mix(AxolotlBody.frillSwing) - last.mix(AxolotlBody.frillSwing))
+                let keel = abs(now.share(of: .slumped) - last.share(of: .slumped))
+                #expect(lift * clawReach <= 2.0 / 3, "claws jumped \(change.from) → \(change.to) at \(age)")
+                #expect(gape * 24 <= 2, "pincers snapped at \(age)")
+                #expect(swing * frondReach <= 2.0 / 3, "fronds jumped at \(age)")
+                #expect(keel * capReach <= 2.0 / 3, "the cap tipped at \(age)")
+                last = now
+                age += Self.frame
+            }
+            #expect(last == BuddyMoodShares(change.to), "lands on the new mood whole")
+            #expect(last.mix(UFOBody.beam) == UFOBody.beam(change.to))
+        }
+        let snapped = abs(CrabBody.clawLift(.waving) - CrabBody.clawLift(.pacing)) * clawReach
+        #expect(snapped > 3, "the old cut moved the claws this far in one frame")
+    }
+
+    @Test("a feeling eases in and out with the moods that wear it")
+    func careFollowsTheHandoff() {
+        // Missing you rides on the patrol and sleep but not on an ask. At
+        // the change to an ask the droop is still all there, and it lets
+        // go over the handoff instead of in one frame.
+        let pacing = figure(care: .missing).pose
+        let start = figure(mood: .waving, handoff: BuddyHandoff(from: .pacing, age: 0), care: .missing).pose
+        #expect(abs(start.offset.height - pacing.offset.height) < 1e-9)
+        #expect(abs(start.lid - pacing.lid) < 1e-9)
+        #expect(abs(start.squash.height - pacing.squash.height) < 1e-9)
+        let asked = figure(mood: .waving, care: .missing).pose
+        #expect(asked.lid == 0, "an ask outranks the feeling once it has handed over")
+        // Reduce Motion takes the new mood whole, feelings and all.
+        #expect(figure(mood: .waving, handoff: BuddyHandoff(from: .pacing, age: 0), still: true).moods
+                == BuddyMoodShares(.waving))
     }
 
     @Test("the carried dangle swings through upright instead of flipping")

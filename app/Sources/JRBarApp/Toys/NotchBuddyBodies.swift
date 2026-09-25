@@ -16,7 +16,9 @@ import SwiftUI
 /// perk for asks), a faint permanent blush, and the shared hole-punch
 /// eyes and mood mouths.
 struct AxolotlBody: View {
-    let mood: NotchBuddyToy.Mood
+    /// Each mood's share of the frame (`BuddyMoodShares`): the parts
+    /// shaped by mood swing through a mood change with the pose.
+    let moods: BuddyMoodShares
     let tint: Color
     let pose: BuddyFigure.Pose
     let lid: Double
@@ -28,13 +30,20 @@ struct AxolotlBody: View {
     private var gill: Color { Color(red: 0.95, green: 0.42, blue: 0.58) }
 
     /// -1 drooped → 1 perked: the gill fan's posture per mood.
-    private var frillLift: Double {
+    static func frillLift(_ mood: NotchBuddyToy.Mood) -> Double {
         switch mood {
         case .waving, .celebrating: return 1.0
         case .gathering: return 0.4
         case .pacing: return 0.15
         case .slumped, .asleep: return -1.0
         }
+    }
+
+    /// How far the fan swings from its resting spread, in degrees: a
+    /// perk lifts it up to 10°, a droop lets it fall up to 18°.
+    static func frillSwing(_ mood: NotchBuddyToy.Mood) -> Double {
+        let lift = frillLift(mood)
+        return max(0, -lift) * 18 - max(0, lift) * 10
     }
 
     var body: some View {
@@ -69,16 +78,15 @@ struct AxolotlBody: View {
     }
 
     /// Three fronds off one cheek, drawn pointing left and mirrored for
-    /// the right. `frillLift` perks the fan or lets it droop; a slow
+    /// the right. `frillSwing` perks the fan or lets it droop; a slow
     /// sway rides on top so the gills always breathe a little.
     private func frills(left: Bool) -> some View {
-        let lift = max(0, frillLift) * 10
-        let droop = max(0, -frillLift) * 18
+        let swing = moods.mix(Self.frillSwing)
         return ZStack {
             ForEach(0..<3, id: \.self) { i in
                 let sway = still ? 0 : sin(phase * 2.1 + Double(i) * 0.9 + (left ? 0 : 1.4)) * 2.2
                 frill
-                    .rotationEffect(.degrees([-34.0, -10.0, 16.0][i] + droop - lift + sway),
+                    .rotationEffect(.degrees([-34.0, -10.0, 16.0][i] + swing + sway),
                                     anchor: UnitPoint(x: 1, y: 0.5))
             }
         }
@@ -115,7 +123,9 @@ struct AxolotlBody: View {
 /// lands, hold a casual gape on patrol, and shut when it is down or
 /// asleep. The pacing walk already waddles; the crab just owns it.
 struct CrabBody: View {
-    let mood: NotchBuddyToy.Mood
+    /// Each mood's share of the frame (`BuddyMoodShares`): the parts
+    /// shaped by mood swing through a mood change with the pose.
+    let moods: BuddyMoodShares
     let tint: Color
     let pose: BuddyFigure.Pose
     let lid: Double
@@ -125,6 +135,10 @@ struct CrabBody: View {
     /// How wide the pincers gape: they clap for asks & hops, hold a
     /// casual gape on patrol, and shut tight when down or asleep.
     private var gape: Double {
+        moods.mix { Self.gape($0, phase: phase, still: still) }
+    }
+
+    static func gape(_ mood: NotchBuddyToy.Mood, phase: TimeInterval, still: Bool) -> Double {
         switch mood {
         case .waving, .celebrating: return still ? 0.7 : 0.45 + 0.4 * sin(phase * 9)
         case .gathering: return still ? 0.5 : 0.35 + 0.25 * sin(phase * 7)
@@ -135,7 +149,9 @@ struct CrabBody: View {
 
     /// How high the claws ride: up for asks & hops, dragging on a fail,
     /// tucked in for sleep.
-    private var clawLift: Double {
+    private var clawLift: Double { moods.mix(Self.clawLift) }
+
+    static func clawLift(_ mood: NotchBuddyToy.Mood) -> Double {
         switch mood {
         case .waving, .celebrating: return 1.0
         case .gathering: return 0.6
@@ -268,7 +284,9 @@ struct CrabBody: View {
 /// keels in the slump. Features are dark reads on the stalk, like the
 /// ghost's — the stalk is pale whatever accent the cap wears.
 struct MushroomBody: View {
-    let mood: NotchBuddyToy.Mood
+    /// Each mood's share of the frame (`BuddyMoodShares`): the parts
+    /// shaped by mood swing through a mood change with the pose.
+    let moods: BuddyMoodShares
     let tint: Color
     let pose: BuddyFigure.Pose
     let lid: Double
@@ -279,14 +297,15 @@ struct MushroomBody: View {
     private var stalk: Color { Color(red: 0.93, green: 0.88, blue: 0.80) }
     private var feature: Color { Color(white: 0.12).opacity(0.85) }
 
-    /// Always half-asleep: a resting lid on top of the skeleton's.
+    /// Always half-asleep: a resting lid on top of the skeleton's,
+    /// which sleep's own shut eyes replace.
     private var drowsy: Double {
-        min(1, lid + (mood == .asleep ? 0 : 0.18))
+        min(1, lid + 0.18 * (1 - moods.share(of: .asleep)))
     }
 
-    /// The cap's slow nod; the slump keels it further.
+    /// The cap's slow nod; the slump keels it a further 7°.
     private var capNod: Double {
-        (still ? 0 : sin(phase * 1.4) * 1.6) + (mood == .slumped ? 7 : 0)
+        (still ? 0 : sin(phase * 1.4) * 1.6) + 7 * moods.share(of: .slumped)
     }
 
     var body: some View {
@@ -355,7 +374,9 @@ struct MushroomBody: View {
 /// and a beam that brightens while an ask is up, as if it means to lift
 /// the question clean out of the terminal.
 struct UFOBody: View {
-    let mood: NotchBuddyToy.Mood
+    /// Each mood's share of the frame (`BuddyMoodShares`): the parts
+    /// shaped by mood swing through a mood change with the pose.
+    let moods: BuddyMoodShares
     let tint: Color
     let pose: BuddyFigure.Pose
     let lid: Double
@@ -367,7 +388,9 @@ struct UFOBody: View {
 
     /// Beam strength by mood: bright while it wants you, a night-light
     /// otherwise, nearly off while it sleeps.
-    private var beam: Double {
+    private var beam: Double { moods.mix(Self.beam) }
+
+    static func beam(_ mood: NotchBuddyToy.Mood) -> Double {
         switch mood {
         case .waving: return 0.50
         case .celebrating: return 0.45

@@ -417,6 +417,15 @@ struct BuddyFigure: View {
     /// The clock the pacing and gathering poses step on.
     private var walk: TimeInterval { stride ?? phase }
 
+    /// Each mood's share of this frame: the new mood whole, or part-way
+    /// through a handoff the moods it leaves fading as it grows. The
+    /// care layer, the nightcap and every body part shaped by mood read
+    /// this, so they change over the handoff with the pose. Reduce
+    /// Motion takes the new mood whole.
+    var moods: BuddyMoodShares {
+        BuddyMoodShares(mood, handoff: still ? nil : handoff)
+    }
+
     // MARK: Pose
 
     /// The mouth shapes: `flat` patrols and sags, `wobble` fails,
@@ -517,21 +526,26 @@ struct BuddyFigure: View {
     /// The pet's feelings over the mood's pose. `fed` blushes and turns
     /// a flat mouth up; `missing` rides heavier — half-lidded, downcast,
     /// a little deflated. Busy moods keep their own face: an ask, a
-    /// failure and a hop all outrank feelings.
+    /// failure and a hop all outrank feelings. Each feeling shows by the
+    /// share of the moods that wear it, so a mood change eases it in or
+    /// out with the pose.
     private func applyCare(_ pose: inout Pose) {
+        let shares = moods
         switch care {
         case .content:
             break
         case .fed:
-            guard mood == .pacing || mood == .gathering else { return }
-            pose.blush = max(pose.blush, 0.8)
-            if pose.mouth == .flat || pose.mouth == .none { pose.mouth = .smile }
+            let k = shares.share(of: .pacing) + shares.share(of: .gathering)
+            guard k > 0 else { return }
+            pose.blush = max(pose.blush, 0.8 * k)
+            if k >= 0.5, pose.mouth == .flat || pose.mouth == .none { pose.mouth = .smile }
         case .missing:
-            guard mood == .asleep || mood == .pacing || mood == .gathering else { return }
-            pose.lid = max(pose.lid, 0.30)
-            pose.look.height += 0.4
-            pose.offset.height += 0.7
-            pose.squash.height *= 0.96
+            let k = shares.share(of: .asleep) + shares.share(of: .pacing) + shares.share(of: .gathering)
+            guard k > 0 else { return }
+            pose.lid += (max(pose.lid, 0.30) - pose.lid) * k
+            pose.look.height += 0.4 * k
+            pose.offset.height += 0.7 * k
+            pose.squash.height *= 1 - 0.04 * k
         }
     }
 
@@ -821,12 +835,13 @@ struct BuddyFigure: View {
     /// Up to two "z"s drift off the head while it sleeps, staggered so
     /// they never leave together.
     private func zee(_ i: Int) -> (x: Double, y: Double, opacity: Double, scale: Double)? {
-        guard mood == .asleep else { return nil }
+        let asleep = moods.share(of: .asleep)
+        guard asleep > 0 else { return nil }
         if still { return i == 0 ? (4, -5.5, 0.55, 1) : nil }
         let p = (phase / 2.8 + Double(i) * 0.55).truncatingRemainder(dividingBy: 1)
         let fade = p < 0.15 ? p / 0.15 : (p > 0.75 ? (1 - p) / 0.25 : 1)
         return (x: 3.6 + sin(p * .pi) * 1.6, y: -3 - p * 6.5,
-                opacity: fade * 0.85, scale: 0.7 + 0.5 * p)
+                opacity: fade * 0.85 * asleep, scale: 0.7 + 0.5 * p)
     }
 
     /// One sparkle thrown near the hop's apex; the green check pops on
@@ -886,9 +901,13 @@ struct BuddyFigure: View {
                 .frame(width: 8 * (1 - air * 0.35), height: 1.5)
                 .offset(y: 7)
             ZStack {
-                if mood != .asleep, wearsBehind, let wearing { outfit(wearing) }
+                // Falling asleep the nightcap fades in as the outfit
+                // fades out, over the handoff; outside one it is either.
+                let asleep = moods.share(of: .asleep)
+                if asleep < 1, wearsBehind, let wearing { outfit(wearing).opacity(1 - asleep) }
                 characterBody
-                if mood == .asleep { cap } else if !wearsBehind, let wearing { outfit(wearing) }
+                if asleep > 0 { cap.opacity(asleep) }
+                if asleep < 1, !wearsBehind, let wearing { outfit(wearing).opacity(1 - asleep) }
                 if pose.blush > 0.01 { cheeks }
             }
             .scaleEffect(x: stageScale.width, y: stageScale.height, anchor: UnitPoint(x: 0.5, y: 0.9))
@@ -956,30 +975,30 @@ struct BuddyFigure: View {
         case .dot:
             DotBody(tint: tint, pose: pose, lid: lid)
         case .cat:
-            CatBody(mood: mood, tint: tint, pose: pose, lid: lid,
+            CatBody(moods: moods, tint: tint, pose: pose, lid: lid,
                     phase: phase, still: still)
         case .ghost:
             GhostBody(tint: tint, pose: pose, lid: lid)
         case .robot:
-            RobotBody(mood: mood, tint: tint, pose: pose, lid: lid,
+            RobotBody(moods: moods, tint: tint, pose: pose, lid: lid,
                       phase: phase, still: still)
         case .owl:
-            OwlBody(mood: mood, tint: tint, pose: pose, lid: lid,
+            OwlBody(moods: moods, tint: tint, pose: pose, lid: lid,
                     phase: phase, still: still)
         case .slime:
-            SlimeBody(mood: mood, tint: tint, pose: pose, lid: lid,
+            SlimeBody(moods: moods, tint: tint, pose: pose, lid: lid,
                       phase: phase, still: still)
         case .axolotl:
-            AxolotlBody(mood: mood, tint: tint, pose: pose, lid: lid,
+            AxolotlBody(moods: moods, tint: tint, pose: pose, lid: lid,
                         phase: phase, still: still)
         case .crab:
-            CrabBody(mood: mood, tint: tint, pose: pose, lid: lid,
+            CrabBody(moods: moods, tint: tint, pose: pose, lid: lid,
                      phase: phase, still: still)
         case .mushroom:
-            MushroomBody(mood: mood, tint: tint, pose: pose, lid: lid,
+            MushroomBody(moods: moods, tint: tint, pose: pose, lid: lid,
                          phase: phase, still: still)
         case .ufo:
-            UFOBody(mood: mood, tint: tint, pose: pose, lid: lid,
+            UFOBody(moods: moods, tint: tint, pose: pose, lid: lid,
                     phase: phase, still: still)
         }
     }
@@ -1493,7 +1512,9 @@ private struct DotBody: View {
 /// that wags on the good moods and flops out along the ground on the
 /// bad ones, and a proper ω mouth that drops its tongue on the hop.
 private struct CatBody: View {
-    let mood: NotchBuddyToy.Mood
+    /// Each mood's share of the frame: the ears and tail swing through a
+    /// mood change with the pose.
+    let moods: BuddyMoodShares
     let tint: Color
     let pose: BuddyFigure.Pose
     let lid: Double
@@ -1501,7 +1522,9 @@ private struct CatBody: View {
     let still: Bool
 
     /// 1 is pricked, -0.5 is flattened; each mood's ear posture.
-    private var earPerk: Double {
+    private var earPerk: Double { moods.mix(Self.earPerk) }
+
+    private static func earPerk(_ mood: NotchBuddyToy.Mood) -> Double {
         switch mood {
         case .waving, .celebrating: return 1.0
         case .gathering: return 0.7
@@ -1586,6 +1609,21 @@ private struct CatBody: View {
     /// the good moods, out along the ground for the slump, tucked when
     /// asleep. The wag rides on top of the resting angle.
     private var tail: some View {
+        let angle = moods.mix { Self.tailAngle($0, phase: phase, still: still) }
+        return Path { p in
+            // Frame space, 7.5×6: base at the bottom-left, tip curling
+            // up-right. The rotation pins the base.
+            p.move(to: CGPoint(x: 0.6, y: 5.2))
+            p.addQuadCurve(to: CGPoint(x: 6.9, y: 1.0), control: CGPoint(x: 5.6, y: 5.6))
+        }
+        .stroke(tint, style: StrokeStyle(lineWidth: 1.9, lineCap: .round))
+        .frame(width: 7.5, height: 6)
+        .rotationEffect(.degrees(angle), anchor: UnitPoint(x: 0.08, y: 0.87))
+        .offset(x: 6.6, y: 1.3)
+    }
+
+    /// One mood's tail: its resting angle with the wag on top.
+    private static func tailAngle(_ mood: NotchBuddyToy.Mood, phase: TimeInterval, still: Bool) -> Double {
         let rest: Double
         let wag: Double
         switch mood {
@@ -1596,16 +1634,7 @@ private struct CatBody: View {
         case .asleep:      rest = 32;  wag = still ? 0 : sin(phase * 1.1) * 2
         case .slumped:     rest = 68;  wag = 0
         }
-        return Path { p in
-            // Frame space, 7.5×6: base at the bottom-left, tip curling
-            // up-right. The rotation pins the base.
-            p.move(to: CGPoint(x: 0.6, y: 5.2))
-            p.addQuadCurve(to: CGPoint(x: 6.9, y: 1.0), control: CGPoint(x: 5.6, y: 5.6))
-        }
-        .stroke(tint, style: StrokeStyle(lineWidth: 1.9, lineCap: .round))
-        .frame(width: 7.5, height: 6)
-        .rotationEffect(.degrees(rest + wag), anchor: UnitPoint(x: 0.08, y: 0.87))
-        .offset(x: 6.6, y: 1.3)
+        return rest + wag
     }
 
     /// The cat mouth: a ω for the good moods, an "o" for the ask, the
@@ -1697,7 +1726,9 @@ private struct GhostBody: View {
 /// lamp that pulses while an ask is up. Its celebration sparkle is a
 /// thrown gear.
 private struct RobotBody: View {
-    let mood: NotchBuddyToy.Mood
+    /// Each mood's share of the frame: the antenna's ask pulse fades in
+    /// and out with the ask.
+    let moods: BuddyMoodShares
     let tint: Color
     let pose: BuddyFigure.Pose
     let lid: Double
@@ -1721,7 +1752,8 @@ private struct RobotBody: View {
     /// Off the left shoulder so it never collides with the "!": a stem
     /// and a lamp that breathes while an ask is open.
     private var antenna: some View {
-        let pulse = mood == .waving && !still ? 0.55 + 0.45 * sin(phase * 9) : 1.0
+        let dip = still ? 0 : moods.share(of: .waving) * 0.45 * (1 - sin(phase * 9))
+        let pulse = 1 - dip
         return ZStack {
             Capsule().fill(Color(white: 0.5)).frame(width: 0.9, height: 2.6)
                 .offset(y: 0.9)
@@ -1810,7 +1842,9 @@ private struct RobotBody: View {
 /// wings lift on the hop and flutter on a gathering, the beak parts for
 /// the ask, and asleep the discs squint into happy arcs.
 private struct OwlBody: View {
-    let mood: NotchBuddyToy.Mood
+    /// Each mood's share of the frame: the tufts and wings swing through
+    /// a mood change with the pose.
+    let moods: BuddyMoodShares
     let tint: Color
     let pose: BuddyFigure.Pose
     let lid: Double
@@ -1820,7 +1854,9 @@ private struct OwlBody: View {
     private var beakColor: Color { Color(red: 0.98, green: 0.66, blue: 0.22) }
 
     /// 1 is alert, -0.6 is drooped; the tufts' posture per mood.
-    private var perk: Double {
+    private var perk: Double { moods.mix(Self.perk) }
+
+    private static func perk(_ mood: NotchBuddyToy.Mood) -> Double {
         switch mood {
         case .waving, .celebrating: return 1.0
         case .gathering: return 0.5
@@ -1880,9 +1916,9 @@ private struct OwlBody: View {
     /// the gathering flutters them; everything else leaves them folded.
     private func wing(left: Bool) -> some View {
         let side: Double = left ? -1 : 1
-        let lift = mood == .celebrating ? 1.0 : (mood == .waving ? 0.45 : 0.0)
-        let flutter = (mood == .celebrating || mood == .gathering) && !still
-            ? sin(phase * 10 + (left ? 0 : 1.3)) * 7 : 0
+        let lift = moods.share(of: .celebrating) + 0.45 * moods.share(of: .waving)
+        let flaps = moods.share(of: .celebrating) + moods.share(of: .gathering)
+        let flutter = still ? 0 : sin(phase * 10 + (left ? 0 : 1.3)) * 7 * flaps
         return Ellipse()
             .fill(tint)
             .overlay(Ellipse().fill(.black.opacity(0.14)))
@@ -1979,7 +2015,9 @@ private struct OwlBody: View {
 /// over; the hop pinches a droplet off the crown at the apex. A sheen
 /// up-left keeps it reading wet.
 private struct SlimeBody: View {
-    let mood: NotchBuddyToy.Mood
+    /// Each mood's share of the frame: the melt spreads and lifts with
+    /// the slump's share.
+    let moods: BuddyMoodShares
     let tint: Color
     let pose: BuddyFigure.Pose
     let lid: Double
@@ -1995,7 +2033,7 @@ private struct SlimeBody: View {
     }
 
     /// 1 in the slump: the base spreads and the tip keels.
-    private var melt: Double { mood == .slumped ? 1 : 0 }
+    private var melt: Double { moods.share(of: .slumped) }
 
     /// Slime features are dark reads in the goo, not holes.
     private var feature: Color { Color(white: 0.10).opacity(0.8) }
@@ -2054,7 +2092,7 @@ private struct SlimeBody: View {
     /// skeleton's `air` and hangs a beat. Reduce Motion parks it
     /// mid-separation.
     @ViewBuilder private var droplet: some View {
-        let sep = mood == .celebrating ? (still ? 0.75 : pose.air) : 0
+        let sep = moods.mood == .celebrating ? (still ? 0.75 : pose.air) : 0
         if sep > 0.04 {
             Circle()
                 .fill(tint.opacity(0.8))

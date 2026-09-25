@@ -204,6 +204,40 @@ struct BuddyHandoff: Equatable, Sendable {
     }
 }
 
+/// Each mood's share of the figure drawn this frame, for the parts a body
+/// shapes by mood: the crab's claws, the axolotl's fronds, the cat's ears
+/// and tail, the owl's tufts and wings, the slime's melt, the mushroom's
+/// slump and the saucer's beam. Outside a handoff it is the mood whole.
+/// Through one, each part takes every mood's own value by its share, so
+/// it swings over the same 0.24 s as the pose instead of jumping.
+struct BuddyMoodShares: Equatable, Sendable {
+    /// The mood being handed into.
+    var mood: NotchBuddyToy.Mood
+    /// Each mood's share, summing to 1.
+    var shares: [NotchBuddyToy.Mood: Double]
+
+    init(_ mood: NotchBuddyToy.Mood, handoff: BuddyHandoff? = nil) {
+        self.mood = mood
+        var drawn: [NotchBuddyToy.Mood: Double] = [mood: 1]
+        if let handoff, !handoff.isOver { drawn = handoff.shares(into: mood) }
+        let total = drawn.values.reduce(0, +)
+        shares = total > 0 ? drawn.mapValues { $0 / total } : [mood: 1]
+    }
+
+    /// How much of the figure is `mood`'s, 0 … 1.
+    func share(of mood: NotchBuddyToy.Mood) -> Double { shares[mood] ?? 0 }
+
+    /// A part's measure: each mood's own value by its share. Summed in
+    /// a fixed order, so a frame never differs from the last by rounding.
+    func mix(_ value: (NotchBuddyToy.Mood) -> Double) -> Double {
+        var sum = 0.0
+        for mood in shares.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+            sum += value(mood) * (shares[mood] ?? 0)
+        }
+        return sum
+    }
+}
+
 /// The buddy arriving where it now lives, drawn over `duration`: grown in
 /// from the size it had and drifted in from where it was, so a drop out
 /// of the notch at 2× doesn't blink and double in one frame, and a buddy
