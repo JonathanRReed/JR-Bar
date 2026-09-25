@@ -189,3 +189,28 @@ def test_the_default_graph_charts_pi_and_openclaw_when_their_files_exist(tmp_pat
     # chart has nothing to say about them.
     assert usage_graph_worker.usage_graph_document(settings, provider_ids=["claude"])["providers"] == ("claude",)
     assert usage_graph_worker.usage_graph_document(settings, metric="percent")["providers"] == ("claude",)
+
+
+def test_the_graph_cache_notices_new_gemini_chats_and_openclaw_events(tmp_path: Path) -> None:
+    import sqlite3
+
+    from jrbar import usage_graph_worker
+
+    gemini = tmp_path / "gemini" / "tmp"
+    chats = gemini / "5f1c0a" / "chats"
+    chats.mkdir(parents=True)
+    (chats / "session-1.json").write_text('{"messages": []}', encoding="utf-8")
+    before = usage_graph_worker._local_history_fingerprint("gemini", gemini)
+    (chats / "session-2.json").write_text('{"messages": []}', encoding="utf-8")
+    assert usage_graph_worker._local_history_fingerprint("gemini", gemini) != before
+
+    openclaw = tmp_path / "openclaw"
+    database = openclaw / "agents" / "main" / "agent" / "openclaw-agent.sqlite"
+    database.parent.mkdir(parents=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE transcript_events (session_id TEXT, seq INTEGER, event TEXT)")
+    before = usage_graph_worker._local_history_fingerprint("openclaw", openclaw)
+    assert "agents/main/agent/openclaw-agent.sqlite" in before["databases"]
+    with sqlite3.connect(database) as connection:
+        connection.execute("INSERT INTO transcript_events VALUES ('s1', 1, '{}')")
+    assert usage_graph_worker._local_history_fingerprint("openclaw", openclaw) != before

@@ -531,13 +531,13 @@ def _file_fingerprint(path: Path) -> dict:
     }
 
 
-def _tree_fingerprint(root: Path) -> dict:
-    """Stat-only fingerprint of every ``.jsonl`` under ``root``.
+def _tree_fingerprint(root: Path, suffix: str = ".jsonl") -> dict:
+    """Stat-only fingerprint of every ``suffix`` file under ``root``.
 
     Same file filter as the usage scan's walk (regular, non-symlinked
-    ``.jsonl``); count+bytes+newest-mtime catch append/delete, and the
-    inode xor catches a same-size same-mtime replacement that the per-
-    file parse cache would also accept.
+    ``.jsonl``, or ``.json`` for Gemini CLI's chats); count+bytes+newest-
+    mtime catch append/delete, and the inode xor catches a same-size
+    same-mtime replacement that the per-file parse cache would also accept.
     """
     files = 0
     total_bytes = 0
@@ -554,7 +554,7 @@ def _tree_fingerprint(root: Path) -> dict:
         for directory, _dirnames, filenames in walker:
             base = Path(directory)
             for name in filenames:
-                if not name.endswith(".jsonl"):
+                if not name.endswith(suffix):
                     continue
                 try:
                     info = (base / name).lstat()
@@ -569,6 +569,32 @@ def _tree_fingerprint(root: Path) -> dict:
     except OSError:
         return {"missing": True}
     return {"files": files, "bytes": total_bytes, "newest_ns": newest_ns, "inos": inode_xor}
+
+
+def _local_history_fingerprint(provider_id: str, root: Path) -> dict:
+    """What ``local_token_history`` reads for one agent, as stat tuples.
+
+    Gemini CLI keeps its chats as ``.json``, not ``.jsonl``. OpenClaw's main
+    store is one SQLite database per agent, where a new event can land in
+    the write-ahead log without touching the database file itself.
+    """
+    if provider_id == "gemini":
+        return _tree_fingerprint(root, suffix=".json")
+    fingerprint = _tree_fingerprint(root)
+    if provider_id == "openclaw":
+        agents = root / "agents"
+        try:
+            databases = sorted(agents.glob("*/agent/openclaw-agent.sqlite"))[:64] if agents.is_dir() else []
+        except OSError:
+            databases = []
+        fingerprint["databases"] = {
+            str(database.relative_to(root)): {
+                "db": _file_fingerprint(database),
+                "wal": _file_fingerprint(database.with_name(database.name + "-wal")),
+            }
+            for database in databases
+        }
+    return fingerprint
 
 
 def _corpus_fingerprint(
@@ -595,7 +621,7 @@ def _corpus_fingerprint(
 
     for provider_id, root in local_history_roots().items():
         if provider_id in providers:
-            fingerprint[f"local:{provider_id}"] = _tree_fingerprint(root)
+            fingerprint[f"local:{provider_id}"] = _local_history_fingerprint(provider_id, root)
     if snapshot.usage_display_mode == "sessions":
         from .session_history import TRANSCRIPT_SESSION_PROVIDERS
 
