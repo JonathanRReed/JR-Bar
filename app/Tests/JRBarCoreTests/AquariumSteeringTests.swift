@@ -523,4 +523,31 @@ struct AquariumSteeringTests {
         }
         #expect(fed.x > 0.55)
     }
+
+    @Test("a change of mind never turns a fish from food ahead or from a scare")
+    func whimWaitsForFood() {
+        // A seed and a moment deep in a whim to turn back: facing right,
+        // the whim says left.
+        let seed: UInt64 = 5
+        var t = 0.0
+        while AquariumSteering.whim(seed: seed, at: t) > -0.995 { t += 0.25 }
+        let start = t - 0.5
+        func run(_ food: (x: Double, y: Double)?, startled: Bool = false) -> [SwimTurn.Kind] {
+            var b = SwimBody(x: 0.45, y: 0.5, dir: 1, speed: 0.04, turnRate: 2.4, energy: 1, homeY: 0.5)
+            var clock = start
+            var kinds: [SwimTurn.Kind] = []
+            for _ in 0..<36 {
+                clock += 1.0 / 30
+                let wasTurning = b.turn != nil
+                AquariumSteering.step(&b, dt: 1.0 / 30, t: clock, seed: seed,
+                                      context: SwimContext(bounds: Self.tank, food: food, wander: 0,
+                                                           startled: startled))
+                if let turn = b.turn, !wasTurning { kinds.append(turn.kind) }
+            }
+            return kinds
+        }
+        #expect(run(nil) == [.cruise], "the whim is real here: with nothing to do it turns back")
+        #expect(run((0.62, 0.5)).isEmpty, "food ahead: it swims on to the pellet")
+        #expect(run((0.62, 0.5), startled: true).isEmpty, "a scare ahead: it flees on, away from the tap")
+    }
 }

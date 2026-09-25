@@ -357,10 +357,12 @@ public enum AquariumSteering {
         }
 
         // A change of mind, now and then, well clear of the glass and
-        // well after the last turn.
+        // well after the last turn — never with food, a scare or work
+        // to see to.
         let clear = min(body.x - bounds.minX, bounds.maxX - body.x) > 0.3
             && t - body.lastTurnEnd > 6 / tempo
-        if clear, context.station == nil, whim(seed: seed, at: t) * dir < -0.985 {
+        if clear, context.food == nil, context.station == nil,
+           whim(seed: seed, at: t) * dir < -0.985 {
             backKind = context.idling ? .idle : .cruise
         }
 
