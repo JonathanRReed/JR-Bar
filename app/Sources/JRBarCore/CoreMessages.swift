@@ -1978,6 +1978,30 @@ public struct CoreDotLink: Codable, Hashable, Sendable {
     public var state: String
     public var role: String?
     public var error: String?
+    /// Additive (`linked` only): how far the Dot's phase is from the
+    /// strip's, predicted from fresh reads of its own clock (ms, signed:
+    /// positive is ahead). nil before the first timed Dot write.
+    public var phaseErrorMs: Double?
+    /// The Dot's clock in device-ms per real ms (0.9734 is 2.66% slow);
+    /// `clockSource` is `measured`, `warm` (the last saved rate), `frozen`
+    /// (fresh reads stopped moving) or `off` (clock correction is off).
+    public var clockRate: Double?
+    public var clockSource: String?
+    /// `linked_sync_tolerance_ms` in effect.
+    public var toleranceMs: Double?
+    /// When the Dot was last written on the strip's beat (epoch seconds),
+    /// and how many Dot-only re-anchors the last hour needed.
+    public var lastSyncAt: Double?
+    public var syncWritesHour: Int?
+    /// How the last Dot write was rotated: `exact`, `snapped` (at a line
+    /// boundary, to fit the firmware's budget) or `unrotated`.
+    public var rotation: String?
+    /// While Check sync runs, when it ends (epoch seconds).
+    public var checkUntil: Double?
+    /// `dot_extend_style` in effect, and the period lock's rung
+    /// (`brightest`, `average`, `soft`, `static`, `continue`).
+    public var style: String?
+    public var rung: String?
 
     public init(state: String, role: String? = nil, error: String? = nil) {
         self.state = state
@@ -1985,13 +2009,63 @@ public struct CoreDotLink: Codable, Hashable, Sendable {
         self.error = error
     }
 
-    enum CodingKeys: String, CodingKey { case state, role, error }
+    enum CodingKeys: String, CodingKey {
+        case state, role, error
+        case phaseErrorMs = "phase_error_ms"
+        case clockRate = "clock_rate"
+        case clockSource = "clock_source"
+        case toleranceMs = "tolerance_ms"
+        case lastSyncAt = "last_sync_at"
+        case syncWritesHour = "sync_writes_hour"
+        case rotation
+        case checkUntil = "check_until"
+        case style, rung
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         state = try c.decodeIfPresent(String.self, forKey: .state) ?? "off"
         role = try c.decodeIfPresent(String.self, forKey: .role)
         error = try c.decodeIfPresent(String.self, forKey: .error)
+        phaseErrorMs = try? c.decodeIfPresent(Double.self, forKey: .phaseErrorMs)
+        clockRate = try? c.decodeIfPresent(Double.self, forKey: .clockRate)
+        clockSource = try? c.decodeIfPresent(String.self, forKey: .clockSource)
+        toleranceMs = try? c.decodeIfPresent(Double.self, forKey: .toleranceMs)
+        lastSyncAt = try? c.decodeIfPresent(Double.self, forKey: .lastSyncAt)
+        syncWritesHour = try? c.decodeIfPresent(Int.self, forKey: .syncWritesHour)
+        rotation = try? c.decodeIfPresent(String.self, forKey: .rotation)
+        checkUntil = try? c.decodeIfPresent(Double.self, forKey: .checkUntil)
+        style = try? c.decodeIfPresent(String.self, forKey: .style)
+        rung = try? c.decodeIfPresent(String.self, forKey: .rung)
+    }
+}
+
+/// `lights.device_receipts[device id]`: what a device's card should say
+/// that no setting explains. Today, that another writer changed the
+/// device's program (found by a fresh read at the reassert cadence), and
+/// whether JR-Bar has stopped rewriting it rather than fight.
+public struct CoreDeviceReceipt: Codable, Hashable, Sendable {
+    public var foreignWriteAt: Double?
+    public var foreignWrites: Int
+    public var paused: Bool
+
+    public init(foreignWriteAt: Double? = nil, foreignWrites: Int = 0, paused: Bool = false) {
+        self.foreignWriteAt = foreignWriteAt
+        self.foreignWrites = foreignWrites
+        self.paused = paused
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case foreignWriteAt = "foreign_write_at"
+        case foreignWrites = "foreign_writes"
+        case paused
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        foreignWriteAt = try? c.decodeIfPresent(Double.self, forKey: .foreignWriteAt)
+        foreignWrites = (try? c.decodeIfPresent(Int.self, forKey: .foreignWrites)) ?? 0
+        paused = (try? c.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
     }
 }
 
@@ -2006,23 +2080,19 @@ public struct CoreLights: Codable, Hashable, Sendable {
     /// When `linkedSkewMs` was measured (epoch seconds); the two travel
     /// together or not at all.
     public var linkedSkewAt: Double?
-    /// The skew the last coupled write baked into the Dot's program so it
-    /// restarts in phase; absent when no correction was applied. Shares
-    /// `linkedSkewAt`'s freshness.
-    public var linkedSkewCorrectedMs: Double?
     public var dotLink: CoreDotLink?
     public var autoDim: CoreAutoDim?
+    /// Additive: per-device receipts (`CoreDeviceReceipt`), keyed by id.
+    public var deviceReceipts: [String: CoreDeviceReceipt] = [:]
 
     public init(surfaces: [String: CoreLightSurface] = [:], linked: Bool? = nil, devicesLinked: Bool? = nil,
                 linkedSkewMs: Double? = nil, linkedSkewAt: Double? = nil,
-                linkedSkewCorrectedMs: Double? = nil,
                 dotLink: CoreDotLink? = nil, autoDim: CoreAutoDim? = nil) {
         self.surfaces = surfaces
         self.linked = linked
         self.devicesLinked = devicesLinked
         self.linkedSkewMs = linkedSkewMs
         self.linkedSkewAt = linkedSkewAt
-        self.linkedSkewCorrectedMs = linkedSkewCorrectedMs
         self.dotLink = dotLink
         self.autoDim = autoDim
     }
@@ -2032,9 +2102,9 @@ public struct CoreLights: Codable, Hashable, Sendable {
         case devicesLinked = "devices_linked"
         case linkedSkewMs = "linked_skew_ms"
         case linkedSkewAt = "linked_skew_at"
-        case linkedSkewCorrectedMs = "linked_skew_corrected_ms"
         case dotLink = "dot_link"
         case autoDim = "auto_dim"
+        case deviceReceipts = "device_receipts"
     }
 
     public init(from decoder: Decoder) throws {
@@ -2047,22 +2117,14 @@ public struct CoreLights: Codable, Hashable, Sendable {
         devicesLinked = try? c.decodeIfPresent(Bool.self, forKey: .devicesLinked)
         linkedSkewMs = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewMs)
         linkedSkewAt = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewAt)
-        linkedSkewCorrectedMs = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewCorrectedMs)
         dotLink = try? c.decodeIfPresent(CoreDotLink.self, forKey: .dotLink)
         autoDim = try? c.decodeIfPresent(CoreAutoDim.self, forKey: .autoDim)
+        deviceReceipts = (try? c.decodeIfPresent([String: CoreDeviceReceipt].self, forKey: .deviceReceipts)) ?? [:]
     }
 
     public var screenBar: CoreLightSurface? { surfaces["screen_bar"] }
     public var hardware: CoreLightSurface? { surfaces["hardware"] }
     public var dot: CoreLightSurface? { surfaces["dot"] }
-
-    /// The skew is a measurement, not a state: past half an hour it is
-    /// old news and says nothing about whether the pair is in step now.
-    public static let linkedSkewFreshSeconds: TimeInterval = 30 * 60
-    public var isLinkedSkewFresh: Bool {
-        guard let linkedSkewAt, linkedSkewMs != nil else { return false }
-        return linkedSkewAt >= Date().timeIntervalSince1970 - Self.linkedSkewFreshSeconds
-    }
 }
 
 // MARK: - event

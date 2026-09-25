@@ -224,7 +224,7 @@ def test_an_ask_outranks_an_unseen_completion__and_2_more() -> None:
             facts = DotBeaconFacts(escalation_stage=stage, **facts_kwargs)
             program = beacon_program(facts, include_completions=True)[0]
             if program == "off":
-                return
+                continue
             animation, problems = read_program(program, led_count=DOT_LED_COUNT)
             assert not [problem for problem in problems if problem.code == "strobe"]
             compiled = compile_presentation_program(program, led_count=DOT_LED_COUNT)
@@ -296,21 +296,26 @@ def test_asks_role_ignores_the_strip_even_when_there_is_one__and_2_more() -> Non
 
 
 def test_plan_applies_the_dots_brightness_as_one_leading_line__and_2_more() -> None:
-    # --- scenario: plan_applies_the_dots_brightness_as_one_leading_line
+    # --- scenario: plan_folds_the_dots_cap_into_the_programs_own_line
+    """The strip's authored ``brightness 10`` and the Dot's cap of 42 are
+    one line on the Dot, ``round(10 * 42 / 255)``: never two lines, and
+    never above the cap (the shared rule, ``led_status.fold_brightness``)."""
     plan = plan_dot_surface(
         role="extend", strip_program=LIVE_DOT_DEFECT, strip_led_count=8, brightness=42
     )
     lines = plan.program.splitlines()
-    assert lines[0] == "brightness 42"
+    assert lines[0] == "brightness 2"
     assert sum(1 for line in lines if line.startswith("brightness")) == 1
 
     # --- scenario: full_brightness_needs_no_line_at_all
     plan = plan_dot_surface(role="asks", facts=DotBeaconFacts(ask_count=1), brightness=255)
     assert not plan.program.startswith("brightness")
 
-    # --- scenario: apply_brightness_line_clamps_and_replaces
-    assert apply_brightness_line("brightness 9\n#FF0000", 300) == "#FF0000"
+    # --- scenario: apply_brightness_line_clamps_and_multiplies
+    assert apply_brightness_line("brightness 9\n#FF0000", 300) == "brightness 9\n#FF0000"
     assert apply_brightness_line("brightness 9\n#FF0000", -5) == "brightness 0\n#FF0000"
+    assert apply_brightness_line("brightness 200\n#FF0000", 128) == "brightness 100\n#FF0000"
+    assert apply_brightness_line("#FF0000", 64) == "brightness 64\n#FF0000"
     assert apply_brightness_line("#FF0000", None) == "#FF0000"
 
 
@@ -323,17 +328,36 @@ def test_unknown_role_plans_as_extend():
 # --- skew compensation: the late restart plays the strip's phase ------------
 
 
+def _firmware_frames(program: str, *, start_ms: int, frames: int, step_ms: int, led_count: int = 2):
+    """The firmware engine's frames, stepped the way the device steps: a
+    frame at a time from the parse (it advances a line per step, so a single
+    jump across laps lands on the wrong line). The RAW engine: the app's
+    renderer facade compiles every program first, which is not what the
+    device does with the bytes it is sent."""
+    from jrbar.led_wasm import RawSdLedWasmController
+
+    engine = RawSdLedWasmController(led_count)
+    assert engine.parse(program, 0).ok, program
+    for moment in range(0, start_ms, 16):
+        engine.step(moment)
+    return [engine.step(start_ms + index * step_ms) for index in range(frames)]
+
+
+def _worst_code_gap(left, right) -> int:
+    return max(
+        abs(a - b)
+        for frame_a, frame_b in zip(left, right)
+        for led_a, led_b in zip(frame_a, frame_b)
+        for a, b in zip(led_a, led_b)
+    )
+
+
 def test_shift_program_phase_reanchors_the_loop_by_the_skew__and_3_more() -> None:
-    # --- scenario: a_late_dot_enters_its_loop_mid_step
-    """Written 250 ms after the strip, the Dot's restart is 250 ms late
-    every lap: the strip is mid-fade while the Dot is still starting.
-    Re-sequencing the loop to begin 250 ms in is the same cycle from the
-    same instant the strip's write landed."""
-    assert shift_program_phase("#FF0000 500ms\noff 500ms\nrepeat", 250) == (
-        "0:#FF0000 250ms; 1:#FF0000 250ms\n"
-        "off 500ms\n"
-        "0:#800000 250ms; 1:#800000 250ms\n"
-        "repeat"
+    # --- scenario: a_pulse_cut_at_its_peak_is_its_two_cosine_halves
+    """A ``pulse`` is exactly two ``cosine`` halves on the firmware, so a cut
+    at the peak is exact -- the rotation used to refuse every pulse."""
+    assert shift_program_phase("#FF0000 500ms pulse\noff 500ms\nrepeat", 250) == (
+        "off 250ms cosine\noff 500ms\n#FF0000 250ms cosine\nrepeat"
     )
 
     # --- scenario: a_cut_on_a_step_boundary_is_a_pure_rotation
@@ -345,52 +369,63 @@ def test_shift_program_phase_reanchors_the_loop_by_the_skew__and_3_more() -> Non
     program = "#FF0000 500ms\noff 500ms\nrepeat"
     assert shift_program_phase(program, 1000) == program
 
-    # --- scenario: a_pulse_cut_mid_flight_cannot_be_spelled
-    assert shift_program_phase("#FF0000 500ms pulse\noff 500ms\nrepeat", 250) is None
+    # --- scenario: a_mid_flight_cut_plays_the_offset_program_on_the_firmware
+    """Written now, the rotated loop plays what the original plays
+    ``shift`` ms after its own start -- within two codes on the real
+    firmware engine, pulses and eased curves alike, laps later."""
+    for source, shift in (
+        ("#FF0000 1000ms pulse\noff 500ms\nrepeat", 250),
+        ("#FF0000 1000ms pulse\noff 500ms\nrepeat", 777),
+        ("#00FF00 800ms cosine\n#000044 600ms ease-in-out\nrepeat", 333),
+        ("#FF0000 #0000FF\nroll-right 2s\nrepeat", 1234),
+        ("#FF0000 250ms none\noff 250ms none\nrepeat", 100),
+        ("0:#FF0000 400ms none; 1:#00FF00 300ms none 100ms\noff 250ms none\nrepeat", 211),
+    ):
+        rotated = shift_program_phase(source, shift)
+        assert rotated is not None
+        lap = _loop_span_ms(source, DOT_LED_COUNT)
+        assert _loop_span_ms(rotated, DOT_LED_COUNT) == lap
+        played = _firmware_frames(rotated, start_ms=3 * lap, frames=160, step_ms=9)
+        expected = _firmware_frames(source, start_ms=3 * lap + shift, frames=160, step_ms=9)
+        assert _worst_code_gap(played, expected) <= 2, (source, shift, rotated)
 
 
-def test_the_plan_reports_the_shift_it_baked_in__and_2_more() -> None:
-    # --- scenario: the_correction_rotates_and_reports
-    """``corrected_ms`` is what the program was shifted by. The plan no
-    longer guesses an anchor -- the rotated program's true start is the
-    Dot's own write completion minus the shift, which only the runtime
-    can know."""
+def test_the_plan_is_period_locked_and_carries_no_phase__and_2_more() -> None:
+    # --- scenario: an_extend_plan_is_timed_at_the_write_boundary
+    """The plan narrows; the write boundary rotates and retimes from the
+    strip's recorded start (``linked_sync.apply_device_timing``), so the
+    plan is the same whenever it is written and reports the strip's lap."""
     plan = plan_dot_surface(
         role="extend",
         strip_program="#FF0000 500ms\noff 500ms\nrepeat",
         strip_led_count=8,
-        skew_correction_ms=250.0,
     )
     assert plan is not None
-    assert plan.corrected_ms == 250.0
-    assert plan.program == (
-        "0:#FF0000 250ms; 1:#FF0000 250ms\n"
-        "off 500ms\n"
-        "0:#800000 250ms; 1:#800000 250ms\n"
-        "repeat"
-    )
-    assert "skew:250" in plan.reasons
+    assert plan.timed is True
+    assert plan.lap_ms == 1000
+    assert plan.rung == "brightest"
+    assert plan.program == "#FF0000 500ms\noff 500ms\nrepeat"
+    assert "lock:brightest" in plan.reasons
 
-    # --- scenario: the_shift_is_capped_at_a_quarter_second
-    plan = plan_dot_surface(
-        role="extend",
-        strip_program="#FF0000 500ms\noff 500ms\nrepeat",
-        strip_led_count=8,
-        skew_correction_ms=400.0,
-    )
-    assert plan is not None
-    assert plan.corrected_ms == 250.0
-
-    # --- scenario: a_program_that_cannot_rotate_plays_unshifted
+    # --- scenario: a_pulse_program_is_planned_not_refused
     plan = plan_dot_surface(
         role="extend",
         strip_program="#FF0000 500ms pulse\noff 500ms\nrepeat",
         strip_led_count=8,
-        skew_correction_ms=250.0,
     )
-    assert plan is not None
-    assert plan.corrected_ms == 0.0
-    assert plan.program == "#FF0000 500ms pulse\noff 500ms\nrepeat"
+    assert plan is not None and plan.program == "#FF0000 500ms pulse\noff 500ms\nrepeat"
+
+    # --- scenario: the_scanner_keeps_the_strips_period_on_the_dot
+    """The live regression: the scanner narrowed to two bands read as a
+    blink at two LEDs, the Dot's own gate slowed it by 2x (1606 vs 3212 ms)
+    and the pair ran different loops forever. The Dot steps down to band
+    averages instead, which keep the strip's period."""
+    scanner = next(program for name, program, leds in CORPUS if name == "effect_scanner_8led")
+    plan = plan_dot_surface(role="extend", strip_program=scanner, strip_led_count=8)
+    compiled_strip = compile_presentation_program(scanner, led_count=8).program
+    compiled_dot = compile_presentation_program(plan.program, led_count=DOT_LED_COUNT).program
+    assert plan.rung == "average"
+    assert _loop_span_ms(compiled_dot, DOT_LED_COUNT) == _loop_span_ms(compiled_strip, 8)
 
 
 # --- the write boundary: no program for the wrong device, ever --------------
@@ -588,7 +623,7 @@ def test_the_corpus_is_the_real_one_and_not_empty__and_2_more() -> None:
     for name, program, source_leds in CORPUS:
         narrowed = downsample_program(program, source_leds=source_leds)
         if narrowed is None:
-            return  # refused outright, which is the other safe answer
+            continue  # refused outright, which is the other safe answer
         assert stray_indices(narrowed) == ()
         worst = unaddressed_leds(narrowed)
         assert max(worst.values()) == 0, f"{name}: LEDs held across lines: {worst}"
@@ -599,7 +634,7 @@ def test_the_corpus_is_the_real_one_and_not_empty__and_2_more() -> None:
 
         narrowed = downsample_program(program, source_leds=source_leds)
         if narrowed is None:
-            return
+            continue
         # Black is always available: it is what "this LED is not lit on this
         # line" is spelled as, and `off` is not legal in indexed form.
         source = {
@@ -649,10 +684,10 @@ def test_narrowing_keeps_the_strips_brightness_repeat_and_line_count__and_2_more
 
         narrowed = downsample_program(program, source_leds=source_leds)
         if narrowed is None:
-            return
+            continue
         _animation, problems = read_program(program, led_count=source_leds)
         if errors_only(problems):
-            return
+            continue
         source_brightness, source_repeats, source_lines = _shape(program, source_leds)
         narrow_brightness, narrow_repeats, narrow_lines = _shape(narrowed, DOT_LED_COUNT)
         assert narrow_brightness == source_brightness
@@ -678,7 +713,7 @@ def test_narrowing_keeps_the_strips_brightness_repeat_and_line_count__and_2_more
 
         narrowed = downsample_program(program, source_leds=source_leds)
         if narrowed is None:
-            return
+            continue
         pattern = r"\b(?:none|linear|pulse|cosine|ease)\b"
         assert set(re.findall(pattern, narrowed)) - {"none"} <= set(
             re.findall(pattern, program)
@@ -753,7 +788,7 @@ def test_downsample_preserves_line_span_of_a_chase__and_3_more() -> None:
     for name, program, source_leds in CORPUS:
         narrowed = downsample_program(program, source_leds=source_leds)
         if narrowed is None:
-            return  # refused outright, which is the other safe answer
+            continue  # refused outright, which is the other safe answer
         assert _loop_span_ms(narrowed, DOT_LED_COUNT) == _loop_span_ms(
             program, source_leds
         ), name
@@ -853,3 +888,121 @@ def test_upsample_round_trips_through_downsample() -> None:
         ), name
     assert saw_dot_program
 
+
+
+# --- the period lock and pulse rotation over the whole corpus ----------------
+
+
+def test_the_period_lock_holds_for_every_corpus_program__and_1_more() -> None:
+    # --- scenario: every_dot_plan_compiles_to_the_strips_period
+    """The strip's program is compiled once at eight LEDs and the Dot is
+    derived from that; whatever rung the Dot lands on, its compiled loop is
+    the strip's compiled loop, or it holds a still colour (no loop at all).
+    Before the lock the scanner ran 1606 ms on the strip and 3212 on the Dot."""
+    from jrbar.animation import loop_duration_ms, read_program
+
+    checked = 0
+    for name, program, source_leds in CORPUS:
+        if source_leds == DOT_LED_COUNT:
+            continue
+        strip = compile_presentation_program(program, led_count=source_leds)
+        if not strip.accepted:
+            continue
+        strip_loop = loop_duration_ms(read_program(strip.program, led_count=source_leds)[0])
+        plan = plan_dot_surface(role="extend", strip_program=program, strip_led_count=source_leds)
+        assert plan is not None, name
+        dot = compile_presentation_program(plan.program, led_count=DOT_LED_COUNT)
+        assert dot.accepted, name
+        dot_loop = loop_duration_ms(read_program(dot.program, led_count=DOT_LED_COUNT)[0])
+        if plan.rung == "static":
+            assert dot_loop is None, name
+        else:
+            assert dot_loop == strip_loop, f"{name}: dot {dot_loop} != strip {strip_loop} ({plan.rung})"
+        checked += 1
+    assert checked > 20
+
+    # --- scenario: no_rotation_of_a_narrowed_corpus_program_is_refused
+    """Pulse programs were refused at a mid-flight cut (64 of 320 attempts
+    in the research corpus), so those Dots played unshifted and started a
+    whole skew late. Every one rotates now."""
+    for name, program, source_leds in CORPUS:
+        narrowed = downsample_program(program, source_leds=source_leds)
+        if narrowed is None or "repeat" not in narrowed:
+            continue
+        for shift in (13.3, 25.6, 56.3, 81.4):
+            assert shift_program_phase(narrowed, shift) is not None, (name, shift)
+
+
+def test_the_lights_frame_asks_only_for_role_and_why__and_1_more(monkeypatch) -> None:
+    # --- scenario: describing_an_extend_dot_plans_no_program
+    """The lights frame reads the plan's role and ``why`` on every build;
+    ``describe_only`` gives it those without working out the Dot's
+    continuation, which cost the main thread about 50 ms a frame."""
+    import sys
+    from pathlib import Path
+
+    from jrbar import dot_continue, linked_sync
+
+    scripts = str(Path(__file__).resolve().parents[1] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from review_effects import effect_programs
+
+    comet = next(p for n, p, leds in effect_programs() if n == "effect_comet_8led")
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("the lights frame planned the Dot's program")
+
+    monkeypatch.setattr(dot_continue, "continue_program", refuse)
+    monkeypatch.setattr(linked_sync, "period_locked_dot", refuse)
+    plan = plan_dot_surface(
+        role="extend", semantic="active", strip_program=comet, extend_style="continue", describe_only=True
+    )
+    assert plan is not None and plan.program == "" and plan.why == "working" and plan.role == "extend"
+
+    # --- scenario: nothing_to_extend_is_still_nothing
+    assert plan_dot_surface(role="extend", strip_program=None, describe_only=True) is None
+
+
+def test_continue_follows_each_device_s_direction__and_1_more() -> None:
+    # --- scenario: the_dot_joins_the_strip_where_it_sits_on_the_desk
+    """``dot_extend_side`` is where the Dot sits as you face the pair, and
+    each device's ``led_direction`` says which way round it is mounted. A
+    strip turned round has LED 0 at its right-hand end, so a Dot on the
+    right carries on from LED 0; the light enters the Dot at its LED
+    nearest the strip, which is LED 1 for a forward Dot on the left."""
+    from jrbar.dot_role import continue_geometry
+
+    cases = {
+        ("after_last", "forward", "forward"): ("after_last", "forward"),
+        ("after_last", "reversed", "forward"): ("before_first", "forward"),
+        ("after_last", "forward", "reversed"): ("after_last", "reversed"),
+        ("after_last", "reversed", "reversed"): ("before_first", "reversed"),
+        ("before_first", "forward", "forward"): ("before_first", "reversed"),
+        ("before_first", "reversed", "forward"): ("after_last", "reversed"),
+        ("before_first", "forward", "reversed"): ("before_first", "forward"),
+        ("before_first", "reversed", "reversed"): ("after_last", "forward"),
+    }
+    for (side, strip, dot), placed in cases.items():
+        assert continue_geometry(side, strip, dot) == placed, (side, strip, dot)
+    assert continue_geometry(None, "sideways", None) == ("after_last", "forward")
+
+    # --- scenario: a_comet_on_a_turned_round_strip_still_runs_on_into_the_dot
+    """Mounted the other way round, the strip is written mirrored (lane 9),
+    so its comet runs from LED 7 to LED 0 and leaves by LED 0, the end the
+    Dot sits at. Read with the strip's direction the Dot carries it on
+    exactly as it does the forward comet; read without it, the comet ran
+    away from LED 7 and the Dot fell back to mirroring."""
+    from jrbar.dot_continue import continue_program
+
+    tail = "#007280 #002B31 #001012 #000606 #000101 #000000 #000000 #000000"
+    rolls = "roll-{0} 1320ms linear\n" * 6
+    comet = f"#000203 160ms cosine\n{tail} 165ms cosine\n{rolls.format('right')}repeat"
+    turned = f"#000203 160ms cosine\n{' '.join(reversed(tail.split()))} 165ms cosine\n{rolls.format('left')}repeat"
+    forward = continue_program(comet, source_leds=8)
+    assert forward is not None
+    plan = plan_dot_surface(role="extend", strip_program=turned, strip_direction="reversed")
+    assert plan is not None and plan.rung == "continue" and "style:continue" in plan.reasons
+    assert plan.program == forward.program
+    unturned = plan_dot_surface(role="extend", strip_program=turned)
+    assert unturned is not None and unturned.rung != "continue"

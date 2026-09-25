@@ -468,3 +468,81 @@ def test_failed_scratch_write_preserves_prior_complete_target__and_1_more(tmp_pa
     assert target.read_text(encoding="utf-8") == PROGRAM_A
     assert sorted(path.name for path in tmp_path.iterdir()) == [target.name]
 
+
+
+# --- a linked Dot's timing, after the gate (lane led-link) --------------------
+
+
+def test_the_dot_timing_runs_after_the_gate__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: the_gate_judges_real_ms_and_the_scaled_text_is_never_recompiled
+    """The safety gate reasons in real milliseconds; the Dot's retimed text
+    is in Dot milliseconds. Re-judging it would clamp a 250 ms phase
+    written as 243 straight back to 250 and break the loop. So the gate
+    sees the program once, before the timing, and the firmware parser --
+    the last word -- sees the timed bytes."""
+    from jrbar import firmware_validation, presentation_compiler
+    from jrbar.linked_sync import DeviceTiming
+
+    # The facade itself: conftest's volume guard wraps the module attribute
+    # with the pre-timing signature, and the controllers call the facade
+    # they imported, which is this one.
+    write_led_program = device_writer._legacy.write_led_program
+    dot = tmp_path / "PulseDot"
+    dot.mkdir()
+    (dot / "LEDS.LED").write_text("off\n", encoding="utf-8")
+    program = "#FF0000 250ms none\noff 250ms none\nrepeat"
+    compiled_inputs: list[str] = []
+    validated: list[str] = []
+    real_compile = presentation_compiler.compile_presentation_program
+    real_require = firmware_validation.require_firmware_program
+
+    def watching_compile(text, **kwargs):
+        compiled_inputs.append(text)
+        return real_compile(text, **kwargs)
+
+    def watching_require(text, **kwargs):
+        # Recorded, not called through: the renderer's parser compiles on
+        # its own for display, which is not the write path compiling.
+        validated.append(text)
+
+    with patch.object(presentation_compiler, "compile_presentation_program", watching_compile), patch.object(
+        firmware_validation, "require_firmware_program", watching_require
+    ):
+        device_writer.take_receipt()
+        write_led_program(
+            program,
+            device_path=dot / "LEDS.LED",
+            preserve_existing_inode=True,
+            timing=DeviceTiming(anchor=0.0, rate=0.9734, latency_ms=0.0),
+        )
+    receipt = device_writer.take_receipt()
+    written = (dot / "LEDS.LED").read_text(encoding="utf-8")
+    assert compiled_inputs == [program]
+    assert validated == [written]
+    real_require(written, led_count=2)
+    assert receipt is not None and receipt.program == written
+    assert receipt.timed is not None and receipt.timed.rate == 0.9734
+    # The gate slowed the saturated-red blink to a 1000 ms loop, and the
+    # Dot's clock runs 0.9734 of real time: its loop is 973 Dot-ms, which is
+    # the strip's 1000 real ms on the Dot.
+    from jrbar.animation import loop_duration_ms, read_program
+
+    assert loop_duration_ms(read_program(written, led_count=2)[0]) == 973
+    assert receipt.applied_at >= receipt.prepared_at
+
+    # --- scenario: the_firmware_check_still_refuses_what_the_device_would
+    with patch.object(firmware_validation, "require_firmware_program", side_effect=firmware_validation.FirmwareValidationError("no")):
+        with pytest.raises(device_writer.DeviceWriteError):
+            write_led_program(
+                program,
+                device_path=dot / "LEDS.LED",
+                preserve_existing_inode=True,
+                timing=DeviceTiming(anchor=0.0, rate=0.9734),
+            )
+
+    # --- scenario: a_plain_write_carries_its_fsync_moment_and_no_timing
+    write_led_program(PROGRAM_A, device_path=dot / "LEDS.LED", preserve_existing_inode=True)
+    receipt = device_writer.take_receipt()
+    assert receipt is not None and receipt.timed is None
+    assert receipt.program == PROGRAM_A
+    assert device_writer.take_receipt() is None

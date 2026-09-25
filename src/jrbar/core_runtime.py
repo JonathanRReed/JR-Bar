@@ -285,13 +285,16 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("surfaces", "*", "why_detail", "seconds_in_state"),
         ("linked_skew_at",),
         ("linked_skew_ms",),
-        ("linked_skew_corrected_ms",),
         ("auto_dim", "lux"),
         ("auto_dim", "factor"),
         # The sensor's value, smoothed and raw: it moves with every read,
         # and the brightness it earns already shows in the surfaces.
         ("auto_dim", "reading"),
         ("auto_dim", "raw"),
+        # The Dot's phase error drifts by tenths of a millisecond between
+        # reads; the sync tick sends the frame itself when it reaches
+        # another 5 ms step or crosses the tolerance (readout_mark).
+        ("dot_link", "phase_error_ms"),
     ),
 }
 
@@ -2648,6 +2651,41 @@ def _cmd_resolve_effect(self, args):
     return core_lights.resolve_effect(self, args)
 
 
+# --- the linked Pro + Dot, and the SidePulse's eject guard ---------------------
+
+
+@command("linked_sync_check")
+def _cmd_linked_sync_check(self, args):
+    """A minute of aligned white flashes on both devices (jrbar.linked_check)."""
+    from . import linked_check
+
+    return linked_check.start_check(self, args)
+
+
+@command("eject_guard", main_thread=False)
+def _cmd_eject_guard(self, args):
+    """The eject guard's real launchd state (jrbar.eject_guard_commands)."""
+    from . import eject_guard_commands
+
+    return eject_guard_commands.status(self, args)
+
+
+@command("protect_sidepulse", main_thread=False)
+def _cmd_protect_sidepulse(self, args):
+    """Reinstall the eject guard for the mounted SidePulse. Explicit only."""
+    from . import eject_guard_commands
+
+    return eject_guard_commands.protect(self, args)
+
+
+@command("release_sidepulse", main_thread=False)
+def _cmd_release_sidepulse(self, args):
+    """Put the eject guard back to protecting nothing. Explicit only."""
+    from . import eject_guard_commands
+
+    return eject_guard_commands.release(self, args)
+
+
 def _history_rows_named(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Name each History row the way the panel names its session now.
 
@@ -3865,16 +3903,8 @@ def build_headless_controller_class() -> type:
             self._core_linked_companion: tuple[str, int, Any] | None = None
             self._core_linked_results: dict[str, tuple[Any, Any]] = {}
             self._core_linked_skew_ms: float | None = None
-            # The skew's rolling median: the last eight coupled-write gaps
-            # per (pro, dot) pair. The median, not the latest sample, is
-            # what the Dot's next program compensates for -- one slow write
-            # should not re-phase the loop.
-            self._core_linked_skew_samples: dict[tuple[str, str], deque[float]] = {}
-            self._core_linked_skew_median_ms: float | None = None
-            # The plan behind the pending companion write, and the shift it
-            # baked in -- ``_apply_hardware_write_result`` reports both.
-            self._core_linked_dot_plan = None
-            self._core_linked_corrected_ms: float | None = None
+            # Where the Dot's last timed program starts in the strip's lap.
+            self._core_linked_dot_origin_ms = 0.0
             # The strip's latest nominal program and its LED count: what a
             # linked ``extend`` Dot replays. Set on every write to the
             # followed strip, cleared when no connected strip remains --
@@ -3897,6 +3927,10 @@ def build_headless_controller_class() -> type:
             # ``lights.dot_link.error``; cleared by the next clean coupled
             # write.
             self._core_linked_dot_error: str | None = None
+            # The pair's shared clock (jrbar.linked_runtime): the strip's
+            # recorded start, the Dot's clock, and the closed loop.
+            self._core_linked = self._core_new_linked_sync()
+            self._core_linked_last_dot_request = None
             # device_id -> monotonic time a bounded cue stops moving. A cue
             # that ends holds whatever its last line painted until something
             # writes again; these deadlines are what puts the live status
@@ -4138,6 +4172,10 @@ def build_headless_controller_class() -> type:
             if expired:
                 self.refresh_(None)
                 self._core_publish_lights()
+            try:
+                self._core_linked_sync_tick(now)
+            except Exception:
+                legacy.log_status_bar(f"core: linked sync tick failed: {traceback.format_exc(limit=3)}")
             if now - self._core_deck_probe_at >= DECK_PROBE_SECONDS:
                 self._core_deck_probe_now()
 
@@ -4375,15 +4413,32 @@ def build_headless_controller_class() -> type:
             objc.super(JRCoreHeadlessController, self).sync_virtual_status_device(*args, **kwargs)
             self._core_publish_lights()
 
+        def _core_new_linked_sync(self):
+            from .device_clock import DeviceClocks
+            from .linked_runtime import LinkedSync
+
+            try:
+                path = default_state_dir() / "device-clocks.json"
+            except Exception:
+                path = None
+            return LinkedSync(DeviceClocks(path))
+
         def _core_note_hardware_write(self, command, result) -> None:
             objc.super(JRCoreHeadlessController, self)._apply_hardware_write_result(command, result)
             try:
                 request = getattr(result, "request", None)
                 write = getattr(result, "write", None)
                 if request is not None and write is not None and write.changed and write.error is None:
-                    anchor = mono_to_epoch(getattr(result, "completed_at", None))
+                    # The program's clock starts when the device takes the
+                    # bytes -- the write's fsync return -- not when the
+                    # worker got round to reporting it after the readback.
+                    started = getattr(write, "applied_at", None)
+                    if started is None:
+                        started = getattr(result, "completed_at", None)
+                    anchor = mono_to_epoch(started)
                     if anchor is not None:
                         self._core_hardware_anchor[request.device.device_id] = anchor
+                    self._core_linked_note_strip_start(request, write, started, anchor)
                 if request is not None and write is not None and write.error is None:
                     from ._led_status_legacy import (
                         finite_cue_duration_ms,
@@ -4430,6 +4485,36 @@ def build_headless_controller_class() -> type:
                             self._core_linked_pro_leds = led_count_for_target(request.device.target)
             except Exception:
                 pass
+
+        def _core_linked_note_strip_start(self, request, write, started, anchor, *, followed: bool = False) -> None:
+            """Record ``A_pro``: the followed strip's current program and the
+            moment it started, from the write's I/O timestamp -- reasserts
+            included, since a reassert restarts the strip too. A timed Dot
+            plays the strip's loop from that same start, so its lights anchor
+            is the strip's, not its own write's (jrbar.linked_runtime)."""
+            from ._led_status_legacy import led_count_for_target
+            from .linked_runtime import LinkedEpoch
+
+            device = request.device
+            leds = led_count_for_target(device.target)
+            epoch = self._core_linked.epoch
+            if leds == 2:
+                if getattr(write, "timed", None) is not None and epoch is not None:
+                    # The Dot's program starts ``origin_ms`` into the strip's
+                    # lap (a Continue Dot starts between two passes), so the
+                    # app plays it from that much after the strip's start --
+                    # 413 ms for a comet, 744 for a chase -- whether or not
+                    # the batch was a clean coupled pair.
+                    origin_s = float(getattr(self, "_core_linked_dot_origin_ms", 0.0) or 0.0) / 1000.0
+                    self._core_hardware_anchor[device.device_id] = epoch.anchor_epoch + origin_s
+                return
+            if started is None or anchor is None or not write.program:
+                return
+            if not followed and not self._core_is_followed_strip(device):
+                return
+            self._core_linked.note_epoch(
+                LinkedEpoch(anchor=float(started), anchor_epoch=float(anchor), device_id=device.device_id)
+            )
 
         def _core_followed_strip_id(self) -> str | None:
             """The strip a linked Dot follows: the first connected strip in
@@ -4573,6 +4658,7 @@ def build_headless_controller_class() -> type:
                 and self._core_linked_skew_ms is None
                 and not self._core_linked_pair_ok
                 and self._core_linked_dot_error is None
+                and self._core_linked.epoch is None
             ):
                 # Nothing linked was ever claimed: resetting the Dot's
                 # dedupe identity anyway would force a rewrite every
@@ -4582,12 +4668,10 @@ def build_headless_controller_class() -> type:
             self._core_linked_pro_leds = 8
             self._core_linked_skew_ms = None
             self._core_linked_skew_at = None
-            self._core_linked_skew_samples.clear()
-            self._core_linked_skew_median_ms = None
-            self._core_linked_corrected_ms = None
-            self._core_linked_dot_plan = None
+            self._core_linked_dot_origin_ms = 0.0
             self._core_linked_pair_ok = False
             self._core_linked_dot_error = None
+            self._core_linked.forget()
             for device in devices:
                 try:
                     if not device.connected or led_count_for_target(device.target) != 2:
@@ -4640,7 +4724,9 @@ def build_headless_controller_class() -> type:
                 lid_closed=core_power.lid_closed(self) is True,
             )
 
-        def _core_dot_plan(self, controller=None, program: str | None = None):
+        def _core_dot_plan(
+            self, controller=None, program: str | None = None, device=None, *, describe_only: bool = False
+        ):
             """The role's whole answer for the Dot, or ``None`` to fall through.
 
             ``None`` means ``status`` (or ``extend`` with nothing to extend):
@@ -4649,13 +4735,20 @@ def build_headless_controller_class() -> type:
             as an unlinked Dot always has.
 
             ``controller`` is optional because the ``lights`` frame wants the
-            role and the ``why`` without wanting a brightness line.
+            role and the ``why`` without wanting a brightness line; it also
+            passes ``describe_only``, so an ``extend`` Dot's program is not
+            worked out on the main thread every frame.
+
+            Brightness: with ``linked_follow_brightness`` (the default) the
+            Dot takes the STRIP's policy -- the brightness lines already in
+            the strip's nominal program -- times ``linked_dot_scale`` in
+            light, capped only by the Dot's own manual brightness. Its own
+            auto-brightness is ignored: it used to cap the Dot below the
+            strip ("100%" read dimmer) and restart it on every auto step.
+            Off, the Dot's own policy (auto included) is the cap instead.
             """
             from . import core_power
-            from ._led_status_legacy import (
-                normalize_brightness,
-                scale_nominal_brightness,
-            )
+            from ._led_status_legacy import normalize_brightness
             from .dot_role import DotRole, normalize_dot_role, plan_dot_surface
 
             if not bool(getattr(self.settings, "devices_linked", True)):
@@ -4664,51 +4757,79 @@ def build_headless_controller_class() -> type:
             strip = getattr(self, "_core_linked_pro_program", None)
             body = program if program is not None else (strip[0] if strip else None)
             brightness = None
+            extend_scale = None
+            finalize = None
+            follow = bool(getattr(self.settings, "linked_follow_brightness", True))
             if controller is not None:
-                device = normalize_brightness(getattr(controller, "brightness", 255))
-                # The strip's own brightness line still caps the Dot: the
-                # linked scale is a ratio between two devices, not a licence
-                # to outshine. ``body`` is NOMINAL here, so this reads a
-                # nominal brightness -- reading the written bytes made the cap
-                # an already-decoded drive code and dimmed the Dot twice.
-                existing = min(
-                    (
-                        int(parts[1])
-                        for parts in (line.strip().split() for line in (body or "").splitlines())
-                        if len(parts) == 2 and parts[0] == "brightness" and parts[1].isdigit()
-                    ),
-                    default=255,
-                )
-                brightness = min(existing, device)
-                # A shut lid makes an ``extend`` Dot the asks beacon, which is
-                # never scaled down (see below).
-                if role == DotRole.EXTEND.value and core_power.lid_closed(self) is not True:
+                own = normalize_brightness(getattr(controller, "brightness", 255))
+                manual = own
+                if device is not None:
+                    try:
+                        manual = normalize_brightness(self.settings.brightness_for_device(device.device_id))
+                    except Exception:
+                        manual = own
+                extend = role == DotRole.EXTEND.value and core_power.lid_closed(self) is not True
+                if extend:
                     # Exactly one place applies ``linked_dot_scale``, and it
-                    # applies it to LIGHT. A code-domain multiply looks like a
-                    # ratio and is not one: the write boundary then decodes
-                    # the scaled code through sRGB, so 0.3 landed as 6.7% of
-                    # the strip's light instead of 30%. ``asks`` is not a
-                    # continuation of anything and is not scaled at all -- an
-                    # attention beacon dimmed to a third is a beacon nobody
-                    # notices.
-                    brightness = scale_nominal_brightness(
-                        brightness, float(getattr(self.settings, "linked_dot_scale", 0.3))
+                    # applies it to LIGHT, line by line on the strip's own
+                    # brightness policy (``scale_program_brightness``). A
+                    # code-domain multiply looks like a ratio and is not one:
+                    # 0.3 landed as 6.7% of the strip's light.
+                    extend_scale = float(getattr(self.settings, "linked_dot_scale", 0.3))
+                    brightness = manual if follow else own
+                else:
+                    # ``asks`` is not a continuation of anything and is not
+                    # scaled at all -- an attention beacon dimmed to a third
+                    # is a beacon nobody notices. Following, it takes the
+                    # strip's policy (its brightness line) as its level.
+                    strip_level = min(
+                        (
+                            int(parts[1])
+                            for parts in (line.strip().split() for line in (body or "").splitlines())
+                            if len(parts) == 2 and parts[0] == "brightness" and parts[1].isdigit()
+                        ),
+                        default=255,
                     )
+                    brightness = min(strip_level, manual) if follow else min(strip_level, own)
+                transfer = getattr(controller, "_for_strip", None)
+                finalize = transfer if callable(transfer) else None
+            # Each device's own mounting (lane 9's ``led_direction``): the
+            # Dot's, and the followed strip's from the epoch its last start
+            # recorded -- the device list is main-thread state, and this
+            # runs on the write worker.
+            epoch = getattr(getattr(self, "_core_linked", None), "epoch", None)
+            led_direction = self._core_led_direction(device.device_id if device is not None else None)
+            strip_direction = self._core_led_direction(epoch.device_id if epoch is not None else None)
             return plan_dot_surface(
                 role=getattr(self.settings, "dot_role", None),
                 semantic=getattr(getattr(self, "_current_resolved_glance", None), "semantic", None),
                 facts=self._core_dot_beacon_facts(),
                 strip_program=body,
                 strip_led_count=int(getattr(self, "_core_linked_pro_leds", 8) or 8),
-                # The rolling median of measured write gaps: the program is
-                # re-anchored by that much, so the Dot's late restart plays
-                # the phase the strip is on (dot_role.shift_program_phase).
-                skew_correction_ms=self._core_linked_skew_median_ms,
                 brightness=brightness,
+                extend_light_scale=extend_scale,
+                finalize=finalize,
+                extend_style=str(getattr(self.settings, "dot_extend_style", "continue")),
+                extend_side=str(getattr(self.settings, "dot_extend_side", "after_last")),
+                led_direction=led_direction,
                 include_completions=bool(
                     getattr(self.settings, "dot_role_include_completions", False)
                 ),
+                describe_only=describe_only,
+                strip_direction=strip_direction,
             )
+
+        def _core_led_direction(self, device_id: str | None) -> str:
+            """``forward`` or ``reversed``: which way round a device is
+            mounted (``DeviceDisplaySetting.led_direction``, which lane 9
+            defines), ``forward`` when it has none."""
+            if device_id is None:
+                return "forward"
+            for entry in getattr(self.settings, "devices", ()) or ():
+                if getattr(entry, "device_id", None) == device_id:
+                    value = str(getattr(entry, "led_direction", "forward") or "forward")
+                    return "reversed" if value == "reversed" else "forward"
+            return "forward"
 
         def _core_linked_dot_follows(self, request) -> bool:
             """True when this request targets the Dot and its role says the
@@ -4742,7 +4863,15 @@ def build_headless_controller_class() -> type:
             return identity in ("", "latest") or identity.startswith("ambient-")
 
         def _sync_hardware_device(self, request):
+            from .linked_check import CHECK_REANCHOR_IDENTITY
+
+            if str(getattr(request, "coalesce_identity", "") or "") == CHECK_REANCHOR_IDENTITY:
+                return self._core_linked_check_reanchor(request)
             if request.device.device_id in self._core_held_preview_devices():
+                # A re-anchor this command was queued for is spent here: left
+                # pending, the next unrelated Dot write took it and was
+                # logged (and counted) as a re-sync.
+                self._core_linked_drop_force(request)
                 # A request queued before the hold began, or one that
                 # slipped past the build-time skip: the held patch is the
                 # truth on this device until the sheet ends it. Reporting
@@ -4761,12 +4890,14 @@ def build_headless_controller_class() -> type:
                     completed_at=self._runtime_worker_monotonic(),
                 )
             if self._core_linked_dot_follows(request):
+                if str(getattr(request, "coalesce_identity", "") or "latest") in ("", "latest"):
+                    self._core_linked_last_dot_request = request
                 controller = self.agent_controller_for_device(request.device)
-                plan = self._core_dot_plan(controller)
+                plan = self._core_dot_plan(controller, device=request.device)
                 if plan is not None:
                     strip = getattr(self, "_core_linked_pro_program", None)
                     state = strip[1] if strip else legacy.LedDisplayState.IDLE
-                    write = controller.sync_program(plan.program, state)
+                    write = self._core_linked_write_dot(controller, plan, request.device, state)
                     return legacy.HardwareWriteResult(
                         request=request,
                         write=write,
@@ -4786,9 +4917,239 @@ def build_headless_controller_class() -> type:
                     legacy.log_status_bar(
                         f"core: dot role could not plan ({reason}); falling through"
                     )
+            # Not the linked write path (no role drives it, or the role
+            # could not plan): a queued re-anchor is spent here too.
+            self._core_linked_drop_force(request)
             return objc.super(JRCoreHeadlessController, self)._sync_hardware_device(request)
 
+        def _core_linked_check_reanchor(self, request):
+            """The closed loop's re-anchor while Check sync holds the Dot, on
+            the write worker. The hold keeps every other write off the Dot,
+            so this one is the check's own: the flash, re-phased from the
+            strip's start. A check that ended before the worker got here has
+            already put the live program back, so the re-anchor is spent."""
+            from .linked_check import reanchor_during_check
+
+            link = self._core_linked
+            write = None
+            if link.check_until is not None and time.monotonic() < link.check_until:
+                write = reanchor_during_check(self, request.device)
+            if write is None:
+                self._core_linked_drop_force(request)
+                write = legacy.LedStatusWrite(
+                    state=legacy.LedDisplayState.IDLE,
+                    target=getattr(request.device, "target", None),
+                    program="",
+                    changed=False,
+                )
+            return legacy.HardwareWriteResult(
+                request=request,
+                write=write,
+                label=f"{request.device.name} sync check",
+                agent_display_rendered=False,
+                completed_at=self._runtime_worker_monotonic(),
+            )
+
         # -- linked Pro + Dot writes -------------------------------------------
+
+        def _core_linked_write_dot(self, controller, plan, device, state, *, force: bool = False, reason: str = "dot"):
+            """Write the Dot's plan, timed from the strip's recorded start.
+
+            An ``extend`` plan is rotated to the phase the strip is on at the
+            moment the Dot will parse it and retimed for the Dot's own clock,
+            at the write boundary (``linked_sync.apply_device_timing``) --
+            so EVERY Dot write is phase-correct by construction, coupled or
+            alone, reassert or brightness change. Its dedupe token leaves the
+            rotation out (the rotation changes every millisecond; the
+            program does not) and carries the strip's start instead, so a
+            strip restart always rewrites the Dot and nothing else does.
+            A Dot write the closed loop asked for (``take_force``) or that
+            rides on a strip restart (``force``) bypasses the deduper."""
+            from .dot_role import DotRole
+            from .linked_runtime import trim_setting
+            from .linked_sync import DeviceTiming
+
+            link = self._core_linked
+            pending = link.take_force()
+            if pending is not None:
+                force, reason = True, pending
+            epoch = link.epoch
+            self._core_linked_dot_plan_seen = getattr(plan, "rung", None)
+            timed = plan.role == DotRole.EXTEND.value and plan.timed and epoch is not None
+            # Where the Dot's program starts in the strip's lap: the lights
+            # frame plays it from the strip's start plus this, as the Dot does.
+            self._core_linked_dot_origin_ms = (
+                float(getattr(plan, "origin_ms", 0.0) or 0.0) if timed else 0.0
+            )
+            if not timed:
+                if force:
+                    return controller.sync_program(plan.program, state, force=True)
+                return controller.sync_program(plan.program, state)
+            correction = bool(getattr(self.settings, "linked_dot_clock_correction", True))
+            drifted = link.current_error(link.now())
+            rate = link.rate_for_write(device.device_id, correction=correction, commit=force)
+            trim = trim_setting(self.settings)
+            # The program starts ``origin_ms`` into the strip's lap (a
+            # ``continue`` Dot starts between two passes), so the rotation
+            # the phase asks for is that much shorter.
+            phase_trim = trim - float(getattr(plan, "origin_ms", 0.0) or 0.0)
+            # The Dot's own transfer (its calibration gains and resting glow)
+            # changes the bytes without changing the plan, so it is part of
+            # the identity: a calibration applied to a linked Dot used to be
+            # deduped away until something else rewrote it.
+            token = (
+                "linked",
+                plan.role,
+                plan.program,
+                round(epoch.anchor, 6),
+                rate,
+                trim,
+                tuple(getattr(controller, "channel_gains", ()) or ()),
+                float(getattr(controller, "resting_glow", 0.0) or 0.0),
+            )
+            write = controller.sync_program(
+                plan.program,
+                state,
+                dedupe_token=token,
+                force=force,
+                trim_on_reassert=False,
+                timing=DeviceTiming(anchor=epoch.anchor, rate=rate, trim_ms=phase_trim),
+            )
+            if getattr(write, "changed", False) and getattr(write, "error", None) is None:
+                # No read of the Dot's clock here: this is the write worker,
+                # which carries the strip too, and a stalled Dot read held
+                # the strip's next command for half a second. The loop's
+                # next 20 s read carries the clock back to this write.
+                link.note_dot_write(
+                    dot_id=device.device_id,
+                    write=write,
+                    epoch=epoch,
+                    trim_ms=phase_trim,
+                    reason=reason,
+                )
+                if reason in ("reanchor", "blind"):
+                    # One line per Dot-only re-anchor, for the log classifier:
+                    # at most one every 20 s, and never a strip write.
+                    error_words = "unmeasured" if drifted is None else f"{drifted:.0f} ms"
+                    legacy.log_status_bar(
+                        f"linked sync: re-anchor (error {error_words}, rate {rate:.4f}x, "
+                        f"{reason}, {getattr(write.timed, 'rotation', '?')})"
+                    )
+            return write
+
+        def _core_linked_dot_device(self):
+            """The connected Dot, when there is exactly the one to link."""
+            from ._led_status_legacy import led_count_for_target
+
+            try:
+                dots = [
+                    device
+                    for device in self.status_bar_devices(remember=False)
+                    if device.connected
+                    and device.device_id != legacy.VIRTUAL_DEVICE_ID
+                    and led_count_for_target(device.target) == 2
+                ]
+            except Exception:
+                return None
+            return dots[0] if len(dots) == 1 else None
+
+        def _core_linked_extend_active(self) -> bool:
+            from . import core_power
+            from .dot_role import DotRole, normalize_dot_role
+
+            return (
+                bool(getattr(self.settings, "devices_linked", True))
+                and normalize_dot_role(getattr(self.settings, "dot_role", None)) == DotRole.EXTEND.value
+                and core_power.lid_closed(self) is not True
+                and self._core_linked.epoch is not None
+                and self._core_linked_dot_device() is not None
+            )
+
+        def _core_linked_request_dot_write(self, reason: str, *, check: bool = False) -> bool:
+            """Queue a Dot-only write that bypasses the deduper: the strip
+            restarted without the Dot in the same batch, or the closed loop
+            wants a re-anchor. The Dot's own last request is reused when it
+            is still for this Dot, so nothing about it is invented.
+
+            ``check``: the re-anchor is for a running Check sync, which holds
+            the Dot, so the request is marked for the check's own write
+            (``_core_linked_check_reanchor``) -- still on the write worker,
+            never the main thread: a Dot's USB write has stalled for more
+            than two seconds."""
+            from dataclasses import replace
+
+            from .linked_check import CHECK_REANCHOR_IDENTITY
+            from .models import AgentMode
+
+            dot = self._core_linked_dot_device()
+            if dot is None or not getattr(self, "_hardware_write_active", False):
+                return False
+            request = self._core_linked_last_dot_request
+            if request is None or request.device.device_id != dot.device_id:
+                try:
+                    request = legacy.HardwareWriteRequest(dot, AgentMode.IDLE_READY, None, (), None, 0.0)
+                except Exception:
+                    return False
+            if check:
+                request = replace(request, coalesce_identity=CHECK_REANCHOR_IDENTITY)
+            self._core_linked.request_force(reason)
+            try:
+                self._hardware_write_worker.submit(self._hardware_write_command(request, time.monotonic()))
+            except Exception:
+                return False
+            return True
+
+        def _core_linked_drop_force(self, request) -> None:
+            """A Dot command that will not reach the linked write path spends
+            any re-anchor that was queued for the Dot."""
+            from ._led_status_legacy import led_count_for_target
+
+            try:
+                if led_count_for_target(request.device.target) != 2:
+                    return
+            except Exception:
+                return
+            self._core_linked.take_force()
+
+        def _core_linked_sync_tick(self, now: float) -> None:
+            """The closed loop, once a second from the housekeeping tick:
+            every 20 s a fresh read of the Dot's ``ticks`` (off the main
+            thread), the predicted phase error from it, and a Dot-only
+            re-anchor when that error is past the tolerance -- at most one
+            every 20 s. The strip is never rewritten for sync."""
+            link = self._core_linked
+            if not self._core_linked_extend_active():
+                link.phase_error_ms = None
+                return
+            if not bool(getattr(self.settings, "linked_dot_clock_correction", True)):
+                return
+            dot = self._core_linked_dot_device()
+            if dot is None:
+                return
+            link.consume()
+            if link.read_due(now):
+                link.start_read(dot.device_id, Path(dot.target).parent)
+            from .linked_runtime import readout_mark
+
+            tolerance = getattr(self.settings, "linked_sync_tolerance_ms", 40.0)
+            if readout_mark(link.current_error(now), tolerance) != getattr(self, "_core_linked_sent_mark", None):
+                # The readout ("Within N ms", "Re-syncing") moved: a fresh
+                # read landed or the drift carried the error a step on.
+                self._core_publish_lights(force=True)
+            reason = link.due(
+                tolerance_ms=tolerance,
+                now=now,
+                dot_id=dot.device_id,
+            )
+            if reason is None:
+                return
+            link.note_reanchor_requested(now)
+            if link.check_until is not None and now < link.check_until:
+                # A drift re-anchor during a check is the check's own write,
+                # not a counted re-sync; a blind one still counts.
+                self._core_linked_request_dot_write("check" if reason == "reanchor" else reason, check=True)
+                return
+            self._core_linked_request_dot_write(reason)
 
         def _submit_hardware_write_requests(self, requests, now: float) -> None:
             """With ``devices_linked`` and a Pro plus one Dot mounted, the
@@ -4818,6 +5179,8 @@ def build_headless_controller_class() -> type:
                     strip = strips[0] if strips else None
                 if strip is not None and len(dots) == 1:
                     pro, dot = strip, dots[0]
+            if dot is not None and str(getattr(dot, "coalesce_identity", "") or "latest") in ("", "latest"):
+                self._core_linked_last_dot_request = dot
             if pro is None or dot is None:
                 self._core_linked_companion = None
                 # A batch that did not couple the pair cannot vouch for it:
@@ -4854,7 +5217,6 @@ def build_headless_controller_class() -> type:
             except Exception as exc:
                 self._core_linked_dot_error = f"{exc.__class__.__name__}"
                 self._core_linked_pair_ok = False
-                self._core_linked_dot_plan = None
                 legacy.log_status_bar(f"core: linked dot write failed: {exc.__class__.__name__}")
                 return result
             dot_command = self._hardware_write_command(dot_request, command.deadline - 1.0)
@@ -4881,22 +5243,34 @@ def build_headless_controller_class() -> type:
             # controller runs the strip transfer again on whatever it is
             # handed, so passing already-transferred text decodes the colours
             # and the brightness twice (2026-09-10: `brightness 131` reached
-            # the hardware as `brightness 1`).
+            # the hardware as `brightness 1`). And the RUNNING one: after a
+            # reassert that is the trimmed variant the strip is looping.
             program = getattr(write, "nominal_program", "") or getattr(write, "program", None)
             if not program or getattr(write, "error", None) is not None:
+                # The strip did not restart: the Dot goes through the same
+                # planner, phased from the strip's recorded start, and the
+                # deduper decides -- never a rotation that assumes a fresh
+                # strip start.
                 return self._sync_hardware_device(dot_request)
-            controller = self.agent_controller_for_device(dot_request.device)
-            plan = self._core_dot_plan(
-                controller,
-                program,
+            # The strip just restarted, so the Dot restarts with it whatever
+            # its deduper thinks: an unchanged narrowed text used to be
+            # skipped, leaving the Dot on the old start (116 strip-only
+            # restarts in 8.7 h of one day's log).
+            self._core_linked_note_strip_start(
+                pro_result.request,
+                write,
+                getattr(write, "applied_at", None) or getattr(pro_result, "completed_at", None),
+                mono_to_epoch(getattr(write, "applied_at", None) or getattr(pro_result, "completed_at", None)),
+                followed=True,
             )
-            # The apply side reports the shift this plan baked in and stamps
-            # the Dot's anchor with it; stashed here because the result
-            # pipeline rejoins on the main thread.
-            self._core_linked_dot_plan = plan
+            self._core_linked_pro_program = (program, write.state)
+            controller = self.agent_controller_for_device(dot_request.device)
+            plan = self._core_dot_plan(controller, program, device=dot_request.device)
             if plan is None:
                 return self._sync_hardware_device(dot_request)
-            dot_write = controller.sync_program(plan.program, write.state)
+            dot_write = self._core_linked_write_dot(
+                controller, plan, dot_request.device, write.state, force=True, reason="coupled"
+            )
             return legacy.HardwareWriteResult(
                 request=dot_request,
                 write=dot_write,
@@ -4909,19 +5283,18 @@ def build_headless_controller_class() -> type:
             self._core_note_hardware_write(command, result)
             companion = self._core_linked_results.pop(getattr(command, "key", ""), None)
             if companion is None:
+                self._core_linked_follow_uncoupled_restart(result)
                 self._core_publish_lights()
                 return
             dot_command, dot_result = companion
             if dot_command.generation != self._hardware_write_generation:
                 self._core_publish_lights()
                 return
-            # The pair's word on this coupled batch, taken BEFORE the skew
-            # bookkeeping below touches the program record: a clean pair is
-            # what lets the lights document stamp the Dot with the strip's
-            # anchor and clear the last linked-write error. A Dot-side
-            # write error is a linked-write failure worth naming; the Pro
-            # failing only means this batch did not couple, not that the
-            # Dot's own write went wrong.
+            # The pair's word on this coupled batch: a clean pair clears the
+            # last linked-write error. A Dot-side write error is a
+            # linked-write failure worth naming; the Pro failing only means
+            # this batch did not couple, not that the Dot's own write went
+            # wrong.
             dot_error = getattr(dot_result.write, "error", None)
             pro_ok = getattr(result.write, "error", None) is None
             self._core_linked_pair_ok = pro_ok and dot_error is None
@@ -4929,50 +5302,46 @@ def build_headless_controller_class() -> type:
                 self._core_linked_dot_error = str(dot_error)
             elif pro_ok:
                 self._core_linked_dot_error = None
+            # The gap between the two writes' I/O, kept as a DIAGNOSTIC only.
+            # It used to be medianed and baked into the Dot's next program,
+            # and each new sample changed the rotation, which rewrote the Dot
+            # within a second of every coupled write (79 times in one day's
+            # log). The Dot's phase comes from the strip's recorded start now.
+            pro_at = getattr(result.write, "applied_at", None) or getattr(result, "completed_at", None)
+            dot_at = getattr(dot_result.write, "applied_at", None) or getattr(dot_result, "completed_at", None)
             try:
-                skew = float(dot_result.completed_at) - float(result.completed_at)
+                skew = float(dot_at) - float(pro_at)
             except Exception:
                 skew = None
             if skew is not None and getattr(dot_result.write, "changed", False) and getattr(result.write, "changed", False):
                 self._core_linked_skew_ms = round(skew * 1000.0, 1)
-                # Epoch, so a stale number can be told apart from a fresh
-                # one: the lights document publishes the two together.
                 self._core_linked_skew_at = time.time()
-                try:
-                    from statistics import median
-
-                    pair = (
-                        str(result.request.device.device_id),
-                        str(dot_result.request.device.device_id),
-                    )
-                    samples = self._core_linked_skew_samples.setdefault(
-                        pair, deque(maxlen=8)
-                    )
-                    samples.append(self._core_linked_skew_ms)
-                    self._core_linked_skew_median_ms = round(float(median(samples)), 1)
-                except Exception:
-                    self._core_linked_skew_median_ms = self._core_linked_skew_ms
                 legacy.log_status_bar(f"linked write: dot {self._core_linked_skew_ms} ms after pro")
             self._core_note_hardware_write(dot_command, dot_result)
-            plan = self._core_linked_dot_plan
-            self._core_linked_dot_plan = None
-            corrected = (
-                float(getattr(plan, "corrected_ms", 0.0) or 0.0)
-                if plan is not None
-                else 0.0
-            )
-            if corrected:
-                # The published program is already rotated to the strip's
-                # phase, so its true on-device start is the Dot's own write
-                # completion pulled back by the shift it baked in -- not
-                # the strip's anchor, and not a planning-time guess.
-                anchor = mono_to_epoch(getattr(dot_result, "completed_at", None))
-                if anchor is not None:
-                    self._core_hardware_anchor[dot_result.request.device.device_id] = (
-                        anchor - corrected / 1000.0
-                    )
-            self._core_linked_corrected_ms = corrected or None
             self._core_publish_lights()
+
+        def _core_linked_follow_uncoupled_restart(self, result) -> None:
+            """The strip restarted in a batch the Dot was not in (its own
+            reassert, a strip-only refresh): the Dot follows at once, on the
+            strip's new start, instead of looping from the old one until
+            something else happens to write it."""
+            from ._led_status_legacy import led_count_for_target
+
+            try:
+                request = getattr(result, "request", None)
+                write = getattr(result, "write", None)
+                if request is None or write is None or not write.changed or write.error is not None:
+                    return
+                if led_count_for_target(request.device.target) == 2:
+                    return
+                epoch = self._core_linked.epoch
+                if epoch is None or epoch.device_id != request.device.device_id:
+                    return
+                if not self._core_linked_extend_active():
+                    return
+                self._core_linked_request_dot_write("strip_restart")
+            except Exception:
+                return
 
         # -- the Creator Micro 2 deck ------------------------------------------
 
@@ -5725,7 +6094,11 @@ def build_headless_controller_class() -> type:
                     "core: widget snapshot write failed: "
                     + traceback.format_exc(limit=3))
 
-        def _core_publish_lights(self) -> None:
+        def _core_publish_lights(self, *, force: bool = False) -> None:
+            """Build and send the lights frame when it changed in a way that
+            matters. ``force`` sends it anyway: the linked sync tick uses it
+            when the Dot's phase error moved to another readout step, which
+            the drift alone (volatile) never earns."""
             if getattr(self, "_core_in_refresh", False):
                 return
             server = getattr(self, "_core", None)
@@ -5738,9 +6111,13 @@ def build_headless_controller_class() -> type:
                 return
             with self._core_lock:
                 previous = self._core_documents.get("lights")
-                if previous is not None and doc_significant_equal("lights", previous, document):
+                if not force and previous is not None and doc_significant_equal("lights", previous, document):
                     return
                 self._core_documents["lights"] = document
+            from .linked_runtime import readout_mark
+
+            link = document.get("dot_link") or {}
+            self._core_linked_sent_mark = readout_mark(link.get("phase_error_ms"), link.get("tolerance_ms"))
             server.publish_lights(document)
             self._core_lights_generation += 1
             self._core_note_frame(self._core_lights_frame_times)
@@ -6438,7 +6815,8 @@ def build_headless_controller_class() -> type:
         def _core_build_lights(self) -> dict[str, Any]:
             from ._led_status_legacy import delivered_brightness, led_count_for_target
             from .colors import lift_program_luminance
-            from .dot_role import apply_brightness_line, normalize_dot_role, upsample_program
+            from .dot_role import normalize_dot_role, upsample_program
+            from .dot_role import replace_brightness_line as apply_brightness_line
             from .presentation_policy import MotionClass
 
             glance = getattr(self, "_current_resolved_glance", None)
@@ -6566,20 +6944,25 @@ def build_headless_controller_class() -> type:
                 # long-finished quota alert kept the Dot's ``why`` at
                 # ``capacity`` beside a strip that said ``working``.
                 dot = surfaces["dot"]
-                dot_plan = self._core_dot_plan()
+                # The role and the why only: planning the Dot's program here
+                # ran a comet's whole continuation on the main thread every
+                # frame.
+                dot_plan = self._core_dot_plan(describe_only=True)
                 # Linked Pro + Dot also share an anchor, so the app reads the
                 # two as one unit (core_runtime linked writes) -- but only a
                 # coupled batch that landed clean earns the shared stamp. A
                 # batch that went out uncoupled or failed leaves the Dot its
                 # own anchor rather than claiming a sync nobody measured.
-                anchor = (
-                    hardware_anchor
-                    if devices_linked
+                coupled = (
+                    devices_linked
                     and "hardware" in surfaces
                     and hardware_anchor is not None
                     and self._core_linked_pair_ok
-                    else dot.anchor
                 )
+                # A ``continue`` Dot's program starts between two passes,
+                # ``origin_ms`` into the strip's lap.
+                origin_s = float(getattr(self, "_core_linked_dot_origin_ms", 0.0) or 0.0) / 1000.0
+                anchor = (hardware_anchor + origin_s) if coupled else dot.anchor
                 why = dot_plan.why if dot_plan is not None else dot.why
                 surfaces["dot"] = SurfaceFacts(
                     program=dot.program,
@@ -6771,6 +7154,9 @@ def build_headless_controller_class() -> type:
                 dot_link=self._core_dot_link(dot_connected, strip_connected, dot_role),
                 auto_dim=auto_dim,
             )
+            receipts = self._core_device_receipts(devices)
+            if receipts:
+                document["device_receipts"] = receipts
             # The skew and its measurement instant travel together: a reader
             # shown only the number could not tell a fresh 11 ms from one
             # measured before the strip was last unplugged.
@@ -6781,8 +7167,6 @@ def build_headless_controller_class() -> type:
             ):
                 document["linked_skew_ms"] = self._core_linked_skew_ms
                 document["linked_skew_at"] = self._core_linked_skew_at
-                if self._core_linked_corrected_ms is not None:
-                    document["linked_skew_corrected_ms"] = self._core_linked_corrected_ms
             try:
                 from . import core_lights
 
@@ -6790,6 +7174,31 @@ def build_headless_controller_class() -> type:
             except Exception:
                 legacy.log_status_bar(f"core: cue naming failed: {traceback.format_exc(limit=3)}")
             return document
+
+        def _core_device_receipts(self, devices) -> dict[str, Any]:
+            """``lights.device_receipts``: per device, what its card should
+            say that no setting explains. Today one thing: another writer
+            (upstream's app, a shell ``echo``, a second JR-Bar) changed the
+            device's program behind our back, found by a fresh read at the
+            reassert cadence. Twice in ten minutes and JR-Bar stops
+            rewriting it, so the two never fight over the flash. The strip
+            and a Dot drawing its own display are checked; a linked Dot is
+            not (``AgentLedController._foreign_write_seen`` says why), so
+            its card never carries this receipt."""
+            receipts: dict[str, Any] = {}
+            window = 600.0
+            now = time.monotonic()
+            for device in devices:
+                controller = self.agent_led_controllers_by_device.get(device.device_id)
+                seen = [at for at in getattr(controller, "foreign_writes", None) or () if now - at < window]
+                if not seen:
+                    continue
+                receipts[device.device_id] = {
+                    "foreign_write_at": mono_to_epoch(max(seen)),
+                    "foreign_writes": len(seen),
+                    "paused": bool(getattr(controller, "foreign_write_paused", False)),
+                }
+            return receipts
 
         def _core_dot_link(self, dot_connected: bool, strip_connected: bool, dot_role: str) -> dict[str, Any]:
             """The ``lights.dot_link`` row: one honest word for what the
@@ -6820,10 +7229,25 @@ def build_headless_controller_class() -> type:
             if self._core_linked_dot_error is not None:
                 return {"state": "failed", "role": dot_role, "error": self._core_linked_dot_error}
             # The steady state: extend with both devices connected is
-            # "linked" the moment the next batch couples them -- the shared
-            # anchor is the claim that waits for a clean coupled write, the
-            # state word is not.
-            return {"state": "linked", "role": dot_role, "error": None}
+            # "linked". What keeps it honest is the timing beside it: the
+            # predicted phase error from the Dot's own clock, the rate that
+            # clock runs at, and how often the loop had to re-anchor --
+            # never a bare "in step".
+            dot = self._core_linked_dot_device()
+            timing = self._core_linked.document(
+                dot_id=dot.device_id if dot is not None else None,
+                tolerance_ms=getattr(self.settings, "linked_sync_tolerance_ms", 40.0),
+                correction=bool(getattr(self.settings, "linked_dot_clock_correction", True)),
+            )
+            plan = getattr(self, "_core_linked_dot_plan_seen", None)
+            return {
+                "state": "linked",
+                "role": dot_role,
+                "error": None,
+                **timing,
+                "style": str(getattr(self.settings, "dot_extend_style", "continue")),
+                "rung": plan,
+            }
 
         def _core_doctor_document(self) -> dict[str, Any]:
             from .doctor import collect_diagnostics

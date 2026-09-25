@@ -34,10 +34,7 @@ struct DotRoleControls: View {
     private var lidClosed: Bool { store.core.state?.power?.closedLid?.lidClosed == true }
     private var readout: DotRoleReadout {
         DotRoleReadout.make(chosen: chosen, includeCompletions: includeCompletions, linked: linked,
-                            link: link, linkedSkewMs: store.core.lights?.linkedSkewMs,
-                            linkedSkewFresh: store.core.lights?.isLinkedSkewFresh ?? false,
-                            linkedSkewCorrectedMs: store.core.lights?.linkedSkewCorrectedMs,
-                            lidClosed: lidClosed,
+                            link: link, lidClosed: lidClosed,
                             dot: store.core.lights?.dot)
     }
 

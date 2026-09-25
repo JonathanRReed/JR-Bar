@@ -202,6 +202,13 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.devices, "linked_dot_scale", .number),
             SettingsKey(.devices, "dot_role", .string),
             SettingsKey(.devices, "dot_role_include_completions", .bool),
+            // The linked Dot's timing (jrbar.linked_sync).
+            SettingsKey(.devices, "linked_follow_brightness", .bool),
+            SettingsKey(.devices, "dot_extend_style", .string),
+            SettingsKey(.devices, "dot_extend_side", .string),
+            SettingsKey(.devices, "linked_dot_phase_trim_ms", .number),
+            SettingsKey(.devices, "linked_dot_clock_correction", .bool),
+            SettingsKey(.devices, "linked_sync_tolerance_ms", .number),
             SettingsKey(.devices, "virtual_status_device_enabled", .bool),
             SettingsKey(.devices, "screen_bar_follow_alcove", .bool),
             SettingsKey(.devices, "screen_bar_show_in_full_screen", .bool),

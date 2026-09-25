@@ -4,6 +4,8 @@ import errno
 import os
 import secrets
 import stat
+import threading
+import time
 from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -37,6 +39,24 @@ class DeviceCandidate:
 
 _FileIdentity = tuple[int, int]
 _SCRATCH_ATTEMPTS = 32
+
+# The moment the device took the bytes, per writing thread. The firmware
+# starts a program's clock when it parses the file, and the best host-side
+# estimate of that moment is the return of the fsync that pushed the bytes
+# to it -- not the end of the readback after it, which is what the linked
+# pair used to measure its skew from (jrbar.linked_sync).
+_APPLIED = threading.local()
+
+
+def _note_applied() -> None:
+    _APPLIED.at = time.monotonic()
+
+
+def take_applied_at() -> float | None:
+    """The monotonic fsync-return of this thread's last device write, once."""
+    value = getattr(_APPLIED, "at", None)
+    _APPLIED.at = None
+    return value
 
 
 def write_led_program(
@@ -385,6 +405,7 @@ def _publish_scratch(
         src_dir_fd=parent_descriptor,
         dst_dir_fd=parent_descriptor,
     )
+    _note_applied()
     _verify_parent_identity(target.parent, parent_descriptor, parent_identity)
     _require_leaf_identity(
         target,
@@ -497,6 +518,7 @@ def _fallback_in_place(
         os.ftruncate(descriptor, 0)
         _write_all(descriptor, payload)
         os.fsync(descriptor)
+        _note_applied()
         _require_exact_readback(descriptor, payload)
         _verify_parent_identity(target.parent, parent_descriptor, parent_identity)
         _require_leaf_identity(

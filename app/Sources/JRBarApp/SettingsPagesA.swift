@@ -651,12 +651,14 @@ struct DevicesPage: View {
         CalibrationProfilesSection(store: store)
 
         SettingGroup("Pro & Dot", note: "The role is what the Dot is for; the link is whether the monitor drives it at all.") {
-            SettingToggle(store, "Dot follows strip", subtitle: "The Dot mirrors the Pro instead of rendering its own; which cue is the role below.",
+            SettingToggle(store, "Dot follows strip", subtitle: "The Dot takes its light from the Pro instead of rendering its own; the role below says how.",
                           path: "devices_linked", default: true)
             SettingSlider(store, "Dot brightness", subtitle: "Two nearby LEDs read much brighter than eight across a desk. The alert beacon is never dimmed.",
                           path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded()))%" }
                 .disabled(!(store.document.bool("devices_linked") ?? true))
+            LinkedBrightnessToggle(store: store)
             DotRoleControls(store: store, inDeviceCard: false)
+            LinkedSyncControls(store: store)
         }
 
         CreatorMicroCard(store: store)
@@ -694,10 +696,16 @@ struct DeviceCard: View {
                         device: state, surface: surface, now: context.date)) { EmptyView() }
                 }
             }
+            if linkedDot {
+                LinkedDotNote()
+            }
+            DeviceReceiptRow(store: store, deviceID: device.id, deviceName: device.kind == "dot" ? "Dot" : "SidePulse")
             SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
+                .disabled(linkedDot)
             SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded()))%" }
-            SettingToggle(store, "Auto-brightness", subtitle: "Follows the display's brightness: dim in a dark room, bright in daylight.",
+            SettingToggle(store, "Auto-brightness", subtitle: autoBrightnessSubtitle,
                           path: "\(device.prefix).auto_brightness_enabled")
+                .disabled(linkedDot && followsStripBrightness)
             Provided(store, "\(device.prefix).provider_pin") {
                 Picker(selection: store.optionalString("\(device.prefix).provider_pin")) {
                     ForEach(pinOptions, id: \.value) { Text($0.label).tag($0.value) }
@@ -706,6 +714,7 @@ struct DeviceCard: View {
                 }
                 .pickerStyle(.menu)
             }
+            .disabled(linkedDot)
             Provided(store, "\(device.prefix).signal_policy") {
                 Toggle(isOn: Binding(
                     get: { store.document.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
@@ -715,6 +724,7 @@ struct DeviceCard: View {
                 }
                 .settingRowStyle()
             }
+            .disabled(linkedDot)
             Provided(store, "\(device.prefix).blend_mode") {
                 Picker(selection: store.optionalString("\(device.prefix).blend_mode")) {
                     Text("Same as Lighting").tag("")
@@ -725,12 +735,15 @@ struct DeviceCard: View {
                 }
                 .pickerStyle(.menu)
             }
+            .disabled(linkedDot)
             SettingRow("Colour calibration", subtitle: calibrationSummary) {
                 Button("Calibrate…") { store.calibrating = device.id }
                     .disabled(!store.core.isLive)
             }
             if device.kind == "dot" {
                 DotRoleControls(store: store, inDeviceCard: true)
+            } else if device.kind == "pro" {
+                EjectGuardRow(store: store)
             }
         } header: {
             SettingsGroupHeader(title: device.name,
@@ -744,6 +757,26 @@ struct DeviceCard: View {
 
     private var calibrationSummary: String {
         SettingsStore.calibrationSummary(document: store.document, prefix: device.prefix)
+    }
+
+    /// A Dot the monitor drives through its role (`devices_linked` on and
+    /// any role but On its own): its Display, Pin to, Asks only and Blend
+    /// do nothing, so they are switched off with the reason on the card.
+    private var linkedDot: Bool {
+        device.kind == "dot"
+            && (store.document.bool("devices_linked") ?? true)
+            && DotRole.parse(store.document.string("dot_role")) != .status
+    }
+
+    /// Matching the strip's brightness, a linked Dot ignores its own
+    /// auto-brightness.
+    private var followsStripBrightness: Bool { store.document.bool("linked_follow_brightness") ?? true }
+
+    private var autoBrightnessSubtitle: String {
+        if linkedDot && followsStripBrightness {
+            return "Linked: the Dot matches the strip's brightness instead."
+        }
+        return "Follows the display's brightness: dim in a dark room, bright in daylight."
     }
 
     /// The program this device was last sent, from the `lights` push.

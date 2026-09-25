@@ -15546,6 +15546,12 @@ class StatusBarController(NSObject):
 
         if not self.leds_enabled:
             return
+        self.poke_led_devices()
+
+    def poke_led_devices(self) -> None:
+        """The SD keepalive and the firmware-reboot watch, off the main
+        thread: every device's reboot check (the Dot's included), then a
+        keepalive read or touch for each SD-card-reader device."""
         # SD-card pokes were file I/O ON THE MAIN THREAD up to 4x/s --
         # a busy or slow card froze the whole UI ("clicked Devices, took
         # five seconds to register a scroll"). Worker thread, in-flight
@@ -15553,7 +15559,10 @@ class StatusBarController(NSObject):
         if getattr(self, "_keepalive_poke_in_flight", False):
             return
         targets = self.status_keepalive_targets()
-        if not targets:
+        # The reboot watch covers every device, the Dot included, even
+        # with no SD-card reader to keep awake: a Dot on its own used to
+        # lose it when the keepalive stopped touching the Dot.
+        if not targets and not self.agent_led_controllers_by_device:
             return
         self._keepalive_poke_in_flight = True
 
@@ -15580,8 +15589,19 @@ class StatusBarController(NSObject):
                                 )
                         except Exception:
                             pass
+                if not targets:
+                    return
                 read_any = False
                 for target in targets:
+                    if self._keepalive_fresh_read(target, poke_now):
+                        # A read past the host's cache is real I/O on the
+                        # card reader, which is all the keepalive exists
+                        # for -- and it wears nothing. A bare ``touch`` can
+                        # be served from the VFS cache and never reach the
+                        # device (gourneau's LEARNINGS), so it is only the
+                        # fallback when the fresh read did not move.
+                        read_any = True
+                        continue
                     status_path = self.keep_awake.poke_status_file(target)
                     if status_path is not None:
                         read_any = True
@@ -15625,26 +15645,58 @@ class StatusBarController(NSObject):
                 )
         self.reconcile_lid_observation()
 
+    #: The keepalive's fresh read runs at the touch's own cadence.
+    KEEPALIVE_FRESH_READ_SECONDS = 60.0
+
+    def _keepalive_fresh_read(self, target: Path, now: float) -> bool:
+        """True when a fresh read of the card's STATUS.TXT just reached the
+        device (its clock moved since the last one), which keeps the SD
+        reader awake without writing anything. At most once a minute per
+        device; off the main thread (the caller is the poke worker)."""
+        from .device_clock import read_fresh_status
+
+        root = Path(target)
+        if root.name.upper() in {name.upper() for name in (KEEPALIVE_FILE_NAME, "LEDS.LED", "INIT.LED", "STATUS.TXT")}:
+            root = root.parent
+        stamps = getattr(self, "_keepalive_fresh_stamps", None)
+        if stamps is None:
+            stamps = self._keepalive_fresh_stamps = {}
+        last = stamps.get(str(root))
+        if last is not None and now - last[0] < self.KEEPALIVE_FRESH_READ_SECONDS:
+            return True
+        status = read_fresh_status(root)
+        clock = None if status is None else status.clock_ms
+        moved = clock is not None and (last is None or clock != last[1])
+        if moved:
+            stamps[str(root)] = (now, clock)
+            return True
+        return False
+
     def status_keepalive_targets(self) -> list[Path]:
+        """What the keepalive keeps awake: SD-card-reader devices only.
+
+        The MacBook's card reader powers a SidePulse Pro off after about
+        three minutes idle; a Dot on USB-C has no such reader, and touching
+        it anyway once stalled its USB I/O for more than two seconds
+        (2026-09-24 log: ``touch /Volumes/PulseDot/keepalive timed out``)."""
         targets = self.current_led_targets()
-        if targets:
-            return targets
-        connected_targets = [
-            device.target
-            for device in self.status_bar_devices(remember=False)
-            if device.connected
-            and device.device_id != VIRTUAL_DEVICE_ID
-            and path_exists(Path(device.target).parent)
-        ]
-        if connected_targets:
-            return connected_targets
-        # Mounted volumes only: touching every known NAME failed loudly
-        # at boot for whichever device wasn't plugged in.
-        return [
-            MOUNT_ROOT / name / KEEPALIVE_FILE_NAME
-            for name in STATUS_BAR_KEEPALIVE_VOLUME_NAMES
-            if path_exists(MOUNT_ROOT / name)
-        ]
+        if not targets:
+            targets = [
+                device.target
+                for device in self.status_bar_devices(remember=False)
+                if device.connected
+                and device.device_id != VIRTUAL_DEVICE_ID
+                and path_exists(Path(device.target).parent)
+            ]
+        if not targets:
+            # Mounted volumes only: touching every known NAME failed loudly
+            # at boot for whichever device wasn't plugged in.
+            targets = [
+                MOUNT_ROOT / name / KEEPALIVE_FILE_NAME
+                for name in STATUS_BAR_KEEPALIVE_VOLUME_NAMES
+                if path_exists(MOUNT_ROOT / name)
+            ]
+        return [target for target in targets if led_count_for_target(Path(target)) != 2]
 
 
 # `usage_window_payloads` lived here: it flattened a typed model back into
