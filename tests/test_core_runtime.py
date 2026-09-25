@@ -3663,6 +3663,38 @@ def test_every_strip_restart_rewrites_the_dot_and_nothing_else_does__and_2_more(
     assert controller._core_hardware_anchor[dot.device_id] == controller._core_linked.epoch.anchor_epoch
 
 
+def test_a_continue_dots_anchor_carries_its_origin(headless, tmp_path: Path) -> None:
+    """A Continue Dot's program starts between two passes, ``origin_ms``
+    into the strip's lap, so the app plays it from the strip's start plus
+    that. Only the coupled stamp added it: the Dot's own anchor -- what the
+    lights frame falls back to when a batch did not land as a clean pair --
+    was the bare strip start, 413 ms off for a comet."""
+    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+
+    controller = headless
+    pro, dot, controllers, submitted = _tmp_pair(controller, tmp_path)
+    comet = (
+        "#000203 160ms cosine\n#007280 #002B31 #001012 #000606 #000101 #000000 #000000 #000000 165ms cosine\n"
+        + "roll-right 1320ms linear\n" * 6
+        + "repeat"
+    )
+    started = time.monotonic()
+    strip_write = LedStatusWrite(
+        LedDisplayState.WORKING, pro.target, comet, True, nominal_program=comet, applied_at=started
+    )
+    dot_result, _dot_request = _coupled(controller, submitted, pro, dot, strip_write)
+    assert dot_result.write.changed is True
+    origin = controller._core_linked_dot_origin_ms
+    assert origin > 100.0, "a comet's Dot starts between two passes"
+    expected = controller._core_linked.epoch.anchor_epoch + origin / 1000.0
+    assert controller._core_hardware_anchor[dot.device_id] == pytest.approx(expected)
+    controllers[pro.device_id].last_program = comet
+    for clean in (False, True):
+        controller._core_linked_pair_ok = clean
+        lights = controller._core_build_lights()
+        assert lights["surfaces"]["dot"]["anchor"] == pytest.approx(expected, abs=0.005), clean
+
+
 def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tmp_path: Path) -> None:
     # --- scenario: the_dot_derives_from_the_trimmed_program_the_strip_runs
     """A reassert drops the approach frame, so the strip loops a shorter

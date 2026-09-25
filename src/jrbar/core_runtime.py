@@ -4501,7 +4501,13 @@ def build_headless_controller_class() -> type:
             epoch = self._core_linked.epoch
             if leds == 2:
                 if getattr(write, "timed", None) is not None and epoch is not None:
-                    self._core_hardware_anchor[device.device_id] = epoch.anchor_epoch
+                    # The Dot's program starts ``origin_ms`` into the strip's
+                    # lap (a Continue Dot starts between two passes), so the
+                    # app plays it from that much after the strip's start --
+                    # 413 ms for a comet, 744 for a chase -- whether or not
+                    # the batch was a clean coupled pair.
+                    origin_s = float(getattr(self, "_core_linked_dot_origin_ms", 0.0) or 0.0) / 1000.0
+                    self._core_hardware_anchor[device.device_id] = epoch.anchor_epoch + origin_s
                 return
             if started is None or anchor is None or not write.program:
                 return
@@ -6915,7 +6921,7 @@ def build_headless_controller_class() -> type:
                 # A ``continue`` Dot's program starts between two passes,
                 # ``origin_ms`` into the strip's lap.
                 origin_s = float(getattr(self, "_core_linked_dot_origin_ms", 0.0) or 0.0) / 1000.0
-                anchor = hardware_anchor + origin_s if coupled else dot.anchor
+                anchor = (hardware_anchor + origin_s) if coupled else dot.anchor
                 why = dot_plan.why if dot_plan is not None else dot.why
                 surfaces["dot"] = SurfaceFacts(
                     program=dot.program,
