@@ -109,6 +109,15 @@ final class AlcovePowerMonitor {
     /// comes back showing the charge it left with.
     var current: AlcovePowerState { feed.latest ?? feed.read() }
 
+    /// The connected charger's rating in watts
+    /// (`IOPSCopyExternalPowerAdapterDetails`); nil with none, or when
+    /// the adapter does not report one.
+    static func adapterWatts() -> Int? {
+        guard let details = IOPSCopyExternalPowerAdapterDetails()?.takeRetainedValue() as? [String: Any],
+              let watts = details[kIOPSPowerAdapterWattsKey] as? Int, watts > 0 else { return nil }
+        return watts
+    }
+
     /// The internal battery's slice of `IOPSCopyPowerSourcesInfo` —
     /// `Type == "InternalBattery"`, AC vs battery from `Power Source
     /// State`, charge state from `Is Charging`, percent from `Current
@@ -145,5 +154,23 @@ final class AlcovePowerMonitor {
                                     minutesRemaining: minutes)
         }
         return empty
+    }
+}
+
+extension AlcovePower {
+    /// The card's battery line with the charger's rating when one is
+    /// plugged in — "84% · Charging · full in 40m · 96 W adapter". On
+    /// battery the line already says the time to empty ("~3h 10m
+    /// left", the system's own estimate).
+    static func batteryLine(_ state: AlcovePowerState, adapterWatts: Int?, working: Int,
+                            heldAwake: Bool) -> String {
+        guard state.onAC, let watts = adapterWatts, watts > 0 else {
+            return batteryLine(state, working: working, heldAwake: heldAwake)
+        }
+        // The charger belongs with the charge, before the runs on it.
+        var parts = [batteryLine(state, working: 0, heldAwake: false), "\(watts) W adapter"]
+        if working > 0 { parts.append(working == 1 ? "1 agent working" : "\(working) agents working") }
+        if heldAwake { parts.append("held awake") }
+        return parts.joined(separator: " · ")
     }
 }

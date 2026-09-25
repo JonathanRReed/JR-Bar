@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import JRBarCore
+import JRBarUI
 import Testing
 @testable import JRBarApp
 
@@ -109,5 +110,42 @@ struct NotchLayoutProfileTests {
 
     private static func elapsedMS(since start: CFAbsoluteTime) -> Double {
         (CFAbsoluteTimeGetCurrent() - start) * 1_000
+    }
+
+    // MARK: lane utilities
+
+    /// A lid-open MacBook with an external as the main display: the
+    /// external first (it carries the menu bar), the notched built-in
+    /// second, a third plain screen after.
+    private static let desk: [ScreenBarGeometry.ScreenCandidate] = [
+        .init(id: 7, notched: false, builtIn: false),
+        .init(id: 1, notched: true, builtIn: true),
+        .init(id: 9, notched: false, builtIn: false),
+    ]
+
+    @Test("the Display pick chooses the island's screen")
+    func displayPickChoosesTheScreen() {
+        typealias Geometry = ScreenBarGeometry
+        #expect(Geometry.preferredIndex(in: Self.desk, pick: .builtIn, seat: nil) == 1)
+        #expect(Geometry.preferredIndex(in: Self.desk, pick: .main, seat: nil) == 0)
+        #expect(Geometry.preferredIndex(in: Self.desk, pick: .pointer, seat: 9) == 2)
+        // A seat on a display that has gone falls back to the built-in.
+        #expect(Geometry.preferredIndex(in: Self.desk, pick: .pointer, seat: 42) == 1)
+        #expect(Geometry.preferredIndex(in: Self.desk, pick: .pointer, seat: nil) == 1)
+        // Lid shut: no notch, no built-in — the main display.
+        let clamshell = [ScreenBarGeometry.ScreenCandidate(id: 7, notched: false, builtIn: false)]
+        #expect(Geometry.preferredIndex(in: clamshell, pick: .builtIn, seat: nil) == 0)
+        // A notchless built-in beside an external still counts as built-in.
+        let air: [ScreenBarGeometry.ScreenCandidate] = [
+            .init(id: 7, notched: false, builtIn: false), .init(id: 2, notched: false, builtIn: true),
+        ]
+        #expect(Geometry.preferredIndex(in: air, pick: .builtIn, seat: nil) == 1)
+        #expect(Geometry.preferredIndex(in: [], pick: .main, seat: nil) == nil)
+        // Picking Pointer seats afresh each time, never on an old seat;
+        // any other settings pass keeps the seat it has.
+        #expect(Geometry.seatsPointer(from: .builtIn, to: .pointer, seat: 9))
+        #expect(Geometry.seatsPointer(from: .pointer, to: .pointer, seat: nil))
+        #expect(!Geometry.seatsPointer(from: .pointer, to: .pointer, seat: 9))
+        #expect(!Geometry.seatsPointer(from: .pointer, to: .main, seat: 9))
     }
 }

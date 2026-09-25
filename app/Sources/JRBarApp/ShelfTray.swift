@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import os
 import Quartz
 import QuickLookThumbnailing
@@ -149,6 +150,17 @@ final class ShelfTrayModel {
     /// files, not tiles.
     var items: [Entry] { entries.flatMap(\.items) }
 
+    // MARK: The notch's shelf settings
+
+    /// Read through closures the notch wires once (`NotchToy`), so the
+    /// glass card and the island's card — one tray between them — both
+    /// follow the Notch card's rows. The defaults are today's shelf.
+    @ObservationIgnored var newestFirst: @MainActor () -> Bool = { false }
+    @ObservationIgnored var dragOutPolicy: @MainActor () -> ShelfDragOut = { .copy }
+    @ObservationIgnored var removeAfterDragOut: @MainActor () -> Bool = { false }
+    /// The shelf itself; off, the card is one page and takes no drops.
+    @ObservationIgnored var shelfEnabled: @MainActor () -> Bool = { true }
+
     init() {
         load()
     }
@@ -163,9 +175,12 @@ final class ShelfTrayModel {
     /// existing stack sharing its folder, or stacks with an existing
     /// loose item from the same folder (the same-folder rule).
     /// Symlinks resolve at read time — a link whose target moved is
-    /// `missing` on the next pass.
+    /// `missing` on the next pass. With the shelf switched off nothing
+    /// lands, whichever way the files came: the island, the Dock's Send
+    /// to Shelf, a paste or an action's result.
     func add(_ urls: [URL], before target: ShelfEntry? = nil,
              onto stackTarget: ShelfEntry? = nil) {
+        guard shelfEnabled() else { return }
         var known = entries
         let held = known.flatMap(\.items).map(\.path)
         let fresh = urls.map(\.path).reduce(into: [Entry]()) { out, path in
@@ -199,7 +214,7 @@ final class ShelfTrayModel {
                 items: fresh,
                 folder: ShelfEntry.Stack.commonFolder(of: fresh))
             let at = target.flatMap { t in known.firstIndex(where: { $0.id == t.id }) }
-                ?? known.count
+                ?? landingIndex(in: known)
             known.insert(.stack(stack), at: at)
             finish(&known)
             return
@@ -267,9 +282,15 @@ final class ShelfTrayModel {
         }
 
         let at = target.flatMap { t in known.firstIndex(where: { $0.id == t.id }) }
-            ?? known.count
+            ?? landingIndex(in: known)
         known.insert(.item(item), at: at)
         finish(&known)
+    }
+
+    /// Where a new chip with no aimed drop lands: the end, or the front
+    /// with "Newest first" (boring.notch's reverse order).
+    private func landingIndex(in known: [ShelfEntry]) -> Int {
+        newestFirst() ? 0 : known.count
     }
 
     /// Bound, revalidate, persist — the add paths' shared tail.
@@ -283,11 +304,13 @@ final class ShelfTrayModel {
             var over = total - Self.maxItems
             var names: [String] = []
             var droppedItems = 0
-            while over > 0, let first = known.first {
-                let count = first.items.count
+            // The oldest chips sit at the far end from where new ones land.
+            let fromFront = !newestFirst()
+            while over > 0, let oldest = fromFront ? known.first : known.last {
+                let count = oldest.items.count
                 droppedItems += count
-                names.append(first.displayName)
-                known.removeFirst()
+                names.append(oldest.displayName)
+                if fromFront { known.removeFirst() } else { known.removeLast() }
                 over -= count
             }
             evictionNotice = droppedItems == 1
@@ -312,7 +335,167 @@ final class ShelfTrayModel {
             icons.removeValue(forKey: item.path)
             pendingThumbs.remove(item.path)
         }
+        selectedIDs.remove(entry.id)
         evictionNotice = nil
+        persist()
+    }
+
+    /// Clear Shelf: every reference goes; the files stay where they are.
+    func removeAll() {
+        entries.removeAll()
+        icons.removeAll()
+        pendingThumbs.removeAll()
+        selectedIDs.removeAll()
+        selectionAnchor = nil
+        evictionNotice = nil
+        persist()
+    }
+
+    // MARK: Selection
+
+    /// The chips picked with ⌘- and ⇧-click; a verb on one of them acts
+    /// on them all.
+    private(set) var selectedIDs: Set<String> = []
+    /// Where a ⇧-click range starts: the last chip ⌘-clicked or ⇧-clicked.
+    @ObservationIgnored private var selectionAnchor: String?
+
+    /// ⌘-click: this chip joins or leaves the selection.
+    func toggleSelection(_ entry: ShelfEntry) {
+        if selectedIDs.contains(entry.id) {
+            selectedIDs.remove(entry.id)
+        } else {
+            selectedIDs.insert(entry.id)
+        }
+        selectionAnchor = entry.id
+    }
+
+    /// ⇧-click: every chip from the anchor to this one, in strip order,
+    /// joins the selection.
+    func extendSelection(to entry: ShelfEntry) {
+        guard let end = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let start = selectionAnchor.flatMap { anchor in entries.firstIndex { $0.id == anchor } } ?? end
+        for index in min(start, end)...max(start, end) {
+            selectedIDs.insert(entries[index].id)
+        }
+        selectionAnchor = entry.id
+    }
+
+    func clearSelection() {
+        guard !selectedIDs.isEmpty else { return }
+        selectedIDs.removeAll()
+        selectionAnchor = nil
+    }
+
+    /// What a verb on `entry` acts on: the whole selection when `entry`
+    /// is part of one, else `entry` alone — in strip order.
+    func targets(for entry: ShelfEntry) -> [ShelfEntry] {
+        guard selectedIDs.contains(entry.id), selectedIDs.count > 1 else { return [entry] }
+        return entries.filter { selectedIDs.contains($0.id) }
+    }
+
+    /// The files of `entries` that still resolve, each once — what a drag
+    /// out, the share menu and every verb carry. A moved file is never
+    /// offered, and a canceled share claims nothing (T50).
+    func presentURLs(of entries: [ShelfEntry]) -> [URL] {
+        revalidate()
+        let ids = Set(entries.map(\.id))
+        var seen = Set<String>()
+        return self.entries.filter { ids.contains($0.id) }
+            .flatMap(\.items)
+            .filter { !$0.missing && seen.insert($0.path).inserted }
+            .map(\.url)
+    }
+
+    // MARK: Verbs on a pick
+
+    /// Remove from Tray on a picked chip: the whole pick leaves the
+    /// shelf. The files stay where they are.
+    func remove(_ picked: [ShelfEntry]) {
+        for entry in picked { remove(entry) }
+    }
+
+    /// Reveal in Finder: the pick's files that still resolve, selected
+    /// together in Finder. A moved file is never revealed.
+    func reveal(_ picked: [ShelfEntry]) {
+        let live = presentURLs(of: picked)
+        guard !live.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(live)
+    }
+
+    /// The dedicated one-click path: straight to AirDrop, no picker —
+    /// Alcove's headline shelf verb — with every file of the pick that
+    /// still resolves. Returns whether the service ran.
+    @discardableResult
+    func sendViaAirDrop(_ picked: [ShelfEntry]) -> Bool {
+        let urls = presentURLs(of: picked)
+        guard !urls.isEmpty,
+              let service = NSSharingService(named: .sendViaAirDrop) else { return false }
+        service.perform(withItems: urls)
+        return true
+    }
+
+    /// Quick Look from a chip. A chip in a pick previews the pick, opened
+    /// on that chip; a lone chip previews the whole shelf, opened on it.
+    func quickLook(_ entry: ShelfEntry, among picked: [ShelfEntry]) {
+        guard picked.count > 1 else {
+            quickLook(entry)
+            return
+        }
+        let urls = presentURLs(of: picked)
+        guard !urls.isEmpty else { return }
+        let paths = Set(entry.items.map(\.path))
+        ShelfQuickLook.shared.show(urls: urls, at: urls.firstIndex { paths.contains($0.path) } ?? 0)
+    }
+
+    /// Hand the pick to an agent: every present file's `@path` goes on
+    /// the pasteboard as text beside the file URLs, and a single small
+    /// image rides along as image data. Nothing is typed anywhere — the
+    /// person pastes it into the session this opens. False when no file
+    /// of the pick is present.
+    @discardableResult
+    func copyForAgent(_ picked: [ShelfEntry], to board: NSPasteboard = .general) -> Bool {
+        let urls = presentURLs(of: picked)
+        guard !urls.isEmpty else { return false }
+        let attach = picked.count == 1 && canAttachCopy(picked[0])
+        copyForAgent(urls, attachImage: attach, to: board)
+        return true
+    }
+
+    // MARK: Drag out
+
+    /// A drag out of the shelf ended. With "Remove after dragging out"
+    /// on, a drop that landed outside JR-Bar takes the dragged chip off
+    /// the shelf — only that chip, and never for a drag that was
+    /// refused, cancelled or only rearranged the strip.
+    func finishDragOut(_ entry: ShelfEntry, operation: NSDragOperation, outside: Bool) {
+        guard ShelfDragOutRule.removes(operation: operation, outside: outside,
+                                       removeAfter: removeAfterDragOut()),
+              entries.contains(where: { $0.id == entry.id }) else { return }
+        remove(entry)
+    }
+
+    /// A line under the strip for what a verb just did — "Copied the
+    /// text of 2 files". It fades on its own like the eviction line.
+    var actionNotice: String?
+
+    /// A file the shelf itself moved (Move to…): its chip follows it,
+    /// in a stack or loose, rather than turning up missing.
+    func relocate(from old: String, to new: String) {
+        guard old != new else { return }
+        let moved = Entry(path: new, missing: false)
+        entries = entries.map { entry in
+            switch entry {
+            case .item(let item):
+                return item.path == old ? .item(moved) : entry
+            case .stack(var stack):
+                guard stack.items.contains(where: { $0.path == old }) else { return entry }
+                stack.items = stack.items.map { $0.path == old ? moved : $0 }
+                stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
+                return .stack(stack)
+            }
+        }
+        selectedIDs.remove(old)
+        icons.removeValue(forKey: old)
         persist()
     }
 
@@ -378,7 +561,7 @@ final class ShelfTrayModel {
         persist()
     }
 
-    /// A stack taken apart — the ⌘-click / Split verb. Members land
+    /// A stack taken apart — the ⌥-click / Split verb. Members land
     /// as loose chips where the stack stood.
     func dissolve(_ entry: ShelfEntry) {
         guard case .stack(let stack) = entry,
@@ -425,51 +608,13 @@ final class ShelfTrayModel {
     /// Reveal in Finder — only for entries that still resolve. A
     /// stack reveals its live members.
     func reveal(_ entry: ShelfEntry) {
-        revalidate()
-        let live = entries.first(where: { $0.id == entry.id })?
-            .items.filter { !$0.missing }.map(\.url) ?? []
-        guard !live.isEmpty else { return }
-        NSWorkspace.shared.activateFileViewerSelecting(live)
+        reveal([entry])
     }
 
-    /// Drag-out / share payload for an entry that still resolves. A
-    /// stack drags out as a multi-item provider — the whole pile.
-    func provider(for entry: ShelfEntry) -> NSItemProvider? {
-        revalidate()
-        let urls = entries.first(where: { $0.id == entry.id })?
-            .items.filter { !$0.missing }.map { $0.url as NSURL } ?? []
-        guard !urls.isEmpty else { return nil }
-        if urls.count == 1, let url = urls.first {
-            return NSItemProvider(object: url)
-        }
-        let provider = NSItemProvider()
-        provider.suggestedName = entry.displayName
-        for url in urls {
-            provider.registerObject(url, visibility: .all)
-        }
-        return provider
-    }
-
-    /// Native share: the entry's files that still exist, for the
-    /// system's share menu (`ShareLink`) to offer. A moved file is
-    /// never offered, and a canceled share claims nothing (T50).
-    func shareableURLs(for entry: ShelfEntry) -> [URL] {
-        revalidate()
-        return entries.first(where: { $0.id == entry.id })?
-            .items.filter { !$0.missing }.map(\.url) ?? []
-    }
-
-    /// The dedicated one-click path: straight to AirDrop, no picker —
-    /// Alcove's headline shelf verb. Returns whether the service ran.
+    /// AirDrop for one chip; see the pick's version.
     @discardableResult
     func sendViaAirDrop(_ entry: ShelfEntry) -> Bool {
-        revalidate()
-        let urls = entries.first(where: { $0.id == entry.id })?
-            .items.filter { !$0.missing }.map(\.url) ?? []
-        guard !urls.isEmpty,
-              let service = NSSharingService(named: .sendViaAirDrop) else { return false }
-        service.perform(withItems: urls)
-        return true
+        sendViaAirDrop([entry])
     }
 
     /// File size for the attach bound — nil when unresolvable.
@@ -498,19 +643,6 @@ final class ShelfTrayModel {
             "@" + path.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: " ", with: "\\ ")
         }.joined(separator: " ")
-    }
-
-    /// Hand the entry to an agent: its `@path` references go on the
-    /// pasteboard as text beside the file URLs, and a single small
-    /// image rides along as image data. Nothing is typed anywhere —
-    /// the person pastes it into the session this opens. False when no
-    /// file of the entry is present.
-    @discardableResult
-    func copyForAgent(_ entry: ShelfEntry, to board: NSPasteboard = .general) -> Bool {
-        let present = entries.first(where: { $0.id == entry.id })?.items.filter { !$0.missing } ?? []
-        guard !present.isEmpty else { return false }
-        copyForAgent(present.map(\.url), attachImage: canAttachCopy(entry), to: board)
-        return true
     }
 
     /// The hand-off for files, shared with a file dropped straight onto
@@ -834,6 +966,27 @@ enum ShelfShakeDetector {
     struct Sample: Equatable {
         var x: CGFloat
         var at: TimeInterval
+    }
+
+    /// The recognizer's thresholds for a sensitivity, 0…1 (Dropover's
+    /// slider): the middle is Alcove's four 30-point swings; all the way
+    /// up, three 20-point swings are enough; all the way down it takes
+    /// six of 45. Both fall as the sensitivity rises, so a shake that
+    /// counts at one setting counts at every setting above it.
+    static func thresholds(sensitivity: Double) -> (reversals: Int, amplitude: CGFloat) {
+        let s = sensitivity.isFinite ? min(1, max(0, sensitivity)) : 0.5
+        if s <= 0.5 {
+            let t = s / 0.5
+            return (Int((6 - 2 * t).rounded()), CGFloat(45 - 15 * t))
+        }
+        let t = (s - 0.5) / 0.5
+        return (Int((4 - t).rounded()), CGFloat(30 - 10 * t))
+    }
+
+    /// `isShake` at a sensitivity's thresholds.
+    static func isShake(_ samples: [Sample], sensitivity: Double) -> Bool {
+        let limits = thresholds(sensitivity: sensitivity)
+        return isShake(samples, reversals: limits.reversals, amplitude: limits.amplitude)
     }
 
     /// Whether `samples` hold a shake. `reversals` completed legs of

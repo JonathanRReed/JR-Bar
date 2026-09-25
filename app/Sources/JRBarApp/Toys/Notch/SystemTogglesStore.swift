@@ -89,6 +89,9 @@ final class SystemTogglesStore {
         /// under the cup counts down without a daemon frame.
         private(set) var awakeClock = Date()
         @ObservationIgnored private var awakeTick: Task<Void, Never>?
+        /// The countdown's clock or the local hold's deadline is running —
+        /// what "off leaves nothing behind" checks.
+        var awakeClockRunning: Bool { awakeTick != nil || awakeTimer != nil }
         /// A hand-over of the app's assertion to the daemon is in flight.
         @ObservationIgnored private var handingOver = false
         /// This connection's daemon answered a lease with "no such
@@ -194,10 +197,30 @@ final class SystemTogglesStore {
             lease(request) { [weak self] in self?.holdLocally(seconds: seconds) }
         }
 
+        /// Hold until the agents working now stop — the daemon's `agents`
+        /// lease, Amphetamine's "while an app runs" for agent runs. Only
+        /// the monitor knows when they stop, so with none it says so in
+        /// the caption rather than guessing at a deadline. An assertion
+        /// the app took while the monitor was away lets go once the lease
+        /// is in, never before: the Mac is held throughout.
+        func holdAwakeUntilAgentsFinish() {
+            guard daemonLive, sendLease != nil, !leaseUnsupported else {
+                lastError = "Awake: only the monitor can tell when the agents finish, and it isn't running."
+                syncAwakeChip()
+                return
+            }
+            let request = CoreAwakeRequest(.untilAgentsFinish(sessions: nil), display: awakeKeepsDisplay)
+            lease(request, fallback: nil) { [weak self] in
+                guard let self, self.awake.held else { return }
+                self.setAwake(false)
+            }
+        }
+
         /// One lease out; the chip pulses until the daemon answers, and
         /// its next `state.power.hold` is what settles the chip. With no
         /// daemon to take it, `fallback` does the job locally.
-        private func lease(_ request: CoreAwakeRequest?, fallback: (@MainActor () -> Void)?) {
+        private func lease(_ request: CoreAwakeRequest?, fallback: (@MainActor () -> Void)?,
+                           taken: (@MainActor () -> Void)? = nil) {
             guard let sendLease else { return }
             applying.insert(.keepAwake)
             Task { [weak self] in
@@ -207,6 +230,7 @@ final class SystemTogglesStore {
                 switch answer {
                 case .taken:
                     if self.lastError?.hasPrefix("Awake:") == true { self.lastError = nil }
+                    taken?()
                 case .refused(let why):
                     self.lastError = "Awake: \(why)"
                 case .unavailable:
@@ -453,6 +477,8 @@ final class SystemTogglesStore {
 
     /// Keep awake for `seconds`, indefinitely (nil), or let go (0).
     func holdAwake(seconds: Int?) { state.holdAwake(seconds: seconds) }
+    /// Keep awake until the agents working now finish.
+    func holdAwakeUntilAgentsFinish() { state.holdAwakeUntilAgentsFinish() }
     func setAwakeKeepsDisplay(_ on: Bool) { state.setAwakeKeepsDisplay(on) }
 
     /// A link's or a Shortcut's `on=` for Awake: the person's lease, on

@@ -433,4 +433,41 @@ struct SettingsRenderProofTests {
         }
         withExtendedLifetime(fixture) {}
     }
+
+    // MARK: lane utilities
+
+    /// The Screen Bar card with two apps under "Hide over these apps", and
+    /// the Keep Awake card open on the Utilities page, in both appearances.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the utilities-lane PNGs"))
+    func laneUtilities() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        fixture.settings.set(ScreenBarHiddenAppsRow.path,
+                             .array([.string("com.apple.iWork.Keynote"), .string("us.zoom.xos")]))
+        let row = Form {
+            Section("Screen Bar") {
+                ScreenBarHiddenAppsRow(store: fixture.settings,
+                                       offered: [("com.apple.Safari", "Safari")])
+            }
+        }
+        .formStyle(.grouped)
+        .environment(fixture.settings)
+        for dark in [false, true] where Self.wanted("screenbar-hidden-apps") {
+            let rep = try Self.snapshot(row, size: CGSize(width: Self.paneWidth, height: 360), dark: dark)
+            try Self.write(rep, named: "settings-screenbar-hidden-apps-\(dark ? "dark" : "light")")
+        }
+        fixture.settings.expandedCards = ["keepAwake"]
+        // The real page's card, with fixed holders: this Mac's own power
+        // holders never reach the PNG.
+        KeepAwakeUtility.shared.proofHolders = [
+            KeepAwakeHolders.Holder(name: "Amphetamine", bundleID: "com.if.Amphetamine", display: false),
+        ]
+        defer { KeepAwakeUtility.shared.proofHolders = nil }
+        for dark in [false, true] where Self.wanted("card-keepAwake") {
+            let view = SettingsPageContainer(store: fixture.settings, page: .utilities)
+            let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 6000), dark: dark)
+            try Self.write(rep, named: "card-keepAwake-\(dark ? "dark" : "light")")
+        }
+        withExtendedLifetime(fixture) {}
+    }
 }

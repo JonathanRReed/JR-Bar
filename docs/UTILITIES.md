@@ -438,6 +438,58 @@ likewise gone — same reason.
   and the island card name it in words, and the panel/Usage Center
   countdowns are unchanged.
 
+## Keep Awake (vs Amphetamine, KeepingYouAwake, Atoll)
+
+The person's own hold, as a card after Dock. The card's switch is that hold:
+on keeps the Mac awake until turned off, off lets it sleep and leaves no
+assertion and no clock running. It is the same hold as the notch card's
+Awake chip, the panel footer's cup and the Screen Bar's right ear
+(`SystemTogglesStore`): the daemon's `hold_awake` lease while the monitor is
+connected, the app's own power assertion otherwise.
+
+- **Duration menu** (`KeepAwakeMenu`): the presets, Until 08:00 (the panel's
+  next-morning rule), Until the agents finish (the daemon's agents lease;
+  offered only while the monitor is live), Indefinitely, Keep the display
+  on, Turn off. A right-click or long press on the Awake chip, a
+  right-click on the footer cup and its line, and a right-click on the
+  Screen Bar's right ear all open the same list.
+- **Presets** live in `jrbar.keepAwakeDurations` (seconds, app defaults;
+  Atoll's 15 m, 30 m, 1 h, 2 h, 4 h by default; up to eight), edited on the
+  card.
+- **While agents run**: the four daemon rows (Keep Mac awake, Keep display
+  awake, Lid closed, Keep awake on battery). Settings › Notifications ›
+  Power keeps them too.
+- **Other apps holding this Mac awake**: read-only from
+  `IOPMCopyAssertionsByProcess`, apps only, JR-Bar itself left out.
+- A Low Power Mode pause (`suspended: "low_power"`) reads "Low Power Mode is
+  on".
+
+## Coexistence
+
+"Still allowing them to be an option" cuts both ways: every utility can be
+switched off and costs nothing while off (`UtilityOffCostTests`), and an
+installed rival can have the surface. `UtilityRivals` is the one table of
+rival apps by role; `RivalGuardView` is the note any card mounts. The menu
+bar keeps its own list and note this wave (`MenuBarRivals`), and so does
+the Dock card's switcher (its chord note). What JR-Bar does while a rival
+runs depends on the role:
+
+| Role | Rivals | While one runs | Where the note shows |
+| --- | --- | --- | --- |
+| Menu bar | Bartender, Ice, Hidden Bar, Vanilla, Dozer, Barbee, Tuck, SaneBar (`MenuBarRivals`) | Ask: Hand over where a pick exists, Quit on a click | Menu Bar card |
+| Dock previews | DockDoor, ActiveDock, DockView | Ask | Dock card, under Render with |
+| Switcher | AltTab, DockDoor, Witch, Contexts | Ask (the card's existing chord note) | Dock card, Switching |
+| Notch island | Alcove, Boring Notch, Atoll, MewNotch, DynamicLake, Notchy, NotchNook | Ask: Hand over to Alcove or Boring Notch | Notch card, under Render with |
+| HUD | MediaMate, SlimHUD (plus the notch apps above) | Ask | Notch card, under the level capsules |
+| Shelf gesture | Dropover, Yoink, Dropzone | **Step aside**: the shake summon's monitors stand down while one runs (`shelfYieldToRivals`, on), because one shake can't be shared; dropping on the notch still works | Notch card, Shelf rows |
+| Keep-awake | Amphetamine, KeepingYouAwake, Caffeine, Lungo, Theine | Inform only: holds stack harmlessly | Keep Awake card, Other apps |
+
+Nothing is ever quit or handed over without the person's click. A rival
+already picked under Render with is the choice, not a clash, so its note
+does not show. The yield reads "the app is running", not "its shake is on"
+(Dropover's own preferences are not readable); the Step aside switch is the
+way out.
+
 ## Cohesion contract
 
 `docs/TOP-OF-SCREEN.md` owns the cross-surface rules; the short version:
@@ -461,6 +513,8 @@ likewise gone — same reason.
 | Wi-Fi network name | Location | shows strength glyph only |
 | Focus readout | daemon Focus sync (FDA) | Focus row hidden |
 | Hide Apple's Battery/Wi-Fi/etc. | nothing (user defaults) | — |
+| Other apps holding the Mac awake | nothing (public IOKit read) | — |
+| Shelf Copy Text on images | nothing (Vision runs on this Mac) | — |
 
 Every card row names the missing permission and deep-links to the Setup
 page's permission step.

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import JRBarCore
@@ -497,5 +498,114 @@ struct DataHoarderModelTests {
         #expect(model.candidates.count == 1)
         #expect(model.records.isEmpty)
         #expect(model.busy == false)
+    }
+
+    // MARK: lane utilities
+
+    @Test func theProviderPickerListsEveryCapturingSourcesAgent() {
+        #expect(DataHoarderProviders.choices(enabledSources: []) == ["claude", "codex", "other"])
+        let all = ArchiveSource.defaults().map(\.id)
+        #expect(DataHoarderProviders.choices(enabledSources: all)
+                == ["claude", "codex", "pi", "gemini", "grok", "cliproxy", "other"])
+        #expect(DataHoarderProviders.choices(enabledSources: ["grok-sessions", "/Users/jr/logs"])
+                == ["claude", "codex", "grok", "other"])
+        #expect(DataHoarderProviders.title("gemini") == ProviderStyle.style(for: "gemini").name)
+        #expect(DataHoarderProviders.title("other") == "Other")
+        #expect(DataHoarderProviders.title("cliproxy") == "CLIProxyAPI")
+    }
+
+    @Test func theResumeCommandIsRightPerProvider() {
+        let id = "5f1c9a2e-7d41-4b8e-9a0c-2f6e1d3b4a55"
+        #expect(DataHoarderProviders.resumeCommand(provider: "claude", sessionID: id, project: nil)
+                == "claude --resume \(id)")
+        #expect(DataHoarderProviders.resumeCommand(provider: "codex", sessionID: id, project: "/Users/jr/JR-Bar")
+                == "cd '/Users/jr/JR-Bar' && codex resume \(id)")
+        #expect(DataHoarderProviders.resumeCommand(provider: "cursor", sessionID: id, project: "JR-Bar")
+                == "cursor-agent --resume \(id)", "a bare repo name is not a folder to cd into")
+        #expect(DataHoarderProviders.resumeCommand(provider: "claude", sessionID: id, project: "/Users/jr/it's")
+                == "cd '/Users/jr/it'\\''s' && claude --resume \(id)")
+        #expect(DataHoarderProviders.resumeCommand(provider: "pi", sessionID: id, project: nil) == nil)
+        #expect(DataHoarderProviders.resumeCommand(provider: "claude", sessionID: nil, project: nil) == nil)
+        #expect(DataHoarderProviders.resumeCommand(provider: "claude", sessionID: "x; rm -rf ~", project: nil) == nil)
+        #expect(DataHoarderProviders.agentID(provider: "claude", sessionID: id) == "claude:session:\(id)")
+    }
+
+    @Test func copyResumeCommandPutsTheLineOnThePasteboard() {
+        let model = DataHoarderModel(archive: DataHoarderArchive(
+            root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)))
+        let record = ArchiveRecord(id: "r1", name: "r1.jsonl", sourcePath: "/tmp/r1.jsonl", byteCount: 1,
+                                   importedAt: Date(), sourceModifiedAt: nil, provider: "codex",
+                                   sessionID: "abc-123", project: nil)
+        let board = NSPasteboard(name: NSPasteboard.Name("jrbar-test-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        model.copyResumeCommand(record, to: board)
+        #expect(board.string(forType: .string) == "codex resume abc-123")
+        #expect(model.message?.contains("codex resume abc-123") == true)
+    }
+
+    @Test func piRecordsCaptureUnderPiAndOldOnesAreRelabelled() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let sessions = root.appending(path: "pi-sessions-root")
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let archive = DataHoarderArchive(root: root.appending(path: "archive"))
+        let source = ArchiveSource(id: "pi-sessions", name: "pi sessions", root: sessions, extensions: ["jsonl"])
+        let file = sessions.appending(path: "run.jsonl")
+        try Data("seed\n".utf8).write(to: file)
+        let capture = DataHoarderCapture(archive: archive)
+        await capture.start(sources: [source], fullContent: false)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((#"{"type":"message","role":"user","content":"hi"}"# + "\n").utf8))
+        try handle.close()
+        await capture.rescan(source: source)
+        await capture.stop()
+        let captured = try #require(try await archive.records().first)
+        #expect(captured.provider == "pi", "the folder names the agent the probe could not")
+
+        // A record from before the stamp reads "other" until relabelled.
+        try await archive.updateRecordMetadata(id: captured.id, provider: "other")
+        let imported = try await archive.importFile(file)
+        #expect(imported.provider == nil || imported.provider == "other")
+        let model = DataHoarderModel(archive: archive, capture: capture)
+        model.enabled = true
+        let suite = "DataHoarderModelTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        await model.relabelSourceRecords(sources: [source], defaults: defaults)
+        let providers = try await archive.records().map(\.provider)
+        #expect(providers.allSatisfy { $0 == "pi" }, "\(providers)")
+
+        // Once per Mac: a second opening reads nothing and changes nothing.
+        let later = sessions.appending(path: "later.jsonl")
+        try Data("seed\n".utf8).write(to: later)
+        let unstamped = try await archive.importFile(later)
+        #expect(unstamped.provider == nil || unstamped.provider == "other")
+        await model.relabelSourceRecords(sources: [source], defaults: defaults)
+        #expect(try await archive.records().first { $0.id == unstamped.id }?.provider == unstamped.provider)
+        // An import is stamped as it lands instead.
+        #expect(await model.stampSourceProvider(unstamped, sources: [source]))
+        #expect(try await archive.records().first { $0.id == unstamped.id }?.provider == "pi")
+        #expect(DataHoarderProviders.sourceProvider(forPath: "/elsewhere/run.jsonl", sources: [source]) == nil)
+    }
+
+    @Test func theCLIProxyConfigIsTheFirstThatExists() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "jrbar-cliproxy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let brew = folder.appending(path: "cliproxyapi.conf")
+        try "port: 8317\n".write(to: brew, atomically: true, encoding: .utf8)
+        let missing = folder.appending(path: "config.yaml").path
+        #expect(DataHoarderProviders.cliProxyConfig(paths: [missing, brew.path]) == "port: 8317\n")
+        #expect(DataHoarderProviders.cliProxyConfig(paths: [missing]) == nil)
+    }
+
+    @Test func aResumeTheDaemonCannotPlacePointsAtTheCopy() {
+        let unknown = CoreReplyError(code: "not_found", message: "JR-Bar has no record of where that session ran.")
+        #expect(DataHoarderProviders.resumeRefusal(unknown, title: "review")
+                == "JR-Bar has no record of where that session ran — Copy Resume Command instead.")
+        let remote = CoreReplyError(code: "unsupported", message: "A session on another Mac resumes on that Mac.")
+        #expect(DataHoarderProviders.resumeRefusal(remote, title: "review") == remote.message)
+        #expect(DataHoarderProviders.resumeRefusal(nil, title: "review") == "Could not resume review")
     }
 }

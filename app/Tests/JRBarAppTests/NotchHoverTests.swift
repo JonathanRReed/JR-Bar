@@ -182,4 +182,42 @@ struct NotchHoverTests {
         let settings = try JSONDecoder().decode(NotchSettings.self, from: json)
         #expect(settings.hapticTick)
     }
+
+    // MARK: lane utilities
+
+    @Test("Open after sets both clocks: 0, 0.12 and 0.5 s, with the menu bar's floor kept")
+    func openAfterClocks() {
+        let now = NotchMotion.hoverDelays(openAfter: 0, fromBar: false)
+        #expect(now.peek == 0 && now.expand == 0)
+        let standard = NotchMotion.hoverDelays(openAfter: 0.12, fromBar: false)
+        #expect(standard.peek == 0.12 && standard.expand == 0.12, "the default is today's timing")
+        let slow = NotchMotion.hoverDelays(openAfter: 0.5, fromBar: false)
+        #expect(slow.peek == NotchMotion.hoverDelay && slow.expand == 0.5, "the breath still tells first")
+        #expect(NotchMotion.hoverDelays(openAfter: 0, fromBar: true).expand == NotchMotion.barArrivalFloor)
+        #expect(NotchMotion.hoverDelays(openAfter: 0.5, fromBar: true).expand == 0.5)
+        #expect(NotchMotion.hoverDelays(openAfter: .nan, fromBar: false).expand == NotchMotion.hoverDelay)
+    }
+
+    @Test("a half-second Open after holds the card back that long")
+    func slowOpenAfterIsHonoured() async throws {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        store.state.notch.hoverOpenDelay = 0.5
+        let start = ContinuousClock.now
+        toy.setHovered(true)
+        let at = try #require(await expansionTime(toy, from: start))
+        #expect(at > .milliseconds(450), "grew at \(at)")
+        #expect(toy.islandHoverPeek, "the breath came first, at the standard delay")
+    }
+
+    @Test("a zero Open after grows the card without a pause")
+    func instantOpenAfterIsHonoured() async throws {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        store.state.notch.hoverOpenDelay = 0
+        let start = ContinuousClock.now
+        toy.setHovered(true)
+        _ = try #require(await expansionTime(toy, from: start))
+        #expect(toy.islandExpanded)
+    }
 }

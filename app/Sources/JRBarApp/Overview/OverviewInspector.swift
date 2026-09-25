@@ -255,6 +255,11 @@ struct OverviewSessionInspector: View {
                 OverviewFactRow(name: "Context", value: context,
                                 evidence: usage.contextWindowSource == "reported" ? .reported : .derived)
             }
+            if let share = OverviewWindowShare.fact(for: usage, provider: entry.session.provider,
+                                                    readings: Array(store.sessionUsage.usage.values)) {
+                OverviewFactRow(name: share.name, value: share.value, evidence: .derived)
+                    .help(OverviewWindowShare.explanation)
+            }
         } else if let model = store.transcriptModel, store.timelineSessionID == entry.id {
             // The transcript's own word for the model — the label names the
             // source so it never reads as a roster fact.
@@ -760,3 +765,43 @@ struct OverviewConnectionRow: View {
         .accessibilityLabel(OverviewView.chipLabel(link))
     }
 }
+
+/// "5 h window share" — which session is spending the quota
+/// (Agent Sessions' Quota Meter), as one inspector fact. The session's
+/// tokens since its provider's primary window opened (`window_tokens`,
+/// the daemon's) over every session of that provider JR-Bar has read in
+/// the same window: derived, never reported, so it wears ≈ and hides
+/// entirely while the daemon gives no window tokens.
+enum OverviewWindowShare {
+    static let explanation = "Derived: this session's tokens since the provider's usage window opened, over every session of that provider JR-Bar has read in the window."
+
+    /// The session's fraction of its provider's window, 0…1; nil while
+    /// its window tokens are unknown or nothing was spent.
+    static func share(tokens: Int?, provider: String, readings: [SessionUsage]) -> Double? {
+        guard let tokens, tokens >= 0 else { return nil }
+        let total = readings
+            .filter { $0.provider == provider }
+            .compactMap(\.windowTokens)
+            .reduce(0) { $0 + max(0, $1) }
+        let whole = max(total, tokens)
+        guard whole > 0 else { return nil }
+        return Double(tokens) / Double(whole)
+    }
+
+    /// The fact's name and value: "5 h window share", "≈ 34%" — written
+    /// the way the column's other percentages are ("44%", "87% cached").
+    static func fact(for usage: SessionUsage, provider: String,
+                     readings: [SessionUsage]) -> (name: String, value: String)? {
+        guard let fraction = share(tokens: usage.windowTokens, provider: provider, readings: readings) else {
+            return nil
+        }
+        let percent = fraction * 100
+        let value = percent > 0 && percent < 1 ? "≈ <1%" : "≈ \(Int(percent.rounded()))%"
+        // Claude's and Codex's primary windows are five hours; the rest
+        // are named only as the window. Short enough for the facts'
+        // name column, with the "5 h" kept on one line.
+        let name = ["claude", "codex"].contains(provider) ? "5\u{00A0}h window share" : "Window share"
+        return (name, value)
+    }
+}
+

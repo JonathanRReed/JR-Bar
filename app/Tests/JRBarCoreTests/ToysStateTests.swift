@@ -421,4 +421,70 @@ struct ToysStateTests {
         #expect(decoded.walkEvery == 5)
         #expect(decoded == settings)
     }
+
+    // MARK: lane utilities
+
+    @Test("the notch's new knobs default to today's behaviour")
+    func notchUtilityDefaults() {
+        let notch = NotchSettings()
+        #expect(notch.hoverOpenDelay == 0.12)
+        #expect(notch.notchDisplay == .builtIn)
+        #expect(notch.shelfEnabled)
+        #expect(notch.shelfDragOut == .copy)
+        #expect(!notch.shelfRemoveAfterDragOut)
+        #expect(!notch.shelfNewestFirst)
+        #expect(notch.shelfShakeSensitivity == 0.5)
+        #expect(notch.shelfShakeExcludedBundleIDs.isEmpty)
+        #expect(notch.shelfYieldToRivals)
+    }
+
+    @Test("a notch file from before the knobs reads them as their defaults")
+    func notchUtilityMissingKeys() throws {
+        let old = try decode(NotchSettings.self, #"{"enabled": true, "provider": "jrbar"}"#)
+        #expect(old.enabled)
+        #expect(old.hoverOpenDelay == NotchSettings().hoverOpenDelay)
+        #expect(old.notchDisplay == .builtIn)
+        #expect(old.shelfDragOut == .copy)
+        #expect(old.shelfYieldToRivals)
+    }
+
+    @Test("mistyped or out-of-range notch knobs fall back or clamp")
+    func notchUtilityTolerant() throws {
+        let mistyped = try decode(NotchSettings.self, """
+            {"hoverOpenDelay": "slow", "notchDisplay": "projector", "shelfEnabled": 3,
+             "shelfDragOut": "teleport", "shelfShakeSensitivity": "high",
+             "shelfShakeExcludedBundleIDs": "com.apple.finder", "shelfYieldToRivals": "no"}
+            """)
+        #expect(mistyped.hoverOpenDelay == 0.12)
+        #expect(mistyped.notchDisplay == .builtIn)
+        #expect(mistyped.shelfEnabled)
+        #expect(mistyped.shelfDragOut == .copy)
+        #expect(mistyped.shelfShakeSensitivity == 0.5)
+        #expect(mistyped.shelfShakeExcludedBundleIDs.isEmpty)
+        #expect(mistyped.shelfYieldToRivals)
+        let high = try decode(NotchSettings.self, #"{"hoverOpenDelay": 9, "shelfShakeSensitivity": 4}"#)
+        #expect(high.hoverOpenDelay == 1)
+        #expect(high.shelfShakeSensitivity == 1)
+        let low = try decode(NotchSettings.self, #"{"hoverOpenDelay": -1, "shelfShakeSensitivity": -2}"#)
+        #expect(low.hoverOpenDelay == 0)
+        #expect(low.shelfShakeSensitivity == 0)
+        #expect(NotchSettings.clampedHoverOpenDelay(.nan) == 0.12)
+        #expect(NotchSettings.clampedShakeSensitivity(.nan) == 0.5)
+    }
+
+    @Test("the notch's new knobs round-trip")
+    func notchUtilityRoundTrip() throws {
+        var notch = NotchSettings(enabled: true)
+        notch.hoverOpenDelay = 0.5
+        notch.notchDisplay = .pointer
+        notch.shelfEnabled = false
+        notch.shelfDragOut = .move
+        notch.shelfRemoveAfterDragOut = true
+        notch.shelfNewestFirst = true
+        notch.shelfShakeSensitivity = 0.8
+        notch.shelfShakeExcludedBundleIDs = ["com.adobe.Photoshop"]
+        notch.shelfYieldToRivals = false
+        let decoded = try decode(NotchSettings.self, try encode(notch))
+        #expect(decoded == notch)
+    }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import JRBarCore
@@ -114,8 +115,7 @@ import JRBarCore
         tray.add([gone])
         tray.revalidate()
         let entry = tray.entries.first!
-        #expect(tray.provider(for: entry) == nil)
-        #expect(tray.shareableURLs(for: entry).isEmpty)
+        #expect(tray.presentURLs(of: [entry]).isEmpty, "nothing to drag, share or reveal")
         #expect(!tray.canAttachCopy(entry))
     }
 
@@ -524,5 +524,253 @@ struct SharedCardShelfTests {
         presenter.model.timers.sweep()
         store.notch.cardModel.timers.sweep()
         #expect(delivered == 1)
+    }
+}
+
+// MARK: - Shelf parity (lane utilities)
+
+/// The shelf as good as Dropover and Yoink: a drag out copies unless ⌘
+/// asks for the move, remove-after-drag takes only the dragged chip, the
+/// instant actions never overwrite a file, Copy Text reads an image on
+/// this Mac, and the shake's sensitivity only ever loosens as it rises.
+extension ShelfTests {
+    /// A tray on its own defaults key, cleared before and after.
+    private func freshTray() -> ShelfTrayModel {
+        UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths")
+        return ShelfTrayModel()
+    }
+
+    private func scratchFolder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-shelf-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    @Test func aDragOutCopiesUnlessCommandAsksForTheMove() {
+        #expect(ShelfDragOutRule.mask(policy: .copy, commandHeld: false, context: .outsideApplication) == .copy)
+        #expect(ShelfDragOutRule.mask(policy: .copy, commandHeld: true, context: .outsideApplication) == .move)
+        #expect(ShelfDragOutRule.mask(policy: .move, commandHeld: false, context: .outsideApplication) == .move)
+        // Inside JR-Bar the strip's own rearranging keeps every operation.
+        #expect(ShelfDragOutRule.mask(policy: .copy, commandHeld: false, context: .withinApplication)
+                .contains(.move))
+        #expect(NotchSettings().shelfDragOut == .copy, "copy is the default")
+    }
+
+    @Test func removeAfterDragTakesOnlyTheDraggedChip() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        looseAdds(tray, ["/tmp/drag-a/a.txt", "/tmp/drag-b/b.txt", "/tmp/drag-c/c.txt"])
+        let dragged = tray.entries[1]
+        // Off: nothing leaves.
+        tray.finishDragOut(dragged, operation: .copy, outside: true)
+        #expect(tray.entries.count == 3)
+        tray.removeAfterDragOut = { true }
+        // A drop back inside JR-Bar, or a refused drop, keeps it.
+        tray.finishDragOut(dragged, operation: .copy, outside: false)
+        tray.finishDragOut(dragged, operation: [], outside: true)
+        #expect(tray.entries.count == 3)
+        tray.finishDragOut(dragged, operation: .copy, outside: true)
+        #expect(tray.entries.map(\.displayName) == ["a.txt", "c.txt"])
+    }
+
+    @Test func newestFirstLandsAtTheFrontAndEvictsFromTheBack() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        tray.newestFirst = { true }
+        looseAdds(tray, (0..<(ShelfTrayModel.maxItems + 2)).map { "/tmp/newest-\($0)/n\($0).txt" })
+        #expect(tray.items.first?.name == "n\(ShelfTrayModel.maxItems + 1).txt")
+        #expect(tray.items.count == ShelfTrayModel.maxItems)
+        #expect(!tray.items.contains { $0.name == "n0.txt" }, "the oldest went, from the back")
+    }
+
+    @Test func commandAndShiftClickPickChipsAndClearShelfTakesAll() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        looseAdds(tray, (0..<5).map { "/tmp/pick-\($0)/p\($0).txt" })
+        let chips = tray.entries
+        tray.toggleSelection(chips[1])
+        tray.extendSelection(to: chips[3])
+        #expect(tray.selectedIDs == Set(chips[1...3].map(\.id)))
+        tray.toggleSelection(chips[2])
+        #expect(tray.selectedIDs == [chips[1].id, chips[3].id])
+        // A verb on a picked chip acts on the whole pick, in strip order.
+        #expect(tray.targets(for: chips[3]).map(\.id) == [chips[1].id, chips[3].id])
+        #expect(tray.targets(for: chips[0]).map(\.id) == [chips[0].id], "an unpicked chip is itself")
+        tray.removeAll()
+        #expect(tray.entries.isEmpty)
+        #expect(tray.selectedIDs.isEmpty)
+    }
+
+    @Test func compressNamesUniquelyAndNeverOverwrites() async throws {
+        let folder = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("notes.txt")
+        try "keep me".write(to: file, atomically: true, encoding: .utf8)
+        // Two names already taken, one of them by a file that must survive.
+        let taken = folder.appendingPathComponent("notes.txt.zip")
+        try "not a zip".write(to: taken, atomically: true, encoding: .utf8)
+        try "also taken".write(to: folder.appendingPathComponent("notes.txt 2.zip"),
+                               atomically: true, encoding: .utf8)
+        let zip = try await ShelfActions.compress([file])
+        #expect(zip.lastPathComponent == "notes.txt 3.zip")
+        #expect(try String(contentsOf: taken, encoding: .utf8) == "not a zip", "never overwritten")
+        let again = try await ShelfActions.compress([file])
+        #expect(again.lastPathComponent == "notes.txt 4.zip")
+        // Several files go into one Archive.zip beside the first.
+        let other = folder.appendingPathComponent("more.txt")
+        try "more".write(to: other, atomically: true, encoding: .utf8)
+        let archive = try await ShelfActions.compress([file, other])
+        #expect(archive.lastPathComponent == "Archive.zip")
+        let size = try #require(try archive.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        #expect(size > 100)
+        #expect(FileManager.default.fileExists(atPath: file.path), "the original stays")
+    }
+
+    @Test func copyTextReadsAnImageOnThisMac() throws {
+        let folder = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let png = folder.appendingPathComponent("words.png")
+        try Self.drawText("SHELF READS THIS", to: png)
+        #expect(ShelfActions.hasText(png))
+        let text = try #require(try ShelfActions.text(of: png))
+        #expect(text.uppercased().contains("SHELF"), "read: \(text)")
+        #expect(text.uppercased().contains("READS"), "read: \(text)")
+    }
+
+    @Test func convertWritesBesideTheOriginalUnderAFreeName() throws {
+        let folder = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let png = folder.appendingPathComponent("shot.png")
+        try Self.drawText("JPEG", to: png)
+        try "taken".write(to: folder.appendingPathComponent("shot.jpg"), atomically: true, encoding: .utf8)
+        let jpeg = try ShelfActions.convert(png, to: .jpeg)
+        #expect(jpeg.lastPathComponent == "shot 2.jpg")
+        #expect(try String(contentsOf: folder.appendingPathComponent("shot.jpg"), encoding: .utf8) == "taken")
+        #expect(NSImage(contentsOf: jpeg) != nil)
+        #expect(ShelfActionMenu.verbs(for: [png]).contains(.convert(.jpeg)))
+        #expect(!ShelfActionMenu.verbs(for: [folder.appendingPathComponent("a.zip")]).contains(.copyText))
+    }
+
+    @Test func convertOffersAndMakesOnlyAnotherFormat() throws {
+        let folder = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let png = folder.appendingPathComponent("shot.png")
+        let jpg = folder.appendingPathComponent("photo.jpg")
+        // A PNG alone offers JPEG only; a PNG beside a JPEG offers both.
+        let pngVerbs = ShelfActionMenu.verbs(for: [png])
+        #expect(pngVerbs.contains(.convert(.jpeg)))
+        #expect(!pngVerbs.contains(.convert(.png)), "a PNG is never offered as a PNG")
+        #expect(ShelfActionMenu.verbs(for: [jpg]).contains(.convert(.png)))
+        #expect(!ShelfActionMenu.verbs(for: [jpg]).contains(.convert(.jpeg)))
+        #expect(ShelfActionMenu.verbs(for: [png, jpg]).contains(.convert(.png)))
+        #expect(ShelfActionMenu.verbs(for: [png, jpg]).contains(.convert(.jpeg)))
+        // Convert to PNG over a PNG writes nothing beside it.
+        try Self.drawText("PNG", to: png)
+        let result = ShelfActions.convert([png], to: .png)
+        #expect(result.made.isEmpty && result.failure == nil)
+        #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("shot 2.png").path))
+        #expect(throws: ShelfActions.ActionError.self) { try ShelfActions.convert(png, to: .png) }
+    }
+
+    @Test func aMoveThatFailsPartWayKeepsTheChipsThatMoved() throws {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        let from = try scratchFolder()
+        let to = try scratchFolder()
+        defer {
+            try? FileManager.default.removeItem(at: from)
+            try? FileManager.default.removeItem(at: to)
+        }
+        let first = from.appendingPathComponent("first.txt")
+        try "one".write(to: first, atomically: true, encoding: .utf8)
+        // The second is gone before the move reaches it.
+        let second = from.appendingPathComponent("second.txt")
+        let result = ShelfActions.transfer([first, second], to: to, move: true)
+        #expect(result.landed.count == 1)
+        #expect(result.failure != nil)
+        #expect(FileManager.default.fileExists(atPath: to.appendingPathComponent("first.txt").path))
+
+        tray.add([first])
+        tray.finishTransfer(result, to: to, move: true)
+        #expect(tray.items.map(\.path) == [to.appendingPathComponent("first.txt").path],
+                "the moved chip follows its file")
+        #expect(tray.items.allSatisfy { !$0.missing })
+        #expect(tray.actionNotice?.hasPrefix("Moved 1, then couldn't move the next") == true,
+                "\(tray.actionNotice ?? "")")
+    }
+
+    @Test func theShelfSwitchedOffTakesNoFiles() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        tray.shelfEnabled = { false }
+        tray.add([URL(fileURLWithPath: "/tmp/shelf-off/a.txt")])
+        #expect(tray.entries.isEmpty)
+        tray.shelfEnabled = { true }
+        tray.add([URL(fileURLWithPath: "/tmp/shelf-off/a.txt")])
+        #expect(tray.entries.count == 1)
+    }
+
+    @Test func aVerbOnAPickedChipRemovesTheWholePick() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        looseAdds(tray, (0..<4).map { "/tmp/pick-remove-\($0)/r\($0).txt" })
+        let chips = tray.entries
+        tray.toggleSelection(chips[0])
+        tray.toggleSelection(chips[2])
+        tray.remove(tray.targets(for: chips[2]))
+        #expect(tray.entries.map(\.displayName) == ["r1.txt", "r3.txt"])
+        #expect(tray.selectedIDs.isEmpty)
+        #expect(ShelfActionMenu.removeTitle(count: 1) == "Remove from Tray")
+        #expect(ShelfActionMenu.removeTitle(count: 3) == "Remove 3 Items from Tray")
+    }
+
+    @Test func moveToCarriesTheChipAlong() throws {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        tray.add([URL(fileURLWithPath: "/tmp/move-from/m.txt")])
+        tray.relocate(from: "/tmp/move-from/m.txt", to: "/tmp/move-to/m.txt")
+        #expect(tray.items.map(\.path) == ["/tmp/move-to/m.txt"])
+    }
+
+    @Test func shakeSensitivityOnlyLoosensAsItRises() {
+        var previous = ShelfShakeDetector.thresholds(sensitivity: 0)
+        #expect(previous.reversals == 6 && previous.amplitude == 45)
+        let middle = ShelfShakeDetector.thresholds(sensitivity: 0.5)
+        #expect(middle.reversals == 4 && middle.amplitude == 30, "the middle is today's shake")
+        let easiest = ShelfShakeDetector.thresholds(sensitivity: 1)
+        #expect(easiest.reversals == 3 && easiest.amplitude == 20)
+        for step in 1...20 {
+            let next = ShelfShakeDetector.thresholds(sensitivity: Double(step) / 20)
+            #expect(next.reversals <= previous.reversals)
+            #expect(next.amplitude <= previous.amplitude)
+            previous = next
+        }
+        // Four 25-point swings: too small for the default, a shake when easy.
+        let small = (0..<9).map {
+            ShelfShakeDetector.Sample(x: $0.isMultiple(of: 2) ? 100 : 125, at: Double($0) * 0.05)
+        }
+        #expect(!ShelfShakeDetector.isShake(small, sensitivity: 0.5))
+        #expect(ShelfShakeDetector.isShake(small, sensitivity: 1))
+    }
+
+    /// Black words on white, large enough for Vision to read.
+    static func drawText(_ text: String, to url: URL) throws {
+        let size = NSSize(width: 900, height: 200)
+        let rep = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        (text as NSString).draw(at: NSPoint(x: 30, y: 60), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 72, weight: .bold),
+            .foregroundColor: NSColor.black,
+        ])
+        NSGraphicsContext.restoreGraphicsState()
+        let data = try #require(rep.representation(using: .png, properties: [:]))
+        try data.write(to: url)
     }
 }

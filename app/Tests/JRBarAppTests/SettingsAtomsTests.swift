@@ -101,7 +101,7 @@ import Testing
     @Test func eachCardWearsItsOwnHueAndAnUnknownOneThePages() {
         let page = Color.pink
         let ids = ["menuBar", "notch", "dock", "agents", "data-hoarder", "fold", "aquarium", "notch-buddy",
-                   "confetti"]
+                   "confetti", "keepAwake"]
         let tints = ids.map { ToyCard.tint(for: $0, page: page).description }
         #expect(Set(tints).count == ids.count, "no two named cards share a hue")
         #expect(ToyCard.tint(for: "a-toy-yet-to-come", page: page) == page)

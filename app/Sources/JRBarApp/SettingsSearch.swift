@@ -76,6 +76,8 @@ enum SettingsSearch {
         .init(.devices, "Screen Bar", "Show Screen Bar", subtitle: "The light band under the notch."),
         .init(.devices, "Screen Bar", "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band."),
         .init(.devices, "Screen Bar", "In full screen", subtitle: "Hidden, shown but not over video, or always over full-screen apps."),
+        .init(.devices, "Screen Bar", "Hide over these apps", subtitle: "The band steps aside while a listed app is in front.",
+              keywords: ["exclude", "presentation", "keynote", "per app"]),
         .init(.devices, "Screen Bar", "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right."),
         .init(.devices, "Screen Bar", "Notch shape"),
         .init(.devices, "Screen Bar", "Corner radius", subtitle: "The tray's bottom corners, in points. Every notched MacBook measures about 8."),
@@ -148,6 +150,15 @@ enum SettingsSearch {
         .init(.advanced, "Transfer", "Import settings", subtitle: "Take chosen parts of an export.",
               keywords: ["restore", "import", "migrate", "second mac"]),
         .init(.advanced, "Diagnostics", "Reset to defaults", subtitle: "Rarely needed — puts one page's settings back."),
+        // The Keep Awake card on the Utilities page (lane utilities).
+        .init(.utilities, "Keep Awake", "Keep Awake", subtitle: "Hold this Mac awake for a while, until the morning, or until the agents finish.",
+              keywords: ["amphetamine", "caffeine", "caffeinate", "sleep", "awake", "keepingyouawake"], card: "keepAwake"),
+        .init(.utilities, "Keep Awake", "Keep the display on", subtitle: "Your hold keeps the screen lit too.",
+              keywords: ["screen saver", "lock"], card: "keepAwake"),
+        .init(.utilities, "Keep Awake", "Durations", subtitle: "The presets the Awake chip, the footer's cup and the Screen Bar's ear offer.",
+              keywords: ["presets", "minutes", "hours"], card: "keepAwake"),
+        .init(.utilities, "Keep Awake", "Other apps holding this Mac awake",
+              keywords: ["assertions", "amphetamine", "who keeps awake"], card: "keepAwake"),
     ]
 
     /// Words a person might search that no row title carries, per page —
@@ -157,7 +168,8 @@ enum SettingsSearch {
         .agents: ["hooks", "claude", "codex", "gemini", "providers", "transcripts", "install"],
         .usage: ["quota", "limits", "meters", "graphs", "cost", "tokens", "pace"],
         .devices: ["sidepulse", "strip", "dot", "screen bar", "notch", "calibration", "creator micro", "stream deck", "usb"],
-        .utilities: ["menu bar", "dock", "hide icons", "bartender", "ice", "switcher", "data hoarder", "archive"],
+        .utilities: ["menu bar", "dock", "hide icons", "bartender", "ice", "switcher", "data hoarder", "archive",
+                     "keep awake", "amphetamine"],
         .lighting: ["colors", "colours", "led", "brightness", "dim", "scene", "effects", "animation"],
         .toys: ["fold", "aquarium", "confetti", "buddy", "fun"],
         .notifications: ["banner", "focus", "do not disturb", "dnd", "quiet", "sleep", "keep awake",

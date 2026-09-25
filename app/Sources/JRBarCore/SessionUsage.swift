@@ -69,6 +69,10 @@ public struct SessionUsage: Codable, Hashable, Sendable {
     public var partial: Bool
     /// Tokens from turns at or after the request's `since`.
     public var tokensSince: Int?
+    /// Tokens the session spent since its provider's primary usage window
+    /// opened (`resets_at − window`) — the daemon's `window_tokens`; nil
+    /// when there is no window or no token timeline, or on an older daemon.
+    public var windowTokens: Int?
 
     public init(provider: String? = nil, model: String? = nil, models: [String: Int] = [:],
                 tokens: SessionUsageTokens = SessionUsageTokens(), turns: Int = 0,
@@ -103,6 +107,7 @@ public struct SessionUsage: Codable, Hashable, Sendable {
         case firstAt = "first_at"
         case lastAt = "last_at"
         case tokensSince = "tokens_since"
+        case windowTokens = "window_tokens"
     }
 
     public init(from decoder: Decoder) throws {
@@ -122,6 +127,7 @@ public struct SessionUsage: Codable, Hashable, Sendable {
         lastAt = try? c.decodeIfPresent(Double.self, forKey: .lastAt)
         partial = (try? c.decodeIfPresent(Bool.self, forKey: .partial)) ?? false
         tokensSince = try? c.decodeIfPresent(Int.self, forKey: .tokensSince)
+        windowTokens = try? c.decodeIfPresent(Int.self, forKey: .windowTokens)
     }
 
     /// "Opus 4.5" — the model as a person says it.

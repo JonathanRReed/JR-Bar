@@ -229,6 +229,9 @@ extension ToyCard {
         case "dock": return Color(nsColor: .systemTeal)
         case "agents": return Color(nsColor: .systemPurple)
         case "data-hoarder": return Color(nsColor: .systemBrown)
+        // Keep Awake's cup in coffee-lamp yellow, the one hue no page or
+        // card wears, so it never twins the Utilities header or Notch.
+        case "keepAwake": return Color(nsColor: .systemYellow)
         case "fold": return Color(nsColor: .systemOrange)
         case "aquarium": return Color(nsColor: .systemCyan)
         case "notch-buddy": return Color(nsColor: .systemGreen)

@@ -202,6 +202,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // opens through the Dock's window locator, off main, instead of
         // stopping at "not found".
         SessionOpener.wiring = SessionOpener.Wiring(core: core, utilities: utilitiesStore)
+        // The archive's Resume: the daemon's resume_session, as History's.
+        DataHoarderModel.resumeSender = { [weak core] id in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.send("resume_session", args: ["session": .string(id)])
+        }
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater
@@ -284,6 +289,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         // …and its "Send to Shelf" lands in the one shared tray.
         utilitiesStore.dock.enhance.sendToShelf = { [weak cardTray] urls in cardTray?.add(urls) }
+        // The Dock offers Send to Shelf only while the shelf takes files.
+        toysStore.notch.onShelfSwitch = { [weak utilitiesStore, weak cardTray] on in
+            let send: @MainActor ([URL]) -> Void = { urls in cardTray?.add(urls) }
+            utilitiesStore?.dock.enhance.sendToShelf = on ? send : nil
+        }
         notchCard.model.mirrorEnabled = { [weak toysStore] in toysStore?.state.notch.mirror ?? false }
         notchCard.focus = { [weak self] in self?.store?.screenBarFocus }
         notchCard.sessionRows = { [weak self] in
@@ -413,6 +423,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             Task { @MainActor [weak self] in
                 if let refusal = await SessionOpener.open(session) { self?.showFeedback(refusal) }
             }
+            return true
+        }
+        // The right ear carries the keep-awake cup: a right-click on it
+        // is the duration menu the notch chip and the footer cup offer.
+        interaction.onWingSecondaryClick = { side, point in
+            guard side == .right else { return false }
+            KeepAwakeMenu.popUp(at: point)
             return true
         }
         // The hidden-run ‹ lives in the island's own surface — a status
@@ -1425,6 +1442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar.wingNoticesEnabled = document?.bool("screen_bar_wing_notices") ?? true
         screenBar.notchProfile = NotchProfile(setting: document?.string("screen_bar_notch_profile"))
         screenBar.notchCornerManual = document?.double("screen_bar_notch_corner").map { CGFloat($0) }
+        screenBar.hiddenApps = document?.strings("screen_bar_hidden_apps") ?? []
     }
 
     private func refreshAggregate() {

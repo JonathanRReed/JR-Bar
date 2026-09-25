@@ -550,6 +550,8 @@ final class DataHoarderModel {
             importProgress = "Archiving \(imported + failures.count + 1) of \(selection.count) \(selection.count == 1 ? "file" : "files")…"
             do {
                 let record = try await archive.importFile(candidate.url)
+                // A pi, Gemini or Grok file lands under its agent's name.
+                await stampSourceProvider(record)
                 candidates.removeAll { $0.id == candidate.id }
                 selectedID = record.id
                 imported += 1

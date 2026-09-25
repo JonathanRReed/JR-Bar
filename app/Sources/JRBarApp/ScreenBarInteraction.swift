@@ -106,6 +106,9 @@ final class ScreenBarInteraction {
     /// session). Return true when the ear's own action consumed the
     /// click; false falls back to the band's pin.
     var onWingActivate: @MainActor (ScreenBarWingSide) -> Bool = { _ in false }
+    /// A right-click (or a two-finger click) on an ear at a screen point
+    /// — the right ear's keep-awake menu. True when the ear answered.
+    var onWingSecondaryClick: @MainActor (ScreenBarWingSide, NSPoint) -> Bool = { _, _ in false }
     /// The hidden-run handle's slice of the right ear, in screen
     /// coordinates — a click inside it is the run's toggle, not the
     /// wing's.
@@ -253,6 +256,17 @@ final class ScreenBarInteraction {
             Task { @MainActor [weak self] in self?.pointerReleased(at: time) }
             return event
         }) { localMonitors.append(up) }
+        // A secondary click on an ear: its menu. Down only — the menu
+        // pops on the press, as a status item's does.
+        if let secondary = NSEvent.addGlobalMonitorForEvents(matching: [.rightMouseDown], handler: { [weak self] _ in
+            let point = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in self?.pointerSecondaryDown(at: point) }
+        }) { globalMonitors.append(secondary) }
+        if let secondary = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown], handler: { [weak self] event in
+            let point = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in self?.pointerSecondaryDown(at: point) }
+            return event
+        }) { localMonitors.append(secondary) }
         // Trackpad swipes arrive as scrollWheel, never as drags — the
         // same stream the island's hosting view reads.
         if let scroll = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel], handler: { [weak self] event in
@@ -767,6 +781,13 @@ final class ScreenBarInteraction {
             if let side = wingSideAt(NSEvent.mouseLocation), onWingActivate(side) { return }
             pinCard()
         }
+    }
+
+    /// A secondary click: only an ear under the pointer answers it —
+    /// anywhere else on the band the click belongs to what is below.
+    func pointerSecondaryDown(at point: NSPoint) {
+        guard let side = wingSideAt(point) else { return }
+        _ = onWingSecondaryClick(side, point)
     }
 
     /// The pull's early answer: the peek slides out before the commit

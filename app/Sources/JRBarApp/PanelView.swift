@@ -2015,6 +2015,7 @@ struct PanelFooterTrailing: View {
                 .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
                 .help(hold.text)
                 .accessibilityLabel(hold.text)
+                .contextMenu { KeepAwakeMenuItems() }
             }
             Button { store.openHistory() } label: {
                 Image(systemName: "clock.arrow.circlepath").font(.system(size: 12, weight: .medium))

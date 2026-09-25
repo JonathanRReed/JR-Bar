@@ -231,6 +231,12 @@ final class NotchToy: Toy {
         }
         cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
         cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
+        // The shelf's own rows: one tray serves both card surfaces, so
+        // the settings ride the tray itself.
+        cardModel.tray.newestFirst = { [weak self] in self?.settings.shelfNewestFirst ?? false }
+        cardModel.tray.dragOutPolicy = { [weak self] in self?.settings.shelfDragOut ?? .copy }
+        cardModel.tray.removeAfterDragOut = { [weak self] in self?.settings.shelfRemoveAfterDragOut ?? false }
+        cardModel.tray.shelfEnabled = { [weak self] in self?.settings.shelfEnabled ?? true }
         cardModel.sessionCwd = { [weak self] id in self?.core.state?.session(withID: id)?.cwd }
         // A meeting about to start says so; one running is a quiet
         // stretch, and its end may replay what it held.
@@ -251,11 +257,31 @@ final class NotchToy: Toy {
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.workspaceVersion += 1 }
+                MainActor.assumeIsolated {
+                    self?.workspaceVersion += 1
+                    // Dropover opening or quitting moves the shake's yield.
+                    self?.syncShakeMonitor()
+                }
             })
         }
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                // "Where the pointer is" seats afresh when screens come
+                // and go — the only moments besides a Space change.
+                ScreenBarGeometry.reseatPointer()
+                self?.displayVersion += 1
+            }
+        })
+        observers.append(workspace.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { ScreenBarGeometry.reseatPointer() }
+        })
+        // The Display pick or its seat moved the island: reframe there.
+        observers.append(NotificationCenter.default.addObserver(
+            forName: ScreenBarGeometry.preferredScreenDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.displayVersion += 1 }
         })
@@ -560,11 +586,11 @@ final class NotchToy: Toy {
 
     /// The hover path: a cursor on the resting island earns the wink —
     /// a few points of grow (`islandHoverPeek`), never the card — and
-    /// only a cursor that STAYS, past `hoverExpandDelay`, earns the
+    /// only a cursor that STAYS, past `hoverDelays.expand`, earns the
     /// grow `expandOnHover` promised. A pointer cutting across the
     /// notch to reach a menu gets the wink and nothing else; that is
     /// the whole reason the debounce exists — and why an arrival by the
-    /// menu bar's row floors at `hoverExpandDelayFromBar` while one
+    /// menu bar's row floors at `NotchMotion.barArrivalFloor` while one
     /// straight onto the island answers quicker. On the grown card the
     /// hover just holds it open — the card IS the island's window, so
     /// the pointer wandering down into the rows is still the same
@@ -573,13 +599,14 @@ final class NotchToy: Toy {
     /// owns the island, so the hover is only remembered then — it
     /// lands its grow when the capsule steps down.
     private static let collapseDelay: TimeInterval = 0.18
-    /// Alcove-quick: a pointer that reaches the notch itself wants the
-    /// card, and the notch sits where nothing else is aimed at.
-    private static let hoverExpandDelay: TimeInterval = 0.12
-    /// Arriving down from the menu bar's row floors here instead — the
-    /// pointer that high may only be reaching a menu, so the tell shows
-    /// first and the card waits (Boring Notch's floor).
-    private static let hoverExpandDelayFromBar: TimeInterval = 0.30
+    /// How long a resting pointer waits for the card, and for the breath
+    /// before it: the Notch card's "Open after" (Alcove-quick 0.12 s by
+    /// default — a pointer that reaches the notch itself wants the card),
+    /// floored for an arrival down from the menu bar's row, which may
+    /// only be reaching a menu (`NotchMotion.hoverDelays`).
+    private var hoverDelays: (peek: TimeInterval, expand: TimeInterval) {
+        NotchMotion.hoverDelays(openAfter: settings.hoverOpenDelay, fromBar: hoverArrivedFromBar)
+    }
     /// The arrival path of the current hover, latched on the enter
     /// edge: an ear or tray landing starts the longer clock, and the
     /// pointer crossing on to the island mid-pause keeps it.
@@ -653,7 +680,7 @@ final class NotchToy: Toy {
                     }
                 }
                 peekWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + NotchMotion.hoverDelay,
+                DispatchQueue.main.asyncAfter(deadline: .now() + hoverDelays.peek,
                                              execute: work)
             }
         } else {
@@ -673,8 +700,7 @@ final class NotchToy: Toy {
                 // crossing from an ear onto the island — keeps the
                 // deadline the arrival already set.
                 if expandWork == nil {
-                    let delay = hoverArrivedFromBar
-                        ? Self.hoverExpandDelayFromBar : Self.hoverExpandDelay
+                    let delay = hoverDelays.expand
                     let work = DispatchWorkItem { [weak self] in
                         MainActor.assumeIsolated { self?.hoverExpandFired() }
                     }
@@ -883,16 +909,26 @@ final class NotchToy: Toy {
     }
 
     /// The drop after the summon — file URLs straight in, web links
-    /// materialised as `.webloc`s first so the entry stays a file.
+    /// materialised as `.webloc`s first so the entry stays a file. With
+    /// the shelf switched off the island takes nothing; only a session
+    /// row still takes a file.
     func shelfDrop(_ urls: [URL]) {
         shelfSummonExpiry?.cancel()
         shelfSummonExpiry = nil
+        guard settings.shelfEnabled else { return }
         cardModel.tray.add(ShelfTrayDrop.trayURLs(from: urls))
         // Show where it landed.
         cardModel.show(.shelf)
     }
 
     // MARK: - Shake to summon
+
+    /// Told when the shelf is switched on or off — the app delegate hides
+    /// the Dock's Send to Shelf while the shelf takes no files.
+    @ObservationIgnored var onShelfSwitch: (@MainActor (Bool) -> Void)?
+    /// The last switch `onShelfSwitch` heard, so a reconcile that moved
+    /// nothing says nothing.
+    @ObservationIgnored private var shelfSwitchSent: Bool?
 
     /// The shake recognizer's feeds — global drag/up monitors, alive
     /// only while the island is up and the setting allows. A shake
@@ -901,6 +937,22 @@ final class NotchToy: Toy {
     @ObservationIgnored var shakeDragMonitor: Any?
     @ObservationIgnored var shakeUpMonitor: Any?
     @ObservationIgnored var shakeSamples: [ShelfShakeDetector.Sample] = []
+    /// How the shake's monitors are made and let go — NSEvent's global
+    /// pair; a test hands in a counter so no suite watches real drags.
+    @ObservationIgnored var installShakeMonitor: (NSEvent.EventTypeMask, @escaping (NSEvent) -> Void) -> Any? = {
+        NSEvent.addGlobalMonitorForEvents(matching: $0, handler: $1)
+    }
+    @ObservationIgnored var removeShakeMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
+    /// The shelf apps that own the same shake, running now
+    /// (`UtilityRivals`, `.shelfGesture`); a test hands in its own list.
+    @ObservationIgnored var shelfRivalsRunning: @MainActor () -> [UtilityRivals.Rival] = {
+        UtilityRivals.running(for: .shelfGesture)
+    }
+    /// The app in front while the pointer shakes — the exclusion list's
+    /// read.
+    @ObservationIgnored var shakeFrontmostApp: @MainActor () -> String? = {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    }
     /// The fold-back timer after a shake-summon — a card nobody
     /// dropped on folds itself rather than standing open forever.
     @ObservationIgnored var shelfSummonExpiry: DispatchWorkItem?
@@ -1155,11 +1207,19 @@ final class NotchToy: Toy {
     private func reconcile() {
         guard runtimeEnabled else { return }
         publishRenderer()
+        // The shelf's switch reaches the surfaces that offer to shelve a
+        // file outside the card (the Dock's Send to Shelf).
+        if shelfSwitchSent != settings.shelfEnabled {
+            shelfSwitchSent = settings.shelfEnabled
+            onShelfSwitch?(settings.shelfEnabled)
+        }
         // The media-key tap's lifetime rides the same gates — a flip
         // must install or drop the tap now, not at the next press.
         onMediaGateChanged()
         // The simulate-notch flag every band-hanging surface reads.
         ScreenBarGeometry.simulatedNotch = settings.simulateNotch
+        // The Display pick the island and the Screen Bar share.
+        ScreenBarGeometry.applyDisplayPick(settings.notchDisplay)
         // Sessions, usage or the focus may have moved while the card is
         // grown — refill before the frame re-measures its height.
         if islandExpanded { feedCard() }

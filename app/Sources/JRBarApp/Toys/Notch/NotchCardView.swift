@@ -21,6 +21,8 @@ final class NotchCardModel {
                 // The rows that had a drag over them are gone with the
                 // card; a stale entry would read as a drag still here.
                 dropHover.removeAll()
+                // A selection is for this open; the next starts clear.
+                tray.clearSelection()
                 // Only a real fold starts the next open on Now — a
                 // repeat "not pinned" while the card is already away
                 // must not undo a shelf summon waiting to grow.
@@ -150,7 +152,8 @@ final class NotchCardModel {
     /// What waits on the shelf page, for its tab: files, running or
     /// done timers, and a fresh copy to paste.
     var shelfWaiting: Int {
-        tray.items.count + timers.entries.count + (tray.pasteOffered ? 1 : 0)
+        let files = tray.shelfEnabled() ? tray.items.count + (tray.pasteOffered ? 1 : 0) : 0
+        return files + timers.entries.count
     }
 
     /// Who has the microphone, whether a camera is rolling — read as the
@@ -235,11 +238,11 @@ final class NotchCardModel {
         }
     }
 
-    /// The shelf's hand-to-agent verb: the entry's `@path` references go
+    /// The shelf's hand-to-agent verb: the chips' `@path` references go
     /// on the pasteboard and the session's window comes forward, ready
     /// for the person's paste. Nothing is ever typed for them.
-    func handToAgent(_ entry: ShelfTrayModel.ShelfEntry, session: String) {
-        guard tray.copyForAgent(entry) else { return }
+    func handToAgent(_ entries: [ShelfTrayModel.ShelfEntry], session: String) {
+        guard tray.copyForAgent(entries) else { return }
         onOpenRow?(session)
     }
 
@@ -256,6 +259,9 @@ final class NotchCardModel {
     /// A drop anywhere on the card but a session row: into the tray,
     /// and the card turns to the shelf page to show where it landed.
     func shelve(_ urls: [URL]) {
+        // The shelf switched off takes no files; a drop on a session row
+        // still hands them to that agent.
+        guard tray.shelfEnabled() else { return }
         tray.add(urls)
         show(.shelf)
     }
@@ -409,6 +415,7 @@ struct NotchCardView: View {
         .frame(width: width)
         .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText],
                 isTargeted: dropHover("card")) { providers in
+            guard model.tray.shelfEnabled() else { return false }
             ShelfTrayDrop.urls(from: providers) { urls in
                 model.shelve(urls)
             }
@@ -654,7 +661,8 @@ struct NotchCardView: View {
             }
         }
         revealRow(13, ShelfMediaRow(utility: model.utility, style: style))
-        revealRow(14, ShelfBatteryRow(power: model.utility.power, working: model.workingCount,
+        revealRow(14, ShelfBatteryRow(power: model.utility.power, adapterWatts: model.utility.adapterWatts,
+                                      working: model.workingCount,
                                       heldAwake: model.heldAwake(), style: style))
     }
 
@@ -663,13 +671,15 @@ struct NotchCardView: View {
     /// Control Center strip.
     @ViewBuilder
     private var shelfPage: some View {
-        revealRow(2, ShelfTrayRow(tray: model.tray, style: style,
-                                  handTargets: model.handTargets,
-                                  onHand: { entry, session in
-                                      model.handToAgent(entry, session: session)
-                                  },
-                                  dropHover: { dropHover($0) },
-                                  onDropLanded: { model.onDropLanded?() }))
+        if model.tray.shelfEnabled() {
+            revealRow(2, ShelfTrayRow(tray: model.tray, style: style,
+                                      handTargets: model.handTargets,
+                                      onHand: { picked, session in
+                                          model.handToAgent(picked, session: session)
+                                      },
+                                      dropHover: { dropHover($0) },
+                                      onDropLanded: { model.onDropLanded?() }))
+        }
         if !model.timers.entries.isEmpty {
             revealRow(3, ShelfTimersRow(timers: model.timers, style: style))
         }
@@ -1041,10 +1051,19 @@ private struct ShelfMediaRow: View {
                                       label: "Volume",
                                       valueText: "\(Int((volume * 100).rounded())) percent",
                                       onScrub: { utility.setVolume($0) }, onEditing: { _ in })
-                        Image(systemName: "speaker.wave.3.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(style.faintColor)
+                        NotchOutputPicker(utility: utility, style: style)
                             .frame(width: 34, alignment: .trailing)
+                    }
+                } else if utility.outputs.count > 1 {
+                    // An output with no volume of its own (HDMI) still
+                    // names itself and can hand the sound elsewhere.
+                    HStack(spacing: 8) {
+                        Text(utility.currentOutput?.name ?? "Sound output")
+                            .font(.system(size: 10))
+                            .foregroundStyle(style.faintColor)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        NotchOutputPicker(utility: utility, style: style)
                     }
                 }
             }
@@ -1303,6 +1322,9 @@ struct LyricLines: View {
 private struct ShelfTogglesRow: View {
     let toggles: SystemTogglesStore
     let style: NotchCardStyle
+    /// When the long press's keep-awake menu last closed — the press's
+    /// own release must not also flip the chip.
+    @ViewState private var awakeMenuClosedAt: Date?
 
     /// Eight across, as the strip has always been; more wrap.
     private static let perRow = 8
@@ -1343,6 +1365,8 @@ private struct ShelfTogglesRow: View {
         let busy = toggles.applying.contains(toggle)
         let title = toggles.title(for: toggle)
         return Button {
+            if toggle == .keepAwake, let closed = awakeMenuClosedAt,
+               Date().timeIntervalSince(closed) < 0.4 { return }
             toggles.apply(toggle)
         } label: {
             // Eight share the card's width: each name keeps a little air
@@ -1370,6 +1394,68 @@ private struct ShelfTogglesRow: View {
         .help(toggles.help(for: toggle))
         .accessibilityLabel("\(title) toggle")
         .accessibilityValue(toggle.isMomentary ? "action" : (on ? "on" : "off"))
+        .modifier(AwakeChipMenu(active: toggle == .keepAwake, toggles: toggles,
+                                closedAt: $awakeMenuClosedAt))
+    }
+}
+
+/// The Awake chip's duration menu: a right-click shows it as a context
+/// menu, a long press pops the same list where the pointer is
+/// (`KeepAwakeMenu`). Every other chip keeps its plain click.
+private struct AwakeChipMenu: ViewModifier {
+    let active: Bool
+    let toggles: SystemTogglesStore
+    @Binding var closedAt: Date?
+
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .contextMenu { KeepAwakeMenuItems(store: toggles) }
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                    KeepAwakeMenu.popUp(at: NSEvent.mouseLocation, store: toggles)
+                    closedAt = Date()
+                })
+                .accessibilityAction(named: "Keep awake for…") {
+                    KeepAwakeMenu.popUp(at: NSEvent.mouseLocation, store: toggles)
+                }
+        } else {
+            content
+        }
+    }
+}
+
+/// The card's sound-output picker — boring.notch 2.8's route button:
+/// the device playing now as a glyph, and a menu of every output with
+/// the current one checked. A pick moves the Mac's default output.
+struct NotchOutputPicker: View {
+    let utility: ShelfUtilityModel
+    let style: NotchCardStyle
+
+    var body: some View {
+        let current = utility.currentOutput
+        Menu {
+            ForEach(utility.outputs) { device in
+                Toggle(isOn: Binding(get: { device.id == utility.defaultOutput },
+                                     set: { _ in utility.pickOutput(device) })) {
+                    Label(device.name, systemImage: device.symbol)
+                }
+            }
+        } label: {
+            // A 10 pt glyph on a 22 pt target: the frame keeps the row's
+            // height, the shape reaches past it so the click lands.
+            Image(systemName: current?.symbol ?? "hifispeaker")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(style.subColor)
+                .frame(width: 22, height: 14, alignment: .trailing)
+                .contentShape(Rectangle().inset(by: -4))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(current.map { "Playing through \($0.name) — choose another output" } ?? "Choose the sound output")
+        .accessibilityLabel("Sound output")
+        .accessibilityValue(current?.name ?? "")
     }
 }
 
@@ -1420,6 +1506,7 @@ struct LiveEqualizer: View {
 /// card can answer.
 private struct ShelfBatteryRow: View {
     let power: AlcovePowerState
+    var adapterWatts: Int?
     let working: Int
     let heldAwake: Bool
     let style: NotchCardStyle
@@ -1431,7 +1518,8 @@ private struct ShelfBatteryRow: View {
                 NotchBatteryGlyph(fraction: Double(power.percent ?? 0) / 100,
                                   tone: power.charging ? .green : (low ? .orange : nil),
                                   plugged: power.onAC, style: style)
-                Text(AlcovePower.batteryLine(power, working: working, heldAwake: heldAwake))
+                Text(AlcovePower.batteryLine(power, adapterWatts: adapterWatts, working: working,
+                                             heldAwake: heldAwake))
                     .font(.system(size: 11.5))
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
@@ -1531,7 +1619,7 @@ private struct ShelfTrayRow: View {
     let tray: ShelfTrayModel
     let style: NotchCardStyle
     var handTargets: [(id: String, label: String)] = []
-    var onHand: (ShelfTrayModel.ShelfEntry, String) -> Void = { _, _ in }
+    var onHand: ([ShelfTrayModel.ShelfEntry], String) -> Void = { _, _ in }
     /// Each tile is a drop target of its own; the card counts it among
     /// the targets a drag can be over (`NotchCardModel.dropHover`).
     var dropHover: ((String) -> Binding<Bool>)?
@@ -1578,6 +1666,18 @@ private struct ShelfTrayRow: View {
                         tray.clearEvictionNotice()
                     }
             }
+            if let notice = tray.actionNotice {
+                Text(notice)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(style.faintColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(6))
+                        if tray.actionNotice == notice { tray.actionNotice = nil }
+                    }
+            }
         }
     }
 
@@ -1608,49 +1708,34 @@ private struct ShelfTrayRow: View {
             switch entry {
             case .item(let item):
                 itemFace(item, entry: entry)
+                    // ⌘-click picks, ⇧-click picks a run — Finder's grammar.
+                    .simultaneousGesture(TapGesture().modifiers(.command).onEnded { tray.toggleSelection(entry) })
+                    .simultaneousGesture(TapGesture().modifiers(.shift).onEnded { tray.extendSelection(to: entry) })
             case .stack(let stack):
                 ShelfStackChip(tray: tray, stack: stack, style: style) {
                     tray.dissolve(entry)
                 }
             }
         }
-        .contextMenu {
-            if !entry.missing {
-                // The job done all day: a screenshot or a file handed
-                // to an agent — copied as its `@path`, the session raised
-                // for the paste. Never typed for you.
-                if let first = handTargets.first {
-                    Button("Hand to \(first.label)") { onHand(entry, first.id) }
-                    if handTargets.count > 1 {
-                        Menu("Hand to") {
-                            ForEach(handTargets, id: \.id) { target in
-                                Button(target.label) { onHand(entry, target.id) }
-                            }
-                        }
-                    }
-                    Divider()
-                }
-                Button("Quick Look") { tray.quickLook(entry) }
-                Button("Reveal in Finder") { tray.reveal(entry) }
-                Button("Send via AirDrop") { _ = tray.sendViaAirDrop(entry) }
-                shareMenu(for: entry)
+        .overlay {
+            if tray.selectedIDs.contains(entry.id) {
+                RoundedRectangle(cornerRadius: Self.tileRadius, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                    .allowsHitTesting(false)
             }
-            switch entry {
-            case .item:
-                if tray.entries.firstIndex(where: { $0.id == entry.id })
-                    .map({ $0 + 1 < tray.entries.count }) == true {
-                    Button("Merge with Next") {
-                        tray.mergeWithNext(entry)
-                    }
+        }
+        .accessibilityAddTraits(tray.selectedIDs.contains(entry.id) ? .isSelected : [])
+        .contextMenu { chipMenu(entry, picked: tray.targets(for: entry)) }
+        // A copy unless ⌘ is held (`shelfDragOut`); a picked chip drags
+        // the whole selection.
+        .background(ShelfDragSource(
+            urls: { tray.presentURLs(of: tray.targets(for: entry)) },
+            policy: { tray.dragOutPolicy() },
+            ended: { operation, outside in
+                for dragged in tray.targets(for: entry) {
+                    tray.finishDragOut(dragged, operation: operation, outside: outside)
                 }
-            case .stack:
-                Button("Split into Items") { tray.dissolve(entry) }
-            }
-            Button("Remove from Tray", role: .destructive) { tray.remove(entry) }
-        }
-        .onDrag {
-            tray.provider(for: entry) ?? NSItemProvider()
-        }
+            }))
         .onDrop(of: [.fileURL], isTargeted: dropHover?("tile:\(entry.id)")) { providers in
             // No provider carrying a file means nothing to land —
             // an unconditional yes would animate acceptance anyway.
@@ -1686,6 +1771,55 @@ private struct ShelfTrayRow: View {
         .help(entry.missing
               ? "Missing — the file moved or was deleted."
               : entry.items.first?.path ?? entry.displayName)
+    }
+
+    /// A chip's menu. Every file verb acts on `picked` — the whole pick
+    /// when the chip is part of one, else the chip — while Merge and
+    /// Split stay the chip's own.
+    @ViewBuilder
+    private func chipMenu(_ entry: ShelfTrayModel.ShelfEntry,
+                          picked: [ShelfTrayModel.ShelfEntry]) -> some View {
+        if !entry.missing {
+            // The job done all day: a screenshot or a file handed to an
+            // agent — copied as its `@path`, the session raised for the
+            // paste. Never typed for you.
+            if let first = handTargets.first {
+                Button("Hand to \(first.label)") { onHand(picked, first.id) }
+                if handTargets.count > 1 {
+                    Menu("Hand to") {
+                        ForEach(handTargets, id: \.id) { target in
+                            Button(target.label) { onHand(picked, target.id) }
+                        }
+                    }
+                }
+                Divider()
+            }
+            Button("Quick Look") { tray.quickLook(entry, among: picked) }
+            Button("Reveal in Finder") { tray.reveal(picked) }
+            Button("Send via AirDrop") { _ = tray.sendViaAirDrop(picked) }
+            shareMenu(for: picked)
+            Divider()
+            ShelfActionMenuItems(tray: tray, targets: picked)
+            Divider()
+        }
+        switch entry {
+        case .item:
+            if tray.entries.firstIndex(where: { $0.id == entry.id })
+                .map({ $0 + 1 < tray.entries.count }) == true {
+                Button("Merge with Next") {
+                    tray.mergeWithNext(entry)
+                }
+            }
+        case .stack:
+            Button("Split into Items") { tray.dissolve(entry) }
+        }
+        let removing = picked.reduce(0) { $0 + $1.items.count }
+        Button(ShelfActionMenu.removeTitle(count: picked.count > 1 ? removing : 1), role: .destructive) {
+            tray.remove(picked)
+        }
+        if tray.entries.count > 1 {
+            Button("Clear Shelf", role: .destructive) { tray.removeAll() }
+        }
     }
 
     /// A loose file's chip face — the Finder icon and the name;
@@ -1728,12 +1862,12 @@ private struct ShelfTrayRow: View {
         }
     }
 
-    /// The system's own share menu for the entry's files; a canceled
-    /// share delivers nothing and claims nothing. A shelf whose files
-    /// all moved offers nothing to share.
+    /// The system's own share menu for the pick's files; a canceled
+    /// share delivers nothing and claims nothing. A pick whose files all
+    /// moved offers nothing to share.
     @ViewBuilder
-    private func shareMenu(for entry: ShelfTrayModel.ShelfEntry) -> some View {
-        let urls = tray.shareableURLs(for: entry)
+    private func shareMenu(for picked: [ShelfTrayModel.ShelfEntry]) -> some View {
+        let urls = tray.presentURLs(of: picked)
         if !urls.isEmpty {
             ShareLink(items: urls) { Text("Share…") }
         }
@@ -1741,8 +1875,8 @@ private struct ShelfTrayRow: View {
 }
 
 /// A stack's chip: a fan of its first three icons, the name and the
-/// count. A plain click opens the grid popover; ⌘-click dissolves
-/// the stack where it stands.
+/// count. A plain click opens the grid popover; ⌘- and ⇧-click pick it,
+/// and ⌥-click dissolves the stack where it stands.
 private struct ShelfStackChip: View {
     let tray: ShelfTrayModel
     let stack: ShelfTrayModel.ShelfEntry.Stack
@@ -1785,7 +1919,14 @@ private struct ShelfStackChip: View {
         .foregroundStyle(stack.items.allSatisfy(\.missing)
                          ? style.faintColor : style.subColor)
         .onTapGesture {
-            if NSEvent.modifierFlags.contains(.command) {
+            // ⌘ and ⇧ pick, as on a loose chip; ⌥-click splits the stack
+            // where it stands; a plain click opens its grid.
+            let flags = NSEvent.modifierFlags
+            if flags.contains(.command) {
+                tray.toggleSelection(.stack(stack))
+            } else if flags.contains(.shift) {
+                tray.extendSelection(to: .stack(stack))
+            } else if flags.contains(.option) {
                 dissolve()
             } else {
                 open = true
@@ -1822,9 +1963,15 @@ private struct ShelfStackChip: View {
                                 in: RoundedRectangle(cornerRadius: 6,
                                                      style: .continuous))
                     .opacity(item.missing ? 0.38 : 1)
-                    .onDrag {
-                        NSItemProvider(object: item.url as NSURL)
-                    }
+                    .background(ShelfDragSource(
+                        urls: { FileManager.default.fileExists(atPath: item.path) ? [item.url] : [] },
+                        policy: { tray.dragOutPolicy() },
+                        ended: { operation, outside in
+                            if ShelfDragOutRule.removes(operation: operation, outside: outside,
+                                                        removeAfter: tray.removeAfterDragOut()) {
+                                tray.removeItem(item, from: stack.id)
+                            }
+                        }))
                     .onTapGesture(count: 2) {
                         if !item.missing {
                             tray.quickLook(.item(item))

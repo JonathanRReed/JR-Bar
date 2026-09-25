@@ -1198,6 +1198,46 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// noticed across the room — only where a strip is connected, never
     /// while the Mac is quiet.
     public var timerLights: Bool = true
+    /// Seconds a pointer rests on the island before the card grows —
+    /// boring.notch's minimum hover, MewNotch's slider. 0 opens at once;
+    /// an arrival down from the menu bar's row still waits its own floor.
+    public var hoverOpenDelay: Double = NotchSettings.defaultHoverOpenDelay
+    public static let defaultHoverOpenDelay: Double = 0.12
+    public static let hoverOpenDelayRange: ClosedRange<Double> = 0...1
+    /// Which display the island and the Screen Bar live on.
+    public var notchDisplay: NotchDisplay = .builtIn
+    /// The shelf itself — the card's second page and its drop targets.
+    /// Off leaves the card one page long and every shelf gesture quiet.
+    public var shelfEnabled: Bool = true
+    /// What a file dragged out of the shelf does in Finder: a copy
+    /// unless ⌘ is held (Atoll's and Yoink's safe default), or a move.
+    public var shelfDragOut: ShelfDragOut = .copy
+    /// A file dragged out leaves the shelf once it lands somewhere.
+    public var shelfRemoveAfterDragOut: Bool = false
+    /// New files join the front of the shelf instead of its end.
+    public var shelfNewestFirst: Bool = false
+    /// How easily a shake summons the shelf, 0…1: higher needs fewer,
+    /// shorter swings. 0.5 is the long-standing four 30-point swings.
+    public var shelfShakeSensitivity: Double = 0.5
+    /// Apps a shake never summons over — a drawing app where a quick
+    /// back-and-forth drag is the work, not a request for the shelf.
+    public var shelfShakeExcludedBundleIDs: [String] = []
+    /// While Dropover, Yoink or Dropzone runs, the shake stays theirs:
+    /// JR-Bar's shake summon steps aside so one shake never opens two
+    /// shelves. Dropping on the notch still works.
+    public var shelfYieldToRivals: Bool = true
+
+    /// A saved hover delay read back into range; NaN reads as the default.
+    public static func clampedHoverOpenDelay(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultHoverOpenDelay }
+        return min(hoverOpenDelayRange.upperBound, max(hoverOpenDelayRange.lowerBound, value))
+    }
+
+    /// A saved sensitivity read back into 0…1; NaN reads as the middle.
+    public static func clampedShakeSensitivity(_ value: Double) -> Double {
+        guard value.isFinite else { return 0.5 }
+        return min(1, max(0, value))
+    }
 
     public init(enabled: Bool = false, provider: NotchProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
@@ -1246,6 +1286,15 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         case holdNewsWhileQuiet
         case meetingAlerts
         case timerLights
+        case hoverOpenDelay
+        case notchDisplay
+        case shelfEnabled
+        case shelfDragOut
+        case shelfRemoveAfterDragOut
+        case shelfNewestFirst
+        case shelfShakeSensitivity
+        case shelfShakeExcludedBundleIDs
+        case shelfYieldToRivals
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1280,7 +1329,34 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         holdNewsWhileQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .holdNewsWhileQuiet)) ?? true
         meetingAlerts = (try? c.decodeIfPresent(Bool.self, forKey: .meetingAlerts)) ?? false
         timerLights = (try? c.decodeIfPresent(Bool.self, forKey: .timerLights)) ?? true
+        hoverOpenDelay = Self.clampedHoverOpenDelay(
+            (try? c.decodeIfPresent(Double.self, forKey: .hoverOpenDelay)) ?? Self.defaultHoverOpenDelay)
+        notchDisplay = (try? c.decodeIfPresent(NotchDisplay.self, forKey: .notchDisplay)) ?? .builtIn
+        shelfEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .shelfEnabled)) ?? true
+        shelfDragOut = (try? c.decodeIfPresent(ShelfDragOut.self, forKey: .shelfDragOut)) ?? .copy
+        shelfRemoveAfterDragOut = (try? c.decodeIfPresent(Bool.self, forKey: .shelfRemoveAfterDragOut)) ?? false
+        shelfNewestFirst = (try? c.decodeIfPresent(Bool.self, forKey: .shelfNewestFirst)) ?? false
+        shelfShakeSensitivity = Self.clampedShakeSensitivity(
+            (try? c.decodeIfPresent(Double.self, forKey: .shelfShakeSensitivity)) ?? 0.5)
+        shelfShakeExcludedBundleIDs = (try? c.decodeIfPresent([String].self, forKey: .shelfShakeExcludedBundleIDs)) ?? []
+        shelfYieldToRivals = (try? c.decodeIfPresent(Bool.self, forKey: .shelfYieldToRivals)) ?? true
     }
+}
+
+/// Which display the notch island and the Screen Bar live on: the
+/// notched built-in (the main display when the lid is shut), the main
+/// display with the menu bar, or the display the pointer was on when
+/// the Space or the screens last changed.
+public enum NotchDisplay: String, Codable, CaseIterable, Sendable {
+    case builtIn, main, pointer
+}
+
+/// What a file dragged out of the shelf does where it lands.
+public enum ShelfDragOut: String, Codable, CaseIterable, Sendable {
+    /// Finder copies it; ⌘ held at the start of the drag moves it.
+    case copy
+    /// Finder moves it on the same volume, as a Finder drag would.
+    case move
 }
 
 /// Who renders the island: ours, Henrik's Alcove, or boring.notch.
