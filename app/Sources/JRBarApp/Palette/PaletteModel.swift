@@ -28,9 +28,9 @@ final class PaletteModel {
     private(set) var searching = false {
         didSet { if searching != oldValue { searchingSince = searching ? clock() : nil } }
     }
-    /// When the slower sources started on the current query — the wait
-    /// rule's clock (an orb in the footer from 2 s, a beam under the
-    /// field from 3 s); nil while none is reading.
+    /// When the slower sources started reading — the wait rule's clock
+    /// (an orb in the footer from 2 s, a beam under the field from 3 s);
+    /// nil while none is reading.
     private(set) var searchingSince: Date?
     /// The clock `searchingSince` reads; tests drive their own.
     @ObservationIgnored var clock: @MainActor () -> Date = { Date() }
@@ -122,12 +122,11 @@ final class PaletteModel {
         refilter(keepSelection: true)
     }
 
-    /// A new query's search restarts the wait's clock even while the
-    /// last one's was still reading.
-    func noteSearching(_ on: Bool) {
-        searching = on
-        if on { searchingSince = clock() }
-    }
+    /// The wait's clock runs from when the slower sources start reading
+    /// until they are done (`searching`'s own edges): typing on while
+    /// they read is the same wait, so the orb and the beam stay put
+    /// rather than drop out and come back.
+    func noteSearching(_ on: Bool) { searching = on }
 
     func refilter(keepSelection: Bool) {
         let previous = selectedID
