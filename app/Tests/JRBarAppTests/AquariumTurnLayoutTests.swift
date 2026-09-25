@@ -262,7 +262,7 @@ struct AquariumTurnLayoutTests {
         expectSmooth(swept, speed: 220, "sweeper", yawStep: 0.34)
     }
 
-    @Test("the turtle, the tetras and the axolotl loop without a jump")
+    @Test("the turtle, the tetras, the axolotl and the octopus loop without a jump")
     func petsLoop() {
         let tank = makeTank([])
         func layouts(_ poses: [PetPose]) -> [AquariumView.Layout] {
@@ -297,6 +297,18 @@ struct AquariumTurnLayoutTests {
             Array(zip(school, school.dropFirst())).firstIndex { ($0[i].c >= 0) != ($1[i].c >= 0) } ?? -1
         }
         #expect(Set(flips).count > 1)
+        // Four minutes of the octopus: out, home again, and its peeks
+        // over the rim — every change eases, none lands in one frame.
+        let den = CGPoint(x: 270, y: 440)
+        let octopus = (0...(30 * 242)).map { tank.octopusPose(home: den, size: size, t: t0 + Double($0) * dt) }
+        for (i, pair) in zip(octopus, octopus.dropFirst()).enumerated() {
+            let (a, b) = pair
+            #expect(hypot(b.at.x - a.at.x, b.at.y - a.at.y) <= 2, "octopus: frame \(i) moved at once")
+            #expect(abs(b.out - a.out) <= 0.2, "octopus: frame \(i) swapped drawings at once")
+            #expect(abs(b.peek - a.peek) <= 0.1, "octopus: frame \(i) peeked at once")
+        }
+        #expect(octopus.contains { $0.out == 1 }, "it went out")
+        #expect(octopus.contains { $0.peek == 1 }, "it peeked")
     }
 
     @Test("the hover box matches the drawn size at every stage and fish size")

@@ -131,43 +131,54 @@ extension AquariumView {
                                       shade: Color(red: 0.36, green: 0.19, blue: 0.17))
         }
 
-        // The wander: a seeded ~4-minute cycle — long home, a crawl
-        // out, a pause in the open, a crawl home.
+        let pose = octopusPose(home: CGPoint(x: homeX, y: homeY), size: size, t: t)
+        var c = canvas
+        c.translateBy(x: pose.at.x, y: pose.at.y)
+        if pose.out < 1 {
+            // Home: slumped in or behind the pot, the eyes easing up over
+            // the rim on a peek and sinking low again after.
+            var home = c
+            home.opacity = (0.55 + 0.40 * pose.peek) * (1 - pose.out)
+            PetArt.octopusAtHome(&home, skin: skin, lift: 3 + 7 * pose.peek,
+                                 open: 0.35 + 0.65 * pose.peek)
+        }
+        if pose.out > 0 {
+            var abroad = c
+            abroad.opacity = 0.97 * pose.out
+            PetArt.octopus(&abroad, skin: skin, crawl: pose.crawl)
+        }
+    }
+
+    /// The octopus's round from `home`: a seeded ~4-minute cycle — long
+    /// at home, a crawl out, a pause in the open, a crawl home. `out`
+    /// runs 0 at home … 1 out in the open, and the two drawings cross
+    /// over in the first and last 0.3 s of the trip instead of swapping
+    /// in a frame. `peek` (0…1) is how far the eyes are up over the rim:
+    /// a stretch of each ~70 s at home, easing up and back down over a
+    /// second rather than popping.
+    func octopusPose(home: CGPoint, size: CGSize, t: Double)
+        -> (at: CGPoint, crawl: Double, out: Double, peek: Double) {
         let cycle = 240.0
         let p = frac(t / cycle + 0.31)
         // Out: p .60–.68 crawls out, .68–.82 sits out, .82–.90 crawls home.
-        let outX = homeX + (homeX < size.width * 0.5 ? 1 : -1) * size.width * 0.09
+        let outX = home.x + (home.x < size.width * 0.5 ? 1 : -1) * size.width * 0.09
         let outY = sandTop(atX: outX, in: size) - 6
-        var pos = CGPoint(x: homeX, y: homeY)
-        var crawl = 0.0
+        var k = 0.0
         if p >= 0.60, p < 0.68 {
-            let k = smooth(clamp01((p - 0.60) / 0.08))
-            pos = CGPoint(x: homeX + (outX - homeX) * k,
-                          y: homeY + (outY - homeY) * k)
-            crawl = reduceMotion ? 0 : sin(k * .pi * 6) * 0.5
+            k = smooth(clamp01((p - 0.60) / 0.08))
         } else if p >= 0.68, p < 0.82 {
-            pos = CGPoint(x: outX, y: outY)
+            k = 1
         } else if p >= 0.82, p < 0.90 {
-            let k = smooth(clamp01((p - 0.82) / 0.08))
-            pos = CGPoint(x: outX + (homeX - outX) * k,
-                          y: outY + (homeY - outY) * k)
-            crawl = reduceMotion ? 0 : sin(k * .pi * 6) * 0.5
+            k = 1 - smooth(clamp01((p - 0.82) / 0.08))
         }
-        let out = pos.x != homeX
-        // The peek: while home, eyes ride over the rim for a stretch
-        // of each ~70 s sub-cycle.
-        let peek = !out && frac(t / 68) < 0.5
-        var c = canvas
-        c.translateBy(x: pos.x, y: pos.y)
-        if out {
-            c.opacity = 0.97
-            PetArt.octopus(&c, skin: skin, crawl: crawl)
-        } else {
-            // Home: slumped in or behind the pot, the eyes up over the
-            // rim on a peek and sunk low otherwise.
-            c.opacity = peek ? 0.95 : 0.55
-            PetArt.octopusAtHome(&c, skin: skin, lift: peek ? 10 : 3, open: peek ? 1 : 0.35)
-        }
+        let crawling = (p >= 0.60 && p < 0.68) || (p >= 0.82 && p < 0.90)
+        let crawl = crawling && !reduceMotion ? sin(k * .pi * 6) * 0.5 : 0
+        let at = CGPoint(x: home.x + (outX - home.x) * k, y: home.y + (outY - home.y) * k)
+        let cross = 0.3 / cycle
+        let out = smooth(clamp01((p - 0.60) / cross)) * smooth(clamp01((0.90 - p) / cross))
+        let u = frac(t / 68) * 68
+        let peek = smooth(clamp01(u / 1.2)) * smooth(clamp01((34 - u) / 1.2))
+        return (at, crawl, out, peek)
     }
 
     /// How long the axolotl takes to turn round at each end, seconds.
