@@ -367,15 +367,19 @@ struct AquariumTurnLayoutTests {
     @Test("a busy tank for two minutes: calm turns, never a pop")
     func busyTankSoak() {
         // Two schools and a loner, the way sessions fill a real tank.
-        let roster: [Fish] = [
-            ("claude-1", "claude", FishSpecies.clownfish), ("claude-2", "claude", .clownfish),
+        let specs: [(id: String, provider: String, species: FishSpecies)] = [
+            ("claude-1", "claude", .clownfish), ("claude-2", "claude", .clownfish),
             ("claude-3", "claude", .clownfish), ("codex-1", "codex", .shark), ("codex-2", "codex", .shark),
             ("gemini-1", "gemini", .angelfish),
-        ].enumerated().map { i, spec in
-            Fish(id: spec.0, label: spec.0, providerID: spec.1, state: .swimming,
-                 lane: 0.2 + 0.12 * Double(i), speed: 0.05 + 0.018 * Double(i),
-                 direction: i % 2 == 0 ? 1 : -1, stateSince: Date(timeIntervalSince1970: t0 - 100),
-                 enteredAt: .distantPast, species: spec.2)
+        ]
+        var roster: [Fish] = []
+        for (i, spec) in specs.enumerated() {
+            let n = Double(i)
+            roster.append(Fish(id: spec.id, label: spec.id, providerID: spec.provider, state: .swimming,
+                               lane: 0.2 + 0.12 * n, speed: 0.05 + 0.018 * n,
+                               direction: i % 2 == 0 ? 1 : -1,
+                               stateSince: Date(timeIntervalSince1970: t0 - 100),
+                               enteredAt: .distantPast, species: spec.species))
         }
         let tank = makeTank(roster)
         var t = t0
