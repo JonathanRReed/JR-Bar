@@ -41,6 +41,7 @@ struct AquariumTankToyTests {
         #expect(tank.game.pets["p3"] != nil, "a live session's record stays")
         #expect(tank.game.hats["p3"] == ShopItem.hatCrown.rawValue, "and so does its hat")
         #expect(tank.game.pets["p0"] == nil, "the oldest passer-by goes")
+        tank.flushSave()
         #expect(file.load().game.pets.count == AquariumRules.maxPets, "the trim is saved")
         withExtendedLifetime(toys) {}
     }
@@ -58,6 +59,7 @@ struct AquariumTankToyTests {
         let tank = AquariumToy(core: core, store: toys, saveFile: file)
         #expect(tank.game.pets.count == 799, "every session looks gone without a list")
         #expect(tank.game.hats["p0"] == ShopItem.hatCrown.rawValue)
+        tank.flushSave()
         #expect(file.load().game.pets.count == 799)
         withExtendedLifetime(toys) {}
     }

@@ -1806,12 +1806,23 @@ public struct CoreState: Codable, Hashable, Sendable {
 
     /// `health.sources[provider]` decoded: whether the provider's hook
     /// feed is still delivering (`fresh`) and how many seconds since the
-    /// last event it accepted (`heard_age_seconds`, nil when it never
-    /// has). `health` stays a reserved JSONValue subtree — this and
-    /// `intakeHealth` are the parts of it consumers need typed.
-    public func sourceHealth(for provider: String) -> (fresh: Bool, heardAgeSeconds: Double?)? {
+    /// last event it accepted, nil when it never has. `health` stays a
+    /// reserved JSONValue subtree — this and `intakeHealth` are the parts
+    /// of it consumers need typed.
+    ///
+    /// The age comes from `heard_at` when the daemon sends it: the moment
+    /// itself stays put between frames, so the age is measured against
+    /// `now` (the caller's clock; else the document's own `now`) and
+    /// keeps counting while the daemon sends nothing new. A daemon that
+    /// sends only `heard_age_seconds` is read as before.
+    public func sourceHealth(for provider: String, now: Double? = nil) -> (fresh: Bool, heardAgeSeconds: Double?)? {
         guard let source = health?["sources"]?[provider]?.objectValue else { return nil }
-        return (source["fresh"]?.boolValue ?? false, source["heard_age_seconds"]?.doubleValue)
+        let fresh = source["fresh"]?.boolValue ?? false
+        if let heardAt = source["heard_at"]?.doubleValue, heardAt.isFinite,
+           let reference = now ?? self.now {
+            return (fresh, max(0, reference - heardAt))
+        }
+        return (fresh, source["heard_age_seconds"]?.doubleValue)
     }
 
     /// `health.intake`: the intake report's verdict codes (`hook_state`,

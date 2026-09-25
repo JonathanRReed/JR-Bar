@@ -294,6 +294,10 @@ final class PanelStore {
     /// arriving: nothing inside animates before then (the first frame is
     /// the final frame). The controller arms it.
     var animationsArmed = false
+    /// The rows' marks, their orbs and the connecting dot move only in an
+    /// open panel that has finished arriving: the open's first frame is
+    /// its final frame, and starting them is not work the open pays for.
+    var marksMove: Bool { isOpen && animationsArmed }
     /// The visible height of the screen the panel opens on; the layout caps
     /// the panel at a fraction of it.
     var screenHeight: Double = 900
@@ -616,20 +620,75 @@ final class PanelStore {
         core.settings.map { SettingsDocument($0.document) }
     }
 
+    /// What `rows` is made of. Reading them all on every call, answered
+    /// from the memo or not, keeps SwiftUI and `withObservationTracking`
+    /// subscribed to each one. Comparing is cheap: an unchanged document
+    /// is the same storage, and a new frame differs in its generation.
+    private struct RowsInputs: Equatable {
+        let live: Bool
+        let state: CoreState?
+        let settings: CoreSettings?
+        let usage: [String: SessionUsage]
+    }
+
+    /// One computation of `rows` and the cuts the panel takes of it, kept
+    /// until an input changes. A class, so filling a cut lazily is not a
+    /// change the store's observers hear.
+    private final class RowsMemo {
+        let inputs: RowsInputs
+        let rows: [SessionRow]
+        lazy var askRows: [SessionRow] = rows.filter { $0.ask != nil }
+        /// The find query's cut: the rows it keeps, split for the list.
+        var cut: RowCut?
+
+        init(inputs: RowsInputs, rows: [SessionRow]) {
+            self.inputs = inputs
+            self.rows = rows
+        }
+    }
+
+    /// The rows the panel draws for one find query.
+    private struct RowCut {
+        let query: String
+        let visible: [SessionRow]
+        let asks: [SessionRow]
+        let plain: [SessionRow]
+        let ids: [String]
+    }
+
+    @ObservationIgnored private var rowsMemo: RowsMemo?
+    /// How many times `rows` was built — a test hook proving the memo
+    /// holds across reads and lets go on an input change.
+    @ObservationIgnored private(set) var rowsComputations = 0
+
+    private var currentRows: RowsMemo {
+        let inputs = RowsInputs(live: core.isLive, state: core.state, settings: core.settings,
+                                usage: sessionUsage.usage)
+        if let memo = rowsMemo, memo.inputs == inputs { return memo }
+        let memo = RowsMemo(inputs: inputs, rows: Self.buildRows(inputs))
+        rowsComputations += 1
+        rowsMemo = memo
+        return memo
+    }
+
     /// Asks first, then waiting, failed, working, done, ended, idle. Among
     /// asks the longest-unanswered leads — `openedAt` ascending — so the
     /// ask that has been waiting longest is never buried under newer ones;
     /// an undated ask sorts last among them. Other ties: most recent first.
-    var rows: [SessionRow] {
-        guard core.isLive else { return [] }
-        let document = settingsDocument
-        let pinned = Dictionary(core.asks.compactMap { ask in ask.session.map { ($0, ask) } }, uniquingKeysWith: { first, _ in first })
+    /// Built once per change of the daemon's state, its settings, the
+    /// sessions' usage or liveness, however often it is read.
+    var rows: [SessionRow] { currentRows.rows }
+
+    private static func buildRows(_ inputs: RowsInputs) -> [SessionRow] {
+        guard inputs.live, let state = inputs.state else { return [] }
+        let document = inputs.settings.map { SettingsDocument($0.document) }
+        let pinned = Dictionary(state.asks.compactMap { ask in ask.session.map { ($0, ask) } }, uniquingKeysWith: { first, _ in first })
         // An ask whose session the daemon no longer lists still needs an
         // answer: it is counted in the header and it is what the light is
         // about, so it gets a row of its own rather than disappearing.
-        let orphans = (core.state?.orphanAsks ?? []).map { SessionRow(orphanAsk: $0, document: document) }
-        let usage = sessionUsage.usage
-        let rows = core.sessions.map { session in
+        let orphans = state.orphanAsks.map { SessionRow(orphanAsk: $0, document: document) }
+        let usage = inputs.usage
+        let rows = state.mainSessions.map { session in
             var row = SessionRow(session: session, pinnedAsk: pinned[session.id], document: document)
             row.usage = usage[session.id]
             return row
@@ -853,7 +912,7 @@ final class PanelStore {
             : "Keeping this Mac awake; it lets go a few minutes after the agents stop"))
     }
 
-    var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
+    var askRows: [SessionRow] { currentRows.askRows }
 
     // MARK: Notify when done
 
@@ -922,13 +981,26 @@ final class PanelStore {
     private(set) var findQuery = ""
 
     /// The rows the panel draws: every row, or the ones the query finds.
-    var visibleRows: [SessionRow] {
+    var visibleRows: [SessionRow] { currentCut.visible }
+    var visibleAskRows: [SessionRow] { currentCut.asks }
+    var visiblePlainRows: [SessionRow] { currentCut.plain }
+    /// The drawn rows' ids, in order — what the list animates on.
+    var visibleRowIDs: [String] { currentCut.ids }
+
+    /// The query's cut of the current rows, taken once per rows change or
+    /// query change and shared by every read in between.
+    private var currentCut: RowCut {
+        let memo = currentRows
         let query = findQuery.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return rows }
-        return rows.filter { $0.matches(query) }
+        if let cut = memo.cut, cut.query == query { return cut }
+        let visible = query.isEmpty ? memo.rows : memo.rows.filter { $0.matches(query) }
+        let cut = RowCut(query: query, visible: visible,
+                         asks: visible.filter { $0.ask != nil },
+                         plain: visible.filter { $0.ask == nil },
+                         ids: visible.map(\.id))
+        memo.cut = cut
+        return cut
     }
-    var visibleAskRows: [SessionRow] { visibleRows.filter { $0.ask != nil } }
-    var visiblePlainRows: [SessionRow] { visibleRows.filter { $0.ask == nil } }
 
     /// Typing lands here: the query grows, and the first match becomes the
     /// keyboard selection so Return opens it straight away.
@@ -1178,10 +1250,13 @@ final class PanelStore {
     var quietFeeds: [String: Double] {
         guard core.isLive, let state = core.state else { return [:] }
         var result: [String: Double] = [:]
+        // The panel's clock: a `heard_at` moment keeps counting while the
+        // panel is open and no frame arrives.
+        let clock = now.timeIntervalSince1970
         for session in core.sessions where !session.isRemote {
             let activity = SessionActivity.reduce(session)
             guard activity == .working || activity == .waiting else { continue }
-            guard let source = state.sourceHealth(for: session.provider),
+            guard let source = state.sourceHealth(for: session.provider, now: clock),
                   !source.fresh,
                   let age = source.heardAgeSeconds,
                   age.isFinite, age >= Self.sourceQuietBound else { continue }

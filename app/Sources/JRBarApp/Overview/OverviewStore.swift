@@ -20,7 +20,15 @@ final class OverviewStore {
     var loading = false
     var error: String?
     var loadedAt: Date?
+    /// The window's one-second clock. Only leaf views read it — the time
+    /// cells of the table, the inspector's waiting line — so a tick
+    /// re-renders those, not the window.
     var now = Date()
+    /// The clock the connections strip reads: moved by the tick only when
+    /// a chip's time-drawn word would change (the minute, the quiet
+    /// verdict and its age), so the strip, and the window root that asks
+    /// for the selected link, stay put through the other ticks.
+    private(set) var linksClock = Date()
     var selectedID: String?
     /// The table's full multi-selection; `selectedID` is the primary
     /// (first in row order) the inspector follows. Two selected rows
@@ -169,6 +177,8 @@ final class OverviewStore {
         case .disconnected(let reason): offlineReason = reason
         default: break
         }
+        let clock = linksClock
+        let time = linksTime(at: clock)
         let key = LinksKey(
             connected: core.isLive, connecting: connecting,
             offlineReason: offlineReason,
@@ -176,13 +186,11 @@ final class OverviewStore {
             inFlight: core.inFlightCommands,
             localSessions: roster.reduce(into: 0) { $0 += $1.session.remote ? 0 : 1 },
             connectedAt: core.connectedAt,
-            stateAge: core.stateAge(at: now),
-            stateStale: core.stateIsStale(at: now),
-            peers: core.state?.peers ?? [], devices: core.state?.devices ?? [],
-            providers: core.state?.usage?.providers ?? [],
-            deck: core.state?.deck?.device,
-            hoarder: hoarderHealth,
-            minute: Int(now.timeIntervalSince1970 / 60)
+            time: time,
+            peers: core.state?.peers ?? [], devices: core.devices,
+            providers: core.usage,
+            deck: core.deck?.device,
+            hoarder: hoarderHealth
         )
         if let cached = linksCache, cached.key == key { return cached.value }
         let value = OverviewLinkage.links(OverviewLinkage.Snapshot(
@@ -190,12 +198,12 @@ final class OverviewStore {
             offlineReason: key.offlineReason,
             coreVersion: key.coreVersion, corePID: key.corePID,
             connectedAt: key.connectedAt, inFlight: key.inFlight,
-            stateAge: key.stateAge, stateStale: key.stateStale,
+            stateAge: core.stateAge(at: clock), stateStale: time.stale,
             localName: Host.current().localizedName ?? "This Mac",
             localSessions: key.localSessions, peers: key.peers,
             devices: key.devices, providers: key.providers, deck: key.deck,
             hoarder: key.hoarder
-        ), now: now)
+        ), now: clock)
         linksCache = (key, value)
         return value
     }
@@ -209,17 +217,45 @@ final class OverviewStore {
         var corePID: Int?
         var inFlight, localSessions: Int
         var connectedAt: Date?
-        /// Seconds since the last state frame, and the same staleness
-        /// verdict the panel uses — the chip's "connected" must admit a
-        /// quiet daemon.
-        var stateAge: TimeInterval?
-        var stateStale: Bool
+        var time: LinksTime
         var peers: [CorePeer]
         var devices: [CoreDevice]
         var providers: [CoreProviderUsage]
         var deck: DeckDevice?
         var hoarder: OverviewLinkage.HoarderHealth?
+    }
+
+    /// What the chips draw from the clock, at the precision they draw it:
+    /// the minute (ages are written in minutes and up), the same
+    /// staleness verdict the panel uses — the chip's "connected" must
+    /// admit a quiet daemon — and the words themselves where an age
+    /// prints seconds: "Connected for 47s" and "captured 3s ago" must
+    /// move the tick or they sit stale for up to a minute.
+    struct LinksTime: Hashable {
         var minute: Int
+        var stale: Bool
+        var staleAge: String?
+        var connectedAge: String?
+        var captureAge: String?
+    }
+
+    func linksTime(at clock: Date) -> LinksTime {
+        let stale = core.stateIsStale(at: clock)
+        let age = stale ? core.stateAge(at: clock).map(AgentMonitorFeed.ageText) : nil
+        let connectedAge = core.isLive ? core.connectedAt.map {
+            AgentMonitorFeed.ageText(clock.timeIntervalSince($0))
+        } : nil
+        let captureAge = hoarderHealth?.archive.lastCapturedAt.map {
+            AgentMonitorFeed.ageText(max(0, clock.timeIntervalSince($0)))
+        }
+        return LinksTime(minute: Int(clock.timeIntervalSince1970 / 60), stale: stale,
+                         staleAge: age, connectedAge: connectedAge, captureAge: captureAge)
+    }
+
+    /// The tick's half of `linksClock`: move it only when what the chips
+    /// draw from the time would change.
+    func advanceLinksClock(to clock: Date) {
+        if linksTime(at: clock) != linksTime(at: linksClock) { linksClock = clock }
     }
     @ObservationIgnored private var linksCache: (key: LinksKey, value: [OverviewLink])?
 
@@ -392,6 +428,7 @@ final class OverviewStore {
     func windowDidOpen() {
         windowOpen = true
         now = Date()
+        linksClock = now
         selectedLinkID = nil
         lastEventID = core.lastEvent?.id
         clock?.invalidate()
@@ -418,6 +455,7 @@ final class OverviewStore {
 
     private func tick() {
         now = Date()
+        advanceLinksClock(to: now)
         probeHoarderIfDue()
         guard core.isLive else { return }
         // Per id at most every `SessionUsageStore.freshFor`.

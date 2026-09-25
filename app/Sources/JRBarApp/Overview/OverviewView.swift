@@ -385,11 +385,7 @@ struct OverviewView: View {
                                 UnseenDot()
                                     .help("Finished since you last looked")
                             }
-                            if OverviewStore.isSnoozed(entry, now: store.now) {
-                                Text("snoozed").font(.system(size: 10))
-                                    .foregroundStyle(.tertiary).lineLimit(1)
-                                    .help(OverviewStore.snoozeWakeText(entry) ?? "Snoozed")
-                            }
+                            OverviewSnoozedTag(entry: entry, store: store)
                         }
                     }
                     .width(min: 120, ideal: 180)
@@ -458,8 +454,7 @@ struct OverviewView: View {
                     }
                     .width(min: 120, ideal: 200)
                     TableColumn("Quiet", value: \.elapsedSortKey) { entry in
-                        Text(elapsedText(entry))
-                            .monospacedDigit().foregroundStyle(.secondary)
+                        OverviewQuietCell(entry: entry, store: store)
                     }
                     .width(min: 48, ideal: 56)
                     TableColumn("Freshness", value: \.freshnessSortKey) { entry in
@@ -467,7 +462,7 @@ struct OverviewView: View {
                     }
                     .width(min: 64, ideal: 80)
                     TableColumn("Attention", value: \.attentionSortKey) { entry in
-                        attentionCell(entry)
+                        OverviewAttentionCell(entry: entry, store: store)
                     }
                     .width(min: 44, ideal: 60)
                 }
@@ -562,13 +557,6 @@ struct OverviewView: View {
         .accessibilityLabel("State: \(activity.word)")
     }
 
-    /// The "Quiet" column: how long since the session last spoke —
-    /// `since` is the last-event stamp, not a start time.
-    private func elapsedText(_ entry: CoreRosterEntry) -> String {
-        guard let since = entry.session.since else { return "—" }
-        let seconds = max(0, store.now.timeIntervalSince1970 - since)
-        return AgentMonitorFeed.ageText(seconds)
-    }
 
     @ViewBuilder
     private func freshnessCell(_ entry: CoreRosterEntry) -> some View {
@@ -581,26 +569,6 @@ struct OverviewView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Freshness: \(word)")
-    }
-
-    @ViewBuilder
-    private func attentionCell(_ entry: CoreRosterEntry) -> some View {
-        HStack(spacing: 5) {
-            if entry.pinned || entry.session.ask != nil {
-                Image(systemName: "exclamationmark.bubble.fill").foregroundStyle(.orange)
-                    .help(entry.session.ask?.summary ?? "Waiting on you")
-            }
-            if entry.axes?.outcome == "failed" {
-                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                    .help("Run failed — outcome reported by the monitor")
-            }
-            if let waiting = OverviewStore.waitingText(entry, now: store.now) {
-                Text(waiting).font(.system(size: 9))
-                    .foregroundStyle(.orange).lineLimit(1)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Self.attentionLabel(entry, now: store.now))
     }
 
     /// The attention cell's spoken form — extracted so tests can assert
@@ -630,6 +598,70 @@ struct OverviewView: View {
         } else {
             OverviewConnectionsBrowser(store: store)
         }
+    }
+}
+
+// MARK: - The table's clock cells
+
+// The cells that draw the one-second clock, each its own view: a tick
+// re-renders these and nothing else, where reading `store.now` in the
+// table's column builders re-rendered the whole window every second.
+
+/// "snoozed" beside a title while the family mailbox is muted.
+struct OverviewSnoozedTag: View {
+    let entry: CoreRosterEntry
+    let store: OverviewStore
+
+    var body: some View {
+        if OverviewStore.isSnoozed(entry, now: store.now) {
+            Text("snoozed").font(.system(size: 10))
+                .foregroundStyle(.tertiary).lineLimit(1)
+                .help(OverviewStore.snoozeWakeText(entry) ?? "Snoozed")
+        }
+    }
+}
+
+/// The "Quiet" column: how long since the session last spoke — `since`
+/// is the last-event stamp, not a start time.
+struct OverviewQuietCell: View {
+    let entry: CoreRosterEntry
+    let store: OverviewStore
+
+    static func text(_ entry: CoreRosterEntry, now: Date) -> String {
+        guard let since = entry.session.since else { return "—" }
+        return AgentMonitorFeed.ageText(max(0, now.timeIntervalSince1970 - since))
+    }
+
+    var body: some View {
+        Text(Self.text(entry, now: store.now))
+            .monospacedDigit().foregroundStyle(.secondary)
+    }
+}
+
+/// The "Attention" column: an open ask, a failure, and how long the ask
+/// has waited.
+struct OverviewAttentionCell: View {
+    let entry: CoreRosterEntry
+    let store: OverviewStore
+
+    var body: some View {
+        let now = store.now
+        HStack(spacing: 5) {
+            if entry.pinned || entry.session.ask != nil {
+                Image(systemName: "exclamationmark.bubble.fill").foregroundStyle(.orange)
+                    .help(entry.session.ask?.summary ?? "Waiting on you")
+            }
+            if entry.axes?.outcome == "failed" {
+                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                    .help("Run failed — outcome reported by the monitor")
+            }
+            if let waiting = OverviewStore.waitingText(entry, now: now) {
+                Text(waiting).font(.system(size: 9))
+                    .foregroundStyle(.orange).lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(OverviewView.attentionLabel(entry, now: now))
     }
 }
 

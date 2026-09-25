@@ -54,6 +54,8 @@ struct PaletteView: View {
         }
         .frame(width: PalettePanel.width, height: PalettePanel.height)
         .onAppear { focus = .search }
+        // A reopen reuses this view: the field takes the keys again.
+        .onChange(of: model.opens) { _, _ in focus = .search }
         .onChange(of: model.actionsOpen) { _, open in focus = open ? .actions : .search }
         .onChange(of: model.inputActive) { _, _ in focus = .search }
     }
@@ -139,6 +141,13 @@ struct PaletteView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     rows(model.sections)
+                        // The list's top, to scroll back to when a reopen
+                        // reuses this view: a mark behind the rows, never
+                        // one of them, so the lazy stack sizes its rows
+                        // as it always has.
+                        .background(alignment: .top) {
+                            Color.clear.frame(height: 1).id(Self.topID).accessibilityHidden(true)
+                        }
                 }
                 .scrollIndicators(.automatic)
                 .onChange(of: model.selectedID) { _, id in
@@ -146,9 +155,12 @@ struct PaletteView: View {
                     // without re-centring the list on every arrow.
                     if let id { proxy.scrollTo(id) }
                 }
+                .onChange(of: model.opens) { _, _ in proxy.scrollTo(Self.topID, anchor: .top) }
             }
         }
     }
+
+    static let topID = "palette.list.top"
 
     /// The sections cut to what one screen of the list shows.
     static func firstScreenful(_ sections: [PaletteListSection], rows limit: Int = 8) -> [PaletteListSection] {

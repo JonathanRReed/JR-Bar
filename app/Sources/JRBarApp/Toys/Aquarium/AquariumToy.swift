@@ -31,6 +31,10 @@ final class AquariumToy: Toy {
     /// Where the game lives on disk — the real state directory only when
     /// the app asks for it, a scratch file otherwise.
     @ObservationIgnored private let saveFile: AquariumSaveFile
+    /// Writes the game off the main thread, newest save first.
+    @ObservationIgnored private let saveWriter: AquariumSaveWriter
+    /// Flushes the writer before the app quits.
+    @ObservationIgnored private var terminateObserver: NSObjectProtocol?
     /// Where this tank saves — the tests check a headless store's.
     var saveLocation: URL { saveFile.url }
     /// The "while you were away" summary the tank shows once, when the
@@ -93,6 +97,7 @@ final class AquariumToy: Toy {
         self.core = core
         self.store = store
         self.saveFile = saveFile
+        saveWriter = AquariumSaveWriter(file: saveFile)
         game = saveFile.load().game
         knownLevel = game.tankLevel
         // A relaunched app starts with the tank closed: if the save
@@ -115,6 +120,10 @@ final class AquariumToy: Toy {
         if isOn { present(activate: false) }
         observeAmbientSettings()
         observeRosterSettings()
+        // A save still on its way lands before the process ends.
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [saveWriter] _ in saveWriter.flush() }
     }
 
     /// The card's roster rows — Fish at once, Raised fish stay and the
@@ -190,6 +199,7 @@ final class AquariumToy: Toy {
 
     isolated deinit {
         gameTimer?.invalidate()
+        if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
     }
 
     let id = "aquarium"
@@ -704,7 +714,12 @@ final class AquariumToy: Toy {
     /// write is not worth interrupting a fish tank over.
     private func persist() {
         lastPersistAt = Date()
-        try? saveFile.save(AquariumSave(game: game))
+        saveWriter.write(AquariumSave(game: game))
+    }
+
+    /// Waits for the saves already handed to the writer to reach the file.
+    func flushSave() {
+        saveWriter.flush()
     }
 
     /// The slowest the game document may be written — the heartbeat's
@@ -825,11 +840,19 @@ final class AquariumToy: Toy {
             .flatMap(FishSpecies.init(rawValue:))
     }
 
+    /// What the tank wakes for: every listed session (the fish) and the
+    /// usage (the water's mood) — slices, so a frame that moved neither
+    /// leaves the tank alone.
+    static func observedFacts(_ core: CoreModel) {
+        _ = core.allSessions
+        _ = core.usage
+    }
+
     /// Watches the session list like `NotchBuddyToy`: one observation
     /// per change, coalesced into a main-queue turn.
     private func observeSessions() {
         withObservationTracking {
-            _ = core.state?.sessions
+            Self.observedFacts(core)
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }

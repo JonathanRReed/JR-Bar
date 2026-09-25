@@ -164,13 +164,25 @@ final class EventCoordinator {
         }
     }
 
+    /// The parts of `state` the toys and the HUD read below: the credits
+    /// and the asks (confetti), every session (the buddy), the Focus (the
+    /// pill) and the closed lid. A frame that moves only something else —
+    /// a health age, the daemon's clock — wakes none of them.
+    static func stateFacts(_ core: CoreModel) {
+        _ = core.usage
+        _ = core.asks
+        _ = core.allSessions
+        _ = core.focus
+        _ = core.power
+    }
+
     /// Re-arms an observation of the applied state after every document
     /// and hands it to the confetti toy: the banked-credits and
     /// all-clear triggers are document edges, not events — no `event`
     /// frame ever carries them.
     private func trackState() {
         withObservationTracking {
-            _ = core.state
+            Self.stateFacts(core)
         } onChange: { [weak self] in
             // onChange fires from the property's willSet — read the new
             // document after a hop, like every other observe loop does.

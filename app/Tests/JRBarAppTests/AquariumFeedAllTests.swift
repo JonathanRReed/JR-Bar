@@ -37,6 +37,7 @@ struct AquariumFeedAllTests {
         #expect(tank.game.pets["b"]?.feedings == 1)
         #expect(tank.game.pets["w"] == nil, "fry ride with their parent")
         #expect(tank.game.pets["x"] == nil, "a sinking fish isn't hungry")
+        tank.flushSave()
         #expect(file.exists, "the round is saved")
     }
 

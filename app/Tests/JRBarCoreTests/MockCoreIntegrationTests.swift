@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import JRBarCore
 
@@ -180,10 +181,16 @@ struct MockCoreIntegrationTests {
         defer { model.stop() }
         #expect(await Self.wait { model.isLive && model.lights != nil })
 
+        // A command's in-flight count moves twice per send; no reader is
+        // woken by it (a view re-rendered per command used to).
+        final class Tripped: @unchecked Sendable { var fired = false }
+        let inFlightRead = Tripped()
+        withObservationTracking { _ = model.inFlightCommands } onChange: { inFlightRead.fired = true }
         let reply = try await model.send("set_brightness", args: ["device": "all", "value": 0.5])
         #expect(reply.ok)
         #expect(reply.result?["value"]?.doubleValue == 0.5)
         #expect(model.inFlightCommands == 0)
+        #expect(!inFlightRead.fired)
 
         let missing = try await model.send("open_session", args: ["session": "nope"])
         #expect(!missing.ok)

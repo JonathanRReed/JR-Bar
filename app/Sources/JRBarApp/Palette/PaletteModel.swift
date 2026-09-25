@@ -79,7 +79,12 @@ final class PaletteModel {
 
     // MARK: Loading
 
+    /// Counts loads — one per open. The kept panel's view hears a new
+    /// open by it and puts the cursor back in the field.
+    private(set) var opens = 0
+
     func load(items: [PaletteItem], usage: PaletteUsage, now: Date = Date()) {
+        opens += 1
         self.items = items
         foldedItems = items.map(PaletteRanking.FoldedItem.init)
         self.usage = usage

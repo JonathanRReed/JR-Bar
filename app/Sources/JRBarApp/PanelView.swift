@@ -118,62 +118,112 @@ struct ActivityMark: View {
     /// hosting view re-rendering at 60 Hz even while the window is ordered
     /// out, which cost 13 % CPU with one working session and the panel closed.
     var active: Bool = true
-    @ViewState private var phase = false
+
+    /// Whether the mark moves at all: a working or waiting mark in an
+    /// open panel, with motion allowed. Anything else draws still.
+    static func pulses(_ activity: SessionActivity, reduced: Bool, active: Bool) -> Bool {
+        active && !reduced && (activity == .working || activity == .waiting)
+    }
 
     var body: some View {
         Group {
-            switch activity {
-            case .working:
-                Circle().fill(accent)
-                    .opacity(reduced ? 0.9 : (phase ? 1.0 : 0.35))
-                    .scaleEffect(reduced ? 1 : (phase ? 1.0 : 0.85))
-            case .waiting:
-                ZStack {
-                    Circle().fill(SessionActivity.waiting.tint.opacity(0.35))
-                        .scaleEffect(reduced ? 1.4 : (phase ? 2.1 : 1.0))
-                        .opacity(reduced ? 0.6 : (phase ? 0 : 0.8))
-                    Circle().fill(SessionActivity.waiting.tint)
-                }
-            case .done:
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(SessionActivity.done.tint.opacity(0.9))
-            case .ended:
-                // The process went away without finishing anything: grey,
-                // and deliberately not the green check a completion earns.
-                Circle()
-                    .strokeBorder(Color.secondary.opacity(0.55), lineWidth: 1.4)
-            case .failed:
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(SessionActivity.failed.tint.opacity(0.9))
-            case .idle:
-                Circle().fill(.quaternary)
+            if Self.pulses(activity, reduced: reduced, active: active) {
+                // A view of its own, there only while the mark may move: a
+                // running `repeatForever` cannot be stopped by setting its
+                // value back, but it ends with the view that runs it. The
+                // id restarts the pulse when working turns to waiting.
+                PulsingActivityMark(activity: activity, accent: accent)
+                    .id(activity)
+            } else {
+                Self.still(activity, accent: accent, reduced: reduced)
             }
         }
         .frame(width: 8, height: 8)
-        .onAppear { animate() }
-        .onChange(of: activity) { animate() }
-        .onChange(of: reduced) { animate() }
-        .onChange(of: active) { animate() }
         // The row's label already speaks the word; alone the mark would
         // be an unlabeled dot VoiceOver has to step over.
         .accessibilityHidden(true)
     }
 
-    private func animate() {
-        guard !reduced, active else { withAnimation(nil) { phase = false }; return }
+    /// The mark at rest — `phase` false — or its reduced-motion form.
+    @ViewBuilder
+    static func still(_ activity: SessionActivity, accent: Color, reduced: Bool) -> some View {
         switch activity {
         case .working:
-            phase = false
-            withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) { phase = true }
+            ActivityMarkShape.working(accent: accent, phase: false, reduced: reduced)
         case .waiting:
-            phase = false
-            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { phase = true }
-        default:
-            phase = false
+            ActivityMarkShape.waiting(phase: false, reduced: reduced)
+        case .done:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SessionActivity.done.tint.opacity(0.9))
+        case .ended:
+            // The process went away without finishing anything: grey,
+            // and deliberately not the green check a completion earns.
+            Circle()
+                .strokeBorder(Color.secondary.opacity(0.55), lineWidth: 1.4)
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SessionActivity.failed.tint.opacity(0.9))
+        case .idle:
+            Circle().fill(.quaternary)
         }
     }
+}
+
+/// The two marks that move, drawn at a phase: working breathes, waiting
+/// sends out an amber ring.
+enum ActivityMarkShape {
+    @ViewBuilder
+    static func working(accent: Color, phase: Bool, reduced: Bool) -> some View {
+        Circle().fill(accent)
+            .opacity(reduced ? 0.9 : (phase ? 1.0 : 0.35))
+            .scaleEffect(reduced ? 1 : (phase ? 1.0 : 0.85))
+    }
+
+    @ViewBuilder
+    static func waiting(phase: Bool, reduced: Bool) -> some View {
+        ZStack {
+            Circle().fill(SessionActivity.waiting.tint.opacity(0.35))
+                .scaleEffect(reduced ? 1.4 : (phase ? 2.1 : 1.0))
+                .opacity(reduced ? 0.6 : (phase ? 0 : 0.8))
+            Circle().fill(SessionActivity.waiting.tint)
+        }
+    }
+}
+
+/// A working or waiting mark while it moves. It starts its repeating
+/// animation when it appears and takes it away when it goes: the parent
+/// keeps it in the tree only while the panel is open.
+struct PulsingActivityMark: View {
+    let activity: SessionActivity
+    let accent: Color
+    @ViewState private var phase = false
+
+    var body: some View {
+        Group {
+            if activity == .working {
+                ActivityMarkShape.working(accent: accent, phase: phase, reduced: false)
+            } else {
+                ActivityMarkShape.waiting(phase: phase, reduced: false)
+            }
+        }
+        .onAppear {
+            PanelPulses.running += 1
+            phase = false
+            let pulse = activity == .working
+                ? Animation.easeInOut(duration: 1.3).repeatForever(autoreverses: true)
+                : Animation.easeOut(duration: 1.4).repeatForever(autoreverses: false)
+            withAnimation(pulse) { phase = true }
+        }
+        .onDisappear { PanelPulses.running -= 1 }
+    }
+}
+
+/// The panel's repeating animations in the tree right now — a test hook
+/// proving a closed panel runs none. Only the pulsing views count.
+enum PanelPulses {
+    @MainActor static var running = 0
 }
 
 /// A small count in a capsule. `symbol` names what is counted, so a bare
@@ -313,7 +363,7 @@ struct PanelHeader: View {
                     .help(quietLabel)
                     .accessibilityLabel("Quiet: \(quietLabel)")
             }
-            ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion, active: store.isOpen)
+            ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion, active: store.marksMove)
                 .help(store.connectionDescription)
         }
         .padding(.horizontal, 14)
@@ -371,7 +421,6 @@ struct ConnectionDot: View {
     let state: PanelStore.ConnectionDot
     let reduced: Bool
     var active: Bool = true
-    @ViewState private var phase = false
 
     private var color: Color {
         switch state {
@@ -382,21 +431,44 @@ struct ConnectionDot: View {
         }
     }
 
+    /// Only a connecting dot in an open panel pulses, and only with
+    /// motion allowed.
+    static func pulses(_ state: PanelStore.ConnectionDot, reduced: Bool, active: Bool) -> Bool {
+        state == .connecting && !reduced && active
+    }
+
+    var body: some View {
+        Group {
+            if Self.pulses(state, reduced: reduced, active: active) {
+                // In the tree only while it may pulse, so closing the
+                // panel ends the repeating animation with the view.
+                PulsingConnectionDot(color: color)
+            } else {
+                // At rest a connecting dot shows its dim phase, as it did
+                // when the pulse was stopped in place.
+                Circle().fill(color)
+                    .opacity(state == .connecting && !reduced ? 0.3 : 1)
+            }
+        }
+        .frame(width: 6, height: 6)
+        .accessibilityLabel(state == .live ? "Monitor connected" : (state == .connecting ? "Connecting to the monitor" : (state == .crashed ? "Monitor crashed" : "Using file feeds")))
+    }
+}
+
+/// The connecting dot's pulse, for as long as the view is shown.
+struct PulsingConnectionDot: View {
+    let color: Color
+    @ViewState private var phase = false
+
     var body: some View {
         Circle()
             .fill(color)
-            .frame(width: 6, height: 6)
-            .opacity(state == .connecting && !reduced ? (phase ? 1 : 0.3) : 1)
-            .onAppear { pulse() }
-            .onChange(of: state) { pulse() }
-            .onChange(of: active) { pulse() }
-            .accessibilityLabel(state == .live ? "Monitor connected" : (state == .connecting ? "Connecting to the monitor" : (state == .crashed ? "Monitor crashed" : "Using file feeds")))
-    }
-
-    private func pulse() {
-        withAnimation(nil) { phase = false }
-        guard state == .connecting, !reduced, active else { return }
-        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { phase = true }
+            .opacity(phase ? 1 : 0.3)
+            .onAppear {
+                PanelPulses.running += 1
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { phase = true }
+            }
+            .onDisappear { PanelPulses.running -= 1 }
     }
 }
 
@@ -414,7 +486,10 @@ struct SessionsSection: View {
                 SessionsEmptyState(store: store)
             } else {
                 SnapshotScrollView {
-                    VStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
+                    // Lazy: every row is a fixed height (`PanelLayout`), so
+                    // only the rows in the viewport are built and laid out
+                    // when a frame lands, not all sixty.
+                    LazyVStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
                         ForEach(store.visibleAskRows) { row in
                             AskRow(row: row, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
@@ -425,7 +500,7 @@ struct SessionsSection: View {
                         }
                     }
                     .padding(.bottom, CGFloat(PanelLayout.listBottomPadding))
-                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.visibleRows.map(\.id))
+                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.visibleRowIDs)
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.sessionsHeight))
@@ -824,7 +899,7 @@ struct SessionRowView: View {
                             .lineLimit(1)
                             .contentTransition(.opacity)
                         SessionRowMark(activity: row.activity, agentActivity: row.agentActivity, accent: row.style.accent,
-                                       reduced: store.reduceMotion, active: store.isOpen, quiet: row.isQuiet(now: store.now))
+                                       reduced: store.reduceMotion, active: store.marksMove, quiet: row.isQuiet(now: store.now))
                     }
                     Text(row.elapsedText(now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
@@ -1008,7 +1083,7 @@ struct AskRow: View {
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
                     AskWaitMark(since: store.answerPendingSince(row.ask), accent: row.style.accent,
-                                reduced: store.reduceMotion, active: store.isOpen && !snoozed)
+                                reduced: store.reduceMotion, active: store.marksMove && !snoozed)
                         .padding(.top, 3)
                     Text(PanelStore.elapsed(since: row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since, now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
