@@ -35,7 +35,9 @@ struct AquariumSandPetsTests {
             frames.append((snail.x * Self.width, snail.facing))
             if (snail.facing > 0) != lastSign { turns += 1; lastSign = snail.facing > 0 }
         }
-        Self.checkNoPop(frames, speed: SnailSim.hustleSpeed)
+        // Held to its creeping pace: a jump a hustle could explain is
+        // still a pop here.
+        Self.checkNoPop(frames, speed: SnailSim.creepSpeed)
         #expect(turns >= 1, "it reached an end and turned")
         #expect(frames.allSatisfy { $0.x >= 0.05 * Self.width && $0.x <= 0.95 * Self.width })
     }
