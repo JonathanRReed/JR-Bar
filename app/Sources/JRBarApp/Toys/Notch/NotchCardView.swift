@@ -715,7 +715,7 @@ struct NotchCardView: View {
         revealRow(steps.battery, ShelfBatteryRow(power: model.utility.power,
                                                  adapterWatts: model.utility.adapterWatts,
                                                  working: model.workingCount,
-                                                 heldAwake: model.heldAwake(), style: style))
+                                                 heldAwake: model.heldAwake, style: style))
     }
 
     /// Page two — the shelf and the day: files, timers, the weather
@@ -1560,7 +1560,9 @@ private struct ShelfBatteryRow: View {
     let power: AlcovePowerState
     var adapterWatts: Int?
     let working: Int
-    let heldAwake: Bool
+    /// Read here, not by the card: it reads the daemon's `state`, and
+    /// only this line should redraw on every doc that carries it.
+    let heldAwake: () -> Bool
     let style: NotchCardStyle
 
     var body: some View {
@@ -1571,7 +1573,7 @@ private struct ShelfBatteryRow: View {
                                   tone: power.charging ? .green : (low ? .orange : nil),
                                   plugged: power.onAC, style: style)
                 Text(AlcovePower.batteryLine(power, adapterWatts: adapterWatts, working: working,
-                                             heldAwake: heldAwake))
+                                             heldAwake: heldAwake()))
                     .font(.system(size: 11.5))
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
