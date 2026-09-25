@@ -416,4 +416,21 @@ struct SettingsRenderProofTests {
         utility.concealer = nil
         withExtendedLifetime(fixture) {}
     }
+
+    // MARK: lane confetti
+
+    /// A search for Hang time: the Confetti card opens with Adjust open
+    /// under it, so the row the search named is on show.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the card PNGs"))
+    func confettiSearchOpensAdjust() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        fixture.settings.reveal(SettingsSearchEntry(.toys, "Confetti", "Hang time", card: "confetti"))
+        for dark in [false, true] where Self.wanted("card-confetti-search") {
+            let view = SettingsPageContainer(store: fixture.settings, page: .toys)
+            let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 6000), dark: dark)
+            try Self.write(rep, named: "card-confetti-search-\(dark ? "dark" : "light")")
+        }
+        withExtendedLifetime(fixture) {}
+    }
 }

@@ -2,12 +2,14 @@ import AVFoundation
 import Foundation
 
 /// The burst's optional voice (Confetti card → Sound, off by default): a
-/// soft pop and a paper rustle, synthesized once into a small in-memory
-/// WAV — no bundled asset, no system sound that might be renamed away —
-/// and played quietly through AVAudioPlayer, which needs no permission.
+/// soft pop and a paper rustle, synthesized once into a small WAV — no
+/// bundled asset, no system sound that might be renamed away — and
+/// played through `SoundPlayer`, so it follows Settings › Sounds like
+/// every other JR-Bar sound: the one volume, the alert device when
+/// that's picked, and held while another app has the microphone.
 /// 1-Click Confetti's one advantage, kept calm: about half a second,
-/// low, and never while JR-Bar is quiet (`ConfettiToy` decides).
-@MainActor
+/// low, a touch higher or lower each burst, and never while JR-Bar is
+/// quiet (`ConfettiToy` decides).
 enum ConfettiSound {
     nonisolated static let sampleRate = 44_100
     /// Pop plus rustle, end to end.
@@ -15,19 +17,19 @@ enum ConfettiSound {
     /// The peak the mix is normalized to — well under full scale, so it
     /// sits under whatever else is playing.
     nonisolated static let gain: Double = 0.32
+    /// The cached file's name in the sounds folder.
+    nonisolated static let key = "confetti-pop"
+    /// The pop as a WAV, built once.
+    nonisolated static let wavData: Data = wav(from: samples(), sampleRate: sampleRate)
 
-    private static var player: AVAudioPlayer?
-
-    /// Plays the burst's pop. A player that fails to build just stays
-    /// silent — a toy is not worth an error.
-    static func play() {
-        if player == nil {
-            let data = wav(from: samples(), sampleRate: sampleRate)
-            player = try? AVAudioPlayer(data: data)
-            player?.prepareToPlay()
-        }
-        player?.currentTime = 0
-        player?.play()
+    /// Plays the burst's pop through `player` at a pitch step near
+    /// `rate` (±6 %) and `pan` (-1 … 1, where the burst came from).
+    /// Returns what played — nil when Settings › Sounds held or muted it.
+    @MainActor
+    @discardableResult
+    static func play(through player: SoundPlayer, rate: Double = 1,
+                     pan: Double = 0) -> SoundPlayer.SynthesizedPlay? {
+        player.playSynthesized(wavData, key: key, gain: 1, rate: rate, pan: pan)
     }
 
     /// The mix, pure and deterministic. The pop is a 90 ms sine that

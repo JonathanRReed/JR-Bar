@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 import JRBarCore
 @testable import JRBarApp
@@ -14,7 +15,7 @@ struct ConfettiRoomTests {
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
 
     private final class Bursts {
-        var fired: [(screens: Int, density: Double)] = []
+        var fired: [ConfettiPresentation] = []
     }
 
     private func makeToy(enabled: Bool = true, freeScreens: Int = 1)
@@ -27,7 +28,7 @@ struct ConfettiRoomTests {
         let toy = store.confetti
         let bursts = Bursts()
         toy.screensForBurst = { Array(repeating: nil, count: freeScreens) }
-        toy.presentOverride = { screens, density in bursts.fired.append((screens, density)) }
+        toy.presentOverride = { bursts.fired.append($0) }
         return (toy, store, bursts)
     }
 
@@ -87,7 +88,7 @@ struct ConfettiRoomTests {
         store.noteCallPresence(false)
         #expect(toy.held == nil)
         #expect(bursts.fired.count == 1)
-        #expect(bursts.fired.first?.density == ConfettiRoom.replayDensity)
+        #expect(bursts.fired.first?.densityScale == ConfettiRoom.replayDensity)
     }
 
     @Test("let go means let go")
@@ -167,11 +168,11 @@ struct ConfettiRoomTests {
         let toy = store.confetti
         let bursts = Bursts()
         toy.screensForBurst = { [nil] }
-        toy.presentOverride = { screens, density in bursts.fired.append((screens, density)) }
+        toy.presentOverride = { bursts.fired.append($0) }
         #expect(toy.fire(reason: .trigger, provider: "claude", at: t0))
         #expect(toy.held == nil, "presented, not held")
         #expect(bursts.fired.count == 1)
-        #expect(bursts.fired.first?.density == 1)
+        #expect(bursts.fired.first?.densityScale == 1)
         let buddy = store.notchBuddy
         buddy.noteEvent(CoreEvent(id: "c1", kind: "completed", session: "s"), at: t0)
         #expect(buddy.hopUntil == t0.addingTimeInterval(1.1))
@@ -194,6 +195,118 @@ struct ConfettiRoomTests {
         buddy.noteEvent(CoreEvent(id: "c2", kind: "completed", session: "s"), at: t0)
         #expect(buddy.hopUntil == t0.addingTimeInterval(1.1))
     }
+
+    /// sRGB components, so two colours built different ways compare.
+    private func same(_ a: Color, _ b: Color) -> Bool {
+        let x = NSColor(a).usingColorSpace(.sRGB) ?? .black
+        let y = NSColor(b).usingColorSpace(.sRGB) ?? .black
+        return abs(x.redComponent - y.redComponent) < 0.002
+            && abs(x.greenComponent - y.greenComponent) < 0.002
+            && abs(x.blueComponent - y.blueComponent) < 0.002
+    }
+
+    @Test("a trigger with no provider wears the Toys tint, not the unknown grey")
+    func providerlessTriggerIsNotGrey() {
+        let (toy, store, bursts) = makeToy()
+        store.state.confetti.triggers.sessionCompleted = true
+        toy.noteEvent(CoreEvent(id: "done-1", kind: "completed"))
+        #expect(bursts.fired.count == 1)
+        #expect(bursts.fired.first.map { same($0.tint, ConfettiView.toysTint) } == true)
+    }
+
+    @Test("a held burst replays smaller even at the lowest density")
+    func replayIsSmallerAtLowDensity() {
+        let (toy, store, bursts) = makeToy()
+        store.state.confetti.density = 0.5
+        store.noteCallPresence(true)
+        toy.fire(reason: .trigger, at: Date())
+        store.noteCallPresence(false)
+        let full = ConfettiView.pieceCount(settings: store.state.confetti)
+        #expect(bursts.fired.count == 1)
+        #expect((bursts.fired.first?.pieces ?? .max) < full,
+                "the replay throws fewer pieces than a live burst at the same density")
+    }
+
+    @Test("Try it wears the focused session's colour, the one the link picks")
+    func tryItUsesTheFocusedProvider() {
+        let (toy, store, bursts) = makeToy(enabled: false)
+        store.focusedProvider = { "codex" }
+        toy.testBurst()
+        store.focusedProvider = { nil }
+        toy.testBurst()
+        #expect(bursts.fired.count == 2)
+        #expect(bursts.fired.first.map { same($0.tint, ProviderStyle.style(for: "codex").accent) } == true)
+        #expect(bursts.fired.last.map { same($0.tint, ConfettiView.toysTint) } == true)
+    }
+
+    @Test("with Moment styles on, a milestone bursts gold, big and from the corners")
+    func momentStyles() {
+        let (toy, store, bursts) = makeToy()
+        store.state.confetti.triggers.milestones = true
+        store.state.confetti.triggers.allClear = true
+        toy.fire(reason: .milestone, at: t0)
+        #expect(bursts.fired.last?.recipe.origin == .notch, "off by default: one style fits every trigger")
+        store.state.confetti.momentStyles = true
+        toy.fire(reason: .milestone, at: t0)
+        let milestone = bursts.fired.last?.recipe
+        #expect(milestone?.origin == .corners && milestone?.intensity == .big)
+        #expect(bursts.fired.last?.pieces == 300)
+        // All caught up is a gentle rain.
+        let plan = ConfettiToy.plan(store.state.confetti,
+                                    shot: ConfettiShot(provider: nil, tint: .white, moment: .allClear),
+                                    densityScale: 1, everyone: [], season: nil)
+        #expect(plan.recipe.origin == .rain && plan.recipe.intensity == .subtle)
+    }
+
+    @Test("Main screen only plays on the main screen, when it's free")
+    func mainScreenOnly() {
+        let (toy, store, bursts) = makeToy(freeScreens: 2)
+        store.state.confetti.screens = .main
+        toy.mainScreen = { nil }
+        toy.fire(reason: .trigger, at: t0)
+        #expect(bursts.fired.last?.screens == 1)
+        store.state.confetti.screens = .all
+        toy.fire(reason: .trigger, at: t0)
+        #expect(bursts.fired.last?.screens == 2)
+    }
+
+    @Test("a seasonal day swaps in its own colours and fleck")
+    func seasonalPlan() {
+        var settings = ConfettiSettings(enabled: true)
+        settings.seasonal = true
+        let plan = ConfettiToy.plan(settings, shot: ConfettiShot(provider: "claude", tint: .orange),
+                                    densityScale: 1, everyone: [], season: .valentine)
+        #expect(plan.recipe.special == .heart)
+        #expect(plan.recipe.glyphs == 0)
+        #expect(plan.look.slots.count == ConfettiSeason.valentine.palette.slots.count)
+    }
+
+    @Test("the pop goes through Settings › Sounds, at its volume")
+    func popFollowsTheSoundsVolume() throws {
+        let (toy, store, _) = makeToy()
+        store.state.confetti.sound = true
+        let player = SoundPlayer()
+        player.preferences = {
+            var preferences = SoundPreferences()
+            preferences.volume = 0.3
+            return preferences
+        }
+        player.microphoneLive = { false }
+        player.synthesizedFolder = FileManager.default.temporaryDirectory
+            .appending(path: "confetti-sound-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: player.synthesizedFolder) }
+        var plays: [SoundPlayer.SynthesizedPlay] = []
+        player.synthesizedOutput = { plays.append($0) }
+        toy.sounds = player
+        toy.fire(reason: .test, at: t0)
+        let play = try #require(plays.first)
+        #expect(abs(Double(play.volume) - 0.3) < 1e-6)
+        #expect(SoundPlayer.pitchSteps.contains(play.rate))
+        #expect(FileManager.default.fileExists(atPath: play.file.path))
+        store.state.confetti.sound = false
+        toy.fire(reason: .test, at: t0)
+        #expect(plays.count == 1, "Sound off plays nothing")
+    }
 }
 
 /// The burst's optional voice, synthesized: short, normalized under
@@ -209,6 +322,74 @@ struct ConfettiSoundTests {
         #expect(abs(Double(peak) - ConfettiSound.gain) < 1e-4)
         #expect(abs(samples.last ?? 1) < 1e-6)
         #expect(ConfettiSound.samples(sampleRate: 22_050) == samples, "deterministic")
+    }
+
+    private func makePlayer(volume: Double, quietOnCalls: Bool = true, micLive: Bool) -> (SoundPlayer, Box) {
+        let player = SoundPlayer()
+        player.preferences = {
+            var preferences = SoundPreferences()
+            preferences.volume = volume
+            preferences.quietOnCalls = quietOnCalls
+            return preferences
+        }
+        player.microphoneLive = { micLive }
+        player.synthesizedFolder = FileManager.default.temporaryDirectory
+            .appending(path: "confetti-sound-\(UUID().uuidString)")
+        let box = Box()
+        player.synthesizedOutput = { box.plays.append($0) }
+        player.onHeldForCall = { box.held.append($0) }
+        return (player, box)
+    }
+
+    final class Box {
+        var plays: [SoundPlayer.SynthesizedPlay] = []
+        var held: [String] = []
+    }
+
+    @Test("a synthesized sound plays at the Sounds volume times its own gain")
+    func gainIsVolumeTimesBase() throws {
+        let (player, box) = makePlayer(volume: 0.3, micLive: false)
+        defer { try? FileManager.default.removeItem(at: player.synthesizedFolder) }
+        let play = try #require(player.playSynthesized(ConfettiSound.wavData, key: "pop", gain: 0.5,
+                                                       rate: 1.05, pan: 0.4))
+        #expect(abs(Double(play.volume) - 0.15) < 1e-6)
+        #expect(play.rate == 1.04 || play.rate == 1.06, "the nearest pitch step")
+        #expect(abs(Double(play.pan) - 0.4) < 1e-6)
+        #expect(box.plays == [play])
+        // The file is written once, then only read.
+        let written = try #require(try? Data(contentsOf: play.file))
+        #expect(written.count == ConfettiSound.wavData.count)
+        let again = try #require(player.playSynthesized(ConfettiSound.wavData, key: "pop", gain: 0.5,
+                                                        rate: 1.05))
+        #expect(again.file == play.file)
+    }
+
+    @Test("a live microphone holds the pop while sounds keep quiet on calls")
+    func heldOnALiveMic() {
+        let (player, box) = makePlayer(volume: 1, micLive: true)
+        defer { try? FileManager.default.removeItem(at: player.synthesizedFolder) }
+        #expect(player.playSynthesized(ConfettiSound.wavData, key: "pop") == nil)
+        #expect(box.plays.isEmpty && box.held == ["pop"])
+        let (open, openBox) = makePlayer(volume: 1, quietOnCalls: false, micLive: true)
+        defer { try? FileManager.default.removeItem(at: open.synthesizedFolder) }
+        #expect(open.playSynthesized(ConfettiSound.wavData, key: "pop") != nil)
+        #expect(openBox.plays.count == 1)
+    }
+
+    @Test("a pitch step rewrites the WAV's rates, so the pitch moves with the speed")
+    func retimedMovesThePitch() throws {
+        let wav = ConfettiSound.wav(from: [0, 0.5, -0.5], sampleRate: 10_000)
+        let faster = try #require(SoundPlayer.retimed(wav, rate: 1.06))
+        func rate(_ data: Data, _ at: Int) -> UInt32 {
+            (0..<4).reduce(UInt32(0)) { $0 | UInt32(data[at + $1]) << (8 * UInt32($1)) }
+        }
+        #expect(rate(faster, 24) == 10_600)
+        #expect(rate(faster, 28) == 21_200)
+        #expect(faster[44...] == wav[44...], "the samples themselves are untouched")
+        #expect(SoundPlayer.retimed(Data("not a wav".utf8), rate: 1.02) == nil)
+        #expect(SoundPlayer.pitchStep(0.5) == 0.94)
+        #expect(SoundPlayer.pitchStep(1.3) == 1.06)
+        #expect(SoundPlayer.pitchStep(1.004) == 1.0)
     }
 
     @Test("the WAV header describes 16-bit mono PCM")

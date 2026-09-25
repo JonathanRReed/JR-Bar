@@ -160,19 +160,6 @@ struct BuddyStroll: Equatable {
     /// out: the buddy doesn't stand on its own panel.
     @MainActor
     static func windowFrames() -> [CGRect] {
-        let own = ProcessInfo.processInfo.processIdentifier
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                              kCGNullWindowID) as? [[String: Any]] ?? []
-        let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
-        return info.compactMap { entry in
-            guard (entry[kCGWindowLayer as String] as? Int) == 0,
-                  (entry[kCGWindowOwnerPID as String] as? Int32) != own,
-                  (entry[kCGWindowAlpha as String] as? Double ?? 1) > 0.01,
-                  let bounds = entry[kCGWindowBounds as String] as? [String: Any],
-                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary)
-            else { return nil }
-            return CGRect(x: rect.minX, y: primaryHeight - rect.maxY,
-                          width: rect.width, height: rect.height)
-        }
+        OnScreenWindows.frames()
     }
 }

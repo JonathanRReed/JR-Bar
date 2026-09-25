@@ -20,7 +20,7 @@ struct CallPresenceToysTests {
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let bursts = Bursts()
         store.confetti.screensForBurst = { [nil] }
-        store.confetti.presentOverride = { _, density in bursts.fired.append(density) }
+        store.confetti.presentOverride = { bursts.fired.append($0.densityScale) }
         final class Daemon { var presence: CorePresence? }
         let daemon = Daemon()
         let reporter = PresenceReporter(isConnected: { false }, presence: { daemon.presence },

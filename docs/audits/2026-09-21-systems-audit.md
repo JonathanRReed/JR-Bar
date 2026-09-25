@@ -169,7 +169,8 @@ quota-crossed/reset events → banners + confetti, per-instance plumbing.
   Metal portal renderer, slew-limited tracker, arming band so capture
   only lives while a fold is plausible. Hardware-gated by design.
 - **Confetti**: trigger policy pure + dedup ring + edge tracker; physics
-  closed-form; three landing modes. Single-screen only.
+  closed-form; three landing modes. One overlay per free screen (updated
+  2026-09-24: this line used to say single-screen only).
 - `docs/TOYS.md` drift: still specifies removed external-app toys;
   stale defaults (jitter 0 vs shipped 1.5) and stale blurbs.
 

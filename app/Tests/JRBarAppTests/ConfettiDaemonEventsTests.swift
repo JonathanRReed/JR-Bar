@@ -12,7 +12,7 @@ import JRBarCore
 @MainActor
 struct ConfettiDaemonEventsTests {
     private final class Bursts {
-        var fired: [(screens: Int, density: Double)] = []
+        var fired: [ConfettiPresentation] = []
     }
 
     /// A connected daemon with nothing quiet in effect (`focus.mode` "off").
@@ -28,7 +28,7 @@ struct ConfettiDaemonEventsTests {
         let toy = store.confetti
         let bursts = Bursts()
         toy.screensForBurst = { [nil] }
-        toy.presentOverride = { screens, density in bursts.fired.append((screens, density)) }
+        toy.presentOverride = { bursts.fired.append($0) }
         return (toy, store, bursts)
     }
 

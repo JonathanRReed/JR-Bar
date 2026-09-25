@@ -363,4 +363,38 @@ struct ToysStateTests {
         }
         #expect(try decode(AquariumSettings.self, json) == settings)
     }
+
+    // MARK: lane confetti
+
+    @Test("confetti's new keys default to today's burst out of the notch")
+    func confettiNewKeysDefault() throws {
+        let settings = try decode(ConfettiSettings.self, "{}")
+        #expect(settings.origin == .notch)
+        #expect(settings.intensity == .standard)
+        #expect(settings.screens == .all)
+        #expect(!settings.seasonal && !settings.momentStyles)
+        #expect(settings == ConfettiSettings())
+    }
+
+    @Test("confetti's new keys are tolerant and round-trip")
+    func confettiNewKeysRoundTrip() throws {
+        var settings = ConfettiSettings(enabled: true)
+        settings.origin = .corners
+        settings.intensity = .big
+        settings.screens = .main
+        settings.seasonal = true
+        settings.momentStyles = true
+        settings.palette = .everyone
+        settings.shapes = .glyphs
+        let decoded = try JSONDecoder().decode(ConfettiSettings.self, from: JSONEncoder().encode(settings))
+        #expect(decoded == settings)
+        let odd = try decode(ConfettiSettings.self,
+                             #"{"enabled": true, "origin": "sky", "intensity": "huge", "screens": 3, "seasonal": "no", "momentStyles": null, "palette": "rainbow"}"#)
+        #expect(odd.enabled)
+        #expect(odd.origin == .notch && odd.intensity == .standard && odd.screens == .all)
+        #expect(!odd.seasonal && !odd.momentStyles)
+        #expect(odd.palette == .party, "Rainbow reads as the palette that replaced it")
+        let inState = try decode(ToysState.self, #"{"confetti": {"enabled": true, "origin": "rain"}}"#)
+        #expect(inState.confetti.origin == .rain)
+    }
 }
