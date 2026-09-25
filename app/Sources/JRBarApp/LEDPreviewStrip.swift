@@ -379,40 +379,52 @@ final class LEDStripLayerView: NSView {
         apply(colors)
     }
 
+    /// The layers' animatable properties the strip sets every frame, and
+    /// their geometry: set straight, never eased — a preview frame is a
+    /// frame, and an implicit animation per dot per frame is work.
+    private static let stillActions: [String: any CAAction] = [
+        "backgroundColor": NSNull(), "shadowColor": NSNull(), "shadowOpacity": NSNull(),
+        "colors": NSNull(), "locations": NSNull(), "bounds": NSNull(), "position": NSNull(),
+        "frame": NSNull(), "shadowPath": NSNull(), "cornerRadius": NSNull(), "contentsScale": NSNull(),
+    ]
+
     private func apply(_ colors: [RGB]) {
         framesDrawn += 1
         guard colors != shownColors else { return }
+        let previous = shownColors
         shownColors = colors
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
         switch config.style {
         case .dots:
             if dotLayers.count != colors.count { buildLayers() }
-            for (dot, rgb) in zip(dotLayers, colors) {
-                let color = Self.cgColor(rgb)
-                dot.backgroundColor = color
-                dot.shadowColor = color
-                dot.shadowOpacity = Float(0.75 * Self.clamped(rgb.maxChannel))
+            let compare = previous.count == colors.count
+            for (index, rgb) in colors.enumerated() where index < dotLayers.count {
+                // Most frames move a few LEDs; the rest keep their layer.
+                if compare && previous[index] == rgb { continue }
+                let dot = dotLayers[index]
+                dot.backgroundColor = Self.cgColor(rgb)
+                // The glow's strength rides in its colour's alpha: one
+                // property a frame, not two.
+                dot.shadowColor = Self.cgColor(rgb, alpha: 0.75 * Self.clamped(rgb.maxChannel))
             }
         case .band:
             let stops = colors.isEmpty ? [RGB.black] : colors
             // A gradient needs two stops; one colour is a flat band.
             let shown = stops.count == 1 ? [stops[0], stops[0]] : stops
-            bandLayer.colors = shown.map(Self.cgColor)
+            bandLayer.colors = shown.map { Self.cgColor($0) }
             bandLayer.locations = shown.indices.map { NSNumber(value: Double($0) / Double(shown.count - 1)) }
             let middle = stops[stops.count / 2]
             let glow = stops.map(\.maxChannel).max() ?? 0
-            bandGlow.shadowColor = Self.cgColor(middle)
-            bandGlow.backgroundColor = Self.cgColor(middle)
+            let middleColor = Self.cgColor(middle)
+            bandGlow.shadowColor = middleColor
+            bandGlow.backgroundColor = middleColor
             bandGlow.shadowOpacity = Float(0.6 * Self.clamped(glow))
         }
-        CATransaction.commit()
     }
 
     private static func clamped(_ value: Double) -> Double { min(1, max(0, value.isFinite ? value : 0)) }
 
-    private static func cgColor(_ rgb: RGB) -> CGColor {
-        CGColor(srgbRed: clamped(rgb.r), green: clamped(rgb.g), blue: clamped(rgb.b), alpha: 1)
+    private static func cgColor(_ rgb: RGB, alpha: Double = 1) -> CGColor {
+        CGColor(srgbRed: clamped(rgb.r), green: clamped(rgb.g), blue: clamped(rgb.b), alpha: alpha)
     }
 
     // MARK: Layers
@@ -431,14 +443,18 @@ final class LEDStripLayerView: NSView {
         case .dots:
             for _ in 0..<drawnCount {
                 let dot = CALayer()
+                dot.actions = Self.stillActions
                 dot.borderColor = rim
                 dot.borderWidth = 0.5
                 dot.shadowOffset = .zero
+                dot.shadowOpacity = 1
                 dot.shadowRadius = config.dotSize * 0.45
                 root.addSublayer(dot)
                 dotLayers.append(dot)
             }
         case .band:
+            bandGlow.actions = Self.stillActions
+            bandLayer.actions = Self.stillActions
             bandGlow.shadowOffset = .zero
             bandGlow.shadowRadius = config.dotSize * 0.4
             bandLayer.startPoint = CGPoint(x: 0, y: 0.5)
