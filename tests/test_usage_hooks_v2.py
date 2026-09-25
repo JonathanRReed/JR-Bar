@@ -213,14 +213,19 @@ def test_a_hung_hook_is_killed_with_its_children(tmp_path: Path) -> None:
         f'/bin/sleep 30 &\necho "$$ $!" > "{pids}"\nwait\n',
     )
 
-    # Long enough for a busy Mac to start the shell and its child before
-    # the timeout, short enough that the kill is what ends the run.
-    result = run_rule(_rule(str(script), timeout_seconds=2.0), EVENT, environ={"PATH": "/usr/bin:/bin"})
-
-    assert result.outcome == "timeout"
+    # The kill must be what ends the run, so the shell has to get as far
+    # as starting its child first. A loaded Mac can take longer than two
+    # seconds to start a shell; then the run is repeated with more time,
+    # still well short of the child's 30 s.
+    for timeout in (2.0, 6.0, 15.0):
+        result = run_rule(_rule(str(script), timeout_seconds=timeout), EVENT, environ={"PATH": "/usr/bin:/bin"})
+        assert result.outcome == "timeout"
+        if pids.exists():
+            break
+    assert pids.exists(), "the hook's shell never started, even with 15 s"
     shell_pid, child_pid = (int(value) for value in pids.read_text().split())
     gone = threading.Event()
-    for _ in range(100):
+    for _ in range(200):
         try:
             os.kill(child_pid, 0)
         except ProcessLookupError:
