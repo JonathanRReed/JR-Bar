@@ -234,3 +234,59 @@ def test_led_count_serial_read_is_memoized_and_expires(tmp_path: Path, monkeypat
     (root / "STATUS.TXT").write_text("serial SPD-000120\n")
     assert led_status.led_count_for_target(root / "LEDS.LED") == 2
     assert len(reads) == 3
+
+
+def test_a_failed_probe_keeps_the_identity_until_the_mount_changes__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: a_failed_probe_keeps_the_identity_until_the_mount_changes
+    """Under load ``diskutil info`` times out now and then. The Dot used to
+    fall back to its path id for that round, which read as a disconnect and
+    a reconnect and rewrote both strips about six times an hour."""
+    mount = tmp_path / "SidePulseDot"
+    mount.mkdir()
+    probe_fails = [False]
+
+    def runner(arguments, **kwargs):
+        if probe_fails[0]:
+            raise subprocess.TimeoutExpired(arguments, 1.5)
+        return completed(
+            {
+                "MountPoint": str(mount),
+                "VolumeName": "SidePulseDot",
+                "VolumeUUID": "stable-uuid",
+                "DeviceIdentifier": "disk4s1",
+            }
+        )
+
+    carried: dict = {}
+    first = inventory_mounts(tmp_path, runner=runner, carried=carried)
+    assert len(first) == 1
+    probe_fails[0] = True
+    assert inventory_mounts(tmp_path, runner=runner, carried=carried) == first
+    # Without the carried memory a failed probe loses the device, as before.
+    assert inventory_mounts(tmp_path, runner=runner) == ()
+
+    # --- scenario: an_unmounted_volume_loses_what_was_carried
+    mount.rmdir()
+    assert inventory_mounts(tmp_path, runner=runner, carried=carried) == ()
+    assert carried == {}
+
+    # --- scenario: a_remount_needs_a_good_probe_again
+    mount.mkdir()
+    probe_fails[0] = False
+    assert inventory_mounts(tmp_path, runner=runner, carried=carried) == first
+    mount.rmdir()
+    mount.mkdir()  # a new inode: another mount at the same path
+    probe_fails[0] = True
+    assert inventory_mounts(tmp_path, runner=runner, carried=carried) == ()
+
+
+def test_the_identity_cache_carries_identities_across_its_own_rounds(monkeypatch) -> None:
+    from jrbar import device_inventory
+
+    seen: list[object] = []
+    monkeypatch.setattr(device_inventory, "inventory_mounts", lambda **kwargs: seen.append(kwargs.get("carried")) or ())
+    cache = DeviceIdentityCache()
+    assert cache._inventory() == ()
+    assert cache._inventory() == ()
+    assert seen == [cache._carried, cache._carried] and seen[0] is cache._carried
+    cache.close()

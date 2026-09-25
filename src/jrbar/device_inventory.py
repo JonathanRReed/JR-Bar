@@ -179,7 +179,17 @@ def inventory_mounts(
     mount_root: Path = Path("/Volumes"),
     *,
     runner=subprocess.run,
+    carried: dict[str, tuple[tuple[int, int], StableDeviceIdentity]] | None = None,
 ) -> tuple[StableDeviceIdentity, ...]:
+    """Every mounted SidePulse volume's stable identity.
+
+    ``carried`` is the caller's memory across rounds: a mount whose
+    ``diskutil`` probe fails (it does under load) keeps the identity its
+    last good probe gave it while the mount itself -- its device and inode
+    -- is unchanged. Without it the device fell back to its path id for a
+    round, which read as a disconnect and a reconnect and rewrote both
+    strips about six times an hour. An unmounted or remounted volume loses
+    what was carried."""
     root = Path(mount_root)
     try:
         candidates = sorted(
@@ -194,24 +204,35 @@ def inventory_mounts(
         return ()
 
     identities: dict[str, StableDeviceIdentity] = {}
+    present: set[str] = set()
     for candidate in candidates:
         try:
             before = candidate.lstat()
         except OSError:
             continue
+        mount = (before.st_dev, before.st_ino)
+        present.add(str(candidate))
         facts = diskutil_facts(candidate, runner=runner)
         if facts is None:
+            held = carried.get(str(candidate)) if carried is not None else None
+            if held is not None and held[0] == mount:
+                identities[held[1].key] = held[1]
             continue
         try:
             after = candidate.lstat()
         except OSError:
             continue
-        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+        if mount != (after.st_dev, after.st_ino):
             continue
         facts = refine_facts_with_hardware_status(facts, candidate)
         identity = derive_device_identity(facts, trusted_mount_root=root)
         if identity is not None:
             identities[identity.key] = identity
+            if carried is not None:
+                carried[str(candidate)] = (mount, identity)
+    if carried is not None:
+        for gone in [path for path in carried if path not in present]:
+            del carried[gone]
     return tuple(sorted(identities.values(), key=lambda row: (row.label, row.key)))
 
 
@@ -223,7 +244,11 @@ class DeviceIdentityCache:
         *,
         inventory: Callable[[], tuple[StableDeviceIdentity, ...]] | None = None,
     ) -> None:
-        self._inventory = inventory or inventory_mounts
+        # What each mount's last good probe said, carried across a failed
+        # probe of the same mount (inventory_mounts). Only the worker reads
+        # and writes it, one round at a time.
+        self._carried: dict[str, tuple[tuple[int, int], StableDeviceIdentity]] = {}
+        self._inventory = inventory or (lambda: inventory_mounts(carried=self._carried))
         self._condition = threading.Condition()
         self._snapshot: tuple[StableDeviceIdentity, ...] = ()
         self._thread: threading.Thread | None = None
