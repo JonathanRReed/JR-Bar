@@ -9156,6 +9156,29 @@ class StatusBarController(NSObject):
         self._last_event_refresh_at = time.monotonic()
         self.refresh_(None)
 
+    def schedule_tool_tint_wake(self, delay: float) -> None:
+        """Comes back for a tool tint the three-second floor held back
+        once the floor ends, from any thread (the writers run off main)."""
+        try:
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "armToolTintWake:", max(0.05, float(delay)), False
+            )
+        except Exception:
+            log_status_bar("tool tint wake not scheduled")
+
+    @objc.IBAction
+    def armToolTintWake_(self, delay) -> None:
+        # One wake at a time: each render the floor holds re-arms it for
+        # the time that is left.
+        NSObject.cancelPreviousPerformRequestsWithTarget_selector_object_(
+            self, "toolTintWake:", None
+        )
+        self.performSelector_withObject_afterDelay_("toolTintWake:", None, float(delay))
+
+    @objc.IBAction
+    def toolTintWake_(self, _sender) -> None:
+        self.schedule_event_refresh()
+
     def replay_debug_logs(self) -> None:
         replayed = replay_recent_debug_logs(self.monitor)
         if replayed:
@@ -12925,7 +12948,12 @@ class StatusBarController(NSObject):
                         if projection is not None
                         else None
                     ),
-                    color_settings=colors_for_render,
+                    color_settings=tool_tinted_colors(
+                        self,
+                        colors_for_render,
+                        statuses,
+                        projection.dominant_provider if projection is not None else None,
+                    ),
                 )
                 program = apply_brightness(presentation.dsl, brightness)
             elif projection is not None:
@@ -13870,6 +13898,11 @@ class StatusBarController(NSObject):
             override = self.settings.device_blend_mode(device.device_id)
             if override:
                 colors_for_render = colors_for_render.with_blend_mode(override)
+            # This strip's own way round and, for a Dot, its way of travel.
+            colors_for_render = colors_for_render.for_device(
+                led_direction=self.settings.device_led_direction(device.device_id),
+                dot_travel_style=self.settings.device_dot_travel_style(device.device_id),
+            )
             statuses_for_device = request.statuses
             fallback_for_device = request.mode
             pin = self.settings.device_provider_pin(device.device_id)
@@ -13925,7 +13958,14 @@ class StatusBarController(NSObject):
                         if device_projection is not None
                         else None
                     ),
-                    color_settings=colors_for_render,
+                    color_settings=tool_tinted_colors(
+                        self,
+                        colors_for_render,
+                        statuses_for_device,
+                        device_projection.dominant_provider
+                        if device_projection is not None
+                        else None,
+                    ),
                 )
                 continuity = continuous_presentation_identity(presentation)
                 if continuity is not None:
@@ -15325,9 +15365,15 @@ class StatusBarController(NSObject):
         devices: list[StatusBarDevice],
         token: int,
     ) -> None:
+        accent = lid_accent_color(self)
         for device in devices:
             try:
-                program = program_for_lid_animation(animation, brightness=device.brightness)
+                program = program_for_lid_animation(
+                    animation,
+                    brightness=device.brightness,
+                    led_count=led_count_for_target(device.target),
+                    accent=accent,
+                )
                 target = write_led_program(
                     program,
                     device_path=device.target,
@@ -16662,9 +16708,18 @@ def _installed_terminal_application() -> Path | None:
 
 
 def validate_lid_animation(animation: LedAnimationSetting) -> None:
+    from .lid_presets import lid_program
+
     program = normalize_led_text(animation.program)
     validate_led_text(program)
     validate_led_text(apply_brightness(program, 1))
+    shape = getattr(animation, "shape", None)
+    if shape:
+        # A shape look is drawn per device: every form it can take must be
+        # a program the firmware accepts, the Dot's two-LED one included.
+        for led_count in (8, 2):
+            drawn = normalize_led_text(lid_program(program, shape, led_count=led_count))
+            validate_led_text(apply_brightness(drawn, 1))
     normalize_animation_duration(animation.duration_seconds)
 
 
@@ -16672,9 +16727,54 @@ def program_for_lid_animation(
     animation: LedAnimationSetting,
     *,
     brightness: float = 255,
+    led_count: int = 8,
+    accent: str | None = None,
 ) -> str:
+    """What one device plays for a lid look: a shape look (Iris) drawn for
+    this device's LED count and, for the active looks, in ``accent`` -- the
+    colour of the agent still working; any other look, its program."""
+    from .lid_presets import lid_program
+
     validate_lid_animation(animation)
-    return apply_brightness(normalize_led_text(animation.program), brightness)
+    program = lid_program(
+        normalize_led_text(animation.program),
+        getattr(animation, "shape", None),
+        led_count=led_count,
+        accent=accent,
+    )
+    return apply_brightness(normalize_led_text(program), brightness)
+
+
+def tool_tinted_colors(target, colors, statuses, provider, *, now: float | None = None, gate=None):
+    """``colors`` carrying the tool family the working head shows. When the
+    three-second floor holds a new family back, ``target`` is asked to come
+    back as it ends (``schedule_tool_tint_wake``), so the head changes then
+    and not at the next status event or refresh, up to 15 s later."""
+    clock = time.monotonic() if now is None else float(now)
+    tint_gate = gate or colors_module.TOOL_TINT_GATE
+    tinted = colors_module.with_tool_tint(colors, statuses, provider, now=clock, gate=tint_gate)
+    if getattr(colors, "tint_by_tool", False):
+        held = tint_gate.held_until(provider)
+        schedule = getattr(target, "schedule_tool_tint_wake", None)
+        if held is not None and schedule is not None:
+            schedule(held - clock)
+    return tinted
+
+
+def lid_accent_color(target) -> str | None:
+    """The colour of the main agent working right now, for the Iris
+    (active) looks; None when nothing is working."""
+    snapshot = getattr(target, "last_snapshot", None)
+    if snapshot is None:
+        return None
+    busy = (AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS)
+    for status in snapshot.statuses:
+        if not status.is_subagent and status.mode in busy:
+            try:
+                return target.agent_render_colors().agent_color(status.provider)
+            except Exception:
+                return None
+    return None
 
 
 def restore_led_display(target, token_value) -> None:

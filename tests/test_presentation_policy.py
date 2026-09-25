@@ -617,3 +617,101 @@ def test_noncontinuous_programs_do_not_invent_refresh_scoped_playback_anchors__a
         assert safe.motion is MotionClass.STATIC
         assert safe.dsl == fallback
 
+
+
+# --- one geometry (lane led-motions, 2026-09-24) -----------------------------
+
+
+def _active_glance():
+    return resolve_glance(
+        GlanceInputs(
+            actionable_episode_key=None,
+            fresh_failure=None,
+            fresh_completion=None,
+            active=True,
+            unresolved_failure=False,
+            capacity=None,
+        ),
+        presentation_time=100.0,
+        relay_epoch=100.0,
+        preferences=AccessibilityDisplayPreferences(),
+    )
+
+
+def _named_leds(line: str) -> list[str]:
+    """The LED indexes a line assigns, in order, one entry per assignment."""
+    named = []
+    for segment in line.split(";"):
+        for token in segment.split():
+            head = token.split(":", 1)[0]
+            if ":" in token and head.isdigit():
+                named.append(head)
+    return named
+
+
+def test_every_solo_motion_names_each_led_once_per_line() -> None:
+    """The firmware keeps only the LAST assignment an LED gets on a line.
+
+    The old hand-written solo Scanner named LEDs 1-6 twice on its one line,
+    so its whole outbound sweep was thrown away, and the solo Heartbeat's
+    two beats on one line came out as one. Every motion a working agent can
+    play on its own now comes from the shared renderer, and none of them
+    names an LED twice on a line -- on the Pro's eight LEDs or the Dot's two.
+    """
+    from jrbar import colors as colors_module
+
+    resolved = _active_glance()
+    base = colors_module.ColorSettings.defaults()
+    for motion in colors_module.PROVIDER_ANIMATION_CHOICES:
+        settings = base.with_agent_animation("claude", motion)
+        for led_count in (8, 2):
+            presentation = compose_presentation_program(
+                resolved,
+                presentation_time=100.0,
+                led_count=led_count,
+                color=settings.agent_color("claude"),
+                preferences=AccessibilityDisplayPreferences(),
+                provider="claude",
+                color_settings=settings,
+            )
+            for line in presentation.dsl.splitlines():
+                named = _named_leds(line)
+                assert len(named) == len(set(named)), (
+                    f"{motion}/{led_count}: {line}"
+                )
+            if motion != colors_module.PROVIDER_ANIMATION_AUTO:
+                # A chosen motion that falls back to the still glyph is a
+                # motion that silently stopped moving.
+                expected = (
+                    MotionClass.STATIC
+                    if motion == colors_module.MOTION_STEADY
+                    else MotionClass.CONTINUOUS
+                )
+                assert presentation.motion is expected, (motion, led_count)
+
+
+def test_a_chosen_motions_identity_changes_with_its_shape() -> None:
+    """The device dedupe compares identities, not text: a knob that changes
+    the loop must change the identity even when the period stays put."""
+    from jrbar import colors as colors_module
+    from jrbar.presentation_policy import continuous_presentation_identity
+
+    resolved = _active_glance()
+    base = colors_module.ColorSettings.defaults().with_agent_animation("claude", "comet")
+    wide = base.with_agent_animation_parameters("claude", {"head_width": 3})
+
+    def identity(settings):
+        return continuous_presentation_identity(
+            compose_presentation_program(
+                resolved,
+                presentation_time=100.0,
+                led_count=8,
+                color="#D97757",
+                preferences=AccessibilityDisplayPreferences(),
+                provider="claude",
+                color_settings=settings,
+            )
+        )
+
+    assert identity(base) != identity(wide)
+    assert identity(base) == identity(base)

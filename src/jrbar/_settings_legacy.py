@@ -138,7 +138,7 @@ DEFAULT_LID_CLOSED_ACTIVE_PROGRAM = (
     "#FF9F0A 300ms pulse\n#FF9F0A 250ms cosine\n#5A3A00 350ms cosine\n#1A1200 600ms cosine"
 )
 DEFAULT_LID_OPEN_ACTIVE_PROGRAM = (
-    "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse"
+    "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse\noff 300ms ease-out"
 )
 
 DEFAULT_IDLE_DIM_AFTER_MINUTES = 10.0
@@ -197,11 +197,16 @@ DEFAULT_LID_OPEN_ANIMATION_SECONDS = 1.0
 class LedAnimationSetting:
     program: str
     duration_seconds: float
+    # A lid look drawn per device (``lid_presets.LID_SHAPES``, the Iris
+    # looks) rather than one program for every LED count. ``program`` then
+    # holds its eight-LED form for anything that reads programs only.
+    shape: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "program": self.program,
             "duration_seconds": self.duration_seconds,
+            "shape": self.shape,
         }
 
 
@@ -243,6 +248,14 @@ class DeviceDisplaySetting:
     # never muted); None = every signal. The per-Focus policy's
     # per-DEVICE sibling.
     signal_policy: str | None = None
+    # Which way round the strip is mounted: "forward" (LED 0 on the left)
+    # or "reversed". Every agent light drawn for this device is mirrored
+    # when reversed, so a comet still runs left to right on the desk.
+    led_direction: str = "forward"
+    # How a travelling motion moves on a two-LED device: "wipe" (LED 0
+    # rises, LED 1 rises, LED 0 falls, LED 1 falls -- a direction you can
+    # see) or "crossfade" (the older soft swap). Only a Dot reads it.
+    dot_travel_style: str = "wipe"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -266,6 +279,8 @@ class DeviceDisplaySetting:
             "blend_mode": self.blend_mode,
             "provider_pin": self.provider_pin,
             "signal_policy": self.signal_policy,
+            "led_direction": self.led_direction,
+            "dot_travel_style": self.dot_travel_style,
         }
 
     def channel_gains(self) -> tuple[float, float, float]:
@@ -361,7 +376,7 @@ class AgentMonitorSettings:
     )
     lid_open_active_animation: LedAnimationSetting = field(
         default_factory=lambda: LedAnimationSetting(
-            program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.2
+            program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.5
         )
     )
     battery_full_charge_watts: float | None = None
@@ -1045,10 +1060,12 @@ class AgentMonitorSettings:
         *,
         program: str,
         duration_seconds: float,
+        shape: str | None = None,
     ) -> AgentMonitorSettings:
         animation = LedAnimationSetting(
             program=program,
             duration_seconds=normalize_animation_duration(duration_seconds),
+            shape=_lid_shape_setting(shape),
         )
         if kind == LID_ANIMATION_CLOSED:
             return replace(self, lid_closed_animation=animation)
@@ -1532,6 +1549,22 @@ class AgentMonitorSettings:
             if device.device_id == device_id:
                 return device.signal_policy
         return None
+
+    def device_led_direction(self, device_id: str) -> str:
+        """``forward`` or ``reversed``: which way round this strip is
+        mounted. A device never seen is forward."""
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.led_direction
+        return "forward"
+
+    def device_dot_travel_style(self, device_id: str) -> str:
+        """``wipe`` or ``crossfade``: how travel looks on this device when
+        it has two LEDs."""
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.dot_travel_style
+        return "wipe"
 
     def with_device_signal_policy(
         self, device_id: str, policy: str | None
@@ -2190,7 +2223,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         lid_open_active_animation=_lid_animation_setting(
             data.get("lid_open_active_animation"),
             LedAnimationSetting(
-                program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.2
+                program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.5
             ),
         ),
         battery_full_charge_watts=_optional_float_setting(
@@ -2680,6 +2713,12 @@ def _device_display_settings(value: object, default_display: str) -> tuple[Devic
                     else None
                 ),
                 resting_glow=_fraction_setting(item.get("resting_glow"), 0.0),
+                led_direction=(
+                    "reversed" if item.get("led_direction") == "reversed" else "forward"
+                ),
+                dot_travel_style=(
+                    "crossfade" if item.get("dot_travel_style") == "crossfade" else "wipe"
+                ),
             )
         )
         seen.add(device_id)
@@ -2763,6 +2802,13 @@ def normalize_animation_duration(value: object) -> float:
     return max(0.1, min(10.0, float(value)))
 
 
+def _lid_shape_setting(value: object) -> str | None:
+    """A lid shape name this build draws, or None (play the program)."""
+    from .lid_presets import LID_SHAPES
+
+    return value if isinstance(value, str) and value in LID_SHAPES else None
+
+
 def _lid_animation_setting(
     value: object,
     default: LedAnimationSetting,
@@ -2775,7 +2821,13 @@ def _lid_animation_setting(
     duration = value.get("duration_seconds")
     if not isinstance(duration, (int, float)):
         duration = default.duration_seconds
+    from .lid_presets import upgraded_program
+
+    # An opening look saved before they all ended dark is today's version
+    # of the same look, so it stays the one picked.
+    program, duration = upgraded_program(program, duration)
     return LedAnimationSetting(
         program=program,
         duration_seconds=normalize_animation_duration(duration),
+        shape=_lid_shape_setting(value.get("shape")),
     )

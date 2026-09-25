@@ -273,7 +273,9 @@ def test_garbage_provider_animation_reads_as_automatic_and_is_not_persisted__and
     # tlip's gradient wave, the roll marquee, the two-tone duotone), and
     # again 2026-09-12 from upstream's own animation catalog (the
     # centre-bright idle gradient, the lid-open centre-out bloom, the
-    # battery bar's pulsing frontier, and a specular glint).
+    # battery bar's pulsing frontier, and a specular glint), and again
+    # 2026-09-24 when Jonathan asked for a handful of new animations (a
+    # centre-out ripple and a swinging pendulum).
     # Still nothing invented BESIDE the list: every entry here was asked
     # for by name or ported from a sourced program.
     assert set(PROVIDER_ANIMATION_CHOICES) - {PROVIDER_ANIMATION_AUTO} == {
@@ -297,6 +299,8 @@ def test_garbage_provider_animation_reads_as_automatic_and_is_not_persisted__and
         colors_module.MOTION_BLOOM,
         colors_module.MOTION_FRONTIER,
         colors_module.MOTION_GLINT,
+        colors_module.MOTION_RIPPLE,
+        colors_module.MOTION_PENDULUM,
         MOTION_STEADY,
         MOTION_BLINK,
     }

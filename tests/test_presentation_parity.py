@@ -671,3 +671,69 @@ def test_accessibility_preferences_repaint_each_changed_dimension_without_recrea
     with pytest.raises(ValueError, match="invalid accessibility display preferences"):
         replace(baseline, accessibility_preferences=object())
 
+
+
+# --- the live solo light is the preview (lane led-motions) --------------------
+
+
+def _solo_body(program: str) -> list[str]:
+    """A program's lines without its brightness line, its settle ease and its
+    ``repeat`` -- the motion itself."""
+    lines = [line for line in program.splitlines() if not line.startswith("brightness ")]
+    if lines and lines[-1].startswith("repeat"):
+        lines = lines[:-1]
+    return lines
+
+
+@pytest.mark.parametrize("cycle_seconds", (0.5, 2.2, 5.0))
+def test_solo_live_program_is_the_studio_preview(cycle_seconds: float) -> None:
+    """One working agent on the Pro plays exactly what its thumbnail shows.
+
+    Before 2026-09-24 the solo light was a second, hand-written geometry:
+    Jonathan's 0.5 s Comet previewed as a 0.48 s lap and played a fixed
+    ~2.4 s one-way sweep, and every motion ignored the cycle speed.
+    """
+    from jrbar import colors as colors_module
+    from jrbar.presentation_policy import GlanceInputs, resolve_glance
+
+    preferences = AccessibilityDisplayPreferences()
+    resolved = resolve_glance(
+        GlanceInputs(
+            actionable_episode_key=None,
+            fresh_failure=None,
+            fresh_completion=None,
+            active=True,
+            unresolved_failure=False,
+            capacity=None,
+        ),
+        presentation_time=100.0,
+        relay_epoch=100.0,
+        preferences=preferences,
+    )
+    base = colors_module.ColorSettings.defaults().with_cycle_speed(cycle_seconds)
+    for motion in colors_module.PROVIDER_ANIMATION_CHOICES:
+        if motion == colors_module.PROVIDER_ANIMATION_AUTO:
+            continue
+        settings = base.with_agent_animation("claude", motion)
+        color = settings.agent_color("claude")
+        for led_count in (8, 2):
+            live = compose_presentation_program(
+                resolved,
+                presentation_time=100.0,
+                led_count=led_count,
+                color=color,
+                preferences=preferences,
+                provider="claude",
+                color_settings=settings,
+            )
+            preview = colors_module.provider_motion_preview_program(
+                "claude", color, settings, led_count=led_count
+            )
+            live_body = _solo_body(live.dsl)
+            preview_body = _solo_body(preview)
+            # Either side may carry the one-line settle ease in front.
+            if len(live_body) == len(preview_body) + 1:
+                live_body = live_body[1:]
+            elif len(preview_body) == len(live_body) + 1:
+                preview_body = preview_body[1:]
+            assert live_body == preview_body, (motion, led_count, cycle_seconds)

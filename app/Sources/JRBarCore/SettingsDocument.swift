@@ -302,6 +302,7 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
         // catalogue so a page reset never wipes it.
         keys += lightsKeys
         keys.append(SettingsKey(.notifications, "closed_lid_grace_minutes", .number))
+        keys += ledMotionKeys
         return keys
     }()
 
@@ -389,4 +390,19 @@ extension SettingsKey {
         let pieces = text.split { $0 == "," || $0 == " " || $0 == ";" || $0 == "\n" }
         return normalizedMilestoneSteps(pieces.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) })
     }
+}
+
+// MARK: - LED motions (strip direction, Dot travel, tool tint, finish look)
+
+extension SettingsKey {
+    /// Each device's way round and, for a Dot, its way of travel; the
+    /// opt-in tool tint on the working head; and how a finish is
+    /// celebrated. The Lid looks live in Effect Studio › Moments, which
+    /// writes whole `lid_*_animation` objects, so they are not page keys.
+    public static let ledMotionKeys: [SettingsKey] = [
+        SettingsKey(.devices, "devices[].led_direction", .string),
+        SettingsKey(.devices, "devices[].dot_travel_style", .string),
+        SettingsKey(.lighting, "colors.tint_by_tool", .bool),
+        SettingsKey(.lighting, "colors.done_celebration_style", .string),
+    ]
 }

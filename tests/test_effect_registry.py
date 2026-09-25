@@ -67,7 +67,7 @@ def test_provider_animation_catalog_is_authoritative_and_keeps_ui_order__and_2_m
     assert tuple(parameter.name for parameter in get_effect("chase").parameter_metadata) == (
         "duration_seconds",
         "direction",
-        "spacing",
+        "crests",
         "softness",
     )
     assert get_effect("aurora").energy == "high"
@@ -85,13 +85,13 @@ def test_parameter_normalization_applies_defaults_in_schema_order__and_2_more() 
     assert normalized == {
         "duration_seconds": 3.0,
         "direction": "reverse",
-        "spacing": 1,
+        "crests": 1,
         "softness": 1.0,
     }
     assert tuple(normalized) == (
         "duration_seconds",
         "direction",
-        "spacing",
+        "crests",
         "softness",
     )
 
@@ -99,7 +99,7 @@ def test_parameter_normalization_applies_defaults_in_schema_order__and_2_more() 
     for effect_id, parameters, message in [
         ("chase", {"unknown": 1}, "unknown parameters"),
         ("chase", {"duration_seconds": True}, "number"),
-        ("chase", {"spacing": 0}, "at least"),
+        ("chase", {"crests": 0}, "at least"),
         ("chase", {"direction": "sideways"}, "one of"),
         ("gradient", {"palette": ["#112233"]}, "at least"),
         ("gradient", {"palette": ["#112233", "bad"]}, "hex color"),

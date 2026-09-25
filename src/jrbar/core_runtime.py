@@ -1316,7 +1316,8 @@ def _cmd_preview_program(self, args):
     for device in targets:
         controller = self.agent_controller_for_device(device)
         try:
-            controller.sync_program(legacy.apply_brightness(program, controller.brightness), LedDisplayState.IDLE)
+            shown = _preview_in_desk_order(self, program, device)
+            controller.sync_program(legacy.apply_brightness(shown, controller.brightness), LedDisplayState.IDLE)
         except Exception as exc:
             raise CommandError("refused", f"device refused the program: {exc}") from exc
         device_ids.append(device.device_id)
@@ -1325,6 +1326,22 @@ def _cmd_preview_program(self, args):
     self._core_previews[surface] = _Preview(program, time.monotonic() + seconds, time.time(), tuple(device_ids))
     self._core_publish_lights()
     return {"surface": surface, "until": time.time() + seconds, "devices": device_ids}
+
+
+def _preview_in_desk_order(self, program: str, device) -> str:
+    """``program`` as ``device`` should play it: mirrored for a strip set to
+    ``reversed``, exactly as its live light is, so Play on strip runs a
+    comet the way the Effect Studio thumbnail and the strip's own agent
+    light run it. Previews are drawn with LED 0 on the left."""
+    from ._led_status_legacy import led_count_for_target
+    from .motion_shapes import oriented_program
+
+    try:
+        direction = self.settings.device_led_direction(device.device_id)
+        led_count = led_count_for_target(device.target)
+    except Exception:
+        return program
+    return oriented_program(program, led_count=led_count, direction=direction)
 
 
 @command("preview_calibration")
@@ -1735,23 +1752,37 @@ _ROUTABLE_SEMANTIC_TARGETS: Final = frozenset(
 )
 
 
-def _apply_provider_motion_assignment(self, effect, scope, target_id) -> str | None:
+#: Values that shape a finite pass, meaningless to a loop that plays for
+#: as long as the agent works; a provider's live motion never stores them.
+_LOOP_ONLY_EXCLUDED_PARAMETERS: Final = frozenset({"pass_mode"})
+
+
+def _apply_provider_motion_assignment(self, effect, scope, target_id, parameters=None) -> str | None:
     """Provider-scope motion assignments write the live color policy.
 
     ``provider_animation``-catalog effects are the persistent per-provider
-    motion the solo renderers read through ``colors.provider_animation``.
-    Recording the assignment alone would leave the picker's promise a dead
-    write, so a provider target also lands in settings. Returns a warning
-    string when the motion could not be applied; the assignment itself is
-    already saved either way.
+    motion the solo renderers read through ``colors.provider_animation``,
+    and ``parameters`` -- the Effect Studio values, tempo included -- ride
+    along into ``colors.provider_animation_parameters``, so the knobs that
+    shaped the preview shape the strip. Recording the assignment alone
+    would leave the picker's promise a dead write, so a provider target
+    also lands in settings. Returns a warning string when the motion could
+    not be applied; the assignment itself is already saved either way.
     """
     from .effect_studio import AssignmentScope
 
     if effect.catalog != "provider_animation" or scope is not AssignmentScope.PROVIDER:
         return None
     legacy = self._core_legacy()
+    values = {
+        name: value
+        for name, value in (parameters or {}).items()
+        if name not in _LOOP_ONLY_EXCLUDED_PARAMETERS
+    }
     try:
-        colors = self.settings.colors.with_agent_animation(target_id, effect.identifier)
+        colors = self.settings.colors.with_agent_animation(
+            target_id, effect.identifier
+        ).with_agent_animation_parameters(target_id, values)
     except (TypeError, ValueError):
         return f"{effect.identifier} is not a motion this build can apply"
     self.settings = self.settings.with_colors(colors)
@@ -1773,15 +1804,10 @@ def _clear_provider_motion_assignment(self, record) -> None:
     effect = cache.registry().get(record.effect_id)
     if effect is None or effect.catalog != "provider_animation":
         return
-    from .colors import PROVIDER_ANIMATION_AUTO
-
     legacy = self._core_legacy()
-    try:
-        colors = self.settings.colors.with_agent_animation(
-            record.target_id, PROVIDER_ANIMATION_AUTO
-        )
-    except (TypeError, ValueError):
-        return
+    # Back to what the provider plays when nobody chose -- OpenCode's own
+    # Pendulum, not an Automatic nobody picked.
+    colors = self.settings.colors.without_agent_animation(record.target_id)
     self.settings = self.settings.with_colors(colors)
     try:
         legacy.save_settings(self.settings)
@@ -1830,7 +1856,9 @@ def _cmd_set_assignment(self, args):
         core_effects.save_assignment_parameters(table)
     except OSError as error:
         self._core_log(f"core: assignment parameters not saved: {error}")
-    motion_error = _apply_provider_motion_assignment(self, effect, plan.scope, plan.target_id)
+    motion_error = _apply_provider_motion_assignment(
+        self, effect, plan.scope, plan.target_id, parameters
+    )
     result = _assignments_document(self)
     result["assignment"] = {
         "effect_id": plan.effect_id,
@@ -1841,6 +1869,86 @@ def _cmd_set_assignment(self, args):
     if motion_error is not None:
         result["motion_warning"] = motion_error
     return result
+
+
+@command("list_lid_presets", main_thread=False)
+def _cmd_list_lid_presets(self, args):
+    """Every lid look for Effect Studio's Lid moments, drawn for the Pro and
+    the Dot, with the one each transition plays now."""
+    from . import lid_presets
+    from .status_bar_legacy import lid_accent_color
+
+    return lid_presets.lid_presets_document(self.settings, accent=lid_accent_color(self))
+
+
+@command("play_lid_preset")
+def _cmd_play_lid_preset(self, args):
+    """Plays one lid look on the connected strip and Dot exactly as a lid
+    change would, drawn for each device, then hands the light back."""
+    from . import lid_presets
+    from ._settings_legacy import LedAnimationSetting
+
+    kind = str(args.get("kind") or "")
+    name = str(args.get("name") or "")
+    entry = lid_presets.preset(kind, name)
+    if entry is None:
+        raise CommandError("invalid_args", f"no lid look {name!r} for {kind!r}")
+    _name, seconds, program = entry
+    animation = LedAnimationSetting(
+        program, seconds, shape=lid_presets.LID_PRESET_SHAPES.get((kind, name))
+    )
+    self.play_lid_animation(kind, animation=animation)
+    return {"kind": kind, "name": name, "seconds": seconds}
+
+
+@command("list_finish_looks", main_thread=False)
+def _cmd_list_finish_looks(self, args):
+    """The done celebration's looks for Effect Studio's Moments, drawn for
+    the Pro and the Dot in the done colour, and the one in use."""
+    from . import celebrations
+    from .led_status import _done_celebration_program
+
+    colors = self.settings.colors
+    done = colors.mode_color("done")
+    labels = {"bloom": "Bloom", "land": "Land", "ripple": "Ripple"}
+    looks = []
+    for style in celebrations.DONE_CELEBRATION_STYLES:
+        drawn = {
+            led_count: celebrations.done_celebration_program(style, done, led_count=led_count)
+            or _done_celebration_program(done, led_count)
+            for led_count in (8, 2)
+        }
+        looks.append(
+            {"style": style, "label": labels.get(style, style), "program": drawn[8], "dot_program": drawn[2]}
+        )
+    return {
+        "current": colors.done_celebration_style,
+        "enabled": colors.done_celebration_enabled,
+        "looks": looks,
+    }
+
+
+@command("preview_provider_motion", main_thread=False)
+def _cmd_preview_provider_motion(self, args):
+    """What one provider's agent working alone plays right now: the same
+    composition the Pro is sent, from the live settings -- its chosen motion
+    at its own tempo, or the Relay for Automatic."""
+    from .presentation_policy import solo_working_program
+
+    provider = str(args.get("provider") or "").strip()
+    if not provider:
+        raise CommandError("invalid_args", "provider is required")
+    try:
+        led_count = max(2, min(8, int(args.get("led_count") or 8)))
+    except (TypeError, ValueError) as error:
+        raise CommandError("invalid_args", "led_count must be a number") from error
+    colors = self.agent_render_colors()
+    return {
+        "provider": provider,
+        "led_count": led_count,
+        "motion": colors.agent_animation(provider),
+        "program": solo_working_program(provider, colors, led_count=led_count),
+    }
 
 
 @command("clear_assignment")
@@ -4550,6 +4658,33 @@ def build_headless_controller_class() -> type:
             followed = self._core_followed_strip_id()
             return followed is None or device.device_id == followed
 
+        def _core_linked_pro_desk_program(self, body: str | None) -> str | None:
+            """The Pro's program in desk order, for a linked Dot to follow.
+
+            The strip's program is kept as it was written, and a Pro set to
+            ``reversed`` wrote it mirrored so its light runs the right way
+            on the desk. The Dot narrows whatever it is handed LED by LED,
+            so it played that mirror as it stood: a comet the Pro ran left
+            to right ran right to left on the Dot. Mirroring it once more
+            puts it back the way the person sees it. A Pro that is not
+            reversed, or one the inventory cannot see, hands it on as it is.
+            """
+            if not body:
+                return body
+            devices = getattr(self.settings, "devices", ()) or ()
+            if not any(getattr(entry, "led_direction", "forward") == "reversed" for entry in devices):
+                return body
+            followed = self._core_followed_strip_id()
+            if followed is None:
+                return body
+            from .motion_shapes import oriented_program
+
+            return oriented_program(
+                body,
+                led_count=int(getattr(self, "_core_linked_pro_leds", 8) or 8),
+                direction=self.settings.device_led_direction(followed),
+            )
+
         def _core_held_preview_devices(self) -> frozenset:
             """Device ids a held preview currently owns.
 
@@ -4756,6 +4891,7 @@ def build_headless_controller_class() -> type:
             role = normalize_dot_role(getattr(self.settings, "dot_role", None))
             strip = getattr(self, "_core_linked_pro_program", None)
             body = program if program is not None else (strip[0] if strip else None)
+            body = self._core_linked_pro_desk_program(body)
             brightness = None
             extend_scale = None
             finalize = None

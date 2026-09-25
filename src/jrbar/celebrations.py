@@ -75,8 +75,75 @@ except Exception:  # pragma: no cover -- parse of our own constant program
     RESET_CELEBRATION_SECONDS = 6.75
 
 
+# --- The done celebration's other looks -----------------------------------
+
+#: How a finish is celebrated. Bloom is the shipped twinkle-then-bloom
+#: (``led_status._done_celebration_program``); Land drops a light to the far
+#: end with a splash -- "it arrived"; Ripple sends one ring out from the
+#: middle.
+DONE_CELEBRATION_BLOOM = "bloom"
+DONE_CELEBRATION_LAND = "land"
+DONE_CELEBRATION_RIPPLE = "ripple"
+DONE_CELEBRATION_STYLES: tuple[str, ...] = (
+    DONE_CELEBRATION_BLOOM,
+    DONE_CELEBRATION_LAND,
+    DONE_CELEBRATION_RIPPLE,
+)
+DEFAULT_DONE_CELEBRATION_STYLE = DONE_CELEBRATION_BLOOM
+#: The one cycle each look is drawn at, and how it lets go afterwards: Land
+#: holds a short glow where the light came to rest, then everything fades
+#: to dark -- a finish is a finite cue, never a held light.
+DONE_CELEBRATION_CYCLE_MS = 2400
+DONE_CELEBRATION_GLOW_MS = 500
+DONE_CELEBRATION_FADE_MS = 900
+#: How bright the landing LED glows once Land has arrived.
+DONE_CELEBRATION_LAND_GLOW = 0.45
+
+
+def normalize_done_celebration_style(value: object) -> str:
+    return value if value in DONE_CELEBRATION_STYLES else DEFAULT_DONE_CELEBRATION_STYLE
+
+
+def done_celebration_program(style: str, color: str, *, led_count: int = 8) -> str | None:
+    """A finish, played once in ``color``, ending dark: the Land or Ripple
+    look, or None for Bloom (the shipped program draws that one)."""
+    from . import motion_shapes as shapes
+
+    count = max(2, int(led_count))
+    body = [f"off {DONE_CELEBRATION_SETTLE_MS}ms cosine"]
+    if style == DONE_CELEBRATION_LAND:
+        # The light lands and stays lit where it came to rest, glows there
+        # a moment, then lets go -- one arrival, never a second light-up.
+        glow = shapes.shade(color, DONE_CELEBRATION_LAND_GLOW)
+        lines = shapes.land(
+            color, "#000000", led_count=count, cycle_ms=DONE_CELEBRATION_CYCLE_MS, settle=glow
+        )
+        body += lines[1:-1]
+        body.append(f"{count - 1}:{glow} {DONE_CELEBRATION_GLOW_MS}ms cosine")
+        body.append(f"off {DONE_CELEBRATION_FADE_MS}ms cosine")
+    elif style == DONE_CELEBRATION_RIPPLE:
+        # The ring runs out to the ends and the water is still: the ring
+        # is the whole cue, and it ends dark on its own.
+        lines = shapes.ripple(color, "#000000", led_count=count, cycle_ms=DONE_CELEBRATION_CYCLE_MS)
+        body += lines[1:-1]
+    else:
+        return None
+    return "\n".join(body)
+
+
+#: The ease to dark a finish starts from, as the shipped celebration does.
+DONE_CELEBRATION_SETTLE_MS = 90
+
+
 __all__ = [
+    "DEFAULT_DONE_CELEBRATION_STYLE",
+    "DONE_CELEBRATION_BLOOM",
+    "DONE_CELEBRATION_LAND",
+    "DONE_CELEBRATION_RIPPLE",
+    "DONE_CELEBRATION_STYLES",
     "REFILL_FALLBACK_COLOR",
     "RESET_CELEBRATION_SECONDS",
+    "done_celebration_program",
+    "normalize_done_celebration_style",
     "reset_celebration_program",
 ]

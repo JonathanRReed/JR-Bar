@@ -1,0 +1,24 @@
+{
+ "current": "bloom",
+ "enabled": true,
+ "looks": [
+  {
+   "style": "bloom",
+   "label": "Bloom",
+   "program": "off 90ms cosine\n0:#00FF66 135ms pulse; 1:#00FF66 135ms pulse 45ms; 2:#00FF66 135ms pulse 90ms; 3:#00FF66 135ms pulse 135ms; 4:#00FF66 135ms pulse 180ms; 5:#00FF66 135ms pulse 225ms; 6:#00FF66 135ms pulse 270ms; 7:#00FF66 135ms pulse 315ms\noff 70ms cosine\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
+   "dot_program": "off 90ms cosine\n0:#00FF66 135ms pulse; 1:#00FF66 135ms pulse 45ms\noff 70ms cosine\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine"
+  },
+  {
+   "style": "land",
+   "label": "Land",
+   "program": "off 90ms cosine\n0:#00FF66 499ms pulse; 1:#00FF66 645ms pulse 335ms; 2:#00FF66 475ms pulse 589ms; 3:#00FF66 365ms pulse 774ms; 4:#00FF66 311ms pulse 910ms; 5:#00FF66 300ms pulse 1012ms; 6:#00FF66 300ms pulse 1099ms; 7:#00FF66 150ms cosine 1180ms\n7:#00732E 400ms cosine; 6:#005924 260ms pulse 60ms; 5:#00260F 240ms pulse 140ms\n7:#00732E 500ms cosine\noff 900ms cosine",
+   "dot_program": "off 90ms cosine\n0:#00FF66 1080ms pulse; 1:#00FF66 540ms cosine 1080ms\n1:#00732E 400ms cosine; 0:#005924 260ms pulse 60ms\n1:#00732E 500ms cosine\noff 900ms cosine"
+  },
+  {
+   "style": "ripple",
+   "label": "Ripple",
+   "program": "off 90ms cosine\n0:#005723 1320ms pulse 720ms; 1:#008F39 1320ms pulse 480ms; 2:#00C750 1320ms pulse 240ms; 3:#00FF66 1320ms pulse; 4:#00FF66 1320ms pulse; 5:#00C750 1320ms pulse 240ms; 6:#008F39 1320ms pulse 480ms; 7:#005723 1320ms pulse 720ms",
+   "dot_program": "off 90ms cosine\n0:#00FF66 1320ms pulse; 1:#00FF66 1320ms pulse"
+  }
+ ]
+}

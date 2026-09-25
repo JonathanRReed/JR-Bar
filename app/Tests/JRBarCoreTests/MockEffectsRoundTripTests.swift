@@ -125,7 +125,7 @@ struct MockEffectsRoundTripTests {
         defer { model.stop() }
 
         let catalog = try await model.listEffects()
-        #expect(catalog.effects.count == 28)
+        #expect(catalog.effects.count == 30)
         #expect(catalog.packs.count == 1)
         #expect(catalog.effects.allSatisfy { $0.preview != nil })
 
@@ -203,7 +203,7 @@ struct MockEffectsRoundTripTests {
         #expect(imported.effect("pack:my-looks:heartbeat") != nil)
         #expect(imported.effect("pack:my-looks:ember")?.reduceMotionFallback == "pack:my-looks:coal")
         #expect(imported.effect("pack:my-looks:heartbeat")?.preview != nil)
-        #expect(try await model.listEffects().effects.count == 31)
+        #expect(try await model.listEffects().effects.count == 33)
 
         // Executable content and bad shapes are refused.
         let evil = directory.appending(path: "evil.json")

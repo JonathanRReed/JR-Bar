@@ -75,6 +75,35 @@ This is the original product lineage. It provided negative evidence for the
 old recency-style announcer behavior and positive evidence for keeping the
 product fork attribution explicit even as JR-Bar diverges further.
 
+### LED motions, 2026-09-24
+
+Upstream studied again at `48a04b8` (MIT). Nothing was copied; the
+programs are short data and were reimplemented as shapes.
+
+- **Iris lid looks.** [PR #38](https://github.com/inteliwear/sidepulse/pull/38)
+  (`e0d578f`, "Polish animations and add customization support") ships a
+  lid-open program that opens from the centre pair outward, ramping from
+  the working cyan to the done green, and a lid-close program that shuts
+  from the edges inward, each as an eight-LED and a two-LED file. JR-Bar's
+  Iris and Iris (active) looks (`motion_shapes.iris_open`/`iris_close`,
+  `lid_presets`) are drawn for each device's LED count instead.
+- **Tool tint.** bizantl/sidepulse, branch `luka`,
+  [`faace13`](https://github.com/bizantl/sidepulse/commit/faace135494de480ea5e369e15f2848d4698607c):
+  the working comet's head takes the hue of the tool family (shell, edit,
+  read, web/MCP, task, plan) and rewrites only on a family change.
+  JR-Bar's `colors.tint_by_tool` is the same idea, opt-in, head only, with
+  a 3 s floor between tint-only rewrites.
+- **The Dot's wipe.** zschwendi/sidepuls-z-swift (MIT),
+  [`878c245`](https://github.com/zschwendi/sidepuls-z-swift/commit/878c245e711e48f1aab5434cadf351ebc85eebc5)
+  `LightingEngine.swift`: a two-LED directional breathe (0 up, 1 up, 0
+  down, 1 down). `motion_shapes.dot_wipe` is JR-Bar's version, the Dot's
+  default way to travel.
+- **Write-rate caution.** gourneau/sidepulse (MIT)
+  [`LEARNINGS.md`](https://github.com/gourneau/sidepulse/blob/9e3d29fc5016a17aa896c71790ee3a3f99b85e8f/LEARNINGS.md):
+  the emulated FAT volume can wedge under a write storm, which is why the
+  tool tint dedupes on the family and never rewrites faster than every
+  three seconds.
+
 ## SidePulse fleet fork
 
 Snapshot studied for P3.35: MIT, © 2026 Peter Kuhar, fork commit

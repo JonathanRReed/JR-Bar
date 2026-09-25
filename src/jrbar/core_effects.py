@@ -277,6 +277,45 @@ def registry_with_packs(packs: Iterable[EffectPack], base: EffectRegistry = EFFE
 # --- parameters ---------------------------------------------------------------
 
 
+#: Parameters retired on 2026-09-24 because nothing could ever make them
+#: do anything (no meaning in the firmware's language, or no data to show).
+#: A stored assignment or a pack that still carries one is not an error:
+#: the value is dropped quietly.
+RETIRED_PARAMETERS: Final = frozenset(
+    {
+        "smooth_morph",
+        "sample_interval_seconds",
+        "max_cluster",
+        "data_mapping",
+        "urgent_overrides",
+    }
+)
+
+
+def _migrated_spacing(effect: EffectDefinition, values: dict[str, Any]) -> dict[str, Any]:
+    """``spacing`` (LEDs between crests, chase 1-6 and marquee 1-8) became
+    ``crests`` (how many waves, 1-3). An old value keeps the look it had
+    and never moves against what it asked for.
+
+    ``spacing`` never reached the light, and every assignment saved with
+    the Studio's values carries its default of 1, so that default means
+    "the look it showed": one crest for Chase, two for Marquee. A wider
+    spacing asked for fewer crests. Marquee can give it one; Chase already
+    has one, so every old Chase value stays at one rather than turning a
+    default into three crests nobody chose.
+    """
+    spacing = values.get("spacing")
+    if "crests" in values or isinstance(spacing, bool) or not isinstance(spacing, (int, float)):
+        return values
+    migrated = dict(values)
+    migrated.pop("spacing", None)
+    if effect.identifier == colors_module.MOTION_CHASE:
+        migrated["crests"] = 1
+    elif effect.identifier == colors_module.MOTION_MARQUEE:
+        migrated["crests"] = 2 if spacing <= 2 else 1
+    return migrated
+
+
 def normalize_parameters(
     effect: EffectDefinition,
     values: Mapping[str, Any] | None,
@@ -286,6 +325,7 @@ def normalize_parameters(
     """Defaults for anything missing, unknown names dropped, bounds kept."""
     values = dict(values) if isinstance(values, Mapping) else {}
     if effect.parameter_metadata:
+        values = _migrated_spacing(effect, values)
         known = {parameter.name for parameter in effect.parameter_metadata}
         cleaned = {str(k): v for k, v in values.items() if str(k) in known}
         try:
@@ -360,9 +400,16 @@ def _builtin_program(identifier: str, color: str) -> str | None:
     return None
 
 
+#: A finite pass count for the motions that offer one. A working loop
+#: cannot play "once", so a provider assignment never stores it; a Moment
+#: or a semantic cue can.
+_PASS_REPEATS: Final = {"once": 1, "twice": 2}
+
+
 def _motion_program(motion: str, color: str, parameters: Mapping[str, Any], *, led_count: int) -> str:
     """The whole-strip shape one provider motion plays for ``color``: the
-    same renderer the Settings thumbnails and the solo live render use."""
+    same renderer the Settings thumbnails and the solo live render use,
+    with every one of the effect's parameters."""
     from ._settings_legacy import AgentMonitorSettings
 
     colors = AgentMonitorSettings().colors
@@ -386,7 +433,32 @@ def _motion_program(motion: str, color: str, parameters: Mapping[str, Any], *, l
         colors = colors.with_cycle_speed(float(duration))
     if motion in colors_module.PROVIDER_ANIMATION_CHOICES:
         colors = colors.with_agent_animation("claude", motion)
-    return colors_module.provider_motion_preview_program("claude", color, colors, led_count=led_count)
+        if motion != colors_module.PROVIDER_ANIMATION_AUTO:
+            colors = colors.with_agent_animation_parameters("claude", _jsonable_values(parameters))
+    program = colors_module.provider_motion_preview_program("claude", color, colors, led_count=led_count)
+    passes = _PASS_REPEATS.get(str(parameters.get("pass_mode", "")))
+    if passes is not None:
+        program = _finite_passes(program, passes)
+    return program
+
+
+def _finite_passes(program: str, passes: int) -> str:
+    """A circulating program cut to ``passes`` laps and then faded out: the
+    shape a transition plays once, where a working loop plays for ever."""
+    lines = program.splitlines()
+    rolls = [index for index, line in enumerate(lines) if line.startswith("roll")]
+    if not rolls:
+        return program
+    first = rolls[0]
+    kept = lines[:first] + lines[first : first + max(1, passes)]
+    return "\n".join([*kept, "off 400ms cosine"])
+
+
+def _jsonable_values(parameters: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(name): list(value) if isinstance(value, tuple) else value
+        for name, value in parameters.items()
+    }
 
 
 def _render_color(

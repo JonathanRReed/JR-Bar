@@ -39,6 +39,8 @@ DEVICE_SETTING_PERSISTED_FIELDS = frozenset(
         "blend_mode",
         "provider_pin",
         "signal_policy",
+        "led_direction",
+        "dot_travel_style",
     }
 )
 DND_SETTING_PERSISTED_FIELDS = frozenset(
@@ -237,6 +239,7 @@ _OWNED_COLLECTION_PATHS = frozenset(
         "colors.fade_ceiling",
         "colors.mode_animation",
         "colors.provider_animation",
+        "colors.provider_animation_parameters",
         "colors.speed_overrides",
         "signal_styles",
         "calibration_profiles",

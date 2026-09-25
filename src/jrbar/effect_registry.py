@@ -486,6 +486,11 @@ def _palette(
 
 
 def _duration(*, minimum: float | None = None) -> EffectParameter:
+    """One cycle's length. Each motion's floor is the shortest cycle at
+    which every combination of its other knobs still passes the safety
+    compiler untouched (measured 2026-09-24): faster than that, the
+    compiler would have to slow it, and the slider would promise a speed
+    the strip never plays."""
     return _number(
         "duration_seconds",
         colors_module.DEFAULT_CYCLE_SPEED_SECONDS,
@@ -506,14 +511,9 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
             "Choose the current state map or a Scene-specific map.",
             ("state", "scene"),
         ),
-        _boolean(
-            "urgent_overrides",
-            True,
-            "Keep reserved asking and failure motion overrides visible.",
-        ),
     ),
     colors_module.MOTION_BREATHE: (
-        _duration(),
+        _duration(minimum=0.5),
         _number(
             "amplitude",
             1.0,
@@ -523,13 +523,13 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_DUOTONE: (
-        _duration(),
+        _duration(minimum=0.5),
         _number(
             "secondary_hue_offset_degrees",
             40.0,
-            "Hue offset used when no explicit two-color palette is supplied.",
-            -180.0,
-            180.0,
+            "How far round the colour wheel the second tone sits, when no palette is set.",
+            -150.0,
+            150.0,
             unit="degrees",
         ),
         _palette(
@@ -541,11 +541,11 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     colors_module.MOTION_CHASE: (
         _duration(),
         _choice("direction", "forward", "Direction of travel.", _DIRECTIONS),
-        _integer("spacing", 1, "LED spacing between wave crests.", 1, 6),
+        _integer("crests", 1, "How many waves travel the strip at once.", 1, 3),
         _number(
             "softness",
             1.0,
-            "Edge softness of the travelling wave.",
+            "How gently the wave's tail fades: 0 is a comet's short tail, 1 a long soft one.",
             0.0,
             1.0,
         ),
@@ -566,32 +566,31 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
             "The gradient's two end colours; leave it empty to take them from the session's colour.",
             maximum_items=2,
         ),
-        _boolean("smooth_morph", True, "Morph smoothly when state colors change."),
     ),
     colors_module.MOTION_HEARTBEAT: (
         _duration(minimum=0.5),
         _number(
             "rest_ratio",
-            0.5,
-            "Fraction of the cycle reserved after the decorative lub-dub.",
+            0.66,
+            "Fraction of the cycle that rests after the two beats.",
             0.35,
             0.8,
         ),
     ),
     colors_module.MOTION_SCANNER: (
         _duration(minimum=0.5),
-        _integer("beam_width", 1, "Width of the bright scanning beam in LEDs.", 1, 8),
+        _integer("beam_width", 1, "Width of the bright scanning beam in LEDs.", 1, 4),
         _number("trail", 0.35, "Relative length of the fading trail.", 0.0, 1.0),
     ),
     colors_module.MOTION_KITT: (
         _duration(minimum=0.5),
-        _integer("beam_width", 3, "Width of the overlapping mechanical eye.", 2, 10),
+        _integer("beam_width", 3, "Width of the overlapping mechanical eye.", 2, 6),
         _number("overlap", 0.5, "Overlap between the eye's light bands.", 0.1, 1.0),
     ),
     colors_module.MOTION_COMET: (
         _duration(minimum=0.5),
-        _integer("head_width", 1, "Width of the bright comet head in LEDs.", 1, 6),
-        _integer("trail_length", 3, "Length of the fading trail in LEDs.", 1, 12),
+        _integer("head_width", 1, "Width of the bright comet head in LEDs.", 1, 4),
+        _integer("trail_length", 3, "Length of the fading trail in LEDs.", 1, 6),
         _choice("direction", "forward", "Direction of comet travel.", _DIRECTIONS),
         _choice(
             "pass_mode",
@@ -601,7 +600,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_FLICKER: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.2),
         _integer("seed", 271, "Picks one of many repeatable flicker patterns.", 0, 2_147_483_647),
         _number("luminance_floor", 0.35, "Lowest relative luminance.", 0.1, 0.8),
         _number("variation", 0.25, "How far the brightness wanders as it flickers.", 0.0, 0.5),
@@ -615,33 +614,18 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
             "How a completed stack returns to its luminous floor.",
             ("all_at_once", "hold", "decay"),
         ),
-        _choice(
-            "data_mapping",
-            "none",
-            "Optional reliable count represented by the stack.",
-            ("none", "queue", "milestone"),
-        ),
     ),
     colors_module.MOTION_TWINKLE: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.2),
         _number("density", 0.15, "Maximum fraction of LEDs sparkling at once.", 0.02, 0.3),
         _integer("seed", 271, "Picks one of many repeatable sparkle patterns.", 0, 2_147_483_647),
-        _integer("max_cluster", 1, "Largest allowed adjacent sparkle cluster.", 1, 2),
     ),
     colors_module.MOTION_DRIFT: (
         _duration(minimum=1.0),
-        _number("detune", 0.08, "Phase variation between slow luminous swells.", 0.0, 0.25),
-        _number(
-            "sample_interval_seconds",
-            0.25,
-            "Minimum cadence for deterministic drift updates.",
-            0.1,
-            2.0,
-            unit="seconds",
-        ),
+        _number("detune", 0.08, "How far each LED's slow swell strays from the others.", 0.0, 0.25),
     ),
     colors_module.MOTION_CONVERGE: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.2),
         _choice(
             "variant",
             "endpoints_to_center",
@@ -662,7 +646,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     colors_module.MOTION_TIDE: (
         _duration(minimum=0.5),
         _number("fill_floor", 0.15, "Minimum filled fraction before the tide rises.", 0.0, 0.8),
-        _number("fill_range", 0.85, "Additional filled fraction at full tide.", 0.1, 1.0),
+        _number("fill_range", 0.85, "Additional filled fraction at full tide.", 0.1, 0.85),
     ),
     colors_module.MOTION_EMBER: (
         _duration(minimum=1.0),
@@ -675,17 +659,17 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_BLOOM: (
-        _duration(minimum=0.5),
+        _duration(minimum=0.7),
         _number(
             "hold_ratio",
-            0.3,
-            "Fraction of the cycle the strip rests lit before draining.",
+            0.0,
+            "Fraction of the cycle the open strip holds lit before it drains.",
             0.0,
             0.7,
         ),
     ),
     colors_module.MOTION_FRONTIER: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.3),
         _number(
             "level",
             0.625,
@@ -706,12 +690,12 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     ),
     colors_module.MOTION_MARQUEE: (
         _duration(minimum=0.5),
-        _integer("spacing", 1, "LED spacing between palette bands.", 1, 8),
+        _integer("crests", 2, "How many bands circle the strip.", 1, 3),
         _choice("direction", "forward", "Direction of palette rotation.", _DIRECTIONS),
         _number(
             "palette_rotation_degrees",
-            48.0,
-            "Derived palette rotation when no explicit palette is supplied.",
+            0.0,
+            "Turns every other band's hue by this much; 0 keeps one colour.",
             0.0,
             180.0,
             unit="degrees",
@@ -721,6 +705,26 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
             "continuous",
             "Continuous loop or a bounded transition pass count.",
             _PASS_MODES,
+        ),
+    ),
+    colors_module.MOTION_RIPPLE: (
+        _duration(minimum=1.0),
+        _number(
+            "fade",
+            0.22,
+            "How much dimmer each ring is than the one inside it.",
+            0.0,
+            0.5,
+        ),
+    ),
+    colors_module.MOTION_PENDULUM: (
+        _duration(minimum=1.2),
+        _number(
+            "glow",
+            1.6,
+            "How wide the swinging light's glow is, in LEDs.",
+            1.0,
+            3.0,
         ),
     ),
     colors_module.MOTION_STEADY: (
@@ -759,6 +763,8 @@ _PROVIDER_ROLES = {
     colors_module.MOTION_BLOOM: "transition",
     colors_module.MOTION_FRONTIER: "capacity",
     colors_module.MOTION_GLINT: "identity",
+    colors_module.MOTION_RIPPLE: "transition",
+    colors_module.MOTION_PENDULUM: "mechanical",
     colors_module.MOTION_STEADY: "persistent",
     colors_module.MOTION_BLINK: "attention",
 }
@@ -785,6 +791,8 @@ _PROVIDER_ADAPTATION_MODES: dict[str, tuple[str, str]] = {
     colors_module.MOTION_BLOOM: ("center_out_spread", "full_segment_swell"),
     colors_module.MOTION_FRONTIER: ("held_fill_breathing_tip", "lit_bed_tip_pulse"),
     colors_module.MOTION_GLINT: ("thin_pass_lit_strip", "narrow_flare_lit_bed"),
+    colors_module.MOTION_RIPPLE: ("center_out_rings", "unison_swell"),
+    colors_module.MOTION_PENDULUM: ("eased_bounce", "narrow_flare"),
     colors_module.MOTION_STEADY: ("persistent_hold", "persistent_hold"),
     colors_module.MOTION_BLINK: ("named_hard_blink", "named_hard_blink"),
 }

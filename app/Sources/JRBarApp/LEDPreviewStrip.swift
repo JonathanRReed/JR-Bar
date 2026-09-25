@@ -1,3 +1,4 @@
+import JRBarCore
 import JRBarLEDS
 import SwiftUI
 
@@ -173,10 +174,71 @@ struct LEDStage: View {
     }
 }
 
-/// Builds the small programs the Lighting page previews: a provider's
-/// working animation under the chosen blend mode and cycle speed, and the
-/// done celebration in a colour. Kept local so the page needs no daemon
-/// round trip; the daemon's own compiler is the authority for the strip.
+/// A provider's working light as the monitor plays it for one agent
+/// working alone (`preview_provider_motion`): its chosen motion at its own
+/// tempo, or the Relay for Automatic -- the same program the Pro is sent,
+/// so the swatch can no longer show one motion while the strip plays
+/// another. The local sketch stands in until the monitor answers and when
+/// it is not running.
+struct ProviderMotionPreview: View {
+    let core: CoreModel
+    let provider: String
+    /// `LightingPreviewPrograms.working`, for a monitor that is away.
+    let sketch: String
+    var phase: TimeInterval = 0
+    @ViewState private var rendered: (key: String, program: String)?
+
+    struct Reply: Decodable {
+        let program: String
+    }
+
+    /// What the render depends on: the provider and every setting.
+    private var key: String { "\(core.isLive)|\(core.settings?.generation ?? 0)|\(provider)" }
+
+    var body: some View {
+        let live = rendered.flatMap { $0.key == key ? $0.program : nil }
+        LEDStripPreview(program: live ?? sketch, style: .band, dotSize: 6, showsBackground: true,
+                        cornerRadius: 6, phase: phase)
+            .task(id: key) {
+                let key = self.key
+                guard core.isLive,
+                      let reply = try? await core.request("preview_provider_motion",
+                                                          args: ["provider": .string(provider), "led_count": .number(8)],
+                                                          as: Reply.self),
+                      !reply.program.isEmpty else { rendered = nil; return }
+                rendered = (key, reply.program)
+            }
+    }
+}
+
+/// The finish the lights play (`list_finish_looks`): the shipped bloom,
+/// Land or Ripple, in the done colour, as the monitor draws it; the local
+/// sketch of the bloom stands in while it is away.
+struct FinishLookPreview: View {
+    let core: CoreModel
+    let sketch: String
+    @ViewState private var rendered: (key: String, program: String)?
+
+    private var key: String { "\(core.isLive)|\(core.settings?.generation ?? 0)" }
+
+    var body: some View {
+        let live = rendered.flatMap { $0.key == key ? $0.program : nil }
+        LEDStripPreview(program: live ?? sketch, style: .dots, dotSize: 9, spacing: 6)
+            .task(id: key) {
+                let key = self.key
+                guard core.isLive,
+                      let list = try? await core.request("list_finish_looks", as: FinishLookList.self),
+                      let look = list.looks.first(where: { $0.style == list.current }) else { rendered = nil; return }
+                rendered = (key, look.program)
+            }
+    }
+}
+
+/// Builds the small programs the Lighting page previews when the monitor
+/// is not there to draw them: a provider's working animation under the
+/// chosen blend mode and cycle speed, and the done celebration in a
+/// colour. The daemon's own renders (`ProviderMotionPreview`,
+/// `FinishLookPreview`) replace them whenever it answers.
 enum LightingPreviewPrograms {
     static func working(colorHex: String, blendMode: String, cycleSeconds: Double, ledCount: Int = 8) -> String {
         let hex = normalized(colorHex)

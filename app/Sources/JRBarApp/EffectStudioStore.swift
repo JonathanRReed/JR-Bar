@@ -64,6 +64,9 @@ final class EffectStudioStore {
     private(set) var draftParameters: [String: JSONValue] = [:]
 
     @ObservationIgnored private var renderTask: Task<Void, Never>?
+    /// How a preview is rendered: the daemon's `render_effect` unless a
+    /// test hands in its own (effect id, values, LED count, colour).
+    @ObservationIgnored var renderer: ((String, [String: JSONValue], Int, String?) async throws -> EffectPreview)?
     /// Insertion order for `renders`, so the cache can drop its oldest.
     @ObservationIgnored private var renderOrder: [String] = []
     @ObservationIgnored private var ticker: Timer?
@@ -299,9 +302,9 @@ final class EffectStudioStore {
         edits[effect.id] = nil
     }
 
-    private static func renderKey(_ effect: EffectDefinition, _ values: [String: JSONValue]) -> String {
+    private static func renderKey(_ effect: EffectDefinition, _ values: [String: JSONValue], color: String? = nil) -> String {
         let data = (try? JSONEncoder().encode(values)) ?? Data()
-        return effect.id + "|" + String(decoding: data, as: UTF8.self)
+        return effect.id + "|" + (color ?? "") + "|" + String(decoding: data, as: UTF8.self)
     }
 
     /// The effect the preview actually plays. Under Reduce Motion the
@@ -327,9 +330,27 @@ final class EffectStudioStore {
     }
 
     /// The assign sheet previews what the (scope, target) pair plays —
-    /// the hydrated draft values, not the inspector's tuning.
+    /// the hydrated draft values, not the inspector's tuning — and, for a
+    /// provider, in that provider's own colour, so OpenCode's purple
+    /// previews as purple rather than as the working cyan.
     func draftPreviewProgram(for effect: EffectDefinition) -> String {
-        previewProgram(for: effect, values: draftParameters)
+        let shown = Self.displayedEffect(for: effect, catalog: catalog, reduceMotion: reduceMotion)
+        if shown.id == effect.id, let color = draftColor,
+           let render = renders[Self.renderKey(effect, draftParameters, color: color)] {
+            return render.program
+        }
+        return previewProgram(for: effect, values: draftParameters)
+    }
+
+    /// The colour the assign sheet previews in: the target provider's own
+    /// colour (as Settings has it) for a provider-scope draft, else none —
+    /// the catalog's working cyan.
+    var draftColor: String? {
+        guard draftScope == .provider else { return nil }
+        let provider = draftTarget.trimmingCharacters(in: .whitespaces)
+        guard !provider.isEmpty else { return nil }
+        let document = SettingsDocument(core.settings?.document ?? .object([:]))
+        return document.agentColorHex(provider) ?? ProviderStyle.style(for: provider).accentHex
     }
 
     /// The LED count the on-screen strip renders at: the connected
@@ -362,17 +383,25 @@ final class EffectStudioStore {
     /// tuning session grows the cache for the window's whole lifetime.
     private static let renderCacheLimit = 48
 
-    private func scheduleRender(_ effect: EffectDefinition, values: [String: JSONValue]) {
+    private func scheduleRender(_ effect: EffectDefinition, values: [String: JSONValue], color: String? = nil) {
         renderTask?.cancel()
-        let key = Self.renderKey(effect, values)
-        guard renders[key] == nil, values != effect.defaultParameters else { return }
+        let key = Self.renderKey(effect, values, color: color)
+        // The catalog already carries each effect at its defaults in the
+        // working cyan; anything else is the daemon's to draw.
+        guard renders[key] == nil, values != effect.defaultParameters || color != nil else { return }
         renderTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled, let self else { return }
             self.rendering = true
             defer { self.rendering = false }
             do {
-                let preview = try await self.core.renderEffect(effect.id, parameters: values, ledCount: previewLedCount)
+                let ledCount = previewLedCount
+                let preview: EffectPreview
+                if let renderer = self.renderer {
+                    preview = try await renderer(effect.id, values, ledCount, color)
+                } else {
+                    preview = try await self.core.renderEffect(effect.id, parameters: values, ledCount: ledCount, color: color)
+                }
                 self.renders[key] = preview
                 self.renderOrder.removeAll { $0 == key }
                 self.renderOrder.append(key)
@@ -591,15 +620,55 @@ final class EffectStudioStore {
 
     /// Re-reads the sheet's parameter values for the current (scope,
     /// target): the stored assignment's own parameters when one exists,
-    /// else the catalog defaults. Runs when the sheet opens and whenever
-    /// scope or target changes, so "keep the parameters" means the
-    /// pair's tuning — not what was last edited for another target.
+    /// else what that provider already plays this effect with (its values
+    /// in Settings), else the catalog defaults. Runs when the sheet opens
+    /// and whenever scope or target changes, so "keep the parameters"
+    /// means the pair's tuning — not what was last edited for another
+    /// target. A provider's draft is always the loop it will play.
     private func hydrateDraftParameters(for effect: EffectDefinition? = nil) {
         guard let effect = effect ?? selected else { draftParameters = [:]; return }
         let target = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
-        draftParameters = assignments?.draftParameters(for: effect, scope: draftScope, targetID: target)
+        var values = assignments?.draftParameters(for: effect, scope: draftScope, targetID: target)
             ?? effect.defaultParameters
-        scheduleRender(effect, values: draftParameters)
+        if draftScope == .provider, let provider = target {
+            if assignments?.assignment(scope: .provider, targetID: provider) == nil,
+               let live = Self.liveValues(for: effect, provider: provider, settings: core.settings?.document) {
+                values = live
+            }
+            values = Self.loopingDraft(values, for: effect)
+        }
+        draftParameters = values
+        scheduleRender(effect, values: draftParameters, color: draftColor)
+    }
+
+    /// What `provider` already plays `effect` with when no assignment
+    /// says so: the values stored beside the motion Settings gave it
+    /// (`colors.provider_animation_parameters`). A motion picked on the
+    /// Lighting page, or the tempo an older settings file was seeded with
+    /// (breathe 5.5 s, blink 1.6 s), has no assignment row, and the sheet
+    /// would otherwise preview the catalog's 2.2 s while the strip plays
+    /// its own. Nil when the provider plays something else.
+    nonisolated static func liveValues(for effect: EffectDefinition, provider: String,
+                                       settings: JSONValue?) -> [String: JSONValue]? {
+        let document = SettingsDocument(settings ?? .object([:]))
+        let motion = SettingsPath(segments: [.key("colors"), .key("provider_animation"), .key(provider)])
+        let stored = SettingsPath(segments: [.key("colors"), .key("provider_animation_parameters"), .key(provider)])
+        guard document.string(motion) == effect.id, let values = document.object(stored) else { return nil }
+        return effect.normalizedParameters(values)
+    }
+
+    /// `values` as a working loop plays them: a pass count (`pass_mode`
+    /// once or twice, which a Moment or a cue can use) means nothing to a
+    /// light that runs for as long as the agent works. The daemon drops it
+    /// on assignment, so the sheet previews the loop the strip will play,
+    /// not one pass and then dark.
+    nonisolated static func loopingDraft(_ values: [String: JSONValue],
+                                         for effect: EffectDefinition) -> [String: JSONValue] {
+        guard let pass = effect.parameters.first(where: { $0.name == "pass_mode" }) else { return values }
+        let loop = pass.choices.contains("continuous") ? "continuous" : (pass.choices.first ?? "continuous")
+        var looping = values
+        looping[pass.name] = .string(loop)
+        return looping
     }
 
     /// The assignment already stored at the draft's (scope, target), if
