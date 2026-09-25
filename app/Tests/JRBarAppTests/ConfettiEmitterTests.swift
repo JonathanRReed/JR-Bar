@@ -61,7 +61,7 @@ struct ConfettiEmitterTests {
                 return frame.opacity > 0.5 && frame.x >= 0 && frame.x <= stage.width
                     && frame.y >= 0 && frame.y <= stage.height
             }
-            // Rain, the calmest, is only just coming in over the top edge.
+            // Rain, the calmest, is still coming in under the menu bar.
             #expect(seen.count >= (origin == .rain ? 5 : 20),
                     "\(origin)/\(landing): \(seen.count) pieces seen at 0.25 s")
         }
@@ -338,6 +338,33 @@ struct ConfettiEmitterTests {
         #expect(corners.pieces.allSatisfy { $0.launch.vy < 0 && $0.launch.y > stage.height })
         #expect(ConfettiEmitter.muzzles(.rain, on: stage).isEmpty)
         let rain = ConfettiBurst(stage: stage, recipe: .init(origin: .rain), seed: 1)
-        #expect(rain.pieces.allSatisfy { $0.launch.y < 0 })
+        #expect(rain.pieces.allSatisfy {
+            $0.launch.y > stage.menuBarBottom && $0.launch.y < stage.menuBarBottom + 20
+        })
+    }
+
+    /// Rain is born along the top edge under the menu bar, fades in over
+    /// its first beat and only falls from there, so it never crosses the
+    /// menu bar's items or the notch — and the curtain has begun by the
+    /// first frames.
+    @Test("rain comes in under the menu bar and fades in", arguments: ConfettiLanding.allCases)
+    func rainUnderTheMenuBar(_ landing: ConfettiLanding) {
+        let stage = Self.laptop()
+        let rain = ConfettiBurst(stage: stage, recipe: .init(origin: .rain, landing: landing), seed: 4)
+        let xs = rain.pieces.map(\.launch.x)
+        #expect((xs.min() ?? 0) < stage.width * 0.05 && (xs.max() ?? 0) > stage.width * 0.95,
+                "born along the whole top edge")
+        for (index, piece) in rain.pieces.enumerated() {
+            for t in stride(from: 0.0, to: piece.end, by: 0.05) {
+                guard let frame = rain.frame(of: index, at: piece.launch.delay + t) else { continue }
+                #expect(frame.y > stage.menuBarBottom, "piece \(index) at \(t) s is up in the menu bar")
+            }
+            let born = rain.frame(of: index, at: piece.launch.delay + 0.03)
+            #expect((born?.opacity ?? 1) < 0.5, "it fades in rather than switching on")
+            let settled = rain.frame(of: index, at: piece.launch.delay + ConfettiBurst.rainFadeIn)
+            #expect((settled?.opacity ?? 0) > 0.99)
+        }
+        let early = rain.pieces.indices.filter { (rain.frame(of: $0, at: 0.08)?.opacity ?? 0) > 0 }
+        #expect(early.count >= 3, "the first pieces are in view at 0.08 s")
     }
 }

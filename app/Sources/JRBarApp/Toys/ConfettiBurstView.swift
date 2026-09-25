@@ -69,6 +69,12 @@ struct ConfettiView: View {
         }
         drawPop(&canvas, age: time, strength: 1)
         if burst.recipe.intensity == .big { drawPop(&canvas, age: time - 0.25, strength: 0.55) }
+        if burst.recipe.origin == .rain {
+            // Rain is born under the menu bar; a long ribbon turned on end
+            // as it fades in is cut there, never laid over the bar's items.
+            canvas.clip(to: Path(CGRect(x: 0, y: burst.stage.menuBarBottom, width: width,
+                                        height: max(0, height - burst.stage.menuBarBottom))))
+        }
         let marks = resolveMarks(in: canvas)
         let gone = ledges?.gone ?? [:]
         for index in burst.pieces.indices {

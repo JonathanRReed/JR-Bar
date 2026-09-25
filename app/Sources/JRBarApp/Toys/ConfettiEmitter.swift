@@ -184,15 +184,17 @@ enum ConfettiEmitter {
                       delay: Double.random(in: 0...0.08, using: &rng))
     }
 
-    /// The Messages look, and the calmest: a curtain already falling
-    /// when it comes in over the top edge — its pieces spread up above
-    /// the screen, so the first are in view at once and the rest keep
-    /// coming for a second or so, all at a gentle drift.
+    /// The Messages look, and the calmest: a curtain born along the whole
+    /// top edge just under the menu bar, so it never crosses the menu
+    /// bar's items or the notch. Each piece starts almost still, fades in
+    /// over its first beat (`ConfettiBurst.rainFadeIn`) and falls at a
+    /// gentle drift; the first are in view at once and the rest keep
+    /// coming for about a second.
     private static func rain(_ stage: ConfettiStage, using rng: inout some RandomNumberGenerator) -> Launch {
         Launch(x: Double.random(in: 0...stage.width, using: &rng),
-               y: -Double.random(in: 8...(8 + stage.height * 0.12), using: &rng),
-               vx: Double.random(in: -50...50, using: &rng), vy: Double.random(in: 120...220, using: &rng),
-               tau: 0.4, delay: Double.random(in: 0...0.7, using: &rng))
+               y: stage.menuBarBottom + Double.random(in: 6...16, using: &rng),
+               vx: Double.random(in: -30...30, using: &rng), vy: Double.random(in: 30...90, using: &rng),
+               tau: 0.4, delay: Double.random(in: 0...0.9, using: &rng))
     }
 }
 

@@ -164,6 +164,9 @@ struct ConfettiBurst {
     /// way down (one that peaks lower dissolves over the same depth from
     /// its peak).
     static let fadeBand = (from: 0.35, to: 0.55)
+    /// Rain: each piece fades in over this long as it's born under the
+    /// menu bar, so the curtain appears rather than switching on.
+    static let rainFadeIn = 0.12
 
     // MARK: Firing
 
@@ -553,6 +556,7 @@ struct ConfettiBurst {
         case .rest:
             if t > piece.fadeFrom { opacity = max(0, 1 - (t - piece.fadeFrom) / Self.fadeOut) }
         }
+        if recipe.origin == .rain { opacity *= min(1, t / Self.rainFadeIn) }
         return Frame(x: x, y: y, transform: transform, front: light.front, shade: light.shade,
                      glint: light.glint, opacity: opacity,
                      ripple: (piece.ripple * t / (2 * .pi)).truncatingRemainder(dividingBy: 1),
