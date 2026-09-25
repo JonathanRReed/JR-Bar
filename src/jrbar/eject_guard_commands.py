@@ -16,11 +16,16 @@ from typing import Any
 
 
 def _mounted_strip(runtime: Any):
-    """The first connected SidePulse Pro (an SD-card-reader device)."""
+    """The first connected SidePulse Pro (an SD-card-reader device).
+
+    These commands run off the main thread (launchctl can take seconds);
+    the device inventory is the controller's, so it is read there."""
     from ._led_status_legacy import led_count_for_target
 
     legacy = runtime._core_legacy()
-    for device in runtime.status_bar_devices(remember=False):
+    on_main = getattr(runtime, "_core_on_main", None) or (lambda fn: fn())
+    inventory = on_main(lambda: list(runtime.status_bar_devices(remember=False) or []))
+    for device in inventory:
         if device.device_id == legacy.VIRTUAL_DEVICE_ID or not device.connected:
             continue
         if led_count_for_target(device.target) != 2:

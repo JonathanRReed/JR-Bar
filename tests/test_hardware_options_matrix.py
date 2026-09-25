@@ -632,7 +632,7 @@ def test_a_check_sync_the_strip_refuses_holds_nothing(rig: Rig) -> None:
     assert controller._core_linked.check_until is None
 
 
-def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_2_more(
+def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_3_more(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # --- scenario: status_names_the_sidepulse_plugged_in_now
@@ -681,6 +681,20 @@ def test_the_eject_guard_commands_answer_for_the_mounted_sidepulse__and_2_more(
     )
     eject_guard_commands.release(rig.controller, {})
     assert releases == [True]
+
+    # --- scenario: the_device_list_is_read_on_the_main_thread
+    """The commands run off the main thread (launchctl can take seconds),
+    and the device inventory is main-thread state: it is read through
+    ``_core_on_main``, as the INIT.LED commands read it."""
+    hops: list[str] = []
+
+    def on_main(work):
+        hops.append("main")
+        return work()
+
+    rig.controller._core_on_main = on_main
+    eject_guard_commands.status(rig.controller, {})
+    assert hops == ["main"]
 
 
 # --- the timing readout ------------------------------------------------------------
