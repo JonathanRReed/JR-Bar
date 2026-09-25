@@ -363,13 +363,16 @@ struct OverviewGraphCanvas: View {
         if let previous {
             for (id, node) in previous.nodes where all[id] == nil { all[id] = node }
         }
-        let entries = Dictionary(store.roster.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let entries = store.rosterIndex
+        // One set for the whole pass — `showsUnseenDot` builds it per node.
+        let unseenIDs = store.unseenCompletionIDs
         var captions: [String: GraphCaption] = [:]
         var unseen: Set<String> = []
         for (id, node) in current.nodes {
             let entry = entries[id]
             if current.layout.nodes[id]?.isWorker == false { captions[id] = caption(node, entry: entry) }
-            if let entry, store.showsUnseenDot(entry) { unseen.insert(id) }
+            if let entry, SessionActivity.reduce(entry.session) == .done,
+               unseenIDs.contains(entry.id) { unseen.insert(id) }
         }
         var hubCaptions: [String: String] = [:]
         for hub in current.layout.hubs {

@@ -14,7 +14,12 @@ import Observation
 final class OverviewStore {
     let core: CoreModel
 
-    var roster: [CoreRosterEntry] = []
+    var roster: [CoreRosterEntry] = [] {
+        didSet { rosterGeneration += 1 }
+    }
+    /// Bumps on every roster write — `DerivedKey` compares this int
+    /// instead of deep-walking up to 2,000 entries per read of `derived`.
+    @ObservationIgnored private(set) var rosterGeneration = 0
     var counts = CoreRosterCounts()
     var coverageNote: String?
     var loading = false
@@ -291,7 +296,9 @@ final class OverviewStore {
         var live = 0, attention = 0, failed = 0, unreviewed = 0, hidden = 0
     }
     private struct DerivedKey: Hashable {
-        var roster: [CoreRosterEntry]
+        /// `rosterGeneration`, not the roster — the memo's hit-check must
+        /// not deep-compare up to 2,000 entries on every read.
+        var rosterGeneration: Int
         var filter: OverviewFilter
         var search: String
         var sortDescription: String
@@ -311,7 +318,7 @@ final class OverviewStore {
 
     private var derived: DerivedResult {
         let key = DerivedKey(
-            roster: roster, filter: filter, search: search,
+            rosterGeneration: rosterGeneration, filter: filter, search: search,
             sortDescription: sortOrder.map { "\($0.keyPath)|\($0.order)" }.joined(separator: ";"),
             workerFilter: workerFilter,
             usageGeneration: sortsByUsage ? sessionUsage.generation : 0,
@@ -1010,8 +1017,23 @@ final class OverviewStore {
         date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
     }
 
+    /// The roster keyed by row id, built once per roster write — the
+    /// Graph canvas asks for it on every body evaluation, including each
+    /// pointer move of a pan.
+    var rosterIndex: [String: CoreRosterEntry] {
+        if let cached = rosterIndexCache, cached.generation == rosterGeneration {
+            return cached.index
+        }
+        let index = Dictionary(roster.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        rosterIndexCache = (rosterGeneration, index)
+        return index
+    }
+    @ObservationIgnored private var rosterIndexCache: (generation: Int, index: [String: CoreRosterEntry])?
+
     /// `state.unseen_completions`: ids of rows that finished since the
     /// user last looked — the same dot the panel gives them (PanelStore).
+    /// Build the set once per read pass; `showsUnseenDot` used to make a
+    /// fresh one per node.
     var unseenCompletionIDs: Set<String> {
         guard core.isLive else { return [] }
         return Set(core.state?.unseenCompletions ?? [])

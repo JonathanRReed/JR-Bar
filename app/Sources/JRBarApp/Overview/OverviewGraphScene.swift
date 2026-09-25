@@ -51,29 +51,42 @@ struct GraphSceneModel {
         activity == .working || activity == .waiting
     }
 
-    var hasMovingMarks: Bool {
-        layout.order.contains { nodes[$0].map { Self.moves($0.activity) } ?? false }
-    }
+    /// Whether anything on the map needs the timeline — worked out once
+    /// with the model, not per animation frame.
+    let hasMovingMarks: Bool
 
     /// The hubs and clusters to draw: the layout's, and any that left with
-    /// the latest change and are still fading out.
-    var hubsDrawn: [OverviewGraphLayout.Hub] {
-        let kept = Set(layout.hubs.map(\.id))
-        return layout.hubs + (previous?.hubs.filter { !kept.contains($0.id) } ?? [])
-    }
-
-    var clustersDrawn: [OverviewGraphLayout.Cluster] {
-        let kept = Set(layout.clusters.map(\.id))
-        return layout.clusters + (previous?.clusters.filter { !kept.contains($0.id) } ?? [])
-    }
+    /// the latest change and are still fading out. Stored, so an animated
+    /// body re-eval doesn't rebuild them per frame.
+    let hubsDrawn: [OverviewGraphLayout.Hub]
+    let clustersDrawn: [OverviewGraphLayout.Cluster]
 
     /// Each provider's accent, parsed once per update rather than per frame.
-    var accents: [String: Color] {
+    let accents: [String: Color]
+
+    init(layout: OverviewGraphLayout, previous: OverviewGraphLayout?,
+         nodes: [String: OverviewGraphNode], captions: [String: GraphCaption],
+         hubCaptions: [String: String], unseen: Set<String>, selectedID: String?,
+         lit: Set<String>?, now: Double) {
+        self.layout = layout
+        self.previous = previous
+        self.nodes = nodes
+        self.captions = captions
+        self.hubCaptions = hubCaptions
+        self.unseen = unseen
+        self.selectedID = selectedID
+        self.lit = lit
+        self.now = now
+        hasMovingMarks = layout.order.contains { nodes[$0].map { Self.moves($0.activity) } ?? false }
+        let keptHubs = Set(layout.hubs.map(\.id))
+        hubsDrawn = layout.hubs + (previous?.hubs.filter { !keptHubs.contains($0.id) } ?? [])
+        let keptClusters = Set(layout.clusters.map(\.id))
+        clustersDrawn = layout.clusters + (previous?.clusters.filter { !keptClusters.contains($0.id) } ?? [])
         var accents: [String: Color] = [:]
         for node in nodes.values where accents[node.provider] == nil {
             accents[node.provider] = ProviderStyle.style(for: node.provider).accent
         }
-        return accents
+        self.accents = accents
     }
 }
 
