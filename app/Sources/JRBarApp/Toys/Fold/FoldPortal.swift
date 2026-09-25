@@ -969,4 +969,15 @@ struct FoldBlackout: Sendable {
     }
 
     mutating func end() { self = FoldBlackout() }
+
+    /// What the watchdog does when it fires: true hands the overlay to
+    /// the live fold the way a release does, false orders it out. A lid
+    /// open again, drawing, with a frame in hand hands over: under the
+    /// release angle the fold draws black too, so the sharp desktop
+    /// never shows through a fresh order-in. With no frame there is
+    /// nothing to draw.
+    static func watchdogHandsOver(angle: Double?, drawing: Bool, freshFrame: Bool) -> Bool {
+        guard drawing, freshFrame, let a = angle, a.isFinite else { return false }
+        return a > FoldPause.closedAngle
+    }
 }

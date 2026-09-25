@@ -963,12 +963,30 @@ final class FoldToy: Toy {
                     return
                 }
                 FoldLog.log.notice("blackout: watchdog let go")
-                self.endBlackout(hide: true)
+                self.expireBlackout()
                 self.reconcile()
             }
         }
         blackoutWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// The watchdog's let-go: handed to the live fold with the overlay
+    /// kept up when the lid is open again with a frame in hand (the fold
+    /// draws black there too), ordered out otherwise.
+    private func expireBlackout() {
+        let handsOver = FoldBlackout.watchdogHandsOver(
+            angle: gateAngle, drawing: !paused && pauseReason == nil,
+            freshFrame: capture?.hasFrame == true)
+        guard handsOver else {
+            endBlackout(hide: true)
+            return
+        }
+        FoldLog.log.notice("blackout: watchdog handed over to the fold")
+        endBlackout(hide: false)
+        let reference = heldReference ?? duoReference ?? 110
+        chase.reset(to: FoldDuoModel.reopenDelta(
+            reference: reference, perspective: self.settings.perspective))
     }
 
     private func ensureOverlay() -> FoldOverlayWindow? {
