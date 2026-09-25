@@ -670,6 +670,23 @@ extension ShelfTests {
         #expect(text.uppercased().contains("SHELF"), "read: \(text)")
     }
 
+    @Test func compressStagesOnTheFilesOwnDisk() throws {
+        let folder = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("big.bin")
+        try Data("clone me".utf8).write(to: file)
+        let first = ShelfActions.stagingFolder(near: file)
+        let second = ShelfActions.stagingFolder(near: file)
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+        #expect(first != second, "each Compress works in its own folder")
+        let volume = try file.resourceValues(forKeys: [.volumeIdentifierKey]).volumeIdentifier as? NSObject
+        let staged = try first.resourceValues(forKeys: [.volumeIdentifierKey]).volumeIdentifier as? NSObject
+        #expect(volume != nil && volume == staged, "the copies are clones on the file's own disk")
+    }
+
     @Test func convertOffersAndMakesOnlyAnotherFormat() throws {
         let folder = try scratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }

@@ -77,12 +77,14 @@ enum ShelfActions {
     /// A zip of `urls` beside the first of them, made by `ditto -c -k
     /// --sequesterRsrc --keepParent` (Finder's Compress): one file keeps
     /// its own name ("report.pdf.zip"), several go into "Archive.zip"
-    /// through a staging folder of APFS clones, which take no room.
+    /// through a staging folder. The staging folder is on the first
+    /// file's own disk, so on APFS its copies are clones that take no
+    /// room and the finished zip moves into place without a copy; a file
+    /// from another disk is copied in full.
     nonisolated static func compress(_ urls: [URL], fileManager: FileManager = .default) async throws -> URL {
         guard let first = urls.first else { throw ActionError.nothingToDo }
         let folder = first.deletingLastPathComponent()
-        let work = fileManager.temporaryDirectory
-            .appendingPathComponent("jrbar-shelf-\(UUID().uuidString)", isDirectory: true)
+        let work = stagingFolder(near: first, fileManager: fileManager)
         try fileManager.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: work) }
         let source: URL
@@ -103,6 +105,19 @@ enum ShelfActions {
         let zip = work.appendingPathComponent("out.zip")
         try await run("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", source.path, zip.path])
         return try place(zip, in: folder, base: base, ext: "zip", fileManager: fileManager)
+    }
+
+    /// A fresh, empty folder for Compress's work on the same disk as
+    /// `file` — one macOS makes for that volume, unique to this call — or
+    /// one in the Mac's temporary folder when the disk has none to give
+    /// (read-only, or a share that refuses one). The caller removes it.
+    nonisolated static func stagingFolder(near file: URL, fileManager: FileManager = .default) -> URL {
+        if let folder = try? fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                              appropriateFor: file, create: true) {
+            return folder
+        }
+        return fileManager.temporaryDirectory
+            .appendingPathComponent("jrbar-shelf-\(UUID().uuidString)", isDirectory: true)
     }
 
     /// Run a tool to its end off the main thread; a non-zero exit is an
