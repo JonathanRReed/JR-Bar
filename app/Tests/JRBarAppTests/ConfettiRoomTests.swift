@@ -223,9 +223,11 @@ struct ConfettiRoomTests {
         store.noteCallPresence(true)
         toy.fire(reason: .trigger, at: Date())
         store.noteCallPresence(false)
-        let full = ConfettiView.pieceCount(settings: store.state.confetti)
         #expect(bursts.fired.count == 1)
-        #expect((bursts.fired.first?.pieces ?? .max) < full,
+        // A live burst with the same settings, for comparison.
+        toy.fire(reason: .trigger, at: Date())
+        #expect(bursts.fired.count == 2)
+        #expect((bursts.fired.first?.pieces ?? .max) < (bursts.fired.last?.pieces ?? 0),
                 "the replay throws fewer pieces than a live burst at the same density")
     }
 

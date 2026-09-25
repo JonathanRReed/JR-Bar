@@ -1,4 +1,3 @@
-import AVFoundation
 import Foundation
 
 /// The burst's optional voice (Confetti card → Sound, off by default): a

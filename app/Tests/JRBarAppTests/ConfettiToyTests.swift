@@ -122,7 +122,7 @@ import JRBarCore
             #expect(abs(determinant - r.r22) < 1e-9)
             let light = ConfettiPhysics.lighting(r)
             #expect(light.front == (r.r22 >= 0))
-            #expect(light.shade >= 0.62 && light.shade <= 1)
+            #expect(light.shade >= 0.7 && light.shade <= 1)
             #expect(light.glint >= 0 && light.glint <= 1)
         }
     }

@@ -104,7 +104,7 @@ struct ConfettiBurst {
         /// projected flat, and a landing's squash. No translation.
         var transform: CGAffineTransform
         var front: Bool
-        /// Lambert shade, 0.62…1, and a specular glint, 0…1.
+        /// Lambert shade, 0.7…1, and a specular glint, 0…1.
         var shade: Double
         var glint: Double
         var opacity: Double

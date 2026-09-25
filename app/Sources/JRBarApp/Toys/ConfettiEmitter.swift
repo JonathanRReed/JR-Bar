@@ -76,9 +76,11 @@ enum ConfettiEmitter {
         return CGRect(x: stage.width / 2 - width / 2, y: stage.menuBarBottom, width: width, height: 0)
     }
 
-    /// The points the pieces leave from, for the pop and the tests: the
-    /// lip's two lower corners and its middle, the icon's bottom centre,
-    /// the two bottom corners, or none for rain (it has no cannon).
+    /// The points the pieces leave from, for the tests to check the
+    /// launches against (the pop draws from `lip(of:)` and the icon's
+    /// frame): the lip's two lower corners and its middle, the icon's
+    /// bottom centre, the two bottom corners, or none for rain (it has
+    /// no cannon).
     static func muzzles(_ origin: ConfettiOrigin, on stage: ConfettiStage) -> [CGPoint] {
         switch resolved(origin, on: stage) {
         case .notch:
