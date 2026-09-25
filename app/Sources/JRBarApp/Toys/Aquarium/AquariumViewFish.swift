@@ -118,19 +118,23 @@ extension AquariumView {
     /// The cruise patrol: a sinusoidal sweep between the walls, so the
     /// fish eases to a stop at the glass — and there turns round through
     /// the same U-turn a steered fish makes. `pose` is the turn's, and
-    /// `bow` how far the loop dips (points).
-    func patrol(of fish: Fish, in size: CGSize, at t: Double, margin: Double)
+    /// `bow` how far the loop dips (points). `slow` runs the sweep at a
+    /// share of its pace (an idler's drift). It runs on the tank's swim
+    /// clock, so the Swimming speed changes how fast it sweeps from the
+    /// moment it moves, never where along the sweep the fish is.
+    func patrol(of fish: Fish, in size: CGSize, at t: Double, margin: Double, slow: Double = 1)
         -> (x: Double, turn: Double, pose: AquariumTurn.Pose, bow: Double) {
         let h = fish.seed
         let x0 = Double((h >> 33) & 0x3FF) / 0x3FF
         // Deep lanes swim slower: parallax.
         let tempo = swimTempo
-        let omega = Double.pi * fish.speed * (1 - fish.lane * 0.3) * tempo
+        let sweep = Double.pi * fish.speed * (1 - fish.lane * 0.3)
+        let omega = sweep * tempo
         // The phase picks the start point on the sweep AND the first
         // direction, so `fish.direction` still means something.
         let s = min(1, max(-1, x0 * 2 - 1))
         let phase = fish.direction > 0 ? asin(s) : Double.pi - asin(s)
-        let theta = omega * t + phase
+        let theta = sweep * slow * motion.swim.swimTime(at: t, tempo: tempo) + phase
         // The turnaround: a cruise U-turn centred on each point where
         // the sweep reverses (u = 0).
         let duration = AquariumTurn.duration(for: .cruise, pace: swimTuning.swimPace, tempo: tempo)
@@ -261,7 +265,7 @@ extension AquariumView {
                 l.y = laneY + bob * (1 - p.turn * 0.5) + p.bow
                 l.wag = 1.25
             } else {
-                let d = patrol(of: fish, in: size, at: t * 0.3, margin: margin)
+                let d = patrol(of: fish, in: size, at: t, margin: margin, slow: 0.3)
                 // The fixture path dozes too — same night, same rule.
                 let doze = reduceMotion ? 0
                     : AquariumBehavior.doze(seed: h, night: nightFactor(t: t))
@@ -467,9 +471,15 @@ extension AquariumView {
         let orbitR = 30 + Double((h >> 8) & 0xFF) / 0xFF * 26
         let omega = (0.45 + Double((h >> 16) & 0xFF) / 0xFF * 0.45)
             * ((h >> 24) & 1 == 0 ? 1.0 : -1.0)
-        // An idling parent's school mills about at less than half speed.
-        let idle = fish.state == .idling
-        let angle = phase + (reduceMotion ? 0 : omega * t * (idle ? 0.45 : 1) * swimTempo)
+        // An idling school mills about at less than half speed. The
+        // orbit adds on each frame's share, so neither the Swimming speed
+        // nor a doze ever jumps a fry round its parent.
+        let pace = omega * (fish.state == .idling ? 0.45 : 1)
+        let tempo = swimTempo
+        let angle = reduceMotion ? phase
+            : motion.swim.orbit(fish.id, t: t, rate: pace * tempo) {
+                phase + pace * motion.swim.swimTime(at: t, tempo: tempo)
+            }
         let pl = parent.layout
         // Face along the orbit's travel, squashing through zero at each
         // end of it rather than mirroring — at a fry's size the sliver

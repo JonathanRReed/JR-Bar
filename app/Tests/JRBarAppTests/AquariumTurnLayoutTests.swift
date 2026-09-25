@@ -219,7 +219,50 @@ struct AquariumTurnLayoutTests {
         #expect(zip(frames, frames.dropFirst()).contains { $0.facing != $1.facing }, "it came round")
     }
 
-    @Test("the turtle, the tetras and the axolotl loop without a jump")
+    @Test("moving the Swimming speed slider never jumps a fry or a sweeping fish")
+    func swimSpeedMovesSmoothly() {
+        // Frame by frame, the slider a notch further every second, the
+        // way a drag moves it.
+        func tuned(_ second: Int) -> AquariumSettings {
+            var tuning = AquariumSettings()
+            tuning.swimSpeed = min(1.6, 0.8 + 0.05 * Double(second))
+            return tuning
+        }
+        // A fry circling its parent, and its parent dozing off halfway.
+        let parent = makeFish("slider-parent", since: t0 - 100)
+        var fry = makeFish("slider-fry", since: t0 - 100)
+        fry.isFry = true
+        fry.anchorID = parent.id
+        let tank = makeTank([parent, fry])
+        var t = t0
+        var frames: [AquariumView.Layout] = []
+        for i in 0..<(30 * 16) {
+            t += dt
+            if i == 30 * 8 { fry.state = .idling }
+            let pl = frame(tank, [parent, fry], parent, t: t)
+            tank.motion.swim.settings = tuned(i / 30)
+            frames.append(tank.layout(of: fry, in: size, at: t, now: Date(timeIntervalSince1970: t),
+                                      parent: (parent, pl)))
+        }
+        expectSmooth(frames, speed: 56 * 0.9 * 1.6 + 60, "fry")
+        // A fish on the patrol sweep (no steering body yet, a fixture's).
+        let sweeper = makeFish("slider-sweeper", since: t0 - 100)
+        let sweep = makeTank([sweeper])
+        t = t0
+        var swept: [AquariumView.Layout] = []
+        for i in 0..<(30 * 16) {
+            t += dt
+            let tuning = tuned(i / 30)
+            sweep.motion.swim.settings = tuning
+            sweep.motion.swim.retime(to: tuning.swimSpeed, at: t)
+            swept.append(sweep.layout(of: sweeper, in: size, at: t, now: Date(timeIntervalSince1970: t)))
+        }
+        // At the quick end of the slider a turn is short, so it comes
+        // round a little further each frame.
+        expectSmooth(swept, speed: 220, "sweeper", yawStep: 0.34)
+    }
+
+    @Test("the turtle, the tetras, the axolotl and the octopus loop without a jump")
     func petsLoop() {
         let tank = makeTank([])
         func layouts(_ poses: [PetPose]) -> [AquariumView.Layout] {
@@ -232,7 +275,7 @@ struct AquariumTurnLayoutTests {
             }
         }
         // A whole turtle sweep and a whole axolotl patrol, wraps included.
-        let turtle = layouts((0...(30 * 92)).map { tank.seaTurtlePose(size: size, t: t0 + Double($0) * dt) })
+        let turtle = layouts((0...(30 * 92)).map { tank.seaTurtlePose(size: size, t: t0 + Double($0) * dt).pose })
         expectSmooth(turtle, speed: size.width / 45, "turtle")
         #expect(Set(turtle.map(\.facing)).count == 2)
         let axolotl = layouts((0...(30 * 162)).map { tank.axolotlPose(size: size, t: t0 + Double($0) * dt).pose })
@@ -254,6 +297,49 @@ struct AquariumTurnLayoutTests {
             Array(zip(school, school.dropFirst())).firstIndex { ($0[i].c >= 0) != ($1[i].c >= 0) } ?? -1
         }
         #expect(Set(flips).count > 1)
+        // Four minutes of the octopus: out, home again, and its peeks
+        // over the rim — every change eases, none lands in one frame.
+        let den = CGPoint(x: 270, y: 440)
+        let octopus = (0...(30 * 242)).map { tank.octopusPose(home: den, size: size, t: t0 + Double($0) * dt) }
+        for (i, pair) in zip(octopus, octopus.dropFirst()).enumerated() {
+            let (a, b) = pair
+            #expect(hypot(b.at.x - a.at.x, b.at.y - a.at.y) <= 2, "octopus: frame \(i) moved at once")
+            #expect(abs(b.out - a.out) <= 0.2, "octopus: frame \(i) swapped drawings at once")
+            #expect(abs(b.peek - a.peek) <= 0.1, "octopus: frame \(i) peeked at once")
+        }
+        #expect(octopus.contains { $0.out == 1 }, "it went out")
+        #expect(octopus.contains { $0.peek == 1 }, "it peeked")
+    }
+
+    @Test("the cleaner shrimp springs over when its client changes, never appearing on the new one")
+    func shrimpChangesClient() {
+        let tank = makeTank([])
+        let near = makeFish("shrimp-near", state: .idling, since: t0 - 100)
+        let far = makeFish("shrimp-far", state: .idling, since: t0 - 100)
+        var spots: [String: AquariumView.Layout] = [:]
+        for (fish, x, y) in [(near, 200.0, 220.0), (far, 700.0, 150.0)] {
+            var l = AquariumView.Layout()
+            l.x = x
+            l.y = y
+            spots[fish.id] = l
+        }
+        // A whole 40 s round, starting while it rides the near fish: the
+        // far one comes first a few seconds in, then nobody idles at all.
+        var t = t0 + 8
+        var frames: [AquariumView.Layout] = []
+        var rodeFar = false
+        for i in 0..<(30 * 40) {
+            t += dt
+            let roster: [Fish] = i < 30 * 4 ? [near, far] : (i < 30 * 12 ? [far, near] : [])
+            let spot = tank.cleanerShrimpSpot(size: size, t: t, layouts: spots, roster: roster)
+            if spot.riding, hypot(spot.at.x - 700, spot.at.y - 140) < 1 { rodeFar = true }
+            var l = AquariumView.Layout()
+            l.x = spot.at.x
+            l.y = spot.at.y
+            frames.append(l)
+        }
+        expectSmooth(frames, speed: 600, "shrimp")
+        #expect(rodeFar, "it got to the new client")
     }
 
     @Test("the hover box matches the drawn size at every stage and fish size")
@@ -281,15 +367,19 @@ struct AquariumTurnLayoutTests {
     @Test("a busy tank for two minutes: calm turns, never a pop")
     func busyTankSoak() {
         // Two schools and a loner, the way sessions fill a real tank.
-        let roster: [Fish] = [
-            ("claude-1", "claude", FishSpecies.clownfish), ("claude-2", "claude", .clownfish),
+        let specs: [(id: String, provider: String, species: FishSpecies)] = [
+            ("claude-1", "claude", .clownfish), ("claude-2", "claude", .clownfish),
             ("claude-3", "claude", .clownfish), ("codex-1", "codex", .shark), ("codex-2", "codex", .shark),
             ("gemini-1", "gemini", .angelfish),
-        ].enumerated().map { i, spec in
-            Fish(id: spec.0, label: spec.0, providerID: spec.1, state: .swimming,
-                 lane: 0.2 + 0.12 * Double(i), speed: 0.05 + 0.018 * Double(i),
-                 direction: i % 2 == 0 ? 1 : -1, stateSince: Date(timeIntervalSince1970: t0 - 100),
-                 enteredAt: .distantPast, species: spec.2)
+        ]
+        var roster: [Fish] = []
+        for (i, spec) in specs.enumerated() {
+            let n = Double(i)
+            roster.append(Fish(id: spec.id, label: spec.id, providerID: spec.provider, state: .swimming,
+                               lane: 0.2 + 0.12 * n, speed: 0.05 + 0.018 * n,
+                               direction: i % 2 == 0 ? 1 : -1,
+                               stateSince: Date(timeIntervalSince1970: t0 - 100),
+                               enteredAt: .distantPast, species: spec.species))
         }
         let tank = makeTank(roster)
         var t = t0
@@ -390,6 +480,58 @@ struct AquariumTurnLayoutTests {
             let run = runs[eater.id] ?? []
             expectSmooth(run, speed: b.speed * b.energy * size.width * 2 + 8, eater.id, yawStep: 0.34)
             expectSteadyFront(run, eater.id)
+        }
+    }
+
+    @Test("a finished run's eaters are the fish nearest where its pellets really fall")
+    func completionMealPicksTheNearest() throws {
+        var leaver = makeFish("near-leaver", since: t0 - 100)
+        let eaters: [Fish] = (0..<3).map { i in
+            Fish(id: "near-eater-\(i)", label: "eater", providerID: "codex", state: .swimming,
+                 lane: 0.3, speed: 0.08, direction: 1, stateSince: Date(timeIntervalSince1970: t0 - 100),
+                 enteredAt: .distantPast, species: .clownfish)
+        }
+        var roster = [leaver] + eaters
+        let tank = makeTank(roster)
+        var t = t0
+        tank.stepSwim(roster, in: size, t: t, now: Date(timeIntervalSince1970: t))
+        // The leaver swims off from where its state began: by the time it
+        // finishes it is far across the tank.
+        let began = try #require(tank.motion.anchors[leaver.id])
+        var lb = tank.motion.bodies[leaver.id]!
+        lb.x = began.x < 0.5 ? 0.8 : 0.2
+        lb.y = 0.3
+        tank.motion.bodies[leaver.id] = lb
+        // One mate waits where the leaver started, the others near where
+        // it really is now.
+        for (i, eater) in eaters.enumerated() {
+            var b = tank.motion.bodies[eater.id]!
+            b.x = i == 0 ? began.x : lb.x + (i == 1 ? -0.06 : 0.06)
+            b.y = i == 0 ? began.y : 0.42
+            tank.motion.bodies[eater.id] = b
+        }
+        t += dt
+        leaver.state = .leaving
+        leaver.stateSince = Date(timeIntervalSince1970: t)
+        roster = [leaver] + eaters
+        let spots = tank.motion.bodies
+        let now = Date(timeIntervalSince1970: t)
+        tank.stepSwim(roster, in: size, t: t, now: now)
+        let meal = try #require(tank.completionMeals(in: size, now: now, roster: roster).first)
+        // The meal falls where the leaver was when it finished.
+        #expect(abs(meal.spawn.x - lb.x * size.width) < 1 && abs(meal.spawn.y - lb.y * size.height) < 1,
+                "the meal fell at \(meal.spawn), the leaver was at \(lb.x * size.width), \(lb.y * size.height)")
+        // Each pellet went to the nearest mate still free, measured from
+        // where the mates really were.
+        var free = Set(eaters.map(\.id))
+        for (i, pellet) in meal.pellets.enumerated() where !free.isEmpty {
+            func gap(_ id: String) -> Double {
+                let b = spots[id]!
+                return hypot(b.x * size.width - pellet.rest.x, b.y * size.height - pellet.rest.y)
+            }
+            let nearest = free.min { gap($0) < gap($1) }!
+            #expect(pellet.eater == nearest, "pellet \(i) went to \(pellet.eater ?? "nobody"), not \(nearest)")
+            free.remove(nearest)
         }
     }
 

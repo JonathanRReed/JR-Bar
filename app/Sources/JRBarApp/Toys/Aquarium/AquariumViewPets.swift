@@ -21,8 +21,9 @@ extension AquariumView {
     /// The sea turtle's path: across the tank one way and back the next
     /// on a 90-second sweep, easing to a stop at each end and coming
     /// round there over 1.4 s with a small dip, rising for a breath near
-    /// the end of each leg.
-    func seaTurtlePose(size: CGSize, t: Double) -> PetPose {
+    /// the end of each leg. `breathe` (0…1) is how far up for that
+    /// breath it is.
+    func seaTurtlePose(size: CGSize, t: Double) -> (pose: PetPose, breathe: Double) {
         let period = 90.0
         let legTime = period / 2
         let tau = frac(t / period) * period
@@ -62,19 +63,16 @@ extension AquariumView {
         let baseY = size.height * 0.42
         let y = reduceMotion ? baseY
             : baseY + sin(t * 0.4) * 14 - breathe * (baseY - 46) + dip * 10
-        return PetPose(x: x, y: y, c: c)
+        return (PetPose(x: x, y: y, c: c), breathe)
     }
 
     /// The sea turtle: a slow glide across midwater on a long lazy
     /// sweep, rising for a breath every minute or so — a patient
     /// silhouette behind the fish lane.
     func drawSeaTurtle(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        let pose = seaTurtlePose(size: size, t: t)
+        let placed = seaTurtlePose(size: size, t: t)
+        let pose = placed.pose, breathe = placed.breathe
         let x = pose.x, y = pose.y
-        let period = 90.0
-        let leg = frac(frac(t / period) * 2)
-        let breathe = smooth(clamp01((leg - 0.72) / 0.10))
-            * smooth(clamp01((0.98 - leg) / 0.10))
         var c = canvas
         c.translateBy(x: x, y: y)
         c.scaleBy(x: pose.c, y: 1)
@@ -131,43 +129,57 @@ extension AquariumView {
                                       shade: Color(red: 0.36, green: 0.19, blue: 0.17))
         }
 
-        // The wander: a seeded ~4-minute cycle — long home, a crawl
-        // out, a pause in the open, a crawl home.
+        let pose = octopusPose(home: CGPoint(x: homeX, y: homeY), size: size, t: t)
+        var c = canvas
+        c.translateBy(x: pose.at.x, y: pose.at.y)
+        if pose.out < 1 {
+            // Home: slumped in or behind the pot, the eyes easing up over
+            // the rim on a peek and sinking low again after.
+            var home = c
+            home.opacity = (0.55 + 0.40 * pose.peek) * (1 - pose.out)
+            PetArt.octopusAtHome(&home, skin: skin, lift: 3 + 7 * pose.peek,
+                                 open: 0.35 + 0.65 * pose.peek)
+        }
+        if pose.out > 0 {
+            // Out in the open, it pours up out of the slump as it fades in.
+            var abroad = c
+            abroad.opacity = 0.97 * pose.out
+            let grow = 0.7 + 0.3 * pose.out
+            abroad.scaleBy(x: grow, y: grow)
+            PetArt.octopus(&abroad, skin: skin, crawl: pose.crawl)
+        }
+    }
+
+    /// The octopus's round from `home`: a seeded ~4-minute cycle — long
+    /// at home, a crawl out, a pause in the open, a crawl home. `out`
+    /// runs 0 at home … 1 out in the open, and the two drawings cross
+    /// over in the first and last 0.3 s of the trip instead of swapping
+    /// in a frame. `peek` (0…1) is how far the eyes are up over the rim:
+    /// a stretch of each ~70 s at home, easing up and back down over a
+    /// second rather than popping.
+    func octopusPose(home: CGPoint, size: CGSize, t: Double)
+        -> (at: CGPoint, crawl: Double, out: Double, peek: Double) {
         let cycle = 240.0
         let p = frac(t / cycle + 0.31)
         // Out: p .60–.68 crawls out, .68–.82 sits out, .82–.90 crawls home.
-        let outX = homeX + (homeX < size.width * 0.5 ? 1 : -1) * size.width * 0.09
+        let outX = home.x + (home.x < size.width * 0.5 ? 1 : -1) * size.width * 0.09
         let outY = sandTop(atX: outX, in: size) - 6
-        var pos = CGPoint(x: homeX, y: homeY)
-        var crawl = 0.0
+        var k = 0.0
         if p >= 0.60, p < 0.68 {
-            let k = smooth(clamp01((p - 0.60) / 0.08))
-            pos = CGPoint(x: homeX + (outX - homeX) * k,
-                          y: homeY + (outY - homeY) * k)
-            crawl = reduceMotion ? 0 : sin(k * .pi * 6) * 0.5
+            k = smooth(clamp01((p - 0.60) / 0.08))
         } else if p >= 0.68, p < 0.82 {
-            pos = CGPoint(x: outX, y: outY)
+            k = 1
         } else if p >= 0.82, p < 0.90 {
-            let k = smooth(clamp01((p - 0.82) / 0.08))
-            pos = CGPoint(x: outX + (homeX - outX) * k,
-                          y: outY + (homeY - outY) * k)
-            crawl = reduceMotion ? 0 : sin(k * .pi * 6) * 0.5
+            k = 1 - smooth(clamp01((p - 0.82) / 0.08))
         }
-        let out = pos.x != homeX
-        // The peek: while home, eyes ride over the rim for a stretch
-        // of each ~70 s sub-cycle.
-        let peek = !out && frac(t / 68) < 0.5
-        var c = canvas
-        c.translateBy(x: pos.x, y: pos.y)
-        if out {
-            c.opacity = 0.97
-            PetArt.octopus(&c, skin: skin, crawl: crawl)
-        } else {
-            // Home: slumped in or behind the pot, the eyes up over the
-            // rim on a peek and sunk low otherwise.
-            c.opacity = peek ? 0.95 : 0.55
-            PetArt.octopusAtHome(&c, skin: skin, lift: peek ? 10 : 3, open: peek ? 1 : 0.35)
-        }
+        let crawling = (p >= 0.60 && p < 0.68) || (p >= 0.82 && p < 0.90)
+        let crawl = crawling && !reduceMotion ? sin(k * .pi * 6) * 0.5 : 0
+        let at = CGPoint(x: home.x + (outX - home.x) * k, y: home.y + (outY - home.y) * k)
+        let cross = 0.3 / cycle
+        let out = smooth(clamp01((p - 0.60) / cross)) * smooth(clamp01((0.90 - p) / cross))
+        let u = frac(t / 68) * 68
+        let peek = smooth(clamp01(u / 1.2)) * smooth(clamp01((34 - u) / 1.2))
+        return (at, crawl, out, peek)
     }
 
     /// How long the axolotl takes to turn round at each end, seconds.
@@ -203,7 +215,8 @@ extension AquariumView {
 
     /// The axolotl: a wide pink smile on legs, three gill fronds a
     /// cheek waving as it ambles the sand on a long seeded patrol;
-    /// every so often it kicks up and settles a body-width over.
+    /// halfway along each leg it kicks up off the sand and drops back
+    /// down in a puff.
     func drawAxolotl(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         let placed = axolotlPose(size: size, t: t)
         let x = placed.pose.x, y = placed.pose.y
@@ -281,6 +294,54 @@ extension AquariumView {
     func drawCleanerShrimp(canvas: inout GraphicsContext, size: CGSize,
                                    t: Double, layouts: [String: Layout],
                                    roster: [Fish], now: Date) {
+        let spot = cleanerShrimpSpot(size: size, t: t, layouts: layouts, roster: roster)
+        var c = canvas
+        c.translateBy(x: spot.at.x, y: spot.at.y)
+        c.opacity = 0.95
+        // The feelers whisk harder while it works.
+        PetArt.cleanerShrimp(&c, whisk: spot.riding && !reduceMotion ? sin(t * 9) * 2 : 0)
+    }
+
+    /// Where the cleaner shrimp is at `t`, and whether it is riding a
+    /// fish. When the fish it was headed for or riding changes — another
+    /// idler comes first, or its client wakes up and swims off — it
+    /// springs over from where it was last drawn instead of appearing on
+    /// the new one.
+    func cleanerShrimpSpot(size: CGSize, t: Double, layouts: [String: Layout],
+                           roster: [Fish]) -> (at: CGPoint, riding: Bool) {
+        let aim = cleanerShrimpAim(size: size, t: t, layouts: layouts, roster: roster)
+        let memory = motion.swim
+        var trail = memory.shrimp ?? TankSwimMemory.ShrimpTrail(client: aim.client, x: aim.at.x, y: aim.at.y,
+                                                                  t: t, dx: 0, dy: 0, since: -.infinity,
+                                                                  length: 0)
+        if trail.client != aim.client, t - trail.t < 0.5 {
+            let gap = hypot(trail.x - aim.at.x, trail.y - aim.at.y)
+            trail.dx = trail.x - aim.at.x
+            trail.dy = trail.y - aim.at.y
+            trail.since = t
+            trail.length = min(1.4, max(0.5, gap / 300))
+        }
+        trail.client = aim.client
+        var at = aim.at
+        if t >= trail.since, trail.length > 0 {
+            let e = smooth(clamp01((t - trail.since) / trail.length))
+            let gap = hypot(trail.dx, trail.dy)
+            at.x += trail.dx * (1 - e)
+            at.y += trail.dy * (1 - e) - sin(e * .pi) * min(24, gap * 0.25)
+        }
+        trail.x = at.x
+        trail.y = at.y
+        trail.t = t
+        memory.shrimp = trail
+        return (at, aim.riding)
+    }
+
+    /// Where the cleaner shrimp's round puts it at `t`, before any
+    /// change of client eases in: its perch, on its way to or from the
+    /// first idling fish, or riding it. `client` is that fish while the
+    /// round is out with it, else nil.
+    private func cleanerShrimpAim(size: CGSize, t: Double, layouts: [String: Layout],
+                                  roster: [Fish]) -> (at: CGPoint, riding: Bool, client: String?) {
         // Station: the first seeded coral or rock's top.
         let station: CGPoint
         if let perch = Self.decor.first(where: { $0.kind == .coral || $0.kind == .rock }) {
@@ -290,7 +351,7 @@ extension AquariumView {
             station = CGPoint(x: size.width * 0.2,
                               y: sandTop(atX: size.width * 0.2, in: size) - 10)
         }
-        // The client: the shallowest idling fish.
+        // The client: the first idling adult in the tank's draw order.
         let client = roster.first(where: { $0.state == .idling && !$0.isFry })
         let clientPt = client.flatMap { layouts[$0.id] }
             .map { CGPoint(x: $0.x, y: $0.y - 10) }
@@ -299,7 +360,9 @@ extension AquariumView {
         let p = frac(t / 40)
         var pos = station
         var riding = false
-        if let clientPt {
+        var outWith: String?
+        if let clientPt, p < 0.70 {
+            outWith = client?.id
             if p < 0.15 {
                 let k = smooth(clamp01(p / 0.15))
                 pos = CGPoint(x: station.x + (clientPt.x - station.x) * k,
@@ -315,11 +378,7 @@ extension AquariumView {
                                   - sin(k * .pi) * 30)
             }
         }
-        var c = canvas
-        c.translateBy(x: pos.x, y: pos.y)
-        c.opacity = 0.95
-        // The feelers whisk harder while it works.
-        PetArt.cleanerShrimp(&c, whisk: riding && !reduceMotion ? sin(t * 9) * 2 : 0)
+        return (pos, riding, outWith)
     }
 
     /// The manta: a rare wide shadow crossing the back layer every

@@ -747,6 +747,7 @@ struct AquariumView: View {
         m.swim.settings = swimSettings
         let tuning = m.swim.settings ?? AquariumSettings()
         let tempo = AquariumSettings.clamped(tuning.swimSpeed, to: AquariumSettings.swimSpeedRange)
+        m.swim.retime(to: tempo, at: t)
         // Reduce Motion ticks once a second: let the sim absorb real
         // elapsed time so sinking food and darting fish still arrive —
         // the motion reads as a stepped drift, not a frozen tank.
@@ -1048,11 +1049,17 @@ struct AquariumView: View {
     }
 
     /// Where a fish's current state found it, in points — the anchor
-    /// the rise/sink/leave poses move from. Falls back to the old
-    /// patrol sweep when no body has stepped yet (the fixture path).
+    /// the rise/sink/leave poses move from. On the state's first frame,
+    /// before the anchor catches up, that is where its body is now —
+    /// never where the last state began, which can be minutes old. Falls
+    /// back to the old patrol sweep when no body has stepped yet (the
+    /// fixture path).
     func anchor(of fish: Fish, in size: CGSize) -> CGPoint {
-        if let a = motion.anchors[fish.id] {
+        if let a = motion.anchors[fish.id], a.state == fish.state {
             return CGPoint(x: a.x * size.width, y: a.y * size.height)
+        }
+        if let b = motion.bodies[fish.id] {
+            return CGPoint(x: b.x * size.width, y: b.y * size.height)
         }
         let p = patrol(of: fish, in: size,
                        at: fish.stateSince.timeIntervalSince1970, margin: 36)
