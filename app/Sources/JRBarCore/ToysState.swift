@@ -1205,8 +1205,10 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     public static let hoverOpenDelayRange: ClosedRange<Double> = 0...1
     /// Which display the island and the Screen Bar live on.
     public var notchDisplay: NotchDisplay = .builtIn
-    /// The shelf itself — the card's second page and its drop targets.
-    /// Off leaves the card one page long and every shelf gesture quiet.
+    /// The shelf itself — the file strip on the card's second page and
+    /// every way a file reaches it. Off hides the strip and its Paste
+    /// chip, takes no drops and quiets every shelf gesture; the second
+    /// page stays for the timers, the day and the switches.
     public var shelfEnabled: Bool = true
     /// What a file dragged out of the shelf does in Finder: a copy
     /// unless ⌘ is held (Atoll's and Yoink's safe default), or a move.

@@ -924,8 +924,16 @@ final class NotchToy: Toy {
     // MARK: - Shake to summon
 
     /// Told when the shelf is switched on or off — the app delegate hides
-    /// the Dock's Send to Shelf while the shelf takes no files.
-    @ObservationIgnored var onShelfSwitch: (@MainActor (Bool) -> Void)?
+    /// the Dock's Send to Shelf while the shelf takes no files. The first
+    /// reconcile runs in `init`, before anyone listens, so wiring this
+    /// hears the switch as it stands right away: a shelf that launches
+    /// off never leaves Send to Shelf on the Dock.
+    @ObservationIgnored var onShelfSwitch: (@MainActor (Bool) -> Void)? {
+        didSet {
+            shelfSwitchSent = settings.shelfEnabled
+            onShelfSwitch?(settings.shelfEnabled)
+        }
+    }
     /// The last switch `onShelfSwitch` heard, so a reconcile that moved
     /// nothing says nothing.
     @ObservationIgnored private var shelfSwitchSent: Bool?

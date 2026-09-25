@@ -43,8 +43,11 @@ import Testing
         return (SystemTogglesStore(state: state), state, fake)
     }
 
+    /// Lets the lease's send task land. The deadline is generous because a
+    /// full parallel run can hold the main actor for seconds; a pass
+    /// returns as soon as the send lands.
     private func settle(_ state: SystemTogglesStore.State) async {
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(30)
         while state.applying.contains(.keepAwake), Date() < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
@@ -194,5 +197,20 @@ import Testing
         #expect(found.map(\.name) == ["Amphetamine", "Keynote"])
         #expect(found.first { $0.name == "Keynote" }?.display == true)
         #expect(found.first?.sentence == "Amphetamine is keeping the Mac awake.")
+    }
+
+    @Test func theLidRowSaysWhatTheHelperNeedsNotACharger() throws {
+        let decoder = JSONDecoder()
+        let missing = try decoder.decode(CoreClosedLid.self, from: Data(#"{"helper_installed":false}"#.utf8))
+        let holding = try decoder.decode(CoreClosedLid.self,
+                                         from: Data(#"{"helper_installed":true,"holding":true}"#.utf8))
+        let unknown = ClosedLidNote.text(nil)
+        #expect(unknown == "Needs the privileged sleep helper; the monitor reports whether it is installed.")
+        #expect(!unknown.contains("charger") && !unknown.contains("display"),
+                "JR-Bar's hold is the sleep helper, not macOS's closed-lid mode")
+        let notInstalled = ClosedLidNote.text(missing)
+        #expect(notInstalled.contains("not installed"))
+        let honoured = ClosedLidNote.text(holding)
+        #expect(honoured == "The sleep helper is installed; closed-lid holds are honoured. Holding now.")
     }
 }

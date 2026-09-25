@@ -742,7 +742,7 @@ final class ScreenBarController {
         if isShown, aside { return true }
         guard isShown, showsInFullScreen, hideOverVideo,
               let playing = nowPlaying,
-              let front = NSWorkspace.shared.frontmostApplication,
+              let front,
               front.bundleIdentifier == playing,
               let screen = ScreenBarGeometry.preferredScreen() else { return false }
         return Self.windowFillsScreen(pid: front.processIdentifier, screen: screen)

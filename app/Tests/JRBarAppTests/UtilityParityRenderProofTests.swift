@@ -199,13 +199,14 @@ struct UtilityParityRenderProofTests {
 
     // MARK: Keep awake
 
-    /// A hold the daemon has: a countdown ending 42 minutes from `now`.
+    /// A hold the daemon has: a countdown with a little under 42 minutes
+    /// left from `now`, so every line that rounds it up says 42.
     private static func heldToggles(now: Date) throws -> SystemTogglesStore {
         let suite = "UtilityParityRenderProofTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         let state = SystemTogglesStore.State(dockDriver: nil, defaults: defaults)
         state.sendLease = { _ in .taken }
-        let until = now.addingTimeInterval(42 * 60).timeIntervalSince1970
+        let until = now.addingTimeInterval(42 * 60 - 20).timeIntervalSince1970
         let hold = try JSONDecoder().decode(CoreAwakeHold.self, from: Data(
             #"{"state":"manual","lease":{"kind":"duration","until":\#(until)}}"#.utf8))
         state.noteDaemonHold(hold, live: true)
@@ -237,7 +238,8 @@ struct UtilityParityRenderProofTests {
                 Spacer()
                 Toggle("", isOn: .constant(utility.isOn)).labelsHidden().toggleStyle(.switch)
             }
-            KeepAwakeUtilityControls(utility: utility, holders: holders, now: now)
+            // The card's own clock, the one the status pill reads.
+            KeepAwakeUtilityControls(utility: utility, holders: holders)
                 .cardBodyStyle()
         }, width: 580).environment(settings)
         for dark in [false, true] {
@@ -253,15 +255,16 @@ struct UtilityParityRenderProofTests {
         let items = KeepAwakeMenu.items(durations: KeepAwakeMenu.defaultDurations,
                                         reading: KeepAwakeReading(state: .lease(.indefinite)),
                                         displayOn: true, monitorLive: true, now: now)
-        var rows = [MenuStill.Row(title: "Keep this Mac awake", enabled: false, header: true)]
-        rows += items.map { MenuStill.Row(title: $0.title, checked: $0.checked, enabled: $0.enabled,
-                                          divider: $0.dividerBefore) }
+        // The items as the chip, the cup and the ear list them — the
+        // real menu has no header row.
+        let rows = items.map { MenuStill.Row(title: $0.title, checked: $0.checked, enabled: $0.enabled,
+                                             divider: $0.dividerBefore) }
         let view = ZStack(alignment: .topLeading) {
             ProofDesktop(dark: true)
             MenuStill(rows: rows).padding(24)
         }
-        try ProofRender.write(view, size: CGSize(width: 300, height: 380), name: "notch-awake-menu")
-        try ProofRender.write(view, size: CGSize(width: 300, height: 380), name: "notch-awake-menu-light", dark: false)
+        try ProofRender.write(view, size: CGSize(width: 300, height: 360), name: "notch-awake-menu")
+        try ProofRender.write(view, size: CGSize(width: 300, height: 360), name: "notch-awake-menu-light", dark: false)
     }
 
     // MARK: Shelf
@@ -320,6 +323,7 @@ struct UtilityParityRenderProofTests {
                                               transport: kAudioDeviceTransportTypeBluetooth)
         let studio = CoreAudioOutputs.Device(id: 90, name: "Studio Display Speakers", transport: nil)
         model.utility.readOutputs = { ([airpods, speakers, studio], 77) }
+        model.utility.watchOutputs = { _ in {} }
         model.focus = ScreenBarFocus(style: ProviderStyle.style(for: "claude"), label: "review-patch",
                                      word: "Working", clickSession: "claude:1")
         model.pinned = true
@@ -328,8 +332,10 @@ struct UtilityParityRenderProofTests {
         defer { model.utility.stop() }
         monitor.onChange?(NotchSurfaceRenderProofTests.media())
         model.show(.now)
-        let rows = [MenuStill.Row(title: "Sound output", enabled: false, header: true)]
-            + model.utility.outputs.map { MenuStill.Row(title: $0.name, checked: $0.id == model.utility.defaultOutput) }
+        // The picker's menu: the devices, the one playing checked.
+        let rows = model.utility.outputs.map {
+            MenuStill.Row(title: $0.name, checked: $0.id == model.utility.defaultOutput)
+        }
         try Self.writeCard(toy, name: "notch-card-now-output-picker",
                            extra: AnyView(MenuStill(rows: rows, width: 240)))
     }
@@ -358,18 +364,18 @@ struct UtilityParityRenderProofTests {
                                                    startedAt: Date().addingTimeInterval(-7200),
                                                    lastActivityAt: Date().addingTimeInterval(-3600))
         }
+        // Imported through Find History with no source capturing: the
+        // pi, Gemini and Grok records still get their own filter rows.
+        // Nothing of this Mac's own transcripts is read.
         let model = DataHoarderModel(archive: archive)
         model.enabled = true
-        model.applyCaptureSettings(DataHoarderSettings(captureSources: [
-            "claude-projects": true, "codex-sessions": true, "pi-sessions": true,
-            "gemini-chats": true, "grok-sessions": true,
-        ]))
+        await model.reload()
         model.searchFilter.provider = "pi"
         await model.runSearch()
         model.selectedID = model.searchResults.first?.record.id
-        let choices = DataHoarderProviders.choices(enabledSources: model.captureSettings.enabledSources)
         let menu = [MenuStill.Row(title: "All providers")]
-            + choices.map { MenuStill.Row(title: DataHoarderProviders.title($0), checked: $0 == "pi") }
+            + model.providerChoices.map { MenuStill.Row(title: DataHoarderProviders.title($0), checked: $0 == "pi") }
+        // The window's own background: the archive view draws on it.
         let view = HStack(alignment: .top, spacing: 0) {
             DataHoarderView(model: model).frame(width: 1040, height: 700)
             ZStack(alignment: .top) {
@@ -378,19 +384,59 @@ struct UtilityParityRenderProofTests {
             }
             .frame(width: 240, height: 700)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         for dark in [false, true] {
-            try ProofRender.write(view, size: CGSize(width: 1280, height: 700),
-                                  name: "hoarder-archive-filters\(dark ? "-dark" : "")", dark: dark, settle: 1.0)
+            try await Self.writeLoaded(view, size: CGSize(width: 1280, height: 700),
+                                       name: "hoarder-archive-filters\(dark ? "-dark" : "")", dark: dark,
+                                       model: model)
         }
         // A Grok record: its CLI resumes, so the detail offers Resume and
         // the copyable line.
         model.searchFilter.provider = "grok"
         await model.runSearch()
         model.selectedID = model.searchResults.first?.record.id
-        try ProofRender.write(DataHoarderView(model: model).frame(width: 1040, height: 520),
-                              size: CGSize(width: 1040, height: 520), name: "hoarder-record-resume",
-                              dark: false, settle: 1.0)
+        let resume = DataHoarderView(model: model).frame(width: 1040, height: 520)
+            .background(Color(nsColor: .windowBackgroundColor))
+        try await Self.writeLoaded(resume, size: CGSize(width: 1040, height: 520), name: "hoarder-record-resume",
+                                   dark: false, model: model)
         await model.capture.stop()
+    }
+
+    /// The archive window as a still once it has loaded what it shows. Its
+    /// own `.task`s fetch the storage line, the list, the preview and the
+    /// detail when it appears, and they finish only while the test awaits
+    /// — so it is hosted, waited on (at most 30 s) until nothing is
+    /// loading, and then drawn.
+    private static func writeLoaded<V: View>(_ view: V, size: CGSize, name: String, dark: Bool,
+                                             model: DataHoarderModel) async throws {
+        let hosting = NSHostingView(rootView: view.environment(\.colorScheme, dark ? .dark : .light))
+        hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.appearance = hosting.appearance
+        window.contentView = hosting
+        defer { window.contentView = nil }
+        hosting.layoutSubtreeIfNeeded()
+        // Past the search's 200 ms debounce, so every load has begun.
+        try await Task.sleep(nanoseconds: 400_000_000)
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline, model.preview.isEmpty || model.measuringStorage || model.searching
+                || model.detailLoading || model.busy {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        hosting.layoutSubtreeIfNeeded()
+        let scale: CGFloat = 2
+        let bitmap = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(ceil(size.width * scale)),
+            pixelsHigh: Int(ceil(size.height * scale)), bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        bitmap.size = size
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)
+        try png.write(to: ProofRender.directory.appendingPathComponent("\(name).png"))
     }
 
     // MARK: Overview

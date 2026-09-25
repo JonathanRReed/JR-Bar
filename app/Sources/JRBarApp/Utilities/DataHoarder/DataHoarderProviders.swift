@@ -10,15 +10,21 @@ enum DataHoarderProviders {
     /// The providers the picker offers, in the sources' own order:
     /// Claude and Codex always (the probe names them in any imported
     /// file), each capturing source's agent, CLIProxyAPI when its logs
-    /// are kept, and "other" last.
-    static func choices(enabledSources: [String]) -> [String] {
+    /// are kept, then any agent the archive already holds records of —
+    /// a pi file brought in by Find History while pi's capture is off
+    /// still gets its name — and the pick in force, so a saved filter
+    /// whose source was switched off keeps its row. "other" is last.
+    static func choices(enabledSources: [String], archived: [String?] = [],
+                        selected: String? = nil) -> [String] {
         var providers = ["claude", "codex"]
         for source in ArchiveSource.defaults() where enabledSources.contains(source.id) {
             let provider = source.id == ArchiveSource.cliProxyAPILogs
                 ? "cliproxy" : DataHoarderOffer.provider(of: source.id)
             if !providers.contains(provider) { providers.append(provider) }
         }
-        return providers + ["other"]
+        let held = Set((archived + [selected]).compactMap { $0 }.filter { !$0.isEmpty && $0 != "other" })
+        let more = held.subtracting(providers).sorted { title($0) < title($1) }
+        return providers + more + ["other"]
     }
 
     /// A provider's name in the picker.
@@ -106,9 +112,9 @@ enum DataHoarderProviders {
     /// error logs, so the archive holds a few failures and none of the
     /// ordinary requests. The sentence and the rule belong to the daemon
     /// lane: at integration this returns
-    /// `CLIProxyLogParser.requestLogNote(config: config)` (X18). Until
-    /// then there is no note.
-    static func requestLogNote(config: String?) -> String? {
+    /// `CLIProxyLogParser.requestLogNote(config: readConfig())` (X18).
+    /// Until then there is no note, and the config is never read.
+    static func requestLogNote(readConfig: () -> String? = { cliProxyConfig() }) -> String? {
         nil
     }
 
@@ -122,6 +128,13 @@ enum DataHoarderProviders {
 }
 
 extension DataHoarderModel {
+    /// The provider picker's rows: the capturing sources' agents, the
+    /// agents already in the archive, and the pick in force.
+    var providerChoices: [String] {
+        DataHoarderProviders.choices(enabledSources: captureSettings.enabledSources,
+                                     archived: records.map(\.provider), selected: searchFilter.provider)
+    }
+
     /// The resume line for a record, when its CLI can resume.
     func resumeCommand(for record: ArchiveRecord) -> String? {
         DataHoarderProviders.resumeCommand(provider: record.provider, sessionID: record.sessionID,

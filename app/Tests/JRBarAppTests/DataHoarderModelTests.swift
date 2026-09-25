@@ -514,6 +514,27 @@ struct DataHoarderModelTests {
         #expect(DataHoarderProviders.title("cliproxy") == "CLIProxyAPI")
     }
 
+    @Test func importedAgentsAndASavedPickKeepTheirRowsWithCaptureOff() {
+        // Find History brought in pi and Grok files; no source captures.
+        let found = DataHoarderProviders.choices(enabledSources: [],
+                                                 archived: ["claude", "pi", nil, "grok", "pi", "other", ""])
+        #expect(Array(found.prefix(2)) == ["claude", "codex"])
+        #expect(found.last == "other")
+        #expect(Set(found) == ["claude", "codex", "pi", "grok", "other"], "each agent once: \(found)")
+        // A saved Gemini filter whose source was switched off keeps its row.
+        #expect(DataHoarderProviders.choices(enabledSources: [], selected: "gemini")
+                == ["claude", "codex", "gemini", "other"])
+        // A capturing source's agent keeps its place in the sources' order.
+        #expect(DataHoarderProviders.choices(enabledSources: ["grok-sessions"], archived: ["grok", "pi"])
+                == ["claude", "codex", "grok", "pi", "other"])
+
+        let model = DataHoarderModel(archive: DataHoarderArchive(
+            root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)))
+        model.records = [ArchiveRecord(id: "r1", name: "r1.jsonl", sourcePath: "/tmp/r1.jsonl", byteCount: 1,
+                                       importedAt: Date(), sourceModifiedAt: nil, provider: "pi")]
+        #expect(model.providerChoices.contains("pi"), "the imported pi record is findable by name")
+    }
+
     @Test func theResumeCommandIsRightPerProvider() {
         let id = "5f1c9a2e-7d41-4b8e-9a0c-2f6e1d3b4a55"
         #expect(DataHoarderProviders.resumeCommand(provider: "claude", sessionID: id, project: nil)

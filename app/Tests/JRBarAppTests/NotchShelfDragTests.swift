@@ -115,4 +115,22 @@ struct NotchShelfDragTests {
         #expect(toy.cardModel.tray.entries.count == before)
         #expect(toy.cardModel.page != .shelf, "no turn to a shelf that is off")
     }
+
+    @Test("a shelf that launches off tells the Dock as soon as the Dock listens")
+    func shelfSwitchReachesALateListener() {
+        var toys = ToysState()
+        toys.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
+        toys.notch.shelfEnabled = false
+        let core = CoreModel()
+        // The toy's first reconcile runs in its init, before the app
+        // delegate wires the Dock's Send to Shelf.
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: toys, cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        final class Heard { var switches: [Bool] = [] }
+        let heard = Heard()
+        store.notch.onShelfSwitch = { heard.switches.append($0) }
+        #expect(heard.switches == [false], "the Dock hides Send to Shelf from launch")
+    }
 }

@@ -86,7 +86,7 @@ struct ShelfDragSource: NSViewRepresentable {
             let point = convert(event.locationInWindow, from: nil)
             switch event.type {
             case .leftMouseDown:
-                downInView = bounds.contains(point)
+                downInView = takesPress(at: point)
                 downPoint = downInView ? point : nil
                 return event
             case .leftMouseDragged:
@@ -107,6 +107,18 @@ struct ShelfDragSource: NSViewRepresentable {
                 downPoint = nil
                 return event
             }
+        }
+
+        /// Whether a press at `point` (in this view's coordinates) is on
+        /// the part of the chip that shows. The island's card scrolls, and
+        /// a chip scrolled out of sight keeps its bounds under whatever is
+        /// drawn there now — a press on that must not drag its file. The
+        /// scroll view's clip is what `visibleRect` reads; the chip's own
+        /// bounds are checked too, since a view that doesn't clip itself
+        /// reports the clip's whole reach.
+        func takesPress(at point: NSPoint) -> Bool {
+            guard !isHiddenOrHasHiddenAncestor else { return false }
+            return bounds.contains(point) && visibleRect.contains(point)
         }
 
         /// One dragging item per file, each wearing the file's icon,

@@ -152,6 +152,20 @@ final class ScreenBarInteraction {
 
     private var globalMonitors: [Any] = []
     private var localMonitors: [Any] = []
+    /// How the band's pointer monitors are made and let go — NSEvent's
+    /// global (`true`) and local ones, a local one passing every event
+    /// on; a test hands in a counter so no suite listens to the pointer.
+    var installMonitor: (_ global: Bool, NSEvent.EventTypeMask, @escaping (NSEvent) -> Void) -> Any? = {
+        global, mask, handler in
+        if global { return NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler) }
+        return NSEvent.addLocalMonitorForEvents(matching: mask) { event in
+            handler(event)
+            return event
+        }
+    }
+    var removeMonitor: (Any) -> Void = { NSEvent.removeMonitor($0) }
+    /// The pointer monitors standing right now — none once `stop` ran.
+    var monitorCount: Int { globalMonitors.count + localMonitors.count }
     /// The hover poll — `moveInterval` cadence, replaces the moved
     /// event tap whose every delivery cost a `TCCAccessRequest`.
     private var hoverTimer: Timer?
@@ -222,7 +236,7 @@ final class ScreenBarInteraction {
         // rather than an event, so nothing is lost. A parked band arms
         // it on the edge back instead.
         if !parked { scheduleMovePoll(after: Self.moveInterval) }
-        if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown], handler: { [weak self] event in
+        if let down = installMonitor(true, [.leftMouseDown], { [weak self] event in
             let point = NSEvent.mouseLocation
             Self.diag("global down raw (\(Int(point.x)),\(Int(point.y)))")
             let time = event.timestamp
@@ -230,51 +244,46 @@ final class ScreenBarInteraction {
         }) { globalMonitors.append(down) } else {
             Self.diag("global down monitor FAILED")
         }
-        if let drag = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged], handler: { [weak self] event in
+        if let drag = installMonitor(true, [.leftMouseDragged], { [weak self] event in
             let point = NSEvent.mouseLocation
             let time = event.timestamp
             Task { @MainActor [weak self] in self?.pointerDragged(to: point, at: time) }
         }) { globalMonitors.append(drag) }
-        if let up = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp], handler: { [weak self] event in
+        if let up = installMonitor(true, [.leftMouseUp], { [weak self] event in
             let time = event.timestamp
             Task { @MainActor [weak self] in self?.pointerReleased(at: time) }
         }) { globalMonitors.append(up) }
-        if let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown], handler: { [weak self] event in
+        if let down = installMonitor(false, [.leftMouseDown], { [weak self] event in
             let point = NSEvent.mouseLocation
             let time = event.timestamp
             Task { @MainActor [weak self] in self?.pointerDown(at: point, time: time) }
-            return event
         }) { localMonitors.append(down) }
-        if let drag = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged], handler: { [weak self] event in
+        if let drag = installMonitor(false, [.leftMouseDragged], { [weak self] event in
             let point = NSEvent.mouseLocation
             let time = event.timestamp
             Task { @MainActor [weak self] in self?.pointerDragged(to: point, at: time) }
-            return event
         }) { localMonitors.append(drag) }
-        if let up = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp], handler: { [weak self] event in
+        if let up = installMonitor(false, [.leftMouseUp], { [weak self] event in
             let time = event.timestamp
             Task { @MainActor [weak self] in self?.pointerReleased(at: time) }
-            return event
         }) { localMonitors.append(up) }
         // A secondary click on an ear: its menu. Down only — the menu
         // pops on the press, as a status item's does.
-        if let secondary = NSEvent.addGlobalMonitorForEvents(matching: [.rightMouseDown], handler: { [weak self] _ in
+        if let secondary = installMonitor(true, [.rightMouseDown], { [weak self] _ in
             let point = NSEvent.mouseLocation
             Task { @MainActor [weak self] in self?.pointerSecondaryDown(at: point) }
         }) { globalMonitors.append(secondary) }
-        if let secondary = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown], handler: { [weak self] event in
+        if let secondary = installMonitor(false, [.rightMouseDown], { [weak self] _ in
             let point = NSEvent.mouseLocation
             Task { @MainActor [weak self] in self?.pointerSecondaryDown(at: point) }
-            return event
         }) { localMonitors.append(secondary) }
         // Trackpad swipes arrive as scrollWheel, never as drags — the
         // same stream the island's hosting view reads.
-        if let scroll = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel], handler: { [weak self] event in
+        if let scroll = installMonitor(true, [.scrollWheel], { [weak self] event in
             Task { @MainActor [weak self] in self?.pointerScrolled(event) }
         }) { globalMonitors.append(scroll) }
-        if let scroll = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel], handler: { [weak self] event in
+        if let scroll = installMonitor(false, [.scrollWheel], { [weak self] event in
             Task { @MainActor [weak self] in self?.pointerScrolled(event) }
-            return event
         }) { localMonitors.append(scroll) }
     }
 
@@ -321,7 +330,7 @@ final class ScreenBarInteraction {
         peekShowWork?.cancel(); peekShowWork = nil
         peekHideWork?.cancel(); peekHideWork = nil
         onPeek(.close)
-        for monitor in globalMonitors + localMonitors { NSEvent.removeMonitor(monitor) }
+        for monitor in globalMonitors + localMonitors { removeMonitor(monitor) }
         globalMonitors = []
         localMonitors = []
         hoverTimer?.invalidate()

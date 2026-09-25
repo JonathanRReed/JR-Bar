@@ -207,10 +207,10 @@ struct DataHoarderView: View {
             HStack(spacing: 6) {
                 Picker("Provider", selection: $model.searchFilter.provider) {
                     Text("All providers").tag(String?.none)
-                    // Every capturing source's agent, so pi, Gemini and
-                    // Grok are findable by name, not only under Other.
-                    ForEach(DataHoarderProviders.choices(enabledSources: model.captureSettings.enabledSources),
-                            id: \.self) { provider in
+                    // Every capturing source's agent and every agent the
+                    // archive holds, so pi, Gemini and Grok are findable
+                    // by name, not only under Other.
+                    ForEach(model.providerChoices, id: \.self) { provider in
                         Text(DataHoarderProviders.title(provider)).tag(String?.some(provider))
                     }
                 }

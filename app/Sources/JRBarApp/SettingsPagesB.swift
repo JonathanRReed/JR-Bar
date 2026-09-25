@@ -1038,12 +1038,7 @@ struct NotificationsPage: View {
     }
 
     private var closedLidNote: String {
-        let lid = store.core.state?.power?.closedLid
-        switch lid?.helperInstalled {
-        case true?: return "The sleep helper is installed; closed-lid holds are honoured." + (lid?.holding == true ? " Holding now." : "")
-        case false?: return "Needs the privileged sleep helper, which is not installed. The monitor will offer to install it."
-        default: return "Needs the privileged sleep helper; the monitor reports whether it is installed."
-        }
+        ClosedLidNote.text(store.core.state?.power?.closedLid)
     }
 }
 

@@ -10,13 +10,15 @@ import Testing
 /// monitor, no event tap, no repeating timer or clock, no capture stream,
 /// no panel on screen.
 ///
-/// The notch, the shelf, the Keep Awake card, the Data Hoarder and Agent
-/// Overview are turned on (with their system hands replaced by counters)
-/// and then off. The Menu Bar, the Dock and the Screen Bar are only built
-/// off and checked, and their tests say so: starting them for real in a
-/// test process would take the Mac's menu bar, the Dock's accessibility
-/// and an on-screen band, which no suite may do. Those three cases pin
-/// what off starts with, not that turning off lets go.
+/// The notch, the shelf, the Keep Awake card, the Data Hoarder, Agent
+/// Overview and the Screen Bar's pointer watch are turned on (with their
+/// system hands replaced by counters) and then off. The Screen Bar's band
+/// itself, the Menu Bar and the Dock are only built off and checked:
+/// showing the band would put a panel on screen, and starting the Menu
+/// Bar or the Dock would take the Mac's menu bar or the Dock's
+/// accessibility, which no suite may do. Their on-then-off cases are
+/// written and disabled, each naming the lane whose files need the
+/// stand-ins that would let them run.
 @Suite("Utility off-cost", .serialized)
 @MainActor
 struct UtilityOffCostTests {
@@ -63,6 +65,7 @@ struct UtilityOffCostTests {
         #expect(toy.expandWork == nil && toy.peekWork == nil && toy.capsuleWork == nil,
                 "no timer left armed")
         #expect(!toy.cardModel.utility.running, "the card's media and power reads are down")
+        #expect(!toy.cardModel.utility.watchingOutputs, "no sound-device listener left")
         toy.runtimeEnabled = false
     }
 
@@ -170,6 +173,59 @@ struct UtilityOffCostTests {
         #expect(!utility.running)
         #expect(!utility.enhance.running, "no Dock watcher or preview panel")
         #expect(!utility.switcher.running, "no switcher chord tap")
+    }
+
+    @Test("a Menu Bar switched on and then off leaves no status item, reveal or Item Bar",
+          .disabled("owner: lane menubar — MenuBarUtility.start() puts JR-Bar's control items on the real menu bar and probes Accessibility; it needs stand-ins for the boundary items and the hider before a suite may start it"))
+    func menuBarOnThenOff() {
+        let utility = MenuBarUtility()
+        var settings = MenuBarSettings()
+        settings.enabled = true
+        utility.settings = { settings }
+        utility.applySettings()
+        settings.enabled = false
+        utility.applySettings()
+        #expect(!utility.running)
+        #expect(!utility.bar.isOpen)
+        #expect(!utility.reveal.revealed)
+    }
+
+    @Test("a Dock switched on and then off lets go of its watcher and its chord tap",
+          .disabled("owner: lane dock — DockUtility.start() restores com.apple.dock through AppleDockControl and starts the AX watcher and the switcher's event tap; it needs stand-ins for all three before a suite may start it"))
+    func dockOnThenOff() {
+        let utility = DockUtility()
+        var settings = DockSettings()
+        settings.enabled = true
+        utility.settings = { settings }
+        utility.applySettings()
+        settings.enabled = false
+        utility.applySettings()
+        #expect(!utility.running)
+        #expect(!utility.enhance.running)
+        #expect(!utility.switcher.running)
+    }
+
+    @Test("the Screen Bar switched off lets go of every pointer monitor and its hover poll")
+    func screenBarPointerWatchOff() {
+        let interaction = ScreenBarInteraction(card: NotchCardPresenter(model: makeTestCardModel()),
+                                               hitRects: { [] }, focus: { nil })
+        let monitors = Monitors()
+        interaction.installMonitor = { _, _, _ in
+            monitors.installed += 1
+            return NSObject()
+        }
+        interaction.removeMonitor = { _ in monitors.removed += 1 }
+        // Shown: the app delegate starts the band's gestures.
+        interaction.start()
+        #expect(monitors.installed > 0)
+        #expect(interaction.monitorCount == monitors.installed)
+        #expect(interaction.isPolling)
+        // Off: the same call the Screen Bar switch makes.
+        interaction.stop()
+        #expect(monitors.live == 0, "no global or local monitor left")
+        #expect(interaction.monitorCount == 0)
+        #expect(!interaction.isPolling, "no hover poll left armed")
+        #expect(!interaction.hovering)
     }
 
     @Test("a Screen Bar never shown runs no clock, has no window up, and steps aside for nobody")

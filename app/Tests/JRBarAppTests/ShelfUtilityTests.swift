@@ -80,4 +80,48 @@ import Testing
         #expect(airpods.symbol == "airpodspro")
         #expect(CoreAudioOutputs.symbol(name: "LG HDR 4K", transport: kAudioDeviceTransportTypeHDMI) == "tv")
     }
+
+    @Test func theOutputListFollowsDevicesWhileTheCardIsUp() {
+        let model = ShelfUtilityModel()
+        let speakers = CoreAudioOutputs.Device(id: 41, name: "MacBook Pro Speakers",
+                                               transport: kAudioDeviceTransportTypeBuiltIn)
+        let airpods = CoreAudioOutputs.Device(id: 77, name: "Jonathan's AirPods Pro",
+                                              transport: kAudioDeviceTransportTypeBluetooth)
+        final class Route {
+            var devices: [CoreAudioOutputs.Device] = []
+            var changed: (@MainActor () -> Void)?
+            var stops = 0
+        }
+        let route = Route()
+        route.devices = [speakers]
+        model.readOutputs = { (route.devices, 41) }
+        model.watchOutputs = { changed in
+            route.changed = changed
+            return { route.stops += 1 }
+        }
+        model.refreshOutputs()
+        model.startWatchingOutputs()
+        #expect(model.watchingOutputs)
+        // AirPods connect while the card is open.
+        route.devices = [speakers, airpods]
+        route.changed?()
+        #expect(model.outputs == [speakers, airpods])
+        // The card folds: the listeners go, once.
+        model.stopWatchingOutputs()
+        model.stopWatchingOutputs()
+        #expect(!model.watchingOutputs)
+        #expect(route.stops == 1)
+    }
+
+    @Test func thePickerOffersOnlyDevicesTheSoundCanMoveTo() {
+        #expect(CoreAudioOutputs.offers(hasOutput: true, hidden: false, canBeDefault: true))
+        #expect(CoreAudioOutputs.offers(hasOutput: true, hidden: nil, canBeDefault: true),
+                "a device that doesn't say it is hidden is shown")
+        #expect(!CoreAudioOutputs.offers(hasOutput: true, hidden: true, canBeDefault: true),
+                "an aggregate's hidden parts are not offered")
+        #expect(!CoreAudioOutputs.offers(hasOutput: true, hidden: false, canBeDefault: false))
+        #expect(!CoreAudioOutputs.offers(hasOutput: true, hidden: false, canBeDefault: nil))
+        #expect(!CoreAudioOutputs.offers(hasOutput: false, hidden: false, canBeDefault: true),
+                "a microphone plays nothing")
+    }
 }

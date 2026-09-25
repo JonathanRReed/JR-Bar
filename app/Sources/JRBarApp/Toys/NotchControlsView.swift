@@ -374,10 +374,7 @@ struct NotchControlsView: View {
             // looks for it: beside the other way to summon the shelf.
             Toggle(isOn: Binding(get: { settings.shelfHotkeyEnabled },
                                  set: { settings.shelfHotkeyEnabled = $0 })) {
-                SettingLabel(title: "Shelf hotkey",
-                             subtitle: settings.shelfHotkeyRegistrationFailed
-                                ? "⌃⌥D is taken by another app."
-                                : "⌃⌥D opens or folds the card from any app; anything you copied waits there as a Paste chip.")
+                SettingLabel(title: "Shelf hotkey", subtitle: shelfHotkeyNote(settings))
             }
         }
         Toggle(isOn: toy.bind(\.timerLights)) {
@@ -431,8 +428,26 @@ struct NotchControlsView: View {
                 SettingLabel(title: "Step aside for other shelf apps",
                              subtitle: "While Dropover, Yoink or Dropzone runs, a shake is theirs, so one shake never opens two shelves. Dropping on the notch still works.")
             }
-            RivalGuardView(role: .shelfGesture, active: toy.settings.shelfYieldToRivals)
+            // Only while JR-Bar's own shake is live: a Notch that is off,
+            // or drawn by Alcove or Boring Notch, has no shake to step aside.
+            RivalGuardView(role: .shelfGesture, active: shakeYieldLive)
         }
+    }
+
+    /// The hotkey's line: taken, or what it opens — the Paste chip only
+    /// while the shelf is on to hold what was copied.
+    private func shelfHotkeyNote(_ settings: SettingsStore) -> String {
+        if settings.shelfHotkeyRegistrationFailed { return "⌃⌥D is taken by another app." }
+        let opens = "⌃⌥D opens or folds the card from any app"
+        guard toy.settings.shelfEnabled else { return opens + "." }
+        return opens + "; anything you copied waits there as a Paste chip."
+    }
+
+    /// Whether the shake-yield note has anything to say: the Notch on and
+    /// drawn by JR-Bar, and the step-aside switch on.
+    private var shakeYieldLive: Bool {
+        let settings = toy.settings
+        return settings.enabled && settings.provider == .jrbar && settings.shelfYieldToRivals
     }
 
     /// "Firm", "Normal", "Easy" — the sensitivity in a word.

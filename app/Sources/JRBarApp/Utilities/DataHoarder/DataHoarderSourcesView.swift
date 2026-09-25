@@ -65,7 +65,7 @@ struct DataHoarderSourcesView: View {
         .frame(width: 630, height: 480)
         .disabled(model.busy)
         .task {
-            cliProxyNote = DataHoarderProviders.requestLogNote(config: DataHoarderProviders.cliProxyConfig())
+            cliProxyNote = DataHoarderProviders.requestLogNote()
         }
     }
 

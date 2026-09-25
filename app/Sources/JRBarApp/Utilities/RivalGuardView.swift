@@ -10,8 +10,10 @@ import SwiftUI
 ///
 /// The note shows only while JR-Bar's own surface is the one live
 /// (`active`): a rival already picked under "Render with" is the choice,
-/// not a clash. Keep-awake is information only, so its note has no
-/// buttons.
+/// not a clash. Only a surface that clashes asks with buttons. The shake
+/// already steps aside on its own — its switch sits right above the
+/// note — and keep-awake is information only, so those two notes have
+/// none.
 struct RivalGuardView: View {
     let role: UtilityRivals.Role
     /// Whether JR-Bar's own surface for this role is live right now.
@@ -38,7 +40,7 @@ struct RivalGuardView: View {
             CardNote(UtilityRivals.note(for: rival, role: role),
                      symbol: symbol, tint: tint)
             Spacer(minLength: SettingsMetrics.s)
-            if role.policy != .informOnly {
+            if role.policy == .ask {
                 if let handOver, rival.handoff(for: role) != nil {
                     Button("Hand over") { handOver(rival) }
                         .controlSize(.small)

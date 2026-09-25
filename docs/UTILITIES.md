@@ -492,7 +492,7 @@ runs depends on the role:
 | Switcher | AltTab, DockDoor, Witch, Contexts | Ask (the card's existing chord note) | Dock card, Switching |
 | Notch island | Alcove, Boring Notch, Atoll, MewNotch, DynamicLake, Notchy, NotchNook | Ask: Hand over to Alcove or Boring Notch | Notch card, under Render with |
 | HUD | MediaMate, SlimHUD (plus the notch apps above) | Ask | Notch card, under the level capsules |
-| Shelf gesture | Dropover, Yoink, Dropzone | **Step aside**: the shake summon's monitors stand down while one runs (`shelfYieldToRivals`, on), because one shake can't be shared; dropping on the notch still works | Notch card, Shelf rows |
+| Shelf gesture | Dropover, Yoink, Dropzone | **Step aside**: the shake summon's monitors stand down while one runs (`shelfYieldToRivals`, on), because one shake can't be shared; dropping on the notch still works. The note has no buttons | Notch card, Shelf rows, while JR-Bar draws the Notch |
 | Keep-awake | Amphetamine, KeepingYouAwake, Caffeine, Lungo, Theine | Inform only: holds stack harmlessly | Keep Awake card, Other apps |
 
 Nothing is ever quit or handed over without the person's click. A rival

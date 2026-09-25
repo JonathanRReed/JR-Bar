@@ -158,7 +158,8 @@ final class ShelfTrayModel {
     @ObservationIgnored var newestFirst: @MainActor () -> Bool = { false }
     @ObservationIgnored var dragOutPolicy: @MainActor () -> ShelfDragOut = { .copy }
     @ObservationIgnored var removeAfterDragOut: @MainActor () -> Bool = { false }
-    /// The shelf itself; off, the card is one page and takes no drops.
+    /// The shelf itself; off, the card's Shelf page shows no file strip
+    /// and the tray takes no files.
     @ObservationIgnored var shelfEnabled: @MainActor () -> Bool = { true }
 
     init() {
@@ -609,12 +610,6 @@ final class ShelfTrayModel {
     /// stack reveals its live members.
     func reveal(_ entry: ShelfEntry) {
         reveal([entry])
-    }
-
-    /// AirDrop for one chip; see the pick's version.
-    @discardableResult
-    func sendViaAirDrop(_ entry: ShelfEntry) -> Bool {
-        sendViaAirDrop([entry])
     }
 
     /// File size for the attach bound — nil when unresolvable.
