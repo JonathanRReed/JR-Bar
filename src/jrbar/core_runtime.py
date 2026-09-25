@@ -4864,6 +4864,10 @@ def build_headless_controller_class() -> type:
             return identity in ("", "latest") or identity.startswith("ambient-")
 
         def _sync_hardware_device(self, request):
+            from .linked_check import CHECK_REANCHOR_IDENTITY
+
+            if str(getattr(request, "coalesce_identity", "") or "") == CHECK_REANCHOR_IDENTITY:
+                return self._core_linked_check_reanchor(request)
             if request.device.device_id in self._core_held_preview_devices():
                 # A re-anchor this command was queued for is spent here: left
                 # pending, the next unrelated Dot write took it and was
@@ -4918,6 +4922,34 @@ def build_headless_controller_class() -> type:
             # could not plan): a queued re-anchor is spent here too.
             self._core_linked_drop_force(request)
             return objc.super(JRCoreHeadlessController, self)._sync_hardware_device(request)
+
+        def _core_linked_check_reanchor(self, request):
+            """The closed loop's re-anchor while Check sync holds the Dot, on
+            the write worker. The hold keeps every other write off the Dot,
+            so this one is the check's own: the flash, re-phased from the
+            strip's start. A check that ended before the worker got here has
+            already put the live program back, so the re-anchor is spent."""
+            from .linked_check import reanchor_during_check
+
+            link = self._core_linked
+            write = None
+            if link.check_until is not None and time.monotonic() < link.check_until:
+                write = reanchor_during_check(self, request.device)
+            if write is None:
+                self._core_linked_drop_force(request)
+                write = legacy.LedStatusWrite(
+                    state=legacy.LedDisplayState.IDLE,
+                    target=getattr(request.device, "target", None),
+                    program="",
+                    changed=False,
+                )
+            return legacy.HardwareWriteResult(
+                request=request,
+                write=write,
+                label=f"{request.device.name} sync check",
+                agent_display_rendered=False,
+                completed_at=self._runtime_worker_monotonic(),
+            )
 
         # -- linked Pro + Dot writes -------------------------------------------
 
@@ -5035,11 +5067,20 @@ def build_headless_controller_class() -> type:
                 and self._core_linked_dot_device() is not None
             )
 
-        def _core_linked_request_dot_write(self, reason: str) -> bool:
+        def _core_linked_request_dot_write(self, reason: str, *, check: bool = False) -> bool:
             """Queue a Dot-only write that bypasses the deduper: the strip
             restarted without the Dot in the same batch, or the closed loop
             wants a re-anchor. The Dot's own last request is reused when it
-            is still for this Dot, so nothing about it is invented."""
+            is still for this Dot, so nothing about it is invented.
+
+            ``check``: the re-anchor is for a running Check sync, which holds
+            the Dot, so the request is marked for the check's own write
+            (``_core_linked_check_reanchor``) -- still on the write worker,
+            never the main thread: a Dot's USB write has stalled for more
+            than two seconds."""
+            from dataclasses import replace
+
+            from .linked_check import CHECK_REANCHOR_IDENTITY
             from .models import AgentMode
 
             dot = self._core_linked_dot_device()
@@ -5051,6 +5092,8 @@ def build_headless_controller_class() -> type:
                     request = legacy.HardwareWriteRequest(dot, AgentMode.IDLE_READY, None, (), None, 0.0)
                 except Exception:
                     return False
+            if check:
+                request = replace(request, coalesce_identity=CHECK_REANCHOR_IDENTITY)
             self._core_linked.request_force(reason)
             try:
                 self._hardware_write_worker.submit(self._hardware_write_command(request, time.monotonic()))
@@ -5104,9 +5147,9 @@ def build_headless_controller_class() -> type:
                 return
             link.note_reanchor_requested(now)
             if link.check_until is not None and now < link.check_until:
-                from .linked_check import reanchor_check
-
-                reanchor_check(self, reason)
+                # A drift re-anchor during a check is the check's own write,
+                # not a counted re-sync; a blind one still counts.
+                self._core_linked_request_dot_write("check" if reason == "reanchor" else reason, check=True)
                 return
             self._core_linked_request_dot_write(reason)
 

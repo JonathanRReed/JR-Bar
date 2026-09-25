@@ -601,15 +601,39 @@ def test_check_sync_holds_both_devices_before_it_writes__and_3_more(rig: Rig) ->
         start_check(controller, {})
     assert busy.value.code == "busy" and "already running" in busy.value.message
 
-    # --- scenario: a_reanchor_during_the_check_writes_the_held_dot
+    # --- scenario: a_reanchor_during_the_check_writes_the_held_dot_on_the_write_worker
     """The Dot is held by the check, so the ordinary write path would
-    refuse the closed loop's re-anchor; the check writes it itself."""
-    from jrbar.linked_check import reanchor_check
+    refuse the closed loop's re-anchor; the check writes it itself -- on
+    the write worker, never inside the main thread's once-a-second tick,
+    where a Dot's USB stall of two seconds would freeze the app."""
+    link = controller._core_linked
+    inside_worker = [False]
+    run = controller._hardware_write_worker.submit
 
-    before = controller._core_linked.dot_write
-    reanchor_check(controller, "reanchor")
-    after = controller._core_linked.dot_write
+    def submit(command):
+        inside_worker[0] = True
+        try:
+            run(command)
+        finally:
+            inside_worker[0] = False
+
+    controller._hardware_write_worker = SimpleNamespace(submit=submit, discard_pending_prefix=lambda prefix: None)
+    dot_writes_in_worker: list[bool] = []
+    held_write = rig.dot_controller.sync_program
+
+    def dot_write(program, state, **kwargs):
+        dot_writes_in_worker.append(inside_worker[0])
+        return held_write(program, state, **kwargs)
+
+    rig.dot_controller.sync_program = dot_write
+    before = link.dot_write
+    link.read_due = lambda now: False
+    link.due = lambda **_kwargs: "reanchor"
+    controller._core_linked_sync_tick(time.monotonic())
+    after = link.dot_write
+    assert dot_writes_in_worker == [True]
     assert after is not before and after.reason == "check"
+    assert controller._core_held_preview_devices() == both
 
 
 def test_a_check_sync_the_strip_refuses_holds_nothing(rig: Rig) -> None:

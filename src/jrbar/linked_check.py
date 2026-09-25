@@ -23,6 +23,9 @@ from .linked_runtime import CHECK_SYNC_PROGRAM, CHECK_SYNC_SECONDS, LinkedEpoch
 
 _MIN_SECONDS = 10.0
 _MAX_SECONDS = 120.0
+#: The write-worker request that carries the closed loop's re-anchor while
+#: a check holds the Dot.
+CHECK_REANCHOR_IDENTITY = "linked-check-reanchor"
 
 
 def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
@@ -121,16 +124,15 @@ def _write_dot(runtime: Any, dot: Any, *, reason: str):
     return runtime._core_linked_write_dot(controller, plan, dot, LedDisplayState.IDLE, force=True, reason=reason)
 
 
-def reanchor_check(runtime: Any, reason: str) -> None:
-    """The closed loop's re-anchor during a check: the Dot is held by the
-    check, so the ordinary write path would refuse it; write it here."""
-    dot = runtime._core_linked_dot_device()
-    if dot is None:
-        return
+def reanchor_during_check(runtime: Any, dot: Any):
+    """The closed loop's re-anchor during a check, run on the write worker
+    (``core_runtime._core_linked_check_reanchor``): the Dot is held by the
+    check, so the ordinary write path would refuse it. The reason is the
+    one the loop queued with the request (``check``, or ``blind``)."""
     try:
-        _write_dot(runtime, dot, reason="check" if reason == "reanchor" else reason)
+        return _write_dot(runtime, dot, reason="check")
     except Exception:
-        return
+        return None
 
 
-__all__ = ["reanchor_check", "start_check"]
+__all__ = ["CHECK_REANCHOR_IDENTITY", "reanchor_during_check", "start_check"]
