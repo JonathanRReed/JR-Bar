@@ -260,9 +260,9 @@ final class ShelfUtilityModel {
     /// the scrubber wear it, OneNotch's artwork-coloured media. nil for
     /// no art, or art too grey to have a colour (the row stays white).
     private(set) var artworkTint: NSColor?
-    /// The cover the artwork and tint are for — the same cover resent
-    /// with a pause or a seek costs nothing.
-    @ObservationIgnored private var artworkSource: Data?
+    /// The print of the cover the artwork and tint are for — the same
+    /// cover resent with a pause or a seek costs nothing.
+    @ObservationIgnored private var artworkSource: ArtworkPrint?
     /// Where covers are decoded; shared with the island's strip.
     @ObservationIgnored var artworkStore: NotchArtworkStore = .shared
     /// A headless card (tests, render proofs) reads and decodes in the
@@ -272,15 +272,16 @@ final class ShelfUtilityModel {
     @ObservationIgnored var inlineReads = false
 
     private func noteArtwork(_ data: Data?) {
-        guard data != artworkSource else { return }
-        artworkSource = data
+        let print = ArtworkPrint(data)
+        guard print != artworkSource else { return }
+        artworkSource = print
         guard let data else {
             artwork = nil
             artworkTint = nil
             return
         }
         artworkStore.art(for: data, inline: inlineReads) { [weak self] art in
-            guard let self, self.artworkSource == data else { return }
+            guard let self, self.artworkSource == print else { return }
             self.artwork = art?.image
             self.artworkTint = art?.tint
         }

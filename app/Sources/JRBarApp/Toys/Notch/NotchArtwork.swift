@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage
 import ImageIO
+import JRBarCore
 
 /// Album art, decoded once per cover and off the main thread: a
 /// thumbnail just big enough for the card's 48-point artwork on a Retina
@@ -26,7 +27,7 @@ final class NotchArtworkStore {
     nonisolated static let thumbnailPixels = 96
     /// Covers kept decoded — the playing one and a few before it, so a
     /// skip back does not decode again.
-    static let cacheLimit = 4
+    nonisolated static let cacheLimit = 4
 
     /// How a cover is decoded. Runs on `queue`; the tests hand in a
     /// counter.
@@ -36,8 +37,11 @@ final class NotchArtworkStore {
     /// Decodes started — the tests' window on the cache.
     private(set) var decodes = 0
 
-    private var cache: [(data: Data, art: Art?)] = []
-    private var waiting: [(data: Data, waiters: [@MainActor (Art?) -> Void])] = []
+    /// Cache and waiting lists key on the cover's `ArtworkPrint`: the
+    /// helper resends the same cover on every media line, and a byte
+    /// compare of up to `maxArtworkBytes` per lookup was the cost.
+    private var cache: [(print: ArtworkPrint, art: Art?)] = []
+    private var waiting: [(print: ArtworkPrint, waiters: [@MainActor (Art?) -> Void])] = []
     private let inbox = Inbox()
 
     init(decode: @escaping @Sendable (Data) -> Art? = NotchArtworkStore.decodeCover) {
@@ -51,7 +55,8 @@ final class NotchArtworkStore {
     /// render proof) that draws in the same turn and has no frame to
     /// protect.
     func art(for data: Data, inline: Bool = false, _ done: @escaping @MainActor (Art?) -> Void) {
-        if let index = cache.firstIndex(where: { $0.data == data }) {
+        let print = ArtworkPrint(data)
+        if let index = cache.firstIndex(where: { $0.print == print }) {
             // Most recent last, so the oldest cover leaves first.
             let hit = cache.remove(at: index)
             cache.append(hit)
@@ -61,20 +66,20 @@ final class NotchArtworkStore {
         if inline {
             decodes += 1
             let art = decode(data)
-            remember(data, art)
+            remember(print, art)
             done(art)
             return
         }
-        if let index = waiting.firstIndex(where: { $0.data == data }) {
+        if let index = waiting.firstIndex(where: { $0.print == print }) {
             waiting[index].waiters.append(done)
             return
         }
-        waiting.append((data, [done]))
+        waiting.append((print, [done]))
         decodes += 1
         let decode = self.decode
         let inbox = self.inbox
         queue.async { [weak self] in
-            inbox.put(data, decode(data))
+            inbox.put(print, decode(data))
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated { self?.deliver() }
             }
@@ -84,16 +89,16 @@ final class NotchArtworkStore {
     /// Hands every finished decode to whoever waits for it — the main
     /// queue's next turn after a decode, or `flush`.
     func deliver() {
-        for (data, art) in inbox.take() {
-            remember(data, art)
-            guard let index = waiting.firstIndex(where: { $0.data == data }) else { continue }
+        for (print, art) in inbox.take() {
+            remember(print, art)
+            guard let index = waiting.firstIndex(where: { $0.print == print }) else { continue }
             let waiters = waiting.remove(at: index).waiters
             for waiter in waiters { waiter(art) }
         }
     }
 
-    private func remember(_ data: Data, _ art: Art?) {
-        cache.append((data, art))
+    private func remember(_ print: ArtworkPrint, _ art: Art?) {
+        cache.append((print, art))
         if cache.count > Self.cacheLimit { cache.removeFirst(cache.count - Self.cacheLimit) }
     }
 
@@ -128,13 +133,13 @@ final class NotchArtworkStore {
     /// Finished decodes on their way from the queue to the main thread.
     private final class Inbox: @unchecked Sendable {
         private let lock = NSLock()
-        private var done: [(Data, Art?)] = []
+        private var done: [(ArtworkPrint, Art?)] = []
 
-        func put(_ data: Data, _ art: Art?) {
-            lock.withLock { done.append((data, art)) }
+        func put(_ print: ArtworkPrint, _ art: Art?) {
+            lock.withLock { done.append((print, art)) }
         }
 
-        func take() -> [(Data, Art?)] {
+        func take() -> [(ArtworkPrint, Art?)] {
             lock.withLock {
                 defer { done = [] }
                 return done

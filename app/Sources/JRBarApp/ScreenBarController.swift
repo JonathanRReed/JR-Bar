@@ -255,7 +255,7 @@ final class ScreenBarController {
     /// meter is a different one.
     nonisolated static func sameWingSubject(_ a: ScreenBarWingSlot, _ b: ScreenBarWingSlot) -> Bool {
         a.provider == b.provider && a.symbol == b.symbol && a.visualizer == b.visualizer
-            && (a.artworkData != nil) == (b.artworkData != nil)
+            && (a.artwork != nil) == (b.artwork != nil)
             && (a.glyph != nil) == (b.glyph != nil) && a.markID == b.markID
     }
     /// The device notice holding a side, and when it lets go.

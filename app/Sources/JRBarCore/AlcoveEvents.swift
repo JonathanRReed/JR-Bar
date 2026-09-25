@@ -674,6 +674,17 @@ public struct AlcoveMedia: Equatable, Sendable {
         self.timestamp = timestamp
     }
 
+    /// The helper resends a track's cover with every line, so two media
+    /// compare by the cover's `ArtworkPrint` rather than by a byte-for-byte
+    /// walk of up to `maxArtworkBytes` per event.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.title == rhs.title && lhs.artist == rhs.artist && lhs.album == rhs.album
+            && lhs.playing == rhs.playing
+            && ArtworkPrint(lhs.artworkData) == ArtworkPrint(rhs.artworkData)
+            && lhs.bundleIdentifier == rhs.bundleIdentifier && lhs.duration == rhs.duration
+            && lhs.elapsed == rhs.elapsed && lhs.timestamp == rhs.timestamp
+    }
+
     /// The playhead as of `date`: the sampled `elapsed` advanced by
     /// wall-clock drift while playing (rate ≈ 1 — MediaRemote reports
     /// the nominal speed for scrub-rate players, which overstates a
@@ -768,6 +779,44 @@ public struct AlcoveMedia: Equatable, Sendable {
                            album: string("Album"),
                            playing: string("Player State") == "Playing",
                            bundleIdentifier: "com.apple.Music")
+    }
+}
+
+/// A cover's stand-in for byte equality: the byte count and a 64-bit
+/// mix of up to 64 bytes sampled at the head, the middle and the tail.
+/// The now-playing feed resends the same PNG/JPEG on every line — a
+/// pause, a seek, a poll — and comparing the payloads byte for byte ran
+/// a memcmp of up to `ShelfUtilityModel.maxArtworkBytes` on the main
+/// actor per event. Two covers that share the count and all three
+/// samples are close enough that mistaking them only holds a stale
+/// thumbnail one track too long; every real cover change differs in at
+/// least one of them.
+public struct ArtworkPrint: Equatable, Sendable {
+    public let count: Int
+    private let digest: UInt64
+
+    public init(_ data: Data) {
+        count = data.count
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325  // FNV-1a
+        data.withUnsafeBytes { raw in
+            func mix(_ bytes: some Sequence<UInt8>) {
+                for byte in bytes { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3 }
+            }
+            mix(raw.prefix(64))
+            if raw.count > 128 {
+                let mid = raw.count / 2
+                mix(raw[mid ..< min(mid + 64, raw.count)])
+            }
+            mix(raw.suffix(64))
+        }
+        digest = hash
+    }
+
+    /// nil for nil — `ArtworkPrint(a) == ArtworkPrint(b)` reads like the
+    /// `Data?` compare it replaces.
+    public init?(_ data: Data?) {
+        guard let data else { return nil }
+        self.init(data)
     }
 }
 

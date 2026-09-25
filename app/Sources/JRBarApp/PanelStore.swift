@@ -761,7 +761,7 @@ final class PanelStore {
         // in the quiet and otherwise spills to an unmetered right.
         let mediaArt: ScreenBarWingSlot? = media?.playing == true && media?.artworkData != nil
             ? ScreenBarWingSlot(text: media?.displayLine ?? "Playing",
-                                artworkData: media?.artworkData)
+                                artwork: media?.artworkData.map(ScreenBarWingSlot.Artwork.init))
             : nil
         let mediaViz: ScreenBarWingSlot? = media?.playing == true
             ? ScreenBarWingSlot(text: media?.displayLine ?? "Playing", visualizer: true)

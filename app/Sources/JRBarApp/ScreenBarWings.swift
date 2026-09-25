@@ -9,6 +9,24 @@ import SwiftUI
 /// bare glyph, a quota ring, or an SF symbol; `text` is the peek's and
 /// VoiceOver's copy, not the ear's face. `tone` is the state colour.
 struct ScreenBarWingSlot: Equatable {
+    /// The bytes a media ear draws, compared by `ArtworkPrint` — the feed
+    /// resends a cover on every line, and the wings' `==` used to walk
+    /// the whole payload per diff.
+    struct Artwork: Equatable {
+        let data: Data
+        let print: ArtworkPrint
+        init(_ data: Data) {
+            self.data = data
+            self.print = ArtworkPrint(data)
+        }
+        static func == (left: Self, right: Self) -> Bool { left.print == right.print }
+
+        /// The decoded cover: made once per print — the shared store's
+        /// own thumbnail — so a media ear under the live meter does not
+        /// decode the payload on every render.
+        var image: NSImage? { ScreenBarWingArtwork.shared.image(for: self) }
+    }
+
     enum Tone: Equatable {
         /// White on the black lobe — ambient information.
         case neutral
@@ -33,7 +51,7 @@ struct ScreenBarWingSlot: Equatable {
     /// The track's album art — a PNG/JPEG payload the mark shows as a
     /// rounded tile, Alcove's media-wing grammar: art on the left ear,
     /// the equalizer on the right. nil leaves the other marks to draw.
-    var artworkData: Data?
+    var artwork: Artwork?
     /// How long this ear's ask has waited, as a ring that fills on its
     /// own clock toward the loudest escalation stage. nil draws the bare
     /// glyph. Only the asking session's ear carries one.
@@ -62,7 +80,7 @@ struct ScreenBarWingSlot: Equatable {
     /// with neither still holds its claim with the lone resting dot.
     var hasMark: Bool {
         provider != nil || symbol != nil || meter != nil || visualizer
-            || artworkData != nil || askAge != nil || glyph != nil
+            || artwork != nil || askAge != nil || glyph != nil
     }
 
     /// Whether the slot carries lit privacy dots.
@@ -402,7 +420,7 @@ struct ScreenBarEarMarks: Equatable {
     static func apply(_ marks: ScreenBarEarMarks, to wings: ScreenBarWings) -> ScreenBarWings {
         var dressed = wings
         if let age = marks.askAge, var left = dressed.left, left.tone == .attention,
-           left.provider == age.provider, left.symbol == nil, left.artworkData == nil,
+           left.provider == age.provider, left.symbol == nil, left.artwork == nil,
            !left.visualizer, left.meter == nil {
             left.askAge = age
             dressed.left = left
@@ -410,7 +428,7 @@ struct ScreenBarEarMarks: Equatable {
         if let quiet = marks.quiet {
             let yields: Bool
             if let left = dressed.left {
-                yields = left.tone == .neutral && left.artworkData == nil && !left.visualizer
+                yields = left.tone == .neutral && left.artwork == nil && !left.visualizer
             } else {
                 yields = true
             }
@@ -566,7 +584,7 @@ struct ScreenBarWingsView: View {
         let swell = side == .left ? model.leftSwell : model.rightSwell
         let reach = swell ? Self.swellReach * (side == .left ? -1 : 1) : 0
         let mark = Group {
-            if let artwork = slot.artworkData, let image = NSImage(data: artwork) {
+            if let image = slot.artwork?.image {
                 // Album art — Alcove's media ear: a small rounded tile,
                 // the track's own face against the notch black.
                 Image(nsImage: image)
@@ -758,6 +776,35 @@ struct ScreenBarWingsView: View {
             Text(text)
                 .font(.system(size: size, weight: .semibold, design: .rounded))
                 .foregroundStyle(ink)
+        }
+    }
+}
+
+/// The ear's decoded covers, keyed on the payload's `ArtworkPrint`: the
+/// media feed resends the same cover on every line, and the wings diff
+/// and draw on every state push — the decode happens once a cover, kept
+/// beside the payload, bounded like `NotchArtworkStore`'s own.
+final class ScreenBarWingArtwork: @unchecked Sendable {
+    static let shared = ScreenBarWingArtwork()
+    private let lock = NSLock()
+    private var covers: [(print: ArtworkPrint, image: NSImage?)] = []
+
+    /// The decoded thumbnail for the slot's payload — the shared
+    /// store's own decode, so the cover decodes at cover size once, and
+    /// never the full bytes per render again.
+    func image(for artwork: ScreenBarWingSlot.Artwork) -> NSImage? {
+        lock.withLock {
+            if let index = covers.firstIndex(where: { $0.print == artwork.print }) {
+                let hit = covers.remove(at: index)
+                covers.append(hit)
+                return hit.image
+            }
+            let image = NotchArtworkStore.decodeCover(artwork.data)?.image
+            covers.append((artwork.print, image))
+            if covers.count > NotchArtworkStore.cacheLimit {
+                covers.removeFirst(covers.count - NotchArtworkStore.cacheLimit)
+            }
+            return image
         }
     }
 }
