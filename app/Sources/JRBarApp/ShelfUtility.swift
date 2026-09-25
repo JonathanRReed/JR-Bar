@@ -343,13 +343,18 @@ final class ShelfUtilityModel {
 
     /// The source app's display name for the card's identity line,
     /// resolved from the reported bundle id; nil stays unlabeled —
-    /// an unnamed source is not "Music".
+    /// an unnamed source is not "Music". Looked up once per player: the
+    /// row asks on every redraw.
     var sourceName: String? {
-        guard let bundle = media?.bundleIdentifier,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else {
-            return nil
+        guard let bundle = media?.bundleIdentifier else { return nil }
+        if let known = sourceNames[bundle] { return known }
+        let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle).map {
+            FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "")
         }
-        return FileManager.default.displayName(atPath: url.path)
-            .replacingOccurrences(of: ".app", with: "")
+        sourceNames[bundle] = .some(name)
+        return name
     }
+    /// Bundle id → display name, nil kept for a player LaunchServices
+    /// does not know.
+    @ObservationIgnored private var sourceNames: [String: String?] = [:]
 }
