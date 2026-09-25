@@ -31,7 +31,8 @@ def test_a_steady_climb_that_beats_the_reset_is_ahead__and_2_more() -> None:
     assert rate == pytest.approx(20.0) and used == len(rows)
     forecast = forecast_window(rows, window_id="five-hour", used_pct=rows[-1].used_pct, resets_at=NOW + 5 * HOUR, now=NOW)
     assert forecast["pace"] == "ahead"
-    assert forecast["exhausts_at"] == pytest.approx(NOW + 2 * HOUR, abs=1.0)
+    assert forecast["exhausts_at"] == pytest.approx(NOW + 2 * HOUR, abs=30.0)
+    assert forecast["exhausts_at"] % 60 == 0, "to the minute: it moves once a minute, not every frame"
     assert forecast["window_id"] == "five-hour" and forecast["remaining_pct"] == 40.0
     assert forecast["rate_pct_per_hour"] == pytest.approx(20.0, abs=0.01) and forecast["samples"] == len(rows)
 
@@ -62,7 +63,7 @@ def test_a_steady_climb_that_beats_the_reset_is_ahead__and_2_more() -> None:
 def test_exhausted_needs_no_history__and_2_more() -> None:
     # --- scenario: exhausted_needs_no_history
     forecast = forecast_window([], window_id="five-hour", used_pct=99.6, resets_at=NOW + HOUR, now=NOW)
-    assert forecast["pace"] == "exhausted" and forecast["exhausts_at"] == NOW and forecast["remaining_pct"] == 0.4
+    assert forecast["pace"] == "exhausted" and forecast["exhausts_at"] == pytest.approx(NOW, abs=30.0) and forecast["remaining_pct"] == 0.4
     assert forecast_window([], window_id="five-hour", used_pct=100.0, resets_at=None, now=NOW)["pace"] == "exhausted"
     # A falling line into an exhausted window is still exhausted.
     assert forecast_window(climb(99.0, 1.0), window_id="five-hour", used_pct=99.9, resets_at=None, now=NOW)["pace"] == "exhausted"
@@ -148,7 +149,7 @@ def test_buffer_records_on_change_or_heartbeat_and_stays_bounded__and_2_more(tmp
     assert loaded.samples("claude", "five-hour") == buffer.samples("claude", "five-hour")
     assert loaded.path == path
     forecast = loaded.forecast("claude", "five-hour", used_pct=70.0, resets_at=NOW + 5 * HOUR, now=NOW)
-    assert forecast["pace"] == "ahead" and forecast["exhausts_at"] == pytest.approx(NOW + HOUR, abs=1.0)
+    assert forecast["pace"] == "ahead" and forecast["exhausts_at"] == pytest.approx(NOW + HOUR, abs=30.0)
     # A window with no samples at all is guarded, not null.
     guarded = loaded.forecast("claude", None, used_pct=60.0, resets_at=None, now=NOW)
     assert guarded["pace"] == "guarded" and guarded["reason"] == "insufficient_samples"

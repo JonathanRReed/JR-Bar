@@ -1573,6 +1573,9 @@ def build_state_document(
                     "heard_age_seconds": bounded_duration(
                         getattr(intake, "heard_age_seconds", None), digits=None
                     ),
+                    # The moment itself: stable between events, so a client
+                    # ages it on its own clock.
+                    "heard_at": epoch(getattr(intake, "event_accepted_at", None)),
                 }
                 for intake in (getattr(intake_report, "providers", ()) or ())
             },
