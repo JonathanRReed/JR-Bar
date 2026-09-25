@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import re
 import threading
 import time
+import weakref
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -139,6 +141,10 @@ STATUS_RETENTION_SECONDS = 24 * 3600.0
 # ask transition (a session starts or ends, an ask opens or resolves) is
 # written at once.
 LATEST_STATE_WRITE_INTERVAL_SECONDS = 30.0
+# A lifecycle edge still lands fast -- just coalesced: a burst of
+# transitions writes at most once a second instead of once an event,
+# and a quiet transition still writes at once.
+LATEST_STATE_TRANSITION_FLUSH_SECONDS = 1.0
 # Transcript detail is capped before any UI surface (T3 caps at 160 --
 # long tool output in a menu row is noise at best, a leak at worst).
 DETAIL_TEXT_CAP = 160
@@ -1222,7 +1228,19 @@ class LiveAgentMonitor(LiveSessionMemory):
             schedule_latest_state_flush or _start_latest_state_flush_timer
         )
         self._latest_state_flush_timer: _CancellableFlush | None = None
+        self._latest_state_flush_at: float | None = None
         self.acknowledged_requests_supplier = acknowledged_requests_supplier
+        # A deferred write the daemon timer never reached is still owed at
+        # exit -- the trailing snapshot is the one a crash-restore reads.
+        # Weak so a torn-down monitor in a shared test process is freed.
+        monitor_ref = weakref.ref(self)
+
+        def _exit_flush() -> None:
+            monitor = monitor_ref()
+            if monitor is not None:
+                monitor._flush_latest_state_at_exit()
+
+        atexit.register(_exit_flush)
         self.load_latest_state()
 
     def ingest_record(self, record: HookEvent) -> None:
@@ -1623,40 +1641,63 @@ class LiveAgentMonitor(LiveSessionMemory):
         """The trailing write a change deferred by the interval armed."""
         self._write_latest_state(force=False, trailing=True)
 
+    def _flush_latest_state_at_exit(self) -> None:
+        """Interpreter exit: the daemon flush timer dies unheard, so a
+        change still owed -- or already mid-schedule -- writes now instead
+        of landing late or not at all. A path already gone is not news."""
+        try:
+            self._write_latest_state(force=True)
+        except Exception:
+            pass
+
     def _write_latest_state(self, *, force: bool, trailing: bool = False) -> None:
         if self.latest_state_path is None:
             return
         with self._latest_state_write_lock:
             if trailing:
                 self._latest_state_flush_timer = None
+                self._latest_state_flush_at = None
             now_monotonic = time.monotonic()
             if force:
                 pending = self._latest_state_flush_timer
                 self._latest_state_flush_timer = None
+                self._latest_state_flush_at = None
                 if pending is not None:
                     pending.cancel()
             else:
                 if not self._latest_state_dirty:
                     return
                 elapsed = now_monotonic - self._latest_state_written_at
-                if elapsed < LATEST_STATE_WRITE_INTERVAL_SECONDS and not self._latest_state_transition:
+                floor = (
+                    LATEST_STATE_TRANSITION_FLUSH_SECONDS
+                    if self._latest_state_transition
+                    else LATEST_STATE_WRITE_INTERVAL_SECONDS
+                )
+                if elapsed < floor:
                     # Without this the last change of a burst -- often an
                     # agent's Stop -- sat unwritten until the next hook
                     # event, which can be hours away.
-                    if self._latest_state_flush_timer is None:
-                        delay = min(
-                            LATEST_STATE_WRITE_INTERVAL_SECONDS,
-                            max(0.0, LATEST_STATE_WRITE_INTERVAL_SECONDS - elapsed),
-                        )
+                    delay = max(0.0, floor - elapsed)
+                    flush_at = self._latest_state_flush_at
+                    if self._latest_state_flush_timer is None or (
+                        flush_at is not None and flush_at > now_monotonic + delay + 0.05
+                    ):
+                        pending = self._latest_state_flush_timer
+                        self._latest_state_flush_timer = None
+                        self._latest_state_flush_at = None
+                        if pending is not None:
+                            pending.cancel()
                         try:
                             self._latest_state_flush_timer = (
                                 self._schedule_latest_state_flush(
                                     delay, self._flush_deferred_latest_state
                                 )
                             )
+                            self._latest_state_flush_at = now_monotonic + delay
                         except RuntimeError:
                             # No thread to spare: the next event retries.
                             self._latest_state_flush_timer = None
+                            self._latest_state_flush_at = None
                     return
             with self.lock:
                 state = self.operator_state
