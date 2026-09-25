@@ -112,9 +112,9 @@ enum DataHoarderProviders {
     /// error logs, so the archive holds a few failures and none of the
     /// ordinary requests. The sentence and the rule belong to the daemon
     /// lane: at integration this returns
-    /// `CLIProxyLogParser.requestLogNote(config: config)` (X18). Until
-    /// then there is no note.
-    static func requestLogNote(config: String?) -> String? {
+    /// `CLIProxyLogParser.requestLogNote(config: readConfig())` (X18).
+    /// Until then there is no note, and the config is never read.
+    static func requestLogNote(readConfig: () -> String? = { cliProxyConfig() }) -> String? {
         nil
     }
 
