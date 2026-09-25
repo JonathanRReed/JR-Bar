@@ -339,11 +339,13 @@ struct AquariumSteeringTests {
             b.lastTurnEnd = 10
             var t = 10.0
             var began: Double?
+            var fastestWaiting = 0.0
             for _ in 0..<60 {
                 t += 1.0 / 30
                 AquariumSteering.step(&b, dt: 1.0 / 30, t: t, seed: 5,
                                       context: SwimContext(bounds: Self.tank, food: (0.3, 0.5),
                                                            startled: startled))
+                if b.turn == nil, began == nil { fastestWaiting = max(fastestWaiting, b.throttle) }
                 if let turn = b.turn, began == nil {
                     began = turn.start
                     #expect(turn.kind == kind)
@@ -351,6 +353,14 @@ struct AquariumSteeringTests {
                 }
             }
             #expect(began != nil, "the food turned it")
+            // While it waited its short beat it eased off, food or no:
+            // it never darted away from the pellet, and a scare kept its
+            // dash.
+            if startled {
+                #expect(fastestWaiting > 1, "a scare darts even while it waits")
+            } else {
+                #expect(fastestWaiting <= 1 + 1e-9, "it darted \(fastestWaiting)× away from the food")
+            }
             let start = began ?? 99
             #expect(start - 10 >= AquariumSteering.urgentCooldown - 1e-9)
             #expect(start - 10 <= AquariumSteering.urgentCooldown + 1.0 / 30 + 1e-9,

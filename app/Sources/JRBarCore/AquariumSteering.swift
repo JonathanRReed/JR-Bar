@@ -453,9 +453,15 @@ public enum AquariumSteering {
             }
             if !cooled {
                 // Waiting it out: level off and ease back, never
-                // rotating through vertical.
+                // rotating through vertical — and never darting the
+                // wrong way while food behind it waits its short beat.
+                // Only a scare keeps its dash.
                 climbRate = 2 * tempo * (0 - body.climb)
-                if kind == .wall { throttleTarget = min(throttleTarget, 0.15) }
+                if kind == .wall {
+                    throttleTarget = min(throttleTarget, 0.15)
+                } else if kind != .startle {
+                    throttleTarget = min(throttleTarget, 0.3)
+                }
             }
         } else {
             body.backFor = 0
