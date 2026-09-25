@@ -557,7 +557,7 @@ struct ConfettiPresentation {
 /// which moment — a milestone and "All caught up" get their own style
 /// when Moment styles is on. Resolved when it's asked for, so a held
 /// burst replays in the colour it was fired in.
-struct ConfettiShot {
+struct ConfettiShot: Equatable, Sendable {
     enum Moment: Equatable, Sendable { case plain, milestone, allClear }
 
     var provider: String?

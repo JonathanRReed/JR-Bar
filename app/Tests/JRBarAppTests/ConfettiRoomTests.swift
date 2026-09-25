@@ -283,6 +283,37 @@ struct ConfettiRoomTests {
         #expect(plan.look.slots.count == ConfettiSeason.valentine.palette.slots.count)
     }
 
+    /// The card re-reads the daemon's state with every document; the
+    /// preview only redraws when what it shows changes.
+    @Test("the card's preview holds still through a document that changes nothing it shows")
+    func previewIgnoresUnrelatedDocuments() {
+        let (toy, store, _) = makeToy()
+        store.focusedProvider = { "claude" }
+        store.core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "a", provider: "claude", mode: "tool_running", lifecycle: "active"),
+        ])))
+        let before = ConfettiPreviewTile(toy: toy)
+        #expect(before.everyone.map(\.id) == ["claude"])
+        // The session moves on and a new one idles: nothing drawn changes.
+        store.core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active"),
+            CoreSession(id: "b", provider: "codex", mode: "idle_ready", lifecycle: "active"),
+        ])))
+        #expect(ConfettiPreviewTile(toy: toy) == before)
+        // Codex starts working: Everyone gains a colour.
+        store.core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active"),
+            CoreSession(id: "b", provider: "codex", mode: "tool_running", lifecycle: "active"),
+        ])))
+        let working = ConfettiPreviewTile(toy: toy)
+        #expect(working != before)
+        store.focusedProvider = { "codex" }
+        #expect(ConfettiPreviewTile(toy: toy) != working, "the focused colour changed")
+        store.focusedProvider = { "claude" }
+        store.state.confetti.palette = .party
+        #expect(ConfettiPreviewTile(toy: toy) != working, "a pick changed")
+    }
+
     @Test("the pop goes through Settings › Sounds, at its volume")
     func popFollowsTheSoundsVolume() throws {
         let (toy, store, _) = makeToy()

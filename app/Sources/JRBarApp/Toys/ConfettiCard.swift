@@ -25,8 +25,8 @@ private struct ConfettiLookSection: View {
 
     var body: some View {
         CardSectionHeader("Look")
-        ConfettiPreviewTile(settings: toy.settings, shot: toy.shot(for: toy.store?.focusedProvider()),
-                            everyone: toy.workingProviders())
+        ConfettiPreviewTile(toy: toy)
+            .equatable()
             .frame(height: 132)
             .padding(.vertical, 4)
 
@@ -320,8 +320,10 @@ private struct ConfettiMannersSection: View {
 /// menu bar, notch and desktop — with the burst the settings would
 /// throw, in the focused session's colours. It plays one burst (30 fps,
 /// about two seconds) whenever a pick changes or the pointer comes over
-/// it, then holds still on a frame mid-air, so the card costs nothing
-/// while it's only being read.
+/// it, then holds still on a frame mid-air. The card above it re-reads
+/// the daemon's state with every document, but the tile is only redrawn
+/// when what it shows changes (`==`), so an open card that's only being
+/// read doesn't rebuild the burst.
 struct ConfettiPreviewTile: View {
     let settings: ConfettiSettings
     let shot: ConfettiShot
@@ -378,6 +380,23 @@ struct ConfettiPreviewTile: View {
             return Self.restingFrame
         }
         return elapsed
+    }
+}
+
+extension ConfettiPreviewTile: Equatable {
+    /// The tile as the card shows it: the stored settings, the focused
+    /// session's colour and whoever is working now.
+    init(toy: ConfettiToy) {
+        self.init(settings: toy.settings, shot: toy.shot(for: toy.store?.focusedProvider()),
+                  everyone: toy.workingProviders())
+    }
+
+    /// The same picture: the same settings, the same burst colour and
+    /// glyph, and the same working providers in the same colours.
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.settings == b.settings && a.shot == b.shot
+            && a.everyone.map(\.id) == b.everyone.map(\.id)
+            && a.everyone.map(\.color) == b.everyone.map(\.color)
     }
 }
 
