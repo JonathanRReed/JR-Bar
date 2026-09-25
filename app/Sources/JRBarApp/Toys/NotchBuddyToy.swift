@@ -1498,10 +1498,10 @@ private struct BuddyControlsView: View {
 
     /// Each character's column: its tile and the air to the next, wide
     /// enough for "Mushroom" at full size.
-    static let rosterCell: CGFloat = 48
+    private static let rosterCell: CGFloat = 48
     private static let rosterTile: CGFloat = 40
     /// The first tile's edge lines up with the labels above it.
-    static let rosterInset: CGFloat = (rosterCell - rosterTile) / 2
+    private static let rosterInset: CGFloat = (rosterCell - rosterTile) / 2
 
     /// One character on a tile of its own, half again the docked size,
     /// with its name under it; the one living in the notch sits lit.
