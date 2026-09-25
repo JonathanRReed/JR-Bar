@@ -587,7 +587,7 @@ final class DockEnhanceController {
                 return
             }
             quitTargetsStamp = (cached.at, list.frame)
-            let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+            let running = RunningApps.shared.bundleIDs
             targets = Self.quickQuitTargets(
                 cached.items.map { ($0.frame, $0.kind, $0.url.flatMap(bundleID(forTile:))) },
                 running: running)

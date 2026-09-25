@@ -364,15 +364,15 @@ struct DockUtilityControls: View {
                 }
             }
             Menu {
-                ForEach(filterableApps, id: \.bundleIdentifier) { app in
-                    Button(app.localizedName ?? "App") {
-                        exclusions.wrappedValue.append(app.bundleIdentifier!)
+                ForEach(filterableApps, id: \.bundleID) { app in
+                    Button(app.name ?? "App") {
+                        exclusions.wrappedValue.append(app.bundleID!)
                     }
                 }
                 // Apps that aren't running right now — an exclusion
                 // shouldn't have to wait for the app to be open.
                 let others = DockInstalledApps.notListed(installed, excluded: exclusions.wrappedValue,
-                                                         running: filterableApps.compactMap(\.bundleIdentifier))
+                                                         running: filterableApps.compactMap(\.bundleID))
                 if !others.isEmpty {
                     Divider()
                     Menu("Other Apps") {
@@ -560,12 +560,17 @@ struct DockUtilityControls: View {
     }
 
     /// Running regular apps not already excluded — the add menu's pool.
-    private var filterableApps: [NSRunningApplication] {
+    /// Read from the `RunningApps` index: the card's body asks for it
+    /// three times a render, and asking each app was a LaunchServices
+    /// round trip apiece.
+    private var filterableApps: [RunningApp] {
         let excluded = Set(exclusions.wrappedValue)
-        return NSWorkspace.shared.runningApplications
-            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != nil
-                && !excluded.contains($0.bundleIdentifier!) }
-            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+        return RunningApps.shared.apps
+            .filter { app in
+                guard app.policy == .regular, let id = app.bundleID else { return false }
+                return !excluded.contains(id)
+            }
+            .sorted { ($0.name ?? "") < ($1.name ?? "") }
     }
 
     /// What an excluded row reads: the running app's name, else the

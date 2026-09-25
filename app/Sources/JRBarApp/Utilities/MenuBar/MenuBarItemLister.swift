@@ -426,8 +426,8 @@ enum MenuBarItemLister {
     static func list() -> [MenuBarItem] {
         if axTrusted() { return axItems }
         var bundleIDs: [pid_t: String] = [:]
-        for app in NSWorkspace.shared.runningApplications {
-            if let id = app.bundleIdentifier { bundleIDs[app.processIdentifier] = id }
+        for app in RunningApps.shared.apps {
+            if let id = app.bundleID { bundleIDs[app.pid] = id }
         }
         return items(from: windowInfos(), ownPID: ProcessInfo.processInfo.processIdentifier,
                      rows: menuBarRows(), bundleIDs: bundleIDs)

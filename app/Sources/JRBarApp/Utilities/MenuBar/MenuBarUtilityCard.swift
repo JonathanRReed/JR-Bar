@@ -903,11 +903,12 @@ private struct MenuBarWhileRulesControls: View {
     }
 
     /// Running regular apps, by name — the picker instead of a bundle id.
+    /// Read from the `RunningApps` index, not asked of each app per render.
     private static func runningApps() -> [(id: String, name: String)] {
-        NSWorkspace.shared.runningApplications
-            .filter { $0.activationPolicy != .prohibited }
+        RunningApps.shared.apps
+            .filter { $0.policy != .prohibited }
             .compactMap { app in
-                app.bundleIdentifier.map { ($0, app.localizedName ?? $0) }
+                app.bundleID.map { ($0, app.name ?? $0) }
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }

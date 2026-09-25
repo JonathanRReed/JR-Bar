@@ -434,9 +434,10 @@ extension MenuBarUtility {
 
     /// The bundle identifiers of every running app — the allowlist's
     /// universe. An app that launches later is re-applied for by the
-    /// workspace observers.
+    /// workspace observers. Read from the `RunningApps` index: a set it
+    /// keeps, not a LaunchServices round trip per app.
     static func readRunningBundleIDs() -> Set<String> {
-        var ids = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        var ids = RunningApps.shared.bundleIDs
         // Ourselves, always: the workspace list can omit the current
         // process, and an allowlist without us concealed our own icon.
         if let own = Bundle.main.bundleIdentifier { ids.insert(own) }
