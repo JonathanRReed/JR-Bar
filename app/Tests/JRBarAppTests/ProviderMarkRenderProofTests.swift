@@ -43,7 +43,39 @@ struct ProviderMarkRenderProofTests {
                       "provider-marks-\(name)")
         }
         try write(ProviderMarkSurfaces(providers: Self.providers), "provider-marks-surfaces")
+        try write(VStack(spacing: 0) {
+            ForEach(Self.providers, id: \.self) { provider in Self.ears(provider) }
+        }, "provider-marks-screenbar-ears")
         StatusItemController.renderStyles(to: dir.appendingPathComponent("provider-marks-menubar").path)
+    }
+
+    /// The Screen Bar's own ears round a 185 pt bezel, as the notch proof
+    /// draws them: the bare 13 pt mark on the left, the 16 pt quota ring
+    /// with its 8 pt mark on the right.
+    static func ears(_ provider: String) -> some View {
+        let size = NSSize(width: 500, height: 48)
+        let depth: CGFloat = 32 + ScreenBarGeometry.wingEarDrop
+        let leftRect = CGRect(x: 157.5 - 36, y: size.height - depth, width: 36, height: depth)
+        let rightRect = CGRect(x: 342.5, y: size.height - depth, width: 36, height: depth)
+        let model = ScreenBarWingsModel()
+        model.viewHeight = size.height
+        model.notchCorner = NotchProfile.standardCornerRadius
+        model.tray = CGRect(x: leftRect.minX, y: size.height - depth, width: rightRect.maxX - leftRect.minX,
+                            height: depth)
+        model.left = (ScreenBarWingSlot(text: "Working", provider: provider), leftRect)
+        model.right = (ScreenBarWingSlot(text: "72%", provider: provider, meter: 0.72), rightRect)
+        return ZStack(alignment: .top) {
+            Color(white: 0.24)
+            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 8, bottomTrailingRadius: 8,
+                                   topTrailingRadius: 0, style: .continuous)
+                .fill(.black)
+                .frame(width: 185, height: 32)
+            ScreenBarWingsView(model: model)
+            Text(ProviderStyle.style(for: provider).name).font(.system(size: 10)).foregroundStyle(.white)
+                .frame(width: 185, height: 32)
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.colorScheme, .dark)
     }
 }
 
