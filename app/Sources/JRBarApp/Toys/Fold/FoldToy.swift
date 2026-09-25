@@ -1449,10 +1449,6 @@ final class FoldToy: Toy {
         endSimulate()
     }
 
-    /// The angle the card's lid glyph draws — the simulation while one
-    /// plays, else the sensor.
-    var glyphAngle: Double? { measuredAngle }
-
     func endSimulate() {
         if tryingIt {
             // A hand on the slider ends the demo; the slider's own
@@ -1479,9 +1475,8 @@ final class FoldToy: Toy {
 
     /// "104°" while anything is driving the angle, "no sensor" on a Mac
     /// without the hinge, "—" for a sensor that has not read yet (the
-    /// poll only runs while the toy is on).
-    var angleText: String { Self.angleText(measuredAngle, sensorAvailable: sensor.available) }
-
+    /// poll only runs while the toy is on). The card shows it for
+    /// `cardAngle`.
     nonisolated static func angleText(_ angle: Double?, sensorAvailable: Bool) -> String {
         if let angle { return "\(Int(angle.rounded()))°" }
         return sensorAvailable ? "—" : "no sensor"
