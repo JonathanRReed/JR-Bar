@@ -99,12 +99,17 @@ final class ShelfCalendarModel {
         scheduleRefresh()
     }
 
-    /// One store for the glance's reads, made and used on `readQueue`
-    /// only (`fetchUpcoming` runs nowhere else).
+    /// One store for the glance's reads, made and used on a model's
+    /// `readQueue` only (`fetchUpcoming` runs nowhere else). Two cards
+    /// fetch on two queues, so the lock serializes them against the
+    /// shared store.
     nonisolated(unsafe) private static var readStore: EKEventStore?
+    nonisolated private static let readStoreLock = NSLock()
 
     /// The timed events in the lookahead window from `now`, projected.
     nonisolated static func fetchUpcoming(from now: Date) -> [Event] {
+        readStoreLock.lock()
+        defer { readStoreLock.unlock() }
         let store = readStore ?? EKEventStore()
         readStore = store
         let predicate = store.predicateForEvents(withStart: now, end: now.addingTimeInterval(lookahead),

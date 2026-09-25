@@ -763,7 +763,7 @@ final class NotchToy: Toy {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.prewarmWork = nil
-                guard self.hoverHeld, self.activeCapsule == nil, self.activeOverlay == nil else { return }
+                guard self.hoverHeld else { return }
                 self.prewarmCard()
             }
         }
@@ -774,7 +774,8 @@ final class NotchToy: Toy {
     /// Feed the card and measure it grown, ahead of the grow. Internal
     /// so the perf harness and the tests can run it without a pointer.
     func prewarmCard() {
-        guard isDrawingIsland, !islandExpanded, let island else { return }
+        guard isDrawingIsland, !islandExpanded, let island,
+              activeCapsule == nil, activeOverlay == nil else { return }
         feedCard()
         island.prewarmExpandedCard(width: expandedCardWidth)
     }
@@ -2104,6 +2105,7 @@ final class NotchToy: Toy {
             _ = displayVersion
             _ = cardModel.mirror.state    // the lens going live grows the card to hold it
             _ = cardModel.page            // a page turn re-measures the card
+            _ = cardModel.privacyLine     // the off-main privacy read lands after the grow; re-measure
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.runtimeEnabled else { return }
