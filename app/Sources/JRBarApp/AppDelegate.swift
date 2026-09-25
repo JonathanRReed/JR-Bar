@@ -118,12 +118,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         source.resume()
         terminationSignal = source
 
+        let core = CoreModel()
+        let store = PanelStore(core: core, screenBarShown: appState.showScreenBar)
+        // The daemon first. It takes seconds to be ready, and every
+        // surface below is built in the meantime rather than before it
+        // is spawned: that construction used to hold the spawn back a
+        // second after exec. Nothing the supervisor reports is handled
+        // before this launch returns (its callbacks hop to the main
+        // actor), so the wiring below is in place by then.
+        let bundledCore = startCoreSupervision(core: core, store: store)
         let statusItem = StatusItemController()
         let screenBar = ScreenBarController()
         let feed = LEDFeed()
         let monitor = AgentStateMonitor()
-        let core = CoreModel()
-        let store = PanelStore(core: core, screenBarShown: appState.showScreenBar)
         let panel = PanelController(store: store)
         let settingsStore = SettingsStore(core: core)
         let settingsWindow = SettingsWindowController(store: settingsStore)
@@ -760,19 +767,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         observeCore()
         watchSocketDirectory(core.socketPath)
 
-        // Core supervision: with JRBAR_CORE_EXEC set, the daemon is our
-        // child and we keep it alive. A packaged bundle carries its own
-        // daemon under Contents/Helpers and supervises that. Otherwise we
-        // connect to whatever listens on the socket (the dev LaunchAgents).
-        if let command = ProcessInfo.processInfo.environment["JRBAR_CORE_EXEC"], !command.isEmpty {
-            if let supervisor = CoreSupervisor(commandLine: command) {
-                attachSupervisor(supervisor, describedAs: "`\(command)`", core: core, store: store)
-            }
-        } else if let bundled = CoreSupervisor.bundledCore(in: Bundle.main) {
-            attachSupervisor(CoreSupervisor(bundled: bundled), describedAs: "the bundled daemon (\(bundled.buildStamp))",
-                             core: core, store: store)
-            completeFirstRun(with: bundled, core: core)
-        }
+        // The supervised daemon started at the top of this launch; the
+        // first run's hook install and login item wait for the wiring.
+        if let bundledCore { completeFirstRun(with: bundledCore, core: core) }
 
         let shown = appState.showScreenBar
         ScreenBarInteraction.diag("didFinishLaunching shown=\(shown)")
@@ -967,6 +964,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// the refresh-timing flight recorder, the errors — as `<private>`,
     /// and the in-app log already shows the same text on this Mac.
     nonisolated private static let coreLog = Logger(subsystem: "devin.jrbar", category: "core")
+
+    /// Core supervision: with JRBAR_CORE_EXEC set, the daemon is our
+    /// child and we keep it alive. A packaged bundle carries its own
+    /// daemon under Contents/Helpers and supervises that. Otherwise we
+    /// connect to whatever listens on the socket (the dev LaunchAgents).
+    /// Returns the bundled daemon when that is the one started, for the
+    /// first run's hook install.
+    private func startCoreSupervision(core: CoreModel, store: PanelStore) -> CoreSupervisor.BundledCore? {
+        if let command = ProcessInfo.processInfo.environment["JRBAR_CORE_EXEC"], !command.isEmpty {
+            if let supervisor = CoreSupervisor(commandLine: command) {
+                attachSupervisor(supervisor, describedAs: "`\(command)`", core: core, store: store)
+            }
+            return nil
+        }
+        guard let bundled = CoreSupervisor.bundledCore(in: Bundle.main) else { return nil }
+        attachSupervisor(CoreSupervisor(bundled: bundled), describedAs: "the bundled daemon (\(bundled.buildStamp))",
+                         core: core, store: store)
+        return bundled
+    }
 
     private func attachSupervisor(_ supervisor: CoreSupervisor, describedAs description: String,
                                   core: CoreModel, store: PanelStore) {
