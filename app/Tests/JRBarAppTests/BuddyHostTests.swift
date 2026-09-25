@@ -60,8 +60,11 @@ struct BuddyHostTests {
     }
 
     /// The panel re-centres on its parked spot at every present, so a
-    /// row that came and went with "Caption on hover" moved the pet.
-    @Test func captionToggleKeepsTheFloatingPanelsSize() {
+    /// row that came and went with "Caption on hover" moved the pet. The
+    /// row keeps its height either way; off, it keeps no width, so the
+    /// panel is the pet alone and takes no clicks beside it, however long
+    /// the line it would have shown.
+    @Test func captionToggleKeepsTheFloatingPanelsHeight() {
         let core = CoreModel()
         let store = ToysStore(core: core, settings: SettingsStore(core: core),
                               state: ToysState(), cardModel: makeTestCardModel())
@@ -72,11 +75,19 @@ struct BuddyHostTests {
         toy.isOn = true
         toy.parkFree(at: CGPoint(x: 120, y: 300))
         store.state.notchBuddy.scale = 2
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "long", provider: "claude",
+                        label: "a very long session name that fills the caption row right to its edge",
+                        mode: "tool_running", lifecycle: "active"),
+        ])))
+        #expect(toy.caption().count > 60)
         let shown = NSHostingView(rootView: BuddyPanelView(model: floating)).fittingSize
         toy.toggleCaption()
         #expect(toy.showsCaption == false)
         let hidden = NSHostingView(rootView: BuddyPanelView(model: floating)).fittingSize
-        #expect(shown == hidden)
+        #expect(shown.height == hidden.height)
         #expect(shown.height > 0)
+        #expect(shown.width >= 150, "on, the row lays out the whole line for the hover")
+        #expect(hidden.width <= 36 * 2 + 0.5, "off, the panel is the pet and its padding, no wider")
     }
 }

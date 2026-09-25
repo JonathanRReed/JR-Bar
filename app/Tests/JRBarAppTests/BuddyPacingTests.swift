@@ -64,6 +64,39 @@ struct BuddyPacingTests {
         _ = store
     }
 
+    /// Waits, bounded, for the toy to follow the last document: the
+    /// follow hops onto the main actor after the document lands.
+    private func followed(_ toy: NotchBuddyToy, past version: Int) async {
+        var tries = 0
+        while toy.digestVersion == version, tries < 2_000 {
+            await Task.yield()
+            tries += 1
+        }
+    }
+
+    @Test("falling asleep holds the full rate while the mood hands over")
+    func fallingAsleepIsLively() async throws {
+        let (toy, store, core) = makeToy()
+        _ = toy.sessionDigest()     // arms the document observation
+        var version = toy.digestVersion
+        core.apply(.state(CoreState(generation: 1, sessions: [working("a")])))
+        await followed(toy, past: version)
+        #expect(toy.summary(at: Date()).mood == .pacing)
+        #expect(toy.livelyUntil == nil, "waking needs no beat: awake is the full rate already")
+
+        version = toy.digestVersion
+        let asleepAt = Date()
+        core.apply(.state(CoreState(generation: 2, sessions: [])))
+        await followed(toy, past: version)
+        #expect(toy.digestVersion > version)
+        #expect(toy.summary(at: Date()).mood == .asleep)
+        let lively = try #require(toy.livelyUntil)
+        #expect(lively >= asleepAt.addingTimeInterval(BuddyHandoff.duration),
+                "the handoff into sleep plays at the full rate")
+        #expect(toy.frameInterval(scale: 1) == NotchBuddyToy.activeInterval)
+        _ = store
+    }
+
     @Test("an unchanged roster reuses the digest")
     func digestIsCached() {
         let (toy, store, core) = makeToy()

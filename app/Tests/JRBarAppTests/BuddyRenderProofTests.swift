@@ -385,7 +385,7 @@ struct BuddyRenderProofTests {
                     ForEach(ticks.indices, id: \.self) { i in
                         placed(body(), NotchBuddyView.presence(tuck: ticks[i], arrival: nil, docked: true,
                                                               scale: 3, reduceMotion: false), scale: 3)
-                            .frame(width: 66, height: 66).background(tile.fill(ground))
+                            .frame(width: 88, height: 66).background(tile.fill(ground))
                     }
                 }
                 Text("Out of the notch at 2× · 0 → \(Int(BuddyArrival.duration * 1000)) ms")
@@ -396,7 +396,7 @@ struct BuddyRenderProofTests {
                                                    age: ticks[i] * BuddyArrival.duration)
                         placed(body(), NotchBuddyView.presence(tuck: nil, arrival: arrival, docked: false,
                                                               scale: 2, reduceMotion: false), scale: 2)
-                            .frame(width: 66, height: 66)
+                            .frame(width: 88, height: 66)
                             .overlay {
                                 Circle().stroke(Color.secondary.opacity(0.6),
                                                 style: StrokeStyle(lineWidth: 0.6, dash: [2, 2]))
@@ -414,7 +414,7 @@ struct BuddyRenderProofTests {
                                     handoff: BuddyHandoff(from: .pacing, age: age)),
                                NotchBuddyView.presence(tuck: nil, arrival: nil, docked: false, scale: 3,
                                                        reduceMotion: false), scale: 3)
-                            .frame(width: 66, height: 66)
+                            .frame(width: 88, height: 66)
                             .background(alignment: .center) {
                                 Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 0.5)
                             }
@@ -426,7 +426,7 @@ struct BuddyRenderProofTests {
                 HStack(spacing: 6) {
                     ForEach(patrol.indices, id: \.self) { i in
                         placed(body(stride: patrol[i]), still, scale: 3)
-                            .frame(width: 66, height: 66)
+                            .frame(width: 88, height: 66)
                             .background(alignment: .center) {
                                 Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 0.5)
                             }
@@ -440,7 +440,7 @@ struct BuddyRenderProofTests {
                         let second = BuddyHandoff(from: .gathering, age: ticks[i] * BuddyHandoff.duration,
                                                   blend: carried)
                         placed(body(handoff: second), still, scale: 3)
-                            .frame(width: 66, height: 66)
+                            .frame(width: 88, height: 66)
                             .background(alignment: .center) {
                                 Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 0.5)
                             }
@@ -458,6 +458,67 @@ struct BuddyRenderProofTests {
             try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)
             try png.write(to: ProofRender.directory
                 .appendingPathComponent("buddy-presence-\(dark ? "dark" : "light").png"))
+        }
+    }
+
+    /// The parts a body shapes by mood, through a mood change: the crab's
+    /// claws riding up for an ask, the axolotl's fronds dropping as it
+    /// falls asleep under a nightcap fading in, the cat's tail and ears
+    /// going down in a slump, the mushroom's cap keeling, the owl's wings
+    /// lifting for a hop and the slime melting. Six frames across
+    /// `BuddyHandoff.duration`, three times the docked size, each in the
+    /// colour the new mood wears.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the mood parts"))
+    func moodParts() throws {
+        let rows: [(character: BuddyCharacter, from: NotchBuddyToy.Mood, to: NotchBuddyToy.Mood,
+                    tint: Color, words: String)] = [
+            (.crab, .pacing, .waving, .orange, "Crab · pacing → an ask: the claws ride up"),
+            (.axolotl, .waving, .asleep, Color(nsColor: .tertiaryLabelColor),
+             "Axolotl · the ask closes → asleep: the fronds drop, the nightcap fades in"),
+            (.cat, .pacing, .slumped, .red, "Cat · pacing → a failure: the tail and ears go down"),
+            (.mushroom, .pacing, .slumped, .red, "Mushroom · pacing → a failure: the cap keels"),
+            (.owl, .pacing, .celebrating, .green, "Owl · pacing → a completion: the wings lift"),
+            (.slime, .pacing, .slumped, .red, "Slime · pacing → a failure: it melts"),
+        ]
+        let ticks = (0..<6).map { Double($0) / 5 * BuddyHandoff.duration }
+        func frame(_ row: (character: BuddyCharacter, from: NotchBuddyToy.Mood, to: NotchBuddyToy.Mood,
+                           tint: Color, words: String), age: Double) -> BuddyFigure {
+            BuddyFigure(character: row.character, mood: row.to, tint: row.tint,
+                        phase: 2.35, hopProgress: row.to == .celebrating ? age / 1.1 : nil,
+                        waveAge: row.to == .waving ? age : nil, slumpAge: row.to == .slumped ? age : nil,
+                        leans: false, still: false, askCount: 0, care: .content, trick: nil,
+                        treatAge: nil, crumbAge: nil, stride: 0.45 * 3.4,
+                        handoff: BuddyHandoff(from: row.from, age: age))
+        }
+        for dark in [false, true] {
+            let ground = dark ? Color(white: 0.11) : Color(white: 0.93)
+            let tile = RoundedRectangle(cornerRadius: 14, style: .continuous)
+            let sheet = VStack(alignment: .leading, spacing: 8) {
+                ForEach(rows.indices, id: \.self) { r in
+                    Text("\(rows[r].words) · 0 → \(Int(BuddyHandoff.duration * 1000)) ms")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        ForEach(ticks.indices, id: \.self) { i in
+                            frame(rows[r], age: ticks[i])
+                                .frame(width: 18, height: 18)
+                                .scaleEffect(3)
+                                .frame(width: 88, height: 66)
+                                .background(tile.fill(ground))
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .background(dark ? Color(white: 0.05) : Color(white: 0.99))
+            .environment(\.colorScheme, dark ? .dark : .light)
+            let renderer = ImageRenderer(content: sheet)
+            renderer.scale = 3
+            let image = try #require(renderer.cgImage)
+            let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)
+            try png.write(to: ProofRender.directory
+                .appendingPathComponent("buddy-mood-parts-\(dark ? "dark" : "light").png"))
         }
     }
 }

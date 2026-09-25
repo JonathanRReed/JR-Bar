@@ -736,10 +736,20 @@ final class NotchBuddyToy: Toy {
 
     /// A new document landed: re-read it and tell the views. A render
     /// may already have re-read it lazily — then this only bumps.
+    /// Falling asleep holds the full frame rate for a beat: with nothing
+    /// awake the timeline drops to its resting rate, which would draw the
+    /// mood's handoff (the patrol, an ask or a slump settling into sleep)
+    /// in a frame or two. A completion's hop already holds it; an ask
+    /// closing, a failure clearing or a run going idle did not.
     private func followDocument() {
-        _ = sessionDigest()
+        let awake = sessionDigest().isAwake
+        if followedAwake, !awake { stayLively() }
+        followedAwake = awake
         digestVersion &+= 1
     }
+
+    /// Whether the last document followed had anything awake in it.
+    @ObservationIgnored private var followedAwake = false
 
     // MARK: Tempo
 
