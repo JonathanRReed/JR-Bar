@@ -141,8 +141,11 @@ extension AquariumView {
                                  open: 0.35 + 0.65 * pose.peek)
         }
         if pose.out > 0 {
+            // Out in the open, it pours up out of the slump as it fades in.
             var abroad = c
             abroad.opacity = 0.97 * pose.out
+            let grow = 0.7 + 0.3 * pose.out
+            abroad.scaleBy(x: grow, y: grow)
             PetArt.octopus(&abroad, skin: skin, crawl: pose.crawl)
         }
     }
