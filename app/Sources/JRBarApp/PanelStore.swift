@@ -47,9 +47,10 @@ struct SessionRow: Identifiable, Equatable {
     /// whose transcripts are not read.
     var usage: SessionUsage?
 
-    init(session: CoreSession, pinnedAsk: CoreAsk?, document: SettingsDocument? = nil) {
+    init(session: CoreSession, pinnedAsk: CoreAsk?, document: SettingsDocument? = nil,
+         style: ProviderStyle? = nil) {
         id = session.id
-        style = ProviderStyle.style(for: session.provider, document: document)
+        self.style = style ?? ProviderStyle.style(for: session.provider, document: document)
         label = session.displayLabel
         isRemote = session.isRemote
         remoteMachine = session.remoteMachine
@@ -80,15 +81,22 @@ struct SessionRow: Identifiable, Equatable {
     /// open request. The header counts it and the light pulses amber for
     /// it, so it must never be the one thing the panel does not show; the
     /// id is all there is, and Approve / Deny still answer it.
-    init(orphanAsk ask: CoreAsk, document: SettingsDocument? = nil) {
+    /// The provider an orphan ask belongs to, read out of its session id.
+    /// A remote ask's id is `remote:<machine>:<provider>:…`; taking the
+    /// first segment would call its provider "remote".
+    static func orphanProvider(of ask: CoreAsk) -> String {
         let session = ask.session ?? ""
-        // A remote ask's id is `remote:<machine>:<provider>:…`; taking the
-        // first segment would call its provider "remote".
+        return CoreSession.isRemoteID(session)
+            ? String(session.split(separator: ":").dropFirst(2).first ?? "")
+            : String(session.split(separator: ":").first ?? "")
+    }
+
+    init(orphanAsk ask: CoreAsk, document: SettingsDocument? = nil, style: ProviderStyle? = nil) {
+        let session = ask.session ?? ""
         let remote = CoreSession.isRemoteID(session)
-        let provider = remote ? String(session.split(separator: ":").dropFirst(2).first ?? "")
-                              : String(session.split(separator: ":").first ?? "")
+        let provider = Self.orphanProvider(of: ask)
         id = session.isEmpty ? ask.id : session
-        style = ProviderStyle.style(for: provider, document: document)
+        self.style = style ?? ProviderStyle.style(for: provider, document: document)
         label = SessionLabel.display(label: nil, shortId: nil, id: session, provider: provider)
         cwd = nil
         cwdTail = nil
@@ -683,13 +691,27 @@ final class PanelStore {
         guard inputs.live, let state = inputs.state else { return [] }
         let document = inputs.settings.map { SettingsDocument($0.document) }
         let pinned = Dictionary(state.asks.compactMap { ask in ask.session.map { ($0, ask) } }, uniquingKeysWith: { first, _ in first })
+        // A provider's style is one lookup per provider per build — the
+        // document's `agent_colors` path walk used to run once per row.
+        var styles: [String: ProviderStyle] = [:]
+        func style(for provider: String) -> ProviderStyle {
+            let key = provider.lowercased()
+            if let known = styles[key] { return known }
+            let made = ProviderStyle.style(for: provider, document: document)
+            styles[key] = made
+            return made
+        }
         // An ask whose session the daemon no longer lists still needs an
         // answer: it is counted in the header and it is what the light is
         // about, so it gets a row of its own rather than disappearing.
-        let orphans = state.orphanAsks.map { SessionRow(orphanAsk: $0, document: document) }
+        let orphans = state.orphanAsks.map {
+            SessionRow(orphanAsk: $0, document: document,
+                       style: style(for: SessionRow.orphanProvider(of: $0)))
+        }
         let usage = inputs.usage
         let rows = state.mainSessions.map { session in
-            var row = SessionRow(session: session, pinnedAsk: pinned[session.id], document: document)
+            var row = SessionRow(session: session, pinnedAsk: pinned[session.id],
+                                 document: document, style: style(for: session.provider))
             row.usage = usage[session.id]
             return row
         } + orphans
