@@ -93,4 +93,19 @@ enum DotLinkReading {
         let off = store.core.lights?.dotLink.map { $0.state == "off" } ?? !linked
         return !off && DotRole.parse(store.document.string("dot_role")) != .status
     }
+
+    /// Whether the Dot's own Strip direction still acts while it follows
+    /// the Pro. Extending with the Continue look, the light carries on into
+    /// the Dot at its LED nearest the strip, and which way round the Dot is
+    /// mounted decides which LED that is (`dot_role.continue_geometry`).
+    /// Mirror, Asks and Call never read it.
+    @MainActor
+    static func directionActs(_ store: SettingsStore) -> Bool {
+        DotRole.parse(store.document.string("dot_role")) == .extend
+            && (store.document.string("dot_extend_style") ?? "continue") == "continue"
+    }
+
+    /// The Strip direction row's note while Continue reads it.
+    static let continueDirectionNote =
+        "Linked with Continue: the light enters the Dot at the LED nearest the strip, so set which way round it sits."
 }

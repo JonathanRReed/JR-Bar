@@ -9,7 +9,9 @@ import SwiftUI
 /// (`devices.N.led_direction`). Only the Pro and the Dot have one (the
 /// Screen Bar is drawn on screen, the right way round already). A linked
 /// Dot follows the Pro in desk order whichever way the Pro is set, and
-/// while its role drives it the row is dimmed and says why.
+/// while its role drives it the row is dimmed and says why -- except
+/// Extend with the Continue look, which enters the Dot at its LED nearest
+/// the strip and so still reads the Dot's own direction.
 struct LEDDirectionRow: View {
     @Bindable var store: SettingsStore
     let device: SettingsStore.DeviceEntry
@@ -21,8 +23,15 @@ struct LEDDirectionRow: View {
     private var path: String { "\(device.prefix).led_direction" }
     private var reversed: Bool { store.document.string(SettingsPath(path)) == "reversed" }
     private var ledCount: Int { device.kind == "dot" ? 2 : 8 }
-    private var followsPro: Bool { device.kind == "dot" && DotLinkReading.followsPro(store) }
-    private var subtitle: String { followsPro ? DotLinkReading.note(store) : Self.subtitle(reversed: reversed) }
+    /// Linked, the Dot plays the Pro's light; only Continue still reads
+    /// which way round the Dot is mounted (`DotLinkReading.directionActs`).
+    private var linkedDot: Bool { device.kind == "dot" && DotLinkReading.followsPro(store) }
+    private var followsPro: Bool { linkedDot && !DotLinkReading.directionActs(store) }
+    private var subtitle: String {
+        if followsPro { return DotLinkReading.note(store) }
+        if linkedDot { return DotLinkReading.continueDirectionNote }
+        return Self.subtitle(reversed: reversed)
+    }
 
     /// The devices whose own strip the monitor draws for.
     static func applies(to kind: String) -> Bool { kind == "pro" || kind == "dot" }

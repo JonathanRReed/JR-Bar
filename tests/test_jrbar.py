@@ -3806,12 +3806,21 @@ for (const event of [
         # between the shifted states: a painted head-and-tail profile plus
         # laps of rotation, so the crest never has to die for the line to
         # end (the staggered-pulse version blanked the strip once a lap).
+        # Two LEDs travel the way the Dot's Travel row says: the wipe by
+        # default (one LED rises, then the other, then they fall in turn),
+        # or the older rolled crossfade.
         dot = program_for_display_state(
-            LedDisplayState.WORKING, led_count=2
+            LedDisplayState.WORKING, led_count=2, dot_travel="crossfade"
         ).splitlines()
         self.assertEqual(dot[0], "#00E5FF #002529 320ms cosine")
         self.assertEqual(set(dot[1:-1]), {"roll-right 2200ms linear"})
         self.assertEqual(dot[-1], "repeat")
+        wipe = program_for_display_state(LedDisplayState.WORKING, led_count=2).splitlines()
+        self.assertEqual(wipe[:4], [
+            "0:#00E5FF 550ms cosine", "1:#00E5FF 550ms cosine",
+            "0:#00171A 550ms cosine", "1:#00171A 550ms cosine",
+        ])
+        self.assertEqual(wipe[-1], "repeat")
         pro = program_for_display_state(
             LedDisplayState.WORKING, led_count=8
         ).splitlines()
@@ -3838,17 +3847,19 @@ for (const event of [
             # Nominal sRGB goes in, the strip's own linear PWM bytes come
             # out -- see led_status.strip_drive_code. The DSL around them is
             # untouched, which is the part this test is really about.
+            # A Dot travels with its default wipe (no settings reach this
+            # one-shot write, so no Travel row can ask for the crossfade).
             cyan = apply_strip_transfer_to_hex("#00E5FF", (1.0, 1.0, 1.0))
-            dim = apply_strip_transfer_to_hex("#002529", (1.0, 1.0, 1.0))
+            rest = apply_strip_transfer_to_hex("#00171A", (1.0, 1.0, 1.0))
+            lap = [
+                f"0:{cyan} 550ms cosine",
+                f"1:{cyan} 550ms cosine",
+                f"0:{rest} 550ms cosine",
+                f"1:{rest} 550ms cosine",
+            ]
             self.assertEqual(
                 (device / "LEDS.LED").read_text(),
-                "\n".join(
-                    [
-                        f"{cyan} {dim} 320ms cosine",
-                        *["roll-right 2200ms linear"] * 6,
-                        "repeat",
-                    ]
-                ),
+                "\n".join([*lap, *lap, "repeat"]),
             )
 
             write_mode_to_leds(AgentMode.IDLE_READY, device_path=device)

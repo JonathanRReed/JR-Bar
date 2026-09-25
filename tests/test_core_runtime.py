@@ -3784,11 +3784,17 @@ def test_the_dot_plan_reads_both_devices_directions(headless, tmp_path: Path, mo
     decides which strip end a Continue Dot carries on from and which of its
     LEDs the light enters first. The planner reads the Dot's own and the
     strip's -- the strip whose start the link recorded, since this runs on
-    the write worker, where the device list is not to be read."""
+    the write worker, where the device list is not to be read.
+
+    The strip's direction is spent turning its program back into desk order
+    (lane 9's ``_core_linked_pro_desk_program``), so Continue is handed a
+    forward strip: reading the strip's end round a second time put the Dot
+    at the far end of the desk."""
     from dataclasses import replace
 
     from jrbar import dot_role
     from jrbar.linked_runtime import LinkedEpoch
+    from jrbar.motion_shapes import oriented_program
 
     controller = headless
     pro, dot, _controllers, _submitted = _tmp_pair(controller, tmp_path)
@@ -3804,13 +3810,18 @@ def test_the_dot_plan_reads_both_devices_directions(headless, tmp_path: Path, mo
     controller.status_bar_devices = lambda *, remember=True: (_ for _ in ()).throw(
         AssertionError("the planner read the device list")
     )
+    controller._core_linked_pro_leds = 8
+    comet = "#FFFFFF #404040 #000000 #000000 #000000 #000000 #000000 #000000 160ms cosine\nroll-right 2000ms linear\nrepeat"
     controller._core_linked.note_epoch(LinkedEpoch(10.0, 1000.0, pro.device_id))
-    controller._core_dot_plan(SimpleNamespace(brightness=255), "#FFFFFF 500ms\nrepeat", device=dot)
-    assert seen[-1]["strip_direction"] == "reversed"
+    controller._core_dot_plan(SimpleNamespace(brightness=255), comet, device=dot)
+    assert seen[-1]["strip_program"] == oriented_program(comet, led_count=8, direction="reversed")
+    assert "roll-left" in seen[-1]["strip_program"]
+    assert seen[-1]["strip_direction"] == "forward"
     assert seen[-1]["led_direction"] == "forward"
-    # No strip start recorded yet: the strip reads as forward.
+    # No strip start recorded yet: the strip reads as forward, as written.
     controller._core_linked.forget()
-    controller._core_dot_plan(SimpleNamespace(brightness=255), "#FFFFFF 500ms\nrepeat", device=dot)
+    controller._core_dot_plan(SimpleNamespace(brightness=255), comet, device=dot)
+    assert seen[-1]["strip_program"] == comet
     assert seen[-1]["strip_direction"] == "forward"
 
 

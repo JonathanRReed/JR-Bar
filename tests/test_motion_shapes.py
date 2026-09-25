@@ -517,3 +517,50 @@ def test_every_slider_end_changes_the_light() -> None:
     assert draw("tide", fill_range=0.8) != draw("tide")
     assert draw("tide", fill_floor=0.7) != draw("tide", fill_floor=0.8)
     assert draw("tide", fill_floor=0.8) != draw("tide", fill_floor=0.8, fill_range=0.5)
+
+
+def test_the_relay_on_a_dot_travels_the_way_its_travel_row_says() -> None:
+    """The Working relay (Automatic, and every roll-styled mode) on two LEDs
+    takes the Dot's Travel row, exactly as a chosen travelling motion does:
+    the wipe by default, the older rolled crossfade when asked for. It used
+    to be the crossfade whatever the row said (``DOT_TAIL``, X7). A strip
+    of eight never changes."""
+    from datetime import datetime, timezone
+
+    from jrbar._led_status_legacy import rolling_program
+    from jrbar.colors import ColorSettings, program_for_snapshot
+    from jrbar.models import AgentMode, AgentStatus
+
+    wipe = rolling_program(COLOR, led_count=2)
+    fade = rolling_program(COLOR, led_count=2, dot_travel="crossfade")
+    assert wipe == rolling_program(COLOR, led_count=2, dot_travel="wipe")
+    assert wipe == rolling_program(COLOR, led_count=2, dot_travel="from a newer build")
+    assert "roll" not in wipe and wipe.startswith("0:") and "\n1:" in wipe
+    assert fade == program(
+        shapes.travelling_wave(
+            COLOR, led_count=2, lap_ms=2200, tail=shapes.DOT_TAIL, laps=shapes.MAX_PROGRAM_LINES // 3
+        )
+    )
+    assert rolling_program(COLOR, led_count=8, dot_travel="crossfade") == rolling_program(COLOR, led_count=8)
+
+    # On the firmware the wipe shows a direction: LED 0 lights before LED 1.
+    frames = luminance(sample(wipe, 2, frames=132, start_ms=0))
+    first_lit = [next(i for i, frame in enumerate(frames) if frame[led] > 0.2) for led in (0, 1)]
+    assert first_lit[0] < first_lit[1]
+
+    # The live path: the Dot's own row reaches the relay a working agent plays.
+    working = (
+        AgentStatus(
+            provider="claude",
+            agent_id="a",
+            display_name="Claude",
+            mode=AgentMode.WORKING,
+            updated_at=datetime(2026, 9, 24, tzinfo=timezone.utc),
+            event_name="PreToolUse",
+        ),
+    )
+    base = ColorSettings.defaults()
+    wiping = program_for_snapshot(working, led_count=2, colors=base.for_device(dot_travel_style="wipe"))[1]
+    fading = program_for_snapshot(working, led_count=2, colors=base.for_device(dot_travel_style="crossfade"))[1]
+    assert "roll" not in wiping and "\n1:" in wiping
+    assert "roll-right" in fading

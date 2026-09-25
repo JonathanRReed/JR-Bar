@@ -4667,23 +4667,38 @@ def build_headless_controller_class() -> type:
             so it played that mirror as it stood: a comet the Pro ran left
             to right ran right to left on the Dot. Mirroring it once more
             puts it back the way the person sees it. A Pro that is not
-            reversed, or one the inventory cannot see, hands it on as it is.
+            reversed, or a program with no recorded start to name its strip,
+            is handed on as it is.
+
+            Everything after this reads the program in desk order, so
+            ``_core_dot_plan`` hands ``plan_dot_surface`` a forward strip:
+            Continue's geometry turning a reversed strip's end round as
+            well would put the Dot at the far end of the desk.
             """
             if not body:
                 return body
-            devices = getattr(self.settings, "devices", ()) or ()
-            if not any(getattr(entry, "led_direction", "forward") == "reversed" for entry in devices):
-                return body
-            followed = self._core_followed_strip_id()
-            if followed is None:
+            direction = self._core_linked_strip_direction()
+            if direction != "reversed":
                 return body
             from .motion_shapes import oriented_program
 
             return oriented_program(
                 body,
                 led_count=int(getattr(self, "_core_linked_pro_leds", 8) or 8),
-                direction=self.settings.device_led_direction(followed),
+                direction=direction,
             )
+
+        def _core_linked_strip_direction(self) -> str:
+            """Which way round the strip a linked Dot follows is mounted.
+
+            The strip the sync last recorded a start for names it: the Dot's
+            plan runs on the write worker, where the device list (main-thread
+            state) is not to be read. Every strip write that feeds the Dot
+            records that start before the Dot is planned, so a program with
+            no start behind it reads as a forward strip.
+            """
+            epoch = getattr(getattr(self, "_core_linked", None), "epoch", None)
+            return self._core_led_direction(epoch.device_id if epoch is not None else None)
 
         def _core_held_preview_devices(self) -> frozenset:
             """Device ids a held preview currently owns.
@@ -4929,13 +4944,13 @@ def build_headless_controller_class() -> type:
                     brightness = min(strip_level, manual) if follow else min(strip_level, own)
                 transfer = getattr(controller, "_for_strip", None)
                 finalize = transfer if callable(transfer) else None
-            # Each device's own mounting (lane 9's ``led_direction``): the
-            # Dot's, and the followed strip's from the epoch its last start
-            # recorded -- the device list is main-thread state, and this
-            # runs on the write worker.
-            epoch = getattr(getattr(self, "_core_linked", None), "epoch", None)
+            # Each device's own mounting (``DeviceDisplaySetting.led_direction``).
+            # The Dot's own says which of its LEDs is nearest the strip. The
+            # followed strip's was spent above: ``body`` is already in desk
+            # order (``_core_linked_pro_desk_program``), so Continue reads it
+            # as a forward strip and joins it at the end the Dot sits by.
             led_direction = self._core_led_direction(device.device_id if device is not None else None)
-            strip_direction = self._core_led_direction(epoch.device_id if epoch is not None else None)
+            strip_direction = "forward"
             return plan_dot_surface(
                 role=getattr(self.settings, "dot_role", None),
                 semantic=getattr(getattr(self, "_current_resolved_glance", None), "semantic", None),
@@ -4957,15 +4972,19 @@ def build_headless_controller_class() -> type:
 
         def _core_led_direction(self, device_id: str | None) -> str:
             """``forward`` or ``reversed``: which way round a device is
-            mounted (``DeviceDisplaySetting.led_direction``, which lane 9
-            defines), ``forward`` when it has none."""
+            mounted, from the one schema (``DeviceDisplaySetting.led_direction``
+            through ``AgentMonitorSettings.device_led_direction``), and
+            ``forward`` for a device with no row or settings without one."""
             if device_id is None:
                 return "forward"
-            for entry in getattr(self.settings, "devices", ()) or ():
-                if getattr(entry, "device_id", None) == device_id:
-                    value = str(getattr(entry, "led_direction", "forward") or "forward")
-                    return "reversed" if value == "reversed" else "forward"
-            return "forward"
+            from .motion_shapes import normalize_led_direction
+
+            reader = getattr(self.settings, "device_led_direction", None)
+            try:
+                value = reader(device_id) if callable(reader) else "forward"
+            except Exception:
+                value = "forward"
+            return normalize_led_direction(value)
 
         def _core_linked_dot_follows(self, request) -> bool:
             """True when this request targets the Dot and its role says the

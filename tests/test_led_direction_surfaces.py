@@ -15,7 +15,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from jrbar._settings_legacy import DeviceDisplaySetting
+from jrbar.device_clock import DeviceClocks
 from jrbar.dot_role import plan_dot_surface
+from jrbar.linked_runtime import LinkedEpoch, LinkedSync
 from jrbar.motion_shapes import oriented_program, render_motion
 from tests.test_core_runtime import headless  # noqa: F401  (the headless daemon fixture)
 
@@ -63,10 +65,44 @@ def test_a_linked_dot_keeps_desk_order_when_the_pro_is_reversed(headless) -> Non
     expected = controller._core_dot_plan(SimpleNamespace(brightness=255)).program
 
     # A reversed Pro wrote the mirror, which is what the Dot is handed; the
-    # Dot still plays the light the way it runs on the desk.
+    # Dot still plays the light the way it runs on the desk. The strip's
+    # recorded start names the strip (every strip write that feeds the Dot
+    # records one first), since the plan runs where the device list is not
+    # read.
+    controller._core_linked = LinkedSync(DeviceClocks(None))
+    controller._core_linked.note_epoch(LinkedEpoch(anchor=100.0, anchor_epoch=1.0, device_id=PRO))
     _pro_reversed(controller)
     controller._core_linked_pro_program = (mirrored, None)
     assert controller._core_dot_plan(SimpleNamespace(brightness=255)).program == expected
+
+
+def test_a_continue_dot_joins_a_reversed_pro_at_the_end_it_sits_by(headless) -> None:  # noqa: F811
+    """The Dot is handed the Pro's program in desk order, and Continue then
+    reads it as a forward strip. With the sync's recorded start on a
+    reversed Pro, the Dot plays exactly what it plays beside a forward one.
+    Turning the strip's end round as well (Continue's own geometry for a
+    program in the strip's numbers) sent the light out of the far end of
+    the desk, so the Dot lit when the comet was nowhere near it."""
+    controller = headless
+    _devices(controller)
+    controller.settings = controller.settings.with_devices_linked(True).with_dot_role("extend")
+    assert controller.settings.dot_extend_style == "continue"
+    controller._core_linked_pro_leds = 8
+    controller._core_linked = LinkedSync(DeviceClocks(None))
+    controller._core_linked.note_epoch(LinkedEpoch(anchor=100.0, anchor_epoch=1.0, device_id=PRO))
+    forward = _comet()
+    mirrored = oriented_program(forward, led_count=8, direction="reversed")
+
+    _pro_reversed(controller, "forward")
+    controller._core_linked_pro_program = (forward, None)
+    beside_forward = controller._core_dot_plan(SimpleNamespace(brightness=255))
+    assert beside_forward is not None and "style:continue" in beside_forward.reasons
+
+    _pro_reversed(controller)
+    controller._core_linked_pro_program = (mirrored, None)
+    beside_reversed = controller._core_dot_plan(SimpleNamespace(brightness=255))
+    assert beside_reversed is not None and "style:continue" in beside_reversed.reasons
+    assert beside_reversed.program == beside_forward.program
 
 
 def test_play_on_strip_turns_round_with_the_strip(headless) -> None:  # noqa: F811

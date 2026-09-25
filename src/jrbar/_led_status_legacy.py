@@ -779,10 +779,12 @@ def _render_full_strip(
     led_count: int,
     floor: float,
     ceiling: float,
+    dot_travel: str | None = None,
 ) -> str:
     """Renders one mode's full-strip animation in the requested style.
     ``color`` is the mode's own configured color (unscaled) -- floor/ceiling
-    scaling is applied here, per style, not by the caller."""
+    scaling is applied here, per style, not by the caller. ``dot_travel`` is
+    how a roll moves on two LEDs (``DeviceDisplaySetting.dot_travel_style``)."""
     peak = _pulse_ceiling_color(color, ceiling)
     duration = _STATE_DURATION_TEXT[state]
 
@@ -792,7 +794,7 @@ def _render_full_strip(
         floor_color = _pulse_floor_color(color, floor)
         return "\n".join([f"{peak} {duration} none", f"{floor_color} {duration} none", "repeat"])
     if style == ANIMATION_STYLE_ROLL:
-        return rolling_program(peak, led_count=led_count, floor=floor)
+        return rolling_program(peak, led_count=led_count, floor=floor, dot_travel=dot_travel)
     # Default: pulse. The settle line eases to the floor rather than
     # snapping to it -- see settle_duration_ms().
     floor_color = _pulse_floor_color(color, floor)
@@ -906,6 +908,7 @@ def program_for_display_state(
     ask_style: str = ANIMATION_STYLE_PULSE,
     working_style: str = ANIMATION_STYLE_ROLL,
     done_celebrate: bool = False,
+    dot_travel: str | None = None,
 ) -> str:
     """Render the LED program for one display state.
 
@@ -935,18 +938,34 @@ def program_for_display_state(
     same solid color instead of an instant snap (see
     _done_celebration_program). Defaults to False, reproducing today's
     exact plain-solid-color output.
+
+    ``dot_travel`` is how a roll moves on a two-LED device: ``wipe`` (the
+    default) or ``crossfade`` (``motion_shapes.dot_travel_tail``). It changes
+    nothing on a longer strip.
     """
     if state == LedDisplayState.IDLE:
         return apply_brightness(
             _render_full_strip(
-                idle_style, state, idle_color, led_count=led_count, floor=idle_floor, ceiling=idle_ceiling
+                idle_style,
+                state,
+                idle_color,
+                led_count=led_count,
+                floor=idle_floor,
+                ceiling=idle_ceiling,
+                dot_travel=dot_travel,
             ),
             brightness,
         )
     if state == LedDisplayState.ASK:
         return apply_brightness(
             _render_full_strip(
-                ask_style, state, ask_color, led_count=led_count, floor=ask_floor, ceiling=ask_ceiling
+                ask_style,
+                state,
+                ask_color,
+                led_count=led_count,
+                floor=ask_floor,
+                ceiling=ask_ceiling,
+                dot_travel=dot_travel,
             ),
             brightness,
         )
@@ -972,6 +991,7 @@ def program_for_display_state(
                 led_count=led_count,
                 floor=working_floor,
                 ceiling=working_ceiling,
+                dot_travel=dot_travel,
             ),
             brightness,
         )
@@ -1027,7 +1047,9 @@ def failure_signal_program(
     return apply_brightness(body, normalize_brightness(brightness) * style.intensity)
 
 
-def rolling_program(color: str, *, led_count: int = 8, floor: float = 0.0) -> str:
+def rolling_program(
+    color: str, *, led_count: int = 8, floor: float = 0.0, dot_travel: str | None = None
+) -> str:
     """The Working relay: a breath travelling down the strip.
 
     Retuned 2026-08-20 from 760ms/95ms ("skittish, almost glitchy") to a
@@ -1042,6 +1064,10 @@ def rolling_program(color: str, *, led_count: int = 8, floor: float = 0.0) -> st
     head-and-tail profile circulates with no seam at all -- and it costs a
     quarter of the bytes, so several laps fit and even the once-per-set
     profile repaint is amortised away.
+
+    On two LEDs the relay travels the way the Dot's Travel row says
+    (``dot_travel``: the wipe by default, or the older crossfade), exactly
+    as a chosen travelling motion does there.
     """
     from . import motion_shapes as shapes
 
@@ -1051,7 +1077,7 @@ def rolling_program(color: str, *, led_count: int = 8, floor: float = 0.0) -> st
     # neighbours; at 200 ms it was measurably the harshest frame-to-frame move
     # in the whole vocabulary, and this is meant to be the calm one.
     lap_ms = 2200 if count <= 2 else 250 * count
-    tail = shapes.DOT_TAIL if count <= 2 else shapes.CHASE_TAIL
+    tail = shapes.dot_travel_tail(dot_travel) if count <= 2 else shapes.CHASE_TAIL
     lines = shapes.travelling_wave(
         color,
         led_count=count,

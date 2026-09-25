@@ -2313,6 +2313,9 @@ def _display_state_program(settings: ColorSettings, state: LedDisplayState, **kw
         )
         if program is not None:
             return apply_brightness(program, kwargs.get("brightness", 255))
+    # How a roll travels on this device's two LEDs, when it has two: the
+    # Dot's Travel row, set per device by ``for_device``.
+    kwargs.setdefault("dot_travel", getattr(settings, "render_dot_travel", None))
     return program_for_display_state(state, **kwargs)
 
 
