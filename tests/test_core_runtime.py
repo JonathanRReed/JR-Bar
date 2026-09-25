@@ -3320,6 +3320,41 @@ def test_the_run_loop_watchdog_starts_with_the_daemon_and_sees_the_command(headl
     assert controller._core_watchdog is None
 
 
+def test_the_widget_file_is_written_off_the_run_loop_and_only_when_it_changed(
+    headless, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every state publish rewrote widget-snapshot.json on the run loop.
+    The projection stays here; the write goes to the persistence thread,
+    and an unchanged glance is rewritten only inside the widget's 90 s
+    freshness window."""
+    import json as _json
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    queued: list[tuple[str, object]] = []
+    controller._persistence_writer = SimpleNamespace(
+        submit=lambda key, operation, **kwargs: queued.append((key, operation)) or "queued"
+    )
+    clock = [1_000.0]
+    monkeypatch.setattr(core_runtime.time, "time", lambda: clock[0])
+    state = {"sessions": [{"provider": "claude", "mode": "working", "axes": {}, "label": "private"}]}
+    target = tmp_path / "state" / "widget-snapshot.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    controller._core_publish_widget_snapshot(state)
+    assert [key for key, _ in queued] == ["widget-snapshot"] and not target.exists()
+    queued[0][1]()
+    written = _json.loads(target.read_text())
+    assert written["counts"]["working"] == 1 and "label" not in _json.dumps(written)
+    clock[0] += 10.0
+    controller._core_publish_widget_snapshot(state)
+    assert len(queued) == 1, "same glance, fresh enough: no write"
+    clock[0] += core_runtime.WIDGET_REWRITE_SECONDS
+    controller._core_publish_widget_snapshot(state)
+    assert len(queued) == 2, "rewritten before the widget calls it stale"
+    controller._core_publish_widget_snapshot({"sessions": []})
+    assert len(queued) == 3, "a changed glance is written at once"
+
+
 def test_the_daemon_doctor_never_asks_tccd_about_alcove(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     """Alcove following and its Screen Recording permission are the app's;
     the daemon's doctor says it does not run following rather than spend a

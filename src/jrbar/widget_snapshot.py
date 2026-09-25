@@ -86,9 +86,16 @@ def widget_snapshot(state: Mapping[str, Any], *, now: float) -> dict[str, Any]:
 
 def write_widget_snapshot(state: Mapping[str, Any], state_dir: Path, *, now: float) -> Path:
     """Atomically replace the snapshot file: tmp + rename, never partial."""
+    return write_widget_snapshot_payload(
+        json.dumps(widget_snapshot(state, now=now), separators=(",", ":")), state_dir
+    )
+
+
+def write_widget_snapshot_payload(payload: str, state_dir: Path) -> Path:
+    """Write an already-projected snapshot: the daemon projects on its run
+    loop and writes from its persistence thread."""
     target = state_dir / SNAPSHOT_FILENAME
     tmp = state_dir / f".{SNAPSHOT_FILENAME}.{os.getpid()}.tmp"
-    payload = json.dumps(widget_snapshot(state, now=now), separators=(",", ":"))
     tmp.write_text(payload, encoding="utf-8")
     os.replace(tmp, target)
     return target

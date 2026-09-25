@@ -80,6 +80,9 @@ UNSETTLED_EXTRAS_SECONDS: Final = 60.0
 # younger than the table) is looked up again this soon, or as soon as the
 # table worker brings a newer table, whichever comes first.
 EXTRAS_TABLE_RETRY_SECONDS: Final = 5.0
+# An unchanged widget file is rewritten this often, inside the widget's
+# 90 s freshness window (WidgetSnapshot.freshnessWindow in the app).
+WIDGET_REWRITE_SECONDS: Final = 60.0
 # How long ``answer_ask`` waits on the answer surface's worker before it gives
 # up and says so. A delivery is a few process reads and one posted key; the
 # surface's own budget (answer_local.DELIVERY_BUDGET_SECONDS) is smaller, so
@@ -4110,6 +4113,8 @@ def build_headless_controller_class() -> type:
             self._core_watchdog = None
             # A settings change the persistence writer has not written yet.
             self._core_settings_dirty = False
+            # The widget file's last (counts and tiles, wall time) written.
+            self._core_widget_written: tuple[Any, float] | None = None
             self._core_settings_save_lock = threading.Lock()
             self._core_command_in_flight: str | None = None
             self._core_started_at = time.time()
@@ -6437,11 +6442,40 @@ def build_headless_controller_class() -> type:
         def _core_publish_widget_snapshot(self, document) -> None:
             """The desktop glance file: a redacted counts-and-tiles view a
             WidgetKit extension reads without holding the socket. Best
-            effort — a disk hiccup must not stall the state pipeline."""
+            effort — a disk hiccup must not stall the state pipeline.
+
+            Projected here, written by the persistence thread (the run loop
+            never waits on the disk), and only when the counts or tiles
+            changed or the last write is near the widget's 90 s freshness
+            window."""
             try:
-                from .widget_snapshot import write_widget_snapshot
-                write_widget_snapshot(
-                    document, default_state_dir(), now=time.time())
+                from .persistence_writer import PersistenceDisposition
+                from .widget_snapshot import widget_snapshot, write_widget_snapshot_payload
+
+                now = time.time()
+                snapshot = widget_snapshot(document, now=now)
+                content = (snapshot["counts"], snapshot["entries"])
+                last = self._core_widget_written
+                if last is not None and last[0] == content and now - last[1] < WIDGET_REWRITE_SECONDS:
+                    return
+                self._core_widget_written = (content, now)
+                payload = json.dumps(snapshot, separators=(",", ":"))
+                state_dir = default_state_dir()
+
+                def write() -> None:
+                    write_widget_snapshot_payload(payload, state_dir)
+
+                writer = getattr(self, "_persistence_writer", None)
+                disposition = (
+                    writer.submit("widget-snapshot", write, replace_pending=True)
+                    if writer is not None
+                    else None
+                )
+                if disposition is None or disposition in (
+                    PersistenceDisposition.REFUSED_FULL,
+                    PersistenceDisposition.REFUSED_CLOSED,
+                ):
+                    write()
             except Exception:
                 legacy.log_status_bar(
                     "core: widget snapshot write failed: "
