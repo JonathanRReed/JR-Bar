@@ -203,6 +203,56 @@ struct AquariumSaveTests {
         #expect(c.completionGranted == true)
     }
 
+    @Test("the writer saves on its own queue, never the caller's")
+    func writerIsOffTheCaller() {
+        let (file, url) = tempFile()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let queue = DispatchQueue(label: "jrbar.aqtest-writer")
+        queue.suspend()
+        let writer = AquariumSaveWriter(file: file, queue: queue)
+        writer.write(AquariumSave(game: AquariumGame(pearls: 5)))
+        #expect(!file.exists, "nothing is written until the writer's queue runs")
+        queue.resume()
+        writer.flush()
+        #expect(file.load().game.pearls == 5)
+    }
+
+    @Test("a burst of saves lands as its newest")
+    func writerCoalesces() {
+        let (file, url) = tempFile()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let queue = DispatchQueue(label: "jrbar.aqtest-writer")
+        queue.suspend()
+        let writer = AquariumSaveWriter(file: file, queue: queue)
+        for pearls in 1...3 { writer.write(AquariumSave(game: AquariumGame(pearls: pearls))) }
+        queue.resume()
+        writer.flush()
+        #expect(file.load().game.pearls == 3)
+        writer.write(AquariumSave(game: AquariumGame(pearls: 4)))
+        writer.flush()
+        #expect(file.load().game.pearls == 4, "a later save still lands")
+    }
+
+    @Test("the writer reads the file back before its first save only")
+    func writerChecksOnce() throws {
+        let (file, url) = tempFile()
+        let directory = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not json {".utf8).write(to: url)
+        let writer = AquariumSaveWriter(file: file)
+        writer.write(AquariumSave(game: AquariumGame(pearls: 1)))
+        writer.flush()
+        #expect(try Self.recoveries(in: directory).count == 1, "the first save keeps what it replaces")
+        // After that the file is the writer's own output; nothing reads
+        // it back again, so a later save makes no second recovery.
+        try Data("also not json {".utf8).write(to: url)
+        writer.write(AquariumSave(game: AquariumGame(pearls: 2)))
+        writer.flush()
+        #expect(try Self.recoveries(in: directory).count == 1)
+        #expect(file.load().game.pearls == 2)
+    }
+
     private static func recoveries(in directory: URL) throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: directory,
             includingPropertiesForKeys: nil).filter {

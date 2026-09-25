@@ -31,6 +31,7 @@ struct AquariumFleetToyTests {
         #expect(tank.notice?.title == AquariumAchievement.school.title
                 || tank.notice?.title == AquariumAchievement.firstPearl.title)
         #expect(tank.game.lifetimePearls >= AquariumAchievement.school.reward)
+        tank.flushSave()
         #expect(file.exists, "a milestone saves at once")
         #expect(file.load().game.fleet.largestSchool == 6)
     }

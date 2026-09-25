@@ -73,13 +73,18 @@ public struct AquariumSaveFile: Sendable {
     }
 
     /// Writes the save, creating the directory when needed.
-    public func save(_ save: AquariumSave) throws {
+    ///
+    /// `checkingPrevious` reads the file it replaces back first and keeps
+    /// a recovery copy when this build would drop anything in it. Once a
+    /// process has written the file itself, what is there is its own
+    /// output, so `AquariumSaveWriter` checks only its first save.
+    public func save(_ save: AquariumSave, checkingPrevious: Bool = true) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(save)
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        if FileManager.default.fileExists(atPath: url.path) {
+        if checkingPrevious, FileManager.default.fileExists(atPath: url.path) {
             let previous = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             let decoded = try? decoder.decode(AquariumSave.self, from: previous)
@@ -121,6 +126,62 @@ public struct AquariumSaveFile: Sendable {
                 && zip(before, after).allSatisfy { preserves($0.0, in: $0.1) }
         default:
             return original == normalized
+        }
+    }
+}
+
+/// Writes `AquariumSave`s on a utility queue, never on the caller's
+/// thread: the encode, the read-back check and the atomic write cost the
+/// main thread 3–25 ms a save. Saves land in order and a burst collapses
+/// to its newest. The read-back check runs on the first save of the
+/// process only — after that the file is this writer's own output.
+public final class AquariumSaveWriter: @unchecked Sendable {
+    public let file: AquariumSaveFile
+    private let queue: DispatchQueue
+    private let lock = NSLock()
+    /// The newest save not yet written, and whether a drain is queued.
+    /// Guarded by `lock`.
+    private var pending: AquariumSave?
+    private var drainQueued = false
+    /// Whether this writer has written the file once. Touched only on
+    /// `queue`.
+    private var wroteOnce = false
+
+    public init(file: AquariumSaveFile,
+                queue: DispatchQueue = DispatchQueue(label: "jrbar.aquarium-save", qos: .utility)) {
+        self.file = file
+        self.queue = queue
+    }
+
+    /// Queues `save`; it replaces a save still waiting its turn.
+    public func write(_ save: AquariumSave) {
+        lock.lock()
+        pending = save
+        let queueDrain = !drainQueued
+        drainQueued = true
+        lock.unlock()
+        guard queueDrain else { return }
+        queue.async { [self] in drain() }
+    }
+
+    /// Waits for every queued save to land: at quit, and in tests.
+    public func flush() {
+        queue.sync {}
+    }
+
+    private func drain() {
+        lock.lock()
+        let save = pending
+        pending = nil
+        drainQueued = false
+        lock.unlock()
+        guard let save else { return }
+        do {
+            try file.save(save, checkingPrevious: !wroteOnce)
+            wroteOnce = true
+        } catch {
+            // A failed write keeps the check for the next one; the game
+            // itself is still in memory and saves again on its next move.
         }
     }
 }
