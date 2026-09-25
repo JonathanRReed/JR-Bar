@@ -67,3 +67,31 @@ def test_a_linked_dot_keeps_desk_order_when_the_pro_is_reversed(headless) -> Non
     plan = controller._core_dot_plan(SimpleNamespace(brightness=255))
     assert plan.program == expected
     assert "roll-left" not in plan.program
+
+
+def test_play_on_strip_turns_round_with_the_strip(headless) -> None:  # noqa: F811
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    _devices(controller)
+    written: dict[str, str] = {}
+
+    def controller_for(device):
+        def sync_program(program, _state):
+            written[device.device_id] = program
+
+        return SimpleNamespace(brightness=255, sync_program=sync_program)
+
+    controller.agent_controller_for_device = controller_for
+    program = _comet()
+
+    controller._core_dispatch("preview_program", {"surface": "hardware", "program": program, "seconds": 1})
+    assert written[PRO] == program
+
+    _pro_reversed(controller)
+    controller._core_previews.clear()
+    controller._core_dispatch("preview_program", {"surface": "hardware", "program": program, "seconds": 1})
+    assert written[PRO] == oriented_program(program, led_count=8, direction="reversed")
+    assert "roll-left" in written[PRO]
+    # The Screen Bar ignores the strip's direction: the preview it shows is
+    # the program as drawn.
+    assert controller._core_previews["hardware"].program == program

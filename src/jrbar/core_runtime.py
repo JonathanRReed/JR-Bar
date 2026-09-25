@@ -1313,7 +1313,8 @@ def _cmd_preview_program(self, args):
     for device in targets:
         controller = self.agent_controller_for_device(device)
         try:
-            controller.sync_program(legacy.apply_brightness(program, controller.brightness), LedDisplayState.IDLE)
+            shown = _preview_in_desk_order(self, program, device)
+            controller.sync_program(legacy.apply_brightness(shown, controller.brightness), LedDisplayState.IDLE)
         except Exception as exc:
             raise CommandError("refused", f"device refused the program: {exc}") from exc
         device_ids.append(device.device_id)
@@ -1322,6 +1323,22 @@ def _cmd_preview_program(self, args):
     self._core_previews[surface] = _Preview(program, time.monotonic() + seconds, time.time(), tuple(device_ids))
     self._core_publish_lights()
     return {"surface": surface, "until": time.time() + seconds, "devices": device_ids}
+
+
+def _preview_in_desk_order(self, program: str, device) -> str:
+    """``program`` as ``device`` should play it: mirrored for a strip set to
+    ``reversed``, exactly as its live light is, so Play on strip runs a
+    comet the way the Effect Studio thumbnail and the strip's own agent
+    light run it. Previews are drawn with LED 0 on the left."""
+    from ._led_status_legacy import led_count_for_target
+    from .motion_shapes import oriented_program
+
+    try:
+        direction = self.settings.device_led_direction(device.device_id)
+        led_count = led_count_for_target(device.target)
+    except Exception:
+        return program
+    return oriented_program(program, led_count=led_count, direction=direction)
 
 
 @command("preview_calibration")
