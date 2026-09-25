@@ -209,6 +209,27 @@ def _assert_main_thread() -> None:
         raise RuntimeError("runtime timer registry is main-thread-only")
 
 
+def _same_timer(current: RuntimeTimerIntent, desired: RuntimeTimerIntent) -> bool:
+    """Whether the desired intent names the timer already running.
+
+    A one-shot compares exactly -- its ``fire_at`` IS the deadline. A
+    repeating intent's ``fire_at`` is only the planner's ``now + interval``
+    re-anchored every plan, so comparing it would destroy and recreate an
+    unchanged NSTimer on each reconcile and re-anchor the repeating phase
+    every time. The cadence fields decide; the existing timer keeps its
+    phase."""
+    if current == desired:
+        return True
+    if current.interval is None or desired.interval is None:
+        return False
+    return (
+        current.feature == desired.feature
+        and current.interval == desired.interval
+        and current.tolerance == desired.tolerance
+        and current.common_modes == desired.common_modes
+    )
+
+
 class AppKitTimerRegistry:
     """One main-thread AppKit timer per locked runtime feature."""
 
@@ -275,7 +296,7 @@ class AppKitTimerRegistry:
             if intent is None:
                 continue
             current = self._entries.get(feature)
-            if current is not None and current.intent == intent and current.target_identity == target_identity:
+            if current is not None and _same_timer(current.intent, intent) and current.target_identity == target_identity:
                 continue
             if current is not None:
                 self._invalidate_entry(feature)

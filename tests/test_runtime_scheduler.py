@@ -217,6 +217,47 @@ def test_timer_intents_reject_invalid_or_ambiguous_schedules__and_2_more() -> No
     assert factory.created[1].invalidations == 0
     assert registry.snapshot().active_features == (second,)
 
+    # --- scenario: a replanned repeating intent keeps its timer
+    clock = _Clock()
+    factory = _FakeAppKitFactory()
+    repeating = RuntimeFeature.ALCOVE_OBSERVATION
+    one_shot = RuntimeFeature.CAPACITY_DEADLINE
+    registry = AppKitTimerRegistry(
+        handlers={repeating: lambda: None, one_shot: lambda: None},
+        timer_factory=factory,
+        monotonic=clock,
+    )
+    target = object()
+    registry.reconcile(
+        (
+            _intent(repeating, fire_at=101.0, interval=3.0, tolerance=0.25),
+            _intent(one_shot, fire_at=150.0),
+        ),
+        target=target,
+    )
+    # The planner re-anchors a repeating intent's fire_at to now+interval
+    # on every pass: cadence unchanged, the timer must survive.
+    registry.reconcile(
+        (
+            _intent(repeating, fire_at=188.0, interval=3.0, tolerance=0.25),
+            _intent(one_shot, fire_at=150.0),
+        ),
+        target=target,
+    )
+    assert len(factory.created) == 2
+    assert registry.snapshot().invalidated == 0
+    # A one-shot's fire_at IS its deadline: moving it replaces the timer,
+    # as does a real cadence change on the repeating one.
+    registry.reconcile(
+        (
+            _intent(repeating, fire_at=190.0, interval=4.0, tolerance=0.25),
+            _intent(one_shot, fire_at=160.0),
+        ),
+        target=target,
+    )
+    assert len(factory.created) == 4
+    assert registry.snapshot().invalidated == 2
+
 
 def test_due_timer_intents_schedule_immediately_and_keep_repeating_interval() -> None:
     clock = _Clock()
