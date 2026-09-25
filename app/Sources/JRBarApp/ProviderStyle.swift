@@ -61,10 +61,16 @@ struct ProviderStyle: Hashable, Sendable {
     /// bisection is a pure function of (accent, surface), so the answer is
     /// kept — the Overview graph asks for it per node per drawn frame.
     func markInk(on surface: ProviderMarkInk.Surface) -> Color {
+        // An unparseable hex falls back to a dynamic colour whose sRGB is
+        // bound to the current appearance — compute it fresh rather than
+        // bake one appearance's read under the hex key.
+        guard let accent = NSColor(hex: accentHex) else {
+            return Color(nsColor: ProviderMarkInk.ink(for: nsAccent, on: surface))
+        }
         let key = "\(accentHex)|\(surface)"
         let color = Self.inkCache.withLock { cache in
             if let hit = cache[key] { return hit }
-            let made = ProviderMarkInk.ink(for: nsAccent, on: surface)
+            let made = ProviderMarkInk.ink(for: accent, on: surface)
             cache[key] = made
             return made
         }
