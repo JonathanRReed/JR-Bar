@@ -1026,6 +1026,11 @@ def _live_host(
         return None
     terminal = getattr(extras, "terminal", None)
     tty = terminal.get("tty") if isinstance(terminal, Mapping) else None
+    if type(tty) is not str:
+        # A brand-new row's extras can predate the daemon's process table
+        # (the run loop never forks ``ps``); the table read here, on the
+        # command's own thread, has the pid's row and its tty.
+        tty = getattr(table.get(pid), "tty", None)
     host = SessionHost(
         pid=pid,
         tty=tty if type(tty) is str else None,

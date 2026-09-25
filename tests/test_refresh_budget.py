@@ -158,16 +158,39 @@ def test_refresh_skips_reaping_right_behind_the_worker(headless) -> None:
     assert reaps == []
 
 
-def test_refresh_reaps_when_the_worker_is_stale_or_absent(headless) -> None:
+def test_refresh_kicks_the_worker_when_its_sweep_is_stale_or_absent(headless) -> None:
+    """The sweep forks ``ps``, which took seconds under load, so the run
+    loop never sweeps itself: a stale sweep starts the worker and the
+    refresh carries on."""
+    from jrbar import status_bar_legacy as legacy
+
     controller = _refreshable(headless)
     reaps = []
+    started = []
     controller.reap_dead_agent_processes = lambda: reaps.append(time.monotonic())
-    controller._liveness_worker_sweep_at = time.monotonic() - 10.0
+    controller._liveness_sweep_running = False
+    controller._liveness_worker_sweep_at = time.monotonic() - legacy.LIVENESS_POLL_SECONDS - 1.0
     _tick(controller)
-    assert len(reaps) == 1
-    controller._liveness_worker_sweep_at = None
-    _tick(controller)
-    assert len(reaps) == 2
+    # One interval late is the worker's own timer to answer, not a kick.
+    assert reaps == [] and not controller._liveness_sweep_running
+    controller._liveness_worker_sweep_at = time.monotonic() - legacy.LIVENESS_STALE_SECONDS - 1.0
+    real_thread = legacy.threading.Thread
+    legacy.threading.Thread = lambda target, name, daemon: SimpleNamespace(start=lambda: started.append((name, target)))
+    try:
+        _tick(controller)
+        assert [name for name, _ in started] == ["JRBarLiveness"]
+        assert reaps == [], "the refresh itself never sweeps"
+        # Stamped when the sweep starts, so the next refresh does not kick
+        # a second one while it runs.
+        assert time.monotonic() - controller._liveness_worker_sweep_at < 1.0
+        controller._liveness_sweep_running = False
+        controller._liveness_worker_sweep_at = None
+        _tick(controller)
+        assert len(started) == 2
+    finally:
+        legacy.threading.Thread = real_thread
+    started[0][1]()
+    assert len(reaps) == 1 and not controller._liveness_sweep_running
 
 
 def test_refresh_reads_integration_settings_once_per_change(headless, monkeypatch) -> None:

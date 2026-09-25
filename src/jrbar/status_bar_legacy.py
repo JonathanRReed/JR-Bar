@@ -1385,6 +1385,8 @@ CALENDAR_WATCH_RETRY_SECONDS = 300.0
 STATUS_BAR_REFRESH_SECONDS = 15.0
 # How often the app checks that live sessions still have a process.
 LIVENESS_POLL_SECONDS = 5.0
+# How old the worker's last sweep may be before a refresh kicks it.
+LIVENESS_STALE_SECONDS = 2 * LIVENESS_POLL_SECONDS
 # The second Mac's own, much slower cadence. A peer fetch is bounded
 # subprocess I/O (up to eight seconds for eight peers), so it never rides
 # the UI tick -- it gets a minute timer and a worker thread.
@@ -3053,12 +3055,14 @@ class StatusBarController(NSObject):
         try:
             self.ingest_transcript_fallback()
             _t_transcripts = time.monotonic()
-            # The worker already sweeps every LIVENESS_POLL_SECONDS; a tick
-            # that lands right behind it would fork a second ``ps`` for the
-            # same answer.
+            # The sweep reads the process table (a ``ps`` fork, seconds under
+            # load), so it runs only on the liveness worker, every
+            # LIVENESS_POLL_SECONDS. A tick that finds the worker's last
+            # sweep more than two intervals old kicks it and carries on with
+            # what the monitor already knows.
             last_sweep = self._liveness_worker_sweep_at
-            if last_sweep is None or time.monotonic() - last_sweep >= LIVENESS_POLL_SECONDS:
-                self.reap_dead_agent_processes()
+            if last_sweep is None or time.monotonic() - last_sweep >= LIVENESS_STALE_SECONDS:
+                self.pollLiveness_(None)
             _t_liveness = time.monotonic()
             try:
                 from .integration_settings import load_integration_settings
@@ -9080,6 +9084,9 @@ class StatusBarController(NSObject):
         if getattr(self, "_liveness_sweep_running", False):
             return
         self._liveness_sweep_running = True
+        # Stamped at the start as well as the end, so a refresh landing
+        # while this sweep runs does not ask for another.
+        self._liveness_worker_sweep_at = time.monotonic()
 
         def _run():
             try:

@@ -3146,6 +3146,75 @@ def test_shared_host_process_record_cannot_vouch_for_a_session(
     assert codex_extras.pid == 424_242
 
 
+_SPAWN_EVENTS = frozenset({"subprocess.Popen", "os.posix_spawn", "os.fork", "os.forkpty", "os.system", "os.exec"})
+_MAIN_THREAD_SPAWNS: list[str] = []
+_SPAWN_WATCH = [False]
+
+
+def _note_main_thread_spawn(event: str, _args) -> None:
+    if _SPAWN_WATCH[0] and event in _SPAWN_EVENTS and threading.current_thread() is threading.main_thread():
+        _MAIN_THREAD_SPAWNS.append(event)
+
+
+sys.addaudithook(_note_main_thread_spawn)
+
+
+def test_a_state_build_never_forks_ps_on_the_run_loop__and_1_more(cleared, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: a_state_build_never_forks_ps_on_the_run_loop
+    """Under load one ``ps`` took seconds, and every Settings toggle waited
+    behind the run loop while it did. A live session's terminal and tty
+    come from the last process table; a row that table has not seen asks
+    the table worker for a newer one and the build carries on."""
+    from jrbar import process_registry
+
+    me = os.getpid()
+    monkeypatch.setattr(
+        process_registry,
+        "load_record",
+        lambda provider, session_id: SimpleNamespace(
+            pid=me, cwd="/tmp/x", started_at_epoch=None, ended_at_epoch=None, end_reason=None
+        ),
+    )
+    monkeypatch.setattr(process_registry, "pid_exists", lambda pid: True)
+    monkeypatch.setattr(process_registry, "_table_cache", None)
+    controller = cleared
+    asked: list[bool] = []
+    controller._core_process_table = SimpleNamespace(request=lambda: asked.append(True) or True)
+    controller._core_extras.clear()
+    _MAIN_THREAD_SPAWNS.clear()
+    _SPAWN_WATCH[0] = True
+    try:
+        document = controller._core_build_state()
+    finally:
+        _SPAWN_WATCH[0] = False
+    assert _MAIN_THREAD_SPAWNS == []
+    assert asked, "the table worker was asked for the table the row needs"
+    live = {row["id"]: row for row in document["sessions"]}["claude:session:live"]
+    assert live["pid"] == me and live["terminal"] is None
+    assert "claude:session:live" in controller._core_extras_awaiting_table
+
+    # --- scenario: the_workers_table_fills_the_row_in
+    """When the worker's read lands, the rows that were waiting are looked
+    up again and published, with the tty from the same table row."""
+    table = {
+        me: process_registry.ProcessEntry(me, 4242, None, "/opt/homebrew/bin/node", "/dev/ttys042"),
+        4242: process_registry.ProcessEntry(4242, 1, None, "/Applications/Ghostty.app/Contents/MacOS/ghostty"),
+    }
+    monkeypatch.setattr(process_registry, "_table_cache", (time.monotonic(), table))
+    published = len(controller._core.published)
+    _SPAWN_WATCH[0] = True
+    try:
+        controller.coreProcessTableRefreshed_(None)
+    finally:
+        _SPAWN_WATCH[0] = False
+    assert _MAIN_THREAD_SPAWNS == []
+    assert len(controller._core.published) == published + 1
+    state = [document for kind, document in controller._core.published if kind == "state"][-1]
+    live = {row["id"]: row for row in state["sessions"]}["claude:session:live"]
+    assert live["terminal"] == {"app": "Ghostty", "bundle_id": "com.mitchellh.ghostty", "tty": "/dev/ttys042"}
+    assert not controller._core_extras_awaiting_table
+
+
 def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     """hidapi's IOHIDManager keeps the run loop of whichever thread first
     touched it. A fresh thread per probe leaves it holding a run loop that

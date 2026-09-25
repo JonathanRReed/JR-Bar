@@ -76,6 +76,10 @@ EXTRAS_TTL_SECONDS: Final = 30.0
 # own ``SessionEnd`` to land behind its process's exit, short enough that a
 # session that really was killed settles and stops costing a file read.
 UNSETTLED_EXTRAS_SECONDS: Final = 60.0
+# A live session whose pid the last process table has not seen yet (it is
+# younger than the table) is looked up again this soon, or as soon as the
+# table worker brings a newer table, whichever comes first.
+EXTRAS_TABLE_RETRY_SECONDS: Final = 5.0
 # How long ``answer_ask`` waits on the answer surface's worker before it gives
 # up and says so. A delivery is a few process reads and one posted key; the
 # surface's own budget (answer_local.DELIVERY_BUDGET_SECONDS) is smaller, so
@@ -4031,11 +4035,15 @@ def build_headless_controller_class() -> type:
             self._core_prev_asks: dict[str, Any] | None = None
             self._core_prev_devices: dict[str, bool] | None = None
             self._core_extras: dict[str, tuple[float, SessionExtras]] = {}
+            # Rows whose last lookup found a live pid the process table had
+            # not seen yet; the table worker's next read expires them.
+            self._core_extras_awaiting_table: set[str] = set()
             # Keyed by (pid, process start epoch), not pid alone: a reused
             # pid must not inherit the previous owner's terminal. Entries
-            # die with the process; the dicts are pruned when they grow.
-            self._core_tty_by_pid: dict[tuple[int, float | None], str | None] = {}
+            # die with the process; the dict is pruned when it grows.
             self._core_terminal_by_pid: dict[tuple[int, float | None], dict[str, Any] | None] = {}
+            # Reads the process table off the run loop (never a ``ps`` here).
+            self._core_process_table = None
             self._core_started_at = time.time()
             self._core_pending_drainer = None
             self._core_last_clear_batch = None
@@ -6454,14 +6462,58 @@ def build_headless_controller_class() -> type:
                 and not self._core_extras_unsettled(cached[1], status)
             ):
                 return cached[1]
-            extras = self._core_lookup_extras(status)
+            extras, table_has_it = self._core_lookup_extras_from_table(status)
             if len(self._core_extras) > 256:
                 # Session ids never repeat, so the map would grow for the
                 # daemon's uptime; a clear is cheaper than an eviction
                 # policy for a cache this cheap to refill.
                 self._core_extras.clear()
-            self._core_extras[status.agent_id] = (time.monotonic(), extras)
+                self._core_extras_awaiting_table.clear()
+            stamp = time.monotonic()
+            if table_has_it:
+                self._core_extras_awaiting_table.discard(status.agent_id)
+            else:
+                # Its terminal and tty are not known yet: look again after
+                # the table worker's next read, or in a few seconds at most.
+                stamp -= EXTRAS_TTL_SECONDS - EXTRAS_TABLE_RETRY_SECONDS
+                self._core_extras_awaiting_table.add(status.agent_id)
+            self._core_extras[status.agent_id] = (stamp, extras)
             return extras
+
+        def _core_process_table_worker(self):
+            from .process_registry import ProcessTableRefresher
+
+            worker = getattr(self, "_core_process_table", None)
+            if worker is None:
+                worker = ProcessTableRefresher(on_refreshed=self._core_process_table_refreshed)
+                self._core_process_table = worker
+            return worker
+
+        def _core_process_table_refreshed(self) -> None:
+            # On the table worker's thread: hand the news to the run loop.
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "coreProcessTableRefreshed:", None, False
+                )
+            except Exception:
+                pass
+
+        @objc.IBAction
+        def coreProcessTableRefreshed_(self, _payload) -> None:
+            """A newer process table landed: rows that were waiting for their
+            pid in it are looked up again on the next state build."""
+            waiting = self._core_extras_awaiting_table
+            if not waiting:
+                return
+            expired = False
+            for agent_id in tuple(waiting):
+                cached = self._core_extras.get(agent_id)
+                if cached is not None:
+                    self._core_extras[agent_id] = (float("-inf"), cached[1])
+                    expired = True
+            waiting.clear()
+            if expired:
+                self._core_publish_state()
 
         @staticmethod
         def _core_extras_unsettled(extras: SessionExtras, status) -> bool:
@@ -6487,6 +6539,14 @@ def build_headless_controller_class() -> type:
             return stamp is not None and time.time() - stamp < UNSETTLED_EXTRAS_SECONDS
 
         def _core_lookup_extras(self, status) -> SessionExtras:
+            return self._core_lookup_extras_from_table(status)[0]
+
+        def _core_lookup_extras_from_table(self, status) -> tuple[SessionExtras, bool]:
+            """``(extras, settled)``. Reads one registry record and the
+            last process table; never forks ``ps``, because this runs on the
+            run loop inside every state build. ``settled`` is False when the
+            session's process is alive but the table has not seen it yet:
+            the table worker has been asked for a newer one."""
             from .process_registry import SHARED_HOST_PROVIDERS, load_record, pid_exists
 
             pid = None
@@ -6531,14 +6591,12 @@ def build_headless_controller_class() -> type:
             origin_label = getattr(status, "origin", None)
             origin = origin_document(origin_label if isinstance(origin_label, str) else None)
             terminal = None
+            settled = True
             if pid is not None:
-                terminal = dict(self._core_terminal_for_pid(pid) or {})
-                tty = self._core_tty_for_pid(pid)
-                if tty:
-                    terminal["tty"] = tty
-                if not terminal:
-                    terminal = None
-            return SessionExtras(
+                terminal, settled = self._core_terminal_for_pid(
+                    pid, started_at_epoch=getattr(record, "started_at_epoch", None)
+                )
+            extras = SessionExtras(
                 pid=pid,
                 origin=origin,
                 terminal=terminal,
@@ -6547,6 +6605,7 @@ def build_headless_controller_class() -> type:
                 name=name,
                 provider_ended=provider_ended,
             )
+            return extras, settled
 
         def _core_session_title(self, provider: str, session_id: str, pid: int | None, cwd: str | None):
             """(name, cwd) from the provider's own session record: Claude's
@@ -6570,53 +6629,60 @@ def build_headless_controller_class() -> type:
                 name = None
             return name, cwd
 
-        def _core_tty_for_pid(self, pid: int) -> str | None:
-            from .process_registry import tty_and_start
+        def _core_terminal_for_pid(
+            self, pid: int, *, started_at_epoch: float | None = None
+        ) -> tuple[dict[str, Any] | None, bool]:
+            """``(terminal, settled)`` for a live pid, from the last process
+            table and never a fork: the terminal app the process runs under
+            and its tty, both from the pid's own row and its ancestors.
 
-            tty, started = tty_and_start(pid)
-            if started is None:
-                # No start time means the process is already gone or
-                # unreadable; nothing safe to cache, and a reused pid
-                # could inherit it.
-                return tty
-            key = (pid, started)
-            if key in self._core_tty_by_pid:
-                return self._core_tty_by_pid[key]
-            if len(self._core_tty_by_pid) > 256:
-                self._core_tty_by_pid.clear()
-            self._core_tty_by_pid[key] = tty
-            return tty
+            ``settled`` is False when there is no table yet, or the process
+            is younger than the table (its pid is missing, or the row is an
+            earlier owner of a reused pid); the table worker is asked for a
+            newer one and the caller looks again once it lands."""
+            from .process_registry import START_TOLERANCE_SECONDS, cached_process_table
 
-        def _core_terminal_for_pid(self, pid: int) -> dict[str, Any] | None:
-            from .process_registry import list_processes
-
-            terminal = None
-            started = None
+            cached = cached_process_table()
+            table = cached[1] if cached is not None else None
+            entry = table.get(pid) if table else None
+            if (
+                entry is not None
+                and started_at_epoch is not None
+                and entry.started_at_epoch is not None
+                and abs(entry.started_at_epoch - started_at_epoch) > START_TOLERANCE_SECONDS
+            ):
+                entry = None
+            if entry is None:
+                try:
+                    self._core_process_table_worker().request()
+                except Exception:
+                    pass
+                return None, False
+            key = (pid, entry.started_at_epoch)
+            if key in self._core_terminal_by_pid:
+                return self._core_terminal_by_pid[key], True
+            terminal: dict[str, Any] = {}
             try:
-                table = list_processes()
-                entry = table.get(pid)
-                if entry is None:
-                    return None
-                started = entry.started_at_epoch
-                key = (pid, started)
-                if key in self._core_terminal_by_pid:
-                    return self._core_terminal_by_pid[key]
                 current = pid
                 for _ in range(12):
-                    entry = table.get(current)
-                    if entry is None or current <= 1:
+                    row = table.get(current)
+                    if row is None or current <= 1:
                         break
-                    match = terminal_from_command(entry.command)
+                    match = terminal_from_command(row.command)
                     if match is not None:
                         terminal = {"app": match[0], "bundle_id": match[1]}
                         break
-                    current = entry.ppid
+                    current = row.ppid
             except Exception:
-                return None
+                terminal = {}
+            tty = getattr(entry, "tty", None)
+            if tty:
+                terminal["tty"] = tty
+            result = terminal or None
             if len(self._core_terminal_by_pid) > 256:
                 self._core_terminal_by_pid.clear()
-            self._core_terminal_by_pid[key] = terminal
-            return terminal
+            self._core_terminal_by_pid[key] = result
+            return result, True
 
         def _core_device_facts(self) -> tuple[DeviceFacts, ...]:
             from ._led_status_legacy import led_count_for_target

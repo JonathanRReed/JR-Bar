@@ -18,16 +18,22 @@ def test_list_processes_parses_lstart_and_comm_with_spaces__and_2_more() -> None
     class Completed:
         returncode = 0
         stdout = (
-            "  9170  9169 Wed Sep  9 18:34:49 2026 /Users/x/Library/Application Support/Claude/claude.app/Contents/MacOS/claude\n"
-            "  1234     1 Wed Sep  9 18:00:00 2026 /opt/homebrew/bin/codex\n"
+            "  9170  9169 ??       Wed Sep  9 18:34:49 2026 /Users/x/Library/Application Support/Claude/claude.app/Contents/MacOS/claude\n"
+            "  1234     1 ttys003  Wed Sep  9 18:00:00 2026 /opt/homebrew/bin/codex\n"
             "garbage line\n"
         )
 
-    table = pr.list_processes(runner=lambda *a, **k: Completed())
+    commands = []
+    table = pr.list_processes(runner=lambda argv, *a, **k: commands.append(argv) or Completed())
+    # One fork answers the terminal question too: the tty rides in the
+    # same row, so nothing asks ``ps -p`` per session.
+    assert commands == [["/bin/ps", "-axo", "pid=,ppid=,tty=,lstart=,comm="]]
     assert table[9170].basename == "claude"
     assert table[9170].ppid == 9169
     assert table[9170].started_at_epoch == time.mktime(time.strptime("Wed Sep  9 18:34:49 2026", "%a %b %d %H:%M:%S %Y"))
+    assert table[9170].tty is None
     assert table[1234].basename == "codex"
+    assert table[1234].tty == "/dev/ttys003"
     assert len(table) == 2
 
     # --- scenario: discover_agent_process_walks_past_shells_to_provider_binary
@@ -281,3 +287,70 @@ def test_prune_registry_removes_old_records(tmp_path: Path):
     os.utime(path, (old, old))
     assert pr.prune_registry(state_dir=tmp_path) == 1
     assert pr.load_record(record.provider, record.session_id, state_dir=tmp_path) is None
+
+
+def test_the_table_worker_reads_off_the_callers_thread_once_at_a_time__and_2_more() -> None:
+    # --- scenario: the_table_worker_reads_off_the_callers_thread_once_at_a_time
+    """The daemon's run loop never waits on ``ps``: it asks the worker,
+    and a second ask while a read is pending (or right after one) is
+    dropped rather than queueing another fork."""
+    clock = [100.0]
+    started: list = []
+    reads: list = []
+    refreshed: list = []
+    worker = pr.ProcessTableRefresher(
+        loader=lambda: reads.append(clock[0]) or {1: pr.ProcessEntry(1, 0, 0.0, "launchd")},
+        start=started.append,
+        clock=lambda: clock[0],
+        retry_seconds=2.0,
+        failure_backoff_seconds=10.0,
+        on_refreshed=lambda: refreshed.append(clock[0]),
+    )
+    assert worker.request() is True
+    assert reads == [] and worker.running
+    assert worker.request() is False, "a read is already pending"
+    started.pop()()
+    assert reads == [100.0] and refreshed == [100.0] and not worker.running
+    clock[0] = 101.0
+    assert worker.request() is False, "inside the retry window"
+    clock[0] = 102.5
+    assert worker.request() is True
+    started.pop()()
+    assert reads == [100.0, 102.5]
+
+    # --- scenario: a_failed_read_backs_off_longer_and_tells_nobody
+    clock = [0.0]
+    started = []
+    refreshed = []
+    worker = pr.ProcessTableRefresher(
+        loader=dict,
+        start=started.append,
+        clock=lambda: clock[0],
+        retry_seconds=2.0,
+        failure_backoff_seconds=10.0,
+        on_refreshed=lambda: refreshed.append(True),
+    )
+    assert worker.request() is True
+    started.pop()()
+    assert refreshed == []
+    clock[0] = 5.0
+    assert worker.request() is False
+    clock[0] = 10.5
+    assert worker.request() is True
+
+    # --- scenario: cached_process_table_never_forks
+    original_cache, original_read = pr._table_cache, pr._list_processes_uncached
+
+    def forbidden(runner):
+        raise AssertionError("cached_process_table forked ps")
+
+    try:
+        pr._list_processes_uncached = forbidden
+        pr._table_cache = None
+        assert pr.cached_process_table() is None
+        table = {7: pr.ProcessEntry(7, 1, 3.0, "codex", "/dev/ttys001")}
+        # Old or not, the last table is what the run loop gets.
+        pr._table_cache = (-1e9, table)
+        assert pr.cached_process_table() == (-1e9, table)
+    finally:
+        pr._table_cache, pr._list_processes_uncached = original_cache, original_read
