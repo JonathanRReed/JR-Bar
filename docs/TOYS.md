@@ -429,8 +429,11 @@ body is five rows:
   eats, a clink for a pearl or coin, a chime for a purchase or a reward
   card, a whoosh for a visitor (`AquariumSound`, synthesized, no asset).
   Only for a tap or a window event, only in the open, uncovered window,
-  never on the wallpaper or the screensaver, never while the toys are
-  hushed (Focus, quiet hours, a call), at the Sounds page's volume.
+  never on the wallpaper or the screensaver, at the Sounds page's
+  volume. It stays quiet during a Focus, quiet hours or a call whether
+  or not the Toys page hushes the toys, and, while the Sounds page
+  keeps quiet on calls, whenever another app has the microphone
+  (`AquariumSound.held`).
 
 A folded **Fine-tune** holds the numbers: **Fish at once** (All, 6, 10,
 16, 24 — past it, residents rest first, least raised first, then quiet

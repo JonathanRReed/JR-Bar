@@ -515,12 +515,19 @@ final class AquariumToy: Toy {
     }
 
     /// The tank's voice, when Sound is on — and only for a person
-    /// watching: the window open and uncovered, the room not hushed.
-    /// Never from the wallpaper or the screensaver, which don't call.
+    /// watching: the window open and uncovered, and never during a
+    /// Focus, JR-Bar's quiet or a call, whatever the Toys page's hush
+    /// switch says (`AquariumSound.held`). Never from the wallpaper or
+    /// the screensaver, which don't call.
     func playSound(_ voice: AquariumSound.Voice) {
-        guard store?.state.aquarium.sound == true, isOn, windowController != nil,
-              !windowOccluded, !hushed else { return }
-        AquariumSound.play(voice, volume: SoundPreferences.load().volume)
+        guard let store, store.state.aquarium.sound, isOn, windowController != nil,
+              !windowOccluded else { return }
+        let preferences = SoundPreferences.load()
+        guard !AquariumSound.held(focus: core.state?.focus, onCall: store.onCall,
+                                  quietOnCalls: preferences.quietOnCalls,
+                                  micLive: { MicrophoneCapture.isLive() }, now: Date())
+        else { return }
+        AquariumSound.play(voice, volume: preferences.volume)
     }
 
     /// Apply an owned theme.

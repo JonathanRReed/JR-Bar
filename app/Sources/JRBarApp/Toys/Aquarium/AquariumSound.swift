@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import JRBarCore
 
 /// The tank's little voice (Aquarium card › Sound, off by default): five
 /// short sounds synthesized once into in-memory WAVs — no bundled asset,
@@ -52,6 +53,21 @@ enum AquariumSound {
         player.volume = Float(min(1, max(0, volume)))
         player.currentTime = 0
         player.play()
+    }
+
+    /// Whether the tank keeps its voice to itself right now, pure: a
+    /// Focus, JR-Bar's quiet or a call (the room's own reading, whether
+    /// or not the Toys page hushes the toys, since a sound reaches you
+    /// where a toast doesn't), the daemon saying sounds are off, or —
+    /// while Settings › Sounds keeps quiet on calls — another app
+    /// capturing from a microphone. `micLive` is only read when it
+    /// matters.
+    nonisolated static func held(focus: CoreFocus?, onCall: Bool, quietOnCalls: Bool,
+                                 micLive: () -> Bool, now: Date) -> Bool {
+        let room = ToysHush.reason(mode: focus?.mode, source: focus?.source,
+                                   until: focus?.until, onCall: onCall, now: now)
+        if room != nil || focus?.soundsAllowed == false { return true }
+        return quietOnCalls && micLive()
     }
 
     /// Per-voice spacing: a voice may start again only `minimumGap`
