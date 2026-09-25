@@ -310,7 +310,8 @@ private struct ConfettiMannersSection: View {
             Text("Every screen").tag(ConfettiScreens.all)
             Text("Main screen only").tag(ConfettiScreens.main)
         } label: {
-            SettingLabel(title: "Screens", subtitle: "A screen a fullscreen app owns is always skipped.")
+            SettingLabel(title: "Screens",
+                         subtitle: "While the switch above is on, a screen a fullscreen app owns is skipped. Try it fires on every screen.")
         }
         .pickerStyle(.menu)
     }
