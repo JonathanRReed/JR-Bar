@@ -1,5 +1,5 @@
 import AppKit
-import EventKit
+@preconcurrency import EventKit
 
 /// W12's event glance: the next few calendar events, read-only, with
 /// explicit Open/Join actions. Privacy is the default (T52): no
@@ -222,6 +222,12 @@ final class ShelfMeetingWatch {
     private var store: EKEventStore?
     private var timer: Timer?
     private var changeObserver: NSObjectProtocol?
+    /// The store's fetches run here — `events(matching:)` walks the
+    /// database and does not belong on main.
+    private let fetchQueue = DispatchQueue(label: "jrbar.meeting-watch", qos: .userInitiated)
+    /// A read in flight whose answer must be dropped — a `stop` or a
+    /// newer read made it stale.
+    private var readGeneration = 0
 
     /// On while the switch is on and access exists; off otherwise.
     func sync(enabled: Bool) {
@@ -243,6 +249,7 @@ final class ShelfMeetingWatch {
 
     func stop() {
         running = false
+        readGeneration += 1
         timer?.invalidate()
         timer = nil
         if let changeObserver { NotificationCenter.default.removeObserver(changeObserver) }
@@ -253,17 +260,31 @@ final class ShelfMeetingWatch {
         }
     }
 
+    /// Fetch the window off main — a busy EventKit store has no business
+    /// stalling the run loop — then hand the rows to `note`. A read that
+    /// lands after a `stop` or a newer fetch is dropped.
     private func read() {
         guard running, let store else { return }
-        let now = Date()
-        // Back far enough to catch a long meeting already running.
-        let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-12 * 3600),
-                                                 end: now.addingTimeInterval(ShelfCalendarModel.lookahead),
-                                                 calendars: nil)
-        let events = store.events(matching: predicate)
-            .filter { !$0.isAllDay }
-            .map(ShelfCalendarModel.project)
-        note(events, now: now)
+        readGeneration += 1
+        let generation = readGeneration
+        fetchQueue.async { [weak self] in
+            let now = Date()
+            // Back far enough to catch a long meeting already running.
+            let predicate = store.predicateForEvents(
+                withStart: now.addingTimeInterval(-12 * 3600),
+                end: now.addingTimeInterval(ShelfCalendarModel.lookahead),
+                calendars: nil)
+            let events = store.events(matching: predicate)
+                .filter { !$0.isAllDay }
+                .map(ShelfCalendarModel.project)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.running,
+                          self.readGeneration == generation else { return }
+                    self.note(events, now: now)
+                }
+            }
+        }
     }
 
     /// One reading: say what is due, move the live meeting, arm the next
