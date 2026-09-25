@@ -275,7 +275,7 @@ struct AquariumTurnLayoutTests {
             }
         }
         // A whole turtle sweep and a whole axolotl patrol, wraps included.
-        let turtle = layouts((0...(30 * 92)).map { tank.seaTurtlePose(size: size, t: t0 + Double($0) * dt) })
+        let turtle = layouts((0...(30 * 92)).map { tank.seaTurtlePose(size: size, t: t0 + Double($0) * dt).pose })
         expectSmooth(turtle, speed: size.width / 45, "turtle")
         #expect(Set(turtle.map(\.facing)).count == 2)
         let axolotl = layouts((0...(30 * 162)).map { tank.axolotlPose(size: size, t: t0 + Double($0) * dt).pose })

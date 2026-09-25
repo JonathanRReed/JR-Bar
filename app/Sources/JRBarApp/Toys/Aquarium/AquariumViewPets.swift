@@ -21,8 +21,9 @@ extension AquariumView {
     /// The sea turtle's path: across the tank one way and back the next
     /// on a 90-second sweep, easing to a stop at each end and coming
     /// round there over 1.4 s with a small dip, rising for a breath near
-    /// the end of each leg.
-    func seaTurtlePose(size: CGSize, t: Double) -> PetPose {
+    /// the end of each leg. `breathe` (0…1) is how far up for that
+    /// breath it is.
+    func seaTurtlePose(size: CGSize, t: Double) -> (pose: PetPose, breathe: Double) {
         let period = 90.0
         let legTime = period / 2
         let tau = frac(t / period) * period
@@ -62,19 +63,16 @@ extension AquariumView {
         let baseY = size.height * 0.42
         let y = reduceMotion ? baseY
             : baseY + sin(t * 0.4) * 14 - breathe * (baseY - 46) + dip * 10
-        return PetPose(x: x, y: y, c: c)
+        return (PetPose(x: x, y: y, c: c), breathe)
     }
 
     /// The sea turtle: a slow glide across midwater on a long lazy
     /// sweep, rising for a breath every minute or so — a patient
     /// silhouette behind the fish lane.
     func drawSeaTurtle(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        let pose = seaTurtlePose(size: size, t: t)
+        let placed = seaTurtlePose(size: size, t: t)
+        let pose = placed.pose, breathe = placed.breathe
         let x = pose.x, y = pose.y
-        let period = 90.0
-        let leg = frac(frac(t / period) * 2)
-        let breathe = smooth(clamp01((leg - 0.72) / 0.10))
-            * smooth(clamp01((0.98 - leg) / 0.10))
         var c = canvas
         c.translateBy(x: x, y: y)
         c.scaleBy(x: pose.c, y: 1)
@@ -214,7 +212,8 @@ extension AquariumView {
 
     /// The axolotl: a wide pink smile on legs, three gill fronds a
     /// cheek waving as it ambles the sand on a long seeded patrol;
-    /// every so often it kicks up and settles a body-width over.
+    /// halfway along each leg it kicks up off the sand and drops back
+    /// down in a puff.
     func drawAxolotl(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         let placed = axolotlPose(size: size, t: t)
         let x = placed.pose.x, y = placed.pose.y
