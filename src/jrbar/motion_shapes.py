@@ -336,7 +336,11 @@ def fill(
 
     ``release`` is how the full bar lets go: ``all_at_once`` drains the
     whole bar together, ``hold`` rests full for a beat first, and ``decay``
-    empties it LED by LED from the last one filled.
+    empties it LED by LED from the last one filled. The decay's fades name
+    no easing, so the firmware plays its own default (``ease``): sixteen
+    per-LED steps spelling ``cosine`` twice over would not leave room for
+    the caller's own lines, and the whole release fell back to draining at
+    once.
     """
     count = max(1, int(led_count))
     total = max(1, int(cycle_ms))
@@ -359,7 +363,7 @@ def fill(
     if release == "decay":
         fade = max(MIN_STEP_MS, drain // max(1, count))
         emptied = [
-            f"{led}:{floor_color} {_time(fade * 2)} cosine"
+            f"{led}:{floor_color} {_time(fade * 2)}"
             + (f" {_time(position * fade)}" if position else "")
             for position, led in enumerate(reversed(order))
         ]
@@ -1279,12 +1283,19 @@ def render_motion(
 
     When the chosen values would leave less than ``reserve_bytes`` of the
     firmware's 512 for the caller's own lines (a settle ease, ``repeat``, a
-    brightness line), the motion is drawn with its default values instead:
-    a slightly plainer motion beats a program the strip cannot take.
+    brightness line), only the values that do not fit go back to their
+    defaults, one at a time, and the rest are kept: a slightly plainer
+    motion beats a program the strip cannot take, and one long knob should
+    not undo every other. An unsettled motion (``UNSETTLED_MOTIONS``) plays
+    without the settle ease, so it only needs ``UNSETTLED_RESERVE_BYTES``.
+    If the defaults still do not fit, a circulating motion drops to one lap.
     """
     values = params if isinstance(params, dict) else {}
+    reserve = int(reserve_bytes)
+    if motion in UNSETTLED_MOTIONS:
+        reserve = min(reserve, UNSETTLED_RESERVE_BYTES)
 
-    def draw(knobs: dict) -> list[str]:
+    def draw(knobs: dict, *, one_lap: bool = compact) -> list[str]:
         return _motion_lines(
             motion,
             peak,
@@ -1292,15 +1303,23 @@ def render_motion(
             led_count=max(1, int(led_count)),
             cycle_ms=max(1, int(cycle_ms)),
             params=knobs,
-            compact=compact,
+            compact=one_lap,
             dot_travel=dot_travel,
             head=head if motion in TINTABLE_MOTIONS else None,
             ceiling=max(0.0, min(1.0, float(ceiling))),
         )
 
     lines = draw(values)
-    if values and not fits(lines, reserve_bytes=reserve_bytes):
-        lines = draw({})
+    if fits(lines, reserve_bytes=reserve):
+        return lines
+    kept: dict = {}
+    for name, value in values.items():
+        trial = {**kept, name: value}
+        if fits(draw(trial), reserve_bytes=reserve):
+            kept = trial
+    lines = draw(kept)
+    if not fits(lines, reserve_bytes=reserve) and not compact:
+        lines = draw(kept, one_lap=True)
     return lines
 
 

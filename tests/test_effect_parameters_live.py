@@ -60,21 +60,45 @@ def _cases():
 
 
 def test_every_render_parameter_changes_the_program() -> None:
+    """Every value a knob can take that is not its default draws something
+    other than the defaults. Counting distinct programs across a knob's
+    values was not enough: Stack's ``decay`` release overflowed, fell back
+    to the default look, and two different programs among three choices
+    still passed."""
     inert = []
     for effect, parameter in _cases():
         if (effect.identifier, parameter.name) in POLICY_PARAMETERS:
             continue
-        programs = {
-            core_effects.render_effect(
-                effect,
-                core_effects.normalize_parameters(effect, {parameter.name: value}),
-                led_count=8,
-            )
-            for value in _extremes(parameter)
-        }
-        if len(programs) < 2:
-            inert.append(f"{effect.identifier}.{parameter.name}")
+        plain = core_effects.render_effect(
+            effect, core_effects.normalize_parameters(effect, {}), led_count=8
+        )
+        for value in _extremes(parameter):
+            parameters = core_effects.normalize_parameters(effect, {parameter.name: value})
+            if parameters[parameter.name] == core_effects.normalize_parameters(effect, {})[parameter.name]:
+                continue
+            if core_effects.render_effect(effect, parameters, led_count=8) == plain:
+                inert.append(f"{effect.identifier}.{parameter.name}={value!r}")
     assert inert == []
+
+
+@pytest.mark.parametrize("knob", ("fill_direction", "release_behavior"))
+def test_one_long_knob_does_not_undo_the_others(knob: str) -> None:
+    """Stack's ``decay`` release is its longest program. Choosing it keeps
+    a reversed fill, and choosing a reversed fill keeps the decay: a value
+    that fits is never thrown back to its default because another one was
+    chosen alongside it."""
+    stack = get_effect("stack")
+    both = core_effects.normalize_parameters(
+        stack, {"fill_direction": "reverse", "release_behavior": "decay"}
+    )
+    alone = {name: value for name, value in both.items() if name != knob}
+    for cycle in (0.5, 2.2, 10.0):
+        both["duration_seconds"] = alone["duration_seconds"] = cycle
+        together = core_effects.render_effect(stack, both, led_count=8)
+        without = core_effects.render_effect(
+            stack, core_effects.normalize_parameters(stack, alone), led_count=8
+        )
+        assert together != without, (knob, cycle)
 
 
 def _assert_safe(effect, values: dict, *, label: str) -> None:
@@ -101,6 +125,33 @@ def test_every_parameter_value_passes_the_safety_compiler_untouched() -> None:
         highs = {p.name: _extremes(p)[-1] for p in effect.parameter_metadata}
         _assert_safe(effect, lows, label=f"{effect.identifier} all low")
         _assert_safe(effect, highs, label=f"{effect.identifier} all high")
+
+
+def test_the_slowest_motion_still_fits_under_a_brightness_line() -> None:
+    """Play on strip (``preview_program``) and a semantic cue put the
+    strip's brightness line in front of what Effect Studio rendered. At the
+    longest cycle, with every knob at either end, that still fits the
+    firmware: a slow Pendulum came to 520 bytes and the strip refused it."""
+    from jrbar._led_status_legacy import apply_brightness
+
+    longest = colors_module.MAX_CYCLE_SPEED_SECONDS
+    for effect in PROVIDER_ANIMATION_EFFECTS:
+        names = {p.name for p in effect.parameter_metadata}
+        choices = [{}]
+        choices += [{p.name: v} for p in effect.parameter_metadata for v in _extremes(p)]
+        choices.append({p.name: _extremes(p)[-1] for p in effect.parameter_metadata})
+        for values in choices:
+            if "duration_seconds" in names:
+                values = {**values, "duration_seconds": longest}
+            parameters = core_effects.normalize_parameters(effect, values)
+            for led_count in (8, 2):
+                program = apply_brightness(
+                    core_effects.render_effect(effect, parameters, led_count=led_count), 128
+                )
+                assert len(program.encode("utf-8")) <= shapes.MAX_PROGRAM_BYTES, (
+                    effect.identifier, values, led_count, len(program.encode("utf-8"))
+                )
+                assert program.count("\n") + 1 <= shapes.MAX_PROGRAM_LINES
 
 
 def test_saturated_red_never_passes_one_hertz() -> None:
@@ -193,6 +244,22 @@ def test_values_that_would_not_fit_fall_back_to_the_defaults() -> None:
     )
     assert shapes.program_bytes(painted) + room > shapes.MAX_PROGRAM_BYTES
     assert squeezed == default
+    # Only the value that does not fit goes back: a wave count chosen
+    # alongside the palette stays.
+    waves = shapes.render_motion(
+        "aurora", peak, floor, led_count=8, cycle_ms=2200, params={"wave_count": 4}
+    )
+    assert waves != default
+    kept = shapes.render_motion(
+        "aurora",
+        peak,
+        floor,
+        led_count=8,
+        cycle_ms=2200,
+        params={"palette": list(PALETTE), "wave_count": 4},
+        reserve_bytes=shapes.MAX_PROGRAM_BYTES - shapes.program_bytes(waves),
+    )
+    assert kept == waves
 
 
 def _solo_dsl(settings) -> str:
