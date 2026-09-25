@@ -1884,6 +1884,7 @@ final class NotchToy: Toy {
             mediaToken = nil
             if islandMedia != nil {
                 islandMedia = nil
+                noteIslandArtwork(nil)
                 reframeCurrent(animated: false)
             }
         }
@@ -1896,10 +1897,31 @@ final class NotchToy: Toy {
     func noteMedia(_ media: AlcoveMedia?) {
         guard media != islandMedia else { return }
         islandMedia = media
+        noteIslandArtwork(media?.artworkData)
         if currentFace != .notice {
             reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         }
         syncAudioTap()
+    }
+
+    /// The idle strip's cover, decoded once off the main thread
+    /// (`NotchArtworkStore`) — the strip draws it on every breath tick.
+    private(set) var islandArtwork: NSImage?
+    /// The cover `islandArtwork` was made from.
+    @ObservationIgnored private var islandArtworkSource: Data?
+
+    private func noteIslandArtwork(_ data: Data?) {
+        guard data != islandArtworkSource else { return }
+        islandArtworkSource = data
+        guard let data else {
+            islandArtwork = nil
+            return
+        }
+        // A headless toy (tests, render proofs) draws in the same turn.
+        NotchArtworkStore.shared.art(for: data, inline: !runtimeEnabled) { [weak self] art in
+            guard let self, self.islandArtworkSource == data else { return }
+            self.islandArtwork = art?.image
+        }
     }
 
     /// The island's swipe transport lands here.

@@ -292,6 +292,7 @@ final class NotchCardModel {
         self.tray = tray
         self.utility = utility ?? ShelfUtilityModel()
         self.runtimeEnabled = runtimeEnabled
+        self.utility.inlineReads = !runtimeEnabled
         if runtimeEnabled { readPrivacy = { NotchSensorMonitor.privacyLineNow() } }
     }
 }
