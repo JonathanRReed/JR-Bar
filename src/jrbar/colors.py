@@ -2275,6 +2275,24 @@ def _within_firmware_budget(program: str) -> bool:
     )
 
 
+#: ``brightness 255`` and its line break: the most a brightness line costs.
+_BRIGHTNESS_LINE_BYTES = 15
+
+
+def _fits_with_brightness(program: str) -> bool:
+    """Whether this program fits the device with room for the brightness
+    line a device write puts in front. A preview rendered at full
+    brightness carries none, and Effect Studio's Play on strip adds the
+    strip's own, so a program judged without that room could be refused
+    by the strip it was previewed for."""
+    if any(line.startswith("brightness ") for line in program.splitlines()):
+        return _within_firmware_budget(program)
+    return (
+        len(program.encode("utf-8")) + _BRIGHTNESS_LINE_BYTES <= MAX_LED_BYTES
+        and program.count("\n") + 2 <= MAX_LED_LINES
+    )
+
+
 def _display_state_program(settings: ColorSettings, state: LedDisplayState, **kwargs) -> str:
     """``program_for_display_state`` with the celebration the person chose:
     a finish plays Land or Ripple instead of the shipped bloom when
@@ -2318,35 +2336,25 @@ def _single_agent_program(
         and settings.agent_animation(provider) != PROVIDER_ANIMATION_AUTO
     ):
         duration_ms = provider_cycle_ms(provider, settings)
-        settle_ms = settle_duration_ms(duration_ms)
-        floor_color = _floor_for_state(color, state, settings)
-        body = _motion_turn_lines(
-            color,
-            state,
-            settings,
-            provider=provider,
-            led_count=led_count,
-            duration_ms=duration_ms,
+        body, settle = _provider_motion_parts(
+            provider, color, settings, led_count=led_count, state=state
         )
         # The settle line is a courtesy, not part of the shape: it eases a
         # mid-breath interruption back to rest. A bouncing sweep spends most
         # of the 512 bytes on its two lines, so when both will not fit the
         # settle line goes first and the motion stays -- refusing the write
-        # entirely would freeze the strip on its previous program.
-        lead = f"{floor_color} {settle_ms}ms cosine"
-        candidates = [[lead, *body, "repeat"], [*body, "repeat"]]
-        if agent_motion(
-            state, cycle_ms=duration_ms, provider=provider, settings=settings
-        ) == MOTION_STEADY:
-            # A held colour has no breath to interrupt; easing down to the
-            # floor at the top of every loop would only make it blink.
-            candidates = candidates[1:]
+        # entirely would freeze the strip on its previous program. A motion
+        # that never rests at its floor has none (``_provider_motion_parts``).
+        candidates = [[*body, "repeat"]]
+        if settle is not None:
+            candidates.insert(0, [settle, *body, "repeat"])
         for candidate in candidates:
             program = apply_brightness("\n".join(candidate), brightness)
-            if _within_firmware_budget(program):
+            if _fits_with_brightness(program):
                 return program
+        rest = f"{_floor_for_state(color, state, settings)} {settle_duration_ms(duration_ms)}ms cosine"
         return apply_brightness(
-            "\n".join([lead, f"{_peak_for_state(color, state, settings)} "
+            "\n".join([rest, f"{_peak_for_state(color, state, settings)} "
                         f"{duration_ms}ms pulse", "repeat"]),
             brightness,
         )
@@ -2379,9 +2387,10 @@ def provider_motion_lines(
     *,
     led_count: int = 8,
     state: LedDisplayState = LedDisplayState.WORKING,
-) -> tuple[list[str], str] | None:
+) -> tuple[list[str], str | None] | None:
     """The body of one provider's chosen motion, and the short ease to its
-    resting colour that goes in front of it.
+    resting colour that goes in front of it (None for a motion that plays
+    without one).
 
     What the live Pro plays for one working agent and what every preview
     shows are both built from this, so they cannot drift apart again. None
@@ -2395,6 +2404,23 @@ def provider_motion_lines(
         or settings.agent_animation(provider) == PROVIDER_ANIMATION_AUTO
     ):
         return None
+    return _provider_motion_parts(provider, color, settings, led_count=led_count, state=state)
+
+
+def _provider_motion_parts(
+    provider: str,
+    color: str,
+    settings: ColorSettings,
+    *,
+    led_count: int,
+    state: LedDisplayState,
+) -> tuple[list[str], str | None]:
+    """The motion's body and its settle ease, or None where the motion
+    plays without one: a held colour, and a sweep that turns at a lit end,
+    which the ease would pull dark at LED 0 once a loop
+    (``motion_shapes.UNSETTLED_MOTIONS``)."""
+    from .motion_shapes import UNSETTLED_MOTIONS
+
     duration_ms = provider_cycle_ms(provider, settings)
     body = _motion_turn_lines(
         color,
@@ -2404,6 +2430,9 @@ def provider_motion_lines(
         led_count=led_count,
         duration_ms=duration_ms,
     )
+    motion = agent_motion(state, cycle_ms=duration_ms, provider=provider, settings=settings)
+    if motion in UNSETTLED_MOTIONS:
+        return body, None
     lead = f"{_floor_for_state(color, state, settings)} {settle_duration_ms(duration_ms)}ms cosine"
     return body, lead
 

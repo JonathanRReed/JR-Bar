@@ -1181,6 +1181,15 @@ DEFAULT_AURORA_SEED = 617
 #: Bytes a motion leaves for its caller: a settle ease, ``repeat`` and a
 #: ``brightness`` line.
 RENDER_RESERVE_BYTES = 48
+#: Motions that play without the settle ease in front. The ease goes back
+#: to the floor at the top of every loop, and these never rest there: a
+#: sweep that turns at a lit end (Knight Rider, Scanner, Pendulum) went
+#: dark for up to a fifth of a second at LED 0 on every swing, and a held
+#: colour blinked. They keep only ``repeat`` and a brightness line.
+UNSETTLED_MOTIONS = frozenset({STEADY, KITT, SCANNER, PENDULUM})
+#: What an unsettled motion leaves for its caller: ``repeat`` and a
+#: ``brightness`` line, with their line breaks.
+UNSETTLED_RESERVE_BYTES = 24
 #: ``aurora.wave_count`` 1-4 as the swell width it stands for.
 AURORA_STRETCH: dict[int, float] = {1: 2.8, 2: 2.0, 3: 1.5, 4: 1.1}
 

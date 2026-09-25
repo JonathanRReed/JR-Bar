@@ -129,6 +129,23 @@ def test_bouncing_motions_light_every_led_in_each_direction(motion: str) -> None
     assert any(run == list(range(7, -1, -1)) for run in inbound), runs
 
 
+@pytest.mark.parametrize("motion", ("scanner", "kitt", "pendulum"))
+@pytest.mark.parametrize("seconds", (0.5, 2.2, 5.0))
+def test_a_sweep_turns_lit_at_both_ends(motion: str, seconds: float) -> None:
+    """A sweep that turns at a lit end never goes dark on the way round.
+    The settle ease that opens other loops went back to the floor at the
+    top of every loop, which is the LED 0 end of the swing: the Pendulum
+    went near-dark there for about 190 ms each time, Knight Rider and the
+    Scanner for 60-80 ms, while the LED 7 end turned lit."""
+    frames, _loop = _second_loop(_solo_program(motion, cycle_seconds=seconds))
+    crest = max(max(frame) for frame in frames)
+    run = longest = 0
+    for frame in frames:
+        run = run + 1 if max(frame) < 0.15 * crest else 0
+        longest = max(longest, run)
+    assert longest <= 3, (motion, seconds, longest * FRAME_MS)
+
+
 def test_heartbeat_beats_twice_every_cycle() -> None:
     frames, _loop = _second_loop(_solo_program("heartbeat"))
     strip = [sum(frame) / len(frame) for frame in frames]

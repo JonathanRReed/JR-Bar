@@ -509,7 +509,8 @@ def _chosen_motion_lines(
     led_count: int,
 ) -> list[str] | None:
     """The loop one working agent plays for its chosen motion: a short ease
-    to the resting colour, then the motion exactly as its preview draws it.
+    to the resting colour (for the motions that rest there), then the
+    motion exactly as its preview draws it.
 
     The ease goes first so an interrupted loop settles instead of snapping,
     and it is the first thing dropped when the firmware's 512 bytes are
@@ -532,9 +533,12 @@ def _chosen_motion_lines(
     if rendered is None or motion_style == PROVIDER_ANIMATION_AUTO:
         return None
     body, settle_text = rendered
-    if motion_style == "steady":
-        return [*body, "repeat"]
-    for candidate in ([settle_text, *body, "repeat"], [*body, "repeat"]):
+    # No settle for a motion that never rests at its floor (a held colour,
+    # a sweep that turns at a lit end): ``provider_motion_lines`` says so.
+    candidates = [[*body, "repeat"]]
+    if settle_text is not None:
+        candidates.insert(0, [settle_text, *body, "repeat"])
+    for candidate in candidates:
         text = "\n".join(candidate)
         if (
             len(text.encode("utf-8")) + _BRIGHTNESS_LINE_RESERVE <= MAX_PROGRAM_BYTES
