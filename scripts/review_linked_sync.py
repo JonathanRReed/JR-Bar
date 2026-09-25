@@ -213,7 +213,6 @@ def simulate(
                 epoch=link.epoch,
                 trim_ms=-origin,
                 reason=reason,
-                sample=None,
             )
         else:
             # Before: rotated by the measured write gap, on the Dot's own

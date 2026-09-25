@@ -3762,7 +3762,6 @@ def test_the_sync_tick_reanchors_at_most_once_in_twenty_seconds(headless, tmp_pa
         epoch=link.epoch,
         trim_ms=0.0,
         reason="coupled",
-        sample=reader(None),
     )
     asked: list[float] = []
     controller._core_linked_request_dot_write = lambda reason: asked.append(clock[0]) or True

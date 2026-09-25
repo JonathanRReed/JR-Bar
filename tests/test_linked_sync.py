@@ -265,7 +265,7 @@ def test_the_closed_loop_reanchors_at_most_every_twenty_seconds() -> None:
         timed = Timed()
         applied_at = 100.0
 
-    link.note_dot_write(dot_id="dot", write=Write(), epoch=link.epoch, trim_ms=0.0, reason="coupled", sample=reader(None))
+    link.note_dot_write(dot_id="dot", write=Write(), epoch=link.epoch, trim_ms=0.0, reason="coupled")
     asked = []
     for second in range(1, 61):
         clock[0] = 100.0 + second
@@ -284,8 +284,8 @@ def test_the_closed_loop_reanchors_at_most_every_twenty_seconds() -> None:
     assert document["sync_writes_hour"] == 0
     assert document["tolerance_ms"] == 40.0
     for _ in range(2):
-        link.note_dot_write(dot_id="dot", write=Write(), epoch=link.epoch, trim_ms=0.0, reason="reanchor", sample=None)
-    link.note_dot_write(dot_id="dot", write=Write(), epoch=link.epoch, trim_ms=0.0, reason="coupled", sample=None)
+        link.note_dot_write(dot_id="dot", write=Write(), epoch=link.epoch, trim_ms=0.0, reason="reanchor")
+    link.note_dot_write(dot_id="dot", write=Write(), epoch=link.epoch, trim_ms=0.0, reason="coupled")
     assert link.document(dot_id="dot", tolerance_ms=40, correction=True)["sync_writes_hour"] == 2
 
 

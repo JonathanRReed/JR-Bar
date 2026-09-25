@@ -166,9 +166,6 @@ class LedStatusWrite:
     #: A linked Dot's timing, as baked in at the write boundary
     #: (``linked_sync.TimedProgram``), when there was any.
     timed: object | None = None
-    #: The exact bytes the device holds after this write (post gate and
-    #: timing), for a later fresh read to be compared against.
-    device_bytes: str = ""
 
     @property
     def label(self) -> str:
@@ -1959,5 +1956,4 @@ class AgentLedController:
             nominal_program=running_nominal,
             applied_at=receipt.applied_at if receipt is not None else None,
             timed=receipt.timed if receipt is not None else None,
-            device_bytes=self.last_device_bytes,
         )

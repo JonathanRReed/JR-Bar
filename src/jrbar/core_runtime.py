@@ -285,7 +285,6 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("surfaces", "*", "why_detail", "seconds_in_state"),
         ("linked_skew_at",),
         ("linked_skew_ms",),
-        ("linked_skew_corrected_ms",),
         ("auto_dim", "lux"),
         ("auto_dim", "factor"),
         # The sensor's value, smoothed and raw: it moves with every read,
@@ -5027,7 +5026,6 @@ def build_headless_controller_class() -> type:
                     epoch=epoch,
                     trim_ms=phase_trim,
                     reason=reason,
-                    sample=None,
                 )
                 if reason in ("reanchor", "blind"):
                     # One line per Dot-only re-anchor, for the log classifier:

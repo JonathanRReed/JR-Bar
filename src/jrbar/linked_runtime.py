@@ -71,13 +71,10 @@ class DotWriteRecord:
 
     device_id: str
     applied_at: float
-    phase_ms: float
     rate: float
     lap_ms: int | None
     rotation: str
     initial_error_ms: float
-    ticks_at_apply: float | None
-    anchor: float
     reason: str
 
 
@@ -181,8 +178,11 @@ class LinkedSync:
         epoch: LinkedEpoch,
         trim_ms: float,
         reason: str,
-        sample: DeviceStatus | None,
     ) -> None:
+        """The Dot's timed write landed: what it promised, and the error
+        the write itself left. No read of the Dot's clock here (this is the
+        write worker, which carries the strip too); the loop's next 20 s
+        read carries the clock back to this write."""
         timed = getattr(write, "timed", None)
         applied = getattr(write, "applied_at", None)
         if timed is None or applied is None:
@@ -192,20 +192,13 @@ class LinkedSync:
         used = float(getattr(timed, "phase_ms", 0.0) or 0.0)
         wanted = phase_ms(applied, epoch.anchor, lap, trim_ms=trim_ms) if lap else used
         initial = wrap_ms(used - wanted, lap) if lap else 0.0
-        ticks_at_apply = None
-        if sample is not None and sample.ticks is not None:
-            estimate = self.clocks.add(dot_id, dot=True, host_at=sample.host_at, clock_ms=sample.ticks)
-            ticks_at_apply = sample.ticks - estimate.rate * (sample.host_at - applied) * 1000.0
         record = DotWriteRecord(
             device_id=dot_id,
             applied_at=float(applied),
-            phase_ms=used,
             rate=rate,
             lap_ms=lap,
             rotation=str(getattr(timed, "rotation", "exact")),
             initial_error_ms=initial,
-            ticks_at_apply=ticks_at_apply,
-            anchor=epoch.anchor,
             reason=reason,
         )
         drift = (self.clocks.rate(dot_id, dot=True) / rate - 1.0) * 1000.0
@@ -262,11 +255,9 @@ class LinkedSync:
         record = self.dot_write
         if record is None or record.device_id != dot_id:
             return self.phase_error_ms
-        ticks_at_apply = record.ticks_at_apply
-        if ticks_at_apply is None:
-            # No read right after the write: the fit's rate carries the
-            # newest reading back to the moment the Dot parsed.
-            ticks_at_apply = status.ticks - estimate.rate * (status.host_at - record.applied_at) * 1000.0
+        # The fit's rate carries the newest reading back to the moment the
+        # Dot parsed its program.
+        ticks_at_apply = status.ticks - estimate.rate * (status.host_at - record.applied_at) * 1000.0
         error = predicted_error_ms(
             initial_error_ms=record.initial_error_ms,
             applied_at=record.applied_at,

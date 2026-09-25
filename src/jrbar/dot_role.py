@@ -223,9 +223,6 @@ class DotSurfacePlan:
     animated: bool = False
     #: Machine-readable notes for the log and the protocol's ``why_detail``.
     reasons: tuple[str, ...] = ()
-    #: The skew this program was re-anchored by, in milliseconds. Kept for
-    #: readers of older plans; the write boundary does the timing now.
-    corrected_ms: float = 0.0
     #: ``extend`` only: the strip's loop length the Dot is locked to, the
     #: period lock's rung, and whether the write boundary should rotate and
     #: retime this program from the strip's recorded start.
