@@ -1149,9 +1149,10 @@ final class NotchToy: Toy {
     /// to see (a session row's label settling by a point) applies
     /// without animation — animating a sub-2 pt delta reads as jitter.
     /// A morph landing mid-pull owns the frame: the pull lets go
-    /// without a verdict rather than fight the spring.
-    func reframe(_ face: NotchIslandFace, animated: Bool) {
-        guard let frame = islandFrame(face: face) else { return }
+    /// without a verdict rather than fight the spring. `measured` is
+    /// `face`'s frame when the caller already took it.
+    func reframe(_ face: NotchIslandFace, measured: NSRect? = nil, animated: Bool) {
+        guard let frame = measured ?? islandFrame(face: face) else { return }
         guard frame != desiredFrame else { return }
         if pullActive {
             pullActive = false
@@ -1270,8 +1271,12 @@ final class NotchToy: Toy {
         // unless this open summoned it.
         cardModel.mirror.sync(enabled: cardModel.pinned && settings.mirror && cardModel.mirrorSummoned)
         let s = settings
+        // The frame the guard measures is the one `reframe` would measure
+        // again — for the grown card, a second layout of the height
+        // probe. Reused whenever the window already existed to measure it.
+        let measuredWithWindow = island != nil
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
-              islandFrame(face: currentFace) != nil else {
+              let frame = islandFrame(face: currentFace) else {
             parkIsland()
             return
         }
@@ -1283,7 +1288,7 @@ final class NotchToy: Toy {
         // in-flight morph the doc churn used to kill. `applyFrame`
         // itself snaps while the window is ordered out, so a first
         // show still lands unanimated.
-        reframe(currentFace,
+        reframe(currentFace, measured: measuredWithWindow ? frame : nil,
                 animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         if island?.isVisible != true {
             island?.orderFrontRegardless()
