@@ -1,0 +1,34 @@
+name: Repair workspace snapshot
+
+on:
+  push:
+    branches: [fix/product-completion-utilities-toys]
+    paths: [.github/workflows/repair-workspace.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f01cd232612fa3020831aadbeab720c22e5118e1
+          persist-credentials: false
+      - name: Archive the reviewed source, without credentials or runtime state
+        run: |
+          test "$(git rev-parse HEAD)" = f01cd232612fa3020831aadbeab720c22e5118e1
+          mkdir -p "$RUNNER_TEMP/repair-snapshot"
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/repair-snapshot/source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/repair-snapshot/COMMIT"
+          git ls-tree -r HEAD > "$RUNNER_TEMP/repair-snapshot/TREE"
+          cd "$RUNNER_TEMP/repair-snapshot"
+          sha256sum source.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jrbar-reviewed-source
+          path: ${{ runner.temp }}/repair-snapshot/
+          if-no-files-found: error
+          retention-days: 1
