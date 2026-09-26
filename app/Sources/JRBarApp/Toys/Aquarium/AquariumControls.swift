@@ -30,6 +30,14 @@ struct AquariumControlsView: View {
                 SettingLabel(title: "In the tank", subtitle: toy.fact)
             }
 
+            Text(toy.activitySummary)
+                .font(.callout)
+                .accessibilityLabel(toy.activitySummary)
+            Text(AquariumActivityPresentation.rewardHelp)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Divider()
                 .padding(.vertical, 4)
 

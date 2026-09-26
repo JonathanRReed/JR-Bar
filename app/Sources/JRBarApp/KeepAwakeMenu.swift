@@ -107,7 +107,7 @@ enum KeepAwakeMenu {
                           checked: reading.state == .lease(.indefinite)))
         items.append(Item(choice: .keepDisplayOn, title: "Keep the display on", checked: displayOn,
                           dividerBefore: true))
-        items.append(Item(choice: .turnOff, title: "Turn off", enabled: reading.leaseInForce,
+        items.append(Item(choice: .turnOff, title: "End manual session", enabled: reading.leaseInForce,
                           dividerBefore: true))
         return items
     }

@@ -110,8 +110,11 @@ struct MenuBarDragRenderProofTests {
 
     /// The gap seat for a run: `MenuBarIconMirror.seat` over its frames.
     static func gapSeat(_ run: [BarItem], width: CGFloat) -> CGFloat {
-        MenuBarIconMirror.seat(drawn: run.map { CGRect(x: $0.x, y: 6.5, width: $0.width, height: 24) },
-                               clearOf: clearOf, width: width, rowMaxX: 1512)
+        guard let seat = MenuBarIconMirror.seat(
+            drawn: run.map { CGRect(x: $0.x, y: 6.5, width: $0.width, height: 24) },
+            clearOf: clearOf, width: width, rowMaxX: 1512)
+        else { preconditionFailure("This render fixture must provide a safe mirror gap") }
+        return seat
     }
 
     /// One state of the bar.

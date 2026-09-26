@@ -62,6 +62,8 @@ protocol Toy: AnyObject, Observable {
     /// "fold", "aquarium", …
     var id: String { get }
     var name: String { get }
+    /// The switch's outcome when it differs from the feature's name.
+    var switchLabel: String { get }
     /// One line, Jonathan's voice.
     var blurb: String { get }
     /// An SF Symbol.
@@ -81,6 +83,7 @@ protocol Toy: AnyObject, Observable {
 }
 
 extension Toy {
+    var switchLabel: String { name }
     func cost(at now: TimeInterval) -> String? { nil }
 }
 
@@ -240,9 +243,15 @@ struct ToyCard: View {
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
             .accessibilityLabel("\(expanded ? "Hide" : "Show") \(toy.name) settings")
-            Toggle(toy.name, isOn: toggle)
+            if toy.switchLabel != toy.name {
+                Text(toy.switchLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Toggle(toy.switchLabel, isOn: toggle)
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .accessibilityLabel(toy.switchLabel)
         }
         .padding(.vertical, SettingsMetrics.xs)
     }

@@ -489,15 +489,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.historyWindow = historyWindow
         store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
         store.onOpenEvents = { [weak historyWindow] in historyWindow?.showEvents() }
-        // History's search also reads what was said, when the Data
-        // Hoarder keeps transcripts.
-        historyStore.archiveSearch = { [weak utilitiesStore] query in
-            guard let hoarder = utilitiesStore?.dataHoarder, hoarder.model.enabled else { return [:] }
-            return await DataHoarderModel.transcriptHits(in: hoarder.model.archive, query: query)
-        }
-        historyStore.archiveSearchAvailable = { [weak utilitiesStore] in
-            utilitiesStore?.dataHoarder.model.enabled ?? false
-        }
+        // Retained evidence is readable even when future capture is disabled.
+        ArchiveReadBindings.install(history: historyStore, model: utilitiesStore.dataHoarder.model)
         // An empty search offers the Data Hoarder until it keeps agent
         // transcripts; the offer's sheet turns it on only on its click.
         historyStore.hoarderKeepsTranscripts = { [weak utilitiesStore] in
@@ -528,12 +521,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
             return try? await archive.captureState(path: path)
         }
-        // The archived fallbacks read only while the Data Hoarder is on,
-        // like History's archive search: switched off, it is not asked.
-        overviewStore.archiveTimeline = { [weak utilitiesStore] sessionID in
-            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return nil }
-            return await DataHoarderModel.archivedTimeline(in: model.archive, sessionID: sessionID)
-        }
+        ArchiveReadBindings.install(overview: overviewStore, model: utilitiesStore.dataHoarder.model)
         overviewStore.hoarderProbe = { [weak utilitiesStore] in
             guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return nil }
             let settings = model.captureSettings
@@ -541,10 +529,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 paused: settings.paused, sources: settings.enabledSources.count,
                 watching: await model.capture.activeSourceIDs.count, fullContent: settings.fullContent,
                 archive: (try? await model.archive.captureHealth()) ?? ArchiveCaptureHealth())
-        }
-        overviewStore.archiveProxyEvidence = { [weak utilitiesStore] sessionID in
-            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return [] }
-            return await DataHoarderModel.proxyRequests(in: model.archive, sessionID: sessionID)
         }
         overviewStore.onOpenArchive = { [weak utilitiesStore] term in
             guard let hoarder = utilitiesStore?.dataHoarder else { return }

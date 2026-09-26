@@ -236,7 +236,7 @@ extension MenuBarUtility {
             // that appears (the first hidden app) grows leftward.
             let frozen = dragFrozenMaxX
             mirror.show(row: placement.row, primaryMaxY: placement.primaryMaxY) { width in
-                frozen.map { $0 - width } ?? mirrorSeat(width: width, row: placement.row)
+                mirrorSeat(width: width, row: placement.row, frozenMaxX: frozen)
             }
         } else {
             iconMirror?.hide()
@@ -284,8 +284,7 @@ extension MenuBarUtility {
     /// The mirror's left edge for a `width`-wide panel: flush left of
     /// the first drawn item, from the right, with room to stand — the
     /// right end of the blank run the concealed apps leave — or, on a
-    /// bar with no such room, `MenuBarIconMirror.seat`'s fallbacks,
-    /// which cover as little of any drawn item as they can. Drawn is
+    /// bar with no such room, no overlay. Drawn is
     /// every listed item on the main row that is not ours and not
     /// concealed, the native « included. While no assertion holds (a
     /// bridged click's lift, the start grace) the target counts as
@@ -296,43 +295,48 @@ extension MenuBarUtility {
     /// ⌘-dragged left lands just left of JR-Bar's slim slot, and a seat
     /// that counted its cover as drawn would stand the icon left of the
     /// hole, putting the hidden item on the shown side.
-    private func mirrorSeat(width: CGFloat, row: CGRect) -> CGFloat {
+    private func mirrorSeat(width: CGFloat, row: CGRect, frozenMaxX: CGFloat? = nil) -> CGFloat? {
         let clear = mirrorClearOf()
+        let drawn = mirrorDrawnFrames(row: row)
+        if let frozenMaxX {
+            return MenuBarIconMirror.validatedSeat(frozenMaxX - width, drawn: drawn,
+                                                   clearOf: clear, width: width, rowMaxX: row.maxX)
+        }
         if settings().curation.mirrorSeat == .slot,
            let slot = MenuBarIconMirror.slotSeat(realItem: ownSlotFrame(), width: width, row: row,
                                                  clearOf: clear,
-                                                 overflow: listedItems.first(where: \.isNativeOverflowControl)?.bounds) {
+                                                 overflow: listedItems.first(where: \.isNativeOverflowControl)?.bounds),
+           MenuBarIconMirror.validatedSeat(slot, drawn: drawn, clearOf: clear,
+                                          width: width, rowMaxX: row.maxX) != nil {
             if slot != lastMirrorSeat {
                 lastMirrorSeat = slot
                 MenuBarAssessmentBackend.log.debug("conceal: mirror seat \(String(format: "%.0f", slot), privacy: .public) w=\(String(format: "%.0f", width), privacy: .public) on our own slot")
             }
             return slot
         }
+        let seat = MenuBarIconMirror.seat(drawn: drawn, clearOf: clear, width: width, rowMaxX: row.maxX)
+        if seat != lastMirrorSeat {
+            lastMirrorSeat = seat
+            if let seat {
+                MenuBarAssessmentBackend.log.debug("conceal: safe mirror seat \(String(format: "%.0f", seat), privacy: .public)")
+            } else {
+                MenuBarAssessmentBackend.log.notice("conceal: no safe mirror seat — yielding to other controls")
+            }
+        }
+        return seat
+    }
+
+    private func mirrorDrawnFrames(row: CGRect) -> [CGRect] {
         let targetOnItsWay = concealer.map { !$0.isConcealing && !$0.activationFailing } ?? true
         let concealed = targetOnItsWay ? concealTarget() : (concealer?.concealedApps ?? [])
         let ourPID = ProcessInfo.processInfo.processIdentifier
         let blank = Self.coverBlanked(coveredItems, revealed: hider.revealed)
-        let drawn = (lastPlan.shown + lastPlan.hidden + lastPlan.alwaysHidden).filter { item in
+        return (lastPlan.shown + lastPlan.hidden + lastPlan.alwaysHidden).filter { item in
             item.ownerPID != ourPID && Self.isForeignOwner(item.ownerName)
                 && item.bounds.intersects(row)
                 && !(item.bundleID.map { concealed.contains($0) } ?? false)
                 && !blank.contains(item.id)
         }.map(\.bounds)
-        let seat = MenuBarIconMirror.seat(drawn: drawn, clearOf: clear, width: width, rowMaxX: row.maxX)
-        if seat != lastMirrorSeat {
-            lastMirrorSeat = seat
-            let line = "conceal: mirror seat \(String(format: "%.0f", seat)) w=\(String(format: "%.0f", width)) clear of \(String(format: "%.0f", clear)), \(drawn.count) drawn"
-            // A seat on a drawn item hides that app's icon and takes its
-            // clicks: no gap on the row fits the face. Said at notice so
-            // a crowded bar's overlap shows in the log.
-            let covered = drawn.filter { $0.minX < seat + width && $0.maxX > seat }.count
-            if covered > 0 {
-                MenuBarAssessmentBackend.log.notice("\(line, privacy: .public) — stands on \(covered, privacy: .public), no gap fits")
-            } else {
-                MenuBarAssessmentBackend.log.debug("\(line, privacy: .public)")
-            }
-        }
-        return seat
     }
 
     /// The covered items whose cover stands right now: every one but

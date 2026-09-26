@@ -5,8 +5,8 @@ import SwiftUI
 
 /// Keep-awake as a card on the Utilities page — Amphetamine's session
 /// switch and presets, beside the other utilities. The switch is the
-/// person's own hold: on keeps the Mac awake until turned off, off lets
-/// it sleep and leaves nothing running. It is the same hold as the notch
+/// person's own hold: off ends only the manual session. Automatic agent
+/// holds and other applications are independent. It is the same hold as the notch
 /// card's Awake chip and the footer's cup (`SystemTogglesStore`), so a
 /// change anywhere shows everywhere. The agents' own hold is a daemon
 /// setting; its four rows sit here too, and Settings › Notifications ›
@@ -24,6 +24,7 @@ final class KeepAwakeUtility: Toy {
 
     let id = "keepAwake"
     let name = "Keep Awake"
+    let switchLabel = "Manual session"
     let blurb = "Hold this Mac awake for a while, until the morning, or until the agents finish — the same hold as the notch's Awake chip."
     let symbol = "cup.and.saucer.fill"
 
@@ -31,8 +32,8 @@ final class KeepAwakeUtility: Toy {
 
     var isOn: Bool {
         get { reading.leaseInForce }
-        // On is "until I turn it off"; off lets go of the hold, so a
-        // switched-off card leaves no assertion and no clock behind.
+        // On is "until I turn it off"; off releases this manual session,
+        // not the daemon's automatic agent hold or another app's assertion.
         set { toggles.holdAwake(seconds: newValue ? nil : 0) }
     }
 
@@ -84,11 +85,15 @@ struct KeepAwakeUtilityControls: View {
         VStack(alignment: .leading, spacing: 0) {
             CardSectionHeader("Right now")
             nowLine
+            Text(KeepAwakeReading.manualSessionHelp)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             presets
             Toggle(isOn: Binding(get: { toggles.awakeKeepsDisplay },
                                  set: { toggles.setAwakeKeepsDisplay($0) })) {
                 SettingLabel(title: "Keep the display on",
-                             subtitle: "Your hold keeps the screen lit too — no screen saver, no lock. Off lets the display sleep while the Mac stays up.")
+                             subtitle: KeepAwakeReading.displaySleepHelp)
             }
             if let settings {
                 agentRows(settings)
@@ -104,7 +109,7 @@ struct KeepAwakeUtilityControls: View {
     private var nowLine: some View {
         let reading = toggles.state.awakeReading
         let at = now ?? toggles.state.awakeClock
-        let words = reading.footerLine(now: at)?.full ?? "Not holding — the Mac sleeps as it normally would."
+        let words = reading.footerLine(now: at)?.full ?? "JR-Bar is not preventing idle sleep."
         return HStack(spacing: SettingsMetrics.s) {
             Image(systemName: reading.holding ? "cup.and.saucer.fill" : "cup.and.saucer")
                 .foregroundStyle(reading.holding ? Color.accentColor : .secondary)
@@ -148,10 +153,10 @@ struct KeepAwakeUtilityControls: View {
     @ViewBuilder
     private func agentRows(_ settings: SettingsStore) -> some View {
         CardSectionHeader("While agents run")
-        SettingToggle(settings, "Keep Mac awake", subtitle: "While agents run, the Mac never idles to sleep.",
+        SettingToggle(settings, "Keep Mac awake", subtitle: "Prevent idle system sleep while agents run, subject to power and thermal safeguards.",
                       path: "agent_keep_awake_enabled", default: true)
         SettingToggle(settings, "Keep display awake",
-                      subtitle: "While agents run, the screen stays on too — so it never locks mid-run.",
+                      subtitle: KeepAwakeReading.displaySleepHelp,
                       path: "keep_display_awake", default: true)
         SettingPicker(settings, "Lid closed",
                       subtitle: ClosedLidNote.text(settings.core.state?.power?.closedLid),
