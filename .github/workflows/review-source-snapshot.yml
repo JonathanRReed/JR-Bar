@@ -1,0 +1,36 @@
+name: Review source snapshot
+
+# Temporary implementation bootstrap. Removed before the review PR is finalized.
+on:
+  push:
+    branches: [fix/product-completion-and-runtime-safety]
+    paths: [.github/workflows/review-source-snapshot.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f01cd232612fa3020831aadbeab720c22e5118e1
+          persist-credentials: false
+      - name: Archive tracked public source only
+        run: |
+          git rev-parse HEAD > SOURCE-COMMIT.txt
+          git rev-parse HEAD^{tree} > SOURCE-TREE.txt
+          git archive --format=tar HEAD | gzip -n > source.tar.gz
+          sha256sum source.tar.gz > SHA256SUMS.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jrbar-pinned-source
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            source.tar.gz
+            SOURCE-COMMIT.txt
+            SOURCE-TREE.txt
+            SHA256SUMS.txt
