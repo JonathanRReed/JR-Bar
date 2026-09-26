@@ -4,6 +4,28 @@ import JRBarCore
 
 struct DataHoarderView: View {
     @Bindable var model: DataHoarderModel
+    @ViewState private var lastSearchQuery: String?
+
+    private struct SearchInput: Equatable {
+        let query: String
+        let filter: ArchiveSearchFilter
+        let trash: Bool
+        let busy: Bool
+    }
+
+    private var searchInput: SearchInput {
+        SearchInput(query: model.query, filter: model.searchFilter,
+                    trash: model.showTrash, busy: model.busy)
+    }
+
+    func refreshResults() async {
+        guard !Task.isCancelled, !model.busy else { return }
+        if model.searchActive {
+            await model.runSearch()
+        } else {
+            await model.reload()
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -170,20 +192,14 @@ struct DataHoarderView: View {
             model.pumpSearchIndex()
             await model.relabelSourceRecords()
         }
-        .task(id: "\(model.busy):\(model.showTrash):\(model.query)") {
-            // Debounced content search — each keystroke retires the last pass.
-            try? await Task.sleep(for: .milliseconds(200))
-            guard !Task.isCancelled else { return }
-            if model.searchActive {
-                await model.runSearch()
-            } else {
-                await model.reload()
+        .task(id: searchInput) {
+            let queryChanged = lastSearchQuery != model.query
+            lastSearchQuery = model.query
+            // One task owns results. Filter changes remain immediate.
+            if queryChanged, !model.query.isEmpty, !model.busy {
+                try? await Task.sleep(for: .milliseconds(200))
             }
-        }
-        .task(id: model.searchFilter) {
-            // Filter picks skip the typing debounce.
-            guard model.searchActive else { return }
-            await model.runSearch()
+            await refreshResults()
         }
         .task(id: model.backfillOffer) {
             guard let source = model.backfillOffer else { return }
@@ -290,12 +306,12 @@ struct DataHoarderView: View {
     @ViewBuilder private var listContent: some View {
         if model.searchActive {
             if model.searchResults.isEmpty && !model.searching {
-                ContentUnavailableView("No matching segments", systemImage: "magnifyingglass",
-                                       description: Text("Adjust the query or filters. New segments index in the background."))
+                ContentUnavailableView("No matching files", systemImage: "magnifyingglass",
+                                       description: Text("Try another query or clear a filter."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: $model.selectedID) {
-                    ForEach(Array(model.searchResults.enumerated()), id: \.offset) { _, result in
+                    ForEach(model.searchResults) { result in
                         searchRow(result)
                             .tag(result.record.id)
                     }
@@ -332,7 +348,7 @@ struct DataHoarderView: View {
     private var footerCounts: some View {
         let count = model.searchActive ? model.searchResults.count : model.records.count
         let bytes = model.searchActive
-            ? model.searchResults.reduce(0) { $0 + $1.record.byteCount }
+            ? DataHoarderModel.totalBytes(model.searchResults.map { $0.record.byteCount })
             : DataHoarderModel.totalBytes(model.records.map(\.byteCount))
         let label = model.searchActive
             ? "\(count) \(count == 1 ? "result" : "results")\(model.searchHasMore ? "+" : "") · \(DataHoarderModel.bytes(bytes))"
