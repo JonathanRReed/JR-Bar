@@ -38,7 +38,7 @@ final class DataHoarderWindowController: NSObject, NSWindowDelegate {
     func attachContent(to target: NSWindow) -> NSViewController {
         model.archiveWindowDidOpen()
         return WindowContentLifecycle.attach(to: target, title: "Data Hoarder") {
-            WindowContentLifecycle.hosting(DataHoarderView(model: model).task {
+            WindowContentLifecycle.hosting(DataHoarderView(model: model).task { [model] in
                 // Enabled maintenance is already owned by DataHoarderView.
                 guard !model.enabled else { return }
                 await model.refreshStorage()
