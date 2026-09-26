@@ -153,7 +153,7 @@ struct WindowFrontTests {
                      "HistoryWindowController.swift", "SettingsWindowController.swift",
                      "Setup/SetupWindowController.swift", "Toys/Aquarium/AquariumWindowController.swift",
                      "UsageCenterWindowController.swift", "Overview/OverviewWindowController.swift",
-                     "Utilities/DataHoarder/DataHoarderUtility.swift",
+                     "Utilities/DataHoarder/DataHoarderWindowController.swift",
                      "WhatsNew/WhatsNewWindowController.swift"]
         for file in files {
             let text = try String(contentsOf: Self.sources.appending(path: file), encoding: .utf8)
