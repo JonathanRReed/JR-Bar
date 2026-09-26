@@ -4,6 +4,10 @@ import JRBarCore
 
 /// One ⌘-press on the menu bar, held from the press to its release.
 struct MenuBarDragInFlight {
+    let id = UUID()
+    var confirming = false
+    var environment: MenuBarDragEnvironment?
+    var rows: [CGRect] = []
     /// Where the press landed, in Quartz points.
     var start: CGPoint
     var pressedAt: Date
@@ -68,14 +72,8 @@ extension MenuBarUtility {
     /// hover reveal and the rehide clock freeze until the drop is
     /// settled. Only while the concealer runs and `dragToHide` is on.
     func commandPressed(at point: CGPoint) {
-        guard concealer != nil, settings().curation.dragToHide else { return }
-        // A new press means the last one's release never came: that drag
-        // is over, and whatever it froze lets go now — its start must
-        // never pair with this press's release.
-        if let lost = dragInFlight {
-            dragInFlight = nil
-            endDrag(lost, after: 0)
-        }
+        cancelDrag()
+        guard concealer != nil, settings().enabled, settings().curation.dragToHide else { return }
         let rows = dragBarRows()
         guard let main = rows.first,
               let row = rows.first(where: { $0.insetBy(dx: 0, dy: -MenuBarDragLearn.slack).contains(point) })
@@ -113,6 +111,14 @@ extension MenuBarUtility {
             drag.revealedHidden = true
             hider.reveal([.hidden])
         }
+        drag.rows = rows
+        let environment = MenuBarDragEnvironment()
+        let gestureID = drag.id
+        environment.onInvalidation = { [weak self] in
+            guard self?.dragInFlight?.id == gestureID else { return }
+            self?.cancelDrag()
+        }
+        drag.environment = environment
         dragInFlight = drag
         if drag.revealedHidden { faceChanged() }
         watchForLostRelease(pressedAt: drag.pressedAt)
@@ -128,7 +134,6 @@ extension MenuBarUtility {
             guard !Task.isCancelled, let self, let drag = self.dragInFlight,
                   drag.pressedAt == pressedAt else { return }
             MenuBarAssessmentBackend.log.notice("drag: no release heard — let go")
-            self.dragInFlight = nil
             self.endDrag(drag, after: 0)
         }
     }
@@ -140,8 +145,7 @@ extension MenuBarUtility {
     /// confirmed after it settles, and then one write lands. Every drop
     /// that asked for something and got nothing says why under the icon.
     func commandReleased(at point: CGPoint, option: Bool) {
-        guard let drag = dragInFlight else { return }
-        dragInFlight = nil
+        guard let drag = dragInFlight, !drag.confirming else { return }
         dragStaleTask?.cancel()
         dragStaleTask = nil
         guard Date().timeIntervalSince(drag.pressedAt) < MenuBarDragLearn.staleDrag else {
@@ -154,9 +158,14 @@ extension MenuBarUtility {
                 MenuBarAssessmentBackend.log.notice("drag: dropped on another display's bar — nothing written")
                 showDropNote(.otherDisplay)
             }
+            endDrag(drag, after: 0)
             return
         }
-        guard let grabbed = drag.grabbed, let icon = drag.icon else { return }
+        guard let grabbed = drag.grabbed, let icon = drag.icon,
+              let engine = concealer else {
+            endDrag(drag, after: 0)
+            return
+        }
         let intent = MenuBarDragLearn.intent(from: drag.start, to: point, icon: icon,
                                              row: drag.row, option: option)
         let kind = dragKind(of: grabbed)
@@ -178,12 +187,41 @@ extension MenuBarUtility {
         let crossed = MenuBarDragLearn.crossed(from: drag.start, to: point, icon: icon)
         let settle = dragSettle
         let releasedAt = Date()
-        dragConfirmTask = Task { @MainActor [weak self] in
-            if settle > 0 { try? await Task.sleep(nanoseconds: UInt64(settle * 1e9)) }
+        dragInFlight?.confirming = true
+        dragConfirmTask = Task { @MainActor [weak self, weak engine] in
             guard let self else { return }
+            defer { self.endDrag(drag, after: 0) }
+            do {
+                if settle > 0 { try await Task.sleep(nanoseconds: UInt64(settle * 1e9)) }
+                try Task.checkCancellation()
+            } catch { return }
+            guard self.owns(drag, engine: engine) else { return }
             let fresh = await self.dragFreshListing(MenuBarDragLearn.confirmTimeout)
+            guard !Task.isCancelled, self.owns(drag, engine: engine) else { return }
             self.settleDrop(drag, grabbed: grabbed, section: section, note: outcome.note,
                             fresh: fresh, crossed: crossed, releasedAt: releasedAt)
+        }
+    }
+
+    /// Only the current gesture may commit or release the frozen layout.
+    private func owns(_ drag: MenuBarDragInFlight, engine: MenuBarConcealer?) -> Bool {
+        guard let engine, concealer === engine,
+              dragInFlight?.id == drag.id,
+              drag.environment?.isValid == true,
+              settings().enabled, settings().curation.dragToHide else { return false }
+        return dragBarRows() == drag.rows
+    }
+
+    /// Sleep, display changes, a new press, and teardown retire pending input.
+    func cancelDrag() {
+        dragConfirmTask?.cancel()
+        dragConfirmTask = nil
+        dragStaleTask?.cancel()
+        dragStaleTask = nil
+        if let drag = dragInFlight {
+            endDrag(drag, after: 0)
+        } else {
+            thawDrag(after: 0)
         }
     }
 
@@ -248,6 +286,9 @@ extension MenuBarUtility {
     /// The drag is over: fold what "reveal while dragging" brought in,
     /// and thaw after `delay`.
     func endDrag(_ drag: MenuBarDragInFlight, after delay: TimeInterval) {
+        guard dragInFlight?.id == drag.id else { return }
+        drag.environment?.finish()
+        dragInFlight = nil
         if drag.revealedHidden {
             hider.hide()
             faceChanged()
@@ -297,6 +338,7 @@ extension MenuBarUtility {
     /// drop anywhere else changes nothing. The drag is the Item Bar's own
     /// session — nothing is posted, the pointer is the person's.
     func tileDropped(_ item: MenuBarItem, at screenPoint: NSPoint) {
+        guard settings().enabled, settings().provider == .jrbar else { return }
         guard let icon = currentIconSpan(), let row = dragBarRows().first else { return }
         let point = Self.quartzPoint(screenPoint)
         guard row.insetBy(dx: 0, dy: -MenuBarDragLearn.slack).contains(point) else { return }
