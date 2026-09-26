@@ -569,7 +569,9 @@ final class DataHoarderModel {
         busy = false
         // Content searches are owned by the view's cancellable task. Only
         // refresh inexpensive metadata here, so Stop Import really finishes.
-        if archiveWindowIsOpen, query.isEmpty { await reload() }
+        // The reload is part of the finished import, not idle work: records
+        // and the selection it just set stay truthful with no window open.
+        if query.isEmpty { await reload() }
         pumpSearchIndex()
         await refreshCaptureStatus()
     }
