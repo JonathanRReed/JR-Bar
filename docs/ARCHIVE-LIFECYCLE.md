@@ -30,6 +30,24 @@ Saved/Trash state identify the request: an older response cannot publish into a
 replacement search, and an old page offset cannot be reused for a different
 query. Multiple provider or state filters also activate search.
 
+## Selection and detail safety
+
+Search actions use only the current result set, never a record hidden by the
+query or filters. A replacement search keeps its selected record when that
+record is still present; otherwise it selects the first result, or clears the
+selection when no result exists. While changed input is waiting for its result,
+a selection from the previous request cannot authorize preview, export, or
+trash actions. Export Entire Archive retains its explicit all-record behavior.
+
+Changing the selected file clears the previous preview, request summary, and
+timeline immediately, before the view starts its next asynchronous read. This
+prevents the old timeline from being exported under the new file's metadata.
+Repeatedly selecting the same file preserves its loaded preview. A shared detail
+reset handles both selection changes and closing the window.
+
+Import capacity accounting reuses the existing saturating byte-total helper;
+an unusually large selected total cannot overflow the signed byte counter.
+
 These changes reduce specific redundant work. They are not measurements of
 startup time, physical memory footprint, battery life, or release artifact size.
 No database schema, capture interval, dependency, packaging, or signing change is
@@ -46,9 +64,11 @@ make fast
 (cd app && swift build --build-tests && swift test)
 ```
 
-The added `ArchiveRuntimeLifecycleTests` cover disabled access, closed content,
+The added `ArchiveRuntimeLifecycleTests` and `ArchiveSelectionTests` cover disabled access, closed content,
 pending imports, filters, pagination, and canceled searches using scratch data.
-Review the real app with capture off and on: search more than 100 saved records,
+Also verify that a no-match search leaves no selected record actionable, and that
+switching files immediately disables Markdown export until the new timeline
+loads. Review the real app with capture off and on: search more than 100 saved records,
 change a query before loading the next page, close during a preview read, reopen
 an unfinished import review, and verify that intentional capture/export continues
 with the window closed. Check keyboard focus and VoiceOver after reopening.

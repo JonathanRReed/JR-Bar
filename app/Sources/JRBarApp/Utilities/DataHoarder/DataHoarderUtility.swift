@@ -85,7 +85,14 @@ final class DataHoarderModel {
         }
     }
     var records: [ArchiveRecord] = []
-    var selectedID: String?
+    var selectedID: String? {
+        didSet {
+            guard selectedID != oldValue else { return }
+            preview = ""
+            previewError = nil
+            clearRecordDetail()
+        }
+    }
     var preview = ""
     var candidates: [ArchiveImportCandidate] = []
     var copyContents = false
@@ -164,8 +171,11 @@ final class DataHoarderModel {
     }
 
     var selected: ArchiveRecord? {
-        records.first { $0.id == selectedID }
-            ?? searchResults.first { $0.record.id == selectedID }?.record
+        if searchActive {
+            guard displayedSearchRequest == currentSearchRequest else { return nil }
+            return searchResults.first { $0.record.id == selectedID }?.record
+        }
+        return records.first { $0.id == selectedID }
     }
     var selectedCount: Int { candidates.filter(\.selected).count }
     static func bytes(_ count: Int64) -> String {
@@ -293,15 +303,18 @@ final class DataHoarderModel {
         let generation = presentationGeneration
         preview = ""
         previewError = nil
-        guard let requested = selectedID else { return }
+        guard let requested = selected?.id else { return }
+        let request = currentSearchRequest
         let requestedTrash = showTrash
         do {
             let text = try await archive.preview(id: requested, inTrash: requestedTrash)
             guard !Task.isCancelled, generation == presentationGeneration,
+                  request == currentSearchRequest,
                   requested == selectedID, requestedTrash == showTrash else { return }
             preview = text.isEmpty ? "Empty file" : text
         } catch {
             guard !Task.isCancelled, generation == presentationGeneration,
+                  request == currentSearchRequest,
                   requested == selectedID, requestedTrash == showTrash else { return }
             previewError = error.localizedDescription
             preview = "Preview unavailable. The saved file could not be read safely."
@@ -323,10 +336,9 @@ final class DataHoarderModel {
     private func releaseArchivePresentation() {
         presentationGeneration &+= 1
         searchRevision &+= 1
-        detailRevision &+= 1
+        clearRecordDetail()
         storageRevision &+= 1
         searching = false
-        detailLoading = false
         measuringStorage = false
         records = []
         searchResults = []
@@ -334,10 +346,6 @@ final class DataHoarderModel {
         searchOffset = 0
         preview = ""
         previewError = nil
-        reconstruction = nil
-        cliProxyRequest = nil
-        relatedRecords = []
-        segmentNotes = []
         displayedSearchRequest = nil
     }
 
@@ -376,14 +384,8 @@ final class DataHoarderModel {
     let timelineViewState = ReconstructedTimelineViewState()
     @ObservationIgnored private var detailRevision = 0
 
-    /// Loads everything the detail pane beyond the raw preview needs:
-    /// segment notes, related records, and — depending on the sniffed kind —
-    /// the reconstructed timeline or the parsed CLIProxyAPI request. Segment
-    /// reads are hash-verified by the archive; reconstruction and parsing run
-    /// off-main. Cancellable and stale-guarded like `loadPreview`.
-    func loadDetail() async {
+    private func clearRecordDetail() {
         detailRevision &+= 1
-        let revision = detailRevision
         detailKind = .plain
         detailLoading = false
         detailError = nil
@@ -391,7 +393,17 @@ final class DataHoarderModel {
         cliProxyRequest = nil
         relatedRecords = []
         segmentNotes = []
-        guard !busy, let record = selected else { return }
+    }
+
+    /// Loads everything the detail pane beyond the raw preview needs:
+    /// segment notes, related records, and — depending on the sniffed kind —
+    /// the reconstructed timeline or the parsed CLIProxyAPI request. Segment
+    /// reads are hash-verified by the archive; reconstruction and parsing run
+    /// off-main. Cancellable and stale-guarded like `loadPreview`.
+    func loadDetail() async {
+        clearRecordDetail()
+        let revision = detailRevision
+        guard !Task.isCancelled, !busy, let record = selected else { return }
         let id = record.id
         let requestedTrash = showTrash
 
@@ -575,7 +587,7 @@ final class DataHoarderModel {
     }
 
     private func performImport(_ selection: [ArchiveImportCandidate]) async {
-        let needed = selection.reduce(Int64(0)) { $0 + max(0, $1.size) }
+        let needed = Self.totalBytes(selection.map(\.size))
         if needed > 0, let available = await archive.availableCapacity(), available < needed {
             error = "Not enough free space to archive \(DataHoarderModel.bytes(needed)); the archive volume has \(DataHoarderModel.bytes(available)) available."
             return
@@ -1058,6 +1070,9 @@ final class DataHoarderModel {
                 searchHasMore = page.count > Self.pageSize
             }
             displayedSearchRequest = request
+            if !searchResults.contains(where: { $0.record.id == selectedID }) {
+                selectedID = searchResults.first?.record.id
+            }
             searchError = nil
         } catch {
             guard rev == searchRevision, request == currentSearchRequest,
