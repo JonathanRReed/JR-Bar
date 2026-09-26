@@ -1,0 +1,52 @@
+name: Apply reviewed repair patch
+on:
+  push:
+    branches: [repair/utility-toy-completeness]
+    paths: [.repair-payload/changes.json]
+permissions:
+  contents: write
+concurrency:
+  group: jrbar-repair-patch-transport
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'JonathanRReed/JR-Bar' && github.ref == 'refs/heads/repair/utility-toy-completeness'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate and apply tracked source changes
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib, io, json, os, re
+          envelope = json.loads(Path('.repair-payload/changes.json').read_text())
+          compressed = base64.b64decode(envelope['gzip_base64'], validate=True)
+          assert len(compressed) < 1000000
+          with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as stream:
+              data = stream.read(1000001)
+          assert len(data) <= 1000000
+          assert hashlib.sha256(data).hexdigest() == envelope['sha256']
+          patch = data.decode('utf-8')
+          paths = re.findall(r'^diff --git a/(\S+) b/(\S+)$', patch, re.M)
+          assert paths, 'No ordinary source changes found'
+          for before, after in paths:
+              assert before == after, 'Renames are not part of this transport'
+              assert '..' not in Path(after).parts and not Path(after).is_absolute()
+              assert after.startswith(('app/', 'src/', 'tests/', 'docs/')) or after in ('README.md', 'ATTRIBUTION.md')
+          assert 'new file mode 120000' not in patch and 'GIT binary patch' not in patch
+          Path(os.environ['RUNNER_TEMP'], 'reviewed.patch').write_bytes(data)
+          PY
+          git apply --check --index "$RUNNER_TEMP/reviewed.patch"
+          git apply --index "$RUNNER_TEMP/reviewed.patch"
+          git rm -- .repair-payload/changes.json
+          git diff --cached --check
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'repair: apply reviewed utility and toy corrections' -m "Verified source patch transported from $EXPECTED_HEAD; no main-branch changes."
+          test "$(git ls-remote origin refs/heads/repair/utility-toy-completeness | cut -f1)" = "$EXPECTED_HEAD"
+          git push origin HEAD:refs/heads/repair/utility-toy-completeness
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
