@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 final class DataHoarderUtility: Toy {
     let model = DataHoarderModel()
     var onEnabledChange: ((Bool) -> Void)?
-    @ObservationIgnored private var window: NSWindow?
+    @ObservationIgnored private var windowController: DataHoarderWindowController?
 
     let id = "data-hoarder"
     let name = "Data Hoarder"
@@ -43,22 +43,9 @@ final class DataHoarderUtility: Toy {
     }
 
     func openArchive() {
-        let archive = window ?? makeArchiveWindow()
-        window = archive
-        WindowFront.bring(archive)
-    }
-
-    private func makeArchiveWindow() -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 620),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                              backing: .buffered, defer: false)
-        window.title = "Data Hoarder"
-        window.identifier = NSUserInterfaceItemIdentifier("data-hoarder")
-        window.contentView = NSHostingView(rootView: DataHoarderView(model: model))
-        window.minSize = NSSize(width: 740, height: 480)
-        window.isReleasedWhenClosed = false
-        window.center()
-        return window
+        let controller = windowController ?? DataHoarderWindowController(model: model)
+        windowController = controller
+        controller.show()
     }
 }
 
@@ -75,7 +62,14 @@ struct ArchiveImportCandidate: Identifiable {
 final class DataHoarderModel {
     var enabled = false {
         didSet {
-            if !enabled { stopImport() }
+            guard enabled != oldValue else { return }
+            if !enabled {
+                stopImport()
+                stopIndexing()
+                // Capture consent and read-only browsing are independent.
+                // A visible archive stays usable when capture is disabled.
+                if !archiveWindowIsOpen { releaseArchivePresentation() }
+            }
             applyCapture()
         }
     }
@@ -146,6 +140,8 @@ final class DataHoarderModel {
     var availableProjects: [String] = []
     var indexProgress: (indexed: Int, total: Int)?
     @ObservationIgnored private var indexTask: Task<Void, Never>?
+    @ObservationIgnored private var indexGeneration: UInt64 = 0
+    @ObservationIgnored private var indexRequested = false
 
     /// The live roster lookup the Overview uses — set by UtilitiesStore, so a
     /// captured record whose session is still known can open its terminal.
@@ -293,20 +289,56 @@ final class DataHoarderModel {
     }
 
     func loadPreview() async {
-        guard !busy else { return }
+        guard !busy, !Task.isCancelled else { return }
+        let generation = presentationGeneration
         preview = ""
         previewError = nil
         guard let requested = selectedID else { return }
         let requestedTrash = showTrash
         do {
             let text = try await archive.preview(id: requested, inTrash: requestedTrash)
-            guard !Task.isCancelled, requested == selectedID, requestedTrash == showTrash else { return }
+            guard !Task.isCancelled, generation == presentationGeneration,
+                  requested == selectedID, requestedTrash == showTrash else { return }
             preview = text.isEmpty ? "Empty file" : text
         } catch {
-            guard !Task.isCancelled, requested == selectedID, requestedTrash == showTrash else { return }
+            guard !Task.isCancelled, generation == presentationGeneration,
+                  requested == selectedID, requestedTrash == showTrash else { return }
             previewError = error.localizedDescription
             preview = "Preview unavailable. The saved file could not be read safely."
         }
+    }
+
+    @ObservationIgnored private(set) var archiveWindowIsOpen = false
+    @ObservationIgnored private var presentationGeneration: UInt64 = 0
+
+    func archiveWindowDidOpen() { archiveWindowIsOpen = true }
+
+    func archiveWindowDidClose() {
+        archiveWindowIsOpen = false
+        releaseArchivePresentation()
+    }
+
+    /// Release rendered data; keep navigation and pending import choices.
+    /// Export/import jobs own their captured inputs and are not canceled here.
+    private func releaseArchivePresentation() {
+        presentationGeneration &+= 1
+        searchRevision &+= 1
+        detailRevision &+= 1
+        storageRevision &+= 1
+        searching = false
+        detailLoading = false
+        measuringStorage = false
+        records = []
+        searchResults = []
+        searchHasMore = false
+        searchOffset = 0
+        preview = ""
+        previewError = nil
+        reconstruction = nil
+        cliProxyRequest = nil
+        relatedRecords = []
+        segmentNotes = []
+        displayedSearchRequest = nil
     }
 
     // MARK: Record detail
@@ -376,6 +408,8 @@ final class DataHoarderModel {
         }
 
         let segments = (try? await archive.segments(id: id)) ?? []
+        guard !Task.isCancelled, revision == detailRevision,
+              selectedID == id, requestedTrash == showTrash else { return }
         let related: [ArchiveRecord]
         if let sessionID = record.sessionID, !sessionID.isEmpty {
             related = (try? await archive.relatedRecords(sessionID: sessionID, excluding: id)) ?? []
@@ -395,6 +429,8 @@ final class DataHoarderModel {
             defer { if revision == detailRevision { detailLoading = false } }
             do {
                 let payloads = try await archive.segmentData(id: id, inTrash: requestedTrash)
+                guard !Task.isCancelled, revision == detailRevision,
+                      selectedID == id, requestedTrash == showTrash else { return }
                 let provider = (provider == "claude" || provider == "codex") ? provider! : "other"
                 let epochFallback = record.startedAt
                 let rebuilt = await Task.detached(priority: .userInitiated) {
@@ -417,6 +453,8 @@ final class DataHoarderModel {
             defer { if revision == detailRevision { detailLoading = false } }
             do {
                 let payloads = try await archive.segmentData(id: id, inTrash: requestedTrash)
+                guard !Task.isCancelled, revision == detailRevision,
+                      selectedID == id, requestedTrash == showTrash else { return }
                 var data = Data()
                 for payload in payloads { data.append(payload) }
                 let request = await Task.detached(priority: .userInitiated) {
@@ -519,7 +557,7 @@ final class DataHoarderModel {
         busy = false
         // Content searches are owned by the view's cancellable task. Only
         // refresh inexpensive metadata here, so Stop Import really finishes.
-        if query.isEmpty { await reload() }
+        if archiveWindowIsOpen, query.isEmpty { await reload() }
         pumpSearchIndex()
         await refreshCaptureStatus()
     }
@@ -822,6 +860,7 @@ final class DataHoarderModel {
     /// gigabytes of transcripts. The engine's rescan stops at its next
     /// file without stamping the scan, so the backfill resumes next start.
     @ObservationIgnored private var applyTask: Task<Void, Never>?
+    @ObservationIgnored private var captureApplyGeneration: UInt64 = 0
     @ObservationIgnored private var appliesInFlight = 0
     /// Engine applies launched; tests read it to see a repeat dropped.
     @ObservationIgnored private(set) var captureApplies = 0
@@ -842,43 +881,59 @@ final class DataHoarderModel {
         let (sources, signature) = capturePlan()
         guard needsApply(sources, signature) else { return }
         appliedCaptureSignature = signature
+        captureApplyGeneration &+= 1
+        let generation = captureApplyGeneration
         let full = captureSettings.fullContent
         let since = backfillSince()
         let previous = applyTask
         previous?.cancel()
+        if !enabled { stopIndexing() }
+        // A disabled, never-started archive must not open SQLite merely
+        // to confirm that it has no work. An existing apply still drains.
+        if sources.isEmpty, previous == nil, !captureRunning { return }
         appliesInFlight += 1
         captureApplies += 1
-        applyTask = Task {
+        applyTask = Task { [weak self] in
             await previous?.value
-            await runApply(sources: sources, fullContent: full, backfillSince: since)
-            appliesInFlight -= 1
+            guard let self else { return }
+            defer {
+                self.appliesInFlight -= 1
+                if self.captureApplyGeneration == generation { self.applyTask = nil }
+            }
+            guard !Task.isCancelled, self.captureApplyGeneration == generation else { return }
+            await self.runApply(sources: sources, fullContent: full,
+                               backfillSince: since, generation: generation)
         }
     }
 
     /// Awaitable twin of `applyCapture` for tests and any caller that must
     /// not race a pending fire-and-forget capture task.
     func applyCaptureNow() async {
-        await applyTask?.value
-        let (sources, signature) = capturePlan()
-        guard needsApply(sources, signature) else {
-            await refreshCaptureStatus()
-            return
+        applyCapture()
+        while let pending = applyTask {
+            let generation = captureApplyGeneration
+            await pending.value
+            if generation == captureApplyGeneration { break }
         }
-        appliedCaptureSignature = signature
-        captureApplies += 1
-        await runApply(sources: sources, fullContent: captureSettings.fullContent,
-                       backfillSince: backfillSince())
+        if enabled { await refreshCaptureStatus() }
     }
 
-    private func runApply(sources: [ArchiveSource], fullContent: Bool, backfillSince: Date?) async {
+    private func runApply(sources: [ArchiveSource], fullContent: Bool,
+                          backfillSince: Date?, generation: UInt64) async {
+        guard !Task.isCancelled, generation == captureApplyGeneration else { return }
         if sources.isEmpty {
             await capture.stop()
+            guard !Task.isCancelled, generation == captureApplyGeneration else { return }
             captureRunning = false
-        } else {
-            await capture.start(sources: sources, fullContent: fullContent, backfillSince: backfillSince)
-            captureRunning = !(await capture.activeSourceIDs).isEmpty
+            return
         }
+        await capture.start(sources: sources, fullContent: fullContent, backfillSince: backfillSince)
+        guard !Task.isCancelled, generation == captureApplyGeneration, enabled else { return }
+        let running = !(await capture.activeSourceIDs).isEmpty
+        guard !Task.isCancelled, generation == captureApplyGeneration, enabled else { return }
+        captureRunning = running
         await refreshCaptureStatus()
+        guard !Task.isCancelled, generation == captureApplyGeneration, enabled else { return }
         pumpSearchIndex()
     }
 
@@ -889,94 +944,149 @@ final class DataHoarderModel {
     /// Termination path — `applyCapture` is Task-bound and may lose the
     /// race against process exit; the streams die with it anyway.
     func stopCapture() {
-        Task { await capture.stop() }
+        captureApplyGeneration &+= 1
+        let generation = captureApplyGeneration
+        applyTask?.cancel()
+        appliedCaptureSignature = nil
+        stopIndexing()
+        Task { [weak self] in
+            guard let self, self.captureApplyGeneration == generation else { return }
+            await self.capture.stop()
+        }
         captureRunning = false
     }
 
     func refreshCaptureStatus() async {
-        captureFailureCount = (try? await archive.captureFailureCount()) ?? 0
-        captureFailures = (try? await archive.captureFailures(limit: 20)) ?? []
-        availableProjects = (try? await archive.searchableProjects()) ?? []
-        indexProgress = try? await archive.indexProgress()
+        let captureGeneration = captureApplyGeneration
+        let presentation = presentationGeneration
+        func stillCurrent() -> Bool {
+            !Task.isCancelled && (enabled || archiveWindowIsOpen)
+                && captureGeneration == captureApplyGeneration
+                && presentation == presentationGeneration
+        }
+        guard stillCurrent() else { return }
+        let count = (try? await archive.captureFailureCount()) ?? 0
+        guard stillCurrent() else { return }
+        let failures = (try? await archive.captureFailures(limit: 20)) ?? []
+        guard stillCurrent() else { return }
+        let projects = (try? await archive.searchableProjects()) ?? []
+        guard stillCurrent() else { return }
+        let progress = try? await archive.indexProgress()
+        guard stillCurrent() else { return }
+        captureFailureCount = count
+        captureFailures = failures
+        availableProjects = projects
+        indexProgress = progress
     }
 
-    /// Pumps the FTS backfill until the pending queue drains (or a newer pass
-    /// supersedes this one). Called after imports, capture ticks and refresh.
-    func pumpSearchIndex() {
+    private func stopIndexing() {
+        indexGeneration &+= 1
+        indexRequested = false
         indexTask?.cancel()
-        indexTask = Task {
-            while !Task.isCancelled {
-                let indexed = (try? await archive.indexPendingSegments(limit: 200)) ?? 0
-                guard !Task.isCancelled else { return }
-                if indexed == 0 { break }
-                indexProgress = try? await archive.indexProgress()
+        indexTask = nil
+    }
+
+    /// One worker drains pending segments; refreshes request another pass.
+    func pumpSearchIndex() {
+        guard enabled else { return }
+        if indexTask != nil {
+            indexRequested = true
+            return
+        }
+        indexGeneration &+= 1
+        let generation = indexGeneration
+        indexTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.indexGeneration == generation { self.indexTask = nil }
             }
-            indexProgress = try? await archive.indexProgress()
+            while !Task.isCancelled, self.enabled, generation == self.indexGeneration {
+                self.indexRequested = false
+                let indexed = (try? await self.archive.indexPendingSegments(limit: 200)) ?? 0
+                guard !Task.isCancelled, self.enabled, generation == self.indexGeneration else { return }
+                let progress = try? await self.archive.indexProgress()
+                guard !Task.isCancelled, self.enabled, generation == self.indexGeneration else { return }
+                self.indexProgress = progress
+                if indexed == 0 && !self.indexRequested { return }
+                await Task.yield()
+            }
         }
     }
 
     // MARK: Search
 
-    var searchActive: Bool {
-        !query.isEmpty || searchFilter.provider != nil || searchFilter.project != nil
-            || searchFilter.state != nil || searchFilter.from != nil || searchFilter.to != nil
+    var searchActive: Bool { !query.isEmpty || !searchFilter.isEmpty }
+
+    private struct SearchRequest: Equatable {
+        let query: String
+        let filter: ArchiveSearchFilter
+        let trash: Bool
     }
 
-    /// Cancels the in-flight page and runs the first page. The caller debounces.
+    private var currentSearchRequest: SearchRequest {
+        SearchRequest(query: query, filter: searchFilter, trash: showTrash)
+    }
+
+    @ObservationIgnored private var displayedSearchRequest: SearchRequest?
+
+    /// Replaces the current search. The view owns cancellation and debounce.
     func runSearch() async {
-        guard enabled else { return }
+        guard !Task.isCancelled else { return }
         searchRevision &+= 1
         let rev = searchRevision
+        let request = currentSearchRequest
+        displayedSearchRequest = nil
+        searchHasMore = false
         searching = true
-        let q = query
-        let filter = searchFilter
+        defer { if rev == searchRevision { searching = false } }
         do {
-            if showTrash {
-                // FTS rows key off live records, so trash searches run the
-                // catalog scan — bounded fine for trash-sized sets.
-                let found = try await archive.records(query: q, inTrash: true)
-                let filtered = found.filter { Self.matchesSearchFilter($0, filter: filter) }
-                guard rev == searchRevision, !Task.isCancelled else { return }
+            if request.trash {
+                let found = try await archive.records(query: request.query, inTrash: true)
+                guard rev == searchRevision, request == currentSearchRequest,
+                      !Task.isCancelled else { return }
+                let filtered = found.filter { Self.matchesSearchFilter($0, filter: request.filter) }
                 searchResults = filtered.map { ArchiveSearchResult(record: $0, snippets: [], rank: nil) }
                 searchOffset = searchResults.count
-                searchHasMore = false
             } else {
-                async let page = archive.search(query: q, filter: filter, offset: 0, limit: Self.pageSize)
-                async let more = archive.searchHasMore(query: q, filter: filter, offset: 0, limit: Self.pageSize)
-                let (results, hasMore) = try await (page, more)
-                guard rev == searchRevision, !Task.isCancelled else { return }
-                searchResults = results
-                searchOffset = results.count
-                searchHasMore = hasMore
+                // One look-ahead row answers pagination without a second search.
+                let page = try await archive.search(query: request.query, filter: request.filter,
+                                                    offset: 0, limit: Self.pageSize + 1)
+                guard rev == searchRevision, request == currentSearchRequest,
+                      !Task.isCancelled else { return }
+                searchResults = Array(page.prefix(Self.pageSize))
+                searchOffset = searchResults.count
+                searchHasMore = page.count > Self.pageSize
             }
-            searching = false
+            displayedSearchRequest = request
             searchError = nil
         } catch {
-            guard rev == searchRevision else { return }
-            searching = false
+            guard rev == searchRevision, request == currentSearchRequest,
+                  !Task.isCancelled else { return }
             searchError = error.localizedDescription
         }
     }
 
     func loadMoreSearch() async {
-        guard searchHasMore, !searching, !showTrash else { return }
+        let request = currentSearchRequest
+        guard !Task.isCancelled, searchHasMore, !searching, !request.trash,
+              displayedSearchRequest == request else { return }
         let rev = searchRevision
-        searching = true
-        let q = query
-        let filter = searchFilter
         let offset = searchOffset
+        searching = true
+        defer { if rev == searchRevision { searching = false } }
         do {
-            async let page = archive.search(query: q, filter: filter, offset: offset, limit: Self.pageSize)
-            async let more = archive.searchHasMore(query: q, filter: filter, offset: offset, limit: Self.pageSize)
-            let (results, hasMore) = try await (page, more)
-            guard rev == searchRevision, !Task.isCancelled else { return }
-            searchResults.append(contentsOf: results)
-            searchOffset += results.count
-            searchHasMore = hasMore
-            searching = false
+            let page = try await archive.search(query: request.query, filter: request.filter,
+                                                offset: offset, limit: Self.pageSize + 1)
+            guard rev == searchRevision, request == currentSearchRequest,
+                  !Task.isCancelled else { return }
+            let visible = page.prefix(Self.pageSize)
+            searchResults.append(contentsOf: visible)
+            searchOffset += visible.count
+            searchHasMore = page.count > Self.pageSize
+            searchError = nil
         } catch {
-            guard rev == searchRevision else { return }
-            searching = false
+            guard rev == searchRevision, request == currentSearchRequest,
+                  !Task.isCancelled else { return }
             searchError = error.localizedDescription
         }
     }
