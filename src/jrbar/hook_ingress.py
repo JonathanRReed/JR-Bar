@@ -307,6 +307,7 @@ class HookIngressService:
         surface_recorder: object | None = None,
         backlog_cleared: Callable[[], object] | None = None,
         statusline_enabled: Callable[[], bool] | None = None,
+        epoch: Callable[[], float] = time.time,
     ) -> None:
         if not callable(process):
             raise ValueError("invalid hook ingress processor")
@@ -326,6 +327,8 @@ class HookIngressService:
             raise ValueError("invalid hook ingress backlog handler")
         if statusline_enabled is not None and not callable(statusline_enabled):
             raise ValueError("invalid hook ingress statusline reader")
+        if not callable(epoch):
+            raise ValueError("invalid hook ingress epoch clock")
         if receipt_handler is not None and not callable(receipt_handler):
             raise ValueError("invalid hook ingress receipt handler")
         if rejection_recorder is not None and not callable(rejection_recorder):
@@ -363,6 +366,9 @@ class HookIngressService:
         # The daemon hands its live settings flag so each statusline frame
         # does not stat and parse the settings document behind a 5 s cache.
         self._statusline_enabled = statusline_enabled
+        # Wall clock for the statusline lane: ``monotonic`` times the queue
+        # but cannot be compared with a window's epoch ``resets_at``.
+        self._epoch = epoch
 
         self._condition = threading.Condition()
         self._pending: deque[_AcceptedHook] = deque()
@@ -929,7 +935,11 @@ class HookIngressService:
             from .claude_statusline_source import ingest
 
             reader = self._statusline_enabled
-            ingest(request.payload_text, enabled=reader() if reader is not None else None)
+            ingest(
+                request.payload_text,
+                now=self._epoch(),
+                enabled=reader() if reader is not None else None,
+            )
         except Exception:
             pass
         return HookIngressDisposition.ACCEPTED

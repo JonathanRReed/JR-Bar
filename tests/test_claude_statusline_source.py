@@ -181,6 +181,7 @@ def test_a_statusline_frame_never_reaches_hook_processing(tmp_path: Path, monkey
         socket_path=tmp_path / "ingress.sock",
         rejection_path=tmp_path / "rejections.jsonl",
         peer_uid_reader=lambda _connection: os.geteuid(),
+        epoch=lambda: NOW,
     )
     frame = encode_hook_ingress_request(
         HookIngressRequest(
