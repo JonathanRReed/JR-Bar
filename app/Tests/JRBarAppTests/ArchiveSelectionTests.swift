@@ -105,6 +105,41 @@ struct ArchiveSelectionTests {
         #expect(model.preview.isEmpty)
     }
 
+    @Test func clearingTheLastFilterReloadsTheArchive() async throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "saved.txt")
+        try Data("synthetic saved file".utf8).write(to: file)
+        let archive = DataHoarderArchive(root: root.appending(path: "archive"))
+        let record = try await archive.importFile(file)
+        let model = DataHoarderModel(archive: archive)
+        model.archiveWindowDidOpen()
+        model.searchFilter.states = [.live]
+        let view = DataHoarderView(model: model)
+        await view.refreshResults()
+        #expect(model.searchResults.isEmpty)
+        model.searchFilter = ArchiveSearchFilter()
+        await view.refreshResults()
+        #expect(model.records.map(\.id) == [record.id])
+        #expect(model.selectedID == record.id)
+        #expect(!model.enabled)
+        model.archiveWindowDidClose()
+    }
+
+    @Test func busyViewDoesNotRefreshSearchResults() async throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = DataHoarderModel(archive: DataHoarderArchive(root: root.appending(path: "archive")))
+        model.query = "synthetic"
+        model.busy = true
+        let record = ArchiveRecord(id: "existing", name: "existing.txt", sourcePath: "existing.txt",
+                                   byteCount: 0, importedAt: Date(), sourceModifiedAt: nil)
+        model.searchResults = [ArchiveSearchResult(record: record, snippets: [], rank: nil)]
+        await DataHoarderView(model: model).refreshResults()
+        #expect(model.searchResults.map { $0.record.id } == [record.id])
+        #expect(!model.searching)
+    }
+
     @Test func importSizeAccountingSaturatesInsteadOfOverflowing() {
         #expect(DataHoarderModel.totalBytes([Int64.max, 1]) == Int64.max)
         #expect(DataHoarderModel.totalBytes([-1, 12, 30]) == 42)

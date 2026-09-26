@@ -30,6 +30,12 @@ Saved/Trash state identify the request: an older response cannot publish into a
 replacement search, and an old page offset cannot be reused for a different
 query. Multiple provider or state filters also activate search.
 
+The window has one result-refresh task keyed by query, filters, Saved/Trash,
+and busy state. Typing a nonempty query keeps the 200 ms debounce; filter
+changes and clearing the query refresh immediately. Clearing the last filter
+reloads the ordinary archive list. Search rows use their record identity,
+not their array position, and no temporary enumerated array is needed.
+
 ## Selection and detail safety
 
 Search actions use only the current result set, never a record hidden by the
