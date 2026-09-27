@@ -33,34 +33,34 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.10"
+    static let releaseID = "0.9.11"
 
     /// The header's one line.
-    static let headline = "Fold starts from rest, reset confetti arrives, and utilities recover safely."
+    static let headline = "Fold returns smoothly, previews fit, and early weekly resets celebrate."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
     static let entries: [WhatsNewEntry] = [
         WhatsNewEntry(
-            id: "dock", symbol: "dock.rectangle",
+            id: "keep-awake", symbol: "cup.and.saucer",
             title: "Keep Awake stays clear",
             detail: "Manual sessions have their own controls, and pending commands cannot run twice.",
             tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Keep Awake is"),
         WhatsNewEntry(
             id: "fold", symbol: "laptopcomputer",
-            title: "Fold starts from rest",
-            detail: "Switching to the resting angle uses the parked lid reading before your first close.",
+            title: "Fold returns to rest",
+            detail: "Resting-angle mode relearns a still lid automatically, with a smooth return to the desktop.",
             tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Fold card is"),
         WhatsNewEntry(
             id: "aquarium", symbol: "fish",
-            title: "Fish earn real work rewards",
-            detail: "Work rewards stop while the core is disconnected, and resume when live readings return.",
+            title: "Fish stay steady on hover",
+            detail: "Showing a fish's name preserves its swim course and sleeping position.",
             tryIt: .aquarium, opens: "Opens the Aquarium"),
         WhatsNewEntry(
             id: "drag", symbol: "menubar.rectangle",
-            title: "Safer menu placement",
-            detail: "Cancelled drags and old display readings cannot restore a mirror over another control.",
+            title: "Menu clicks reach the icon",
+            detail: "Old system-item hit areas cannot swallow clicks on JR-Bar's visible icon.",
             keys: "⌘ drag"),
         WhatsNewEntry(
             id: "dot", symbol: "light.strip.2",
@@ -69,8 +69,8 @@ enum WhatsNewCatalog {
             tryIt: .settings(page: "devices"), opens: "Opens Settings › Devices, where Pro & Dot is"),
         WhatsNewEntry(
             id: "resets", symbol: "party.popper",
-            title: "Reset confetti arrives",
-            detail: "Recent provider resets reach confetti after reconnecting, even when daemon event numbers restart.",
+            title: "Early weekly resets celebrate",
+            detail: "Stable provider readings confirm weekly refills even before the scheduled reset time.",
             tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where Confetti is"),
         WhatsNewEntry(
             id: "archive", symbol: "archivebox",
@@ -78,10 +78,10 @@ enum WhatsNewCatalog {
             detail: "Saved searches, transcripts and details remain available while new capture is off.",
             tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Data Hoarder is"),
         WhatsNewEntry(
-            id: "marks", symbol: "star",
-            title: "Every agent's real mark",
-            detail: "Claude, Codex, ChatGPT, Gemini, Pi, Grok, Devin and the rest draw their own logos wherever a provider appears.",
-            tryIt: .panel(toggle: false), opens: "Opens the panel, where the marks sit beside each session"),
+            id: "dock", symbol: "dock.rectangle",
+            title: "Dock previews fit their windows",
+            detail: "Long app names and agent counts stay within the preview's thumbnail width.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Dock is"),
     ]
 }
 

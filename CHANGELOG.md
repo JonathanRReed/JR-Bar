@@ -2,6 +2,23 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.11
+
+- Resting-angle Fold returns to the desktop after one second of stillness
+  when its parking timer is at zero. The control now calls this Auto.
+- Fold shares elapsed time across sensor, capture and display callbacks,
+  and eases small returns to flat.
+- Dock preview width follows thumbnails and controls. Long application
+  names, channel badges and agent counts stay inside that width.
+- The menu click bridge passes clicks on JR-Bar's visible icon through,
+  even when an old system-item frame overlaps it.
+- Hovering a fish changes its expression and label without steering it
+  or removing its sleeping position.
+- The keep-awake cup has enough space inside the black Screen Bar ear.
+- Early weekly refills are confirmed from stable provider readings,
+  including full refills of less than five percentage points. Account
+  changes, source changes and rolling unused windows do not celebrate.
+
 ## 0.9.10
 
 - Fold uses the parked lid reading when switching to "Wherever the lid
