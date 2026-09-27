@@ -483,8 +483,8 @@ struct FoldRenderProofTests {
         var chase = DeltaChase()
         var cells: [(Double, CGImage, CGImage)] = []
         var captions: [(glass: String, eye: String)] = []
-        let picks: Set<Int> = [0, 30, 59, 60, 61, 62, 75]
-        for frame in 0...75 {
+        let picks: Set<Int> = [0, 30, 59, 60, 66, 72, 90]
+        for frame in 0...90 {
             let t = parkedAt + Double(frame) / 60
             anchor.feed(lid, at: t)
             let reference = anchor.anchor ?? Self.rest

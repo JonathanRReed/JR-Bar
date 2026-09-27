@@ -99,7 +99,8 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     public var holdStrength: Double
     /// Mac Duo's pause-at-angle: a lid parked mid-fold hands the
     /// desktop back after this many seconds until the hinge moves
-    /// again. 0 keeps the fold however long the lid sits.
+    /// again. At 0, resting-angle mode releases after one second;
+    /// fixed-angle mode keeps the fold while the lid sits.
     public var dwellTimeout: Double
     /// Bendy's return click — a Tink when the fold fully unwinds.
     public var restoreSound: Bool
@@ -1364,5 +1365,4 @@ public enum ShelfDragOut: String, Codable, CaseIterable, Sendable {
 public enum NotchProvider: String, Codable, CaseIterable, Sendable {
     case jrbar, alcove, boringNotch
 }
-
 

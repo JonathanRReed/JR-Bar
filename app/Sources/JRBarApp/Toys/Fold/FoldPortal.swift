@@ -47,6 +47,18 @@ import JRBarCore
 
 // MARK: - SlewTracker
 
+struct FoldFrameClock: Sendable {
+    private var previous: TimeInterval?
+
+    mutating func tick(at now: TimeInterval) -> TimeInterval {
+        let elapsed = previous.map { now - $0 } ?? 0
+        previous = now
+        return elapsed
+    }
+
+    mutating func reset() { previous = nil }
+}
+
 /// A slew-limited critically damped tracker for the lid angle.
 ///
 /// The hinge sensor reports integer degrees at ~10 Hz; a real close
@@ -136,14 +148,9 @@ struct SlewTracker: Sendable {
 /// The movement-anchored reference (FoldAnchor.movement): where the lid
 /// was resting when the gesture began.
 ///
-/// While the lid is flat — at or above the anchor, no fold in flight —
-/// a rest spot held for `settleAfter` becomes the new anchor, so the
-/// fold always starts from wherever the lid was last parked. Below the
-/// anchor the fold is live and the reference freezes: parking mid-fold
-/// must not re-anchor (that would collapse a held fold after 400 ms);
-/// handing the desktop back is the dwell pause's job, and it re-seats
-/// the anchor itself. Opening back through the anchor is what counts as
-/// flat — the stillness clock resumes from there.
+/// The reference stays fixed while the lid moves. Above it, a stable
+/// reading re-seats after `settleAfter`. Below it, `parkAfter` can seat
+/// a held lid too; otherwise the caller's parking timer owns that release.
 ///
 /// A reopen that stops short of the old rest is a rest too: once the lid
 /// has come back up more than `reopenRise` from the lowest point of the
@@ -185,6 +192,13 @@ struct MoveAnchor: Sendable {
     /// come back up since; nil while flat.
     private var flightLow: Double?
     private var flightHigh: Double?
+    var parkAfter: TimeInterval?
+    private var parkRange: ClosedRange<Double>?
+    private var parkAt: TimeInterval = 0
+    private var parkEarlyTotal = 0.0
+    private var parkEarlyCount = 0
+    private var parkLateTotal = 0.0
+    private var parkLateCount = 0
 
     /// How far back up from the close's lowest point counts as a reopen
     /// rather than sensor wobble on a parked lid: the flight margin, or
@@ -205,24 +219,30 @@ struct MoveAnchor: Sendable {
         restAngle = nil
         flightLow = nil
         flightHigh = nil
+        parkRange = nil
         if mode == .movement, let angle { reseat(angle, at: at) }
         return true
     }
 
-    /// Feed a raw lid sample at host time `at`. Mid-flight the anchor
-    /// moves only when a reopen settles short of it.
-    mutating func feed(_ angle: Double, at: TimeInterval) {
-        guard angle.isFinite, at.isFinite else { return }
+    /// Returns true when a held lid becomes the next resting angle.
+    @discardableResult
+    mutating func feed(_ angle: Double, at: TimeInterval) -> Bool {
+        guard angle.isFinite, at.isFinite else { return false }
         guard let a = anchor else {
             anchor = angle
             restAngle = angle
             restAt = at
-            return
+            return false
         }
         if a - angle > flightMargin {
+            if let parkAfter, notePark(angle, at: at, after: parkAfter) {
+                reseat(angle, at: at)
+                return true
+            }
             feedInFlight(angle, at: at)
-            return
+            return false
         }
+        parkRange = nil
         flightLow = nil
         flightHigh = nil
         if let r = restAngle, abs(angle - r) <= tolerance {
@@ -231,6 +251,7 @@ struct MoveAnchor: Sendable {
             restAngle = angle
             restAt = at
         }
+        return false
     }
 
     /// A real deviation from the anchor — what arms the capture in
@@ -253,6 +274,44 @@ struct MoveAnchor: Sendable {
         restAt = at
         flightLow = nil
         flightHigh = nil
+        parkRange = nil
+    }
+
+    private mutating func notePark(_ angle: Double, at: TimeInterval, after delay: TimeInterval) -> Bool {
+        guard let range = parkRange else {
+            beginPark(angle, at: at)
+            return false
+        }
+        let low = min(range.lowerBound, angle)
+        let high = max(range.upperBound, angle)
+        if high - low > max(2, 2 * tolerance) {
+            beginPark(angle, at: at)
+            return false
+        }
+        parkRange = low...high
+        let elapsed = at - parkAt
+        if elapsed < delay / 2 {
+            parkEarlyTotal += angle
+            parkEarlyCount += 1
+        } else {
+            parkLateTotal += angle
+            parkLateCount += 1
+        }
+        guard elapsed >= delay else { return false }
+        let early = parkEarlyTotal / Double(parkEarlyCount)
+        let late = parkLateTotal / Double(parkLateCount)
+        guard abs(late - early) > 0.25 else { return true }
+        beginPark(angle, at: at)
+        return false
+    }
+
+    private mutating func beginPark(_ angle: Double, at: TimeInterval) {
+        parkRange = angle...angle
+        parkAt = at
+        parkEarlyTotal = angle
+        parkEarlyCount = 1
+        parkLateTotal = 0
+        parkLateCount = 0
     }
 
     /// A sample below the anchor. Parked with no rise the rest clock
@@ -455,6 +514,10 @@ struct DeltaChase: Sendable {
     /// target in one step.
     var maxDt = 0.05
 
+    private var releaseFrom: Double?
+    private var releaseElapsed = 0.0
+    private var releaseDuration = 0.0
+
     init() {}
 
     /// Parked on a value with no rate left — resets plant the chase so
@@ -465,24 +528,47 @@ struct DeltaChase: Sendable {
         target = newValue
     }
 
-    /// One render-frame step toward `newTarget`. A dropping target is
-    /// chased linearly at `unwindRate`; the step never crosses the
-    /// target, so a real opening (slower than the rate) is tracked
-    /// exactly and only a snap is eased.
+    /// Tracks physical opening at `unwindRate`. A jump to flat uses a
+    /// short eased release instead of cutting the last few degrees off.
     @discardableResult
     mutating func tick(target newTarget: Double, dt rawDt: Double) -> Double {
         guard newTarget.isFinite else { return value }
+        let wasFlat = target == 0
         target = max(0, newTarget)
         if target >= value {
             // Closing (or aligned): the old direct assignment, unchanged.
             value = target
             velocity = 0
+            releaseFrom = nil
             return value
         }
         guard rawDt.isFinite, rawDt > 0 else { return value }
         let dt = min(rawDt, maxDt)
+        if target == 0 {
+            if releaseFrom == nil, !wasFlat, value > unwindRate * dt, value <= 0.9 {
+                releaseFrom = value
+                releaseElapsed = 0
+                releaseDuration = max(0.28, 1.5 * value / unwindRate)
+            }
+            if let start = releaseFrom {
+                releaseElapsed = min(releaseDuration, releaseElapsed + dt)
+                let progress = releaseElapsed / releaseDuration
+                let eased = progress * progress * (3 - 2 * progress)
+                let next = max(0, start * (1 - eased))
+                velocity = (next - value) / dt
+                value = next
+                if releaseElapsed == releaseDuration {
+                    value = 0
+                    velocity = 0
+                    releaseFrom = nil
+                }
+                return value
+            }
+        } else {
+            releaseFrom = nil
+        }
         let next = max(target, value - unwindRate * dt)
-        velocity = (next - value) / dt
+        velocity = next == target ? 0 : (next - value) / dt
         value = next
         return value
     }

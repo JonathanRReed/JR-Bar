@@ -168,7 +168,7 @@ final class FoldToy: Toy {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// The lock and unlock broadcasts arrive on the distributed centre.
     @ObservationIgnored private var distributedObservers: [NSObjectProtocol] = []
-    @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
+    @ObservationIgnored private var frameClock = FoldFrameClock()
     /// Safety facts, cached instead of queried per frame: the clamshell
     /// truth rides in on the sensor's 1 Hz beat, and display topology
     /// only re-reads when the screen-parameters notification bumps
@@ -451,6 +451,7 @@ final class FoldToy: Toy {
         selectAnchorMode(at: CACurrentMediaTime())
         jitter.tolerance = settings.jitterTolerance
         moveAnchor.tolerance = settings.jitterTolerance
+        moveAnchor.parkAfter = settings.anchor == .movement && settings.dwellTimeout == 0 ? 1 : nil
         // Both looks arm on 3° of real travel down, so a nudge never
         // flashes the Screen Recording indicator, and neither does
         // tilting the screen back: neither look folds on the way up. The
@@ -833,11 +834,11 @@ final class FoldToy: Toy {
                 link?.add(to: .main, forMode: .common)
                 tickLink = link
             }
-            lastDeltaTick = CACurrentMediaTime()
             tickFrame()
         } else if let link = tickLink {
             link.invalidate()
             tickLink = nil
+            frameClock.reset()
             // The blackout outlives the link: it is a flat clear with no
             // motion to tick, and it lets go on its own terms.
             if !blackout.active { hideOverlay() }
@@ -852,8 +853,7 @@ final class FoldToy: Toy {
     private func tickFrame() {
         let now = CACurrentMediaTime()
         defer { publishCard(now: now) }
-        let dt = now - lastDeltaTick
-        lastDeltaTick = now
+        let dt = frameClock.tick(at: now)
         if smoothsEdges, let drawn = edges.value(at: now) { tracker.feed(drawn) }
         tracker.tick(dt: dt)
         refreshDisplayFactsIfStale()
@@ -910,6 +910,7 @@ final class FoldToy: Toy {
             if targetDelta == 0 && tracker.atRest && chase.atRest && glideDone, let link = tickLink {
                 link.invalidate()
                 tickLink = nil
+                frameClock.reset()
             }
             return
         }
@@ -1277,7 +1278,7 @@ final class FoldToy: Toy {
             // still guards what reaches the tracker. Reconcile runs on
             // every sample too: the 400 ms stillness boundary and the
             // first-move arm can't wait for an accepted edge.
-            moveAnchor.feed(angle, at: sample.at)
+            feedMovementAnchor(angle, at: sample.at)
             if jitter.accept(angle, at: sample.at) { feedTracker(angle, at: sample.at) }
             reconcile()
             return
@@ -1302,6 +1303,13 @@ final class FoldToy: Toy {
         guard moveAnchor.select(settings.anchor, angle: measuredAngle, at: now) else { return }
         restGate.reset()
         sensor.quiet(around: nil)
+    }
+
+    private func feedMovementAnchor(_ angle: Double, at now: TimeInterval) {
+        if moveAnchor.feed(angle, at: now) {
+            dwellPaused = true
+            dwellAnchor = angle
+        }
     }
 
     /// Nothing a reading could change is live: ours to render and on,
@@ -1426,7 +1434,7 @@ final class FoldToy: Toy {
                 if self.settings.anchor == .movement {
                     // The slider exercises the movement path too — a
                     // still drag end re-seats the anchor on its own.
-                    self.moveAnchor.feed($0, at: CACurrentMediaTime())
+                    self.feedMovementAnchor($0, at: CACurrentMediaTime())
                 }
                 self.scheduleReconcile()
                 self.publishCard()
@@ -1806,9 +1814,11 @@ private struct FoldControlsView: View {
                 .disabled(toy.settings.anchor == .movement)
 
             sliderRow(SettingLabel(title: "Release when parked",
-                                   subtitle: "Seconds a lid held mid-fold waits before the desktop comes back — until the hinge moves again."),
+                                   subtitle: "Return to the desktop after the lid settles. Resting angle uses one second automatically."),
                       value: toy.bind(\.dwellTimeout), range: 0...10, step: 1,
-                      readout: toy.settings.dwellTimeout == 0 ? "Off" : "\(Int(toy.settings.dwellTimeout))s")
+                      readout: toy.settings.dwellTimeout == 0
+                          ? (toy.settings.anchor == .movement ? "Auto" : "Off")
+                          : "\(Int(toy.settings.dwellTimeout))s")
 
             sliderRow(SettingLabel(title: "Jitter",
                                    subtitle: "Ignore angle wobbles smaller than this."),

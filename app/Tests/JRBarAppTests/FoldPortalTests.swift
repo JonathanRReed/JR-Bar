@@ -16,6 +16,94 @@ struct FoldPortalTests {
 
     // MARK: SlewTracker
 
+    @Test("resting angle relearns a stationary lid with the parking timer off")
+    func automaticRestWorksWithoutParkingTimer() {
+        var anchor = MoveAnchor()
+        anchor.parkAfter = 1
+        _ = anchor.select(.movement, angle: 110, at: 0)
+        anchor.feed(100, at: 0.1)
+        anchor.feed(90, at: 0.2)
+        anchor.feed(80, at: 0.3)
+        for step in 1...9 {
+            let angle = 80 + Double(step % 3) - 1
+            let released = anchor.feed(angle, at: 0.3 + Double(step) * 0.1)
+            #expect(!released)
+        }
+        let released = anchor.feed(80, at: 1.4)
+        #expect(released)
+        #expect(anchor.anchor == 80)
+        #expect(!anchor.moving(80))
+        anchor.feed(70, at: 1.5)
+        #expect(anchor.moving(70))
+        #expect(anchor.anchor == 80)
+    }
+
+    @Test("a moving lid never starts a new resting fold halfway down")
+    func automaticRestWaitsForStillness() {
+        var anchor = MoveAnchor()
+        anchor.parkAfter = 1
+        _ = anchor.select(.movement, angle: 110, at: 0)
+        for step in 1...30 {
+            let released = anchor.feed(110 - Double(step) * 2, at: Double(step) * 0.1)
+            #expect(!released)
+        }
+        #expect(anchor.anchor == 110)
+    }
+
+    @Test("a slow closing lid is motion rather than a new rest")
+    func slowCloseDoesNotReseat() {
+        var anchor = MoveAnchor()
+        anchor.parkAfter = 1
+        _ = anchor.select(.movement, angle: 110, at: 0)
+        anchor.feed(100, at: 0.1)
+        for step in 1...80 {
+            let angle = 100 - floor(Double(step) * 0.2)
+            let released = anchor.feed(angle, at: 0.1 + Double(step) * 0.1)
+            #expect(!released)
+        }
+        #expect(anchor.anchor == 110)
+    }
+
+    @Test("sensor and display callbacks share elapsed time while the fold stays armed")
+    func frameTimeSurvivesSensorReconciles() {
+        var clock = FoldFrameClock()
+        var tracker = SlewTracker()
+        tracker.feed(110)
+        _ = clock.tick(at: 0)
+        tracker.feed(80)
+        var elapsed = 0.0
+        for step in 1...120 {
+            let displayTime = Double(step) / 120
+            let sampleTime = displayTime - 0.002
+            let sensorStep = clock.tick(at: sampleTime)
+            tracker.tick(dt: sensorStep)
+            let displayStep = clock.tick(at: displayTime)
+            tracker.tick(dt: displayStep)
+            elapsed += sensorStep + displayStep
+        }
+        #expect(abs(elapsed - 1) < 1e-9)
+        #expect(tracker.atRest)
+        #expect(tracker.angle == 80)
+        clock.reset()
+        let restarted = clock.tick(at: 20)
+        #expect(restarted == 0)
+    }
+
+    @Test("a small rest release eases out instead of disappearing in two frames")
+    func smallReleaseEasesOut() {
+        var chase = DeltaChase()
+        chase.reset(to: 6 * .pi / 180)
+        let initial = chase.value
+        let dt = 1.0 / 60
+        let first = chase.tick(target: 0, dt: dt)
+        #expect(first > initial * 0.98)
+        for _ in 0..<4 { chase.tick(target: 0, dt: dt) }
+        #expect(chase.value > initial * 0.7)
+        for _ in 0..<30 { chase.tick(target: 0, dt: dt) }
+        #expect(chase.value == 0)
+        #expect(chase.atRest)
+    }
+
     @Test("changing to movement mode folds from the parked reading on the first close")
     func movementModeUsesTheExistingRest() {
         var anchor = MoveAnchor()
