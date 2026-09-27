@@ -828,6 +828,7 @@ final class FoldToy: Toy {
             || (smoothsEdges && !edges.settled(at: CACurrentMediaTime()))
         if armed && busy {
             if tickLink == nil {
+                frameClock.reset()
                 // On macOS the link comes from the screen it drives.
                 let link = (FoldOverlayWindow.builtinScreen() ?? NSScreen.main)?
                     .displayLink(target: tickBox, selector: #selector(TickBox.tick))
