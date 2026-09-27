@@ -242,6 +242,26 @@ enum MenuBarItemLister {
     /// another AX round trip onto tccd.
     @MainActor
     private static var axScanInFlight = false
+    /// Invalidates asynchronous geometry reads across sleep, wake and
+    /// display reconfiguration. A scan begun against an old arrangement
+    /// may finish, but it cannot publish its frames into the new one.
+    @MainActor private static var environmentGeneration: UInt64 = 0
+
+    @MainActor
+    static func invalidateGeometry() {
+        environmentGeneration &+= 1
+        axItems = []
+        infosCache = nil
+        trustCache = nil
+        lastFullScanAt = .distantPast
+        invalidateMenuEdge()
+    }
+
+    @MainActor
+    static func invalidateMenuEdge() {
+        menuEdgeGeneration += 1
+        appMenuEdge = nil
+    }
 
     /// The right edge of the menus on the bar — the menu-bar owner's
     /// (`menuBarOwnerApp`) — refilled by each AX scan and, when the
@@ -285,11 +305,13 @@ enum MenuBarItemLister {
         guard axTrusted() else { return false }
         menuEdgeGeneration += 1
         let token = menuEdgeGeneration
+        let environment = environmentGeneration
         let ownerPID = menuBarOwnerApp()?.processIdentifier
         let edge = await Task.detached(priority: .utility) {
             ownerPID.flatMap { MenuBarAX.frontMenuRightEdge(pid: $0) }
         }.value
-        guard token == menuEdgeGeneration, edge != appMenuEdge else { return false }
+        guard !Task.isCancelled, environment == environmentGeneration,
+              token == menuEdgeGeneration, edge != appMenuEdge else { return false }
         appMenuEdge = edge
         return true
     }
@@ -401,6 +423,7 @@ enum MenuBarItemLister {
         if axScanInFlight { return axItems }
         axScanInFlight = true
         defer { axScanInFlight = false }
+        let environment = environmentGeneration
         let rows = menuBarRows()
         let now = Date()
         let walkAll = full || walksAll(now: now, lastFull: lastFullScanAt, ownersKnown: !axOwnerPIDs.isEmpty)
@@ -417,6 +440,8 @@ enum MenuBarItemLister {
             (MenuBarAX.scan(targets: targets, rows: rows),
              ownerPID.flatMap { MenuBarAX.frontMenuRightEdge(pid: $0) })
         }.value
+        guard !Task.isCancelled, environment == environmentGeneration,
+              rows == menuBarRows() else { return axItems }
         axItems = scanned.0.items
         // An edge re-read that started after this scan (the menu bar
         // changed hands mid-scan) saw the newer owner and stands.
@@ -450,14 +475,24 @@ enum MenuBarItemLister {
     /// its own; nil when none could be had.
     @MainActor
     static func freshAXItems(timeout: TimeInterval = 3) async -> [MenuBarItem]? {
-        let deadline = Date().addingTimeInterval(timeout)
+        guard timeout.isFinite, timeout > 0, !Task.isCancelled else { return nil }
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        let environment = environmentGeneration
         while axScanInFlight {
-            guard Date() < deadline else { return nil }
-            try? await Task.sleep(nanoseconds: 20_000_000)
+            guard !Task.isCancelled, environment == environmentGeneration,
+                  ProcessInfo.processInfo.systemUptime < deadline else { return nil }
+            do { try await Task.sleep(nanoseconds: 20_000_000) } catch { return nil }
         }
         let generation = axGeneration
-        let listed = await refreshAXItems()
-        return axGeneration != generation ? listed : nil
+        let read = Task { await refreshAXItems() }
+        defer { read.cancel() }
+        while axGeneration == generation {
+            guard !Task.isCancelled, environment == environmentGeneration,
+                  ProcessInfo.processInfo.systemUptime < deadline else { return nil }
+            do { try await Task.sleep(nanoseconds: 20_000_000) } catch { return nil }
+        }
+        guard environment == environmentGeneration else { return nil }
+        return axItems
     }
 
     /// The live list: the AX snapshot when Accessibility is granted,

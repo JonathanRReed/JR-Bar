@@ -1243,7 +1243,7 @@ final class MenuBarUtility: Toy {
             && !settings().curation.forceSpacerEngine
         if wanted, concealer == nil {
             startConcealer()
-        } else if !wanted, concealer != nil {
+        } else if !wanted, concealer != nil || clickBridgeFailed {
             stopConcealer()
             host?.setBoundarySpacer(0)
         }

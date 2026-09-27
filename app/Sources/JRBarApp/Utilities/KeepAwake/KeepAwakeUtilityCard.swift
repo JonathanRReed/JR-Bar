@@ -34,7 +34,10 @@ final class KeepAwakeUtility: Toy {
         get { reading.leaseInForce }
         // On is "until I turn it off"; off releases this manual session,
         // not the daemon's automatic agent hold or another app's assertion.
-        set { toggles.holdAwake(seconds: newValue ? nil : 0) }
+        set {
+            guard !toggles.state.applying.contains(.keepAwake), newValue != reading.leaseInForce else { return }
+            toggles.holdAwake(seconds: newValue ? nil : 0)
+        }
     }
 
     var status: ToyStatus {
@@ -123,9 +126,12 @@ struct KeepAwakeUtilityControls: View {
     }
 
     private var presets: some View {
-        let items = KeepAwakeMenu.items(durations: durations, reading: toggles.state.awakeReading,
+        var items = KeepAwakeMenu.items(durations: durations, reading: toggles.state.awakeReading,
                                         displayOn: toggles.awakeKeepsDisplay,
                                         monitorLive: toggles.state.daemonLive, now: now ?? Date())
+        if toggles.state.applying.contains(.keepAwake) {
+            for index in items.indices { items[index].enabled = false }
+        }
         // The display switch is its own row below; Turn off shows only
         // while there is a hold to end (the menus keep it, greyed).
         let buttons = items.filter { $0.choice != .keepDisplayOn && ($0.choice != .turnOff || $0.enabled) }
@@ -258,7 +264,9 @@ struct KeepAwakeUtilityControls: View {
     /// holder, about 150 ms on a busy Mac — and shows the result.
     private func refreshHolders() async {
         guard holders == nil else { return }
-        readHolders = await KeepAwakeHolders.readInBackground()
+        let result = await KeepAwakeHolders.readInBackground()
+        guard !Task.isCancelled else { return }
+        readHolders = result
     }
 }
 

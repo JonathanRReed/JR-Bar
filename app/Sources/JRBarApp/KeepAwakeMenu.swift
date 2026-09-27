@@ -136,6 +136,7 @@ enum KeepAwakeMenu {
     @MainActor
     static func perform(_ choice: Choice, on store: SystemTogglesStore = SystemTogglesStore(),
                         now: Date = Date()) {
+        guard !store.state.applying.contains(.keepAwake) else { return }
         switch choice {
         case .untilAgentsFinish:
             store.holdAwakeUntilAgentsFinish()
@@ -151,8 +152,13 @@ enum KeepAwakeMenu {
     /// The live list for a store right now.
     @MainActor
     static func items(for store: SystemTogglesStore, now: Date = Date()) -> [Item] {
-        items(durations: durations(), reading: store.state.awakeReading,
-              displayOn: store.awakeKeepsDisplay, monitorLive: store.state.daemonLive, now: now)
+        var result = items(durations: durations(), reading: store.state.awakeReading,
+                           displayOn: store.awakeKeepsDisplay,
+                           monitorLive: store.state.daemonLive, now: now)
+        if store.state.applying.contains(.keepAwake) {
+            for index in result.indices { result[index].enabled = false }
+        }
+        return result
     }
 
     // MARK: AppKit

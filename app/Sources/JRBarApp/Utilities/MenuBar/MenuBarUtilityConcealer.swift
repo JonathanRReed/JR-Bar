@@ -10,6 +10,13 @@ import SwiftUI
 extension MenuBarUtility {
     // MARK: The concealer (macOS 27)
 
+    nonisolated static let concealerRetryDelay: TimeInterval = 30
+
+    nonisolated static func concealerRetryAllowed(failed: Bool, startedAt: Date,
+                                                  now: Date = Date()) -> Bool {
+        !failed || now.timeIntervalSince(startedAt) >= concealerRetryDelay
+    }
+
     /// Bring the agent-side engine up: the hider keeps listing and
     /// planning (the card, the Item Bar, the reveal clock all read its
     /// plan) but never grows a spacer or draws a cover; the plan's
@@ -19,10 +26,15 @@ extension MenuBarUtility {
         // One engine at a time: a second start would overwrite the first
         // engine's bridge and helper without stopping them, leaving a
         // live event tap pointing at a freed bridge.
-        guard concealer == nil else { return }
+        guard concealer == nil,
+              Self.concealerRetryAllowed(failed: clickBridgeFailed,
+                                         startedAt: concealerStartedAt) else { return }
         runningApps.invalidate()
         let concealer = MenuBarConcealer()
-        concealer.onChange = { [weak self] in self?.concealerChanged() }
+        concealer.onChange = { [weak self, weak concealer] in
+            guard let self, self.concealer === concealer else { return }
+            self.concealerChanged()
+        }
         self.concealer = concealer
         concealerStartedAt = Date()
         prePhotographPending = true
@@ -41,6 +53,18 @@ extension MenuBarUtility {
         bridge.start()
         clickBridge = bridge
         clickBridgeFailed = !bridge.tapLive
+        guard bridge.tapLive else {
+            // The concealer assertion intercepts native system-item clicks.
+            // Without its bridge, leave concealment to the spacer engine.
+            bridge.stop()
+            clickBridge = nil
+            concealer.onChange = nil
+            Task { await concealer.releaseAll() }
+            self.concealer = nil
+            hider.shuttersSuppressed = false
+            engineVersion += 1
+            return
+        }
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
@@ -411,7 +435,8 @@ extension MenuBarUtility {
     }
 
     func stopConcealer() {
-        guard let concealer else { return }
+        let activeConcealer = concealer
+        activeConcealer?.onChange = nil
         iconMirrored = false
         iconMirror?.hide()
         iconMirror = nil
@@ -422,7 +447,7 @@ extension MenuBarUtility {
         // The drop lands now — a disable or quit must not leave the
         // run concealed for the drain; `releaseAll` invalidates the
         // live assertion synchronously, then unwinds queued work.
-        Task { await concealer.releaseAll() }
+        if let activeConcealer { Task { await activeConcealer.releaseAll() } }
         clickBridge?.stop()
         clickBridge = nil
         clickBridgeFailed = false

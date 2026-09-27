@@ -137,6 +137,17 @@ import Testing
         #expect(Set(off.map(\.choice)).count == off.count, "each choice once")
     }
 
+    @Test func pendingLeaseDisablesChoicesAndRejectsAnotherCommand() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (store, state, fake) = leased(defaults)
+        state.applying.insert(.keepAwake)
+
+        #expect(KeepAwakeMenu.items(for: store).allSatisfy { !$0.enabled })
+        KeepAwakeMenu.perform(.seconds(900), on: store)
+        #expect(fake.sent.isEmpty)
+    }
+
     @Test func theDurationListStaysClean() throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }

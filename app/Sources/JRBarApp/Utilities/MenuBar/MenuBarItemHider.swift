@@ -327,11 +327,28 @@ final class MenuBarItemHider {
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                MenuBarItemLister.invalidateGeometry()
                 self?.reloadFitEdge()
                 self?.resetCaps()
                 self?.reconcile()
             }
         })
+        for name in [NSWorkspace.willSleepNotification,
+                     NSWorkspace.didWakeNotification,
+                     NSWorkspace.screensDidSleepNotification,
+                     NSWorkspace.screensDidWakeNotification,
+                     NSWorkspace.sessionDidResignActiveNotification,
+                     NSWorkspace.sessionDidBecomeActiveNotification] {
+            observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    MenuBarItemLister.invalidateGeometry()
+                    self?.resetCaps()
+                    self?.scheduleSettle()
+                }
+            })
+        }
         // Another app's menus take the left of the bar on a notch-less
         // screen: the room a spacer can claim changes with the
         // frontmost app, so the parked caps learned under one app are
@@ -524,6 +541,7 @@ final class MenuBarItemHider {
     /// that moves the edge re-arms the settle, which is debounced, so
     /// a read that lands first costs no extra pass.
     private func menuBarChangedHands() {
+        MenuBarItemLister.invalidateMenuEdge()
         resetCaps()
         scheduleSettle()
         menuEdgeTask?.cancel()

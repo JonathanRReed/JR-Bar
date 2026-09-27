@@ -872,6 +872,25 @@ struct MenuBarSpacerTests {
     }
 
     @MainActor
+    @Test("a failed click bridge waits before retrying and disable clears the failure")
+    func clickBridgeFailureBacksOff() {
+        let started = Date(timeIntervalSinceReferenceDate: 1_000)
+        #expect(!MenuBarUtility.concealerRetryAllowed(
+            failed: true, startedAt: started,
+            now: started.addingTimeInterval(MenuBarUtility.concealerRetryDelay - 0.1)))
+        #expect(MenuBarUtility.concealerRetryAllowed(
+            failed: true, startedAt: started,
+            now: started.addingTimeInterval(MenuBarUtility.concealerRetryDelay)))
+        #expect(MenuBarUtility.concealerRetryAllowed(
+            failed: false, startedAt: started, now: started))
+
+        let utility = MenuBarUtility()
+        utility.clickBridgeFailed = true
+        utility.stopConcealer()
+        #expect(!utility.clickBridgeFailed)
+    }
+
+    @MainActor
     @Test("a parked icon at first scan does not hold the engine — seeding proceeds past the deadline")
     func seedAfterDeadline() {
         let utility = MenuBarUtility()
