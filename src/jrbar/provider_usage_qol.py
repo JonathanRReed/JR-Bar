@@ -15,6 +15,7 @@ RESET_TRIGGER_TIMING = "timing"
 #: boundary passing on our clock. One odd read can look like that, so a
 #: jump is only a candidate until a later read confirms it.
 RESET_TRIGGER_JUMP = "jump"
+RESET_TRIGGER_EARLY_WEEKLY = "early_weekly"
 RESET_TIMING_POINTS = 5.0
 RESET_JUMP_POINTS = 50.0
 #: A confirming read must come at least a minute after the jump (a
@@ -62,6 +63,7 @@ class ResetCandidate:
     after_remaining: float
     before_remaining: float
     observed_at: float
+    trigger: str = RESET_TRIGGER_JUMP
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -75,6 +77,7 @@ class ResetCandidate:
             "after_remaining": self.after_remaining,
             "before_remaining": self.before_remaining,
             "observed_at": self.observed_at,
+            "trigger": self.trigger,
         }
 
     @classmethod
@@ -102,7 +105,10 @@ class ResetCandidate:
             return None
         if not all(isinstance(value, str) and value for value in words.values()):
             return None
-        return cls(**words, **numbers)
+        trigger = raw.get("trigger", RESET_TRIGGER_JUMP)
+        if trigger not in {RESET_TRIGGER_JUMP, RESET_TRIGGER_EARLY_WEEKLY}:
+            return None
+        return cls(**words, **numbers, trigger=trigger)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +148,10 @@ def _snapshot_map(
 
 def _lane_map(snapshot: ProviderUsageSnapshot) -> dict[str, UsageLane]:
     return {lane.lane_id: lane for lane in snapshot.lanes}
+
+
+def _is_weekly_reset_lane(lane_id: str) -> bool:
+    return lane_id == "weekly" or lane_id.endswith("-weekly")
 
 
 def _event_id(
@@ -208,13 +218,14 @@ def detect_reset_events(
         if before is None or before.state not in {
             ProviderSourceState.READY,
             ProviderSourceState.STALE,
-        }:
+        } or before.account_label != after.account_label:
             continue
         before_lanes = _lane_map(before)
         for lane_after in after.lanes:
             lane_before = before_lanes.get(lane_after.lane_id)
             if (
                 lane_before is None
+                or lane_before.source_id != lane_after.source_id
                 or lane_before.reset_at is None
                 or lane_after.reset_at is None
                 or lane_before.remaining_percent is None
@@ -239,8 +250,25 @@ def detect_reset_events(
                 lane_after.remaining_percent
                 >= lane_before.remaining_percent + 50.0
             )
-            if not crossed and not jumped:
+            gain = lane_after.remaining_percent - lane_before.remaining_percent
+            full_refill = (
+                lane_after.remaining_percent >= RESET_UNUSED_REMAINING
+                and gain > 0.0
+            )
+            early_weekly = (
+                before.state is ProviderSourceState.READY
+                and _is_weekly_reset_lane(lane_after.lane_id)
+                and after.observed_at < lane_before.reset_at
+                and (gain >= RESET_TIMING_POINTS or full_refill)
+            )
+            if not crossed and not jumped and not early_weekly:
                 continue
+            if crossed:
+                trigger = RESET_TRIGGER_TIMING
+            elif jumped:
+                trigger = RESET_TRIGGER_JUMP
+            else:
+                trigger = RESET_TRIGGER_EARLY_WEEKLY
             event_id = _event_id(
                 after.provider_id,
                 after.source_instance_id,
@@ -258,7 +286,7 @@ def detect_reset_events(
                     after.observed_at,
                     after.source_instance_id,
                     lane_before.reset_at,
-                    RESET_TRIGGER_TIMING if crossed else RESET_TRIGGER_JUMP,
+                    trigger,
                     lane_after.reset_at,
                     lane_after.remaining_percent,
                     lane_before.remaining_percent,
@@ -286,6 +314,7 @@ def _candidate_from(event: ResetEvent) -> ResetCandidate | None:
         float(event.after_remaining),
         float(event.before_remaining),
         float(event.occurred_at),
+        event.trigger,
     )
 
 
@@ -298,7 +327,7 @@ def _confirmed(candidate: ResetCandidate, observed_at: float) -> ResetEvent:
         observed_at,
         candidate.source_instance_id,
         candidate.reset_boundary,
-        RESET_TRIGGER_JUMP,
+        candidate.trigger,
         candidate.after_reset_at,
         candidate.after_remaining,
         candidate.before_remaining,
@@ -332,10 +361,23 @@ def _judge_candidate(
         and moved >= age / 2.0
     ):
         return "discard"
-    holds = (
-        lane.remaining_percent >= candidate.before_remaining + RESET_JUMP_POINTS
-        and abs(moved) <= RESET_BOUNDARY_TOLERANCE_S
+    full_refill = (
+        candidate.trigger == RESET_TRIGGER_EARLY_WEEKLY
+        and candidate.after_remaining >= RESET_UNUSED_REMAINING
+        and candidate.after_remaining > candidate.before_remaining
     )
+    if full_refill:
+        replenishment_holds = lane.remaining_percent >= RESET_UNUSED_REMAINING
+    else:
+        required_gain = (
+            RESET_TIMING_POINTS
+            if candidate.trigger == RESET_TRIGGER_EARLY_WEEKLY
+            else RESET_JUMP_POINTS
+        )
+        replenishment_holds = (
+            lane.remaining_percent >= candidate.before_remaining + required_gain
+        )
+    holds = replenishment_holds and abs(moved) <= RESET_BOUNDARY_TOLERANCE_S
     if not holds:
         return "discard"
     if age < RESET_CONFIRM_MIN_S:
@@ -353,13 +395,13 @@ def confirm_reset_events(
     """The one reset rule every consumer shares.
 
     ``detected`` is ``detect_reset_events`` over the same reads. A TIMING
-    reset is announced at once. A JUMP becomes a candidate, and a later
-    READY read confirms it when it comes 60 s to 30 min after the jump,
-    still shows remaining at least 50 points above the pre-reset value,
-    and names a reset time within two minutes of the jump's. Anything else
-    discards it, and so does a rolling unused window. The celebrations,
-    the ``quota_reset`` wire event and the usage hooks all take the events
-    from here, so they agree, and they share one ``event_id``.
+    reset is announced at once. A JUMP or early weekly reset becomes a
+    candidate. A later READY read confirms it when it comes 60 s to 30
+    min after the jump, keeps the replenishment, and names a reset time
+    within two minutes of the jump's. Anything else discards it, as does
+    a rolling unused window. The celebrations, the ``quota_reset`` wire
+    event and the usage hooks all take the events from here, so they agree,
+    and they share one ``event_id``.
     """
     by_identity = _snapshot_map(current)
     events: list[ResetEvent] = []
@@ -535,6 +577,7 @@ def usage_totals(
 __all__ = [
     "RESET_CONFIRM_MAX_S",
     "RESET_CONFIRM_MIN_S",
+    "RESET_TRIGGER_EARLY_WEEKLY",
     "RESET_TRIGGER_JUMP",
     "RESET_TRIGGER_TIMING",
     "ResetCandidate",

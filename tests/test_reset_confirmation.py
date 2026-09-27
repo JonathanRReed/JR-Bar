@@ -37,7 +37,13 @@ WEEK = 7 * 86400.0
 T0 = 1_790_000_000.0
 
 
-def lane(remaining: float, reset_at: float, *, lane_id: str = "weekly") -> UsageLane:
+def lane(
+    remaining: float,
+    reset_at: float,
+    *,
+    lane_id: str = "weekly",
+    source_id: str = "claude-oauth",
+) -> UsageLane:
     return UsageLane(
         provider_id="claude",
         lane_id=lane_id,
@@ -48,14 +54,19 @@ def lane(remaining: float, reset_at: float, *, lane_id: str = "weekly") -> Usage
         model=None,
         feature=None,
         bindable=True,
-        source_id="claude-oauth",
+        source_id=source_id,
     )
 
 
-def read(observed_at: float, *lanes: UsageLane, state=ProviderSourceState.READY) -> ProviderUsageSnapshot:
+def read(
+    observed_at: float,
+    *lanes: UsageLane,
+    state=ProviderSourceState.READY,
+    account_label: str | None = None,
+) -> ProviderUsageSnapshot:
     return ProviderUsageSnapshot(
         provider_id="claude",
-        account_label=None,
+        account_label=account_label,
         observed_at=observed_at,
         state=state,
         reason_code=None if state is ProviderSourceState.READY else "network_unavailable",
@@ -112,6 +123,129 @@ def test_a_jump_then_a_confirming_read_gives_exactly_one_event() -> None:
     # And never again.
     later = read(T0 + 900, lane(95.0, T0 + 120 + WEEK - 30))
     assert step(confirm, later, candidates=second.candidates).events == ()
+
+
+def test_an_early_weekly_reset_with_a_smaller_refill_is_confirmed() -> None:
+    scheduled = T0 + 3 * 86400
+    before = read(T0, lane(40.0, scheduled))
+    reset = read(T0 + 120, lane(75.0, T0 + 120 + WEEK))
+
+    first = step(before, reset)
+    assert first.events == ()
+    assert len(first.candidates) == 1
+    restored = decode_reset_delivery_state(
+        encode_reset_delivery_state(
+            with_reset_candidates(ResetDeliveryState(), first.candidates)
+        )
+    )
+
+    confirm = read(T0 + 240, lane(73.0, T0 + 120 + WEEK))
+    second = step(reset, confirm, candidates=restored.candidates)
+
+    assert len(second.events) == 1
+    assert second.events[0].lane_id == "weekly"
+    assert second.candidates == ()
+
+
+def test_an_early_weekly_full_refill_below_five_points_is_confirmed() -> None:
+    scheduled = T0 + 3 * 86400
+    before = read(T0, lane(97.0, scheduled))
+    reset = read(T0 + 120, lane(100.0, T0 + 120 + WEEK))
+
+    first = step(before, reset)
+    assert first.events == ()
+    assert len(first.candidates) == 1
+
+    rolled = read(T0 + 240, lane(100.0, T0 + 240 + WEEK))
+    rolling_result = step(reset, rolled, candidates=first.candidates)
+    assert rolling_result.events == ()
+    assert rolling_result.candidates == ()
+
+    fell_back = read(T0 + 240, lane(97.5, scheduled))
+    transient_result = step(reset, fell_back, candidates=first.candidates)
+    assert transient_result.events == ()
+    assert transient_result.candidates == ()
+
+    confirm = read(T0 + 240, lane(99.5, T0 + 120 + WEEK))
+    second = step(reset, confirm, candidates=first.candidates)
+
+    assert len(second.events) == 1
+    assert second.events[0].lane_id == "weekly"
+    assert second.candidates == ()
+
+
+def test_an_early_weekly_candidate_rejects_unrelated_changes() -> None:
+    scheduled = T0 + 3 * 86400
+
+    stale = read(T0, lane(40.0, scheduled), state=ProviderSourceState.STALE)
+    ready = read(T0 + 120, lane(75.0, T0 + 120 + WEEK))
+    assert step(stale, ready).candidates == ()
+
+    changed_source = read(
+        T0 + 120,
+        lane(75.0, T0 + 120 + WEEK, source_id="replacement-source"),
+    )
+    before = read(T0, lane(40.0, scheduled), account_label="original-account")
+    assert step(before, changed_source).candidates == ()
+
+    changed_account = read(
+        T0 + 120,
+        lane(75.0, T0 + 120 + WEEK),
+        account_label="replacement-account",
+    )
+    assert step(before, changed_account).candidates == ()
+
+    short_window = read(
+        T0 + 120,
+        lane(75.0, T0 + 120 + WEEK, lane_id="five-hour"),
+    )
+    short_before = read(T0, lane(40.0, scheduled, lane_id="five-hour"))
+    assert step(short_before, short_window).candidates == ()
+
+
+def test_a_large_refill_rejects_account_and_source_switches() -> None:
+    scheduled = T0 + 3 * 86400
+    before = read(
+        T0,
+        lane(10.0, scheduled),
+        account_label="original-account",
+    )
+
+    changed_source = read(
+        T0 + 120,
+        lane(100.0, T0 + 120 + WEEK, source_id="replacement-source"),
+        account_label="original-account",
+    )
+    assert step(before, changed_source).candidates == ()
+
+    changed_account = read(
+        T0 + 120,
+        lane(100.0, T0 + 120 + WEEK),
+        account_label="replacement-account",
+    )
+    assert step(before, changed_account).candidates == ()
+
+    unnamed = read(T0, lane(10.0, scheduled))
+    newly_named = read(
+        T0 + 120,
+        lane(100.0, T0 + 120 + WEEK),
+        account_label="named-account",
+    )
+    assert step(unnamed, newly_named).candidates == ()
+
+
+def test_a_transient_early_weekly_increase_is_not_confirmed() -> None:
+    scheduled = T0 + 3 * 86400
+    before = read(T0, lane(40.0, scheduled))
+    raised = read(T0 + 120, lane(75.0, T0 + 120 + WEEK))
+    first = step(before, raised)
+    assert len(first.candidates) == 1
+
+    fell_back = read(T0 + 240, lane(41.0, scheduled))
+    result = step(raised, fell_back, candidates=first.candidates)
+
+    assert result.events == ()
+    assert result.candidates == ()
 
 
 def test_a_jump_that_the_next_read_contradicts_is_dropped() -> None:
