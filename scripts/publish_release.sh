@@ -4,10 +4,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="${PYTHON:-$ROOT_DIR/.venv/bin/python}"
 
-if [ -n "${1:-}" ]; then
-    echo "Usage: $0" >&2
-    exit 2
-fi
+notes_file=""
+case "$#" in
+    0) ;;
+    2)
+        [ "$1" = "--notes-file" ] || { echo "Usage: $0 [--notes-file PATH]" >&2; exit 2; }
+        notes_file="$2"
+        case "$notes_file" in /*) ;; *) notes_file="$PWD/$notes_file" ;; esac
+        [ -f "$notes_file" ] && [ -s "$notes_file" ] || { echo "Release notes are missing or empty." >&2; exit 2; }
+        ;;
+    *) echo "Usage: $0 [--notes-file PATH]" >&2; exit 2 ;;
+esac
 
 cd "$ROOT_DIR"
 if [ ! -x "$PYTHON" ]; then
@@ -120,11 +127,13 @@ rollback() {
 }
 trap rollback EXIT
 
+notes_args=(--generate-notes)
+if [ -n "$notes_file" ]; then notes_args=(--notes-file "$notes_file"); fi
 gh release create "$tag" \
     --repo JonathanRReed/JR-Bar \
     --target "$head_sha" \
     --title "JR-Bar $version" \
-    --generate-notes \
+    "${notes_args[@]}" \
     --draft
 release_created=1
 gh release upload "$tag" "${immutable_artifacts[@]}" \

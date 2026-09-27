@@ -13,8 +13,8 @@
 #     higher than the last release tag's, since Sparkle orders updates by it.
 # It then writes the release notes from that CHANGELOG section to
 # dist/release-notes-<version>.md, runs scripts/publish_release.sh (verify,
-# notarized package, signed assets, GitHub release) and puts those notes on
-# the release. Nothing here runs in CI, and a dry run touches no remote but a
+# notarized package, signed assets, GitHub release) with those notes on the
+# draft before publication. Nothing here runs in CI, and a dry run touches no remote but a
 # read of origin's tags.
 set -euo pipefail
 
@@ -79,12 +79,10 @@ awk -v heading="$top" '
 say "notes: $notes ($(wc -l < "$notes" | tr -d ' ') lines)"
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    say "would run: scripts/publish_release.sh"
-    say "would run: gh release edit $tag --repo JonathanRReed/JR-Bar --notes-file $notes"
+    say "would run: scripts/publish_release.sh --notes-file $notes"
     say "dry run: every check passed; nothing was published"
     exit 0
 fi
 
-"$ROOT_DIR/scripts/publish_release.sh"
-gh release edit "$tag" --repo JonathanRReed/JR-Bar --notes-file "$notes"
+"$ROOT_DIR/scripts/publish_release.sh" --notes-file "$notes"
 say "released $tag"

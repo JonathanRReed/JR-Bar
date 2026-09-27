@@ -2,6 +2,33 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.12
+
+- Tight Dock previews center their controls below the app name. Long
+  names and channel badges no longer widen a single-window preview.
+- Fold relearns a resting lid with any parking delay and eases its
+  return to flat. Slow sensor drift no longer keeps it folded.
+- Menu-bar clicks accepted by the icon remain valid if its panel moves
+  or hides before the action runs.
+- Claude quota caches, capacity bindings and weekly reset comparisons
+  stay with the account that produced them. Unidentified accounts show
+  live readings without borrowing another account's saved quota.
+- Repeated forced quota refreshes share one collector and keep only
+  the newest pending request. Removing a credential also removes its
+  legacy fallback, and a failed removal remains available for retry.
+- Socket restarts wait for the old reader to stop. Pending writers own
+  their descriptors, and old callbacks cannot alter a new connection.
+- Archive session lookup uses an index. Timeline reconstruction checks
+  the 64 MiB limit before loading transcript segments.
+- Screen Bar and Notch Buddy actions are available to VoiceOver without
+  depending on the pointer's location.
+- Install failures restore the previous app and launch agents. Root
+  uninstall cleanup no longer executes a helper from a user-writable app.
+- The hook drains wrapped status-line input and output within its time
+  budget, and handles short spool writes without leaving a partial line
+  when it owns the file lock.
+- Release notes are attached to the draft before publication.
+
 ## 0.9.11
 
 - Resting-angle Fold returns to the desktop after one second of stillness

@@ -58,6 +58,30 @@ def test_a_ready_tree_passes_and_writes_the_notes(tmp_path: Path) -> None:
     assert notes.strip() == "- The usage hooks run without a shell."
 
 
+def test_release_passes_final_notes_before_publication_without_a_later_edit(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    publisher = repo / "scripts" / "publish_release.sh"
+    publisher.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$(dirname "$0")/../publisher-call.txt"\n')
+    publisher.chmod(0o755)
+    _git(repo, "add", "scripts/publish_release.sh")
+    _git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "publisher double")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    gh = fake_bin / "gh"
+    gh.write_text("#!/bin/sh\nexit 99\n")
+    gh.chmod(0o755)
+    env = dict(os.environ, JRBAR_RELEASE_SKIP_REMOTE="1", PATH=str(fake_bin) + ":" + os.environ["PATH"])
+    env.pop("JRBAR_BUILD_NUMBER", None)
+    result = subprocess.run(
+        ["/bin/bash", str(repo / "scripts" / "release.sh")],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (repo / "publisher-call.txt").read_text().splitlines() == [
+        "--notes-file", "dist/release-notes-1.2.3.md",
+    ]
+
+
 def test_an_unreleased_changelog_is_refused(tmp_path: Path) -> None:
     repo = _repo(tmp_path, changelog_top="## 1.2.3 (unreleased)")
     result = _dry_run(repo)

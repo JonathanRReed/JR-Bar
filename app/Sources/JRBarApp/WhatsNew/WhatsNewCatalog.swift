@@ -33,10 +33,10 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.11"
+    static let releaseID = "0.9.12"
 
     /// The header's one line.
-    static let headline = "Fold returns smoothly, previews fit, and early weekly resets celebrate."
+    static let headline = "Steadier Fold, smaller Dock previews, and quota readings that stay with their account."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
@@ -50,7 +50,7 @@ enum WhatsNewCatalog {
         WhatsNewEntry(
             id: "fold", symbol: "laptopcomputer",
             title: "Fold returns to rest",
-            detail: "Resting-angle mode relearns a still lid automatically, with a smooth return to the desktop.",
+            detail: "Resting-angle mode relearns a still lid with any parking delay and eases back to the desktop.",
             tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Fold card is"),
         WhatsNewEntry(
             id: "aquarium", symbol: "fish",
@@ -60,7 +60,7 @@ enum WhatsNewCatalog {
         WhatsNewEntry(
             id: "drag", symbol: "menubar.rectangle",
             title: "Menu clicks reach the icon",
-            detail: "Old system-item hit areas cannot swallow clicks on JR-Bar's visible icon.",
+            detail: "A click accepted by JR-Bar's icon still opens it if the panel moves before the action runs.",
             keys: "⌘ drag"),
         WhatsNewEntry(
             id: "dot", symbol: "light.strip.2",
@@ -70,17 +70,17 @@ enum WhatsNewCatalog {
         WhatsNewEntry(
             id: "resets", symbol: "party.popper",
             title: "Early weekly resets celebrate",
-            detail: "Stable provider readings confirm weekly refills even before the scheduled reset time.",
+            detail: "Stable readings confirm early weekly refills without carrying reset comparisons between Claude accounts.",
             tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where Confetti is"),
         WhatsNewEntry(
             id: "archive", symbol: "archivebox",
             title: "Read archives without capture",
-            detail: "Saved searches, transcripts and details remain available while new capture is off.",
+            detail: "Session lookup uses an index, and oversized timelines report their limit before loading transcript segments.",
             tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Data Hoarder is"),
         WhatsNewEntry(
             id: "dock", symbol: "dock.rectangle",
             title: "Dock previews fit their windows",
-            detail: "Long app names and agent counts stay within the preview's thumbnail width.",
+            detail: "Long names stay within the thumbnail width, and Tight previews center their controls below the name.",
             tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Dock is"),
     ]
 }
