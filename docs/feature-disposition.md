@@ -10,6 +10,7 @@ The status authority for what ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
 | Feature | Score | Disposition | Where |
 | --- | ---: | --- | --- |
 | Session truth (shim, process liveness, Claude session files, Codex/pi/Gemini tails) | 5 | Shipped; the reason 0.8 exists | `hook/`, `process_registry.py`, `liveness_sweep.py`, `transcript_runtime.py` |
+| Candidate-bound release gate | 5 | Required before publication | `scripts/verify_macos_release.sh`, `scripts/release_evidence.py` |
 | Escalation for real asks only | 5 | Shipped; Approve / Deny in the panel and banners | `attention.py`, `EventPolicy`, `NotificationBridge` |
 | Screen Bar as one band, phase-locked to the strip | 5 | Shipped; the mirror is deliberate (the owner does not want a segmented announcer) | `ScreenBarController`, `ScreenBarBlend` |
 | Pro + Dot linked mode | 5 | Shipped (`devices_linked`, `linked_dot_scale`) | `device_writer.py`, `core_projection.py` |
@@ -41,7 +42,6 @@ The status authority for what ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
 | Night warmth and the fixed 7 PM–7 AM dim | 1 | Replaced by auto-dim, which knows the time and the room |
 | Architecture-policing meta-tests | 0 | They tested the shape of the Python UI that no longer exists |
 | Dead settings dials (`closed_lid_system_override_enabled`, `local_activity_history_enabled`, `forecast_release_authority`), `signals.quota_resets`, `interruption_policy.plan_deliveries`, `LID_ANIMATION_CHOICES` | 0 | No callers |
-| The multi-receipt release gate as the release path | 1 | `make package` is the release; the scripts stay only until their tests are retired |
 | Legacy PyObjC windows behind `open_legacy_window` | 1 | Every one has a Swift replacement; the command went on 2026-09-24 and the deck's window keys ask the app |
 
 ## Still open

@@ -1,8 +1,8 @@
 # JR-Bar feature matrix
 
-Updated 2026-09-27. The installed baseline is 0.9.12, build 2313,
-Developer ID signed, notarized and stapled. The source also contains
-unreleased audit improvements. No public release has been published.
+Updated 2026-09-27. The installed local candidate is 0.9.13, build 2324,
+Developer ID signed, notarized and stapled. Later source commits change CI
+only. No public release has been published.
 
 - **Implemented** means a reachable source path with regression coverage.
   It does not establish current physical acceptance for every provider,
