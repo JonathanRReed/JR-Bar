@@ -276,3 +276,14 @@ We cross-checked the Claude, OpenAI and Gemini paths against the copies
 CodexBar 0.53.0 bundles (they match) and took none of CodexBar's files.
 Each mark is its owner's trademark and is used only to name that
 provider. None of them appears in JR-Bar's own icon or branding.
+
+## Mac Duo motion comparison, 2026-09-27
+
+Studied [Mac Duo](https://github.com/DhananjayBhosale/MacDuo) at commit
+`f6862c85f02964ac4720fd9c7a2979d812a1b627`, MIT, to compare its resting-lid
+reference, stillness detection and Metal effects with JR-Bar's Fold.
+Mac Duo separates its expanding Duo effect from its held-plane Ghost effect.
+That distinction matters when assessing JR-Bar's current Duo look, which
+uses a held-plane model. This comparison does not establish visual parity;
+animation changes require rendered and physical checks. No Mac Duo code was
+copied into JR-Bar.
