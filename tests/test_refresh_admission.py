@@ -171,7 +171,7 @@ class Drainer:
 
 class NoThread:
     def __init__(self, *args, **kwargs):
-        pass
+        self.ident = -1
 
     def start(self):
         return None
@@ -262,6 +262,7 @@ before, built = counts(), len(builds)
 controller.refresh_(None)
 out["after_stop"] = {"refreshed": counts()["refresh"] - before["refresh"], "built": len(builds) - built,
                      "mode": lifecycle(session)}
+controller.applicationWillTerminate_(None)
 print(json.dumps(out))
 """
 

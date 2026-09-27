@@ -305,6 +305,7 @@ def snapshot_from_reading(
     estimated_cost_usd: float | None = None,
     cache_savings_usd: float | None = None,
     account_plan: str | None = None,
+    account_discriminator: str | None = None,
 ) -> ProviderUsageSnapshot:
     """A READY Claude snapshot whose lanes say they came from Claude Code."""
     labels = {key: (lane, label) for key, lane, label in _WINDOWS}
@@ -327,6 +328,7 @@ def snapshot_from_reading(
         provider_id="claude",
         account_label=None,
         account_plan=account_plan,
+        account_discriminator=account_discriminator,
         observed_at=reading.observed_at,
         state=ProviderSourceState.READY,
         reason_code=None,

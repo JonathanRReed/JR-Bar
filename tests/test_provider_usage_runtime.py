@@ -24,7 +24,14 @@ from jrbar.provider_usage_runtime import (
 from jrbar.provider_usage_settings import default_provider_usage_settings
 
 
-def snapshot(provider, *, state=ProviderSourceState.READY, remaining=50, observed=1000):
+def snapshot(
+    provider,
+    *,
+    state=ProviderSourceState.READY,
+    remaining=50,
+    observed=1000,
+    account_discriminator="default",
+):
     lanes = ()
     reason = None
     action = None
@@ -49,6 +56,13 @@ def snapshot(provider, *, state=ProviderSourceState.READY, remaining=50, observe
     elif state is not ProviderSourceState.DISABLED:
         reason = "network_unavailable"
         action = "Retry"
+    discriminator = (
+        "claude-account-fixture"
+        if provider == "claude" and account_discriminator == "default"
+        else account_discriminator
+    )
+    if discriminator == "default":
+        discriminator = None
     return ProviderUsageSnapshot(
         provider_id=provider,
         account_label=None,
@@ -65,6 +79,7 @@ def snapshot(provider, *, state=ProviderSourceState.READY, remaining=50, observe
         cache_savings_usd=None,
         credits_remaining=None,
         incident=None,
+        account_discriminator=discriminator,
     )
 
 
@@ -481,6 +496,7 @@ def test_an_imminent_reset_is_still_watched_closely__and_2_more(tmp_path) -> Non
     assert callbacks and callbacks[0].refreshing is False
     service.close()
 
+
     # --- scenario: replacement_refresh_publishes_first_and_older_generation_cannot_publish
     settings = default_provider_usage_settings()
     first_started = threading.Event()
@@ -533,9 +549,10 @@ def test_an_imminent_reset_is_still_watched_closely__and_2_more(tmp_path) -> Non
         force=True,
     )
 
-    assert replacement_done.wait(1.0), "replacement waited for the obsolete refresh"
-    assert service.snapshot().by_provider("codex").lanes[0].remaining_percent == 80
+    assert not replacement_done.wait(0.05), "replacement ran beside the obsolete refresh"
     release_first.set()
+    assert replacement_done.wait(2.0)
+    assert service.snapshot().by_provider("codex").lanes[0].remaining_percent == 80
     assert superseded.wait(2.0)
 
     assert service.snapshot().by_provider("codex").lanes[0].remaining_percent == 80
@@ -547,6 +564,45 @@ def test_an_imminent_reset_is_still_watched_closely__and_2_more(tmp_path) -> Non
     failed = service.refresh_now(providers=("codex",), force=True)
     assert failed.by_provider("codex").state is ProviderSourceState.STALE
     assert failed.by_provider("codex").lanes[0].remaining_percent == 80
+    service.close()
+
+
+def test_forced_refresh_burst_keeps_one_worker_and_one_latest_replacement(tmp_path) -> None:
+    settings = default_provider_usage_settings()
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    calls = []
+
+    def collect(_preference, _home, observed, _credentials):
+        calls.append(observed)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(3.0)
+        return snapshot("codex", remaining=20 + len(calls), observed=observed)
+
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"codex": collect},
+        credentials=object(),
+        home=tmp_path,
+        clock=time.time,
+        incident_lookup=lambda *_args: None,
+    )
+    service.request(callback=lambda _state: None, providers=("codex",), force=True)
+    assert entered.wait(1.0)
+    for _ in range(100):
+        service.request(
+            callback=lambda _state: completed.set(),
+            providers=("codex",),
+            force=True,
+        )
+    assert len(service._workers) == 1
+    assert service._pending_refresh is not None
+    release.set()
+    assert completed.wait(3.0)
+    assert len(calls) == 2
+    assert len(service._workers) <= 1
     service.close()
 
 
@@ -1007,6 +1063,82 @@ def test_terminal_gate_lifts_when_the_credential_file_changes__and_2_more(tmp_pa
     service.close()
 
 
+def test_claude_cache_continuity_requires_the_same_proved_account(tmp_path) -> None:
+    settings = default_provider_usage_settings().with_enabled("grok", False)
+    current = {"account": "claude-account-first", "state": ProviderSourceState.READY}
+
+    def collector(_pref, _home, observed, _credentials):
+        return snapshot(
+            "claude",
+            state=current["state"],
+            remaining=25,
+            observed=observed,
+            account_discriminator=current["account"],
+        )
+
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"claude": collector},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000,
+        incident_lookup=lambda *_args: None,
+    )
+    assert service.refresh_now(providers=("claude",)).by_provider("claude").lanes
+
+    current["state"] = ProviderSourceState.UNAVAILABLE
+    same = service.refresh_now(providers=("claude",), force=True).by_provider("claude")
+    assert same.state is ProviderSourceState.STALE
+    assert same.lanes[0].remaining_percent == 25
+
+    current["account"] = "claude-account-second"
+    switched = service.refresh_now(providers=("claude",), force=True).by_provider("claude")
+    assert switched.state is ProviderSourceState.UNAVAILABLE
+    assert switched.lanes == ()
+
+    current["account"] = None
+    unknown = service.refresh_now(providers=("claude",), force=True).by_provider("claude")
+    assert unknown.state is ProviderSourceState.UNAVAILABLE
+    assert unknown.lanes == ()
+    service.close()
+
+
+def test_restored_claude_quota_is_withheld_before_refresh_after_account_switch(tmp_path) -> None:
+    import json
+
+    from jrbar.claude_quota import account_facts_from_claude_config
+
+    (tmp_path / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "current@example.invalid"}}),
+        encoding="utf-8",
+    )
+    _plan, current_account = account_facts_from_claude_config(tmp_path)
+    assert current_account is not None
+    old_claude = snapshot(
+        "claude",
+        remaining=9,
+        account_discriminator="claude-account-previous",
+    )
+    codex = snapshot("codex", remaining=44)
+    restored = ProviderUsageState((old_claude, codex), 900, 10_000, False)
+    service = ProviderUsageService(
+        settings_loader=default_provider_usage_settings,
+        collectors={},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000,
+        state_loader=lambda: restored,
+        incident_lookup=lambda *_args: None,
+    )
+
+    before_refresh = service.snapshot()
+
+    assert all(item.provider_id != "claude" for item in before_refresh.snapshots)
+    assert before_refresh.by_provider("codex").lanes[0].remaining_percent == 44
+    assert before_refresh.next_refresh_at is None
+    service.close()
+
+
 
 def test_a_visible_quota_strip_counts_as_attention():
     """Our one adaptation of CodexBar's ladder: they only have a menu,
@@ -1137,4 +1269,3 @@ def test_stale_refresh_is_superseded_then_worker_reruns_latest_settings__and_1_m
     assert callbacks[-1].by_provider("grok").state is ProviderSourceState.DISABLED
     assert len(callbacks) == 1
     service.close()
-

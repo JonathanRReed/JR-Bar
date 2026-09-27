@@ -83,6 +83,29 @@ class ProviderCredentialStore:
             pass
         return legacy_secret
 
+    def _delete_current_and_legacy(self, service: str, account: str) -> bool:
+        """Delete both service names without turning a read into a write."""
+        removed = False
+        refused = False
+        for candidate in (service, legacy_keychain_service(service)):
+            if candidate is None:
+                continue
+            try:
+                secret = self._backend.get_password(candidate, account)
+            except Exception:
+                refused = True
+                continue
+            if not isinstance(secret, str) or not secret:
+                continue
+            try:
+                self._backend.delete_password(candidate, account)
+                removed = True
+            except Exception:
+                refused = True
+        if refused:
+            return False
+        return removed
+
     @staticmethod
     def _identity(provider_id: str, account: str) -> tuple[str, str]:
         if not isinstance(provider_id, str) or _PROVIDER.fullmatch(provider_id) is None:
@@ -204,14 +227,7 @@ class ProviderCredentialStore:
 
     def delete(self, provider_id: str, account: str) -> bool:
         service, normalized_account = self._identity(provider_id, account)
-        existing = self.get(provider_id, normalized_account)
-        if not existing.available:
-            return False
-        try:
-            self._backend.delete_password(service, normalized_account)
-        except Exception:
-            return False
-        return True
+        return self._delete_current_and_legacy(service, normalized_account)
 
     def delete_for_instance(
         self,
@@ -221,14 +237,7 @@ class ProviderCredentialStore:
         _provider_id, _source_instance_id, service, normalized_account = (
             self._instance_identity(key, account)
         )
-        existing = self.get_for_instance(key, normalized_account)
-        if not existing.available:
-            return False
-        try:
-            self._backend.delete_password(service, normalized_account)
-        except Exception:
-            return False
-        return True
+        return self._delete_current_and_legacy(service, normalized_account)
 
 
 __all__ = ["CredentialRead", "ProviderCredentialStore"]

@@ -184,10 +184,10 @@ def purge_imported_browser_data(
     say exactly what happened to JR-Bar-owned data (T26).
     """
     ledger = _load_import_ledger(home)
-    record = ledger.pop(f"{provider_id}:{source_instance_id}", None)
+    ledger_key = f"{provider_id}:{source_instance_id}"
+    record = ledger.get(ledger_key)
     if record is None:
         return "none"
-    _save_import_ledger(ledger, home)
     try:
         if source_instance_id == "default":
             stored = credentials.get(provider_id, record.get("account") or _IMPORT_ACCOUNT)
@@ -203,22 +203,32 @@ def purge_imported_browser_data(
     secret = getattr(stored, "secret", None)
     available = bool(getattr(stored, "available", False))
     if not available or not isinstance(secret, str):
+        if getattr(stored, "reason", None) != "credential_not_found":
+            return "retained"
+        ledger.pop(ledger_key, None)
+        _save_import_ledger(ledger, home)
         return "none"
     if hashlib.sha256(secret.encode("utf-8")).hexdigest() != record["secret_sha256"]:
         # The user replaced the imported value; nothing here is ours.
         return "replaced"
     try:
         if source_instance_id == "default":
-            credentials.delete(provider_id, record.get("account") or _IMPORT_ACCOUNT)
+            removed = credentials.delete(
+                provider_id, record.get("account") or _IMPORT_ACCOUNT
+            )
         else:
             from .provider_instances import ProviderInstanceKey
 
-            credentials.delete_for_instance(
+            removed = credentials.delete_for_instance(
                 ProviderInstanceKey(provider_id, source_instance_id),
                 record.get("account") or _IMPORT_ACCOUNT,
             )
     except Exception:
         return "retained"
+    if not removed:
+        return "retained"
+    ledger.pop(ledger_key, None)
+    _save_import_ledger(ledger, home)
     return "removed"
 
 

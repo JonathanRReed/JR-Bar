@@ -67,13 +67,19 @@ def _descriptor():
     )
 
 
-def _observations(payload, *, observed_at=NOW):
+def _observations(
+    payload,
+    *,
+    observed_at=NOW,
+    account_discriminator=claude_quota.CLAUDE_ACCOUNT_SCOPE,
+):
     descriptor = _descriptor()
     windows = claude_quota.windows_from_payload(payload)
     evidence = claude_quota.capacity_evidence_from_windows(
         descriptor,
         windows,
         observed_at=observed_at,
+        account_discriminator=account_discriminator,
     )
     normalized = normalize_supported_quota_evidence(
         descriptor,
@@ -296,7 +302,10 @@ def test_the_refresh_scope_matches_the_lanes_the_producer_emits(controller) -> N
     """
     target, _status_bar = controller
     refresh_key = target._capacity_refresh_keys_by_provider["claude"]
-    lanes = _observations({"five_hour": {"utilization": 10.0}})
+    lanes = _observations(
+        {"five_hour": {"utilization": 10.0}},
+        account_discriminator=refresh_key.account_discriminator,
+    )
 
     assert refresh_key.pool == "claude-consumer-plan"
     for lane in lanes:
@@ -506,13 +515,16 @@ def test_every_window_reaches_the_capacity_copy_with_usage_and_reset(controller)
     primary, secondary, rows = _capacity_copy(target, status_bar)
 
     assert primary == "Claude · 5h 90% left"
-    assert "resets in" in secondary
+    # The isolated controller has no Claude account metadata. The number is
+    # live, but reset continuity is intentionally unbound rather than shared
+    # across every Claude account.
+    assert secondary == "updated just now"
     # The sub-cap that actually stops the owner's work is visible, named, and
     # carries both numbers. Three "7d" rows would have hidden it.
     assert rows == (
-        "Weekly 80% left · resets in 1d 1h",
-        "Weekly Opus 12% left · resets in 1d 1h",
-        "Weekly Sonnet 60% left · resets in 1d 1h",
+        "Weekly 80% left",
+        "Weekly Opus 12% left",
+        "Weekly Sonnet 60% left",
     )
 
 

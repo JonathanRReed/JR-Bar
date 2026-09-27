@@ -13,7 +13,7 @@ from .provider_usage_platform import (
 )
 from .provider_usage_runtime import ProviderUsageState
 
-PROVIDER_USAGE_STORE_SCHEMA_VERSION = 2
+PROVIDER_USAGE_STORE_SCHEMA_VERSION = 3
 MAX_STORE_BYTES = 2 * 1024 * 1024
 
 
@@ -57,6 +57,7 @@ def _snapshot_document(snapshot: ProviderUsageSnapshot) -> dict[str, object]:
         "incident": snapshot.incident,
         "source_instance_id": snapshot.source_instance_id,
         "reset_credits": snapshot.reset_credits,
+        "account_discriminator": snapshot.account_discriminator,
     }
 
 
@@ -135,6 +136,7 @@ def _snapshot(value: object) -> ProviderUsageSnapshot | None:
             incident=value.get("incident"),
             source_instance_id=value.get("source_instance_id", DEFAULT_SOURCE_INSTANCE_ID),
             reset_credits=_reset_credits(value.get("reset_credits")),
+            account_discriminator=value.get("account_discriminator"),
         )
     except (TypeError, ValueError):
         return None
@@ -161,6 +163,7 @@ def load_provider_usage_state(
         not isinstance(document, dict)
         or document.get("schema_version") not in {
             1,
+            2,
             PROVIDER_USAGE_STORE_SCHEMA_VERSION,
         }
     ):

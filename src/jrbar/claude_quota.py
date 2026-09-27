@@ -40,7 +40,6 @@ from .capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from .private_io import read_private_text
 from .reset_policy import parse_reset_epoch
 
 MAX_CLAUDE_WINDOWS = 32
@@ -92,6 +91,7 @@ CLAUDE_LANE_IDENTITIES = {
 # switching accounts fails closed (the old cycle disputes) rather than
 # carrying one account's reset boundary onto another's.
 CLAUDE_ACCOUNT_SCOPE = "claude-consumer"
+_DEFAULT_ACCOUNT_SCOPE = object()
 # The one authentication mode the `anthropic-consumer` policy declares. It
 # rides along on every observation so an account binding can be exact about
 # which credential produced the reading; `test_claude_capacity_plane` pins it
@@ -427,27 +427,18 @@ def plan_from_claude_config(home: Path | None = None) -> str | None:
     Reads only ``oauthAccount``'s tier words. No Keychain, no prompt, no
     network; returns None when the file is missing, unreadable or silent.
     """
+    return account_facts_from_claude_config(home)[0]
+
+
+def account_facts_from_claude_config(
+    home: Path | None = None,
+) -> tuple[str | None, str | None]:
+    """Provider plan plus private account continuity from one local read."""
+    from .provider_account_identity import claude_account_metadata
+
     base = Path.home() if home is None else Path(home)
-    try:
-        payload = json.loads(
-            read_private_text(base / ".claude.json", max_bytes=8 * 1024 * 1024)
-        )
-    except (OSError, ValueError):
-        return None
-    account = payload.get("oauthAccount") if isinstance(payload, dict) else None
-    if not isinstance(account, dict):
-        return None
-    for key in (
-        "userRateLimitTier",
-        "organizationRateLimitTier",
-        "seatTier",
-        "organizationType",
-        "subscriptionType",
-    ):
-        label = claude_plan_label(account.get(key))
-        if label is not None:
-            return label
-    return None
+    raw_plan, discriminator = claude_account_metadata(base)
+    return claude_plan_label(raw_plan), discriminator
 
 
 def _product_model_label(model: object) -> str | None:
@@ -681,6 +672,7 @@ def capacity_evidence_from_windows(
     windows,
     *,
     observed_at: float,
+    account_discriminator: str | object | None = _DEFAULT_ACCOUNT_SCOPE,
 ) -> SupportedCapacityEvidence:
     """Project fetched windows onto the declared lanes of one exact source.
 
@@ -706,7 +698,11 @@ def capacity_evidence_from_windows(
         lanes=tuple(
             matched[lane.key] for lane in descriptor.lanes if lane.key in matched
         ),
-        account_discriminator=CLAUDE_ACCOUNT_SCOPE,
+        account_discriminator=(
+            CLAUDE_ACCOUNT_SCOPE
+            if account_discriminator is _DEFAULT_ACCOUNT_SCOPE
+            else account_discriminator
+        ),
         has_last_known_good=False,
         auth_mode=CLAUDE_AUTH_MODE,
     )

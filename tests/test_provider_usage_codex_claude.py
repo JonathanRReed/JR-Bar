@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,6 +29,13 @@ class FixtureCredentials:
 
 def preference(provider: str):
     return default_provider_usage_settings().preference(provider)
+
+
+def write_claude_account(home: Path, email: str) -> None:
+    (home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": email, "organizationType": "claude_max"}}),
+        encoding="utf-8",
+    )
 
 
 def test_codex_combines_local_quota_tokens_models_and_cost(tmp_path: Path):
@@ -144,6 +152,7 @@ def test_codex_without_rollout_evidence_is_actionable__and_1_more(tmp_path: Path
     assert result.action_label == "Use Codex once or sign in"
 
     # --- scenario: claude_combines_oauth_windows_and_local_tokens
+    write_claude_account(tmp_path, "fixture@example.invalid")
     result = collect_claude(
         preference("claude"),
         home=tmp_path,
@@ -168,6 +177,72 @@ def test_codex_without_rollout_evidence_is_actionable__and_1_more(tmp_path: Path
     assert next(lane for lane in result.lanes if lane.model == "fable").remaining_percent == 20
     assert result.cached_input_tokens == 100
     assert result.cache_savings_usd == 0.75
+    assert result.account_discriminator is not None
+    assert "fixture" not in result.account_discriminator
+
+
+def test_claude_account_identity_survives_token_rotation_and_changes_on_switch(tmp_path: Path) -> None:
+    write_claude_account(tmp_path, "first@example.invalid")
+
+    def fetch(_token):
+        return [{"label": "5-hour", "used_percent": 15, "resets_at": 2000}]
+    first = collect_claude(
+        preference("claude"), home=tmp_path, observed_at=1000,
+        credentials=FixtureCredentials({("claude", "oauth-token"): "token-one"}),
+        quota_fetcher=fetch, local_scanner=lambda *_args: None,
+    )
+    rotated = collect_claude(
+        preference("claude"), home=tmp_path, observed_at=1001,
+        credentials=FixtureCredentials({("claude", "oauth-token"): "token-two"}),
+        quota_fetcher=fetch, local_scanner=lambda *_args: None,
+    )
+    assert first.account_discriminator == rotated.account_discriminator
+
+    write_claude_account(tmp_path, "second@example.invalid")
+    switched = collect_claude(
+        preference("claude"), home=tmp_path, observed_at=1002,
+        credentials=FixtureCredentials({("claude", "oauth-token"): "token-three"}),
+        quota_fetcher=fetch, local_scanner=lambda *_args: None,
+    )
+    assert switched.account_discriminator != first.account_discriminator
+
+    (tmp_path / ".claude.json").unlink()
+    unknown = collect_claude(
+        preference("claude"), home=tmp_path, observed_at=1003,
+        credentials=FixtureCredentials({("claude", "oauth-token"): "token-four"}),
+        quota_fetcher=fetch, local_scanner=lambda *_args: None,
+    )
+    assert unknown.state.value == "ready"
+    assert unknown.account_discriminator is None
+
+
+def test_claude_statusline_fallback_uses_only_the_default_cli_account_identity(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from jrbar.claude_statusline_source import StatusLineReading, StatusLineWindow
+
+    write_claude_account(tmp_path, "statusline@example.invalid")
+    reading = StatusLineReading(
+        "session-fixture",
+        "claude-fixture",
+        (("five_hour", StatusLineWindow(25.0, 2000.0)),),
+        1000.0,
+    )
+    result = collect_claude(
+        preference("claude"), home=tmp_path, observed_at=1000,
+        credentials=FixtureCredentials(), quota_fetcher=lambda _token: [],
+        local_scanner=lambda *_args: None, statusline_reader=lambda _now: reading,
+    )
+    assert result.state.value == "ready"
+    assert result.account_discriminator is not None
+
+    named = replace(preference("claude"), source_instance_id="manual")
+    named_result = collect_claude(
+        named, home=tmp_path, observed_at=1000,
+        credentials=FixtureCredentials(), quota_fetcher=lambda _token: [],
+        local_scanner=lambda *_args: None, statusline_reader=lambda _now: reading,
+    )
+    assert named_result.account_discriminator is None
 
 
 
@@ -241,4 +316,3 @@ def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(tmp_path:
     )
     assert result.state.value == "needs_consent"
     assert result.action_label == "Connect Claude usage"
-

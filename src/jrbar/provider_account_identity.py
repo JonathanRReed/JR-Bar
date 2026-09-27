@@ -1,13 +1,22 @@
-"""Privacy-safe provider account labels for presentation surfaces."""
+"""Privacy-safe provider account labels and private account discriminators."""
 
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
 import re
+import secrets
 from dataclasses import dataclass
+from pathlib import Path
 
+from .private_io import atomic_private_write, read_private_text
 from .provider_usage_platform import provider_descriptor
+from .state_paths import default_state_dir
 
+_SALT_BYTES = 32
+_SALT_FILE = "provider-account-identity.key"
+_CLAUDE_CONFIG_MAX_BYTES = 8 * 1024 * 1024
 _EMAIL = re.compile(
     r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -27,6 +36,86 @@ _INTERNAL_PREFIX = re.compile(
 )
 _PATH_FRAGMENT = re.compile(r"(?:^|[\s(])(?:/|~[/\\]|[A-Za-z]:[/\\])")
 _OPAQUE_TOKEN = re.compile(r"[A-Za-z0-9._~:+/=-]{32,}\Z")
+
+
+def _salt_path(home: Path) -> Path:
+    base = Path(home).expanduser()
+    state = default_state_dir() if base == Path.home().expanduser() else default_state_dir(base)
+    return state / _SALT_FILE
+
+
+def _read_identity_salt(path: Path) -> bytes | None:
+    try:
+        raw = read_private_text(path, max_bytes=128).strip()
+        salt = bytes.fromhex(raw)
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return salt if len(salt) == _SALT_BYTES else None
+
+
+def _identity_salt(home: Path) -> bytes | None:
+    path = _salt_path(home)
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        salt = secrets.token_bytes(_SALT_BYTES)
+        try:
+            atomic_private_write(path, salt.hex(), overwrite=False)
+        except FileExistsError:
+            pass
+        except OSError:
+            return None
+        return _read_identity_salt(path)
+    except OSError:
+        return None
+    # An existing unreadable, malformed, linked, or non-regular key is not
+    # replaceable identity evidence. Fail closed rather than rotating it.
+    return _read_identity_salt(path)
+
+
+def claude_account_metadata(home: Path) -> tuple[str | None, str | None]:
+    """Return Claude's plan word and a private account discriminator.
+
+    The email is provider-owned metadata already present in ``.claude.json``.
+    It never leaves this boundary. A per-install HMAC prevents the persisted
+    discriminator from being reversed with an email dictionary.
+    """
+    base = Path(home)
+    try:
+        payload = json.loads(
+            read_private_text(base / ".claude.json", max_bytes=_CLAUDE_CONFIG_MAX_BYTES)
+        )
+    except (OSError, ValueError):
+        return None, None
+    account = payload.get("oauthAccount") if isinstance(payload, dict) else None
+    if not isinstance(account, dict):
+        return None, None
+    plan = next(
+        (
+            value
+            for key in (
+                "userRateLimitTier",
+                "organizationRateLimitTier",
+                "seatTier",
+                "organizationType",
+                "subscriptionType",
+            )
+            if isinstance((value := account.get(key)), str) and value.strip()
+        ),
+        None,
+    )
+    email = account.get("emailAddress")
+    if not isinstance(email, str) or not email.strip():
+        return plan, None
+    salt = _identity_salt(base)
+    if salt is None:
+        return plan, None
+    digest = hmac.new(
+        salt,
+        email.strip().casefold().encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    return plan, f"claude-account-{digest}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +201,6 @@ def project_provider_account_identity(
 
     suffix = _collision_suffix(provider_id, source_instance_id, account_label)
     fallback = f"{provider_label} #{suffix}"
-
     alias = human_readable_account_label(user_alias)
     account = human_readable_account_label(account_label)
     if alias is not None:
@@ -137,6 +225,7 @@ def project_provider_account_identity(
 
 __all__ = [
     "ProviderAccountIdentityPresentation",
+    "claude_account_metadata",
     "configured_user_alias",
     "human_readable_account_label",
     "project_provider_account_identity",

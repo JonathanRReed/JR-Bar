@@ -35,6 +35,7 @@ from jrbar.usage_event_hooks import detect_usage_hook_events
 
 WEEK = 7 * 86400.0
 T0 = 1_790_000_000.0
+ACCOUNT = "claude-account-reset-fixture"
 
 
 def lane(
@@ -63,6 +64,7 @@ def read(
     *lanes: UsageLane,
     state=ProviderSourceState.READY,
     account_label: str | None = None,
+    account_discriminator: str | None = ACCOUNT,
 ) -> ProviderUsageSnapshot:
     return ProviderUsageSnapshot(
         provider_id="claude",
@@ -80,6 +82,7 @@ def read(
         cache_savings_usd=None,
         credits_remaining=None,
         incident=None,
+        account_discriminator=account_discriminator,
     )
 
 
@@ -232,6 +235,20 @@ def test_a_large_refill_rejects_account_and_source_switches() -> None:
         account_label="named-account",
     )
     assert step(unnamed, newly_named).candidates == ()
+
+    unidentified = read(
+        T0 + 120,
+        lane(100.0, T0 + 120 + WEEK),
+        account_discriminator=None,
+    )
+    assert step(read(T0, lane(10.0, scheduled)), unidentified).candidates == ()
+
+    switched_identity = read(
+        T0 + 120,
+        lane(100.0, T0 + 120 + WEEK),
+        account_discriminator="claude-account-replacement",
+    )
+    assert step(read(T0, lane(10.0, scheduled)), switched_identity).candidates == ()
 
 
 def test_a_transient_early_weekly_increase_is_not_confirmed() -> None:

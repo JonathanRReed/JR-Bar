@@ -250,6 +250,9 @@ class ProviderUsageSnapshot:
     #: Codex reset credit), counted read-only: JR-Bar never redeems one.
     #: None when no source stated a count.
     reset_credits: int | None = None
+    #: Private stable account scope. None means the collector cannot prove
+    #: continuity, so caches and reset detectors must not bridge observations.
+    account_discriminator: str | None = None
 
     def __post_init__(self) -> None:
         provider_descriptor(self.provider_id)
@@ -273,6 +276,13 @@ class ProviderUsageSnapshot:
             or not isinstance(self.source_instance_id, str)
             or _SOURCE_INSTANCE_ID.fullmatch(self.source_instance_id) is None
             or type(self.lanes) is not tuple
+            or (
+                self.account_discriminator is not None
+                and (
+                    not isinstance(self.account_discriminator, str)
+                    or _LANE_ID.fullmatch(self.account_discriminator) is None
+                )
+            )
             or (
                 self.account_plan is not None
                 and (

@@ -11751,8 +11751,14 @@ class UsageGraphRangeTests(unittest.TestCase):
 
 
 class ProviderAwareUsageRefreshTests(unittest.TestCase):
+    CLAUDE_ACCOUNT = "claude-account-capacity-fixture"
+
     def setUp(self) -> None:
-        isolate_controller(self)
+        with patch(
+            "jrbar.claude_quota.account_facts_from_claude_config",
+            return_value=("Max", self.CLAUDE_ACCOUNT),
+        ):
+            isolate_controller(self)
         from jrbar.capacity_refresh import (
             CapacityRefreshCoordinator,
             RefreshFailureKind,
@@ -11928,14 +11934,14 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             observed_at=stamp,
         ).snapshot.lanes
 
-    @staticmethod
-    def _claude_evidence_from_windows(descriptor, windows, *, observed_at):
+    def _claude_evidence_from_windows(self, descriptor, windows, *, observed_at):
         from jrbar import claude_quota
 
         return claude_quota.capacity_evidence_from_windows(
             descriptor,
             windows,
             observed_at=observed_at,
+            account_discriminator=self._refresh_key("claude").account_discriminator,
         )
 
     def _result(self, provider_id, percent, *, minutes=300, summary=None):
@@ -12141,14 +12147,12 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             {row.key.source.provider_id: row.key.pool for row in source_states},
             {"codex": "codex-chatgpt-plan", "claude": "claude-consumer-plan"},
         )
-        # Codex has an account scope now for the same reason Claude does: its
-        # producer stamps one on every lane, and the coordinator throws away
-        # any snapshot whose lanes do not match the key exactly. It is a
-        # constant meaning "the plan currently signed in on this machine",
-        # never an account identifier.
+        # Both producers stamp the exact scope their coordinator key declares.
+        # Claude's fixture is a proved synthetic account, not the old global
+        # "claude-consumer" placeholder shared by every account.
         self.assertEqual(
             {row.key.source.provider_id: row.key.account_discriminator for row in source_states},
-            {"codex": "codex-chatgpt", "claude": "claude-consumer"},
+            {"codex": "codex-chatgpt", "claude": self.CLAUDE_ACCOUNT},
         )
         self.assertTrue(all(row.status is RefreshStatusKind.IDLE for row in source_states))
         self.assertEqual(self.controller._capacity_refresh_deadline_timers, {})

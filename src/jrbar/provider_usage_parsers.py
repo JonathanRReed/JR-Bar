@@ -64,6 +64,7 @@ def _snapshot(
     lanes: tuple[UsageLane, ...] = (),
     account_label: str | None = None,
     account_plan: str | None = None,
+    account_discriminator: str | None = None,
     input_tokens: int = 0,
     cached_input_tokens: int = 0,
     output_tokens: int = 0,
@@ -77,6 +78,7 @@ def _snapshot(
         provider_id=provider_id,
         account_label=account_label,
         account_plan=account_plan,
+        account_discriminator=account_discriminator,
         observed_at=observed_at,
         state=ProviderSourceState.READY,
         reason_code=None,
@@ -265,6 +267,7 @@ def parse_claude_usage(
     cache_savings_usd: float | None = None,
     account_label: str | None = None,
     account_plan: str | None = None,
+    account_discriminator: str | None = None,
 ) -> ProviderUsageSnapshot:
     """Claude windows -> lanes, with the same three states as Codex.
 
@@ -306,6 +309,7 @@ def parse_claude_usage(
         lanes=tuple(lanes),
         account_label=account_label,
         account_plan=account_plan,
+        account_discriminator=account_discriminator,
         input_tokens=input_tokens,
         cached_input_tokens=cached_input_tokens,
         output_tokens=output_tokens,

@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from jrbar.provider_account_identity import project_provider_account_identity
+import json
+import threading
+
+from jrbar.provider_account_identity import (
+    _identity_salt,
+    _salt_path,
+    claude_account_metadata,
+    project_provider_account_identity,
+)
 
 
 def test_user_alias_precedes_safe_account_label__and_2_more() -> None:
@@ -80,3 +88,60 @@ def test_privacy_mode_strings_do_not_depend_on_private_account_label() -> None:
     assert first == second
     assert first.primary_label == "Grok"
     assert first.full_label == "Grok"
+
+
+def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypatch) -> None:
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    issued = 0
+
+    def token_bytes(_count):
+        nonlocal issued
+        with lock:
+            issued += 1
+            value = issued
+        barrier.wait(timeout=2.0)
+        return bytes([value]) * 32
+
+    monkeypatch.setattr("jrbar.provider_account_identity.secrets.token_bytes", token_bytes)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(_identity_salt(tmp_path))) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2.0)
+
+    assert len(results) == 2
+    assert results[0] == results[1]
+    assert results[0] in {bytes([1]) * 32, bytes([2]) * 32}
+    assert _identity_salt(tmp_path) == results[0]
+
+
+def test_existing_corrupt_salt_fails_closed_without_rotation(tmp_path, monkeypatch) -> None:
+    path = _salt_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("not-a-private-salt", encoding="utf-8")
+    monkeypatch.setattr(
+        "jrbar.provider_account_identity.secrets.token_bytes",
+        lambda _count: (_ for _ in ()).throw(AssertionError("must not rotate")),
+    )
+    (tmp_path / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "private@example.invalid"}}),
+        encoding="utf-8",
+    )
+
+    _plan, discriminator = claude_account_metadata(tmp_path)
+
+    assert discriminator is None
+    assert path.read_text(encoding="utf-8") == "not-a-private-salt"
+
+
+def test_real_home_uses_xdg_state_but_injected_home_stays_isolated(tmp_path, monkeypatch) -> None:
+    real_home = tmp_path / "home"
+    xdg = tmp_path / "xdg"
+    injected = tmp_path / "fixture-home"
+    monkeypatch.setattr("pathlib.Path.home", lambda: real_home)
+    monkeypatch.setenv("XDG_STATE_HOME", str(xdg))
+
+    assert _salt_path(real_home) == xdg / "jrbar" / "provider-account-identity.key"
+    assert _salt_path(injected) == injected / ".local/state/jrbar/provider-account-identity.key"

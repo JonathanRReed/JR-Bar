@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from jrbar.provider_usage_platform import (
@@ -56,6 +57,13 @@ def test_state_round_trip_preserves_dynamic_lanes_and_qol_fields__and_2_more(tmp
     loaded = load_provider_usage_state(target)
     assert loaded == state()
     assert json.loads(target.read_text())["schema_version"] == PROVIDER_USAGE_STORE_SCHEMA_VERSION
+
+    identified = replace(
+        state().snapshots[0],
+        account_discriminator="claude-account-0123456789abcdef0123456789abcdef",
+    )
+    save_provider_usage_state(ProviderUsageState((identified,), 1000, 1060, False), target)
+    assert load_provider_usage_state(target).snapshots[0].account_discriminator == identified.account_discriminator
 
     # --- scenario: invalid_or_future_document_fails_closed
     target = tmp_path / "usage.json"
@@ -116,4 +124,4 @@ def test_store_preserves_two_same_provider_instances__and_1_more(tmp_path: Path)
     target.write_text(json.dumps(document))
     loaded = load_provider_usage_state(target)
     assert loaded.snapshots[0].source_instance_id == "default"
-
+    assert loaded.snapshots[0].account_discriminator is None

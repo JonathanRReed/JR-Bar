@@ -357,10 +357,12 @@ class ProviderUsageService:
         )
         if type(loaded_state) is not ProviderUsageState or loaded_state.refreshing:
             loaded_state = ProviderUsageState((), None, None, False)
-        self._last_known_good: dict[tuple[str, str], ProviderUsageSnapshot] = {
-            snapshot.identity: snapshot
+        loaded_state = self._identity_checked_restored_state(loaded_state)
+        self._last_known_good: dict[tuple[str, str, str], ProviderUsageSnapshot] = {
+            self._continuity_key(snapshot): snapshot
             for snapshot in loaded_state.snapshots
             if snapshot.state in {ProviderSourceState.READY, ProviderSourceState.STALE}
+            and self._can_retain(snapshot)
         }
         self._state = loaded_state
         self._callbacks: list[
@@ -368,6 +370,9 @@ class ProviderUsageService:
         ] = []
         self._worker: threading.Thread | None = None
         self._workers: set[threading.Thread] = set()
+        self._pending_refresh: tuple[
+            int, tuple[ProviderRefreshScope, ...] | None, bool
+        ] | None = None
         self._refresh_generation = 0
         # Per-provider retry gates (see provider_reconnect): terminal
         # auth failures wait for the credential source to change,
@@ -388,6 +393,45 @@ class ProviderUsageService:
         self._last_cadence_plan = plan_adaptive_refresh_cadence(
             (),
             observed_at=0.0,
+        )
+
+    @staticmethod
+    def _can_retain(snapshot: ProviderUsageSnapshot) -> bool:
+        return snapshot.provider_id != "claude" or snapshot.account_discriminator is not None
+
+    def _identity_checked_restored_state(
+        self,
+        state: ProviderUsageState,
+    ) -> ProviderUsageState:
+        """Withhold saved Claude quota until its account scope is proved."""
+        try:
+            from .claude_quota import account_facts_from_claude_config
+
+            _plan, current_claude_account = account_facts_from_claude_config(
+                self._home
+            )
+        except Exception:
+            current_claude_account = None
+        kept = tuple(
+            snapshot
+            for snapshot in state.snapshots
+            if snapshot.provider_id != "claude"
+            or (
+                snapshot.source_instance_id == "default"
+                and current_claude_account is not None
+                and snapshot.account_discriminator == current_claude_account
+            )
+        )
+        if len(kept) == len(state.snapshots):
+            return state
+        return replace(state, snapshots=kept, next_refresh_at=None)
+
+    @staticmethod
+    def _continuity_key(snapshot: ProviderUsageSnapshot) -> tuple[str, str, str]:
+        return (
+            snapshot.provider_id,
+            snapshot.source_instance_id,
+            snapshot.account_discriminator or "",
         )
 
     def note_ambient_usage_visible(self, visible: bool) -> None:
@@ -663,7 +707,18 @@ class ProviderUsageService:
                 )
             else:
                 failure_gates.pop(identity, None)
-            previous_good = last_known_good.get(identity)
+            continuity_key = self._continuity_key(candidate)
+            previous_good = (
+                last_known_good.get(continuity_key)
+                if self._can_retain(candidate)
+                else None
+            )
+            if candidate.provider_id == "claude" and candidate.account_discriminator is not None:
+                last_known_good = {
+                    key: value
+                    for key, value in last_known_good.items()
+                    if key[:2] != identity or key == continuity_key
+                }
             if (
                 candidate.state is ProviderSourceState.READY
                 and not candidate.lanes
@@ -685,13 +740,18 @@ class ProviderUsageService:
                     )
                 )
             elif candidate.state is ProviderSourceState.READY:
-                last_known_good[identity] = candidate
+                if self._can_retain(candidate):
+                    last_known_good[continuity_key] = candidate
                 snapshots.append(candidate)
             elif candidate.state is ProviderSourceState.UNSUPPORTED:
                 # The source says this account HAS no quota (OpenCode
                 # without a Go subscription). Old lanes are not a stale
                 # reading of something that exists; they must go.
-                last_known_good.pop(identity, None)
+                last_known_good = {
+                    key: value
+                    for key, value in last_known_good.items()
+                    if key[:2] != identity
+                }
                 snapshots.append(candidate)
             elif candidate.state is ProviderSourceState.STALE and candidate.lanes:
                 # A stale-but-real reading is NEWER information than the
@@ -928,6 +988,24 @@ class ProviderUsageService:
                 self._worker = None
             raise
 
+    def _retire_worker_locked(self, worker: threading.Thread) -> None:
+        """Retire ``worker`` and start only the newest queued replacement."""
+        self._workers.discard(worker)
+        if self._worker is worker:
+            self._worker = None
+        pending = self._pending_refresh
+        self._pending_refresh = None
+        if self._closed or pending is None:
+            return
+        generation, providers, force = pending
+        if generation != self._refresh_generation:
+            return
+        self._start_worker_locked(
+            generation=generation,
+            providers=providers,
+            force=force,
+        )
+
     def request(
         self,
         *,
@@ -966,6 +1044,11 @@ class ProviderUsageService:
             ]
             self._callbacks.append((generation, callback))
             self._state = replace(self._state, refreshing=True)
+            if active:
+                # The in-flight collector cannot be interrupted safely. Keep
+                # exactly one replace-latest request for when it retires.
+                self._pending_refresh = (generation, providers, True)
+                return self._state
             self._start_worker_locked(
                 generation=generation,
                 providers=providers,
@@ -988,9 +1071,7 @@ class ProviderUsageService:
             )
             with self._lock:
                 if self._closed or generation != self._refresh_generation:
-                    self._workers.discard(threading.current_thread())
-                    if self._worker is threading.current_thread():
-                        self._worker = None
+                    self._retire_worker_locked(threading.current_thread())
                     return
                 if outcome is RefreshPublicationOutcome.SUPERSEDED:
                     # The settings revision changed during collection. This
@@ -1054,6 +1135,7 @@ class ProviderUsageService:
             self._closed = True
             self._refresh_generation += 1
             self._callbacks.clear()
+            self._pending_refresh = None
             workers = tuple(self._workers)
         deadline = time.monotonic() + 1.0
         for worker in workers:

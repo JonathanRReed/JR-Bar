@@ -273,6 +273,24 @@ def test_revoke_removes_only_the_imported_credential():
     assert credentials.get("devin", "token").secret == "imported-secret"
 
 
+def test_failed_imported_credential_removal_preserves_provenance_for_retry():
+    class RefusingCredentials(DictCredentials):
+        def delete(self, provider_id, account):
+            return False
+
+    credentials = RefusingCredentials()
+    credentials.set("devin", "token", "imported-secret")
+    pm.record_browser_import(
+        "devin", "default", "chrome", "Default", "imported-secret"
+    )
+
+    assert pm.purge_imported_browser_data(
+        "devin", "default", credentials
+    ) == "retained"
+    assert "devin:default" in pm._load_import_ledger()
+    assert credentials.get("devin", "token").secret == "imported-secret"
+
+
 class Record:
     def __init__(self, seq, state, user_key, value):
         self.seq = seq

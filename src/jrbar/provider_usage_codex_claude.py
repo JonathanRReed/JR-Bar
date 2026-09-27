@@ -554,6 +554,8 @@ def _statusline_stand_in(
     local: dict[str, object] | None,
     observed_at: float,
     home: Path,
+    account_plan: str | None = None,
+    account_discriminator: str | None = None,
 ) -> ProviderUsageSnapshot:
     """Claude Code's own status line reading in place of a failed OAuth
     read (claude_statusline_source): its lanes say where they came from,
@@ -564,16 +566,11 @@ def _statusline_stand_in(
         return _with_local_usage(failure, local)
     values = local or {}
     try:
-        from .claude_quota import plan_from_claude_config
-
-        account_plan = plan_from_claude_config(Path(home))
-    except Exception:
-        account_plan = None
-    try:
         return snapshot_from_reading(
             reading,
             observed_at=observed_at,
             account_plan=account_plan,
+            account_discriminator=account_discriminator,
             input_tokens=max(0, int(values.get("input_tokens", 0))),
             cached_input_tokens=max(0, int(values.get("cached_input_tokens", 0))),
             output_tokens=max(0, int(values.get("output_tokens", 0))),
@@ -599,6 +596,17 @@ def collect_claude(
     # so it can only stand in for the default instance.
     default_instance = getattr(preference, "source_instance_id", "default") == "default"
     del preference
+    try:
+        from .claude_quota import account_facts_from_claude_config
+
+        account_plan, account_discriminator = (
+            account_facts_from_claude_config(Path(home))
+            if default_instance
+            else (None, None)
+        )
+    except Exception:
+        account_plan = None
+        account_discriminator = None
     local = local_scanner(Path(home), observed_at)
     reader = _default_statusline_reader if statusline_reader is None else statusline_reader
     try:
@@ -620,16 +628,38 @@ def collect_claude(
             local=local,
             observed_at=observed_at,
             home=Path(home),
+            account_plan=account_plan,
+            account_discriminator=account_discriminator,
         )
-    snapshot = _collect_claude_oauth(home=home, observed_at=observed_at, credentials=credentials,
-                                     quota_fetcher=quota_fetcher, local=local)
+    snapshot = _collect_claude_oauth(
+        home=home,
+        observed_at=observed_at,
+        credentials=credentials,
+        quota_fetcher=quota_fetcher,
+        local=local,
+        account_plan=account_plan,
+        account_discriminator=account_discriminator,
+    )
+    snapshot = replace(
+        snapshot,
+        account_plan=snapshot.account_plan or account_plan,
+        account_discriminator=account_discriminator,
+    )
     if snapshot.state is ProviderSourceState.READY:
         _oauth_rest_until.pop(rest_key, None)
         return snapshot
     if reading is None:
         return snapshot
     _oauth_rest_until[rest_key] = observed_at + _OAUTH_REST_SECONDS.get(snapshot.reason_code or "", 300.0)
-    return _statusline_stand_in(snapshot, reading=reading, local=local, observed_at=observed_at, home=Path(home))
+    return _statusline_stand_in(
+        snapshot,
+        reading=reading,
+        local=local,
+        observed_at=observed_at,
+        home=Path(home),
+        account_plan=account_plan,
+        account_discriminator=account_discriminator,
+    )
 
 
 def _collect_claude_oauth(
@@ -639,6 +669,8 @@ def _collect_claude_oauth(
     credentials,
     quota_fetcher: Callable[[str], list[dict]],
     local: dict[str, object] | None,
+    account_plan: str | None = None,
+    account_discriminator: str | None = None,
 ) -> ProviderUsageSnapshot:
     """The OAuth usage endpoint's reading, or the failure that says why not."""
     # Re-read BEFORE asking when JR-Bar's copy is stale. This is a
@@ -707,16 +739,11 @@ def _collect_claude_oauth(
         )
     values = local or {}
     try:
-        from .claude_quota import plan_from_claude_config
-
-        account_plan = plan_from_claude_config(Path(home))
-    except Exception:
-        account_plan = None
-    try:
         return parse_claude_usage(
             windows=windows,
             observed_at=observed_at,
             account_plan=account_plan,
+            account_discriminator=account_discriminator,
             input_tokens=max(0, int(values.get("input_tokens", 0))),
             cached_input_tokens=max(0, int(values.get("cached_input_tokens", 0))),
             output_tokens=max(0, int(values.get("output_tokens", 0))),

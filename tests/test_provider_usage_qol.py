@@ -28,7 +28,13 @@ def lane(remaining, reset, *, lane_id="weekly", label="Weekly"):
     )
 
 
-def snapshot(observed, lanes, *, state=ProviderSourceState.READY):
+def snapshot(
+    observed,
+    lanes,
+    *,
+    state=ProviderSourceState.READY,
+    account_discriminator="claude-account-fixture",
+):
     return ProviderUsageSnapshot(
         provider_id="claude",
         account_label="account-fixture",
@@ -45,6 +51,7 @@ def snapshot(observed, lanes, *, state=ProviderSourceState.READY):
         cache_savings_usd=0.75,
         credits_remaining=12,
         incident=None,
+        account_discriminator=account_discriminator,
     )
 
 
@@ -57,6 +64,15 @@ def test_reset_event_requires_boundary_crossing_and_fresh_replenishment__and_2_m
     assert events[0].provider_id == "claude"
     assert events[0].label == "Weekly reset"
     assert events[0].event_id.startswith("claude:weekly:")
+
+    switched = snapshot(
+        1001,
+        (lane(100, 2000),),
+        account_discriminator="claude-account-other",
+    )
+    assert detect_reset_events((before,), (switched,), seen_event_ids=frozenset()) == ()
+    unknown = snapshot(1001, (lane(100, 2000),), account_discriminator=None)
+    assert detect_reset_events((before,), (unknown,), seen_event_ids=frozenset()) == ()
 
     # --- scenario: reset_event_is_not_reannounced_or_emitted_from_stale_data
     before = snapshot(990, (lane(5, 1000),))

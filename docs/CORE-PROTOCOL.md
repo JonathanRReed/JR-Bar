@@ -124,6 +124,12 @@ protocol 1. Timestamps are Unix epoch seconds.
 
 Vocabulary:
 
+- The daemon's stored usage snapshots may carry `account_discriminator`, an opaque local
+  account binding. It is never an email, token or display label. A
+  changed binding invalidates cached quota and reset comparisons for
+  that source instance. Claude readings without a provable binding
+  remain usable as live readings, but cannot establish account-bound
+  stale fallback, reset or capacity continuity.
 - `sessions[].id` is the existing agent id: `provider:session:<sid>` for a
   main session, `provider:agent:<id>` for a worker (`kind: "worker"`,
   `parent` = the main session's id). `label` is human: the provider's own

@@ -721,9 +721,17 @@ CAPACITY_EVIDENCE_CLASSES_BY_SOURCE = _capacity_evidence_classes_by_source()
 # so a discriminator invented in one place and not the other loses every
 # reading as "cross-scope" -- silently, because the commit just fails.
 CAPACITY_ACCOUNT_SCOPES_BY_SOURCE = {
-    claude_quota.CLAUDE_QUOTA_SOURCE: claude_quota.CLAUDE_ACCOUNT_SCOPE,
     usage_stats.CODEX_QUOTA_SOURCE: usage_stats.CODEX_ACCOUNT_SCOPE,
 }
+
+
+def _capacity_account_scope(source_key):
+    if source_key == claude_quota.CLAUDE_QUOTA_SOURCE:
+        try:
+            return claude_quota.account_facts_from_claude_config()[1]
+        except Exception:
+            return None
+    return CAPACITY_ACCOUNT_SCOPES_BY_SOURCE.get(source_key)
 
 
 def _capacity_auth_modes_by_source():
@@ -2180,7 +2188,7 @@ class StatusBarController(NSObject):
             provider_id: RefreshSourceKey(
                 source=source_key,
                 pool=_capacity_refresh_pool(source_key),
-                account_discriminator=CAPACITY_ACCOUNT_SCOPES_BY_SOURCE.get(source_key),
+                account_discriminator=_capacity_account_scope(source_key),
                 auth_mode=CAPACITY_AUTH_MODES_BY_SOURCE.get(source_key),
             )
             for provider_id, source_key in CAPACITY_SOURCE_KEYS_BY_PROVIDER.items()
@@ -4338,6 +4346,8 @@ class StatusBarController(NSObject):
         source_key: SourceKey,
         windows,
         evidence_from_windows,
+        *,
+        account_discriminator=None,
     ) -> tuple[QuotaLaneObservation, ...]:
         """Turn one provider's fetched windows into contract-stamped lanes.
 
@@ -4351,11 +4361,10 @@ class StatusBarController(NSObject):
         if descriptor is None or not windows:
             return ()
         observed_at = time.time()
-        evidence = evidence_from_windows(
-            descriptor,
-            windows,
-            observed_at=observed_at,
-        )
+        evidence_kwargs = {"observed_at": observed_at}
+        if source_key == claude_quota.CLAUDE_QUOTA_SOURCE:
+            evidence_kwargs["account_discriminator"] = account_discriminator
+        evidence = evidence_from_windows(descriptor, windows, **evidence_kwargs)
         if not evidence.lanes:
             return ()
         normalized = normalize_supported_quota_evidence(
@@ -4375,6 +4384,9 @@ class StatusBarController(NSObject):
             source_key,
             windows,
             claude_quota.capacity_evidence_from_windows,
+            account_discriminator=self._capacity_refresh_keys_by_provider[
+                "claude"
+            ].account_discriminator,
         )
 
     def _codex_capacity_observations(

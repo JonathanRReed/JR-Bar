@@ -46,6 +46,7 @@ class ResetEvent:
     after_reset_at: float | None = None
     after_remaining: float | None = None
     before_remaining: float | None = None
+    account_discriminator: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,7 @@ class ResetCandidate:
     before_remaining: float
     observed_at: float
     trigger: str = RESET_TRIGGER_JUMP
+    account_discriminator: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -78,6 +80,7 @@ class ResetCandidate:
             "before_remaining": self.before_remaining,
             "observed_at": self.observed_at,
             "trigger": self.trigger,
+            "account_discriminator": self.account_discriminator,
         }
 
     @classmethod
@@ -108,7 +111,10 @@ class ResetCandidate:
         trigger = raw.get("trigger", RESET_TRIGGER_JUMP)
         if trigger not in {RESET_TRIGGER_JUMP, RESET_TRIGGER_EARLY_WEEKLY}:
             return None
-        return cls(**words, **numbers, trigger=trigger)
+        account = raw.get("account_discriminator")
+        if account is not None and (not isinstance(account, str) or not account):
+            return None
+        return cls(**words, **numbers, trigger=trigger, account_discriminator=account)
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,10 +165,12 @@ def _event_id(
     source_instance_id: str,
     lane_id: str,
     old_reset_at: float,
+    account_discriminator: str | None,
 ) -> str:
-    material = (
-        f"{provider_id}\0{source_instance_id}\0{lane_id}\0{old_reset_at:.6f}"
-    ).encode()
+    identity = f"{provider_id}\0{source_instance_id}"
+    if account_discriminator is not None:
+        identity += f"\0{account_discriminator}"
+    material = f"{identity}\0{lane_id}\0{old_reset_at:.6f}".encode()
     digest = hashlib.sha256(material).hexdigest()[:24]
     prefix = (
         f"{provider_id}:{lane_id}"
@@ -190,7 +198,15 @@ def merged_edge_baseline(previous, current):
     kept = []
     for snapshot in current.snapshots:
         held = before.get(snapshot.identity)
-        if snapshot.state in comparable or held is None:
+        account_changed = (
+            snapshot.provider_id == "claude"
+            and (
+                snapshot.account_discriminator is None
+                or held is None
+                or held.account_discriminator != snapshot.account_discriminator
+            )
+        )
+        if snapshot.state in comparable or held is None or account_changed:
             kept.append(snapshot)
         else:
             kept.append(held)
@@ -219,6 +235,11 @@ def detect_reset_events(
             ProviderSourceState.READY,
             ProviderSourceState.STALE,
         } or before.account_label != after.account_label:
+            continue
+        if after.provider_id == "claude" and (
+            after.account_discriminator is None
+            or before.account_discriminator != after.account_discriminator
+        ):
             continue
         before_lanes = _lane_map(before)
         for lane_after in after.lanes:
@@ -274,6 +295,7 @@ def detect_reset_events(
                 after.source_instance_id,
                 lane_after.lane_id,
                 lane_before.reset_at,
+                after.account_discriminator,
             )
             if event_id in seen_event_ids:
                 continue
@@ -290,6 +312,7 @@ def detect_reset_events(
                     lane_after.reset_at,
                     lane_after.remaining_percent,
                     lane_before.remaining_percent,
+                    after.account_discriminator,
                 )
             )
     return tuple(events)
@@ -315,6 +338,7 @@ def _candidate_from(event: ResetEvent) -> ResetCandidate | None:
         float(event.before_remaining),
         float(event.occurred_at),
         event.trigger,
+        event.account_discriminator,
     )
 
 
@@ -331,6 +355,7 @@ def _confirmed(candidate: ResetCandidate, observed_at: float) -> ResetEvent:
         candidate.after_reset_at,
         candidate.after_remaining,
         candidate.before_remaining,
+        candidate.account_discriminator,
     )
 
 
@@ -339,8 +364,14 @@ def _judge_candidate(
     snapshot: ProviderUsageSnapshot | None,
 ) -> str:
     """``keep``, ``confirm`` or ``discard`` for one waiting jump."""
-    if snapshot is None or snapshot.state is not ProviderSourceState.READY:
+    if snapshot is None:
         return "keep"
+    if snapshot.account_discriminator != candidate.account_discriminator:
+        return "discard"
+    if snapshot.state is not ProviderSourceState.READY:
+        return "keep"
+    if snapshot.provider_id == "claude" and snapshot.account_discriminator is None:
+        return "discard"
     lane = _lane_map(snapshot).get(candidate.lane_id)
     if lane is None or lane.remaining_percent is None or lane.reset_at is None:
         return "discard"

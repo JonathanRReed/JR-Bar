@@ -129,3 +129,33 @@ def test_instance_read_miss_falls_back_to_the_pre_rename_service__and_2_more() -
 
     assert store.get("devin", "token").secret == "old-secret"
 
+
+def test_delete_removes_current_and_pre_rename_items_without_copying_forward() -> None:
+    backend = FakeBackend()
+    current = ("com.jonathanreed.jrbar.provider.devin", "token")
+    legacy = ("io.sidepulse.provider.devin", "token")
+    backend.values[current] = "current-secret"
+    backend.values[legacy] = "legacy-secret"
+
+    assert ProviderCredentialStore(backend=backend).delete("devin", "token") is True
+    assert current not in backend.values
+    assert legacy not in backend.values
+
+
+def test_delete_reports_refusal_when_either_identity_survives() -> None:
+    class RefusingBackend(FakeBackend):
+        def delete_password(self, service, account) -> None:
+            if service.startswith("io.sidepulse"):
+                raise RuntimeError("denied")
+            super().delete_password(service, account)
+
+    backend = RefusingBackend()
+    current = ("com.jonathanreed.jrbar.provider.devin.work", "token")
+    legacy = ("io.sidepulse.provider.devin.work", "token")
+    backend.values[current] = "current-secret"
+    backend.values[legacy] = "legacy-secret"
+
+    store = ProviderCredentialStore(backend=backend)
+    assert store.delete_for_instance(ProviderInstanceKey("devin", "work"), "token") is False
+    assert current not in backend.values
+    assert backend.values[legacy] == "legacy-secret"
