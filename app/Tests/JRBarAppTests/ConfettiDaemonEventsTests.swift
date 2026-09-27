@@ -36,6 +36,18 @@ struct ConfettiDaemonEventsTests {
         try JSONDecoder().decode(CoreEvent.self, from: Data(json.utf8))
     }
 
+    @Test("a recovered weekly reset reaches the burst once through the core model")
+    func recoveredResetBurstsOnce() throws {
+        let (toy, store, bursts) = try makeToy()
+        store.core.onEvent = { toy.noteEvent($0) }
+        let reset = CoreEvent(id: "ev-1", kind: "quota_reset", provider: "claude",
+                              lane: "weekly", cursor: "stream:ev-1")
+        store.core.apply(.event(reset))
+        store.core.apply(.event(reset))
+        #expect(bursts.fired.count == 1)
+        #expect(store.state.confetti.firedKeys.contains("event:stream:ev-1"))
+    }
+
     @Test("a journaled confetti request bursts once, and a repeat inside the cooldown does not")
     func requestEvent() throws {
         let (toy, store, bursts) = try makeToy()

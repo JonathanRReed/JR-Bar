@@ -16,6 +16,39 @@ struct FoldPortalTests {
 
     // MARK: SlewTracker
 
+    @Test("changing to movement mode folds from the parked reading on the first close")
+    func movementModeUsesTheExistingRest() {
+        var anchor = MoveAnchor()
+        _ = anchor.select(.angle, angle: 110, at: 0)
+        let changed = anchor.select(.movement, angle: 110, at: 1)
+        #expect(changed)
+        anchor.feed(100, at: 1.1)
+        anchor.armThreshold = 3
+        #expect(anchor.anchor == 110)
+        #expect(anchor.moving(100))
+        var arming = FoldArming()
+        let result = arming.updateMovement(moving: anchor.moving(100), closed: false, now: 1.1)
+        #expect(result.capture)
+        #expect(result.foldGate)
+        let unchanged = anchor.select(.movement, angle: 100, at: 1.2)
+        #expect(!unchanged)
+        #expect(anchor.anchor == 110, "a reconcile during the close keeps its reference")
+    }
+
+    @Test("returning to movement mode forgets its old reference")
+    func movementModeReturnsToTheCurrentRest() {
+        var anchor = MoveAnchor()
+        _ = anchor.select(.movement, angle: 110, at: 0)
+        anchor.feed(80, at: 0.1)
+        _ = anchor.select(.angle, angle: 80, at: 0.2)
+        _ = anchor.select(.movement, angle: 95, at: 2)
+        #expect(anchor.anchor == 95)
+        #expect(!anchor.moving(95))
+        anchor.feed(85, at: 2.1)
+        #expect(anchor.anchor == 95)
+        #expect(anchor.moving(85))
+    }
+
     @Test("the first sample primes the tracker at the measurement")
     func trackerPrime() {
         var tracker = SlewTracker()

@@ -8,6 +8,35 @@ import Testing
 @Suite("Core reconnect")
 @MainActor
 struct CoreReconnectTests {
+    @Test("event ids from different daemon streams both reach the app")
+    func eventIDsAreScopedToTheirStream() {
+        let model = CoreModel(socketPath: "/nonexistent/jrbar-test.sock")
+        var delivered: [String?] = []
+        model.onEvent = { delivered.append($0.cursor) }
+        let old = CoreEvent(id: "ev-1", kind: "quota_reset", cursor: "old:ev-1")
+        let fresh = CoreEvent(id: "ev-1", kind: "quota_reset", cursor: "new:ev-1")
+        model.apply(.event(old))
+        model.handle(.disconnected(reason: "eof"))
+        model.handle(.connected)
+        model.apply(.event(fresh))
+        model.apply(.event(fresh))
+        #expect(delivered == ["old:ev-1", "new:ev-1"])
+    }
+
+    @Test("a stream in hello scopes events that carry no cursor")
+    func helloScopesCursorlessEvents() {
+        let model = CoreModel(socketPath: "/nonexistent/jrbar-test.sock")
+        var delivered = 0
+        model.onEvent = { _ in delivered += 1 }
+        let event = CoreEvent(id: "ev-1", kind: "quota_reset")
+        model.apply(.hello(CoreHello(stream: "old")))
+        model.apply(.event(event))
+        model.apply(.event(event))
+        model.apply(.hello(CoreHello(stream: "new")))
+        model.apply(.event(event))
+        #expect(delivered == 2)
+    }
+
     static func liveModel() -> CoreModel {
         let model = CoreModel(socketPath: "/nonexistent/jrbar-test.sock")
         model.handle(.connected)

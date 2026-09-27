@@ -440,6 +440,19 @@ class CoreServer:
     def publish_settings(self, document: dict[str, Any]) -> None:
         self._publish_coalesced("settings", document)
 
+    def recent_reset_events(self, *, now: float | None = None) -> list[dict[str, Any]]:
+        """Resets still within their delivery window, with original cursors."""
+        from .provider_reset_events import RESET_DELIVERY_WINDOW_SECONDS
+
+        current = time.time() if now is None else now
+        with self._flush_condition:
+            return [
+                dict(event) for event in self._journal
+                if event.get("kind") == "quota_reset"
+                and isinstance(event.get("at"), (int, float))
+                and 0 <= current - event["at"] < RESET_DELIVERY_WINDOW_SECONDS
+            ]
+
     def publish_event(self, document: dict[str, Any]) -> dict[str, Any]:
         with self._flush_condition:
             self._event_counter += 1
@@ -698,6 +711,14 @@ class CoreServer:
                 frame = encode_frame(_envelope(kind, document))
                 if len(frame) > MAX_FRAME_BYTES:
                     self._log(f"core skipped oversize initial {document.get('t')} frame")
+                    continue
+                client.send(frame)
+            for event in self.recent_reset_events():
+                if not client.alive:
+                    break
+                frame = encode_frame(event)
+                if len(frame) > MAX_FRAME_BYTES:
+                    self._log("core skipped oversize initial quota_reset frame")
                     continue
                 client.send(frame)
             self._read_commands(client)

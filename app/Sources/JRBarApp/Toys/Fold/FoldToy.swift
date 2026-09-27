@@ -448,6 +448,7 @@ final class FoldToy: Toy {
     /// fold comes back.
     private func reconcile() {
         let settings = settings
+        selectAnchorMode(at: CACurrentMediaTime())
         jitter.tolerance = settings.jitterTolerance
         moveAnchor.tolerance = settings.jitterTolerance
         // Both looks arm on 3° of real travel down, so a nudge never
@@ -1237,6 +1238,9 @@ final class FoldToy: Toy {
     /// same glide the simulate slider gets — then the filter and tracker
     /// decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
+        // A sample may beat the settings observation to the main actor.
+        // Seat a changed mode before replacing the parked raw reading.
+        selectAnchorMode(at: sample.at)
         // The clamshell flag is the one pause input that changes on
         // this path with no trigger of its own — the angle reconciles
         // on accepted samples, the display facts through observed
@@ -1292,6 +1296,12 @@ final class FoldToy: Toy {
         }
         feedTracker(angle, at: sample.at)
         reconcile()
+    }
+
+    private func selectAnchorMode(at now: TimeInterval) {
+        guard moveAnchor.select(settings.anchor, angle: measuredAngle, at: now) else { return }
+        restGate.reset()
+        sensor.quiet(around: nil)
     }
 
     /// Nothing a reading could change is live: ours to render and on,
@@ -1405,6 +1415,7 @@ final class FoldToy: Toy {
         Binding(
             get: { self.simulatedAngle ?? self.measuredAngle ?? 90 },
             set: {
+                self.selectAnchorMode(at: CACurrentMediaTime())
                 self.simulatedAngle = $0
                 if !self.simulating { self.simulating = true }
                 // The card's demo and the slider preview the voice too.

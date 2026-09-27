@@ -93,6 +93,27 @@ def _connect(server: CoreServer) -> socket.socket:
     return client
 
 
+def test_initial_connection_recovers_only_recent_quota_resets(server: CoreServer, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    reset = server.publish_event({"kind": "quota_reset", "provider": "claude", "lane": "weekly", "at": 990.0})
+    server.publish_event({"kind": "quota_reset", "at": 700.0})
+    server.publish_event({"kind": "quota_reset", "at": 1001.0})
+    server.publish_event({"kind": "completed", "at": 990.0})
+    server.publish_event({"kind": "confetti", "at": 990.0})
+    server.publish_event({"kind": "quota_reset", "at": 990.0, "detail": "x" * MAX_FRAME_BYTES})
+    monkeypatch.setattr("jrbar.core_server.time.time", lambda: 1000.0)
+    frames = []
+    client = SimpleNamespace(alive=True, index=1, send=lambda frame: frames.append(json.loads(frame)))
+    monkeypatch.setattr(server, "_read_commands", lambda _: None)
+    monkeypatch.setattr(server, "_drop_clients", lambda _: None)
+    server._serve_client(client)
+    assert [frame["t"] for frame in frames] == ["hello", "state", "lights", "settings", "event"]
+    assert frames[-1] == reset
+    assert reset in server.recent_reset_events(now=1289.0)
+    assert reset not in server.recent_reset_events(now=1290.0)
+
+
 def test_socket_is_private_and_greets_with_hello_state_lights_settings__and_2_more(server: CoreServer) -> None:
     # --- scenario: socket_is_private_and_greets_with_hello_state_lights_settings
     mode = stat.S_IMODE(os.stat(server.socket_path).st_mode)

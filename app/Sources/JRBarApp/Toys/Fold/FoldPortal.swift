@@ -153,6 +153,7 @@ struct SlewTracker: Sendable {
 /// it was opened past 107°. A lid parked mid-close with no rise keeps
 /// its fold.
 struct MoveAnchor: Sendable {
+    private var selectedMode: FoldAnchor?
     /// The reference angle a fold measures from. nil until the first
     /// real sample seats it.
     private(set) var anchor: Double?
@@ -193,6 +194,20 @@ struct MoveAnchor: Sendable {
     init() {}
 
     mutating func reset() { self = MoveAnchor() }
+
+    /// A mode change starts from the current reading, before the next
+    /// closing sample can be mistaken for the lid's resting angle.
+    @discardableResult
+    mutating func select(_ mode: FoldAnchor, angle: Double?, at: TimeInterval) -> Bool {
+        guard selectedMode != mode else { return false }
+        selectedMode = mode
+        anchor = nil
+        restAngle = nil
+        flightLow = nil
+        flightHigh = nil
+        if mode == .movement, let angle { reseat(angle, at: at) }
+        return true
+    }
 
     /// Feed a raw lid sample at host time `at`. Mid-flight the anchor
     /// moves only when a reopen settles short of it.

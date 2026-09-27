@@ -66,7 +66,11 @@ start epoch); `cursor` is its current tail — the position a fresh
 client anchors at. A reconnecting client that sees the SAME `stream`
 may ask `replay_events` with the last `cursor` it saw to recover the
 frames the drop ate. A different `stream` means the journal restarted:
-anchor at the new `cursor`, never replay. The journal is bounded
+anchor at the new `cursor`, never replay the whole journal. After the
+initial state, lights and settings, the server sends retained `quota_reset`
+events less than five minutes old. They keep their original cursors, so
+live delivery and reconnect recovery deduplicate the same reset. Other
+event kinds are not recovered on a fresh connection. The journal is bounded
 (512 entries) and in-memory by design — replay survives socket churn,
 not a daemon restart.
 

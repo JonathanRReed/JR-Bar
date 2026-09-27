@@ -50,7 +50,7 @@ public final class CoreModel {
     public var onEvent: (@MainActor (CoreEvent) -> Void)?
 
     @ObservationIgnored private var client: CoreClient?
-    @ObservationIgnored private var seenEventIDs: [String] = []
+    @ObservationIgnored private var seenEventKeys: [String] = []
 
     public init(socketPath: String = CoreSocketPath.resolve()) {
         self.socketPath = socketPath
@@ -958,9 +958,10 @@ public final class CoreModel {
         case .settings(let settings):
             self.settings = settings
         case .event(let event):
-            guard !seenEventIDs.contains(event.id) else { return }
-            seenEventIDs.append(event.id)
-            if seenEventIDs.count > 64 { seenEventIDs.removeFirst(seenEventIDs.count - 64) }
+            let key = event.cursor ?? hello?.stream.map { "\($0):\(event.id)" } ?? event.id
+            guard !seenEventKeys.contains(key) else { return }
+            seenEventKeys.append(key)
+            if seenEventKeys.count > 64 { seenEventKeys.removeFirst(seenEventKeys.count - 64) }
             onEvent?(event)
             lastEvent = event
         case .reply:
