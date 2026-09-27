@@ -14,6 +14,7 @@ All notable changes to JR-Bar are documented here.
   and custom log paths, and serialize changes with CLI installation/removal.
 - Setup lists permissions used by enabled features first and keeps other
   grants optional. Unknown active grants remain unresolved.
+- An older setup-note expiry cannot clear a newer integration reply.
 - Aquarium swimming and drawing share each frame's completion meals, with
   eaten pellets updated before that frame draws.
 - The GitHub entry has a current synthetic panel image, quick-start and

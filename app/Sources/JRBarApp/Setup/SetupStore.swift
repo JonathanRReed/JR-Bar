@@ -85,6 +85,9 @@ final class SetupStore {
     private(set) var hookNotes: [String: SetupNote] = [:]
 
     @ObservationIgnored private var hookNoteClear: [String: DispatchWorkItem] = [:]
+    @ObservationIgnored private var hookNoteRevision: [String: Int] = [:]
+    @ObservationIgnored private let scheduleHookNoteClear:
+        (@escaping @MainActor () -> Void) -> DispatchWorkItem
     @ObservationIgnored private var permissionTimer: Timer?
 
     /// The Screen Bar's visibility, mirrored locally so the toggle
@@ -115,9 +118,18 @@ final class SetupStore {
              do { try file.save(state) } catch {
                  NSLog("JR-Bar setup: could not write %@: %@", file.url.path, error.localizedDescription)
              }
-         }) {
+         },
+         scheduleHookNoteClear: @escaping
+             (@escaping @MainActor () -> Void) -> DispatchWorkItem = { clear in
+                 let work = DispatchWorkItem {
+                     MainActor.assumeIsolated { clear() }
+                 }
+                 DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+                 return work
+             }) {
         self.model = model
         self.persist = persist
+        self.scheduleHookNoteClear = scheduleHookNoteClear
         self.state = load()
         self.screenBarShown = model.screenBarShown()
         self.menuBarIconStyle = model.iconStyle()
@@ -266,11 +278,14 @@ final class SetupStore {
     private func noteHook(_ provider: String, _ note: SetupNote) {
         hookNotes[provider] = note
         hookNoteClear[provider]?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.hookNotes[provider] = nil }
+        let revision = (hookNoteRevision[provider] ?? 0) + 1
+        hookNoteRevision[provider] = revision
+        let work = scheduleHookNoteClear { [weak self] in
+            guard let self, self.hookNoteRevision[provider] == revision else { return }
+            self.hookNotes[provider] = nil
+            self.hookNoteClear[provider] = nil
         }
         hookNoteClear[provider] = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
     }
 
     // MARK: Permissions step

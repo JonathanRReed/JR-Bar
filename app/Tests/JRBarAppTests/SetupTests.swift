@@ -27,6 +27,7 @@ import SwiftUI
         var statuses: [SetupPermission: SetupPermissionStatus] = [:]
         var requiredPermissions: Set<SetupPermission> = []
         var live = true
+        var hookNoteClears: [@MainActor () -> Void] = []
     }
 
     func make(initialState: SetupState = SetupState(),
@@ -48,7 +49,11 @@ import SwiftUI
         model.setIconStyle = { recorder.iconStyle = $0; recorder.iconStyleSets.append($0) }
         let store = SetupStore(model: model,
                                load: { initialState },
-                               persist: { recorder.persisted.append($0) })
+                               persist: { recorder.persisted.append($0) },
+                               scheduleHookNoteClear: { clear in
+                                   recorder.hookNoteClears.append(clear)
+                                   return DispatchWorkItem {}
+                               })
         configure(store, recorder)
         return (store, recorder)
     }
@@ -271,7 +276,31 @@ import SwiftUI
         #expect(!store.hookBusy.contains("codex"))
         #expect(store.hookNotes["codex"] == SetupNote("no CLI found on PATH", isError: true))
         #expect(recorder.installed == ["codex"])
-        #expect(store.installHooks(for: "codex") != nil)
+        #expect(recorder.hookNoteClears.count == 1)
+        recorder.hookNoteClears[0]()
+        #expect(store.hookNotes["codex"] == nil)
+
+        recorder.installResult = SetupNote("Hooks installed", isError: false)
+        let second = store.installHooks(for: "codex")
+        #expect(second != nil)
+        await second?.value
+        #expect(store.hookNotes["codex"] == SetupNote("Hooks installed", isError: false))
+    }
+
+    @Test func staleHookNoteExpiryCannotClearANewerReply() async {
+        let (store, recorder) = make()
+        recorder.installResult = SetupNote("first reply", isError: true)
+        let first = store.installHooks(for: "codex")
+        await first?.value
+        recorder.installResult = SetupNote("new reply", isError: false)
+        let second = store.installHooks(for: "codex")
+        await second?.value
+        #expect(recorder.hookNoteClears.count == 2)
+
+        recorder.hookNoteClears[0]()
+        #expect(store.hookNotes["codex"] == SetupNote("new reply", isError: false))
+        recorder.hookNoteClears[1]()
+        #expect(store.hookNotes["codex"] == nil)
     }
 
     // MARK: Appearance
