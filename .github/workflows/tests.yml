@@ -115,5 +115,10 @@ jobs:
       - name: swift test
         # The protocol round trips spawn app/scripts/mock-core.py on a
         # socket of their own; the runner's python3 is enough for it.
+        # Run the planning contracts first so unrelated main-actor render
+        # tests cannot consume their one-minute deadline. Both commands
+        # together cover every suite.
         working-directory: app
-        run: swift test
+        run: |
+          swift test --filter 'ScreenBarPlanQueueTests|ScreenBarAsynchronousPlanningTests'
+          swift test --skip 'ScreenBarPlanQueueTests|ScreenBarAsynchronousPlanningTests'
