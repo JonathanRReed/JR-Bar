@@ -108,8 +108,9 @@ covers the first useful checks.
   beta channel.
 - **Desktop utilities.** Data Hoarder keeps a local, searchable archive of
   sources you choose. Dock tools can hold or enhance the Dock, and Menu Bar
-  tools can arrange or conceal items. Each utility is off until you turn it
-  on, and its controls explain any macOS permission it needs.
+  tools can arrange or conceal items. Menu Bar is enabled by default but
+  hides nothing until you arrange items. Dock enhancements and archive
+  capture are opt-in. Each control explains its macOS permissions.
 
 <p align="center">
   <img src="media/usage-center.png" alt="Usage Center: Claude's 5h, 7d and 30d rings, a comfortable forecast, tokens by day with cost and cache savings; Gemini near its limit with a run-out time" width="640">
@@ -211,7 +212,8 @@ status line), then delete `JR-Bar.app`.
 
 ### Permissions
 
-Everything works with nothing granted; features ask when you turn them on.
+The core panel works without extra grants. Features ask for the permissions
+they need when you turn them on.
 
 | Permission | Unlocks | Asked when |
 | --- | --- | --- |
@@ -287,18 +289,17 @@ to be done by hand:
   (copied, never moved; nothing already under a JR-Bar path is overwritten;
   `~/.local/state/jrbar/migrated-from-sidepulse.json` records it so it
   happens once).
-- Every hook shape SidePulse ever registered (`python -m
-  sidepulse.hook_client`, `agent_monitor.hook_entry`, the `sidepulse-status`
-  OpenClaw and Antigravity hooks, the `sidepulse.js` OpenCode plugin, the
-  Kiro and Grok files) is replaced in place by the bundled shim, and Codex's
-  trust hash is refreshed. The old `io.sidepulse.agentstatus` and
+- Installers recognize legacy JR-Bar and SidePulse hook forms. Connecting
+  a provider replaces its owned legacy hooks with the bundled shim and
+  refreshes Codex's trust hash where applicable. Upgrades refresh owned
+  integrations while preserving disabled flags. The old `io.sidepulse.agentstatus` and
   `com.sidepulse.agentstatus` LaunchAgents are unloaded and removed; the
   app is a login item now, not a LaunchAgent.
 - Keychain secrets are copied forward on first read
   (`io.sidepulse.provider.<id>` → `com.jonathanreed.jrbar.provider.<id>`).
-- `SIDEPULSE_*` environment variables, the `sidepulse` command and
-  `sidepulse.*` imports keep working for this one release and go away in
-  the next.
+- `SIDEPULSE_*` environment variables remain fallback names for their
+  `JRBAR_*` counterparts. The old `sidepulse` command and Python import
+  aliases have been removed; use `jrbar`.
 
 macOS keys permissions to the bundle identifier, so the grants above are
 asked for again. Once the app is running and `jrbar hooks doctor` says
