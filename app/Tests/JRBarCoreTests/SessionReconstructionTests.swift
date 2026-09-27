@@ -144,6 +144,45 @@ struct SessionReconstructionTests {
 
     // MARK: Bounds and gaps
 
+    @Test("every byte split preserves unicode, empty lines, errors and an unterminated tail")
+    func segmentBoundariesPreserveRows() {
+        let valid = #"{"type":"user","message":{"role":"user","content":"hello 🐟 café"}}"#
+        var payload = Data(("\n" + valid + "\r\n\ninvalid\n").utf8)
+        payload.append(TranscriptRedactor.redact(Data("broken row {\n".utf8)))
+        payload.append(Data(valid.utf8))
+        let whole = SessionReconstructor.reconstruct(segments: [payload], provider: "claude")
+        #expect(whole.items.map(\.text) == ["hello 🐟 café", "hello 🐟 café"])
+        #expect(whole.totalLines == 6)
+        #expect(whole.redactedLines == 1)
+        #expect(whole.gaps == ["malformed_lines:2"])
+        for split in 0...payload.count {
+            let segments = [Data(), Data(payload[..<split]), Data(), Data(payload[split...]), Data()]
+            #expect(SessionReconstructor.reconstruct(segments: segments, provider: "claude") == whole)
+        }
+        let bytes = payload.map { Data([$0]) }
+        #expect(SessionReconstructor.reconstruct(segments: bytes, provider: "claude") == whole)
+    }
+
+    @Test("blank records preserve line counts without losing the newest event")
+    func blankLinesKeepTheirCount() {
+        let blanks = Data(repeating: 0x0A, count: 65_536)
+        let tail = Data(#"{"type":"user","message":{"role":"user","content":"last row"}}"#.utf8)
+        let result = SessionReconstructor.reconstruct(segments: [blanks, tail], provider: "claude")
+        #expect(result.totalLines == 65_537)
+        #expect(result.items.map(\.text) == ["last row"])
+        #expect(result.gaps.isEmpty)
+        #expect(SessionReconstructor.reconstruct(segments: [Data(), Data()], provider: "claude").totalLines == 0)
+    }
+
+    @Test("reported byte count cannot bypass the loaded input limit")
+    func loadedBytesRemainAuthoritative() {
+        let chunk = Data(repeating: 0x0A, count: 1024 * 1024)
+        let result = SessionReconstructor.reconstruct(
+            segments: Array(repeating: chunk, count: 65), provider: "claude", totalByteCount: 0)
+        #expect(result.items.isEmpty)
+        #expect(result.gaps == ["transcript_too_large:68157440"])
+    }
+
     @Test("the item cap keeps the newest 5000 with a named gap")
     func itemCap() {
         var blocks: [String] = []
@@ -173,6 +212,24 @@ struct SessionReconstructionTests {
     }
 
     // MARK: FailureStory
+
+    @Test("failure lookup keeps the first tool use even when its name is missing")
+    func firstToolUseWins() {
+        let items = [
+            ReconstructedItem(seq: 0, kind: .toolUse, toolUseID: "duplicate"),
+            ReconstructedItem(seq: 1, kind: .toolUse, name: "later name", toolUseID: "duplicate"),
+            ReconstructedItem(seq: 2, kind: .toolUse, name: "first", toolUseID: "a"),
+            ReconstructedItem(seq: 3, kind: .toolUse, name: "second", toolUseID: "b"),
+            ReconstructedItem(seq: 4, kind: .toolResult, toolUseID: "b", isError: true),
+            ReconstructedItem(seq: 5, kind: .toolResult, toolUseID: "a", isError: true),
+            ReconstructedItem(seq: 6, kind: .toolResult, toolUseID: "b", isError: true),
+            ReconstructedItem(seq: 7, kind: .toolResult, toolUseID: "duplicate", isError: true),
+        ]
+        let result = SessionReconstructor.story(for: items)
+        #expect(result.failedToolNames == ["second", "first"])
+        #expect(result.lastErrorSummary == "tool call failed")
+        #expect(result.errorCount == 4)
+    }
 
     @Test("a clean session reports failed=false")
     func cleanStory() {

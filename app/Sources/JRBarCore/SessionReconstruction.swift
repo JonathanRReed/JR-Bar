@@ -281,43 +281,31 @@ public enum SessionReconstructor {
 
         var loadedBytes = 0
         for segment in segments { loadedBytes += segment.count }
-        let totalBytes = totalByteCount ?? loadedBytes
+        let totalBytes = max(totalByteCount ?? loadedBytes, loadedBytes)
         if totalBytes > timelineByteLimit {
             return SessionReconstruction(
                 items: [], story: story(for: []),
                 gaps: gaps + ["transcript_too_large:\(totalBytes)"],
                 totalLines: 0, redactedLines: 0)
         }
-        var data = Data()
-        data.reserveCapacity(loadedBytes)
-        for segment in segments { data.append(segment) }
-
         var fallbackAt: Double? = epochFallback?.timeIntervalSince1970
         var turnID: String? = nil
         var truncated = false
-
-        var start = 0
-        var lineRanges: [Range<Int>] = []
-        for index in 0..<data.count where data[index] == 0x0A {
-            lineRanges.append(start..<index)
-            start = index + 1
-        }
-        if start < data.count { lineRanges.append(start..<data.count) }
 
         // The cap anchors to the tail: a transcript that outgrows it keeps its
         // newest events — dropping the tail would hide the very failure the
         // timeline exists to surface. `seq` counts every appended item so the
         // pre-sort index stays monotonic after front-trimming.
         var seq = 0
-        for range in lineRanges {
+        forEachLine(in: segments) { line in
             totalLines += 1
-            let line = String(decoding: data[range], as: UTF8.self)
+            if line.isEmpty { return }
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty { continue }
+            if trimmed.isEmpty { return }
             guard let object = try? JSONSerialization.jsonObject(
                 with: Data(trimmed.utf8), options: [.fragmentsAllowed]) else {
                 malformed += 1
-                continue
+                return
             }
             if let scalar = object as? String {
                 // A whole-line sentinel: the redactor could not keep the row.
@@ -327,11 +315,11 @@ public enum SessionReconstructor {
                 } else {
                     malformed += 1
                 }
-                continue
+                return
             }
             guard let row = object as? [String: Any] else {
                 malformed += 1
-                continue
+                return
             }
             if containsSentinel(row) { redactedLines += 1 }
             let rowItems: [ReconstructedItem]
@@ -375,6 +363,38 @@ public enum SessionReconstructor {
         return SessionReconstruction(
             items: items, story: story(for: items), gaps: gaps,
             totalLines: totalLines, redactedLines: redactedLines)
+    }
+
+    /// Only a line crossing a segment boundary needs a byte buffer.
+    private static func forEachLine(in segments: [Data], consume: (String) -> Void) {
+        let lastSegment = segments.lastIndex { !$0.isEmpty }
+        var carry = Data()
+        for (segmentIndex, segment) in segments.enumerated() {
+            segment.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+                var start = 0
+                for index in 0..<bytes.count where bytes[index] == 0x0A {
+                    if carry.isEmpty {
+                        consume(String(decoding: bytes[start..<index], as: UTF8.self))
+                    } else {
+                        carry.append(contentsOf: bytes[start..<index])
+                        consume(String(decoding: carry, as: UTF8.self))
+                        carry.removeAll(keepingCapacity: true)
+                    }
+                    start = index + 1
+                }
+                guard start < bytes.count else { return }
+                if segmentIndex == lastSegment {
+                    if carry.isEmpty {
+                        consume(String(decoding: bytes[start..<bytes.count], as: UTF8.self))
+                    } else {
+                        carry.append(contentsOf: bytes[start..<bytes.count])
+                        consume(String(decoding: carry, as: UTF8.self))
+                    }
+                } else {
+                    carry.append(contentsOf: bytes[start..<bytes.count])
+                }
+            }
+        }
     }
 
     /// `parse_datetime(row["timestamp"], fallback)` — a missing or bad stamp
@@ -579,6 +599,12 @@ public enum SessionReconstructor {
     // MARK: Failure story
 
     static func story(for items: [ReconstructedItem], running: Bool = false) -> FailureStory {
+        var toolNames: [String: String?] = [:]
+        for item in items where item.kind == .toolUse {
+            if let id = item.toolUseID, toolNames[id] == nil {
+                toolNames.updateValue(item.name, forKey: id)
+            }
+        }
         let errorItems = items.filter(\.isError)
         let diedMidTurn = !running && !items.isEmpty && items.last?.kind != .turnEnd
         var lastErrorSummary: String? = nil
@@ -589,7 +615,7 @@ public enum SessionReconstructor {
                     ? "turn aborted"
                     : bounded(last.name.map { "turn end: \($0)" } ?? last.text)
             case .toolUse, .toolResult:
-                let name = last.name ?? pairedToolName(for: last, in: items)
+                let name = last.name ?? last.toolUseID.flatMap { toolNames[$0] ?? nil }
                 lastErrorSummary = name.map { "tool `\($0)` failed" }
                     ?? "tool call failed"
             case .message:
@@ -600,9 +626,10 @@ public enum SessionReconstructor {
             $0.kind == .message && $0.role == "user"
         }.flatMap { $0.text }.map { String($0.prefix(intentLimit)) }
         var failedToolNames: [String] = []
+        var seenNames: Set<String> = []
         for item in errorItems where item.kind == .toolUse || item.kind == .toolResult {
-            if let name = item.name ?? pairedToolName(for: item, in: items),
-               !failedToolNames.contains(name) {
+            if let name = item.name ?? item.toolUseID.flatMap({ toolNames[$0] ?? nil }),
+               seenNames.insert(name).inserted {
                 failedToolNames.append(name)
             }
         }
@@ -624,14 +651,6 @@ public enum SessionReconstructor {
               let asked = items[..<index].last(where: { $0.kind == .message && $0.role == "user" && $0.at != nil })?.at,
               failedAt >= asked else { return nil }
         return failedAt - asked
-    }
-
-    /// A failed tool_result's name lives on its paired tool_use row.
-    private static func pairedToolName(
-        for item: ReconstructedItem, in items: [ReconstructedItem]
-    ) -> String? {
-        guard let id = item.toolUseID else { return nil }
-        return items.first { $0.kind == .toolUse && $0.toolUseID == id }?.name
     }
 
     private static func bounded(_ text: String?) -> String? {
