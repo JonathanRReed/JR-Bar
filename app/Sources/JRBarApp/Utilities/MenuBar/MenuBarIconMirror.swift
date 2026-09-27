@@ -160,9 +160,14 @@ final class MenuBarIconMirror: NSPanel {
     /// against the Quartz origin display's `primaryMaxY`. Idempotent: the
     /// window moves only when its frame changes and orders front only
     /// when it is not already up.
-    func show(row: CGRect, primaryMaxY: CGFloat, seat: (CGFloat) -> CGFloat) {
+    func show(row: CGRect, primaryMaxY: CGFloat, seat: (CGFloat) -> CGFloat?) {
         let width = panelWidth
-        let frame = Self.frame(seatMinX: seat(width), width: width, row: row, primaryMaxY: primaryMaxY)
+        guard let x = seat(width), x.isFinite, width.isFinite, width > 0,
+              x >= row.minX, x + width <= row.maxX else {
+            hide()
+            return
+        }
+        let frame = Self.frame(seatMinX: x, width: width, row: row, primaryMaxY: primaryMaxY)
         if self.frame != frame {
             setFrame(frame, display: true)
             // A move that keeps the size never reaches `resizeSubviews`.
@@ -257,34 +262,26 @@ final class MenuBarIconMirror: NSPanel {
         return nil
     }
 
-    /// Where the mirror stands, always. First the seat with macOS's
-    /// item gap each side; failing that, a gap the face fits flush
-    /// against both neighbours — touching them beats standing on one,
-    /// and a hole the agent leaves open after concealing a small app is
-    /// often just that wide; failing that, the seat that covers the
-    /// least of anything drawn. On a crowded bar every gap is narrower
-    /// than the face, so the face takes the widest gap's left edge and
-    /// overlaps the next item by only the width that gap lacks — the
-    /// leftmost of equal gaps, so the system's own items at the right
-    /// end are the last covered. The old last resort, one gap right of
-    /// `clearOf`, was sure to land on the first drawn item: a
-    /// status-bar-level panel there hides that app's icon and takes its
-    /// clicks. With no gap to weigh — nothing drawn right of `clearOf`:
-    /// an empty row, or no Accessibility and so no frames — the mirror
-    /// stands one item gap clear of it. `rowMaxX` keeps the panel on
-    /// the bar.
+    /// A complete free gap, or no seat. An empty/incomplete listing is
+    /// not proof of empty space. Never cover another control merely to
+    /// keep our icon visible; the palette and Screen Bar remain reachable.
     nonisolated static func seat(drawn: [CGRect], clearOf: CGFloat, width: CGFloat,
-                                 rowMaxX: CGFloat) -> CGFloat {
-        if let seat = seatMinX(drawn: drawn, clearOf: clearOf, width: width) { return seat }
-        if let seat = seatMinX(drawn: drawn, clearOf: clearOf, width: width,
-                               trailingGap: 0, leadingGap: 0) { return seat }
-        var widest: (left: CGFloat, right: CGFloat)?
-        for gap in gaps(drawn: drawn, clearOf: clearOf)
-        where widest.map({ gap.right - gap.left > $0.right - $0.left }) ?? true {
-            widest = gap
+                                 rowMaxX: CGFloat) -> CGFloat? {
+        guard clearOf.isFinite, rowMaxX.isFinite, width.isFinite,
+              width > 0, rowMaxX - clearOf >= width else { return nil }
+        let onRow = drawn.filter {
+            $0.minX.isFinite && $0.maxX.isFinite && $0.width > 0
+                && $0.minX < rowMaxX && $0.maxX > clearOf
         }
-        guard let widest else { return min(clearOf + itemGap, rowMaxX - width) }
-        return min(max(widest.left, widest.right - width), rowMaxX - width)
+        guard !onRow.isEmpty else { return nil }
+        for padding in [itemGap, CGFloat.zero] {
+            if let x = seatMinX(drawn: onRow, clearOf: clearOf, width: width,
+                                trailingGap: padding, leadingGap: padding),
+               x >= clearOf, x + width <= rowMaxX {
+                return x
+            }
+        }
+        return nil
     }
 
     /// The open stretches of the row right of `clearOf`, left to right:
@@ -320,10 +317,24 @@ final class MenuBarIconMirror: NSPanel {
     /// on the « (parked).
     nonisolated static func slotSeat(realItem: CGRect?, width: CGFloat, row: CGRect,
                                      clearOf: CGFloat, overflow: CGRect?) -> CGFloat? {
-        guard let realItem, realItem.width > 0, realItem.intersects(row),
-              realItem.minX >= clearOf else { return nil }
+        guard let realItem, width.isFinite, width > 0, realItem.width >= width,
+              realItem.intersects(row), realItem.minX >= max(clearOf, row.minX),
+              realItem.maxX <= row.maxX else { return nil }
         if let overflow, overflow.intersection(realItem).width >= 4 { return nil }
         return realItem.maxX - width
+    }
+
+    /// A frozen drag boundary or native slot is only a preference, never
+    /// permission to cover a newly discovered system control.
+    nonisolated static func validatedSeat(_ minX: CGFloat, drawn: [CGRect],
+                                         clearOf: CGFloat, width: CGFloat,
+                                         rowMaxX: CGFloat) -> CGFloat? {
+        guard minX.isFinite, clearOf.isFinite, width.isFinite, rowMaxX.isFinite,
+              width > 0, minX >= clearOf, minX + width <= rowMaxX,
+              !drawn.isEmpty,
+              drawn.allSatisfy({ $0.minX.isFinite && $0.maxX.isFinite && $0.width > 0 }),
+              drawn.allSatisfy({ $0.maxX <= minX || $0.minX >= minX + width }) else { return nil }
+        return minX
     }
 
     /// The panel's width: the face plus the ‹ zone while anything is

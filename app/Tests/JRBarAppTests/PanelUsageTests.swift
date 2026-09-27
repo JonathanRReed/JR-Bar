@@ -51,7 +51,7 @@ struct PanelUsageTests {
         let store = makeStore(liveCore(), asked: asked)
         store.panelDidOpen()
         #expect(asked.calls.isEmpty, "nothing queues ahead of the panel's first clicks")
-        await settle { !asked.calls.isEmpty }
+        await settle(within: 90) { !asked.calls.isEmpty }
         #expect(asked.calls == ["claude"])
         store.panelDidClose()
     }

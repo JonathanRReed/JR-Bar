@@ -144,7 +144,7 @@ final class FoldCapture {
         fullSink.onFrame = { [weak self] buffer in
             let box = FrameBox(buffer)
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.stopRequested else { return }
                 if !self.hasFrame {
                     FoldLog.log.notice("capture: first full frame delivered")
                 }
@@ -154,15 +154,16 @@ final class FoldCapture {
         }
         fullSink.onError = { [weak self] message in
             Task { @MainActor [weak self] in
+                guard let self, !self.stopRequested else { return }
                 FoldLog.log.error("capture: full stream stopped: \(message, privacy: .public)")
-                self?.lastError = message
-                self?.onError?(message)
+                self.lastError = message
+                self.onError?(message)
             }
         }
         farSink.onFrame = { [weak self] buffer in
             let box = FrameBox(buffer)
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.stopRequested else { return }
                 if !self.hasFarFrame {
                     FoldLog.log.notice("capture: first far-wall frame delivered")
                 }
@@ -170,8 +171,9 @@ final class FoldCapture {
                 self.onFarFrame?(box.buffer)
             }
         }
-        farSink.onError = { message in
-            Task { @MainActor in
+        farSink.onError = { [weak self] message in
+            Task { @MainActor [weak self] in
+                guard let self, !self.stopRequested else { return }
                 FoldLog.log.error("capture: far stream stopped: \(message, privacy: .public)")
             }
         }
@@ -223,6 +225,10 @@ final class FoldCapture {
             far = stream
         }
         try await full.startCapture()
+        guard !stopRequested else {
+            try? await full.stopCapture()
+            return
+        }
         if let far {
             do {
                 try await far.startCapture()
@@ -326,7 +332,7 @@ final class FoldCapture {
 
     private func pollWindowLayout() {
         let frame = displayFrameQuartz
-        guard frame.width > 0 else { return }
+        guard !stopRequested, frame.width > 0 else { return }
         let entries = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
         ) as? [[String: Any]] ?? []

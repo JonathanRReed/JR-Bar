@@ -78,6 +78,7 @@ final class AquariumToy: Toy {
 
     @ObservationIgnored private var windowController: AquariumWindowController?
     @ObservationIgnored private var gameTimer: Timer?
+    @ObservationIgnored private var workClock = AquariumWorkClock()
     /// The tank outside its window: the live wallpaper and the idle
     /// screensaver, both opt-in from the card.
     @ObservationIgnored private var ambient: AquariumAmbientController?
@@ -106,6 +107,7 @@ final class AquariumToy: Toy {
         game.apply(.setWindowOpen(false), now: Date())
         refreshFish()
         observeSessions()
+        observeWorkConnection()
         // The economy's tick runs only while the toy is on — the
         // window being closed is exactly when the away counters fill.
         // Twenty seconds of live time per tick; nothing accrues while
@@ -186,6 +188,7 @@ final class AquariumToy: Toy {
     private func syncGameTimer() {
         if isOn {
             guard gameTimer == nil else { return }
+            workClock.reset(connected: core.isLive, at: ProcessInfo.processInfo.systemUptime)
             gameTimer = Timer.scheduledTimer(
                 withTimeInterval: AquariumRules.tickInterval, repeats: true
             ) { [weak self] _ in
@@ -194,6 +197,7 @@ final class AquariumToy: Toy {
         } else {
             gameTimer?.invalidate()
             gameTimer = nil
+            workClock.reset()
         }
     }
 
@@ -204,6 +208,7 @@ final class AquariumToy: Toy {
 
     let id = "aquarium"
     let name = "Aquarium"
+    let switchLabel = "Tank window"
     let blurb = "Every session is a fish. Asks come up for air."
     let symbol = "fish.fill"
 
@@ -290,6 +295,14 @@ final class AquariumToy: Toy {
         return parts.joined(separator: " · ")
     }
 
+    var activitySummary: String {
+        let now = Date()
+        let visible = fish.filter { !$0.isRetired(at: now) }
+        return AquariumActivityPresentation.summary(
+            states: visible.filter { !$0.isResident }.map(\.state),
+            residents: visible.filter(\.isResident).count, connected: core.isLive)
+    }
+
     /// The Day & night picker's caption: what the chosen clock is, and
     /// for "Follow the sun" where the sun is worked out from — so it
     /// never pretends to know more than the time zone.
@@ -358,15 +371,17 @@ final class AquariumToy: Toy {
         let before = game
         let sessions = core.state?.sessions ?? []
         let working = sessions
-            .filter { SessionActivity.reduce($0) == .working }
+            .filter { core.isLive && SessionActivity.reduce($0) == .working }
             .map(\.id)
+        let workSeconds = workClock.consume(connected: core.isLive,
+            at: ProcessInfo.processInfo.systemUptime, maximum: AquariumRules.tickInterval)
         var effects = game.apply(
-            .workTick(seconds: AquariumRules.tickInterval, working: working),
+            .workTick(seconds: workSeconds, working: working),
             now: now)
         effects += game.apply(.tick, now: now)
         // No session list (the core not up yet, or reconnecting) says
         // nothing about who is live, so nothing is pruned on it.
-        if core.state != nil {
+        if core.isLive && core.state != nil {
             effects += game.apply(.prune(liveIDs: Set(sessions.map(\.id))), now: now)
         }
         note(effects, now: now)
@@ -846,6 +861,26 @@ final class AquariumToy: Toy {
     static func observedFacts(_ core: CoreModel) {
         _ = core.allSessions
         _ = core.usage
+    }
+
+    /// Connection changes invalidate work time synchronously, before a queued
+    /// reconnect can replace a disconnected snapshot. Re-arming is coalesced;
+    /// no timer or timestamp-polling freshness heuristic is added.
+    private func observeWorkConnection() {
+        withObservationTracking {
+            _ = core.isLive
+        } onChange: { [weak self] in
+            // CoreModel publishes isLive on the main actor; onChange is a
+            // synchronous will-change callback. Do not read its old value.
+            MainActor.assumeIsolated { self?.workClock.reset() }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.workClock.reset(connected: self.isOn && self.core.isLive,
+                                     at: ProcessInfo.processInfo.systemUptime)
+                self.refreshFish()
+                self.observeWorkConnection()
+            }
+        }
     }
 
     /// Watches the session list like `NotchBuddyToy`: one observation

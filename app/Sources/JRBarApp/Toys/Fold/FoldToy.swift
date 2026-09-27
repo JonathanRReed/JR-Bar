@@ -163,6 +163,8 @@ final class FoldToy: Toy {
     /// The frames: the ScreenCaptureKit streams, or — without Screen
     /// Recording — the wallpaper alone (`FoldWallpaperSource`).
     @ObservationIgnored private var capture: (any FoldFrameSource)?
+    @ObservationIgnored private var captureDisplayVersion = -1
+    @ObservationIgnored private var captureFailure: String?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// The lock and unlock broadcasts arrive on the distributed centre.
     @ObservationIgnored private var distributedObservers: [NSObjectProtocol] = []
@@ -896,9 +898,8 @@ final class FoldToy: Toy {
             if let capture, !capture.hasFrame,
                now - captureBeganAt > 5, now - lastCaptureRecycle > 5 {
                 lastCaptureRecycle = now
-                self.capture = nil
+                stopCapture()
                 FoldLog.log.warning("capture: no frame in 5s — restarting stream")
-                Task { await capture.stop() }
                 ensureCaptureRunning()
             }
             // The link's only job is motion; fully at rest — gate shut,
@@ -1091,30 +1092,36 @@ final class FoldToy: Toy {
     /// the band or its cooldown — so the purple indicator never outlives
     /// a fold that could be on screen.
     private func ensureCaptureRunning() {
+        // A display change retires the source even before the next frame.
+        if capture != nil && captureDisplayVersion != displayVersion { stopCapture() }
         // A wallpaper stand-in yields to the real capture the moment the
         // permission lands — the next arm films the windows too.
         if let current = capture, current is FoldWallpaperSource, FoldCapturePermission.granted {
-            self.capture = nil
-            Task { await current.stop() }
+            stopCapture()
         }
         // The Duo runs one stream and the Room two: a look change swaps
         // the capture for the right shape.
         let dual = settings.look == .room
         if let current = capture as? FoldCapture, current.dual != dual {
-            self.capture = nil
-            Task { await current.stop() }
+            stopCapture()
         }
         guard capture == nil else { return }
         let capture: any FoldFrameSource = FoldCapturePermission.granted
             ? FoldCapture(dual: dual) : FoldWallpaperSource()
         self.capture = capture
+        captureDisplayVersion = displayVersion
+        captureFailure = nil
+        let sourceDisplayVersion = displayVersion
+        let isCurrent: @MainActor () -> Bool = { [weak self, weak capture] in
+            guard let self, let capture else { return false }
+            return self.capture === capture && self.displayVersion == sourceDisplayVersion
+                && self.isOn && self.settings.provider == .jrbar
+                && !self.screenAsleep && !self.screenLocked && !self.sessionInactive
+        }
         captureBeganAt = CACurrentMediaTime()
         awaitingFirstFrame = true
-        capture.onFullFrame = { [weak self, weak capture] buffer in
-            // A stream already stopped may land one last frame: it is not
-            // the fold's any more, and must not bring the picture back.
-            guard let self, let capture, self.capture === capture,
-                  let overlay = self.ensureOverlay() else { return }
+        FoldCaptureCallbacks.install(on: capture, isCurrent: isCurrent, full: { [weak self] buffer in
+            guard let self, let overlay = self.ensureOverlay() else { return }
             // Push once per delivered frame; a draw then costs one
             // triangle, not a texture conversion. The overlay is made
             // here, not at show time: on a static screen SCK may deliver
@@ -1128,42 +1135,48 @@ final class FoldToy: Toy {
                 self.noteFirstFrame()
             }
             self.tickFrame()
-        }
-        capture.onFarFrame = { [weak self] buffer in
+        }, far: { [weak self] buffer in
             // The wallpaper-only far wall is the Room's nice-to-have half —
             // the renderer stands the full texture in until it lands. The
             // Duo has no far wall.
             guard let self, self.settings.look == .room else { return }
             _ = self.overlay?.renderer.setFarFrame(buffer)
-        }
-        capture.onCards = { [weak self] cards in
+        }, cards: { [weak self] cards in
             guard let self else { return }
             self.lastCards = cards
             self.overlay?.renderer.setCards(cards)
-        }
-        capture.onError = { [weak self] message in
+        }, failed: { [weak self] message in
             // The stream died mid-run: drop it so the next reconcile
             // builds a fresh one rather than trusting a dead hasFrame.
             // A revoked grant kills streams this way, so the cached
             // preflight goes stale here — re-ask on the next read.
+            guard let self else { return }
             FoldCapturePermission.invalidate()
-            guard let self, let capture = self.capture else { return }
-            self.capture = nil
+            self.captureFailure = message
+            self.stopCapture()
             self.core.appendLocalLog(level: "error", "Fold capture stopped: \(message)")
-            Task { await capture.stop() }
             self.noteDiag(stage: "capture-error")
             self.publishCard()
-        }
+        })
         FoldLog.log.notice("capture: starting stream")
         Task { [weak self, weak capture] in
+            guard let capture, isCurrent() else { return }
             do {
-                try await capture?.start()
+                try await capture.start()
+                // start() may resume after stop/replacement. The retired
+                // source is still ours to close, never the replacement.
+                if !isCurrent() { await capture.stop() }
             } catch {
+                guard isCurrent(), let self else {
+                    await capture.stop()
+                    return
+                }
                 FoldCapturePermission.invalidate()
-                guard let self, self.capture === capture else { return }
-                self.capture = nil
+                self.captureFailure = error.localizedDescription
+                self.stopCapture()
                 FoldLog.log.error("capture: start failed: \(error.localizedDescription, privacy: .public)")
                 self.core.appendLocalLog(level: "error", "Fold capture failed: \(error.localizedDescription)")
+                self.publishCard()
             }
         }
     }
@@ -1210,8 +1223,11 @@ final class FoldToy: Toy {
     /// its black frame up with nothing being recorded.
     private func stopCapture() {
         awaitingFirstFrame = false
+        lastCards = []
+        overlay?.renderer.setCards([])
         guard let capture else { return }
         self.capture = nil
+        FoldCaptureCallbacks.detach(from: capture)
         Task { await capture.stop() }
     }
 
@@ -1497,16 +1513,12 @@ final class FoldToy: Toy {
         guard canFold else { return "Waiting for Screen Recording" }
         if rendererFailed { return "Renderer failed to start" }
         if let lastError = capture?.lastError { return "Capture stopped — \(lastError)" }
-        let tilted = displayedDelta * 180 / .pi
-        guard tilted > 0.1 else {
-            if settings.anchor == .movement {
-                return "Parked — the next move folds from here"
-            }
-            return "Parked — close the lid past \(Int(settings.activationAngle.rounded()))°"
-        }
-        if capture?.hasFrame != true { return "Tilted \(Int(tilted))° — waiting for a screen frame" }
-        if overlay?.renderer.hasTexture != true { return "Tilted \(Int(tilted))° — frames not reaching the GPU" }
-        return overlay?.isVisible == true ? "Holding \(Int(tilted))° of tilt" : "Tilted \(Int(tilted))° — overlay hidden"
+        if let captureFailure { return "Capture stopped — \(captureFailure)" }
+        return FoldReadiness.detail(
+            tilted: displayedDelta * 180 / .pi, movement: settings.anchor == .movement,
+            activationAngle: settings.activationAngle, captureStarted: capture != nil,
+            hasFrame: capture?.hasFrame == true, hasTexture: overlay?.renderer.hasTexture == true,
+            visible: overlay?.isVisible == true)
     }
 
     // MARK: External providers

@@ -33,7 +33,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
     public var state: State
     /// `thermal` or `battery` while a yield has taken the hold away.
     public var suspended: String?
-    /// The screen is held too — no screen saver, no lock.
+    /// Prevent idle display sleep too; this does not override lock policy.
     public var display: Bool
     /// When the agents' post-work grace ends (`hold.grace_until`).
     public var graceUntil: Date?
@@ -125,6 +125,10 @@ public struct KeepAwakeReading: Equatable, Sendable {
         return false
     }
 
+    /// Shared by the card and chip so neither promises to bypass security policy.
+    public static let displaySleepHelp = "Prevents idle display sleep. Manual locking and system security policies still apply."
+    public static let manualSessionHelp = "Turning this off ends only your manual session. Automatic agent holds and other apps may still keep the Mac awake."
+
     // MARK: The chip
 
     /// The chip's word under the cup — short enough for a chip.
@@ -154,7 +158,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
         switch state {
         case .off:
             return display
-                ? "Keep the Mac and its display awake — the screen will not lock while held."
+                ? "Start a manual Keep Awake session. " + Self.displaySleepHelp
                 : "Keep the Mac awake (the display may still sleep and lock)."
         case .agents(let count):
             if count > 0 {
@@ -167,18 +171,18 @@ public struct KeepAwakeReading: Equatable, Sendable {
         case .lease(.until(let end)):
             let left = end.timeIntervalSince(now)
             text = left > 0
-                ? "Keeping the Mac awake for \(Self.long(left)) more — click to allow sleep."
-                : "Keeping the Mac awake — click to allow sleep."
+                ? "Keeping the Mac awake for \(Self.long(left)) more — click to end your manual session."
+                : "Keeping the Mac awake — click to end your manual session."
         case .lease(.agentsFinish):
-            text = "Keeping the Mac awake until the agents finish — click to allow sleep."
+            text = "Keeping the Mac awake until the agents finish — click to end your manual session."
         case .lease(.indefinite):
-            text = "Keeping the Mac awake until you turn it off — click to allow sleep."
+            text = "Keeping the Mac awake until you turn it off — click to end your manual session."
         }
+        if leaseInForce { text += " " + Self.manualSessionHelp }
         if let why = suspendedWords {
             text = "Paused: \(why). The hold comes back on its own. " + text
-        } else if display {
-            text += " The display stays on too."
         }
+        if display { text += " " + Self.displaySleepHelp }
         return text
     }
 
