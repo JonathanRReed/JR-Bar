@@ -229,3 +229,52 @@ folder; open and inspect each produced PNG.
 Record Mac model, macOS/Xcode version, displays/scales, permissions, branch
 SHA, observed result, and relevant diagnostics for failures. Leave the PR
 unmerged until these results and any remaining scope decisions are reviewed.
+
+## Native verification — Devin run, this Mac
+
+Host: Mac16,8 (Apple M4 Pro), macOS 27.2 (26B5091g), arm64. Toolchain is
+Command Line Tools only — no Xcode is installed or selected — with Apple
+Swift 6.4.0.34.1 (swift-driver 1.168.6), target arm64-apple-macosx27.2.0.
+CI builds with the older Swift 6.3.3 toolchain, so the local compiler is
+newer, not identical. Python 3.12.13 via the worktree's own `.venv`
+(`./scripts/bootstrap-dev.sh`). One display: 3024×1964 Retina, main, not
+mirrored. Worktree: `.claude/worktrees/repair-pr14`.
+
+| Check | Native result |
+| --- | --- |
+| `./scripts/bootstrap-dev.sh` | Passed. Pinned pip 26.1.2 and all constrained dependencies; `pip check` clean. |
+| `make fast` | Passed in 44.23 s at `9eff18e6` and 61.30 s at `c48da3cd`: 87 contract tests, 2161-file secret scan, 161 Markdown link check, 37 fixture tests, 288 focused tests, bytecode, dependency policy, version contract, diff hygiene. |
+| `.venv/bin/python -m pytest tests -q` | 4271 passed, 4 warnings, 17 subtests, 345.52 s at `9eff18e6`. |
+| `swift build --build-tests` | Passed at `9eff18e6` and `c48da3cd`; warnings only (pre-existing sendable-capture and missing CLT search paths). |
+| `swift test` (all four targets) | 3560/3560 passed at `9eff18e6`, and again at `c48da3cd` (76 + 45 + 985 + 2454). The four repair suites the prior run could not execute natively — `FoldCaptureCallbacksRepairTests`, `ArchiveReadBindingsRepairTests`, and the placement/drag/mirror suites — all ran and passed. |
+| Render proofs | `JRBAR_RENDER_PROOF=1` wrote ~995 PNGs to `/tmp/jrbar-proofs-pr14` at `9eff18e6`. Inspected: the Keep Awake card reads "Manual session" with both disclaimers; the Aquarium card shows "Tank window" and the honest "Disconnected · 0 confirmed working" line; the notch menu says "End manual session"; the menu-bar drag frames show the frozen icon mid-drag and the covered-control note; the LED strip proof's layer render matches its SwiftUI still pixel-for-pixel. |
+
+### CI flake comparison against main
+
+The failed Swift check at `9eff18e6` reported four issues, all in files
+this branch does not touch: `LEDPreviewStripTests` (two frames identical),
+`PanelPulseTests` (no pulse registered), `ScreenBarEarTests` ("1h 00m" read
+back as "59m"), and `PanelUsageTests` (the sparkline ask never landed).
+Main's own push run at `f01cd232` failed the same way — the same suites,
+plus a mock-core socket that took over ten seconds to appear — while the
+prior head `9bea0661` passed, so the failures are environment-sensitive,
+not a regression of this diff. The mechanism for each is concrete: the CI
+image forces Reduce Motion (still frames, still marks), the ear formats a
+fresh `Date()` on each read and crossed a minute boundary under starvation,
+and two waits had deadlines inside what the loaded runner needed.
+
+`c48da3cd` hardens those tests without weakening any assertion: the probe
+hosts the layer view with Reduce Motion pinned off, the ear's reset is
+seeded mid-bucket in the day-scaled wording, and the condition-bounded
+waits are raised to ninety seconds (socket wait to thirty). Locally at
+`f01cd232` all four suites already passed; the fixes exist so the required
+CI check measures the code rather than the host.
+
+### Still pending on this Mac
+
+- Human-driven acceptance: the checklist's Command-drag supersession,
+  physical lid movement, screen-permission grant/revoke, Spaces/wake, and
+  second-display steps need a person; they have not been run.
+- Full Xcode-specific validation is unavailable (CLT only).
+- GitHub checks must re-run on `c48da3cd`; merging waits on them and on
+  the human acceptance above.
