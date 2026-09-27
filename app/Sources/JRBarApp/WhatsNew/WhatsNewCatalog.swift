@@ -33,10 +33,10 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "2026-09-25"
+    static let releaseID = "0.9.10"
 
     /// The header's one line.
-    static let headline = "Every agent's real mark, a faster Settings, and a notch card that keeps up."
+    static let headline = "Fold starts from rest, reset confetti arrives, and utilities recover safely."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
@@ -44,23 +44,23 @@ enum WhatsNewCatalog {
     static let entries: [WhatsNewEntry] = [
         WhatsNewEntry(
             id: "dock", symbol: "dock.rectangle",
-            title: "Tighter Dock previews",
-            detail: "Previews sit just off the icon, and Tight, Standard or Roomy spacing is on the Dock card.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where the Dock card is"),
+            title: "Keep Awake stays clear",
+            detail: "Manual sessions have their own controls, and pending commands cannot run twice.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Keep Awake is"),
         WhatsNewEntry(
             id: "fold", symbol: "laptopcomputer",
-            title: "The Fold, like the Duo",
-            detail: "The desktop holds still while the screen folds through it, darkening away from the hinge.",
+            title: "Fold starts from rest",
+            detail: "Switching to the resting angle uses the parked lid reading before your first close.",
             tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Fold card is"),
         WhatsNewEntry(
             id: "aquarium", symbol: "fish",
-            title: "Fish that really turn",
-            detail: "Every fish swims round through a real head-on turn, and an Arcade tank joins the shop.",
+            title: "Fish earn real work rewards",
+            detail: "Work rewards stop while the core is disconnected, and resume when live readings return.",
             tryIt: .aquarium, opens: "Opens the Aquarium"),
         WhatsNewEntry(
             id: "drag", symbol: "menubar.rectangle",
-            title: "⌘-drag to hide",
-            detail: "Hold ⌘ and drag a menu bar item across the JR-Bar icon to hide it, or back to show it.",
+            title: "Safer menu placement",
+            detail: "Cancelled drags and old display readings cannot restore a mirror over another control.",
             keys: "⌘ drag"),
         WhatsNewEntry(
             id: "dot", symbol: "light.strip.2",
@@ -68,15 +68,15 @@ enum WhatsNewCatalog {
             detail: "Light flows off the SidePulse into the Dot, kept in step with the Dot's slower clock.",
             tryIt: .settings(page: "devices"), opens: "Opens Settings › Devices, where Pro & Dot is"),
         WhatsNewEntry(
-            id: "motions", symbol: "waveform.path",
-            title: "New light motions",
-            detail: "Ripple, Pendulum and a Land finish join the strip, and every Effect Studio knob works.",
-            tryIt: .window(.effects), opens: "Opens Effect Studio"),
+            id: "resets", symbol: "party.popper",
+            title: "Reset confetti arrives",
+            detail: "Recent provider resets reach confetti after reconnecting, even when daemon event numbers restart.",
+            tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where Confetti is"),
         WhatsNewEntry(
-            id: "orbs", symbol: "sparkles",
-            title: "See what agents do",
-            detail: "A working session's orb shows whether it is thinking, searching, writing or running.",
-            tryIt: .panel(toggle: false), opens: "Opens the panel, where your sessions are"),
+            id: "archive", symbol: "archivebox",
+            title: "Read archives without capture",
+            detail: "Saved searches, transcripts and details remain available while new capture is off.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Data Hoarder is"),
         WhatsNewEntry(
             id: "marks", symbol: "star",
             title: "Every agent's real mark",

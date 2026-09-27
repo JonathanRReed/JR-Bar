@@ -2,6 +2,26 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.10
+
+- Fold uses the parked lid reading when switching to "Wherever the lid
+  rests", so the first close starts from the correct angle.
+- Provider reset events survive event-id collisions after a daemon restart.
+  A new app connection also receives quota resets from the last five minutes,
+  with their original cursors to prevent duplicate bursts.
+- Fold retires old capture callbacks when its source or display changes,
+  and reports when it is still waiting for a frame.
+- Menu placement rejects overlapping seats and cancelled drag results.
+  Old Accessibility scans cannot publish geometry after display or session
+  changes. If the native click bridge fails, the spacer engine takes over
+  and concealment retries wait 30 seconds.
+- Keep Awake controls act on the manual session, preserve battery and
+  charger warnings, and reject repeated commands while a change is pending.
+- Aquarium work rewards stop when the core disconnects. Saved archive
+  searches and details remain available when capture is off.
+- Integrated the utility and toy repair branch and retained the useful
+  menu-bar and Keep Awake corrections from the alternate lifecycle branch.
+
 ## 0.9.9 (unreleased)
 
 ### Round 4 (2026-09-25): the performance pass

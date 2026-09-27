@@ -184,7 +184,8 @@ final class LyricsStore {
                              session: URLSession) async -> Data? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
-        request.setValue("JR-Bar/0.9.9 (https://github.com/jonathanreed/jr-bar)",
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        request.setValue("JR-Bar/\(version) (https://github.com/jonathanreed/jr-bar)",
                          forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse,
