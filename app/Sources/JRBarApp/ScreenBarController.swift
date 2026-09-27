@@ -3,6 +3,116 @@ import JRBarCore
 import JRBarLEDS
 import QuartzCore
 
+/// Builds one Screen Bar keyframe plan at a time. A burst of new programs
+/// keeps only the newest request behind the one already running, so a slow
+/// plan cannot turn brightness changes into an unbounded detached-task queue.
+@MainActor
+final class ScreenBarPlanQueue {
+    typealias Renderer = @Sendable (LEDSSampler) async -> LEDSKeyframePlan?
+    typealias Result = @MainActor (_ generation: UInt64, _ sampler: LEDSSampler,
+                                   _ plan: LEDSKeyframePlan?) -> Void
+
+    struct Request {
+        let generation: UInt64
+        let sampler: LEDSSampler
+    }
+
+    static let defaultRenderer: Renderer = { sampler in
+        await Task.detached(priority: .userInitiated) {
+            LEDSKeyframePlan.render(sampler: sampler)
+        }.value
+    }
+
+    private let renderer: Renderer
+    private var active: Request?
+    private var pending: Request?
+    private var worker: Task<Void, Never>?
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+    var onResult: Result?
+
+    /// Test diagnostics for the scheduling contract, not product state.
+    private(set) var renderStarts = 0
+    var activeGeneration: UInt64? { active?.generation }
+    var pendingGeneration: UInt64? { pending?.generation }
+
+    init(renderer: @escaping Renderer = ScreenBarPlanQueue.defaultRenderer) {
+        self.renderer = renderer
+    }
+
+    func submit(generation: UInt64, sampler: LEDSSampler) {
+        let request = Request(generation: generation, sampler: sampler)
+        guard active == nil else {
+            pending = request
+            return
+        }
+        start(request)
+    }
+
+    func contains(generation: UInt64) -> Bool {
+        active?.generation == generation || pending?.generation == generation
+    }
+
+    /// Parking drops work that has not started. The active synchronous
+    /// renderer may finish, but no successor starts until admission reopens.
+    func discardPending() {
+        pending = nil
+        if active == nil { resumeIdleWaiters() }
+    }
+
+    func cancel() {
+        worker?.cancel()
+        worker = nil
+        active = nil
+        pending = nil
+        onResult = nil
+        resumeIdleWaiters()
+    }
+
+    /// Deterministic test seam: waits for the active render and its one
+    /// coalesced successor, without polling a clock.
+    func waitUntilIdle() async {
+        if active == nil, pending == nil { return }
+        await withCheckedContinuation { idleWaiters.append($0) }
+    }
+
+    private func start(_ request: Request) {
+        active = request
+        renderStarts += 1
+        let renderer = self.renderer
+        worker = Task { @MainActor [weak self] in
+            guard !Task.isCancelled else { return }
+            let plan = await renderer(request.sampler)
+            guard !Task.isCancelled else { return }
+            self?.finish(request, plan: plan)
+        }
+    }
+
+    private func finish(_ request: Request, plan: LEDSKeyframePlan?) {
+        guard active?.generation == request.generation,
+              active?.sampler === request.sampler else { return }
+        // Keep the active slot occupied through the callback. A callback may
+        // synchronously submit a newer program; it must replace `pending`,
+        // never start a second renderer beside this finishing one.
+        onResult?(request.generation, request.sampler, plan)
+        guard active?.generation == request.generation,
+              active?.sampler === request.sampler else { return }
+        active = nil
+        worker = nil
+        if let pending {
+            self.pending = nil
+            start(pending)
+        } else {
+            resumeIdleWaiters()
+        }
+    }
+
+    private func resumeIdleWaiters() {
+        let waiters = idleWaiters
+        idleWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+}
+
 /// Owns the Screen Bar panel, the program currently on it, and how it moves.
 ///
 /// A program is rendered once into keyframe tracks (`LEDSKeyframePlan`) and
@@ -135,7 +245,10 @@ final class ScreenBarController {
         didSet {
             guard sensors != oldValue else { return }
             pushWings()
-            if sensors.cameraInUse != oldValue.cameraInUse, stillOnCamera { present() }
+            if sensors.cameraInUse != oldValue.cameraInUse, stillOnCamera {
+                syncPlanAdmission()
+                present()
+            }
         }
     }
     /// `jrbar.screenBarStillOnCamera` (default on): while any camera is
@@ -348,6 +461,12 @@ final class ScreenBarController {
     private var displayLink: CADisplayLink?
     private var sampler: LEDSSampler?
     private var plan: LEDSKeyframePlan?
+    private let planQueue: ScreenBarPlanQueue
+    private var planGeneration: UInt64 = 0
+    private var desiredPlan: (generation: UInt64, sampler: LEDSSampler)?
+    /// Includes nil results: a program too large to keyframe stays on its
+    /// frame-clock fallback instead of retrying on every visibility edge.
+    private var completedPlanGeneration: UInt64?
     private var anchor: CFTimeInterval = 0
     private var lastCodes: [RGB8] = []
     private var lastRaw: [RGB8] = Array(repeating: .black, count: ScreenBarGeometry.ledCount)
@@ -379,6 +498,10 @@ final class ScreenBarController {
     /// The frame clock is ticking right now — false whenever nobody can
     /// see the band (the off-cost check reads it).
     var clockRunning: Bool { displayLink.map { !$0.isPaused } ?? false }
+    var planBuildStarts: Int { planQueue.renderStarts }
+    var planBuildPending: Bool { planQueue.pendingGeneration != nil }
+    var programAnchorEpoch: Double? { lastAnchorEpoch }
+    func waitForPlanBuilds() async { await planQueue.waitUntilIdle() }
     /// The band's window is on screen.
     var panelOnScreen: Bool { panel.isVisible }
     private(set) var programText: String = ""
@@ -417,7 +540,9 @@ final class ScreenBarController {
     /// draw (`updateAppMenuWatch`).
     private let appMenus = AppMenuExtent()
 
-    init() {
+    init(planRenderer: @escaping ScreenBarPlanQueue.Renderer = ScreenBarPlanQueue.defaultRenderer,
+         reduceMotionOverride: Bool? = nil) {
+        planQueue = ScreenBarPlanQueue(renderer: planRenderer)
         let screen = ScreenBarGeometry.preferredScreen()
         // The settings-document geometry lands through the properties
         // above on the first `coreDidChange`; the first frame uses the
@@ -428,6 +553,10 @@ final class ScreenBarController {
         view = ScreenBarView(frame: NSRect(origin: .zero, size: frame.size))
         panel.contentView = view
         view.relayout()
+        if let reduceMotionOverride { reduceMotion = reduceMotionOverride }
+        planQueue.onResult = { [weak self] generation, sampler, plan in
+            self?.accept(plan: plan, generation: generation, sampler: sampler)
+        }
 
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(screensChanged(_:)), name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -479,6 +608,10 @@ final class ScreenBarController {
             self.recentAudioNotices = result.recent
             if let slot = result.slot { self.presentWingNotice(.right, slot: slot) }
         }
+    }
+
+    isolated deinit {
+        planQueue.cancel()
     }
 
     /// The band's rounded rect in screen coordinates, for hit testing.
@@ -671,6 +804,7 @@ final class ScreenBarController {
     /// timelines start or park together.
     private func settleVisibility() {
         updateAccessibility()
+        syncPlanAdmission()
         guard let live = visibility.settle() else { return }
         view.wingsLive = live
         syncIslandWatch()
@@ -699,7 +833,13 @@ final class ScreenBarController {
     /// Reduce Motion toggled in System Settings: freeze the moving program
     /// or hand a still one back to Core Animation.
     @objc private func reduceMotionChanged(_ note: Notification) {
-        reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        setReduceMotion(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+
+    func setReduceMotion(_ reduced: Bool) {
+        guard reduceMotion != reduced else { return }
+        reduceMotion = reduced
+        syncPlanAdmission()
         present()
     }
 
@@ -714,7 +854,10 @@ final class ScreenBarController {
         let wanted = UserDefaults.standard.object(forKey: Self.stillOnCameraDefaultsKey) as? Bool ?? true
         guard wanted != stillOnCamera else { return }
         stillOnCamera = wanted
-        if sensors.cameraInUse { present() }
+        if sensors.cameraInUse {
+            syncPlanAdmission()
+            present()
+        }
     }
 
     @objc private func frontmostMayHaveChanged(_ note: Notification) {
@@ -1255,7 +1398,10 @@ final class ScreenBarController {
         programText = compiledText
         let sampler = LEDSSampler(program: program, ledCount: ScreenBarGeometry.ledCount, initialCodes: lastRaw)
         self.sampler = sampler
-        plan = LEDSKeyframePlan.render(sampler: sampler)
+        plan = nil
+        planGeneration &+= 1
+        let generation = planGeneration
+        desiredPlan = (generation, sampler)
         anchor = now
         lastAnchorEpoch = anchorEpoch
         if let anchorEpoch {
@@ -1265,6 +1411,35 @@ final class ScreenBarController {
             if locked <= now + 0.05, now - locked < 6 * 3600 { anchor = locked }
         }
         lastCodes = []
+        // The new program appears at its current phase at once through the
+        // existing frame clock. The expensive keyframe pass runs off-main;
+        // once ready it takes over at this same anchor.
+        present()
+        syncPlanAdmission()
+    }
+
+    /// Planning is display work. Hidden, sleeping, stepped-aside and held
+    /// bars remember only the current desired sampler; a live moving edge
+    /// admits it once, unless a nil result already chose the fallback.
+    private func syncPlanAdmission() {
+        guard visibility.live, !holdsStill else {
+            planQueue.discardPending()
+            return
+        }
+        guard plan == nil, let desiredPlan,
+              completedPlanGeneration != desiredPlan.generation,
+              !planQueue.contains(generation: desiredPlan.generation) else { return }
+        planQueue.submit(generation: desiredPlan.generation, sampler: desiredPlan.sampler)
+    }
+
+    /// A finished plan may belong to a program superseded while it rendered.
+    /// Both the monotonic request and the immutable sampler identity must
+    /// still match before it can pause the current program's frame clock.
+    private func accept(plan built: LEDSKeyframePlan?, generation: UInt64,
+                        sampler: LEDSSampler) {
+        guard generation == planGeneration, self.sampler === sampler else { return }
+        completedPlanGeneration = generation
+        plan = built
         present()
     }
 
