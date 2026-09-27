@@ -49,6 +49,8 @@ install it. This page lists everything else.
   [final testing](FINAL-TESTING.md)
 - [Repair handoff, 2026-09-26](REPAIR-HANDOFF-2026-09-26.md): implemented
   utility/toy fixes, remaining code work, and pending native acceptance
+- [Audit and release preparation, 2026-09-26](archive/audits/2026-09-26-release-readiness.md):
+  Fold and reset repairs, branch consolidation, verification and release gates
 - [Releasing](PRODUCTION-RELEASE.md); `make release-check` runs every
   release check without publishing
 - [Repository hygiene](REPOSITORY-HYGIENE.md)
