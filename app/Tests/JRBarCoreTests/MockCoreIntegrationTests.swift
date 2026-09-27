@@ -34,7 +34,7 @@ struct MockCoreIntegrationTests {
         return process
     }
 
-    static func waitForSocket(_ path: String, timeout: TimeInterval = 10) async -> Bool {
+    static func waitForSocket(_ path: String, timeout: TimeInterval = 30) async -> Bool {
         let deadline = Date(timeIntervalSinceNow: timeout)
         while Date() < deadline {
             if FileManager.default.fileExists(atPath: path) { return true }

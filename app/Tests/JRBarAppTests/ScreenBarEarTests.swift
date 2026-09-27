@@ -14,9 +14,12 @@ struct ScreenBarEarTests {
 
     @Test func unchangedQuotaDoesNotRelayoutOnEveryLightingUpdate() async throws {
         let core = CoreModel()
+        // Mid-bucket: a starved runner reads the wings seconds later, and
+        // the "resets in" hour must not have rolled over when it does —
+        // two days lands mid-bucket in the day-scaled wording.
         var state = CoreState(usage: CoreUsage(providers: [CoreProviderUsage(
             id: "codex", windows: [CoreUsageWindow(key: "5h", name: "5h", usedPct: 42,
-                resetsAt: Date().timeIntervalSince1970 + 3600)])]))
+                resetsAt: Date().timeIntervalSince1970 + 174_600)])]))
         core.apply(.state(state))
         let store = PanelStore(core: core, screenBarShown: false)
         let first = store.screenBarWings

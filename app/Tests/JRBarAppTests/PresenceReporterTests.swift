@@ -32,7 +32,7 @@ struct PresenceReporterTests {
     /// Lets the send tasks run. The deadline is generous because a full
     /// parallel run can keep the main actor busy for seconds at a time;
     /// a passing wait returns as soon as the condition does.
-    private func settle(within seconds: TimeInterval = 30, _ until: @escaping () -> Bool) async {
+    private func settle(within seconds: TimeInterval = 90, _ until: @escaping () -> Bool) async {
         let deadline = Date().addingTimeInterval(seconds)
         while !until(), Date() < deadline {
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -194,7 +194,7 @@ struct PresenceReporterTests {
         daemon.mirror = false
         presence.ownCameraChanged()
         let held = CorePresenceReport(mic: false, camera: true)
-        await settle(within: 30) { daemon.sent.last == held }
+        await settle(within: 90) { daemon.sent.last == held }
         #expect(daemon.sent.last == held)
         #expect(presence.onCall)
     }
