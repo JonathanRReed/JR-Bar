@@ -112,6 +112,7 @@ protocol 1. Timestamps are Unix epoch seconds.
  "focus":{"mode":"dim","source":"schedule","until":…,"display":"all","brightness_factor":0.15,"banner_allowed":true,"audible_allowed":false,"summary":"Dim until 07:00"},
  "escalation":{"stage":"menu_bar","since":1788982800.0},
  "health":{"hooks":{"claude":"ok","codex":"stale","pi":"missing"},
+           "managed_hooks":["claude","codex"],
            "detected":{"claude":true,"codex":true,"pi":false},
            "sources":{"claude":{"fresh":true,"heard_age_seconds":1.4,"heard_at":1788982798.6}},
            "intake":{"hook_state":"configured","source_health":"partial","silence_seconds":1.4}},
@@ -124,6 +125,12 @@ protocol 1. Timestamps are Unix epoch seconds.
 
 Vocabulary:
 
+- `health.managed_hooks` lists provider ids whose current configs contain
+  a JR-Bar command or a recognized JR-Bar legacy registration. Ownership
+  is separate from activation: an owned integration disabled in its
+  provider config remains listed, while `health.hooks` reports `disabled`.
+  Foreign hooks never establish ownership. A missing ownership list on
+  an older daemon must not authorize an install.
 - The daemon's stored usage snapshots may carry `account_discriminator`, an opaque local
   account binding. It is never an email, token or display label. A
   changed binding invalidates cached quota and reset comparisons for
@@ -1056,6 +1063,7 @@ the main thread). Unknown args are ignored.
 | `provider_consent` | action (`list`/`grant`/`revoke`), provider?, browser?, profile?, instance?, background_repair? | The exact-scope consent store. `grant` binds provider + browser + profile + the provider's declared domain/field allowlist and imports nothing — the import remains its own action. `list` returns `{consents[]}`; grant/revoke return `{consent}` with the bound scope, `was_granted`, and on revoke `imported_data`: `removed`/`replaced`/`retained`/`none` — the imported credential is deleted only while the stored value still matches the import's digest, so a user-replaced token survives. `unsupported` for providers with no consented browser source. |
 | `provider_action` | provider, instance? | Runs the staged flow behind the provider's CURRENT action label — clipboard/LevelDB import, reconnect, repair — and returns `{provider, instance, message}` with the exact string the daemon surfaced (it may be a success note, not only an error). `unsupported` when no staged action matches the live state, `unknown_provider` for an unregistered id. Ownership is preserved: a credential the provider's own CLI owns (Grok's auth.json, Gemini's oauth_creds.json) produces a message pointing at that CLI, never a JR-Bar-side rewrite. |
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
+| `refresh_hooks` | | Refreshes only integrations still owned by JR-Bar when the command executes. The daemon detects ownership and updates under the same cross-process mutation lock used by app and CLI installs/removals. It preserves provider-level disabled flags and leaves foreign hooks and removed integrations alone. Returns `{providers, results{provider: {ok, changed, config_path, codex_trust, warning}}}`. Per-provider failures remain failures; the app advances its build stamp only after the selected batch succeeds. No caller-supplied provider snapshot authorizes a refresh. |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
 | `confetti` | session?, provider?, reason? | A burst asked for from outside JR-Bar -- `jrbar confetti [--session ID \| --provider NAME \| --from-hook] [--why TEXT]`, a Stop hook, `make test && …`, CI (`confetti_requests.py`). `session` is the daemon's id (`claude:session:…`) or the agent's own (`session_id` from its hook payload, which names the session's main row before any worker); `provider` (`[a-z][a-z0-9._-]{0,31}`) wins over the session's own; `reason` is one printable line, at most 80 chars. Journals one `confetti` event (see event) and replies `{sent: true, coalesced: false, event, cursor, session, provider, unmatched}`. The daemon only states the fact: the app's Confetti toy fires it when the toy is on and the room is clear, with its own cooldown. A second ask inside 3 s (the app's cooldown) is answered `{sent: false, coalesced: true}` and never journaled, so a loop in a hook cannot evict the events a reconnecting app replays. A named session nobody watches still celebrates, in the Toys colour: `session: null`, `unmatched: <the id>`. Bad args are `invalid_args`. |
@@ -1347,12 +1355,14 @@ whatever terminal the owner is reading in front, keeps the record it finds.
 names one (an empty value disables it), when a bundled copy sits beside a
 frozen executable, or when a source checkout has built
 `hook/build/jrbar-hook`; otherwise `python -m jrbar.hook_client` as before.
-On this Mac the installed copy is `~/.local/share/jrbar/bin/jrbar-hook`
+The development layout installs `~/.local/share/jrbar/bin/jrbar-hook`
 (`scripts/install-agents.sh` copies it there, sets `JRBAR_HOOK_EXEC` in the
 daemon's LaunchAgent, and runs `jrbar agent-monitor install all` so every
 provider with a config on this Mac -- claude, codex, devin, grok, cursor,
 hermes, openclaw, opencode, antigravity, kiro, pi, gemini -- runs it; an
-installed package also finds that copy on its own). The OpenClaw handler,
+installed package can also locate a sibling shim). The packaged app uses
+`Contents/Helpers/jrbar-hook` and the chosen-provider policy below.
+The OpenClaw handler,
 the OpenCode plugin and the pi extension embed the shim argv; Antigravity's
 envelope pipes into it.
 Both shapes are recognised as ours by every installer, uninstaller and
@@ -1443,9 +1453,13 @@ On this Mac the running pair is the packaged app, `~/Applications/JR-Bar.app`
 puts it there without a password): the app supervises
 `Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core core` as its
 child (`JRBAR_SUPERVISED=1`, `JRBAR_HOOK_EXEC` = the bundled shim,
-`JRBAR_COMMIT` from the bundle's `JRBarCommit`), re-points every provider's
-hook at `Contents/Helpers/jrbar-hook` on the first launch of a build, and
-registers itself as a login item. launchd is not involved: no LaunchAgents,
+`JRBAR_COMMIT` from the bundle's `JRBarCommit`) and registers itself as a
+login item. A fresh installation leaves provider configs alone until the
+person connects a provider in Settings › Agents. On an upgrade, the app
+asks the live daemon to `refresh_hooks` for its currently owned integrations,
+preserving disabled flags and custom log destinations. It records the new
+build stamp only after the daemon affirms every selected result.
+launchd is not involved: no LaunchAgents,
 no `~/.local/share/jrbar` venv. The daemon's `doctor` reply carries the
 `commit` it was built from (`-dirty` = uncommitted changes) and a `memory`
 field (`rss_mb`, `peak_rss_mb`; with `JRBAR_TRACEMALLOC` also `traced_mb`

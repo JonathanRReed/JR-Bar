@@ -22,9 +22,9 @@
 #
 # --pkg [SOURCE] (the packaged app): installs the bundle `make package`
 # built, boots out and parks both LaunchAgents, and launches the app, which
-# supervises the daemon it carries (Contents/Helpers/jrbar-core.app), points
-# every provider's hooks at its shim (Contents/Helpers/jrbar-hook) on the
-# first launch of a build, and registers itself as a login item. SOURCE is
+# supervises the daemon it carries (Contents/Helpers/jrbar-core.app), refreshes
+# owned hooks on upgrades, and registers itself as a login item. Fresh
+# installs connect chosen providers in Settings > Agents. SOURCE is
 # dist/JR-Bar-<version>.pkg (installed for this user with `installer
 # -target CurrentUserHomeDirectory`, no password) or a JR-Bar.app (copied);
 # the default is the PKG when it exists, else build/macos-pkg/app/JR-Bar.app.

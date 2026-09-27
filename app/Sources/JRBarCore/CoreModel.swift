@@ -441,6 +441,11 @@ public final class CoreModel {
         try await send("uninstall_hooks", args: ["providers": .array(providers.map(JSONValue.string))])
     }
 
+    @discardableResult
+    public func refreshHooksNow() async throws -> CoreReply {
+        try await send("refresh_hooks", args: [:], timeout: 120)
+    }
+
     /// Shows `program` on `surface` for `seconds`, then the daemon reverts.
     public func previewProgram(surface: String, program: String, seconds: Double) {
         post("preview_program", args: ["surface": .string(surface), "program": .string(program), "seconds": .number(seconds)])

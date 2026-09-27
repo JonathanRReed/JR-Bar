@@ -731,7 +731,7 @@ for (const event of [
                                     "hooks": [
                                         {
                                             "type": "command",
-                                            "command": f"python hook_entry.py --provider devin --log {log}",
+                                            "command": f"python /site/sidepulse/hook_entry.py --provider devin --log {log}",
                                         }
                                     ],
                                 }
@@ -769,7 +769,7 @@ for (const event of [
                                         {
                                             "type": "command",
                                             "command": (
-                                                f"python hook_entry.py --provider devin --log {sidepulse_log};"
+                                                f"python /site/sidepulse/hook_entry.py --provider devin --log {sidepulse_log};"
                                             ),
                                         },
                                     ]
@@ -863,7 +863,7 @@ for (const event of [
                                     "hooks": [
                                         {
                                             "type": "command",
-                                            "command": f"python hook_entry.py --provider devin --log {log}",
+                                            "command": f"python /site/sidepulse/hook_entry.py --provider devin --log {log}",
                                         }
                                     ],
                                 }

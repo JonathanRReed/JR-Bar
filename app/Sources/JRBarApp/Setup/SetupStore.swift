@@ -32,7 +32,7 @@ final class SetupStore {
         var subtitle: String {
             switch self {
             case .welcome: return "A one-minute tour of the two things to switch on."
-            case .agents: return "Hooks let each agent report its sessions to the monitor."
+            case .agents: return "Choose the agents to monitor. Connecting updates that agent's configuration."
             case .permissions: return "Each one unlocks a feature; grant what's useful, skip the rest."
             case .appearance: return "What the menu bar shows, and whether the band is up."
             case .done: return "What's set, and what's still waiting on you."
@@ -349,6 +349,9 @@ final class SetupStore {
 
     // MARK: Done step
 
+    var activePermissions: [SetupPermission] { model.permissionPlan().active }
+    var optionalPermissions: [SetupPermission] { model.permissionPlan().optional }
+
     /// What's set and what still needs the user, in the order the steps ran.
     var summaryRows: [SummaryRow] {
         var rows: [SummaryRow] = []
@@ -368,13 +371,13 @@ final class SetupStore {
                                    detail: "No agent CLIs found yet — install one and it appears in Settings › Agents.", ok: false))
         }
 
-        let missing = SetupPermission.allCases.filter { status(of: $0) == .needed || status(of: $0) == .denied }
+        let missing = activePermissions.filter { status(of: $0) != .granted }
         if missing.isEmpty {
             rows.append(SummaryRow(symbol: "checkmark.shield.fill", text: "Permissions",
-                                   detail: "Every row is granted or not applicable.", ok: true))
+                                   detail: "Permissions for enabled features are ready; other grants are optional.", ok: true))
         } else {
             rows.append(SummaryRow(symbol: "exclamationmark.shield.fill", text: "Permissions",
-                                   detail: "Still needed: " + missing.map(\.title).joined(separator: ", ") + ".", ok: false))
+                                   detail: "Check permissions for: " + missing.map(\.title).joined(separator: ", ") + ".", ok: false))
         }
 
         rows.append(SummaryRow(symbol: "menubar.rectangle", text: "Menu bar & Screen Bar",

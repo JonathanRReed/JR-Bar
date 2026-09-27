@@ -271,7 +271,8 @@ def test_detection_reports_installed_only_for_our_own_enabled_commands(
     disabled = providers.detect_antigravity_config(tmp_path)
 
     assert disabled.hooks_enabled is False
-    assert disabled.hook_events == ()
+    assert disabled.managed is True
+    assert disabled.hook_events == ("PostToolUse", "PreInvocation", "Stop")
 
 
 def test_detection_ignores_a_foreign_command_under_our_hook_name(

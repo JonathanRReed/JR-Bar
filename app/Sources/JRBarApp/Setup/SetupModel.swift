@@ -30,6 +30,7 @@ struct SetupAgent: Identifiable, Equatable, Sendable {
         case "ok": return "Live"
         case "missing": return "Not installed"
         case "stale": return "Quiet"
+        case "disabled": return "Disabled in provider"
         case nil: return monitorLive ? "Unknown" : "Monitor offline"
         case let other?: return other.capitalized
         }
@@ -223,6 +224,7 @@ struct SetupModel {
     /// `INFocusStatusCenter`, the FDA probe. Audio capture has no public
     /// status read — its row stays "Unknown" with a pane link.
     var refreshPermissions: () async -> [SetupPermission: SetupPermissionStatus] = { [:] }
+    var permissionPlan: () -> SetupPermissionPlan = { SetupPermissionPlan(active: []) }
     /// The row's button: the real request where one exists, the
     /// system-settings deep link otherwise.
     var act: (SetupPermission) async -> Void = { _ in }

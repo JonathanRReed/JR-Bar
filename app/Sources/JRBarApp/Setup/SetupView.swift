@@ -325,10 +325,27 @@ struct SetupPermissionsStep: View {
 
     var body: some View {
         SnapshotScrollView {
-            VStack(spacing: 0) {
-                ForEach(Array(SetupPermission.allCases.enumerated()), id: \.element) { index, permission in
-                    if index > 0 { Divider().opacity(0.5) }
-                    SetupPermissionRow(store: store, permission: permission)
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Used by features that are on")
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.vertical, 12)
+                    if store.activePermissions.isEmpty {
+                        Text("The panel works without these grants. Enable optional features when you need them.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    ForEach(Array(store.activePermissions.enumerated()), id: \.element) { index, permission in
+                        if index > 0 { Divider().opacity(0.5) }
+                        SetupPermissionRow(store: store, permission: permission)
+                    }
+                }
+                DisclosureGroup("Other permissions") {
+                    VStack(spacing: 0) {
+                        ForEach(Array(store.optionalPermissions.enumerated()), id: \.element) { index, permission in
+                            if index > 0 { Divider().opacity(0.5) }
+                            SetupPermissionRow(store: store, permission: permission)
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 24)

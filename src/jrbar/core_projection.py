@@ -744,11 +744,22 @@ def hook_health(intake_report: object) -> dict[str, str]:
             continue
         if not getattr(intake, "installed", False):
             result[provider] = "missing"
+        elif not getattr(intake, "enabled", True):
+            result[provider] = "disabled"
         elif getattr(intake, "stuck", False):
             result[provider] = "stale"
         else:
             result[provider] = "ok"
     return result
+
+
+def managed_hooks(intake_report: object) -> list[str]:
+    return sorted(
+        str(getattr(intake, "provider"))
+        for intake in (getattr(intake_report, "providers", ()) or ())
+        if isinstance(getattr(intake, "provider", None), str)
+        and getattr(intake, "installed", False)
+    )
 
 
 # --- documents ----------------------------------------------------------------
@@ -1597,6 +1608,7 @@ def build_state_document(
         },
         "health": {
             "hooks": hook_health(intake_report),
+            "managed_hooks": managed_hooks(intake_report),
             # Whether each agent was actually found on this Mac (the
             # installed-agent inventory), so the Agents page can say
             # "not installed" instead of implying a dead hook.

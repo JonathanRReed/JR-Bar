@@ -11,7 +11,7 @@ import Foundation
 /// now, next to the daemon's state, written atomically; user defaults are
 /// left to Sparkle, which owns its own keys.
 public struct AppState: Codable, Equatable, Sendable {
-    /// The build stamp whose `agent-monitor install all` last succeeded.
+    /// The packaged build whose setup or existing-hook refresh completed.
     public var bundledHooksInstalledFor: String?
     /// The first packaged launch has registered the login item.
     public var loginItemRegistered: Bool

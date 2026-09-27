@@ -2662,6 +2662,7 @@ def _cmd_provider_action(self, args):
 
 def _hooks_command(self, args, *, install: bool):
     from .install import install_provider_hooks, uninstall_provider_hooks
+    from .state_paths import default_state_dir
 
     providers = [p for p in (args.get("providers") or []) if isinstance(p, str) and p]
     if not providers:
@@ -2683,7 +2684,11 @@ def _hooks_command(self, args, *, install: bool):
             }
             continue
         try:
-            result = install_provider_hooks(provider) if install else uninstall_provider_hooks(provider)
+            result = (
+                install_provider_hooks(provider, state_dir=default_state_dir())
+                if install
+                else uninstall_provider_hooks(provider, state_dir=default_state_dir())
+            )
             changed = changed or bool(result.changed)
             results[provider] = {
                 "ok": True,
@@ -2712,6 +2717,28 @@ def _cmd_install_hooks(self, args):
 @command("uninstall_hooks", main_thread=False)
 def _cmd_uninstall_hooks(self, args):
     return _hooks_command(self, args, install=False)
+
+
+@command("refresh_hooks", main_thread=False)
+def _cmd_refresh_hooks(self, args):
+    from .install import InstallResult, refresh_managed_hooks
+    from .state_paths import default_state_dir
+
+    refreshed = refresh_managed_hooks(state_dir=default_state_dir())
+    results: dict[str, Any] = {}
+    changed = False
+    for provider, result in refreshed.items():
+        if isinstance(result, InstallResult):
+            changed = changed or result.changed
+            results[provider] = {"ok": True, **result.to_dict()}
+        else:
+            results[provider] = {"ok": False, "error": str(result)[:500]}
+    self.performSelectorOnMainThread_withObject_waitUntilDone_(
+        "hooksUpdated:",
+        {"ok": True, "changed": changed, "provider": ",".join(results), "install": True},
+        False,
+    )
+    return {"providers": sorted(results), "results": results}
 
 
 @command("set_closed_lid_policy")

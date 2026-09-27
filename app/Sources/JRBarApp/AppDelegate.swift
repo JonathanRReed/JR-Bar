@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var shelfHotkey: PanelHotkey?
     private var checkForUpdatesItem: NSMenuItem?
     private var wasLive = false
+    private var pendingHookRefreshStamp: String?
     private var lastFileProgram: (text: String, source: LEDFeed.Source, anchor: Double?)?
     private var lastLightsSource: String?
     /// When the last `completed` event arrived: the menu bar's state dot
@@ -764,8 +765,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         watchSocketDirectory(core.socketPath)
 
         // The supervised daemon started at the top of this launch; the
-        // first run's hook install and login item wait for the wiring.
-        if let bundledCore { completeFirstRun(with: bundledCore, core: core) }
+        // packaged integration refresh and login item wait for the wiring.
+        if let bundledCore { completePackagedLaunch(with: bundledCore, core: core) }
 
         let shown = appState.showScreenBar
         ScreenBarInteraction.diag("didFinishLaunching shown=\(shown)")
@@ -787,6 +788,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // General's "Run Setup Again" opens the same window.
         let setup = SetupWindowController.shared
         setup.store.model = .live(core: core)
+        setup.store.model.permissionPlan = { [weak self, weak core] in
+            guard let self else { return SetupPermissionPlan(active: []) }
+            let toys = self.toysStore?.state ?? self.appState.toys
+            let utilities = self.utilitiesStore?.state ?? self.appState.utilities
+            let document = SettingsDocument(core?.settings?.document ?? .object([:]))
+            let followsAlcove = self.appState.showScreenBar && toys.notch.enabled
+                && toys.notch.provider == .alcove && (self.alcove?.isAlcoveRunning ?? false)
+                && (document.bool("screen_bar_follow_alcove") ?? true)
+            return SetupPermissionPlan.features(toys: toys, utilities: utilities,
+                                                document: document, followsAlcove: followsAlcove)
+        }
         setup.store.model.screenBarShown = { [weak self] in self?.appState.showScreenBar ?? true }
         setup.store.model.setScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         setup.store.model.iconStyle = { [weak settingsStore] in
@@ -1002,43 +1014,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         supervisor.start()
     }
 
-    /// The first launch of a packaged build points every provider's hooks at
-    /// the bundled shim (`jrbar-core agent-monitor install all`, once per
-    /// build stamp) and, the very first time, registers the app as a login
-    /// item. Personal app: launch at login is on by default and Settings ›
-    /// General turns it off.
-    private func completeFirstRun(with bundled: CoreSupervisor.BundledCore, core: CoreModel) {
+    /// Fresh setup chooses its providers. An upgrade refreshes only the
+    /// integrations the daemon still recognizes as JR-Bar's.
+    private func completePackagedLaunch(with bundled: CoreSupervisor.BundledCore, core: CoreModel) {
         let stamp = bundled.buildStamp
-        if appState.bundledHooksInstalledFor != stamp {
-            core.appendLocalLog(level: "supervisor", "first launch of \(stamp): installing provider hooks for \(bundled.hookShim)")
-            DispatchQueue.global(qos: .utility).async { [weak self, weak core] in
-                let result = bundled.run(["agent-monitor", "install", "all"])
-                Task { @MainActor in
-                    for line in result.output.split(separator: "\n") where !line.isEmpty {
-                        core?.appendLocalLog(level: "hooks", String(line))
-                    }
-                    if result.status == 0 {
-                        self?.appState.bundledHooksInstalledFor = stamp
-                        self?.persistAppState()
-                        core?.appendLocalLog(level: "supervisor", "provider hooks installed for \(stamp)")
-                        // A silent success left the first run looking
-                        // broken: nothing can report in until these exist.
-                        // Shows once per build stamp — the `installedFor`
-                        // record above is what keeps it from repeating.
-                        self?.events?.hud.show("Agent hooks installed", symbol: "checkmark.circle")
-                        self?.store?.show(toast: "Hooks installed — sessions appear when they start", actionTitle: "Settings") { [weak self] in
-                            self?.settingsWindow?.show(page: .agents)
-                        }
-                    } else {
-                        core?.appendLocalLog(level: "supervisor", "provider hook install exited \(result.status); will retry next launch")
-                        self?.events?.hud.show("Agent hook install failed — will retry at next launch", symbol: "exclamationmark.triangle")
-                        self?.store?.show(toast: "Hooks did not install — retry from Settings › Agents", actionTitle: "Open Settings") { [weak self] in
-                            self?.settingsWindow?.show(page: .agents)
-                        }
-                    }
-                    NSLog("JR-Bar hooks: install all exited %d", result.status)
-                }
-            }
+        switch PackagedHookRefresh.action(previous: appState.bundledHooksInstalledFor,
+                                         current: stamp, coreLive: false) {
+        case .stampOnly:
+            appState.bundledHooksInstalledFor = stamp
+            persistAppState()
+        case .wait:
+            pendingHookRefreshStamp = stamp
+        case .none, .refresh:
+            break
         }
         if !appState.loginItemRegistered {
             // The very first launch opens the panel once, so the one
@@ -1062,6 +1050,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             persistAppState()
         }
         NSLog("JR-Bar login item: %@", Self.describe(SMAppService.mainApp.status))
+    }
+
+    private func refreshPackagedHooksIfNeeded(core: CoreModel) {
+        guard core.isLive, let stamp = pendingHookRefreshStamp else { return }
+        pendingHookRefreshStamp = nil
+        Task { @MainActor [weak self, weak core] in
+            guard let core else { return }
+            do {
+                let reply = try await core.refreshHooksNow()
+                guard let self else { return }
+                if let providers = PackagedHookRefresh.completedProviders(in: reply) {
+                    self.appState.bundledHooksInstalledFor = stamp
+                    self.persistAppState()
+                    core.appendLocalLog(level: "hooks", "refreshed \(providers.count) existing integrations for \(stamp)")
+                } else {
+                    let results = reply.result?["results"]?.objectValue ?? [:]
+                    for (provider, result) in results where result["ok"]?.boolValue != true {
+                        let reason = result["error"]?.stringValue ?? "refresh did not confirm success"
+                        core.appendLocalLog(level: "hooks", "\(provider): \(reason)")
+                    }
+                    if let reason = reply.error?.message { core.appendLocalLog(level: "hooks", reason) }
+                    self.showHookRefreshFailure()
+                }
+            } catch {
+                core.appendLocalLog(level: "hooks", "refresh failed: \(error)")
+                self?.showHookRefreshFailure()
+            }
+        }
+    }
+
+    private func showHookRefreshFailure() {
+        store?.show(toast: "Existing integrations could not refresh. JR-Bar will retry next launch.",
+                    actionTitle: "Open Settings") { [weak self] in
+            self?.settingsWindow?.show(page: .agents)
+        }
     }
 
     // MARK: App state
@@ -1355,6 +1378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar?.nowPlaying = store?.media.flatMap { $0.playing ? $0.bundleIdentifier : nil }
         rearmAskAgeTick()
         guard let core, let statusItem else { return }
+        refreshPackagedHooksIfNeeded(core: core)
         switch core.connection {
         case .connected where core.state != nil:
             statusItem.setCore(description: "connected (\(core.hello?.coreVersion ?? "?"))")

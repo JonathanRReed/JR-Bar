@@ -25,6 +25,7 @@ import SwiftUI
         var iconStyle = StatusIconStyle.agents.rawValue
         var agents: [SetupAgent] = []
         var statuses: [SetupPermission: SetupPermissionStatus] = [:]
+        var requiredPermissions: Set<SetupPermission> = []
         var live = true
     }
 
@@ -39,6 +40,7 @@ import SwiftUI
             return recorder.installResult
         }
         model.refreshPermissions = { recorder.statuses }
+        model.permissionPlan = { SetupPermissionPlan(active: recorder.requiredPermissions) }
         model.act = { recorder.acted.append($0) }
         model.screenBarShown = { recorder.screenBar }
         model.setScreenBar = { recorder.screenBar = $0; recorder.screenBarSets.append($0) }
@@ -292,6 +294,7 @@ import SwiftUI
 
     @Test func summaryNamesWhatIsStillNeeded() async {
         let (store, recorder) = make()
+        recorder.requiredPermissions = [.notifications, .screenRecording, .fullDiskAccess]
         recorder.agents = [SetupAgent(id: "claude", name: "Claude", detected: true, hookStatus: "ok")]
         recorder.statuses = [
             .notifications: .granted, .calendar: .granted, .screenRecording: .denied,
@@ -310,6 +313,26 @@ import SwiftUI
         #expect(permissions?.detail.contains("Notifications") == false)
         let appearance = rows.first { $0.text == "Menu bar & Screen Bar" }
         #expect(appearance?.detail.contains("Screen Bar on") == true)
+    }
+
+    @Test func optionalDeniedPermissionsDoNotMakeSetupIncomplete() async {
+        let (store, recorder) = make()
+        recorder.requiredPermissions = [.notifications]
+        recorder.statuses = [.notifications: .granted, .camera: .denied, .fullDiskAccess: .needed]
+        await store.refreshPermissions()
+        #expect(store.summaryRows.first { $0.text == "Permissions" }?.ok == true)
+        #expect(store.activePermissions == [.notifications])
+        #expect(store.optionalPermissions.contains(.camera))
+    }
+
+    @Test func unknownActivePermissionNeverClaimsReady() async {
+        let (store, recorder) = make()
+        recorder.requiredPermissions = [.notifications]
+        recorder.statuses = [.notifications: .unknown]
+        await store.refreshPermissions()
+        #expect(store.summaryRows.first { $0.text == "Permissions" }?.ok == false)
+        #expect(SetupAgent(id: "claude", name: "Claude", hookStatus: "disabled")
+            .statusWord(monitorLive: true) == "Disabled in provider")
     }
 }
 

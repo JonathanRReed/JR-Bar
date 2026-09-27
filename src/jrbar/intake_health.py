@@ -81,6 +81,7 @@ class ProviderProbe:
     probed: bool
     installed: bool
     wire_written_at: float | None
+    enabled: bool = True
 
     def __post_init__(self) -> None:
         if not (
@@ -90,6 +91,7 @@ class ProviderProbe:
             and self.label
             and type(self.probed) is bool
             and type(self.installed) is bool
+            and type(self.enabled) is bool
             and (
                 self.wire_written_at is None
                 or (
@@ -112,6 +114,7 @@ class ProviderIntake:
     wire_written_at: float | None
     event_accepted_at: float | None
     heard_age_seconds: float | None
+    enabled: bool = True
 
     def __post_init__(self) -> None:
         if type(self.code) is not DiagnosticCode:
@@ -262,7 +265,7 @@ def probe_providers(
     for spec in PROVIDER_SPECS:
         try:
             config = spec.detector(home)
-            installed = bool(config.exists and config.hook_events)
+            installed = config.managed
             written: float | None = None
             for path in _log_paths(spec.provider, config, home):
                 epoch = _newest_record_epoch(path.expanduser(), tail_bytes=tail_bytes)
@@ -275,6 +278,7 @@ def probe_providers(
                     probed=True,
                     installed=installed,
                     wire_written_at=written,
+                    enabled=config.hooks_enabled,
                 )
             )
         except Exception:
@@ -285,6 +289,7 @@ def probe_providers(
                     probed=False,
                     installed=False,
                     wire_written_at=None,
+                    enabled=False,
                 )
             )
     return tuple(probes)
@@ -415,6 +420,7 @@ def build_intake_report(
                 wire_written_at=probe.wire_written_at,
                 event_accepted_at=accepted,
                 heard_age_seconds=_age_seconds(now_epoch, accepted),
+                enabled=probe.enabled,
             )
         )
     frozen = tuple(providers)

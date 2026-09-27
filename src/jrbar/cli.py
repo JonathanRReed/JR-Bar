@@ -57,6 +57,7 @@ from .settings import (
     load_settings,
     save_settings,
 )
+from .state_paths import default_state_dir
 from .trusted_tools import trusted_system_tool
 from .watch_run import WatchRunPlanError, execute_watch_run, plan_watch_run
 
@@ -1259,7 +1260,10 @@ def install_hook_results(args: argparse.Namespace):
         log_path = install_log_path(provider, args)
         try:
             results.append(
-                install_provider_hooks(provider, log_path=log_path, dry_run=args.dry_run)
+                install_provider_hooks(
+                    provider, log_path=log_path, dry_run=args.dry_run,
+                    state_dir=default_state_dir(),
+                )
             )
         except HookVerificationError as exc:
             # Refused, not failed: nothing was written. Say so and keep
@@ -1286,7 +1290,10 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     results = []
     for provider in providers:
         log_path = uninstall_log_path(provider, args)
-        results.append(uninstall_provider_hooks(provider, log_path=log_path, dry_run=args.dry_run))
+        results.append(uninstall_provider_hooks(
+            provider, log_path=log_path, dry_run=args.dry_run,
+            state_dir=default_state_dir(),
+        ))
 
     for result in results:
         action = "would remove" if args.dry_run and result.changed else "removed"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import queue
@@ -13,6 +14,7 @@ import threading
 import time
 import tomllib
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -57,6 +59,7 @@ from .providers import (
     OPENCLAW_HOOK_NAME,
     PI_EXTENSION_MARKER,
     PI_NATIVE_EVENT_NAMES,
+    PROVIDER_REGISTRY,
     _is_jrbar_hook_invocation,
     default_antigravity_config_path,
     default_cursor_config_path,
@@ -65,6 +68,7 @@ from .providers import (
     default_grok_hook_config_path,
     default_hermes_config_path,
     default_kiro_agent_config_path,
+    default_log_path,
     default_openclaw_config_path,
     default_opencode_plugin_path,
     default_pi_extension_path,
@@ -80,6 +84,7 @@ from .providers import (
     openclaw_hook_dir,
     opencode_plugin_source_for_arguments,
 )
+from .state_paths import default_state_dir
 
 MANAGED_START = "# >>> jrbar hooks >>>"
 MANAGED_END = "# <<< jrbar hooks <<<"
@@ -427,6 +432,7 @@ def install_codex_hooks(
     config_path: Path | None = None,
     dry_run: bool = False,
     python_executable: str | None = None,
+    preserve_activation: bool = False,
 ) -> InstallResult:
     config = config_path or Path.home() / ".codex" / "config.toml"
     target_log = (log_path or detect_log_path("codex")).expanduser()
@@ -441,7 +447,8 @@ def install_codex_hooks(
     else:
         text = strip_managed_block(original)
         text = remove_codex_hook_blocks_for_log(text, target_log)
-        text = ensure_codex_hooks_feature(text)
+        if not preserve_activation:
+            text = ensure_codex_hooks_feature(text)
         new_text = _ensure_trailing_newline(text) + "\n" + block
     changed = new_text != original
 
@@ -540,6 +547,7 @@ def install_claude_hooks(
     config_path: Path | None = None,
     dry_run: bool = False,
     python_executable: str | None = None,
+    preserve_activation: bool = False,
 ) -> InstallResult:
     config = config_path or Path.home() / ".claude" / "settings.json"
     target_log = (log_path or detect_log_path("claude")).expanduser()
@@ -547,8 +555,10 @@ def install_claude_hooks(
     config_leaf = _validated_optional_config(config, dry_run=dry_run)
     original_text = _decode_config(config_leaf)
     data = _strict_json_object(original_text, path=config)
-
     original = json.dumps(data, sort_keys=True)
+    if not preserve_activation and data.get("disableAllHooks") is True:
+        data["disableAllHooks"] = False
+
     hooks = _strict_hooks_object(data, path=config)
     command = hook_command("claude", target_log, python_executable)
     decide_command = decide_hook_command("claude", target_log, python_executable)
@@ -1052,6 +1062,7 @@ def install_openclaw_hooks(
     config_path: Path | None = None,
     dry_run: bool = False,
     python_executable: str | None = None,
+    preserve_activation: bool = False,
 ) -> InstallResult:
     """Two coordinated writes: the handler directory under
     ~/.openclaw/hooks/ (auto-discovered by the gateway) and the enabled
@@ -1072,11 +1083,18 @@ def install_openclaw_hooks(
     internal = hooks.setdefault("internal", {})
     if not isinstance(internal, dict):
         raise ValueError(f"Expected hooks.internal object in {config}")
-    internal["enabled"] = True
+    internal_was_enabled = internal.get("enabled", True) is not False
+    internal["enabled"] = internal_was_enabled if preserve_activation else True
     entries = internal.setdefault("entries", {})
     if not isinstance(entries, dict):
         raise ValueError(f"Expected hooks.internal.entries object in {config}")
-    entries[OPENCLAW_HOOK_NAME] = {"enabled": True}
+    existing_entry = entries.get(OPENCLAW_HOOK_NAME)
+    if not isinstance(existing_entry, dict):
+        existing_entry = entries.get(LEGACY_OPENCLAW_HOOK_NAME)
+    entry_was_enabled = not isinstance(existing_entry, dict) or existing_entry.get("enabled", True) is not False
+    entries[OPENCLAW_HOOK_NAME] = {
+        "enabled": entry_was_enabled if preserve_activation else True
+    }
     # The pre-rename entry is ours only when its handler directory is ours
     # (or already gone); a foreign hook that happens to share the old name
     # is left alone.
@@ -1767,6 +1785,7 @@ def install_antigravity_hooks(
     config_path: Path | None = None,
     dry_run: bool = False,
     python_executable: str | None = None,
+    preserve_activation: bool = False,
 ) -> InstallResult:
     """Claim one named hook in ~/.gemini/config/hooks.json.
 
@@ -1783,7 +1802,10 @@ def install_antigravity_hooks(
     existing = data.get(ANTIGRAVITY_HOOK_NAME)
     if existing is not None and not _antigravity_entry_is_ours(existing):
         raise OSError(f"refusing to replace unowned Antigravity hook: {config}")
-    data[ANTIGRAVITY_HOOK_NAME] = _antigravity_entry(target_log, python_executable)
+    replacement = _antigravity_entry(target_log, python_executable)
+    if preserve_activation and isinstance(existing, dict) and existing.get("enabled") is False:
+        replacement["enabled"] = False
+    data[ANTIGRAVITY_HOOK_NAME] = replacement
     legacy_entry = data.get(LEGACY_ANTIGRAVITY_HOOK_NAME)
     if legacy_entry is not None and _antigravity_entry_is_ours(legacy_entry):
         data.pop(LEGACY_ANTIGRAVITY_HOOK_NAME, None)
@@ -2002,6 +2024,41 @@ class HookVerificationError(RuntimeError):
     """The hook command failed its pre-registration probe run."""
 
 
+@contextmanager
+def hook_mutation_lock(
+    *, state_dir: Path | None = None, lock_path: Path | None = None,
+    timeout: float = 5.0,
+):
+    path = Path(lock_path) if lock_path is not None else Path(state_dir or default_state_dir()) / "hooks.lock"
+    ensure_private_directory(path.parent)
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+            raise OSError(f"refusing unsafe hook lock: {path}")
+        os.fchmod(descriptor, 0o600)
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"hook mutation lock timed out: {path}")
+                time.sleep(0.01)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
 def _probe_registration_command(provider: str, python_executable: str | None) -> None:
     """Run the exact command once against a scratch log before writing it.
 
@@ -2027,14 +2084,90 @@ def _probe_registration_command(provider: str, python_executable: str | None) ->
         )
 
 
-def install_provider_hooks(provider: str, **kwargs: Any) -> InstallResult:
+def _install_provider_hooks_unlocked(provider: str, **kwargs: Any) -> InstallResult:
     if not kwargs.get("dry_run"):
         _probe_registration_command(provider, kwargs.get("python_executable"))
     return INSTALLERS[provider](**kwargs)
 
 
-def uninstall_provider_hooks(provider: str, **kwargs: Any) -> InstallResult:
+def _uninstall_provider_hooks_unlocked(provider: str, **kwargs: Any) -> InstallResult:
     return UNINSTALLERS[provider](**kwargs)
+
+
+def _mutation_state_dir(kwargs: dict[str, Any]) -> Path:
+    if kwargs.get("state_dir") is not None:
+        return Path(kwargs.pop("state_dir"))
+    if kwargs.get("log_path") is not None:
+        return Path(kwargs["log_path"]).expanduser().parent
+    return default_state_dir()
+
+
+def install_provider_hooks(provider: str, **kwargs: Any) -> InstallResult:
+    state_dir = _mutation_state_dir(kwargs)
+    timeout = float(kwargs.pop("lock_timeout", 5.0))
+    if kwargs.get("dry_run"):
+        return _install_provider_hooks_unlocked(provider, **kwargs)
+    with hook_mutation_lock(state_dir=state_dir, timeout=timeout):
+        return _install_provider_hooks_unlocked(provider, **kwargs)
+
+
+def uninstall_provider_hooks(provider: str, **kwargs: Any) -> InstallResult:
+    state_dir = _mutation_state_dir(kwargs)
+    timeout = float(kwargs.pop("lock_timeout", 5.0))
+    if kwargs.get("dry_run"):
+        return _uninstall_provider_hooks_unlocked(provider, **kwargs)
+    with hook_mutation_lock(state_dir=state_dir, timeout=timeout):
+        return _uninstall_provider_hooks_unlocked(provider, **kwargs)
+
+
+def refresh_managed_hooks(
+    *, home: Path | None = None, state_dir: Path | None = None,
+    dry_run: bool = False, python_executable: str | None = None,
+    lock_timeout: float = 5.0,
+) -> dict[str, InstallResult | Exception]:
+    directory = Path(state_dir or default_state_dir(home))
+
+    def refresh() -> dict[str, InstallResult | Exception]:
+        results: dict[str, InstallResult | Exception] = {}
+        for provider, spec in sorted(PROVIDER_REGISTRY.items()):
+            try:
+                detected = spec.detector(home)
+            except Exception as exc:
+                results[provider] = exc
+                continue
+            if not detected.managed:
+                continue
+            if len(detected.log_paths) > 1:
+                results[provider] = ValueError(
+                    f"ambiguous managed hook log paths for {provider}"
+                )
+                continue
+            target_log = detected.log_paths[0] if detected.log_paths else default_log_path(provider, home)
+            kwargs: dict[str, Any] = {
+                "log_path": target_log,
+                "dry_run": dry_run,
+                "python_executable": python_executable,
+            }
+            path_key = _refresh_path_argument(provider)
+            kwargs[path_key] = spec.config_path(home)
+            if provider in {"codex", "claude", "openclaw", "antigravity"}:
+                kwargs["preserve_activation"] = True
+            try:
+                results[provider] = _install_provider_hooks_unlocked(provider, **kwargs)
+            except Exception as exc:
+                results[provider] = exc
+        return results
+
+    if dry_run:
+        return refresh()
+    with hook_mutation_lock(state_dir=directory, timeout=lock_timeout):
+        return refresh()
+
+
+def _refresh_path_argument(provider: str) -> str:
+    if provider == "opencode":
+        return "plugin_path"
+    return "config_path"
 
 
 def hook_command(

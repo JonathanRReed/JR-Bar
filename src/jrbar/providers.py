@@ -322,6 +322,41 @@ HOOK_CLIENT_MODULES = (
 _OPENCLAW_HANDLER_MAX_SOURCE_BYTES = 32 * 1024
 
 
+def _hook_command_stages(parts: list[str]) -> list[list[str]]:
+    stages: list[list[str]] = [[]]
+    for part in parts:
+        if part in {"|", ";", "&&", "||"}:
+            if stages[-1]:
+                stages.append([])
+            continue
+        stages[-1].append(part.rstrip(";"))
+    return [stage for stage in stages if stage]
+
+
+def _jrbar_hook_stage(parts: list[str]) -> list[str] | None:
+    package_names = {"jrbar", "sidepulse", "sidepulse_cli", "agent_monitor"}
+    for stage in _hook_command_stages(parts):
+        if not stage:
+            continue
+        executable = Path(stage[0])
+        interpreter = executable.name.startswith("python") or executable.name in {
+            "jrbar-core", "sidepulse", "agent-monitor"
+        }
+        if executable.is_absolute() and executable.name == HOOK_SHIM_NAME:
+            return stage
+        if interpreter and len(stage) >= 3 and stage[1] == "-m" and stage[2] in HOOK_CLIENT_MODULES:
+            return stage
+        if executable.name == "agent-monitor" and len(stage) >= 2 and stage[1] in {"hook-log", "hook-client"}:
+            return stage
+        if executable.is_absolute() and len(stage) >= 3 and stage[1] == "agent-monitor" and stage[2] in {"hook-log", "hook-client"}:
+            return stage
+        if interpreter and len(stage) >= 2:
+            script = Path(stage[1])
+            if script.name == "hook_entry.py" and script.parent.name in package_names:
+                return stage
+    return None
+
+
 def _is_jrbar_hook_invocation(parts) -> bool:
     """Ours, in every legacy and current shape we register.
 
@@ -331,18 +366,7 @@ def _is_jrbar_hook_invocation(parts) -> bool:
     knew only the first shape would report "hooks not installed" for a
     perfectly working install and re-register duplicates over it.
     """
-    parts = list(parts)
-    if any(Path(part).name == "hook_entry.py" for part in parts):
-        return True
-    # The compiled shim (hook/jrbar-hook.c): `jrbar-hook --provider <id>`,
-    # bare or inside a shell wrapper (Antigravity's envelope pipes into it).
-    if any(Path(part).name == HOOK_SHIM_NAME for part in parts):
-        return True
-    if "-m" in parts and any(module in parts for module in HOOK_CLIENT_MODULES):
-        return True
-    return "agent-monitor" in parts and any(
-        command in parts for command in ("hook-log", "hook-client")
-    )
+    return _jrbar_hook_stage(list(parts)) is not None
 
 
 def _shim_hook_arguments(arguments: list, provider: str) -> bool:
@@ -703,6 +727,7 @@ class ProviderConfig:
     hooks_enabled: bool
     hook_events: tuple[str, ...]
     log_paths: tuple[Path, ...]
+    managed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -712,6 +737,7 @@ class ProviderConfig:
             "hooks_enabled": self.hooks_enabled,
             "hook_events": list(self.hook_events),
             "log_paths": [str(path) for path in self.log_paths],
+            "managed": self.managed,
         }
 
 
@@ -835,12 +861,17 @@ def detect_codex_config(home: Path | None = None) -> ProviderConfig:
     hook_events: list[str] = []
     paths: list[Path] = []
 
+    def owned(command: str) -> bool:
+        return is_jrbar_hook_command(command, "codex")
+
     if isinstance(hooks, dict):
         for event_name, entries in hooks.items():
             if event_name not in CODEX_EVENTS or not isinstance(entries, list):
                 continue
-            hook_events.append(event_name)
-            paths.extend(_paths_from_hook_entries(entries))
+            event_paths = _paths_from_hook_entries(entries, owned)
+            if _hook_entries_contain_command(entries, owned):
+                hook_events.append(event_name)
+                paths.extend(event_paths)
 
     return ProviderConfig(
         "codex",
@@ -849,19 +880,23 @@ def detect_codex_config(home: Path | None = None) -> ProviderConfig:
         bool(features.get("hooks")),
         tuple(sorted(set(hook_events))),
         _dedupe_paths(paths),
+        bool(hook_events),
     )
 
 
 def detect_codex_config_from_text(config_path: Path, text: str) -> ProviderConfig:
-    hook_events = tuple(
-        sorted(
-            {
-                match.group(1)
-                for match in re.finditer(r"^\s*\[\[hooks\.([A-Za-z0-9_]+)\]\]\s*$", text, re.MULTILINE)
-                if match.group(1) in CODEX_EVENTS
-            }
-        )
-    )
+    hook_events: list[str] = []
+    for match in re.finditer(
+        r"^\s*\[\[hooks\.([A-Za-z0-9_]+)\]\]\s*$(.*?)(?=^\s*\[\[hooks\.|\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    ):
+        event = match.group(1)
+        commands = re.findall(r"command\s*=\s*(?:'''(.*?)'''|\"(.*?)\")", match.group(2), re.DOTALL)
+        if event in CODEX_EVENTS and any(
+            is_jrbar_hook_command(a or b, "codex") for a, b in commands
+        ):
+            hook_events.append(event)
 
     paths: list[Path] = []
     for match in re.finditer(r"command\s*=\s*'''(.*?)'''", text, re.DOTALL):
@@ -874,8 +909,9 @@ def detect_codex_config_from_text(config_path: Path, text: str) -> ProviderConfi
         config_path,
         True,
         codex_hooks_feature_enabled(text),
-        hook_events,
+        tuple(sorted(set(hook_events))),
         _dedupe_paths(paths),
+        bool(hook_events),
     )
 
 
@@ -918,7 +954,7 @@ def detect_json_hook_config(
             ) or not isinstance(entries, list):
                 continue
             event_paths = _paths_from_hook_entries(entries, command_filter)
-            if command_filter is not None and not event_paths:
+            if command_filter is not None and not _hook_entries_contain_command(entries, command_filter):
                 continue
             hook_events.append(canonical)
             paths.extend(event_paths)
@@ -927,15 +963,17 @@ def detect_json_hook_config(
         provider,
         config_path,
         True,
-        bool(hook_events),
+        bool(hook_events) and not (provider == "claude" and data.get("disableAllHooks") is True),
         tuple(sorted(set(hook_events))),
         _dedupe_paths(paths),
+        bool(hook_events),
     )
 
 
 def detect_claude_config(home: Path | None = None) -> ProviderConfig:
     return detect_json_hook_config(
-        "claude", default_claude_config_path(home), CLAUDE_EVENTS
+        "claude", default_claude_config_path(home), CLAUDE_EVENTS,
+        lambda command: is_jrbar_hook_command(command, "claude"),
     )
 
 
@@ -960,7 +998,10 @@ def default_grok_hook_config_path(home: Path | None = None) -> Path:
 
 def detect_grok_config(home: Path | None = None) -> ProviderConfig:
     config_path = default_grok_hook_config_path(home)
-    return detect_json_hook_config("grok", config_path, GROK_EVENTS)
+    return detect_json_hook_config(
+        "grok", config_path, GROK_EVENTS,
+        lambda command: is_jrbar_hook_command(command, "grok"),
+    )
 
 
 def is_jrbar_hook_command(command: str, provider: str) -> bool:
@@ -972,14 +1013,14 @@ def is_jrbar_hook_command(command: str, provider: str) -> bool:
         parts = shlex.split(command)
     except ValueError:
         return False
-    has_provider = any(
-        (part == "--provider" and index + 1 < len(parts) and parts[index + 1] == provider)
-        or part == f"--provider={provider}"
-        for index, part in enumerate(parts)
-    )
-    if not has_provider:
+    stage = _jrbar_hook_stage(parts)
+    if stage is None:
         return False
-    return _is_jrbar_hook_invocation(parts)
+    return any(
+        (part == "--provider" and index + 1 < len(stage) and stage[index + 1] == provider)
+        or part == f"--provider={provider}"
+        for index, part in enumerate(stage)
+    )
 
 
 def default_cursor_config_path(home: Path | None = None) -> Path:
@@ -1008,13 +1049,15 @@ def detect_cursor_config(home: Path | None = None) -> ProviderConfig:
             if event_name not in CURSOR_EVENTS or not isinstance(entries, list):
                 continue
             event_paths: list[Path] = []
+            owned = False
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
                 command = entry.get("command")
                 if isinstance(command, str) and is_jrbar_hook_command(command, "cursor"):
+                    owned = True
                     event_paths.extend(extract_log_paths_from_command(command))
-            if event_paths:
+            if owned:
                 hook_events.append(event_name)
                 paths.extend(event_paths)
 
@@ -1025,6 +1068,7 @@ def detect_cursor_config(home: Path | None = None) -> ProviderConfig:
         bool(hook_events),
         tuple(sorted(set(hook_events))),
         _dedupe_paths(paths),
+        bool(hook_events),
     )
 
 
@@ -1052,13 +1096,15 @@ def detect_hermes_config(home: Path | None = None) -> ProviderConfig:
             if event_name not in HERMES_EVENTS or not isinstance(entries, list):
                 continue
             event_paths: list[Path] = []
+            owned = False
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
                 command = entry.get("command")
                 if isinstance(command, str) and is_jrbar_hook_command(command, "hermes"):
+                    owned = True
                     event_paths.extend(extract_log_paths_from_command(command))
-            if event_paths:
+            if owned:
                 hook_events.append(event_name)
                 paths.extend(event_paths)
 
@@ -1069,6 +1115,7 @@ def detect_hermes_config(home: Path | None = None) -> ProviderConfig:
         bool(hook_events),
         tuple(sorted(set(hook_events))),
         _dedupe_paths(paths),
+        bool(hook_events),
     )
 
 
@@ -1106,9 +1153,11 @@ def detect_openclaw_config(home: Path | None = None) -> ProviderConfig:
         return ProviderConfig("openclaw", config_path, True, False, (), ())
 
     entry_enabled = False
+    internal_enabled = False
     if isinstance(data, dict):
         internal = ((data.get("hooks") or {}).get("internal")) or {}
         if isinstance(internal, dict):
+            internal_enabled = internal.get("enabled", True) is not False
             entries = internal.get("entries") or {}
             entry = entries.get(OPENCLAW_HOOK_NAME)
             if not isinstance(entry, dict):
@@ -1131,14 +1180,16 @@ def detect_openclaw_config(home: Path | None = None) -> ProviderConfig:
     except (OSError, UnicodeError):
         pass
 
-    installed = entry_enabled and managed_log_path is not None
+    managed = managed_log_path is not None
+    installed = internal_enabled and entry_enabled and managed
     return ProviderConfig(
         "openclaw",
         config_path,
         True,
         installed,
-        OPENCLAW_EVENTS if installed else (),
+        OPENCLAW_EVENTS if managed else (),
         () if managed_log_path is None else (managed_log_path,),
+        managed,
     )
 
 
@@ -1198,7 +1249,7 @@ def detect_antigravity_config(home: Path | None = None) -> ProviderConfig:
             entry = data.get(LEGACY_ANTIGRAVITY_HOOK_NAME)
     hook_events: list[str] = []
     paths: list[Path] = []
-    if isinstance(entry, dict) and entry.get("enabled", True) is not False:
+    if isinstance(entry, dict):
         for event_name in ANTIGRAVITY_EVENTS:
             event_paths: list[Path] = []
             for command in _antigravity_handler_commands(entry.get(event_name)):
@@ -1211,9 +1262,10 @@ def detect_antigravity_config(home: Path | None = None) -> ProviderConfig:
         "antigravity",
         config_path,
         True,
-        bool(hook_events),
+        bool(hook_events) and entry.get("enabled", True) is not False,
         tuple(sorted(set(hook_events))),
         _dedupe_paths(paths),
+        bool(hook_events),
     )
 
 
@@ -1267,6 +1319,7 @@ def detect_opencode_plugin(home: Path | None = None) -> ProviderConfig:
         installed,
         OPENCODE_EVENTS if installed else (),
         (log_path,) if log_path is not None else (),
+        installed,
     )
 
 
@@ -1305,6 +1358,7 @@ def _detect_kiro_config_at(config_path: Path) -> ProviderConfig:
             if canonical not in KIRO_EVENTS or not isinstance(entries, list):
                 continue
             event_paths: list[Path] = []
+            owned = False
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
@@ -1312,8 +1366,9 @@ def _detect_kiro_config_at(config_path: Path) -> ProviderConfig:
                 if isinstance(command, str) and is_jrbar_hook_command(
                     command, "kiro"
                 ):
+                    owned = True
                     event_paths.extend(extract_log_paths_from_command(command))
-            if event_paths:
+            if owned:
                 events.append(canonical)
                 paths.extend(event_paths)
     enabled = (
@@ -1328,6 +1383,7 @@ def _detect_kiro_config_at(config_path: Path) -> ProviderConfig:
         enabled,
         tuple(sorted(set(events))),
         _dedupe_paths(paths),
+        bool(events),
     )
 
 
@@ -1375,7 +1431,7 @@ def detect_pi_config(home: Path | None = None) -> ProviderConfig:
     if command is None:
         return ProviderConfig("pi", path, True, False, (), ())
     paths = extract_log_paths_from_command(" ".join(shlex.quote(item) for item in command))
-    return ProviderConfig("pi", path, True, True, tuple(sorted(PI_EVENTS)), _dedupe_paths(list(paths)))
+    return ProviderConfig("pi", path, True, True, tuple(sorted(PI_EVENTS)), _dedupe_paths(list(paths)), True)
 
 
 def default_gemini_config_path(home: Path | None = None) -> Path:
@@ -2006,6 +2062,19 @@ def _paths_from_hook_entries(
             if isinstance(command, str) and (command_filter is None or command_filter(command)):
                 paths.extend(extract_log_paths_from_command(command))
     return paths
+
+
+def _hook_entries_contain_command(
+    entries: list[Any], command_filter: Callable[[str], bool]
+) -> bool:
+    return any(
+        isinstance(hook, dict)
+        and isinstance(hook.get("command"), str)
+        and command_filter(hook["command"])
+        for entry in entries
+        if isinstance(entry, dict)
+        for hook in (entry.get("hooks") or [])
+    )
 
 
 def is_jrbar_devin_command(command: str) -> bool:
