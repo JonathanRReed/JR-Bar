@@ -39,12 +39,15 @@ struct NotchRenderProofTests {
         view.wingGeometry = ScreenBarWingGeometry(
             notchWidth: 185, notchDepth: 32, bandSpan: 213,
             leftExtent: 60, rightExtent: 76)
+        var right = ScreenBarWingSlot(text: "Codex", provider: "codex", meter: 0.5)
+        right.accessory = ScreenBarWingAccessory(symbol: ScreenBarEarMarks.leaseSymbol)
         view.wings = ScreenBarWings(
             left: ScreenBarWingSlot(text: "Working", provider: "claude"),
-            right: ScreenBarWingSlot(text: "Codex", provider: "codex", meter: 0.5))
-        view.menuHandleRevealed = false
+            right: right)
         view.islandFrame = CGRect(x: 157.5, y: 28, width: 185, height: 32)
         view.relayout()
+        #expect(view.rightWingRect?.width == ScreenBarView.contentWidth(right),
+                "the black ear includes the cup's measured slice")
         view.display(colors: Array(repeating: RGB(r: 1, g: 0.25, b: 0.25), count: 8))
         view.layoutSubtreeIfNeeded()
         let context = try #require(CGContext(

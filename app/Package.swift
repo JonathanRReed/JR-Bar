@@ -48,6 +48,15 @@ if sparkleAvailable {
     ]))
 }
 
+var appTestLinkerSettings = testLinkerSettings
+if sparkleAvailable {
+    appTestLinkerSettings.append(.linkedFramework("Sparkle"))
+    appTestLinkerSettings.append(.unsafeFlags([
+        "-F", sparkleDirectory,
+        "-Xlinker", "-rpath", "-Xlinker", sparkleDirectory,
+    ]))
+}
+
 let package = Package(
     name: "JRBar",
     platforms: [.macOS(.v26)],
@@ -106,8 +115,8 @@ let package = Package(
         .testTarget(
             name: "JRBarAppTests",
             dependencies: ["JRBarApp", "JRBarCore", "JRBarUI"],
-            swiftSettings: testSwiftSettings,
-            linkerSettings: testLinkerSettings
+            swiftSettings: testSwiftSettings + appSwiftSettings,
+            linkerSettings: appTestLinkerSettings
         ),
     ]
 )

@@ -131,7 +131,15 @@ extension MenuBarUtility {
         mirror.onPrimaryClick = { [weak self] in self?.host?.faceClicked() }
         mirror.onSecondaryClick = { [weak self] view in self?.host?.popUpMenu(in: view) }
         mirror.onChevronClick = { [weak self] in self?.host?.onBoundaryClick?() }
-        mirror.onPlace = { [weak self] frame in self?.host?.mirroredFaceFrame = frame }
+        mirror.onPlace = { [weak self] frame in
+            guard let self else { return }
+            self.host?.mirroredFaceFrame = frame
+            self.clickBridge?.setMirrorFrame(frame.map {
+                let height = CGDisplayBounds(CGMainDisplayID()).height
+                return CGRect(x: $0.minX, y: height - $0.maxY,
+                              width: $0.width, height: $0.height)
+            })
+        }
         mirror.onAccessoryClick = { [weak self] id, view in self?.accessoryClicked(id, view: view) }
         if let face = mirrorFace() { mirror.update(face: face) }
         return mirror

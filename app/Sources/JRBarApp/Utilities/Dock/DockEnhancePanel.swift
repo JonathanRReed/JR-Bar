@@ -519,6 +519,8 @@ struct DockPreviewView: View {
                     if let channel = appTitle.channel {
                         Text(channel)
                             .font(.system(size: 9.5, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1.5)
@@ -531,7 +533,8 @@ struct DockPreviewView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .frame(maxWidth: 260, alignment: .leading)
+            .frame(maxWidth: 160, alignment: .leading)
+            .clipped()
             // Exclude an app from where it bothers you — the card's
             // list, one right-click nearer.
             .contextMenu {
@@ -542,6 +545,7 @@ struct DockPreviewView: View {
             Spacer(minLength: 12)
             verbs
         }
+        .frame(width: headerWidth)
     }
 
     /// The header's verbs as quiet glass discs — least to most final,
@@ -589,6 +593,47 @@ struct DockPreviewView: View {
 
     private var quitLabel: String {
         content.stillRunning ? "Force quit \(content.appName)" : "Quit \(content.appName)"
+    }
+
+    /// The cards set the preview's natural width. A one-card preview may
+    /// grow only enough to keep its controls and a short readable name.
+    private var headerWidth: CGFloat {
+        var titleWidth: CGFloat = 72
+        if let channel = appTitle.channel {
+            let font = NSFont.systemFont(ofSize: 9.5, weight: .semibold)
+            let badge = (channel as NSString).size(withAttributes: [.font: font]).width
+            titleWidth += badge + 18
+        }
+        return max(cardStripWidth, headerChromeWidth + titleWidth)
+    }
+
+    private var cardStripWidth: CGFloat {
+        guard !content.compact, !content.windows.isEmpty else {
+            return DockPreviewCompactRow.minWidth
+        }
+        let cards = content.windows.map { max(cardSize($0).width, DockPreviewCard.minColumn)
+            + 2 * metrics.cardPad }
+        return cards.reduce(0, +) + CGFloat(max(0, cards.count - 1)) * metrics.cardSpacing
+    }
+
+    private var headerChromeWidth: CGFloat {
+        var width: CGFloat = 12
+        if !content.folderTrail.isEmpty { width += metrics.verbDisc + 10 }
+        if content.icon != nil { width += metrics.headerIcon + 10 }
+        let count: Int
+        if content.folderShown != nil {
+            count = 1
+        } else if content.isRunning {
+            count = 3
+                + (content.windows.count > 1 ? 1 : 0)
+                + (content.windows.count > 1 && content.windows.contains { !$0.minimized } ? 1 : 0)
+        } else {
+            count = 0
+        }
+        if count > 0 {
+            width += CGFloat(count) * metrics.verbDisc + CGFloat(count - 1) * 6
+        }
+        return width
     }
 
     /// The folder the pop is showing, by name.

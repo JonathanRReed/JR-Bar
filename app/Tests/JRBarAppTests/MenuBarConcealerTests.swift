@@ -355,6 +355,28 @@ struct MenuBarConcealerTests {
         #expect(log.releases.count == 1, "a plain click is no drag")
     }
 
+    @MainActor
+    @Test("the mirror owns an ordinary click over a stale protected-item frame")
+    func mirrorClickPassesThroughTheBridge() throws {
+        let log = BridgeLog()
+        let bridge = MenuBarSystemClickBridge(onBridge: { log.bridged.append($0) })
+        let wifi = item("wifi", owner: "MenuBarAgent", x: 1165,
+                        identifier: "com.apple.menuextra.wifi")
+        bridge.update(items: [wifi], concealing: true)
+        bridge.setMirrorFrame(CGRect(x: 1165, y: 0, width: 12, height: 24))
+
+        let mirrorPoint = CGPoint(x: 1170, y: 10)
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: mirrorPoint)) != nil,
+                "the visible mirror receives its own press")
+        #expect(log.bridged.isEmpty)
+
+        let systemPoint = CGPoint(x: 1182, y: 10)
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: systemPoint)) == nil,
+                "the uncovered part of Wi-Fi still lifts and replays")
+    }
+
     @Test("Apple's extras conceal like apps only with the flag; the system's own owners never")
     func appleExtras() {
         #expect(MenuBarConcealPlan.canConcealApp("com.tinyspeck.slackmacgap"))

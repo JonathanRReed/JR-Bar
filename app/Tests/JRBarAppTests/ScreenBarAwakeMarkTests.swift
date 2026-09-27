@@ -162,5 +162,7 @@ struct ScreenBarAwakeMarkTests {
         var bare = meter
         bare.sensors = watched.sensors
         #expect(ScreenBarView.contentWidth(watched) == ScreenBarView.contentWidth(bare) + ScreenBarWingAccessory.width)
+        #expect(ScreenBarWingAccessory.width > ScreenBarWingAccessory.size,
+                "the cup's measured slice includes room around its glyph")
     }
 }

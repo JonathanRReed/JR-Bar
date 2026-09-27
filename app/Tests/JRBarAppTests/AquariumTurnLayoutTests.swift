@@ -364,6 +364,30 @@ struct AquariumTurnLayoutTests {
         }
     }
 
+    @Test("hovering a dozing idler leaves its body where it is")
+    func hoverDoesNotWakeOrMoveADozingIdler() throws {
+        let seed = try #require((0..<512).map { UInt64($0) }
+            .first { AquariumBehavior.doze(seed: $0, night: 1) > 0.9 })
+        var fish = makeFish("sleepy", state: .idling, since: t0 - 100)
+        fish.seed = seed
+        let tank = AquariumView(fixture: AquariumView.Fixture(fish: [fish], night: 1))
+        let now = Date(timeIntervalSince1970: t0)
+        tank.stepSwim([fish], in: size, t: t0, now: now)
+        var body = try #require(tank.motion.bodies[fish.id])
+        body.x = 0.5
+        body.y = 0.25
+        tank.motion.bodies[fish.id] = body
+
+        let resting = tank.layout(of: fish, in: size, at: t0, now: now)
+        tank.motion.curiousID = fish.id
+        let hovered = tank.layout(of: fish, in: size, at: t0, now: now)
+
+        #expect(resting.sleep > 0.9)
+        #expect(hovered.x == resting.x)
+        #expect(hovered.y == resting.y)
+        #expect(hovered.sleep == resting.sleep)
+    }
+
     @Test("a busy tank for two minutes: calm turns, never a pop")
     func busyTankSoak() {
         // Two schools and a loner, the way sessions fill a real tank.

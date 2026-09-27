@@ -901,6 +901,9 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     private var loop: TapLoop?
     private var items: [MenuBarItem] = []
     private var concealing = false
+    /// The mirror panel owns clicks in this rect even when a protected
+    /// system item's stale AX frame overlaps it.
+    private var mirrorFrame: CGRect?
     private var swallowUp = false
     /// A ⌘-press went by and its release has not: the next left-up ends
     /// the drag, whatever the modifiers say by then.
@@ -936,6 +939,10 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
             self.items = items.filter { MenuBarItemLister.isProtected($0) }
             self.concealing = concealing
         }
+    }
+
+    func setMirrorFrame(_ frame: CGRect?) {
+        lock.withLock { mirrorFrame = frame }
     }
 
     func start() {
@@ -1040,6 +1047,7 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
         let point = event.location
         let hit: Bool = lock.withLock {
             guard concealing else { return false }
+            if mirrorFrame?.contains(point) == true { return false }
             return MenuBarConcealPlan.bridgedItem(at: point, items: items) != nil
         }
         guard hit else { return Unmanaged.passUnretained(event) }

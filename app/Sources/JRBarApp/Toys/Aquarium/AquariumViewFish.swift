@@ -236,10 +236,10 @@ extension AquariumView {
                     // sip the surface every half-minute or so.
                     // The doze: deep in the tank's night wash an idler
                     // settles toward the sand, stills its tail and dims
-                    // a touch — `drawFish` breathes out the "z"s. A
-                    // curious pointer is worth waking up for.
-                    let doze = reduceMotion || fish.id == motion.curiousID
-                        ? 0 : AquariumBehavior.doze(seed: h, night: nightFactor(t: t))
+                    // a touch — `drawFish` breathes out the "z"s.
+                    // Hover adds a mark without moving or waking it.
+                    let doze = reduceMotion ? 0
+                        : AquariumBehavior.doze(seed: h, night: nightFactor(t: t))
                     let sipPeriod = 26 + Double((h >> 60) & 0xF)
                     let sip = frac(t / sipPeriod + phase / (.pi * 2))
                     let sipping = (reduceMotion ? 0

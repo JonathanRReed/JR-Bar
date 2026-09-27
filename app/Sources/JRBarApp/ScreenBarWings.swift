@@ -117,7 +117,7 @@ struct ScreenBarWingAccessory: Equatable {
     var tone: ScreenBarWingSlot.Tone = .neutral
 
     /// The room it adds to its ear.
-    static let width: CGFloat = 14
+    static let width: CGFloat = 18
     /// Its point size — the menu bar's small glyphs, beside the 13 pt
     /// mark.
     static let size: CGFloat = 10
@@ -712,6 +712,7 @@ struct ScreenBarWingsView: View {
         Image(systemName: accessory.symbol)
             .font(.system(size: ScreenBarWingAccessory.size, weight: .semibold))
             .foregroundStyle(ScreenBarWingSlot(text: "", tone: accessory.tone).textColor)
+            .frame(width: ScreenBarWingAccessory.width)
             .accessibilityHidden(true)
     }
 

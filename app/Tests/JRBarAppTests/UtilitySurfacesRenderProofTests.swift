@@ -161,6 +161,36 @@ struct UtilitySurfacesRenderProofTests {
         #expect(widened.width == short.width)
     }
 
+    @Test("a long application name never widens thumbnail previews")
+    func longApplicationNameKeepsCardWidth() {
+        let short = Fixtures.browserContent()
+        short.appName = "Web"
+        let shortSize = DockPreviewPanel(content: short).fittingSize()
+
+        let long = Fixtures.browserContent()
+        long.appName = String(repeating: "A Very Long Synthetic Application Name ", count: 8)
+        let longSize = DockPreviewPanel(content: long).fittingSize()
+
+        #expect(longSize.width == shortSize.width)
+    }
+
+    @Test("one thumbnail bounds a Nightly name and a long status line")
+    func oneCardHeaderStaysBounded() {
+        let short = Fixtures.noStillsContent()
+        short.windows = Array(short.windows.prefix(1))
+        short.appName = "Short Application (Nightly)"
+        let shortSize = DockPreviewPanel(content: short).fittingSize()
+
+        let long = Fixtures.noStillsContent()
+        long.windows = Array(long.windows.prefix(1))
+        long.appName = "A Long Synthetic Application (Nightly)"
+        long.appAgents = Array(repeating: Fixtures.working, count: 24)
+        let longSize = DockPreviewPanel(content: long).fittingSize()
+
+        #expect(longSize.width == shortSize.width)
+        #expect(longSize.width < 300)
+    }
+
     // MARK: Proof shots
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
@@ -168,7 +198,12 @@ struct UtilitySurfacesRenderProofTests {
         let previous = AskAnswerDesk.shared
         AskAnswerDesk.shared = AskAnswerDesk(send: { _, _, _ in throw CoreClientError.notConnected })
         defer { AskAnswerDesk.shared = previous }
+        let longName = Fixtures.noStillsContent()
+        longName.windows = Array(longName.windows.prefix(1))
+        longName.appName = "A Long Synthetic Application (Nightly)"
+        longName.appAgents = Array(repeating: Fixtures.working, count: 24)
         let shots: [(String, DockPreviewContent)] = [
+            ("dock-long-name", longName),
             ("dock-terminal", Fixtures.terminalContent()),
             ("dock-browser", Fixtures.browserContent()),
             ("dock-no-stills", Fixtures.noStillsContent()),

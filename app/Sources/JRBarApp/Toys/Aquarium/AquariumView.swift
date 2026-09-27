@@ -846,12 +846,8 @@ struct AquariumView: View {
             sumY[fish.providerID, default: 0] += b.y
         }
 
-        // Curiosity: the swimmer nearest the hovering pointer drifts
-        // over to look at it — a weak pull, never a dart, and only
-        // while the pointer is actually in the water (below the HUD,
-        // above the sand). Startled or eating fish have better things
-        // to do.
-        var pointerUnit: (x: Double, y: Double)?
+        // Curiosity marks the nearest swimmer while the pointer is in
+        // the water. It changes the fish's expression, not its course.
         m.curiousID = nil
         if let point = hoverProbe.point, size.width > 1,
            point.y > 44, point.y < sandTop(atX: point.x, in: size) {
@@ -866,7 +862,6 @@ struct AquariumView: View {
                 let d = dx * dx + dy * dy
                 if d < bestD { bestD = d; m.curiousID = fish.id }
             }
-            if m.curiousID != nil { pointerUnit = pu }
         }
 
         let maxY = (size.height - 100) / max(1, size.height)
@@ -899,10 +894,6 @@ struct AquariumView: View {
                let b = m.bodies[fish.id] {
                 context.school = (x: (sx - b.x) / Double(n - 1),
                                   y: (sy - b.y) / Double(n - 1))
-            }
-            // Curiosity wins over schooling: it pulls toward you.
-            if fish.id == m.curiousID, let pu = pointerUnit {
-                context.school = pu
             }
             let hungry = toy?.game.pets[fish.id]?.hungry(at: now) ?? false
             context.idling = fish.state == .idling
