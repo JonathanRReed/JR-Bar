@@ -17,8 +17,8 @@ You need the Command Line Tools (Swift 6.2 or newer) and Python 3.12.
 
 ```sh
 git clone https://github.com/JonathanRReed/JR-Bar.git && cd JR-Bar
-./scripts/bootstrap-dev.sh   # the Python venv the build uses
-make package                 # dist/JR-Bar-<version>.pkg, signed with whatever identity the keychain has
+make bootstrap               # the pinned Python environment the build uses
+make package                 # dist/JR-Bar-<version>.pkg
 make clean-install           # installs it into ~/Applications and opens it
 ```
 
@@ -30,14 +30,21 @@ make clean-install           # installs it into ~/Applications and opens it
 On first launch the app:
 
 - starts its daemon;
-- points the hook of every provider it finds on the Mac at the bundled shim
-  (Settings › Agents installs, reinstalls or removes them per provider);
+- records the installed build so later upgrades can identify it;
 - registers itself as a login item.
+
+It does not install provider hooks by itself. Open **Settings > Agents**,
+review the detected providers, and install the ones you want JR-Bar to watch.
+Later upgrades refresh only hooks the detector can prove JR-Bar manages.
+Inactive hooks remain inactive, and a custom managed log path is preserved.
 
 Click the icon for the panel, and right-click it for the menu. No
 permission is asked for at launch. Each feature asks the first time it
 needs one; the README's [permissions table](../../README.md#permissions)
 lists them all.
+
+Continue with the [quick start](quick-start.md). If the monitor or a provider
+does not come online, use [recovery](recovery.md).
 
 ## The command line
 

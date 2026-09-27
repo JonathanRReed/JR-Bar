@@ -1,21 +1,39 @@
 # JR-Bar
 
-Your coding agents, as light. JR-Bar is a native macOS menu-bar app that
-watches Claude Code, Codex, Gemini CLI and friends and turns what they are
-doing into a glow: breathing in the session's colour while an agent works,
-a green sweep when it finishes, amber that escalates when one is stuck
-waiting on you. The light lives on a SidePulse strip in the SD slot, on a
-Dot in a USB-C port, and on the Screen Bar, one unsegmented band tucked under
-the MacBook notch. No hardware is required.
+JR-Bar is a native macOS app for keeping track of coding agents. It shows
+which sessions are working, what finished while you were away, which agent
+needs an answer, and how much provider quota remains. Asks stay pinned until
+you answer them. Session state and quota can also drive the Screen Bar under
+the notch or optional SidePulse lights.
 
 <p align="center">
-  <img src="media/panel.png" alt="The JR-Bar panel: an ask pinned at the top with Approve and Deny, working and waiting sessions under it, usage bars per provider, device chips and a brightness slider" width="420">
+  <img src="media/panel.png" alt="JR-Bar panel with a permission ask, Deny and Approve controls, a working Codex session, quota readings and the Screen Bar device" width="360" height="467">
 </p>
+
+Current native panel rendered with synthetic demo sessions.
 
 It is built to feel like the tools it sits beside: a glass panel off the
 status item, keyboard first, a Settings window that looks like System
 Settings, no web views. The app is Swift and SwiftUI; a Python daemon
 bundled inside it owns the facts.
+
+## Build and install
+
+There is no public release yet. On an Apple silicon Mac running macOS 26 or
+newer, build the current source with Xcode Command Line Tools, Swift 6.2 or
+newer, and Python 3.12:
+
+```sh
+git clone https://github.com/JonathanRReed/JR-Bar.git && cd JR-Bar
+make bootstrap
+make package
+make clean-install
+```
+
+This builds `dist/JR-Bar-<version>.pkg`, installs the app in
+`~/Applications`, and opens it. Go to **Settings > Agents** to choose which
+detected providers receive hooks. The [quick start](docs/user/quick-start.md)
+covers the first useful checks.
 
 ## What it does
 
@@ -34,9 +52,9 @@ bundled inside it owns the facts.
 - **The Screen Bar.** A 6 pt band under the notch playing the same LEDS
   program as the strip, phase-locked to it, blended from eight samples into
   one gradient (never a row of segments). Hover shows the top session and a
-  plain-language line about the light; click jumps to that session's
-  terminal. It follows Alcove's capsule width and stays up over full-screen
-  apps.
+  plain-language line about the light. Click the band to pin its card. Click
+  the session mark on the left wing to open that session. It follows
+  Alcove's capsule width and stays up over full-screen apps.
 
 <p align="center">
   <img src="media/screen-bar.png" alt="The Screen Bar under the notch after a completion, with the hover pill naming the session" width="700">
@@ -88,6 +106,10 @@ bundled inside it owns the facts.
   a Doctor checklist and `jrbar hooks doctor`; Sparkle updates from this
   repository's releases, manual until you turn automatic checks on, with a
   beta channel.
+- **Desktop utilities.** Data Hoarder keeps a local, searchable archive of
+  sources you choose. Dock tools can hold or enhance the Dock, and Menu Bar
+  tools can arrange or conceal items. Each utility is off until you turn it
+  on, and its controls explain any macOS permission it needs.
 
 <p align="center">
   <img src="media/usage-center.png" alt="Usage Center: Claude's 5h, 7d and 30d rings, a comfortable forecast, tokens by day with cost and cache savings; Gemini near its limit with a run-out time" width="640">
@@ -116,11 +138,13 @@ them, the Screen Bar is the light.
 | Best effort (hook shapes known, not exercised on the author's Mac) | Cursor, Hermes Agent, Kiro |
 | Neighbours, not providers | T3 Code (read-only session projection, [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)); Alcove (the Screen Bar matches its capsule) |
 
-Hooks are registered by the app on its first launch for every provider
-with a config on the Mac, and can be installed, reinstalled or removed
-per provider in Settings › Agents. Codex's trust hash is recomputed
-locally for the exact command written. How each provider is read, and
-what its usage lanes mean, is in [docs/NATIVE-PROVIDERS.md](docs/NATIVE-PROVIDERS.md);
+The app detects providers without changing their configs. Install, reinstall,
+or remove hooks one provider at a time in Settings › Agents. On an upgrade,
+JR-Bar refreshes only hooks its detector can prove JR-Bar already manages;
+inactive hooks stay inactive and custom log paths stay in place. Codex's
+trust hash is recomputed locally for the exact command written. How each
+provider is read, and what its usage lanes mean, is in
+[docs/NATIVE-PROVIDERS.md](docs/NATIVE-PROVIDERS.md);
 adding one is [docs/PROVIDER-ADAPTER-GUIDE.md](docs/PROVIDER-ADAPTER-GUIDE.md).
 
 ## Install
@@ -129,20 +153,22 @@ Requirements: an Apple silicon Mac on macOS 26 or newer. JR-Bar is one
 signed app bundle carrying the daemon and the hook shim; nothing else is
 installed on the system.
 
-From a [GitHub release](https://github.com/JonathanRReed/JR-Bar/releases),
-once one is published: download `JR-Bar-<version>.pkg` and run it. Until
-then, build it yourself (Command Line Tools with Swift 6.2+, Python 3.12):
+There is no public package yet. When one is published, it will appear on the
+[GitHub releases page](https://github.com/JonathanRReed/JR-Bar/releases).
+For now, build it yourself:
 
 ```sh
 git clone https://github.com/JonathanRReed/JR-Bar.git && cd JR-Bar
-make package          # dist/JR-Bar-0.9.9.pkg, signed with whatever identity the keychain has
+make bootstrap        # creates the pinned development environment
+make package          # dist/JR-Bar-<version>.pkg
 make clean-install    # installs it into ~/Applications (no password) and opens it
 ```
 
-`sudo installer -pkg dist/JR-Bar-0.9.9.pkg -target /` puts it in
-`/Applications` instead. On first launch the app starts its daemon, points
-every provider's hook at the bundled shim, and registers itself as a login
-item. Click the icon for the panel; right-click for the menu. The command
+`sudo installer -pkg dist/JR-Bar-<version>.pkg -target /` puts it in
+`/Applications` instead. On first launch the app starts its daemon, records
+the installed build, and registers itself as a login item. It does not edit
+provider hooks until you choose them in Settings › Agents. Click the icon for
+the panel; right-click for the menu. The command
 line lives inside the bundle; **Settings › Shortcuts › Command line ›
 Install** links it as `~/.local/bin/jrbar` (put `~/.local/bin` on your
 `PATH` if it is not already). The link follows the app when you update it,

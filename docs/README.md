@@ -5,6 +5,10 @@ install it. This page lists everything else.
 
 ## Using JR-Bar
 
+- [Quick start](user/quick-start.md): install hooks, find a session, answer an
+  ask, and check quota
+- [Recovery](user/recovery.md): monitor offline, stale quota, missing hooks,
+  and macOS permissions
 - [Install and remove](user/install.md)
 - [The command line](user/cli.md): `jrbar usage`, `jrbar status`,
   `jrbar hooks doctor`, settings by dot path, `jrbar://` links

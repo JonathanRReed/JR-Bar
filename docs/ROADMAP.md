@@ -1,58 +1,49 @@
 # JR-Bar roadmap
 
-Updated 2026-09-21. 0.8.0 shipped the Swift app over the bundled Python
-daemon; 0.9.9 is what runs on the owner's Mac now — signed, notarized and
-stapled. The plan that got it here is [PLAN-0.8.md](PLAN-0.8.md); what
-ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md). This is the short list of
-what comes after, in rough order.
+Updated 2026-09-27. The installed baseline is 0.9.12, build 2313. It is
+signed, notarized and stapled. Source improvements after that baseline are
+unreleased. [FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented
+capabilities; a source path is not a physical acceptance receipt.
 
-## After 0.9
+## Before the first public release
 
-1. **A first public release.** The app is already Developer-ID signed,
-   notarized and stapled. The PKG is installable but unsigned — there is
-   no Developer ID Installer identity in the keychain, so the package
-   itself can never be notarized (only signed PKGs can); the stapled app
-   inside is what carries the trust. Either add an installer identity so
-   the PKG carries its own ticket, or ship the notarized ZIP as the
-   primary artifact. Then cut `v0.9.x`, upload the PKG and ZIP, and the
-   signed `appcast.xml` to the `updates` release — the Sparkle feed 404s
-   until a release exists ([PRODUCTION-RELEASE.md](PRODUCTION-RELEASE.md)).
-2. **Creator Micro 2 live verification.** The pad has been verified
-   powered off only (approval, keymap plan, the board without hardware).
-   Turn it on and exercise: approval on first sight, a session key press
-   answering an ask when the terminal is frontmost, the dial and joystick
-   mappings, keymap apply with backup and restore, USB and Bluetooth
-   arrival and departure.
-3. **Codex and Gemini real-turn verification.** Both providers are wired
-   and fixture-tested; the owner's Codex quota resets 2026-09-14 and Gemini
-   was verified on the derived tier only. Run real turns through each,
-   confirm the ask lane, the SessionEnd/interrupt path for Codex, and the
-   usage windows.
-4. **Adapters in Swift.** The protocol was drawn so provider adapters can
-   move to Swift one at a time without the app noticing. Start with the
-   session-truth pieces that are already process-table work (liveness,
-   Claude session files), then the transcript tails, leaving the daemon
-   with usage, devices and policy.
-5. **Retire the legacy windows.** Done 2026-09-24: `open_legacy_window` is
-   gone, the Creator Micro's window keys ask the app for its own windows,
-   and the Setup, Effect Studio, Control Center and Why panel windows are
-   deleted. The Settings window and the modules only it imports go with the
-   settings-window removal (SP-10).
-6. **Smaller things.** A real app icon (the current one is programmatic);
-   the Screen Bar's notch-silhouette measurement and standing gauges on
-   the Swift side; a price table served by the daemon so the Usage Center's
-   cost lines stop reading "no price table"; the Dial and Joystick mapping
-   editor in Settings › Devices.
-7. **The 2026-09-21 audit's deferred parity work** (see
-   [archive/audits/2026-09-21-systems-audit.md](archive/audits/2026-09-21-systems-audit.md)):
-   live Dock thumbnails behind an opt-in (SCStream costs the persistent
-   recording indicator — stills were the deliberate choice, but the option
-   is parity with DockDoor); a widget extension target (the snapshot
-   writer and decoder already exist, the target needs an Xcode project);
-   pinch/squeeze on the island; inbound AirDrop progress capsules; system
-   notifications rendered *in* the island rather than as pills under it;
-   Dock preview keyboard walk without the pointer; token/cost history
-   beyond Claude and Codex transcripts.
+1. Finish the audit repairs and verify the installed candidate. Transcript
+   parsing now streams lines, Screen Bar planning runs off-main with bounded
+   admission, and upgrades preserve chosen hook integrations. Setup asks
+   about permissions used by enabled features. Combined tests, packaging
+   and installed parity must follow the final source changes.
+2. Verify the reported native interactions on the Mac. Repeat Fold at rest
+   with parking off, menu-bar clicks, long Dock titles, centered compact
+   actions, fish hover and an early weekly quota reset. Fixture coverage
+   cannot prove how the lid or pointer feels in daily use.
+3. Collect controlled performance measurements. Record warm launch, menu
+   and pane latency, main-thread work and idle CPU against the release
+   budgets. Complete the [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md).
+   Synthetic parsing benchmarks are useful evidence for that parser only.
+4. Finish signing and release acceptance. Developer ID Application,
+   notarization and Sparkle keys are available. The Developer ID Installer
+   identity is still missing. Physical hardware/provider checks and the
+   system uninstall receipt also remain open. The
+   [production release gate](PRODUCTION-RELEASE.md) must pass before publishing.
+5. Verify the public entry. Keep setup instructions and screenshots current,
+   make the support route usable, then publish the signed installer and
+   update archive once their receipts pass. Until then, Releases has no
+   downloadable public build.
+
+## Later work
+
+- Creator Micro 2 live acceptance. Check human approval, session keys,
+  dial and joystick mappings, keymap backup/restore, and USB/Bluetooth
+  arrival and departure. Previous checks covered a powered-off pad only.
+- Real Codex and Gemini turns. Verify asks, completion/interrupt handling
+  and the account's actual quota windows. Old quota reset dates do not
+  establish current acceptance.
+- Move provider adapters to Swift one at a time if measurements justify
+  it. Keep the core protocol stable while doing so.
+- Reassess the deferred parity items from the
+  [2026-09-21 audit](archive/audits/2026-09-21-systems-audit.md), including
+  optional live Dock thumbnails, widget hosting, island gestures and
+  broader token/cost history. Reliability and resource use come first.
 
 ## Deliberately not planned
 

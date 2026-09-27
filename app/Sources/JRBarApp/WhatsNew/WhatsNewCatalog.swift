@@ -33,20 +33,20 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.12"
+    static let releaseID = "0.9.13"
 
     /// The header's one line.
-    static let headline = "Steadier Fold, smaller Dock previews, and quota readings that stay with their account."
+    static let headline = "Provider choices survive upgrades, and timeline and Screen Bar work is bounded."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
     static let entries: [WhatsNewEntry] = [
         WhatsNewEntry(
-            id: "keep-awake", symbol: "cup.and.saucer",
-            title: "Keep Awake stays clear",
-            detail: "Manual sessions have their own controls, and pending commands cannot run twice.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Keep Awake is"),
+            id: "hooks", symbol: "checklist",
+            title: "Hooks stay your choice",
+            detail: "Fresh setup connects chosen providers, and upgrades preserve disabled integrations and custom log destinations.",
+            tryIt: .settings(page: "agents"), opens: "Opens Settings › Agents"),
         WhatsNewEntry(
             id: "fold", symbol: "laptopcomputer",
             title: "Fold returns to rest",
@@ -54,8 +54,8 @@ enum WhatsNewCatalog {
             tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Fold card is"),
         WhatsNewEntry(
             id: "aquarium", symbol: "fish",
-            title: "Fish stay steady on hover",
-            detail: "Showing a fish's name preserves its swim course and sleeping position.",
+            title: "Fish share frame work",
+            detail: "Swimming and drawing reuse completion meals, including pellets eaten in the current frame.",
             tryIt: .aquarium, opens: "Opens the Aquarium"),
         WhatsNewEntry(
             id: "drag", symbol: "menubar.rectangle",
@@ -64,8 +64,8 @@ enum WhatsNewCatalog {
             keys: "⌘ drag"),
         WhatsNewEntry(
             id: "dot", symbol: "light.strip.2",
-            title: "Pro and Dot, one strip",
-            detail: "Light flows off the SidePulse into the Dot, kept in step with the Dot's slower clock.",
+            title: "Screen Bar plans off-main",
+            detail: "One active plan and the latest pending program keep hidden bars from starting new planning work.",
             tryIt: .settings(page: "devices"), opens: "Opens Settings › Devices, where Pro & Dot is"),
         WhatsNewEntry(
             id: "resets", symbol: "party.popper",
@@ -74,8 +74,8 @@ enum WhatsNewCatalog {
             tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where Confetti is"),
         WhatsNewEntry(
             id: "archive", symbol: "archivebox",
-            title: "Read archives without capture",
-            detail: "Session lookup uses an index, and oversized timelines report their limit before loading transcript segments.",
+            title: "Timelines use less memory",
+            detail: "Reconstruction streams transcript lines and indexes failure-story tools while preserving timeline order.",
             tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Data Hoarder is"),
         WhatsNewEntry(
             id: "dock", symbol: "dock.rectangle",

@@ -1,15 +1,16 @@
 # Providers
 
-A provider is an agent CLI whose hooks JR-Bar installs and whose usage it
-reads. The README lists them in its
+A provider is an agent CLI JR-Bar can watch through hooks, local evidence, or
+a provider usage source. The README lists them in its
 [providers table](../../README.md#providers). How each one is read is
 in [NATIVE-PROVIDERS.md](../NATIVE-PROVIDERS.md).
 
 ## Hooks
 
-The app installs hooks on first launch for every provider that has a
-config on the Mac. Settings › Agents installs, reinstalls or removes them
-one provider at a time.
+The app detects provider configs without editing them. In **Settings >
+Agents**, install, reinstall, or remove hooks one provider at a time. A later
+upgrade refreshes only detector-proven JR-Bar-managed hooks. It preserves
+inactive flags and custom managed log paths.
 
 `jrbar hooks doctor` shows, for each provider:
 

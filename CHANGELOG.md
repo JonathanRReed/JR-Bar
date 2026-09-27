@@ -2,6 +2,23 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.13 (unreleased)
+
+- Transcript reconstruction streams lines across segments without a merged
+  buffer or an allocation for every line. Failure stories use indexed tool
+  lookup while keeping their original ordering.
+- Screen Bar keyframe planning runs off-main with one active job and only
+  the latest pending program. Hidden and held bars start no new planning.
+- First setup leaves provider configurations alone until a provider is
+  selected. Upgrades refresh owned integrations, preserve disabled flags
+  and custom log paths, and serialize changes with CLI installation/removal.
+- Setup lists permissions used by enabled features first and keeps other
+  grants optional. Unknown active grants remain unresolved.
+- Aquarium swimming and drawing share each frame's completion meals, with
+  eaten pellets updated before that frame draws.
+- The GitHub entry has a current synthetic panel image, quick-start and
+  recovery guides, accurate hook instructions and a working Issues route.
+
 ## 0.9.12
 
 - Tight Dock previews center their controls below the app name. Long

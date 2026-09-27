@@ -5,6 +5,13 @@ capture proves what the app observed. An Instruments profile adds wakeups,
 energy impact, memory, and CPU evidence and binds those values to a raw trace.
 Neither file is a release claim by itself.
 
+The runtime exporter described below belongs to the retained Python renderer.
+The current Swift Screen Bar does not export that schema. The retired
+`status-bar start` UI command cannot produce a native-app capture. Use
+Instruments against the installed `JR-Bar` process for current measurements;
+do not certify the native renderer with a legacy runtime profile. A native
+exporter remains needed to complete this diagnostic matrix.
+
 ## Required matrix
 
 Capture each scenario for at least five minutes:
@@ -23,19 +30,12 @@ run is accepted only when the Screen Bar is not visible and presents no
 frames. Unreadable Focus state remains `unknown`; it is never converted to a
 successful DND observation.
 
-## Capture one runtime profile
+## Legacy runtime profile schema
 
-Choose a private output path and launch JR-Bar in the foreground with the
-scenario named explicitly:
-
-```bash
-JRBAR_SCREEN_BAR_PROFILE_SCENARIO=static \
-JRBAR_SCREEN_BAR_PROFILE_OUTPUT="$PWD/performance-evidence/static.runtime.json" \
-.venv/bin/python -m jrbar status-bar start --foreground
-```
-
-Put the app into the named state, keep it there for at least 300 seconds, and
-quit it normally. JR-Bar writes the profile only during termination. Without
+The former renderer used `JRBAR_SCREEN_BAR_PROFILE_SCENARIO` and
+`JRBAR_SCREEN_BAR_PROFILE_OUTPUT` to name a scenario and private output path.
+Its historical capture procedure held that state for at least 300 seconds
+and exported during normal termination. Without
 both environment variables, the ordinary runtime performs no profile export.
 During an explicit profiling run, a content-free state sampler observes the
 scenario every five seconds and whenever Screen Bar visibility or display

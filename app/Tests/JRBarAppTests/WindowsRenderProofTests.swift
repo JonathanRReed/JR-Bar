@@ -179,6 +179,25 @@ struct WindowsRenderProofTests {
     // MARK: Panel
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func publicPanel() throws {
+        let ask = CoreAsk(session: "claude:demo", kind: "permission", openedAt: Self.t - 20,
+                          summary: "Run the test suite before the merge?", answerable: true,
+                          request: "demo-request", preview: "npm test")
+        let sessions = [
+            CoreSession(id: "claude:demo", provider: "claude", label: "Parser tests",
+                        cwd: "/demo/parser", mode: "waiting", since: Self.t - 20, ask: ask),
+            CoreSession(id: "codex:demo", provider: "codex", label: "Weather dashboard",
+                        cwd: "/demo/weather", mode: "working", since: Self.t - 240, workers: 2),
+        ]
+        let state = CoreState(now: Self.t,
+                              aggregate: CoreAggregate(mode: "waiting", needsYou: 1, active: 1),
+                              sessions: sessions, asks: [ask],
+                              devices: [Self.devices[2]], usage: Self.usage(heavy: false))
+        let store = Self.panelStore(state)
+        try Self.write("public-panel", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
+    }
+
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func panelStates() async throws {
         let quiet = Self.panelStore(CoreState(now: Self.t, devices: Self.devices, usage: Self.usage(heavy: false),
                                               hiddenCount: 3))
