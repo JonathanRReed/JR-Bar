@@ -20,4 +20,9 @@ enum PackagedHookRefresh {
               providers.allSatisfy({ results[$0]?["ok"]?.boolValue == true }) else { return nil }
         return providers
     }
+
+    static func peerMatches(connected: Bool, peerPID: Int?, supervisor: CoreSupervisor.State?) -> Bool {
+        guard connected, let supervisor, case .running(let pid) = supervisor else { return false }
+        return peerPID == Int(pid)
+    }
 }

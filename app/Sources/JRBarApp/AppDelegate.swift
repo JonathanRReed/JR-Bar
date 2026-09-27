@@ -1053,7 +1053,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     private func refreshPackagedHooksIfNeeded(core: CoreModel) {
-        guard core.isLive, let stamp = pendingHookRefreshStamp else { return }
+        guard core.isLive, let stamp = pendingHookRefreshStamp,
+              PackagedHookRefresh.peerMatches(connected: core.connection.isConnected,
+                                              peerPID: core.hello?.pid, supervisor: supervisor?.state) else { return }
         pendingHookRefreshStamp = nil
         Task { @MainActor [weak self, weak core] in
             guard let core else { return }

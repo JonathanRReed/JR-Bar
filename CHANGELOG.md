@@ -15,6 +15,8 @@ All notable changes to JR-Bar are documented here.
 - Setup lists permissions used by enabled features first and keeps other
   grants optional. Unknown active grants remain unresolved.
 - An older setup-note expiry cannot clear a newer integration reply.
+- Upgrade refresh waits for the supervised daemon's hello, so a retiring
+  daemon cannot consume the new build's refresh attempt.
 - Aquarium swimming and drawing share each frame's completion meals, with
   eaten pellets updated before that frame draws.
 - The GitHub entry has a current synthetic panel image, quick-start and

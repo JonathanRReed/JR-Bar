@@ -4,6 +4,24 @@ import Testing
 
 @Suite("Packaged hook refresh")
 struct PackagedHookRefreshTests {
+    @Test("only a connected supervised peer can receive the upgrade refresh")
+    func refreshRequiresConnectedMatchingPeer() {
+        #expect(PackagedHookRefresh.peerMatches(connected: true, peerPID: 42,
+                                               supervisor: .running(pid: 42)))
+        #expect(!PackagedHookRefresh.peerMatches(connected: false, peerPID: 42,
+                                                supervisor: .running(pid: 42)))
+    }
+
+    @Test("upgrade refresh waits for the supervised peer, including its hello")
+    func upgradeWaitsForExpectedPeer() {
+        #expect(!PackagedHookRefresh.peerMatches(connected: true, peerPID: 41,
+                                                supervisor: .running(pid: 42)))
+        #expect(!PackagedHookRefresh.peerMatches(connected: true, peerPID: nil,
+                                                supervisor: .running(pid: 42)))
+        #expect(!PackagedHookRefresh.peerMatches(connected: true, peerPID: 42, supervisor: .idle))
+        #expect(!PackagedHookRefresh.peerMatches(connected: true, peerPID: 42, supervisor: nil))
+    }
+
     @Test("fresh setup stamps without installing providers, and an unchanged build does nothing")
     func freshAndUnchanged() {
         #expect(PackagedHookRefresh.action(previous: nil, current: "new", coreLive: true) == .stampOnly)
