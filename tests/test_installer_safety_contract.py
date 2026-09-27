@@ -38,8 +38,6 @@ def test_package_installs_payload_without_mutating_external_integrations__and_2_
     for command in (
         "agent-monitor uninstall all",
         "sdejectguard uninstall --scope user",
-        "status-bar uninstall-sleep-helper",
-        "sdejectguard uninstall --scope system",
     ):
         assert f'"$CORE_BINARY" {command}' in text
     # Contents/MacOS/JR-Bar is the Swift app and takes no arguments; every
@@ -47,6 +45,11 @@ def test_package_installs_payload_without_mutating_external_integrations__and_2_
     assert 'CORE_BINARY="$APP_PATH/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core"' in text
     assert '"$APP_BINARY" status-bar' not in text
     assert '"$APP_BINARY" agent-monitor' not in text
+    assert '"$CORE_BINARY" status-bar uninstall-sleep-helper' not in text
+    assert '"$CORE_BINARY" sdejectguard uninstall --scope system' not in text
+    assert "/etc/sudoers.d/jrbar-disablesleep" in text
+    assert "/Library/LaunchDaemons/com.jonathanreed.jrbar.sdejectguard.plist" in text
+    assert "Path overrides are allowed only with --dry-run." in text
     # The retired menu bar's LaunchAgent is booted out and unlinked directly.
     assert "status-bar stop" not in text
     assert "com.jonathanreed.jrbar.app io.sidepulse.agentstatus com.sidepulse.agentstatus" in text
@@ -63,4 +66,3 @@ def test_package_installs_payload_without_mutating_external_integrations__and_2_
     assert 'PACKAGE_ID="com.jonathanreed.jrbar"' in text
     assert 'LEGACY_PACKAGE_ID="io.sidepulse.app"' in text
     assert 'pkgutil --forget "$package_id"' in text
-

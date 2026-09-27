@@ -12,14 +12,15 @@ set -euo pipefail
 # own Remove button uses; anything else at that path is left alone.
 #
 # --dry-run prints every step instead of taking it and needs no sudo. The
-# JRBAR_* variables below exist for that dry run and for tests: JRBAR_HOME
-# skips the directory lookup, JRBAR_APP_PATH and JRBAR_CLI_LINK pin one path.
+# The JRBAR_* path variables below exist only for dry runs and tests. A real
+# root run resolves the account home and accepts only the two supported app
+# locations.
 
 PACKAGE_ID="com.jonathanreed.jrbar"
 LEGACY_PACKAGE_ID="io.sidepulse.app"
 # The retired Python menu bar's LaunchAgent, and its pre-rename labels.
 RETIRED_AGENT_LABELS="com.jonathanreed.jrbar.app io.sidepulse.agentstatus com.sidepulse.agentstatus"
-RECEIPT_DIR="${JRBAR_RECEIPT_DIR:-${SIDEPULSE_RECEIPT_DIR:-/var/db/jrbar}}"
+RECEIPT_DIR="/var/db/jrbar"
 LEGACY_RECEIPT_DIR="/var/db/sidepulse"
 PURGE_STATE=0
 REMOVE_APP=1
@@ -66,16 +67,37 @@ if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ] || [ "$TARGET_USER" = "l
     exit 2
 fi
 
+if [ "$DRY_RUN" -eq 0 ] && { \
+    [ -n "${JRBAR_HOME:-}" ] || \
+    [ -n "${JRBAR_APP_PATH:-${SIDEPULSE_APP_PATH:-}}" ] || \
+    [ -n "${JRBAR_CLI_LINK:-${SIDEPULSE_CLI_LINK:-}}" ] || \
+    [ -n "${JRBAR_RECEIPT_DIR:-${SIDEPULSE_RECEIPT_DIR:-}}" ]; }; then
+    echo "Path overrides are allowed only with --dry-run." >&2
+    exit 2
+fi
+
 if [ -n "${JRBAR_HOME:-}" ]; then
     TARGET_HOME="$JRBAR_HOME"
 else
     TARGET_HOME="$(/usr/bin/dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
 fi
-if [ -z "$TARGET_HOME" ] || [ ! -d "$TARGET_HOME" ]; then
+if [ -z "$TARGET_HOME" ] || [ ! -d "$TARGET_HOME" ] || [ -L "$TARGET_HOME" ]; then
     echo "Could not resolve a safe home directory for $TARGET_USER." >&2
     exit 2
 fi
+RESOLVED_HOME="$(cd "$TARGET_HOME" && pwd -P)"
+if [ "$RESOLVED_HOME" != "$TARGET_HOME" ]; then
+    echo "Refusing a home directory that resolves somewhere else: $TARGET_HOME" >&2
+    exit 2
+fi
 TARGET_UID="$(/usr/bin/id -u "$TARGET_USER" 2>/dev/null || echo 0)"
+if [ "$TARGET_UID" -eq 0 ]; then
+    echo "Could not resolve a non-root user id for $TARGET_USER." >&2
+    exit 2
+fi
+if [ "$DRY_RUN" -eq 1 ]; then
+    RECEIPT_DIR="${JRBAR_RECEIPT_DIR:-${SIDEPULSE_RECEIPT_DIR:-$RECEIPT_DIR}}"
+fi
 
 # Take a step, or with --dry-run say it.
 act() {
@@ -95,6 +117,14 @@ elif [ -d "$TARGET_HOME/Applications/JR-Bar.app" ]; then
     APP_PATH="$TARGET_HOME/Applications/JR-Bar.app"
 else
     APP_PATH="/Applications/JR-Bar.app"
+fi
+case "$APP_PATH" in
+    "$TARGET_HOME/Applications/JR-Bar.app"|/Applications/JR-Bar.app) ;;
+    *) echo "Refusing unsafe JR-Bar application path: $APP_PATH" >&2; exit 2 ;;
+esac
+if [ -L "$APP_PATH" ]; then
+    echo "Refusing symlinked JR-Bar application: $APP_PATH" >&2
+    exit 2
 fi
 echo "JR-Bar.app: $APP_PATH"
 # The Swift app takes no arguments; the command line is the bundled daemon.
@@ -140,14 +170,46 @@ run_as_user "$CORE_BINARY" agent-monitor uninstall claude-statusline
 run_as_user "$CORE_BINARY" agent-monitor uninstall all
 run_as_user "$CORE_BINARY" sdejectguard uninstall --scope user
 
-# System-owned helpers are removed only through their reviewed commands.
-act /usr/bin/env \
-    SUDO_USER="$TARGET_USER" \
-    USER="$TARGET_USER" \
-    LOGNAME="$TARGET_USER" \
-    HOME="$TARGET_HOME" \
-    "$CORE_BINARY" status-bar uninstall-sleep-helper
-act "$CORE_BINARY" sdejectguard uninstall --scope system
+# System cleanup uses fixed reviewed paths. Never execute a binary from the
+# target user's writable app bundle as root.
+for sudoers in /etc/sudoers.d/jrbar-disablesleep /etc/sudoers.d/sidepulse-disablesleep; do
+    if [ -e "$sudoers" ] || [ -L "$sudoers" ]; then
+        act /bin/rm -f "$sudoers"
+    fi
+done
+
+for plist in \
+    "/Library/LaunchDaemons/com.jonathanreed.jrbar.sdejectguard.plist" \
+    "/Library/LaunchDaemons/io.sidepulse.sdejectguard.plist"; do
+    if [ -e "$plist" ] || [ -L "$plist" ]; then
+        if [ "$DRY_RUN" -eq 1 ]; then
+            act /bin/launchctl bootout system "$plist"
+        else
+            /bin/launchctl bootout system "$plist" >/dev/null 2>&1 || true
+        fi
+        act /bin/rm -f "$plist"
+    fi
+done
+for owned in \
+    "/Library/Application Support/JR-Bar/sd-eject-guard/SidePulse Pro Eject Prevention" \
+    "/Library/Application Support/JR-Bar/sd-eject-guard/sd_eject_guard" \
+    "/Library/Application Support/SidePulse/sd-eject-guard/SidePulse Pro Eject Prevention" \
+    "/Library/Application Support/SidePulse/sd-eject-guard/sd_eject_guard"; do
+    if [ -e "$owned" ] || [ -L "$owned" ]; then
+        act /bin/rm -f "$owned"
+    fi
+done
+for directory in \
+    "/Library/Application Support/JR-Bar/sd-eject-guard" \
+    "/Library/Application Support/SidePulse/sd-eject-guard"; do
+    if [ -d "$directory" ] && [ ! -L "$directory" ]; then
+        if [ "$DRY_RUN" -eq 1 ]; then
+            act /bin/rmdir "$directory"
+        else
+            /bin/rmdir "$directory" >/dev/null 2>&1 || true
+        fi
+    fi
+done
 
 # True when a link points into some JR-Bar bundle: this one, a moved one,
 # a dev build, or the exact app executable an older package linked.

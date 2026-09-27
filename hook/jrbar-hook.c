@@ -280,7 +280,9 @@ static int lock_spool(int fd, const char *path, const struct stat *st, uint64_t 
  * the shim reopens until its deadline; past it the line is appended
  * without the lock to the file `path` names, past the cap if need be. Only
  * then can a drain or rotation at that same moment still take it. */
-static int open_spool_with_room(const char *path, const char *overflow, size_t need, uint64_t deadline) {
+static int open_spool_with_room(const char *path, const char *overflow, size_t need,
+                                uint64_t deadline, int *locked_out) {
+    *locked_out = 0;
     for (;;) {
         int fd = open_spool(path);
         struct stat st;
@@ -290,15 +292,57 @@ static int open_spool_with_room(const char *path, const char *overflow, size_t n
         if (locked == 0) {
             /* The size is read under the lock: every earlier append has landed. */
             if (fstat(fd, &st) != 0 || st.st_size == 0
-                || (uint64_t)st.st_size + need <= MAX_SPOOL_BYTES) return fd;
+                || (uint64_t)st.st_size + need <= MAX_SPOOL_BYTES) {
+                *locked_out = 1;
+                return fd;
+            }
             /* ENOENT is a drain that took the file after the lock was
              * checked; there is a fresh one to open. */
-            if (rename(path, overflow) != 0 && errno != ENOENT) return fd;
+            if (rename(path, overflow) != 0 && errno != ENOENT) {
+                *locked_out = 1;
+                return fd;
+            }
         }
         /* The file moved or was rotated. Every pass that goes round again
          * comes through here, so the loop ends at the deadline. */
         close(fd);
         if (now_ms() >= deadline) return open_spool(path);
+    }
+}
+
+static void write_spool_line(int fd, const char *line, size_t length, int locked,
+                             uint64_t deadline) {
+    struct stat before;
+    off_t original_size = -1;
+    if (locked && fstat(fd, &before) == 0) original_size = before.st_size;
+    size_t written = 0;
+    int attempted = 0;
+    while (written < length) {
+        if (attempted && now_ms() >= deadline) break;
+        ssize_t count = write(fd, line + written, length - written);
+        attempted = 1;
+        if (count > 0) {
+            written += (size_t)count;
+            continue;
+        }
+        if (count < 0 && errno == EINTR) continue;
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            struct pollfd ready = { fd, POLLOUT, 0 };
+            int64_t left = (int64_t)deadline - (int64_t)now_ms();
+            if (left <= 0) break;
+            int result = poll(&ready, 1, (int)left);
+            if (result < 0 && errno == EINTR) continue;
+            if (result > 0) continue;
+        }
+        break;
+    }
+    if (written == length) return;
+    if (written && original_size >= 0) {
+        struct stat after;
+        if (fstat(fd, &after) == 0
+            && after.st_size == original_size + (off_t)written) {
+            (void)ftruncate(fd, original_size);
+        }
     }
 }
 
@@ -318,8 +362,12 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
                      "{\"provider\":\"%s\",\"ppid\":%d,\"ppid_start\":%.6f,\"queued_at_ms\":%llu,\"payload\":\"%s\"}\n",
                      provider, (int)ppid, ppid_start, (unsigned long long)queued_at_ms, escaped);
     if (n > 0 && (size_t)n < cap) {
-        int fd = open_spool_with_room(path, overflow, (size_t)n, deadline);
-        if (fd >= 0) { (void)write(fd, line, (size_t)n); close(fd); }
+        int locked = 0;
+        int fd = open_spool_with_room(path, overflow, (size_t)n, deadline, &locked);
+        if (fd >= 0) {
+            write_spool_line(fd, line, (size_t)n, locked, deadline);
+            close(fd);
+        }
     }
     free(line);
     free(escaped);
@@ -347,6 +395,13 @@ static void print_statusline_text(const char *dir) {
     fflush(stdout);
 }
 
+static void kill_and_reap(pid_t pid) {
+    kill(-pid, SIGKILL);
+    kill(pid, SIGKILL);
+    pid_t waited;
+    do waited = waitpid(pid, NULL, 0); while (waited < 0 && errno == EINTR);
+}
+
 /* Run the wrapped statusLine command with the payload on its stdin and
  * copy what it prints, within THEN_BUDGET_MS; a command still running at
  * the deadline is killed with its process group. */
@@ -366,31 +421,75 @@ static void run_then(const char *command, const char *payload, size_t len) {
     }
     close(in[0]);
     close(out[1]);
+    (void)setpgid(pid, pid);
     signal(SIGPIPE, SIG_IGN);
+    int in_flags = fcntl(in[1], F_GETFL, 0);
+    int out_flags = fcntl(out[0], F_GETFL, 0);
+    if (in_flags < 0 || out_flags < 0
+        || fcntl(in[1], F_SETFL, in_flags | O_NONBLOCK) < 0
+        || fcntl(out[0], F_SETFL, out_flags | O_NONBLOCK) < 0) {
+        close(in[1]);
+        close(out[0]);
+        kill_and_reap(pid);
+        return;
+    }
     uint64_t deadline = now_ms() + THEN_BUDGET_MS;
     size_t sent = 0;
-    while (sent < len && now_ms() < deadline) {
-        ssize_t n = write(in[1], payload + sent, len - sent);
-        if (n <= 0) break;
-        sent += (size_t)n;
-    }
-    close(in[1]);
     char buffer[THEN_OUTPUT_BYTES];
     size_t got = 0;
-    struct pollfd pfd = { out[0], POLLIN, 0 };
-    while (got < sizeof buffer) {
+    int input = in[1];
+    int output = out[0];
+    while (input >= 0 || output >= 0) {
+        if (input >= 0 && sent == len) { close(input); input = -1; }
+        if (output >= 0 && got == sizeof buffer) { close(output); output = -1; }
+        if (input < 0 && output < 0) break;
         int64_t left = (int64_t)deadline - (int64_t)now_ms();
-        if (left <= 0 || poll(&pfd, 1, (int)left) <= 0) break;
-        ssize_t n = read(out[0], buffer + got, sizeof buffer - got);
-        if (n <= 0) break;
-        got += (size_t)n;
+        if (left <= 0) break;
+        struct pollfd ready[2];
+        nfds_t count = 0;
+        int input_index = -1, output_index = -1;
+        if (output >= 0) {
+            output_index = (int)count;
+            ready[count++] = (struct pollfd){ output, POLLIN | POLLHUP, 0 };
+        }
+        if (input >= 0) {
+            input_index = (int)count;
+            ready[count++] = (struct pollfd){ input, POLLOUT | POLLHUP, 0 };
+        }
+        int polled = poll(ready, count, (int)left);
+        if (polled < 0 && errno == EINTR) continue;
+        if (polled <= 0) break;
+
+        if (output_index >= 0 && ready[output_index].revents) {
+            for (;;) {
+                ssize_t n = read(output, buffer + got, sizeof buffer - got);
+                if (n > 0) { got += (size_t)n; if (got == sizeof buffer) break; continue; }
+                if (n < 0 && errno == EINTR) {
+                    if (now_ms() >= deadline) break;
+                    continue;
+                }
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+                close(output); output = -1; break;
+            }
+        }
+        if (input_index >= 0 && ready[input_index].revents) {
+            for (;;) {
+                ssize_t n = write(input, payload + sent, len - sent);
+                if (n > 0) { sent += (size_t)n; if (sent == len) break; continue; }
+                if (n < 0 && errno == EINTR) {
+                    if (now_ms() >= deadline) break;
+                    continue;
+                }
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+                close(input); input = -1; break;
+            }
+        }
     }
-    close(out[0]);
-    if (waitpid(pid, NULL, WNOHANG) == 0) {
-        kill(-pid, SIGKILL);
-        kill(pid, SIGKILL);
-        waitpid(pid, NULL, 0);
-    }
+    if (input >= 0) close(input);
+    if (output >= 0) close(output);
+    pid_t waited;
+    do waited = waitpid(pid, NULL, WNOHANG); while (waited < 0 && errno == EINTR);
+    if (waited == 0) kill_and_reap(pid);
     if (got) { fwrite(buffer, 1, got, stdout); fflush(stdout); }
 }
 

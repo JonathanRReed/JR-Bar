@@ -327,6 +327,92 @@ def test_shim_spools_a_frame_the_budget_cut_short(shim: Path, sock_dir: Path) ->
     assert [row["payload"] for row in rows] == [payload]
 
 
+def _write_interposer(tmp_path: Path) -> Path:
+    interposer = tmp_path / "hook-write-interpose.dylib"
+    subprocess.run(
+        [
+            "/usr/bin/clang",
+            "-dynamiclib",
+            str(Path(__file__).parent / "fixtures" / "hook_write_interpose.c"),
+            "-o",
+            str(interposer),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=20,
+    )
+    return interposer
+
+
+def test_shim_completes_a_spool_line_after_eintr_and_short_writes(
+    shim: Path, sock_dir: Path, tmp_path: Path
+) -> None:
+    interposer = _write_interposer(tmp_path)
+    payload = json.dumps(
+        {"hook_event_name": "Stop", "session_id": "short-write", "body": "x" * 4096}
+    )
+    env = dict(
+        os.environ,
+        JRBAR_STATE_DIR=str(sock_dir),
+        DYLD_INSERT_LIBRARIES=str(interposer),
+    )
+    result = subprocess.run(
+        [str(shim), "--provider", "claude"],
+        input=payload.encode(),
+        capture_output=True,
+        env=env,
+        timeout=5,
+    )
+    assert result.returncode == 0
+    lines = (sock_dir / "claude.pending.jsonl").read_text().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["payload"] == payload
+
+
+def test_shim_rolls_back_a_partial_spool_line_after_a_hard_write_error(
+    shim: Path, sock_dir: Path, tmp_path: Path
+) -> None:
+    interposer = _write_interposer(tmp_path)
+    env = dict(
+        os.environ,
+        JRBAR_STATE_DIR=str(sock_dir),
+        DYLD_INSERT_LIBRARIES=str(interposer),
+        JRBAR_TEST_WRITE_MODE="hard-error",
+    )
+    result = subprocess.run(
+        [str(shim), "--provider", "claude"],
+        input=b'{"hook_event_name":"Stop","session_id":"hard-error"}',
+        capture_output=True,
+        env=env,
+        timeout=5,
+    )
+    assert result.returncode == 0
+    assert (sock_dir / "claude.pending.jsonl").read_bytes() == b""
+
+
+def test_shim_stops_retrying_an_interrupted_spool_at_its_deadline(
+    shim: Path, sock_dir: Path, tmp_path: Path
+) -> None:
+    interposer = _write_interposer(tmp_path)
+    env = dict(
+        os.environ,
+        JRBAR_STATE_DIR=str(sock_dir),
+        DYLD_INSERT_LIBRARIES=str(interposer),
+        JRBAR_TEST_WRITE_MODE="always-eintr",
+    )
+    started = time.monotonic()
+    result = subprocess.run(
+        [str(shim), "--provider", "claude"],
+        input=b'{"hook_event_name":"Stop","session_id":"interrupted"}',
+        capture_output=True,
+        env=env,
+        timeout=5,
+    )
+    assert result.returncode == 0
+    assert time.monotonic() - started < 2.0
+    assert (sock_dir / "claude.pending.jsonl").read_bytes() == b""
+
+
 def test_shim_spools_what_a_full_or_closing_daemon_refused__and_2_more(shim: Path, sock_dir: Path) -> None:
     """refused_full and refused_closed leave the payload with nobody: the
     daemon never processes a frame it answered that way. The shim spools it
@@ -473,5 +559,29 @@ def test_statusline_then_passes_stdin_to_the_wrapped_command(shim: Path, sock_di
 def test_statusline_then_is_bounded(shim: Path, sock_dir: Path) -> None:
     started = time.monotonic()
     result = _run_statusline(shim, sock_dir, "{}", "--then", "/bin/sleep 20")
+    assert result.returncode == 0
+    assert time.monotonic() - started < 8.0
+
+
+def test_statusline_then_is_bounded_when_the_child_never_reads_large_stdin(
+    shim: Path, sock_dir: Path
+) -> None:
+    payload = json.dumps({"session_id": "large", "body": "x" * 200_000})
+    started = time.monotonic()
+    result = _run_statusline(shim, sock_dir, payload, "--then", "/bin/sleep 20")
+    assert result.returncode == 0
+    assert time.monotonic() - started < 8.0
+
+
+def test_statusline_then_drains_output_while_feeding_large_stdin(
+    shim: Path, sock_dir: Path
+) -> None:
+    payload = json.dumps({"session_id": "duplex", "body": "x" * 200_000})
+    command = (
+        "/bin/dd if=/dev/zero bs=65536 count=4 2>/dev/null; "
+        "/bin/cat >/dev/null"
+    )
+    started = time.monotonic()
+    result = _run_statusline(shim, sock_dir, payload, "--then", command)
     assert result.returncode == 0
     assert time.monotonic() - started < 8.0

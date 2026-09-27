@@ -14,16 +14,16 @@ def test_installer_uses_an_isolated_virtual_environment__and_1_more() -> None:
     assert '"$VENV_DIR/bin/python" -m pip install' in text
     assert "--break-system-packages" not in text
 
-    # --- scenario: project_bash_scripts_have_valid_syntax
+    # --- scenario: project_shell_scripts_have_valid_syntax
     scripts = sorted((ROOT / "scripts").glob("*.sh"))
     scripts.extend(sorted((ROOT / "packaging").glob("*.sh")))
 
     for path in scripts:
+        interpreter = "zsh" if path.read_text().splitlines()[0] == "#!/bin/zsh" else "bash"
         result = subprocess.run(
-            ["bash", "-n", str(path)],
+            [interpreter, "-n", str(path)],
             check=False,
             capture_output=True,
             text=True,
         )
         assert result.returncode == 0, f"{path}: {result.stderr}"
-

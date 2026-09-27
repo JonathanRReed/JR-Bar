@@ -53,6 +53,11 @@ AGENTS="$HOME/Library/LaunchAgents"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/jrbar"
 DOMAIN="gui/$(id -u)"
 LSREGISTER="${LSREGISTER_TOOL:-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister}"
+PGREP="${PGREP_TOOL:-/usr/bin/pgrep}"
+PS="${PS_TOOL:-/bin/ps}"
+KILL="${KILL_TOOL:-/bin/kill}"
+STOP_SLEEP="${STOP_SLEEP_TOOL:-/bin/sleep}"
+RECOVERY_OPEN="${RECOVERY_OPEN_TOOL:-/usr/bin/open}"
 COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 DIRTY="$(git -C "$ROOT" status --porcelain 2>/dev/null | grep -q . && echo '-dirty' || true)"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$ROOT/pyproject.toml" | head -1)"
@@ -80,22 +85,44 @@ stop_everything() {
     # The retired Python status bar, the dev agents and a packaged app
     # cannot share the hook sockets: stop whatever is running before
     # switching layouts.
+    local executable stopped
+    stop_started=1
     if launchctl print "$DOMAIN/$OLD_LABEL" >/dev/null 2>&1; then
         echo "==> booting out $OLD_LABEL"
         launchctl bootout "$DOMAIN/$OLD_LABEL" || true
     fi
-    if [[ -f "$AGENTS/$OLD_LABEL.plist" ]]; then
-        mv "$AGENTS/$OLD_LABEL.plist" "$STATE/$OLD_LABEL.plist.disabled"
-        echo "moved $AGENTS/$OLD_LABEL.plist to $STATE/$OLD_LABEL.plist.disabled"
-    fi
     for label in "$UI_LABEL" "$CORE_LABEL"; do
         launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
     done
-    # A JR-Bar or daemon started by hand would fight for the sockets.
-    pkill -x "JR-Bar" 2>/dev/null || true
-    pkill -f "jrbar core" 2>/dev/null || true
-    pkill -f "jrbar-core core" 2>/dev/null || true
-    sleep 1
+    # Stop only a process whose executable is the installed app. This avoids
+    # both broad process-name kills and an Apple Events permission prompt.
+    while IFS= read -r pid; do
+        [[ "$pid" == <-> ]] || continue
+        executable="$("$PS" -p "$pid" -o comm= 2>/dev/null || true)"
+        [[ "$executable" == "$BINARY" ]] || continue
+        # Re-read immediately before signalling so a reused PID cannot turn
+        # the first observation into a kill of another process.
+        executable="$("$PS" -p "$pid" -o comm= 2>/dev/null || true)"
+        [[ "$executable" == "$BINARY" ]] || continue
+        if ! "$KILL" -TERM "$pid" 2>/dev/null; then
+            echo "JR-Bar process $pid could not be stopped; the installed app was not moved." >&2
+            return 1
+        fi
+        stopped_installed_app=1
+        stopped=0
+        for _ in {1..50}; do
+            executable="$("$PS" -p "$pid" -o comm= 2>/dev/null || true)"
+            if [[ "$executable" != "$BINARY" ]]; then
+                stopped=1
+                break
+            fi
+            "$STOP_SLEEP" 0.1
+        done
+        if [[ "$stopped" != 1 ]]; then
+            echo "JR-Bar process $pid did not exit; the installed app was not moved." >&2
+            return 1
+        fi
+    done < <("$PGREP" -x JR-Bar 2>/dev/null || true)
 }
 
 # A packaged app registers itself as a login item; hand that back before the
@@ -125,30 +152,145 @@ if [[ "$MODE" == "pkg" ]]; then
         fi
     fi
     [[ -e "$PKG_SOURCE" ]] || { echo "nothing to install at $PKG_SOURCE: run make package" >&2; exit 1; }
+    [[ ! -L "$PKG_SOURCE" ]] || { echo "SOURCE must not be a symlink: $PKG_SOURCE" >&2; exit 2; }
+    case "$PKG_SOURCE" in
+        *.pkg)
+            [[ -f "$PKG_SOURCE" ]] || { echo "SOURCE is not a regular package: $PKG_SOURCE" >&2; exit 2; }
+            payload="$(/usr/sbin/pkgutil --payload-files "$PKG_SOURCE" | /usr/bin/sed 's#^\./##')" || {
+                echo "SOURCE is not a readable macOS package: $PKG_SOURCE" >&2
+                exit 2
+            }
+            for required in \
+                JR-Bar.app/Contents/MacOS/JR-Bar \
+                JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core \
+                JR-Bar.app/Contents/Helpers/jrbar-hook; do
+                print -r -- "$payload" | /usr/bin/grep -Fxq "$required" || {
+                    echo "package payload is missing $required" >&2
+                    exit 2
+                }
+            done
+            validation_dir="$(/usr/bin/mktemp -d "$HOME/Applications/.jrbar-package-check.XXXXXX")"
+            chmod 700 "$validation_dir"
+            if ! /usr/sbin/pkgutil --expand "$PKG_SOURCE" "$validation_dir/expanded"; then
+                /bin/rm -rf "$validation_dir"
+                echo "SOURCE cannot be expanded as a macOS package: $PKG_SOURCE" >&2
+                exit 2
+            fi
+            package_infos=("$validation_dir"/expanded/**/PackageInfo(N))
+            if [[ "${#package_infos[@]}" -ne 1 ]] || \
+               ! /usr/bin/grep -Eq '<pkg-info[^>]*identifier="com\.jonathanreed\.jrbar"' "$package_infos[1]"; then
+                /bin/rm -rf "$validation_dir"
+                echo "package identifier is not com.jonathanreed.jrbar" >&2
+                exit 2
+            fi
+            /bin/rm -rf "$validation_dir"
+            ;;
+        *.app)
+            [[ -d "$PKG_SOURCE" ]] || { echo "SOURCE is not an application bundle: $PKG_SOURCE" >&2; exit 2; }
+            for required in \
+                Contents/MacOS/JR-Bar \
+                Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core \
+                Contents/Helpers/jrbar-hook; do
+                [[ -x "$PKG_SOURCE/$required" ]] || {
+                    echo "application bundle is missing $required" >&2
+                    exit 2
+                }
+            done
+            source_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PKG_SOURCE/Contents/Info.plist" 2>/dev/null || true)"
+            [[ "$source_identifier" == "com.jonathanreed.jrbar" ]] || {
+                echo "application bundle has the wrong bundle identifier: ${source_identifier:-missing}" >&2
+                exit 2
+            }
+            codesign --verify --deep --strict "$PKG_SOURCE" || {
+                echo "application bundle signature is invalid: $PKG_SOURCE" >&2
+                exit 2
+            }
+            ;;
+        *) echo "SOURCE must be a .pkg or a JR-Bar.app: $PKG_SOURCE" >&2; exit 2 ;;
+    esac
+
+    staging="$(/usr/bin/mktemp -d "$HOME/Applications/.jrbar-install.XXXXXX")"
+    chmod 700 "$staging"
+    old_app="$staging/JR-Bar.app.previous"
+    transaction_active=1
+    old_app_moved=0
+    replacement_started=0
+    stop_started=0
+    stopped_installed_app=0
+    restore_install() {
+        local result_code=$?
+        if [[ "$transaction_active" == 1 && "$result_code" -ne 0 ]]; then
+            echo "install failed; restoring the previous JR-Bar app and launch agents" >&2
+            if [[ "$replacement_started" == 1 ]]; then
+                [[ ! -e "$APP" && ! -L "$APP" ]] || /bin/rm -rf "$APP"
+            fi
+            if [[ "$old_app_moved" == 1 && -e "$old_app" ]]; then
+                /bin/mv "$old_app" "$APP"
+            fi
+            for label in "$OLD_LABEL" "$UI_LABEL" "$CORE_LABEL"; do
+                staged_plist="$staging/$label.plist"
+                if [[ -e "$staged_plist" ]]; then
+                    /bin/mv "$staged_plist" "$AGENTS/$label.plist"
+                fi
+                if [[ "$stop_started" == 1 && -f "$AGENTS/$label.plist" ]]; then
+                    launchctl bootstrap "$DOMAIN" "$AGENTS/$label.plist" >/dev/null 2>&1 || true
+                    launchctl kickstart -k "$DOMAIN/$label" >/dev/null 2>&1 || true
+                fi
+            done
+            if [[ "$stopped_installed_app" == 1 && -d "$APP" ]]; then
+                "$RECOVERY_OPEN" -a "$APP" >/dev/null 2>&1 || true
+            fi
+        fi
+        /bin/rm -rf "$staging"
+        return "$result_code"
+    }
+    trap restore_install EXIT
 
     stop_everything
-    for label in "$UI_LABEL" "$CORE_LABEL"; do
-        if [[ -f "$AGENTS/$label.plist" ]]; then
-            mv "$AGENTS/$label.plist" "$STATE/$label.plist.disabled"
-            echo "parked $AGENTS/$label.plist at $STATE/$label.plist.disabled"
+    if [[ -e "$APP" || -L "$APP" ]]; then
+        /bin/mv "$APP" "$old_app"
+        old_app_moved=1
+    fi
+    for label in "$OLD_LABEL" "$UI_LABEL" "$CORE_LABEL"; do
+        if [[ -f "$AGENTS/$label.plist" && ! -L "$AGENTS/$label.plist" ]]; then
+            /bin/mv "$AGENTS/$label.plist" "$staging/$label.plist"
         fi
     done
-    rm -rf "$APP"
 
     case "$PKG_SOURCE" in
         *.pkg)
+            replacement_started=1
             echo "==> installing $PKG_SOURCE into ~/Applications (home-directory install, no password)"
             installer -pkg "$PKG_SOURCE" -target CurrentUserHomeDirectory
             ;;
         *.app)
+            replacement_started=1
             echo "==> copying $PKG_SOURCE to $APP"
             ditto "$PKG_SOURCE" "$APP"
             ;;
-        *) echo "SOURCE must be a .pkg or a JR-Bar.app: $PKG_SOURCE" >&2; exit 2 ;;
     esac
     [[ -x "$BINARY" ]] || { echo "install did not produce $BINARY" >&2; exit 1; }
     [[ -x "$APP/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core" ]] || { echo "$APP carries no bundled daemon" >&2; exit 1; }
-    codesign --verify --deep --strict "$APP" && echo "codesign verify: ok"
+    [[ -x "$APP/Contents/Helpers/jrbar-hook" ]] || { echo "$APP carries no bundled hook shim" >&2; exit 1; }
+    installed_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+    [[ "$installed_identifier" == "com.jonathanreed.jrbar" ]] || { echo "installed app has the wrong bundle identifier" >&2; exit 1; }
+    if ! codesign --verify --deep --strict "$APP"; then
+        echo "installed app signature verification failed" >&2
+        exit 1
+    fi
+    echo "codesign verify: ok"
+
+    # The replacement is verified. Keep the old development agents parked as
+    # before, then discard the app backup and commit the transaction.
+    for label in "$OLD_LABEL" "$UI_LABEL" "$CORE_LABEL"; do
+        staged_plist="$staging/$label.plist"
+        if [[ -e "$staged_plist" ]]; then
+            /bin/mv "$staged_plist" "$STATE/$label.plist.disabled"
+            echo "parked $AGENTS/$label.plist at $STATE/$label.plist.disabled"
+        fi
+    done
+    /bin/rm -rf "$old_app"
+    transaction_active=0
     echo "installed $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist") ($(/usr/libexec/PlistBuddy -c 'Print :JRBarCommit' "$APP/Contents/Info.plist" 2>/dev/null || echo 'no commit'))"
     # jrbar:// links open whichever copy Launch Services picks: make it
     # this one. The package build unregisters its own intermediates, but
@@ -180,6 +322,8 @@ if [[ "$MODE" == "pkg" ]]; then
     fi
     echo "hooks (from the bundled daemon):"
     "$APP/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core" hooks doctor 2>/dev/null | grep -E '^  [a-z]+ ' | sed 's/^/  /' || true
+    /bin/rm -rf "$staging"
+    trap - EXIT
     exit 0
 fi
 
@@ -197,6 +341,10 @@ echo "==> installing the hook shim at $SHIM"
 install -m 755 "$SHIM_SRC" "$SHIM"
 
 stop_everything
+if [[ -f "$AGENTS/$OLD_LABEL.plist" && ! -L "$AGENTS/$OLD_LABEL.plist" ]]; then
+    mv "$AGENTS/$OLD_LABEL.plist" "$STATE/$OLD_LABEL.plist.disabled"
+    echo "moved $AGENTS/$OLD_LABEL.plist to $STATE/$OLD_LABEL.plist.disabled"
+fi
 login_item "$APP" off
 echo "==> installing $APP"
 rm -rf "$APP"

@@ -17,11 +17,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "uninstall-macos.sh"
 
 
-def _fake_app(parent: Path) -> Path:
+def _fake_app(parent: Path, marker: Path | None = None) -> Path:
     app = parent / "JR-Bar.app"
     core = app / "Contents" / "Helpers" / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
     core.parent.mkdir(parents=True)
-    core.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    action = f"printf executed > '{marker}'" if marker is not None else "exit 0"
+    core.write_text(f"#!/bin/sh\n{action}\n", encoding="utf-8")
     core.chmod(0o755)
     (app / "Contents" / "MacOS").mkdir(parents=True)
     return app
@@ -143,3 +144,177 @@ def test_claude_codes_status_line_is_put_back_before_the_app_goes(tmp_path: Path
     out = result.stdout
     statusline = out.index("agent-monitor uninstall claude-statusline")
     assert statusline < out.index("agent-monitor uninstall all") < out.index(f"/bin/rm -rf {app}")
+
+
+def test_dry_run_never_executes_the_user_writable_helper(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    marker = tmp_path / "helper-executed"
+    _fake_app(home / "Applications", marker)
+
+    result = _dry_run(home)
+
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+    assert "launchctl asuser" in result.stdout
+    assert "status-bar uninstall-sleep-helper" not in result.stdout
+    assert "sdejectguard uninstall --scope system" not in result.stdout
+
+
+def test_even_dry_run_rejects_an_app_path_outside_supported_locations(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    unsafe = _fake_app(tmp_path / "other")
+
+    result = _dry_run(home, env_extra={"JRBAR_APP_PATH": str(unsafe)})
+
+    assert result.returncode == 2
+    assert "Refusing unsafe JR-Bar application path" in result.stderr
+    assert unsafe.is_dir()
+
+
+def test_real_flow_never_runs_the_user_writable_helper_for_root_cleanup(tmp_path: Path) -> None:
+    home = tmp_path / "fixture-home"
+    helper_log = tmp_path / "helper.log"
+    app = _fake_app(home / "Applications")
+    core = app / "Contents" / "Helpers" / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
+    core.write_text(
+        f"#!/bin/sh\nprintf '%s:%s\\n' \"${{FAKE_EFFECTIVE_USER:-unset}}\" \"$*\" >> '{helper_log}'\n",
+        encoding="utf-8",
+    )
+    core.chmod(0o755)
+
+    system_root = tmp_path / "system"
+    fixed_paths = {
+        "/etc/sudoers.d/jrbar-disablesleep": system_root / "etc/sudoers.d/jrbar-disablesleep",
+        "/etc/sudoers.d/sidepulse-disablesleep": system_root / "etc/sudoers.d/sidepulse-disablesleep",
+        "/Library/LaunchDaemons/com.jonathanreed.jrbar.sdejectguard.plist": system_root
+        / "Library/LaunchDaemons/com.jonathanreed.jrbar.sdejectguard.plist",
+        "/Library/LaunchDaemons/io.sidepulse.sdejectguard.plist": system_root
+        / "Library/LaunchDaemons/io.sidepulse.sdejectguard.plist",
+        "/Library/Application Support/JR-Bar/sd-eject-guard/SidePulse Pro Eject Prevention": system_root
+        / "Library/Application Support/JR-Bar/sd-eject-guard/SidePulse Pro Eject Prevention",
+        "/Library/Application Support/JR-Bar/sd-eject-guard/sd_eject_guard": system_root
+        / "Library/Application Support/JR-Bar/sd-eject-guard/sd_eject_guard",
+        "/Library/Application Support/SidePulse/sd-eject-guard/SidePulse Pro Eject Prevention": system_root
+        / "Library/Application Support/SidePulse/sd-eject-guard/SidePulse Pro Eject Prevention",
+        "/Library/Application Support/SidePulse/sd-eject-guard/sd_eject_guard": system_root
+        / "Library/Application Support/SidePulse/sd-eject-guard/sd_eject_guard",
+        "/var/db/jrbar": system_root / "var/db/jrbar",
+        "/var/db/sidepulse": system_root / "var/db/sidepulse",
+    }
+    fixed_directories = {
+        "/Library/Application Support/JR-Bar/sd-eject-guard": system_root
+        / "Library/Application Support/JR-Bar/sd-eject-guard",
+        "/Library/Application Support/SidePulse/sd-eject-guard": system_root
+        / "Library/Application Support/SidePulse/sd-eject-guard",
+    }
+    for path in fixed_paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix or path.name in {"jrbar-disablesleep", "sidepulse-disablesleep"}:
+            path.write_text("owned", encoding="utf-8")
+        else:
+            path.mkdir(exist_ok=True)
+
+    bin_dir = tmp_path / "bin"
+    command_log = tmp_path / "commands.log"
+
+    def tool(name: str, body: str) -> Path:
+        path = bin_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    fake_id = tool(
+        "id",
+        'if [ "$1" = -u ] && [ "$#" -eq 1 ]; then echo 0; else echo 501; fi',
+    )
+    fake_dscl = tool("dscl", f"printf '%s\\n' 'NFSHomeDirectory: {home}'")
+    fake_rm = tool("rm", f"printf 'rm %s\\n' \"$*\" >> '{command_log}'")
+    fake_rmdir = tool("rmdir", f"printf 'rmdir %s\\n' \"$*\" >> '{command_log}'")
+    fake_pkgutil = tool("pkgutil", "exit 1")
+    fake_sudo = tool(
+        "sudo",
+        """
+selected_user=missing
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -H) shift ;;
+        -u) selected_user="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+FAKE_EFFECTIVE_USER="$selected_user" exec "$@"
+""",
+    )
+    fake_launchctl = tool(
+        "launchctl",
+        f"""
+if [ "$1" = asuser ]; then
+    shift 2
+    exec "$@"
+fi
+printf 'launchctl %s\\n' "$*" >> '{command_log}'
+exit 0
+""",
+    )
+
+    copied = tmp_path / "uninstall-macos.sh"
+    text = SCRIPT.read_text(encoding="utf-8")
+    replacements = {
+        "/usr/bin/id": str(fake_id),
+        "/usr/bin/dscl": str(fake_dscl),
+        "/bin/launchctl": str(fake_launchctl),
+        "/usr/bin/sudo": str(fake_sudo),
+        "/bin/rm": str(fake_rm),
+        "/bin/rmdir": str(fake_rmdir),
+        "/usr/sbin/pkgutil": str(fake_pkgutil),
+    }
+    tool_placeholders: dict[str, str] = {}
+    for index, source in enumerate(sorted(replacements, key=len, reverse=True)):
+        placeholder = f"__JRBAR_TEST_TOOL_{index}__"
+        text = text.replace(source, placeholder)
+        tool_placeholders[placeholder] = replacements[source]
+    for placeholder, target in tool_placeholders.items():
+        text = text.replace(placeholder, target)
+    path_replacements = {**fixed_paths, **fixed_directories}
+    placeholders: dict[str, str] = {}
+    for index, source in enumerate(sorted(path_replacements, key=len, reverse=True)):
+        placeholder = f"__JRBAR_TEST_PATH_{index}__"
+        text = text.replace(source, placeholder)
+        placeholders[placeholder] = str(path_replacements[source])
+    for placeholder, target in placeholders.items():
+        text = text.replace(placeholder, target)
+    copied.write_text(text, encoding="utf-8")
+    copied.chmod(0o755)
+
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": str(tmp_path / "unused-root-home"),
+        "JRBAR_USER": "fixture",
+        "FAKE_EFFECTIVE_USER": "root",
+    }
+    result = subprocess.run(
+        ["/bin/bash", str(copied)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    helper_calls = helper_log.read_text(encoding="utf-8").splitlines()
+    assert helper_calls == [
+        "fixture:agent-monitor uninstall claude-statusline",
+        "fixture:agent-monitor uninstall all",
+        "fixture:sdejectguard uninstall --scope user",
+    ]
+    assert all(not call.startswith("root:") for call in helper_calls)
+    commands = command_log.read_text(encoding="utf-8")
+    for target in fixed_paths.values():
+        assert str(target) in commands
+    for target in fixed_directories.values():
+        assert f"rmdir {target}" in commands
+    assert "status-bar uninstall-sleep-helper" not in commands
+    assert "sdejectguard uninstall --scope system" not in commands

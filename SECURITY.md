@@ -2,7 +2,7 @@
 
 ## What ships, and what is supported
 
-JR-Bar 0.8 is one signed `JR-Bar.app` carrying three programs:
+JR-Bar ships as one signed `JR-Bar.app` carrying three programs:
 
 | Path | What it is |
 | --- | --- |
