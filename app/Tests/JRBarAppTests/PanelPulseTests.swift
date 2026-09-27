@@ -25,6 +25,9 @@ struct PanelPulseTests {
     func closedPanelIsStill() {
         let rows = [PanelRowsMemoTests.session("a", mode: "waiting"), PanelRowsMemoTests.session("b", mode: "idle")]
         let (_, store) = PanelRowsMemoTests.liveStore(rows)
+        // A host with Reduce Motion on shows the still marks; the host
+        // setting is not the thing under test.
+        store.reduceMotion = false
         // Counted against what is running already: another suite's view
         // may still be alive in this process.
         let baseline = PanelPulses.running

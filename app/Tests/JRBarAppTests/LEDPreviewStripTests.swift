@@ -228,14 +228,31 @@ struct LEDPreviewStripTests {
     }
 }
 
-/// Counts its body evaluations around one strip.
+/// Counts its body evaluations around one strip. Hosts the layer view
+/// with Reduce Motion pinned off — the environment key is read-only, and
+/// a host with Reduce Motion on would hold every frame still.
 private struct LEDStripProbe: View {
     @MainActor static var bodies = 0
     let program: String
 
     var body: some View {
         let _ = { Self.bodies += 1 }()
-        LEDStripPreview(program: program)
+        Layers(program: program)
+    }
+
+    /// The same plumbing as the preview's own representable, minus the
+    /// host's motion setting.
+    private struct Layers: NSViewRepresentable {
+        let program: String
+
+        func makeNSView(context: Context) -> LEDStripLayerView {
+            LEDStripLayerView(config: LEDStripLayerView.Config(
+                program: program, ledCount: 8, style: .dots, dotSize: 14, spacing: 8,
+                loops: true, paused: false, phase: 0),
+                              held: false, reduceMotion: false)
+        }
+
+        func updateNSView(_ view: LEDStripLayerView, context: Context) {}
     }
 }
 
