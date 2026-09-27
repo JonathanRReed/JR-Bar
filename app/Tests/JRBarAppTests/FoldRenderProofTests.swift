@@ -446,15 +446,17 @@ struct FoldRenderProofTests {
         var chase = DeltaChase()
         chase.reset(to: FoldDuoModel.reopenDelta(reference: Self.rest, perspective: 0.6))
         var cells: [(Double, CGImage, CGImage)] = []
+        let picks: Set<Int> = [0, 4, 8, 12, 18, 24, 30]
         for frame in 0...30 {
             let drawn = Self.rest - chase.tick(target: 0, dt: 1.0 / 60) * 180 / .pi
-            guard frame % 3 == 0, cells.count < 7 else { continue }
+            guard picks.contains(frame) else { continue }
             let panel = try Self.renderPanel(rig, angle: drawn)
             // The lid itself is at rest: the eye sees the glass flat.
             let seen = try Self.renderObserver(rig, panel: panel, angle: Self.rest)
             cells.append((drawn, try Self.image(panel), try Self.image(seen)))
         }
-        let title = "Duo reopen — the lid is back at 110° as the first frame lands; the glass unfolds from black, one cell per 50 ms"
+        #expect(chase.atRest)
+        let title = "Duo reopen: back at 110°, unfolding from black to flat over half a second"
         let url = dir.appendingPathComponent("fold-duo-reopen-strip.png")
         try Self.writePNG(try Self.makeStrip(cells, title: title), to: url)
     }

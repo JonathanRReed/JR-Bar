@@ -109,6 +109,7 @@ final class ScreenBarView: NSView {
     private(set) var housingRect: NSRect?
     private let wingsModel = ScreenBarWingsModel()
     private var wingsHosting: NSHostingView<ScreenBarWingsView>?
+    var onAccessibilityPress: @MainActor () -> Bool = { false }
     /// Somebody can see the band (`ScreenBarVisibility.live`): the ears'
     /// own timelines pause while it is false.
     var wingsLive: Bool {
@@ -199,8 +200,8 @@ final class ScreenBarView: NSView {
         // A status light, not a bare coloured rect: VoiceOver gets a name
         // for the band (the controller refines the label when a program
         // is refused).
-        setAccessibilityElement(true)
-        setAccessibilityRole(.image)
+        setAccessibilityElement(false)
+        setAccessibilityRole(.button)
         setAccessibilityLabel("Screen Bar — agent status light")
         setAccessibilityHelp("Mirrors the agents' status; the same words are on the JR-Bar menu bar item")
     }
@@ -209,6 +210,15 @@ final class ScreenBarView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var isFlipped: Bool { false }
+
+    override func accessibilityPerformPress() -> Bool {
+        onAccessibilityPress()
+    }
+
+    override func accessibilityFrame() -> NSRect {
+        guard let window, !bandRect.isEmpty else { return super.accessibilityFrame() }
+        return window.convertToScreen(convert(bandRect, to: nil))
+    }
 
     override func layout() {
         super.layout()

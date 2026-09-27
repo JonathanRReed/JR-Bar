@@ -259,9 +259,11 @@ final class NotchCardModel {
     /// answer path only ever offers the click-to-open. Tests hand in
     /// their own.
     @ObservationIgnored var askDesk: @MainActor () -> AskAnswerDesk? = { AskAnswerDesk.shared }
-    /// How long an open's refusal stays under its row; tests hold it
-    /// longer than a loaded run can take.
+    /// How long an open's refusal stays under its row.
     @ObservationIgnored var openNoteLife: TimeInterval = 4
+    @ObservationIgnored var openNoteTimer: @MainActor (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
     /// Session → why its last open did not land, drawn where the ask's
     /// refusal would be. The row stays; the person can try again.
     private(set) var openRefusals: [String: String] = [:]
@@ -294,13 +296,14 @@ final class NotchCardModel {
         openRefusals[session] = line
         let token = UUID()
         openRefusalTokens[session] = token
-        DispatchQueue.main.asyncAfter(deadline: .now() + openNoteLife) { [weak self] in
+        let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.openRefusalTokens[session] == token else { return }
                 self.openRefusals[session] = nil
                 self.openRefusalTokens[session] = nil
             }
         }
+        openNoteTimer(openNoteLife, work)
     }
 
     /// The shelf's hand-to-agent verb: the chips' `@path` references go

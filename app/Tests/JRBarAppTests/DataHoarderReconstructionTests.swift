@@ -195,6 +195,25 @@ struct DataHoarderReconstructionTests {
         #expect(await DataHoarderModel.proxyRequests(in: archive, sessionID: "nobody").isEmpty)
     }
 
+    @Test func proxyEvidenceKeepsItsAggregateReadInsideTheTimelineBudget() async throws {
+        let (root, archive) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var records: [ArchiveRecord] = []
+        for index in 0..<2 {
+            let record = try await archive.createLiveRecord(
+                name: "proxy-\(index).log", sourcePath: "/tmp/proxy-\(index).log",
+                provider: "cliproxy", sessionID: "sess-1")
+            _ = try await archive.appendSegment(
+                recordID: record.id, data: cliproxyLog(status: 200 + index), byteOffset: 0)
+            records.append(record)
+        }
+        let oneRecordBudget = cliproxyLog(status: 200).count
+        let requests = await DataHoarderModel.proxyRequests(
+            in: archive, records: records, byteLimit: oneRecordBudget)
+        #expect(requests.requests.count == 1)
+        #expect(requests.gaps == ["proxy_data_too_large:\(oneRecordBudget)"])
+    }
+
     @Test func aTranscriptExportsAsReadableMarkdown() async throws {
         let (root, archive) = try makeArchive()
         defer { try? FileManager.default.removeItem(at: root) }

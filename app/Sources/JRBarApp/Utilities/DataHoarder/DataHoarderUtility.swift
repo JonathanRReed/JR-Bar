@@ -440,22 +440,23 @@ final class DataHoarderModel {
             detailLoading = true
             defer { if revision == detailRevision { detailLoading = false } }
             do {
-                let payloads = try await archive.segmentData(id: id, inTrash: requestedTrash)
+                let payload = try await archive.timelineSegmentData(id: id, inTrash: requestedTrash)
                 guard !Task.isCancelled, revision == detailRevision,
                       selectedID == id, requestedTrash == showTrash else { return }
                 let provider = (provider == "claude" || provider == "codex") ? provider! : "other"
                 let epochFallback = record.startedAt
                 let rebuilt = await Task.detached(priority: .userInitiated) {
-                    SessionReconstructor.reconstruct(segments: payloads, provider: provider,
-                                                     epochFallback: epochFallback)
+                    SessionReconstructor.reconstruct(segments: payload.segments, provider: provider,
+                                                     epochFallback: epochFallback,
+                                                     totalByteCount: payload.totalByteCount)
                 }.value
                 // The proxy's requests for the same session sit between
                 // the turns: retries and refusals the transcript never
                 // records.
-                let requests = await Self.proxyRequests(in: archive, records: related)
+                let proxy = await Self.proxyRequests(in: archive, records: related)
                 guard !Task.isCancelled, revision == detailRevision,
                       selectedID == id, requestedTrash == showTrash else { return }
-                reconstruction = rebuilt.withProxyRequests(requests)
+                reconstruction = rebuilt.withProxyRequests(proxy.requests, additionalGaps: proxy.gaps)
             } catch {
                 guard !Task.isCancelled, revision == detailRevision else { return }
                 detailError = "Timeline unavailable: \(error.localizedDescription)"
@@ -464,11 +465,15 @@ final class DataHoarderModel {
             detailLoading = true
             defer { if revision == detailRevision { detailLoading = false } }
             do {
-                let payloads = try await archive.segmentData(id: id, inTrash: requestedTrash)
+                let payload = try await archive.timelineSegmentData(id: id, inTrash: requestedTrash)
                 guard !Task.isCancelled, revision == detailRevision,
                       selectedID == id, requestedTrash == showTrash else { return }
+                guard payload.totalByteCount <= SessionReconstructor.timelineByteLimit else {
+                    detailError = "Request summary unavailable: the stored log is \(DataHoarderModel.bytes(Int64(payload.totalByteCount))), above the timeline read limit."
+                    return
+                }
                 var data = Data()
-                for payload in payloads { data.append(payload) }
+                for segment in payload.segments { data.append(segment) }
                 let request = await Task.detached(priority: .userInitiated) {
                     CLIProxyLogParser.parse(data)
                 }.value
@@ -1173,12 +1178,15 @@ final class DataHoarderModel {
               let records = try? await archive.relatedRecords(sessionID: sessionID),
               let record = newestTranscript(in: records),
               let provider = record.provider,
-              let payloads = try? await archive.segmentData(id: record.id) else { return nil }
+              let payload = try? await archive.timelineSegmentData(id: record.id) else { return nil }
         let startedAt = record.startedAt
         let rebuilt = await Task.detached(priority: .userInitiated) {
-            SessionReconstructor.reconstruct(segments: payloads, provider: provider, epochFallback: startedAt)
+            SessionReconstructor.reconstruct(segments: payload.segments, provider: provider,
+                                             epochFallback: startedAt,
+                                             totalByteCount: payload.totalByteCount)
         }.value
-        return (rebuilt.withProxyRequests(await proxyRequests(in: archive, records: records)), record)
+        let proxy = await proxyRequests(in: archive, records: records)
+        return (rebuilt.withProxyRequests(proxy.requests, additionalGaps: proxy.gaps), record)
     }
 
     /// The CLIProxyAPI requests a session's saved records include, parsed
@@ -1187,23 +1195,38 @@ final class DataHoarderModel {
     /// proxy logs one file per request. A record that no longer parses
     /// is left out, never guessed at.
     nonisolated static func proxyRequests(in archive: DataHoarderArchive,
-                                          records: [ArchiveRecord]) async -> [CLIProxyRequest] {
+                                          records: [ArchiveRecord],
+                                          byteLimit: Int = SessionReconstructor.timelineByteLimit) async
+        -> (requests: [CLIProxyRequest], gaps: [String]) {
         let proxied = records
             .filter { $0.provider == "cliproxy" }
             .sorted { ($0.lastActivityAt ?? $0.importedAt) > ($1.lastActivityAt ?? $1.importedAt) }
             .prefix(SessionProxyEvidence.requestLimit)
-        guard !proxied.isEmpty else { return [] }
+        guard !proxied.isEmpty else { return ([], []) }
         var logs: [Data] = []
+        var remaining = max(0, byteLimit)
+        var omittedBytes = 0
         for record in proxied {
-            guard !Task.isCancelled, let payloads = try? await archive.segmentData(id: record.id) else { continue }
+            guard !Task.isCancelled else { break }
+            guard let payload = try? await archive.timelineSegmentData(id: record.id, maximumBytes: remaining) else {
+                continue
+            }
+            guard payload.totalByteCount <= remaining else {
+                let (sum, overflow) = omittedBytes.addingReportingOverflow(payload.totalByteCount)
+                omittedBytes = overflow ? .max : sum
+                continue
+            }
             var data = Data()
-            for payload in payloads { data.append(payload) }
+            for segment in payload.segments { data.append(segment) }
             logs.append(data)
+            remaining -= payload.totalByteCount
         }
         let captured = logs
-        return await Task.detached(priority: .userInitiated) {
+        let requests = await Task.detached(priority: .userInitiated) {
             captured.compactMap(CLIProxyLogParser.parse)
         }.value
+        let gaps = omittedBytes > 0 ? ["proxy_data_too_large:\(omittedBytes)"] : []
+        return (requests, gaps)
     }
 
     /// History's transcript search: session uuid → the best readable
@@ -1227,7 +1250,7 @@ final class DataHoarderModel {
                                           sessionID: String) async -> [CLIProxyRequest] {
         guard !sessionID.isEmpty,
               let records = try? await archive.relatedRecords(sessionID: sessionID) else { return [] }
-        return await proxyRequests(in: archive, records: records)
+        return await proxyRequests(in: archive, records: records).requests
     }
 
     /// The transcript record a session's timeline should come from: a

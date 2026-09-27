@@ -86,9 +86,12 @@ public final class CoreClient: @unchecked Sendable {
     private let lock = NSLock()
     private let wakeup = NSCondition()
     private var thread: Thread?
+    /// A restart waits until the current socket owner has finished stopping.
+    private var restartAfterStop = false
     private var stopped = false
     private var retryRequested = false
     private var fd: Int32 = -1
+    private var connectionGeneration: UInt64 = 0
     private var commandCounter = 0
     private var pending: [String: CheckedContinuation<CoreReply, Error>] = [:]
     private var _isConnected = false
@@ -145,30 +148,37 @@ public final class CoreClient: @unchecked Sendable {
 
     public func start() {
         lock.lock()
-        if thread != nil { lock.unlock(); return }
+        if thread != nil {
+            if stopped { restartAfterStop = true }
+            lock.unlock()
+            return
+        }
         stopped = false
-        let thread = Thread { [weak self] in self?.run() }
-        thread.name = "jrbar.core.client"
-        thread.qualityOfService = .userInitiated
+        let thread = makeThread()
         self.thread = thread
         lock.unlock()
         thread.start()
     }
 
+    private func makeThread() -> Thread {
+        let thread = Thread { [weak self] in self?.run() }
+        thread.name = "jrbar.core.client"
+        thread.qualityOfService = .userInitiated
+        return thread
+    }
+
     public func stop() {
         lock.lock()
         stopped = true
+        restartAfterStop = false
         let fd = self.fd
-        self.fd = -1
         _isConnected = false
         let waiting = pending
         pending.removeAll()
-        thread = nil
-        lock.unlock()
         if fd >= 0 {
             shutdown(fd, SHUT_RDWR)
-            close(fd)
         }
+        lock.unlock()
         for (_, continuation) in waiting { continuation.resume(throwing: CoreClientError.stopped) }
         wakeup.lock()
         wakeup.broadcast()
@@ -207,6 +217,7 @@ public final class CoreClient: @unchecked Sendable {
             }
             pending[command.id] = continuation
             let socket = fd
+            let generation = connectionGeneration
             lock.unlock()
             // Arm the deadline BEFORE the write: it covers the whole
             // operation (a blocked write, a lost reply), not just the
@@ -225,13 +236,13 @@ public final class CoreClient: @unchecked Sendable {
                 // connection, so a slow sibling (a cold usage scan) is
                 // what delayed this reply. Dropping here would kill the
                 // in-flight command too; only a silent socket is dropped.
-                if self.framesSeenCount() == framesAtSend { self.dropConnection(socket) }
+                if self.framesSeenCount() == framesAtSend { self.dropConnection(socket, generation: generation) }
             }
-            if let errno = writeAll(socket, bytes) {
+            if let errno = writeAll(socket, bytes, generation: generation) {
                 if let waiting = takePending(command.id) {
                     waiting.resume(throwing: CoreClientError.writeFailed(errno))
                 }
-                dropConnection(socket)
+                dropConnection(socket, generation: generation)
                 return
             }
         }
@@ -244,11 +255,12 @@ public final class CoreClient: @unchecked Sendable {
         let bytes = try CoreCodec.encode(command: command)
         lock.lock()
         let socket = fd
+        let generation = connectionGeneration
         let connected = _isConnected
         lock.unlock()
         guard connected, socket >= 0 else { throw CoreClientError.notConnected }
-        if let errno = writeAll(socket, bytes) {
-            dropConnection(socket)
+        if let errno = writeAll(socket, bytes, generation: generation) {
+            dropConnection(socket, generation: generation)
             throw CoreClientError.writeFailed(errno)
         }
     }
@@ -257,11 +269,10 @@ public final class CoreClient: @unchecked Sendable {
     /// tears down and reconnects. `shutdown`, never `close`: the run
     /// loop owns the descriptor and closes it after `readLoop` returns;
     /// a second close could land on a recycled fd number.
-    private func dropConnection(_ socket: Int32) {
+    private func dropConnection(_ socket: Int32, generation: UInt64) {
         lock.lock()
-        let current = fd == socket
+        if fd == socket && connectionGeneration == generation { shutdown(socket, SHUT_RDWR) }
         lock.unlock()
-        if current { shutdown(socket, SHUT_RDWR) }
     }
 
     /// Synchronous lock wrapper — `NSLock` is banned inside async
@@ -279,13 +290,24 @@ public final class CoreClient: @unchecked Sendable {
     private let writeLock = NSLock()
 
     /// Returns errno on failure.
-    private func writeAll(_ socket: Int32, _ data: Data) -> Int32? {
+    private func writeAll(_ socket: Int32, _ data: Data, generation: UInt64? = nil) -> Int32? {
         writeLock.lock(); defer { writeLock.unlock() }
+        lock.lock()
+        guard !stopped, _isConnected, fd == socket,
+              generation == nil || generation == connectionGeneration else {
+            lock.unlock()
+            return ENOTCONN
+        }
+        let writer = dup(socket)
+        let duplicationError = errno
+        lock.unlock()
+        guard writer >= 0 else { return duplicationError }
+        defer { close(writer) }
         var offset = 0
         return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int32? in
             guard let base = raw.baseAddress else { return nil }
             while offset < raw.count {
-                let written = Darwin.write(socket, base.advanced(by: offset), raw.count - offset)
+                let written = Darwin.write(writer, base.advanced(by: offset), raw.count - offset)
                 if written < 0 {
                     if errno == EINTR { continue }
                     return errno
@@ -302,6 +324,7 @@ public final class CoreClient: @unchecked Sendable {
     // MARK: Thread
 
     private func run() {
+        defer { runDidFinish() }
         var failures = 0
         while !isStopped {
             let attempt = failures + 1
@@ -312,7 +335,13 @@ public final class CoreClient: @unchecked Sendable {
                 continue
             }
             lock.lock()
+            if stopped {
+                lock.unlock()
+                close(socket)
+                break
+            }
             fd = socket
+            connectionGeneration &+= 1
             _isConnected = true
             lock.unlock()
             handler(.connected)
@@ -320,11 +349,13 @@ public final class CoreClient: @unchecked Sendable {
             lock.lock()
             let wasStopped = stopped
             if fd == socket { fd = -1 }
+            // The read loop owns close. Stop only shuts down the socket,
+            // so a borrowed descriptor cannot be reused by another thread.
+            close(socket)
             _isConnected = false
             let waiting = pending
             pending.removeAll()
             lock.unlock()
-            if !wasStopped { close(socket) }
             for (_, continuation) in waiting { continuation.resume(throwing: CoreClientError.disconnected) }
             handler(.disconnected(reason: reason))
             if wasStopped { break }
@@ -332,6 +363,22 @@ public final class CoreClient: @unchecked Sendable {
             failures = sawHello ? 1 : failures + 1
             wait(CoreBackoff.delay(afterFailures: failures))
         }
+    }
+
+    /// Start the pending replacement after the old socket owner retires.
+    private func runDidFinish() {
+        lock.lock()
+        thread = nil
+        guard restartAfterStop else {
+            lock.unlock()
+            return
+        }
+        restartAfterStop = false
+        stopped = false
+        let replacement = makeThread()
+        thread = replacement
+        lock.unlock()
+        replacement.start()
     }
 
     private var isStopped: Bool {

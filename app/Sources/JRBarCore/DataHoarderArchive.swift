@@ -271,6 +271,14 @@ public struct ArchiveStorageUsage: Sendable, Equatable {
     public var trashedContentBytes: Int64 = 0
 }
 
+/// A timeline read separates the record's verified size from the bytes kept
+/// in memory. Oversized records return no payloads and their exact size, so
+/// reconstruction can name the existing cap without first allocating them.
+public struct ArchiveTimelinePayload: Sendable, Equatable {
+    public let segments: [Data]
+    public let totalByteCount: Int
+}
+
 public enum DataHoarderArchiveError: Error, Equatable, LocalizedError {
     case unsupportedFile
     case corruptManifest
@@ -711,7 +719,7 @@ public actor DataHoarderArchive {
     /// `excluding` drops one record (typically the caller's own) from the list.
     public func relatedRecords(sessionID: String, excluding id: String? = nil) throws -> [ArchiveRecord] {
         guard !sessionID.isEmpty, let catalog = try openCatalogIfPresent() else { return [] }
-        return try catalog.records().filter { $0.sessionID == sessionID && $0.id != id }
+        return try catalog.records(sessionID: sessionID, excluding: id)
     }
 
     /// The record's ordered segment payloads — the input session
@@ -735,6 +743,68 @@ public actor DataHoarderArchive {
             payloads.append(data)
         }
         return payloads
+    }
+
+    /// Hash-verifies a transcript chain while keeping allocations under the
+    /// reconstruction cap. Full content and export reads continue to use
+    /// `segmentData` and the streaming export paths.
+    public func timelineSegmentData(
+        id: String, inTrash: Bool = false,
+        maximumBytes: Int = SessionReconstructor.timelineByteLimit
+    ) throws -> ArchiveTimelinePayload {
+        let record = try record(id: id, inTrash: inTrash)
+        guard let catalog = try openCatalogIfPresent() else {
+            throw DataHoarderArchiveError.recordNotFound
+        }
+        let chain = try chain(catalog: catalog, record: record)
+        var total: Int64 = 0
+        let limit = Int64(max(0, maximumBytes))
+        for segment in chain {
+            try Task.checkCancellation()
+            let object = objectURL(hash: segment.hash)
+            try ensureRegularObject(object)
+            var info = stat()
+            guard lstat(object.path, &info) == 0, info.st_size == segment.byteLength else {
+                throw DataHoarderArchiveError.objectCorrupt
+            }
+            let (next, overflow) = total.addingReportingOverflow(info.st_size)
+            guard !overflow else { throw DataHoarderArchiveError.objectCorrupt }
+            total = next
+        }
+        let boundedTotal = total > Int64(Int.max) ? Int.max : Int(total)
+        guard total <= limit else {
+            return ArchiveTimelinePayload(segments: [], totalByteCount: boundedTotal)
+        }
+
+        var payloads: [Data] = []
+        payloads.reserveCapacity(chain.count)
+        for segment in chain {
+            try Task.checkCancellation()
+            let object = objectURL(hash: segment.hash)
+            let handle = try FileHandle(forReadingFrom: object)
+            var data = Data()
+            var hasher = SHA256()
+            do {
+                while let chunk = try handle.read(upToCount: Self.chunkSize), !chunk.isEmpty {
+                    try Task.checkCancellation()
+                    guard Int64(chunk.count) <= segment.byteLength - Int64(data.count) else {
+                        throw DataHoarderArchiveError.objectCorrupt
+                    }
+                    hasher.update(data: chunk)
+                    data.append(chunk)
+                }
+                try handle.close()
+            } catch {
+                try? handle.close()
+                throw error
+            }
+            let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            guard digest == segment.hash, Int64(data.count) == segment.byteLength else {
+                throw DataHoarderArchiveError.objectCorrupt
+            }
+            payloads.append(data)
+        }
+        return ArchiveTimelinePayload(segments: payloads, totalByteCount: boundedTotal)
     }
 
     /// The live record a captured file grows into. The id is a random

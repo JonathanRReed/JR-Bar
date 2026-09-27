@@ -46,6 +46,14 @@ extension MenuBarUtility {
         // them — the one source a drag across the icon is learned from.
         let bridge = MenuBarSystemClickBridge(
             onBridge: { [weak self] point in self?.bridgeClick(at: point) },
+            onMirrorPress: { [weak self] _, flags in
+                guard let self else { return }
+                if let mirror = self.iconMirror {
+                    mirror.routeAcceptedFacePress(flags: flags)
+                } else if !flags.contains(.maskAlternate) && !flags.contains(.maskControl) {
+                    self.host?.faceClicked()
+                }
+            },
             onCommandPress: { [weak self] point, _ in self?.commandPressed(at: point) },
             onCommandRelease: { [weak self] point, flags in
                 self?.commandReleased(at: point, option: flags.contains(.maskAlternate))
@@ -134,11 +142,9 @@ extension MenuBarUtility {
         mirror.onPlace = { [weak self] frame in
             guard let self else { return }
             self.host?.mirroredFaceFrame = frame
-            self.clickBridge?.setMirrorFrame(frame.map {
-                let height = CGDisplayBounds(CGMainDisplayID()).height
-                return CGRect(x: $0.minX, y: height - $0.maxY,
-                              width: $0.width, height: $0.height)
-            })
+        }
+        mirror.onHitPlace = { [weak self] frame, face in
+            self?.clickBridge?.setMirrorFrames(frame, face: face)
         }
         mirror.onAccessoryClick = { [weak self] id, view in self?.accessoryClicked(id, view: view) }
         if let face = mirrorFace() { mirror.update(face: face) }

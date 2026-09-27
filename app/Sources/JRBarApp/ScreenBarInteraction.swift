@@ -123,6 +123,10 @@ final class ScreenBarInteraction {
     /// nothing to peek at. That zone is the peek's alone: the card and
     /// the island never arm from it.
     var peekZoneAt: @MainActor (NSPoint) -> Bool = { _ in false }
+    /// Whether the drawn right ear currently belongs to the menu-bar
+    /// peek. When it does not, its ordinary click falls through to the
+    /// same wing action and card pin as any other ear.
+    var rightWingOpensPeek: @MainActor () -> Bool = { false }
     /// The hanging peek's frame; nil while it is down.
     var peekPanel: @MainActor () -> NSRect? = { nil }
     /// Whether a screen point is on the corridor from the ear down to
@@ -1079,6 +1083,42 @@ final class ScreenBarInteraction {
         hideWork?.cancel(); hideWork = nil
         lifeWork?.cancel(); lifeWork = nil
         card.pin()
+    }
+
+    /// VoiceOver's default press is the band's ordinary click: grow the
+    /// island, or pin the glass card without opening a session itself.
+    @discardableResult
+    func accessibilityPress() -> Bool {
+        guard !parked else { return false }
+        if islandOwnsNotch() {
+            pinCard()
+            return true
+        }
+        guard focus() ?? lastFocus != nil else { return false }
+        pinCard()
+        return true
+    }
+
+    /// VoiceOver's named ear actions use the same meanings as a click on
+    /// the drawn ears. The left mark gets first claim; the right ear owns
+    /// the menu-bar peek.
+    @discardableResult
+    func accessibilityActivateWing(_ side: ScreenBarWingSide) -> Bool {
+        guard !parked else { return false }
+        if side == .right, rightWingOpensPeek() {
+            requestPeek(.toggle)
+            return true
+        }
+        if onWingActivate(side) { return true }
+        return accessibilityPress()
+    }
+
+    /// The named hidden-items action is the drawn ‹ handle's own toggle.
+    @discardableResult
+    func accessibilityToggleMenuHandle() -> Bool {
+        guard !parked else { return false }
+        onMenuHandle()
+        return true
     }
 
     private func unpin() {

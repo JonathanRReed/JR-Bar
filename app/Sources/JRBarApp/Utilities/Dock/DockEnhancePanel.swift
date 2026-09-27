@@ -481,71 +481,102 @@ struct DockPreviewView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 10) {
-            if !content.folderTrail.isEmpty {
-                DockRoundVerb(symbol: "chevron.left", label: backLabel, size: metrics.verbDisc) {
-                    actions.onFolderBack?()
+        Group {
+            if cardStripWidth >= wideHeaderMinimum {
+                HStack(spacing: 10) {
+                    headerBack
+                    headerIcon
+                    headerWords
+                    Spacer(minLength: 12)
+                    verbs
                 }
-            }
-            if let icon = content.icon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: metrics.headerIcon, height: metrics.headerIcon)
-                    .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
-                    .overlay(alignment: .topTrailing) {
-                        // The Dock tile's own badge, on the icon the way
-                        // the tile draws it — unread counts, alert dots.
-                        if let badge = content.badge {
-                            DockBadgePill(text: badge, size: 9.5)
-                                .offset(x: 7, y: -6)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        headerBack
+                        headerIcon
+                        headerWords
+                    }
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        ViewThatFits(in: .horizontal) {
+                            verbs
+                            VStack(alignment: .center, spacing: 4) {
+                                HStack(spacing: 6) { leadingVerbs }
+                                HStack(spacing: 6) { trailingVerbs }
+                            }
                         }
-                    }
-                    // Beside the Dock's badge, the agent's: the most
-                    // urgent session this app hosts, as a mark.
-                    .overlay(alignment: .bottomTrailing) {
-                        if let agent = content.appAgents.first {
-                            DockAgentDot(mark: agent, size: 9)
-                                .offset(x: 3, y: 3)
-                        }
-                    }
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(appTitle.base)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if let channel = appTitle.channel {
-                        Text(channel)
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1.5)
-                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                        Spacer(minLength: 0)
                     }
                 }
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
-            .frame(maxWidth: 160, alignment: .leading)
-            .clipped()
-            // Exclude an app from where it bothers you — the card's
-            // list, one right-click nearer.
-            .contextMenu {
-                if content.bundleID != nil, content.folderURL == nil {
-                    Button("Never Preview \(content.appName)") { actions.onExcludeApp?() }
-                }
-            }
-            Spacer(minLength: 12)
-            verbs
         }
-        .frame(width: headerWidth)
+        .frame(width: cardStripWidth)
+    }
+
+    @ViewBuilder
+    private var headerBack: some View {
+        if !content.folderTrail.isEmpty {
+            DockRoundVerb(symbol: "chevron.left", label: backLabel, size: metrics.verbDisc) {
+                actions.onFolderBack?()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var headerIcon: some View {
+        if let icon = content.icon {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: metrics.headerIcon, height: metrics.headerIcon)
+                .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                .overlay(alignment: .topTrailing) {
+                    if let badge = content.badge {
+                        DockBadgePill(text: badge, size: 9.5)
+                            .offset(x: 7, y: -6)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if let agent = content.appAgents.first {
+                        DockAgentDot(mark: agent, size: 9)
+                            .offset(x: 3, y: 3)
+                    }
+                }
+        }
+    }
+
+    private var headerWords: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Text(appTitle.base)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let channel = appTitle.channel {
+                    Text(channel)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                }
+            }
+            Text(subtitle)
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+        .contextMenu {
+            if content.bundleID != nil, content.folderURL == nil {
+                Button("Never Preview \(content.appName)") { actions.onExcludeApp?() }
+            }
+        }
     }
 
     /// The header's verbs as quiet glass discs — least to most final,
@@ -560,33 +591,47 @@ struct DockPreviewView: View {
             }
         } else if content.isRunning {
             HStack(spacing: 6) {
-                DockRoundVerb(symbol: "plus", tint: DockChrome.go,
-                              label: "New window in \(content.appName)", size: metrics.verbDisc) {
-                    actions.onNewWindow?()
+                leadingVerbs
+                trailingVerbs
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var leadingVerbs: some View {
+        if content.isRunning {
+            DockRoundVerb(symbol: "plus", tint: DockChrome.go,
+                          label: "New window in \(content.appName)", size: metrics.verbDisc) {
+                actions.onNewWindow?()
+            }
+            DockRoundVerb(symbol: "eye.slash", tint: DockChrome.caution,
+                          label: "Hide \(content.appName) (⌘H)", size: metrics.verbDisc) {
+                actions.onHideApp?()
+            }
+            if content.windows.contains(where: { !$0.minimized }), content.windows.count > 1 {
+                DockRoundVerb(symbol: "minus", tint: DockChrome.caution,
+                              label: "Minimise every \(content.appName) window",
+                              size: metrics.verbDisc) {
+                    actions.onMinimizeAll?()
                 }
-                DockRoundVerb(symbol: "eye.slash", tint: DockChrome.caution,
-                              label: "Hide \(content.appName) (⌘H)", size: metrics.verbDisc) {
-                    actions.onHideApp?()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var trailingVerbs: some View {
+        if content.isRunning {
+            if content.windows.count > 1 {
+                DockRoundVerb(symbol: "xmark", tint: DockChrome.stop,
+                              label: "Close every \(content.appName) window (app stays running)",
+                              size: metrics.verbDisc) {
+                    actions.onCloseAll?()
                 }
-                if content.windows.contains(where: { !$0.minimized }), content.windows.count > 1 {
-                    DockRoundVerb(symbol: "minus", tint: DockChrome.caution,
-                                  label: "Minimise every \(content.appName) window",
-                                  size: metrics.verbDisc) {
-                        actions.onMinimizeAll?()
-                    }
-                }
-                if content.windows.count > 1 {
-                    DockRoundVerb(symbol: "xmark", tint: DockChrome.stop,
-                                  label: "Close every \(content.appName) window (app stays running)",
-                                  size: metrics.verbDisc) {
-                        actions.onCloseAll?()
-                    }
-                }
-                DockRoundVerb(symbol: content.stillRunning ? "bolt.horizontal.fill" : "power",
-                              tint: DockChrome.stop, label: quitLabel, size: metrics.verbDisc,
-                              lit: content.stillRunning) {
-                    actions.onQuitApp?()
-                }
+            }
+            DockRoundVerb(symbol: content.stillRunning ? "bolt.horizontal.fill" : "power",
+                          tint: DockChrome.stop, label: quitLabel, size: metrics.verbDisc,
+                          lit: content.stillRunning) {
+                actions.onQuitApp?()
             }
         }
     }
@@ -595,16 +640,16 @@ struct DockPreviewView: View {
         content.stillRunning ? "Force quit \(content.appName)" : "Quit \(content.appName)"
     }
 
-    /// The cards set the preview's natural width. A one-card preview may
-    /// grow only enough to keep its controls and a short readable name.
-    private var headerWidth: CGFloat {
+    /// Enough room for the one-row header. Narrow card strips keep their
+    /// own width and put the controls below the name instead.
+    private var wideHeaderMinimum: CGFloat {
         var titleWidth: CGFloat = 72
         if let channel = appTitle.channel {
             let font = NSFont.systemFont(ofSize: 9.5, weight: .semibold)
             let badge = (channel as NSString).size(withAttributes: [.font: font]).width
             titleWidth += badge + 18
         }
-        return max(cardStripWidth, headerChromeWidth + titleWidth)
+        return headerChromeWidth + titleWidth
     }
 
     private var cardStripWidth: CGFloat {

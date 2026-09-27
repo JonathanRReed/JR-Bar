@@ -413,6 +413,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
 
     /// The mirror's ordinary click — the button's left click.
     func faceClicked() {
+        Self.log.debug("status click: mirrored face toggle")
         onTogglePanel?()
     }
 
@@ -817,6 +818,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
 
     @objc private func clicked(_ sender: Any?) {
         let event = NSApp.currentEvent
+        Self.log.debug("status click: native button action")
         let secondary = event?.type == .rightMouseUp || event?.modifierFlags.contains(.option) == true
         // A click on the blank stretch left of the icon is the Menu Bar
         // utility's reveal, whichever button.

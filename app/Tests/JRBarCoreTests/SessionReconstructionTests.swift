@@ -8,6 +8,12 @@ import Testing
 @Suite("Session reconstruction")
 struct SessionReconstructionTests {
 
+    private func makeArchive() throws -> (URL, DataHoarderArchive) {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return (root, DataHoarderArchive(root: root.appending(path: "archive")))
+    }
+
     // MARK: Claude rows
 
     @Test("claude rows project every item kind with python field semantics")
@@ -275,5 +281,46 @@ struct SessionReconstructionTests {
 
         let payloads = try await archive.segmentData(id: transcript.id)
         #expect(payloads == [Data("first\n".utf8), Data("second\n".utf8)])
+    }
+
+    @Test("timeline reads reject an oversized chain before loading its payloads")
+    func boundedTimelineRead() async throws {
+        let (root, archive) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let record = try await archive.createLiveRecord(
+            name: "large.jsonl", sourcePath: "/tmp/large.jsonl", provider: "claude")
+        _ = try await archive.appendSegment(
+            recordID: record.id, data: Data(repeating: 0x61, count: 33), byteOffset: 0)
+
+        let payload = try await archive.timelineSegmentData(id: record.id, maximumBytes: 32)
+        #expect(payload.segments.isEmpty)
+        #expect(payload.totalByteCount == 33)
+
+        let reconstruction = SessionReconstructor.reconstruct(
+            segments: payload.segments, provider: "claude",
+            totalByteCount: SessionReconstructor.timelineByteLimit + 1)
+        #expect(reconstruction.items.isEmpty)
+        #expect(reconstruction.gaps == ["transcript_too_large:\(SessionReconstructor.timelineByteLimit + 1)"])
+    }
+
+    @Test("timeline preflight rejects a sparse object whose size no longer matches its segment")
+    func sparseObjectFailsBeforeContentRead() async throws {
+        let (root, archive) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let record = try await archive.createLiveRecord(
+            name: "sparse.jsonl", sourcePath: "/tmp/sparse.jsonl", provider: "claude")
+        let segment = try await archive.appendSegment(
+            recordID: record.id, data: Data("x\n".utf8), byteOffset: 0)
+        let object = root.appending(path: "archive/objects/\(segment.hash)")
+        let handle = try FileHandle(forWritingTo: object)
+        try handle.truncate(atOffset: UInt64(SessionReconstructor.timelineByteLimit * 4))
+        try handle.close()
+
+        do {
+            _ = try await archive.timelineSegmentData(id: record.id)
+            Issue.record("a changed object size must fail preflight")
+        } catch let error as DataHoarderArchiveError {
+            #expect(error == .objectCorrupt)
+        }
     }
 }

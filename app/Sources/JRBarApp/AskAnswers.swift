@@ -360,6 +360,9 @@ final class AskAnswerDesk {
     /// Ask (by its request pin) → the picks so far.
     private(set) var picks: [String: AskChoicePicks] = [:]
     @ObservationIgnored private var noteTokens: [String: UUID] = [:]
+    @ObservationIgnored var noteTimer: @MainActor (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
 
     init(send: @escaping @MainActor (String, AskVerdict, String?) async throws -> CoreReply) {
         self.send = send
@@ -457,12 +460,13 @@ final class AskAnswerDesk {
         notes[session] = note
         let token = UUID()
         noteTokens[session] = token
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.noteLife) { [weak self] in
+        let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.noteTokens[session] == token else { return }
                 self.clearNote(for: session)
             }
         }
+        noteTimer(Self.noteLife, work)
     }
 
     private func clearNote(for session: String) {

@@ -11,6 +11,21 @@ import JRBarCore
 struct AskAnswersTests {
     static let session = "claude:session:s1"
 
+    @Test("answer notes expire on the injected clock and older expiry cannot erase a newer note")
+    func noteExpiryUsesManualTime() async {
+        let timers = ManualTimers()
+        let desk = AskAnswerDesk(send: { _, _, _ in CoreReply(id: "1", ok: false) })
+        desk.noteTimer = { delay, work in timers.arm(delay, work) }
+        _ = await desk.answer(Self.held(), .approve)
+        #expect(desk.note(for: Self.session) != nil)
+        timers.advance(by: 3)
+        _ = await desk.answer(Self.held(), .approve)
+        timers.advance(by: 1)
+        #expect(desk.note(for: Self.session) != nil)
+        timers.advance(by: 3)
+        #expect(desk.note(for: Self.session) == nil)
+    }
+
     static let single = CoreAskChoice(question: "Which database?", header: "Database",
                                       options: ["Postgres", "SQLite"])
     static let multi = CoreAskChoice(question: "Which checks?", options: ["Lint", "Tests", "Types"], multi: true)

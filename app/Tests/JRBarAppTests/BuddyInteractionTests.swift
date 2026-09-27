@@ -58,6 +58,14 @@ struct BuddyInteractionTests {
         #expect(toy.trickKind == .wave)
     }
 
+    @Test("the accessibility press is the same coordinate-free pet and trick")
+    func accessibilityPressPetsAndTricks() {
+        let (toy, store) = makeToy()
+        toy.accessibilityActivate(at: t0)
+        #expect(store.state.notchBuddy.care.petCount == 1)
+        if !reducedMotion { #expect(toy.trickKind == .hop) }
+    }
+
     @Test("a treat feeds, bursts hearts, and hops when motion is on")
     func treatFeeds() {
         let (toy, store) = makeToy()

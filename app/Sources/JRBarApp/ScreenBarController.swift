@@ -504,6 +504,9 @@ final class ScreenBarController {
     }
 
     var onGeometryChange: (@MainActor () -> Void)?
+    var onAccessibilityPress: (@MainActor () -> Bool)?
+    var onAccessibilityWing: (@MainActor (ScreenBarWingSide) -> Bool)?
+    var onAccessibilityMenuHandle: (@MainActor () -> Bool)?
 
     /// A short reason the band is not animating, for the status menu —
     /// nil while it plays normally. Frame-path detail stays in NSLog.
@@ -667,6 +670,7 @@ final class ScreenBarController {
     /// island watch, the hover poll, the frame clock and the ears'
     /// timelines start or park together.
     private func settleVisibility() {
+        updateAccessibility()
         guard let live = visibility.settle() else { return }
         view.wingsLive = live
         syncIslandWatch()
@@ -1052,6 +1056,7 @@ final class ScreenBarController {
         if (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect, view.menuHandleRect) != oldRects {
             onGeometryChange?()
         }
+        updateAccessibility()
         // A peek hanging from the right ear follows it — or folds with it.
         syncPeek()
     }
@@ -1359,6 +1364,30 @@ final class ScreenBarController {
         view.setAccessibilityLabel(lastRejection == nil
             ? "Screen Bar — \(summary ?? "agent status light")"
             : "Screen Bar — \(summary ?? "agent status light"); a program was refused, showing the last safe one")
+        let live = visibility.live && panel.isVisible && !view.bandRect.isEmpty
+        view.setAccessibilityElement(live)
+        view.onAccessibilityPress = { [weak self] in self?.onAccessibilityPress?() ?? false }
+        guard live else {
+            view.setAccessibilityCustomActions([])
+            return
+        }
+        var actions: [NSAccessibilityCustomAction] = []
+        if let slot = effectiveWings.left, view.leftWingRect != nil {
+            actions.append(NSAccessibilityCustomAction(name: "Activate left ear, \(slot.text)") { [weak self] in
+                self?.onAccessibilityWing?(.left) ?? false
+            })
+        }
+        if let slot = effectiveWings.right, view.rightWingRect != nil {
+            actions.append(NSAccessibilityCustomAction(name: "Activate right ear, \(slot.text)") { [weak self] in
+                self?.onAccessibilityWing?(.right) ?? false
+            })
+        }
+        if view.menuHandleRect != nil {
+            actions.append(NSAccessibilityCustomAction(name: "Toggle hidden menu items") { [weak self] in
+                self?.onAccessibilityMenuHandle?() ?? false
+            })
+        }
+        view.setAccessibilityCustomActions(actions)
     }
 
     // MARK: Frame clock (fallback)

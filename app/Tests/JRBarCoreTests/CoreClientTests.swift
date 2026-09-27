@@ -230,9 +230,25 @@ struct CoreClientTests {
 
     final class EventLog: @unchecked Sendable {
         private let lock = NSLock()
+        private let changed = NSCondition()
         private var _events: [CoreClient.Event] = []
         var events: [CoreClient.Event] { lock.lock(); defer { lock.unlock() }; return _events }
-        func add(_ event: CoreClient.Event) { lock.lock(); _events.append(event); lock.unlock() }
+        func add(_ event: CoreClient.Event) {
+            lock.lock(); _events.append(event); lock.unlock()
+            changed.lock(); changed.broadcast(); changed.unlock()
+        }
+        func waitForConnections(_ count: Int, timeout: TimeInterval = 2) -> Bool {
+            let deadline = Date(timeIntervalSinceNow: timeout)
+            changed.lock(); defer { changed.unlock() }
+            while connectedCount < count, changed.wait(until: deadline) {}
+            return connectedCount >= count
+        }
+        private var connectedCount: Int {
+            events.reduce(0) { count, event in
+                if case .connected = event { return count + 1 }
+                return count
+            }
+        }
         var connectAttempts: Int {
             events.reduce(0) { count, event in
                 if case .connecting = event { return count + 1 }
@@ -282,6 +298,44 @@ struct CoreClientTests {
         #expect(await Self.wait { events.connectAttempts >= 2 })
         #expect(await Self.wait { server.acceptCount >= 2 },
                 "the client must keep retrying the socket")
+    }
+
+    @Test("stop then start waits for the old socket owner to retire")
+    func stopStartHasOneRunOwner() throws {
+        let path = Self.temporarySocketPath()
+        let server = StubCoreSocket(path: path, speakHello: true)
+        try server.start()
+        defer { server.stop() }
+
+        let events = EventLog()
+        let client = CoreClient(socketPath: path, helloTimeout: 1, connectTimeout: 1) { events.add($0) }
+        client.start()
+        #expect(events.waitForConnections(1))
+
+        client.stop()
+        client.start()
+        defer { client.stop() }
+        #expect(events.waitForConnections(2), "a start during teardown must launch after the old owner returns")
+        #expect(client.isConnected, "the retired owner must not close the replacement socket")
+    }
+
+    @MainActor
+    @Test("CoreModel ignores an event queued by a stopped client")
+    func modelRejectsRetiredClientEvent() {
+        let model = CoreModel(socketPath: Self.temporarySocketPath())
+        model.start()
+        let retired = model.eventGeneration
+        model.stop()
+        model.handle(.connected, generation: retired)
+        #expect(model.connection == .idle)
+
+        model.start()
+        let current = model.eventGeneration
+        model.handle(.connected, generation: current)
+        #expect(model.connection == .connected)
+        model.handle(.disconnected(reason: "retired"), generation: retired)
+        #expect(model.connection == .connected, "an obsolete disconnect must not overwrite the replacement")
+        model.stop()
     }
 
     @Test("send throws at its deadline even while the write is still blocked")

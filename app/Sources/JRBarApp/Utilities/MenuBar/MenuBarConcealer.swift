@@ -904,6 +904,7 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     /// The mirror panel owns clicks in this rect even when a protected
     /// system item's stale AX frame overlaps it.
     private var mirrorFrame: CGRect?
+    private var mirrorFaceFrame: CGRect?
     private var swallowUp = false
     /// A ⌘-press went by and its release has not: the next left-up ends
     /// the drag, whatever the modifiers say by then.
@@ -914,6 +915,7 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     /// `start`/`stop`, read there too.
     private(set) var tapLive = false
     private let onBridge: @MainActor (CGPoint) -> Void
+    private let onMirrorPress: (@MainActor (CGPoint, CGEventFlags) -> Void)?
     /// A ⌘-press at a Quartz point, passed straight through.
     private let onCommandPress: @MainActor (CGPoint, CGEventFlags) -> Void
     /// The release that ends a ⌘-press, with the flags held at the drop
@@ -921,9 +923,11 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
     private let onCommandRelease: @MainActor (CGPoint, CGEventFlags) -> Void
 
     init(onBridge: @escaping @MainActor (CGPoint) -> Void,
+         onMirrorPress: (@MainActor (CGPoint, CGEventFlags) -> Void)? = nil,
          onCommandPress: @escaping @MainActor (CGPoint, CGEventFlags) -> Void = { _, _ in },
          onCommandRelease: @escaping @MainActor (CGPoint, CGEventFlags) -> Void = { _, _ in }) {
         self.onBridge = onBridge
+        self.onMirrorPress = onMirrorPress
         self.onCommandPress = onCommandPress
         self.onCommandRelease = onCommandRelease
     }
@@ -941,8 +945,11 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
         }
     }
 
-    func setMirrorFrame(_ frame: CGRect?) {
-        lock.withLock { mirrorFrame = frame }
+    func setMirrorFrames(_ frame: CGRect?, face: CGRect? = nil) {
+        lock.withLock {
+            mirrorFrame = frame
+            mirrorFaceFrame = face
+        }
     }
 
     func start() {
@@ -1045,12 +1052,26 @@ final class MenuBarSystemClickBridge: @unchecked Sendable {
         }
         lock.withLock { commandDown = false }
         let point = event.location
+        let direct = lock.withLock {
+            self.onMirrorPress != nil && mirrorFaceFrame?.contains(point) == true
+        }
+        if direct, let onMirrorPress {
+            lock.withLock { swallowUp = true }
+            let flags = event.flags
+            MenuBarAssessmentBackend.log.debug("click bridge: mirror face press routed directly")
+            Task { @MainActor in onMirrorPress(point, flags) }
+            return nil
+        }
         let hit: Bool = lock.withLock {
             guard concealing else { return false }
-            if mirrorFrame?.contains(point) == true { return false }
+            if mirrorFrame?.contains(point) == true {
+                MenuBarAssessmentBackend.log.debug("click bridge: mirror press passed through")
+                return false
+            }
             return MenuBarConcealPlan.bridgedItem(at: point, items: items) != nil
         }
         guard hit else { return Unmanaged.passUnretained(event) }
+        MenuBarAssessmentBackend.log.debug("click bridge: protected system press held for replay")
         lock.withLock { swallowUp = true }
         let onBridge = onBridge
         Task { @MainActor in onBridge(point) }

@@ -450,8 +450,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         interaction.menuHandleAt = { [weak screenBar] point in
             screenBar?.menuHandle(atScreenPoint: point) ?? false
         }
+        interaction.rightWingOpensPeek = { [weak screenBar] in
+            screenBar?.peekAvailable ?? false
+        }
         interaction.onMenuHandle = { [weak self] in
             self?.utilitiesStore?.menuBar.toggleMenuHandle()
+        }
+        screenBar.onAccessibilityPress = { [weak interaction] in
+            interaction?.accessibilityPress() ?? false
+        }
+        screenBar.onAccessibilityWing = { [weak interaction] side in
+            interaction?.accessibilityActivateWing(side) ?? false
+        }
+        screenBar.onAccessibilityMenuHandle = { [weak interaction] in
+            interaction?.accessibilityToggleMenuHandle() ?? false
         }
         // The right ear is the menu bar's reveal, update and newcomer
         // surface: its marks, and the black peek of hidden glyphs.

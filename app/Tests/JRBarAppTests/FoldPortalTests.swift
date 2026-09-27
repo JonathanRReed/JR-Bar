@@ -64,6 +64,32 @@ struct FoldPortalTests {
         #expect(anchor.anchor == 110)
     }
 
+    @Test("one-degree sensor flicker does not keep a stationary lid folded")
+    func automaticRestAcceptsUnevenSensorFlicker() {
+        var anchor = MoveAnchor()
+        anchor.tolerance = 1
+        anchor.parkAfter = 1
+        _ = anchor.select(.movement, angle: 110, at: 0)
+        var released = false
+        for step in 0...10 {
+            let angle = step < 5 ? 80.0 : 79.0
+            released = anchor.feed(angle, at: 0.1 + Double(step) * 0.1) || released
+        }
+        #expect(released)
+        #expect(anchor.anchor == 79)
+    }
+
+    @Test("deep folds start their rest release gently too", arguments: [0.89, 0.91, 1.25])
+    func deepRestReleaseEasesOut(delta: Double) {
+        var chase = DeltaChase()
+        chase.reset(to: delta)
+        let first = chase.tick(target: 0, dt: 1.0 / 60)
+        #expect(first > delta * 0.98)
+        for _ in 0..<40 { chase.tick(target: 0, dt: 1.0 / 60) }
+        #expect(chase.atRest)
+        #expect(chase.value == 0)
+    }
+
     @Test("sensor and display callbacks share elapsed time while the fold stays armed")
     func frameTimeSurvivesSensorReconciles() {
         var clock = FoldFrameClock()

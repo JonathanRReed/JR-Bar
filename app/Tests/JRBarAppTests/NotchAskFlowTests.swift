@@ -15,6 +15,21 @@ import JRBarCore
 struct NotchAskFlowTests {
     private static let session = "claude:s1"
 
+    @Test("open refusals expire by manual time without racing the main queue")
+    func openRefusalExpiryUsesManualTime() {
+        let (toy, store, _) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers()
+        toy.cardModel.openNoteTimer = { delay, work in timers.arm(delay, work) }
+        toy.cardModel.noteOpenRefused("First refusal", session: Self.session)
+        timers.advance(by: 3)
+        toy.cardModel.noteOpenRefused("Second refusal", session: Self.session)
+        timers.advance(by: 1)
+        #expect(toy.cardModel.openRefusals[Self.session] == "Second refusal")
+        timers.advance(by: 3)
+        #expect(toy.cardModel.openRefusals[Self.session] == nil)
+    }
+
     /// What the staged daemon was asked: session, verdict, request pin.
     private final class Sent {
         var answers: [(String, AskVerdict, String?)] = []
@@ -42,6 +57,9 @@ struct NotchAskFlowTests {
             sent.answers.append((session, verdict, request))
             return sent.reply
         })
+        let timers = ManualTimers()
+        desk.noteTimer = { delay, work in timers.arm(delay, work) }
+        toy.cardModel.openNoteTimer = { delay, work in timers.arm(delay, work) }
         // As the app delegate wires the shared desk: an answer it lands
         // steps the capsule down.
         desk.onAnswered = { [weak toy] session, request in toy?.resolveAsk(session: session, request: request) }

@@ -451,7 +451,7 @@ final class FoldToy: Toy {
         selectAnchorMode(at: CACurrentMediaTime())
         jitter.tolerance = settings.jitterTolerance
         moveAnchor.tolerance = settings.jitterTolerance
-        moveAnchor.parkAfter = settings.anchor == .movement && settings.dwellTimeout == 0 ? 1 : nil
+        moveAnchor.parkAfter = settings.anchor == .movement ? max(1, settings.dwellTimeout) : nil
         // Both looks arm on 3° of real travel down, so a nudge never
         // flashes the Screen Recording indicator, and neither does
         // tilting the screen back: neither look folds on the way up. The
@@ -624,7 +624,7 @@ final class FoldToy: Toy {
             }
         } else {
             let dwellSeconds = settings.dwellTimeout
-            let dwellArmed = dwellSeconds > 0 && outcome.capture
+            let dwellArmed = settings.anchor == .angle && dwellSeconds > 0 && outcome.capture
                 && arming.foldGateOpen && tracker.atRest && chase.atRest
                 && targetDelta > 0.002
             if dwellArmed {
@@ -1310,6 +1310,7 @@ final class FoldToy: Toy {
         if moveAnchor.feed(angle, at: now) {
             dwellPaused = true
             dwellAnchor = angle
+            FoldLog.log.debug("rest: lid settled at \(angle, privacy: .public), returning to flat")
         }
     }
 

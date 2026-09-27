@@ -306,6 +306,11 @@ struct MenuBarConcealerTests {
         }
     }
 
+    @MainActor
+    private func yieldUntil(_ done: () -> Bool) async {
+        for _ in 0..<200 where !done() { await Task.yield() }
+    }
+
     private func event(_ type: CGEventType, at point: CGPoint, flags: CGEventFlags = []) throws -> CGEvent {
         let event = try #require(CGEvent(mouseEventSource: nil, mouseType: type,
                                          mouseCursorPosition: point, mouseButton: .left))
@@ -363,7 +368,7 @@ struct MenuBarConcealerTests {
         let wifi = item("wifi", owner: "MenuBarAgent", x: 1165,
                         identifier: "com.apple.menuextra.wifi")
         bridge.update(items: [wifi], concealing: true)
-        bridge.setMirrorFrame(CGRect(x: 1165, y: 0, width: 12, height: 24))
+        bridge.setMirrorFrames(CGRect(x: 1165, y: 0, width: 12, height: 24))
 
         let mirrorPoint = CGPoint(x: 1170, y: 10)
         #expect(bridge.handle(type: .leftMouseDown,
@@ -375,6 +380,92 @@ struct MenuBarConcealerTests {
         #expect(bridge.handle(type: .leftMouseDown,
                               event: try event(.leftMouseDown, at: systemPoint)) == nil,
                 "the uncovered part of Wi-Fi still lifts and replays")
+    }
+
+    @MainActor
+    @Test("a concealing mirror face consumes one physical down and up and routes once")
+    func mirrorFaceRoutesExactlyOnce() async throws {
+        let log = BridgeLog()
+        var routed: [(CGPoint, CGEventFlags)] = []
+        let bridge = MenuBarSystemClickBridge(
+            onBridge: { log.bridged.append($0) },
+            onMirrorPress: { routed.append(($0, $1)) })
+        let face = CGRect(x: 1165, y: 0, width: 24, height: 24)
+        bridge.setMirrorFrames(face, face: face)
+        bridge.update(items: [], concealing: true)
+        let point = CGPoint(x: 1170, y: 10)
+
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: point,
+                                               flags: .maskAlternate)) == nil)
+        #expect(bridge.handle(type: .leftMouseUp,
+                              event: try event(.leftMouseUp, at: point,
+                                               flags: .maskAlternate)) == nil)
+        await yieldUntil { routed.count == 1 }
+        #expect(routed.count == 1)
+        #expect(routed.first?.0 == point)
+        #expect(routed.first?.1.contains(.maskAlternate) == true)
+        #expect(log.bridged.isEmpty)
+    }
+
+    @MainActor
+    @Test("a face press accepted by the tap survives a move before dispatch")
+    func acceptedMirrorPressSurvivesReposition() async throws {
+        let mirror = MenuBarIconMirror()
+        mirror.update(face: MenuBarIconFace(length: 24))
+        var routed = 0
+        mirror.onPrimaryClick = { routed += 1 }
+        let bridge = MenuBarSystemClickBridge(
+            onBridge: { _ in },
+            onMirrorPress: { _, flags in mirror.routeAcceptedFacePress(flags: flags) })
+        mirror.onHitPlace = { panel, face in bridge.setMirrorFrames(panel, face: face) }
+        let row = CGRect(x: 10_000, y: 0, width: 1512, height: 37)
+        mirror.show(row: row, primaryMaxY: 10_000) { _ in 10_100 }
+        let point = CGPoint(x: 10_110, y: row.minY)
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: point)) == nil)
+        mirror.show(row: row, primaryMaxY: 10_000) { _ in 10_200 }
+        mirror.hide()
+        #expect(bridge.handle(type: .leftMouseUp,
+                              event: try event(.leftMouseUp, at: point)) == nil)
+        await yieldUntil { routed == 1 }
+        #expect(routed == 1)
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: point)) != nil)
+    }
+
+    @MainActor
+    @Test("direct face ownership follows the visible mirror through an assertion lift")
+    func mirrorFaceDirectRouteGates() async throws {
+        var routed = 0
+        let bridge = MenuBarSystemClickBridge(
+            onBridge: { _ in }, onMirrorPress: { _, _ in routed += 1 })
+        bridge.setMirrorFrames(CGRect(x: 100, y: 0, width: 60, height: 24),
+                               face: CGRect(x: 114, y: 0, width: 24, height: 24))
+        let face = CGPoint(x: 120, y: 10)
+        let chevron = CGPoint(x: 105, y: 10)
+
+        bridge.update(items: [], concealing: false)
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: face)) == nil)
+        #expect(bridge.handle(type: .leftMouseUp,
+                              event: try event(.leftMouseUp, at: face)) == nil)
+        await yieldUntil { routed == 1 }
+        #expect(routed == 1)
+        bridge.update(items: [], concealing: true)
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: chevron)) != nil)
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: face,
+                                               flags: .maskCommand)) != nil)
+        #expect(bridge.handle(type: .leftMouseUp,
+                              event: try event(.leftMouseUp, at: face,
+                                               flags: .maskCommand)) != nil)
+        bridge.setMirrorFrames(nil)
+        #expect(bridge.handle(type: .leftMouseDown,
+                              event: try event(.leftMouseDown, at: face)) != nil)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(routed == 1)
     }
 
     @Test("Apple's extras conceal like apps only with the flag; the system's own owners never")

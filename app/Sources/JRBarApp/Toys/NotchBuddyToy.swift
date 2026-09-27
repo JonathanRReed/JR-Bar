@@ -612,6 +612,12 @@ final class NotchBuddyToy: Toy {
         }
     }
 
+    /// VoiceOver's default action is a coordinate-free pat. It never
+    /// opens an ask; that remains a separate, named action.
+    func accessibilityActivate(at now: Date = Date()) {
+        tapped(at: now)
+    }
+
     /// The card's "Give treat": fed for a while, hearts off the crown,
     /// and the hop borrowed from completions when motion is allowed.
     func giveTreat(at now: Date = Date()) {

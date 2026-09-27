@@ -300,7 +300,7 @@ struct MoveAnchor: Sendable {
         guard elapsed >= delay else { return false }
         let early = parkEarlyTotal / Double(parkEarlyCount)
         let late = parkLateTotal / Double(parkLateCount)
-        guard abs(late - early) > 0.25 else { return true }
+        guard high - low > 1, abs(late - early) > max(0.75, tolerance / 2) else { return true }
         beginPark(angle, at: at)
         return false
     }
@@ -545,10 +545,10 @@ struct DeltaChase: Sendable {
         guard rawDt.isFinite, rawDt > 0 else { return value }
         let dt = min(rawDt, maxDt)
         if target == 0 {
-            if releaseFrom == nil, !wasFlat, value > unwindRate * dt, value <= 0.9 {
+            if releaseFrom == nil, !wasFlat, value > unwindRate * dt {
                 releaseFrom = value
                 releaseElapsed = 0
-                releaseDuration = max(0.28, 1.5 * value / unwindRate)
+                releaseDuration = min(0.45, max(0.28, 1.5 * value / unwindRate))
             }
             if let start = releaseFrom {
                 releaseElapsed = min(releaseDuration, releaseElapsed + dt)

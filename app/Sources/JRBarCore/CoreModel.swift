@@ -50,6 +50,9 @@ public final class CoreModel {
     public var onEvent: (@MainActor (CoreEvent) -> Void)?
 
     @ObservationIgnored private var client: CoreClient?
+    /// Queued events from retired clients cannot change the current model.
+    @ObservationIgnored private var clientGeneration: UInt64 = 0
+    var eventGeneration: UInt64 { clientGeneration }
     @ObservationIgnored private var seenEventKeys: [String] = []
 
     public init(socketPath: String = CoreSocketPath.resolve()) {
@@ -98,14 +101,19 @@ public final class CoreModel {
 
     public func start() {
         guard client == nil else { return }
+        clientGeneration &+= 1
+        let generation = clientGeneration
         let client = CoreClient(socketPath: socketPath) { [weak self] event in
-            Task { @MainActor [weak self] in self?.handle(event) }
+            Task { @MainActor [weak self] in
+                self?.handle(event, generation: generation)
+            }
         }
         self.client = client
         client.start()
     }
 
     public func stop() {
+        clientGeneration &+= 1
         client?.stop()
         client = nil
         connection = .idle
@@ -115,6 +123,11 @@ public final class CoreModel {
     }
 
     public func retryNow() { client?.retryNow() }
+
+    func handle(_ event: CoreClient.Event, generation: UInt64) {
+        guard clientGeneration == generation else { return }
+        handle(event)
+    }
 
     // MARK: Commands
 

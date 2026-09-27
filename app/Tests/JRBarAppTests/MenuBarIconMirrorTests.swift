@@ -137,6 +137,9 @@ struct MenuBarIconMirrorTests {
         #expect(frame.height == MenuBarIconMirror.itemHeight)
         // Quartz midY of the panel is the row's midY — the other items'.
         #expect(982 - frame.midY == row.midY)
+        #expect(MenuBarIconMirror.hitFrame(seatMinX: 1054, width: 70, row: row)
+                == CGRect(x: 1054, y: 6.5, width: 70, height: 24),
+                "the bridge gets the original Quartz rect, with no display conversion")
     }
 
     @Test("the ‹ zone widens the panel to the left; the face keeps its slice on the right")
@@ -248,6 +251,50 @@ struct MenuBarIconMirrorTests {
         #expect(host.mirroredFaceFrame == face)
         mirror.onPlace?(nil)
         #expect(host.mirroredFaceFrame == nil)
+    }
+
+    @MainActor
+    @Test("placement publishes the whole Quartz hit panel, not only the face anchor")
+    func hitPlacementCoversEveryVisibleSegment() throws {
+        let mirror = MenuBarIconMirror()
+        let glyph = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in true }
+        let accessory = MenuBarFaceAccessory(id: "agent", image: glyph, title: nil,
+                                             toolTip: nil, accessibilityLabel: "Agent",
+                                             signature: "agent")
+        mirror.update(face: MenuBarIconFace(image: glyph, length: 24, hiddenCount: 1,
+                                            accessories: [accessory]))
+        var hit: CGRect?
+        mirror.onHitPlace = { panel, _ in hit = panel }
+        // Stand it off every real screen; this test needs placement, not
+        // a visible window on the developer's menu bar.
+        let row = CGRect(x: 10_000, y: 0, width: 1512, height: 37)
+        mirror.show(row: row, primaryMaxY: 10_000) { width in 11_100 - width }
+        let placed = try #require(hit)
+        #expect(placed.width == mirror.panelWidth)
+        #expect(placed.maxX == 11_100)
+        #expect(placed.minY == row.minY)
+        #expect(placed.height == row.height)
+        mirror.hide()
+        #expect(hit == nil)
+    }
+
+    @MainActor
+    @Test("an accepted face press survives re-seating and hiding")
+    func acceptedFacePressSurvivesGeometryChanges() {
+        let mirror = MenuBarIconMirror()
+        let glyph = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in true }
+        mirror.update(face: MenuBarIconFace(image: glyph, length: 24))
+        var clicks = 0
+        var menus = 0
+        mirror.onPrimaryClick = { clicks += 1 }
+        mirror.onSecondaryClick = { _ in menus += 1 }
+        let row = CGRect(x: 10_000, y: 0, width: 1512, height: 37)
+        mirror.show(row: row, primaryMaxY: 10_000) { _ in 10_100 }
+        mirror.show(row: row, primaryMaxY: 10_000) { _ in 10_200 }
+        mirror.routeAcceptedFacePress(flags: [])
+        mirror.hide()
+        mirror.routeAcceptedFacePress(flags: .maskControl)
+        #expect(clicks == 1 && menus == 1)
     }
 
     @MainActor

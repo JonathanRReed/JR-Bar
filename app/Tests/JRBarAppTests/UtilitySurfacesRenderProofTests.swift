@@ -188,7 +188,28 @@ struct UtilitySurfacesRenderProofTests {
         let longSize = DockPreviewPanel(content: long).fittingSize()
 
         #expect(longSize.width == shortSize.width)
-        #expect(longSize.width < 300)
+        let card = DockEnhanceMath.cardSize(large: false).width
+        let expected = card + 2 * long.metrics.cardPad + 2 * long.metrics.panelInset
+        #expect(longSize.width == expected)
+    }
+
+    @Test("a portrait thumbnail remains the panel's width")
+    func portraitCardOwnsPanelWidth() throws {
+        let content = DockPreviewSamples.shapes(hug: true)
+        let portrait = try #require(content.windows.min { left, right in
+            DockEnhanceMath.cardSize(large: false, aspect: DockEnhanceMath.aspect(of: left)).width
+                < DockEnhanceMath.cardSize(large: false, aspect: DockEnhanceMath.aspect(of: right)).width
+        })
+        content.windows = [portrait]
+        content.appName = "A Long Synthetic Application (Nightly)"
+        content.appAgents = Array(repeating: Fixtures.working, count: 24)
+
+        let panel = DockPreviewPanel(content: content).fittingSize()
+        let card = DockEnhanceMath.cardSize(large: false,
+                                            aspect: DockEnhanceMath.aspect(of: portrait)).width
+        let column = max(card, DockPreviewCard.minColumn)
+        let expected = column + 2 * content.metrics.cardPad + 2 * content.metrics.panelInset
+        #expect(panel.width == expected)
     }
 
     // MARK: Proof shots
@@ -202,8 +223,13 @@ struct UtilitySurfacesRenderProofTests {
         longName.windows = Array(longName.windows.prefix(1))
         longName.appName = "A Long Synthetic Application (Nightly)"
         longName.appAgents = Array(repeating: Fixtures.working, count: 24)
+        let tightLongName = Fixtures.noStillsContent(spacing: 0.6)
+        tightLongName.windows = Array(tightLongName.windows.prefix(1))
+        tightLongName.appName = longName.appName
+        tightLongName.appAgents = longName.appAgents
         let shots: [(String, DockPreviewContent)] = [
             ("dock-long-name", longName),
+            ("dock-long-name-tight", tightLongName),
             ("dock-terminal", Fixtures.terminalContent()),
             ("dock-browser", Fixtures.browserContent()),
             ("dock-no-stills", Fixtures.noStillsContent()),
@@ -219,7 +245,7 @@ struct UtilitySurfacesRenderProofTests {
         // shows; the stops below walk every face through all three.
         let defaultMetrics = DockPreviewMetrics.scaled(DockEnhanceSettings.defaultSpacing)
         for (name, content) in shots {
-            content.metrics = defaultMetrics
+            if name != "dock-long-name-tight" { content.metrics = defaultMetrics }
             for dark in [true, false] {
                 let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
                 try Self.write(view, glassRadius: content.metrics.panelRadius, name: name, dark: dark,

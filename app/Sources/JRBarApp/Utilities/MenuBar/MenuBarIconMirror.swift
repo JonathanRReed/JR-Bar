@@ -105,11 +105,17 @@ final class MenuBarIconMirror: NSPanel {
     /// The face's frame in AppKit screen coordinates after every move;
     /// nil once the mirror is down. The host anchors the panel on it.
     var onPlace: ((NSRect?) -> Void)?
+    /// The whole clickable panel in Quartz coordinates. The session
+    /// click bridge uses this exact rect instead of reconstructing it
+    /// from the narrower AppKit face anchor.
+    var onHitPlace: ((CGRect?, CGRect?) -> Void)?
 
     private let content = MirrorContentView()
     private(set) var face = MenuBarIconFace()
     /// The face frame last handed to `onPlace`.
     private var publishedFaceFrame: NSRect?
+    private var publishedHitFrame: CGRect?
+    private var publishedFaceHitFrame: CGRect?
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 30, height: Self.itemHeight),
@@ -167,7 +173,8 @@ final class MenuBarIconMirror: NSPanel {
             hide()
             return
         }
-        let frame = Self.frame(seatMinX: x, width: width, row: row, primaryMaxY: primaryMaxY)
+        let frame = Self.frame(seatMinX: x, width: width, height: row.height,
+                               row: row, primaryMaxY: primaryMaxY)
         if self.frame != frame {
             setFrame(frame, display: true)
             // A move that keeps the size never reaches `resizeSubviews`.
@@ -177,6 +184,10 @@ final class MenuBarIconMirror: NSPanel {
         let chevron = face.hiddenCount > 0 ? Self.chevronZone : 0
         publish(Self.faceFrame(in: frame, chevronWidth: chevron,
                                accessoryWidth: content.accessoryWidths.reduce(0, +)))
+        let hit = Self.hitFrame(seatMinX: x, width: width, height: row.height, row: row)
+        let faceHit = Self.faceFrame(in: hit, chevronWidth: chevron,
+                                     accessoryWidth: content.accessoryWidths.reduce(0, +))
+        publishHit(hit, face: faceHit)
     }
 
     /// A segment's view, in the panel — what a popover anchors on.
@@ -187,12 +198,27 @@ final class MenuBarIconMirror: NSPanel {
     func hide() {
         if isVisible { orderOut(nil) }
         publish(nil)
+        publishHit(nil, face: nil)
     }
 
     private func publish(_ faceFrame: NSRect?) {
         guard faceFrame != publishedFaceFrame else { return }
         publishedFaceFrame = faceFrame
         onPlace?(faceFrame)
+    }
+
+    private func publishHit(_ hitFrame: CGRect?, face: CGRect?) {
+        guard hitFrame != publishedHitFrame || face != publishedFaceHitFrame else { return }
+        publishedHitFrame = hitFrame
+        publishedFaceHitFrame = face
+        onHitPlace?(hitFrame, face)
+    }
+
+    /// The tap already accepted this press on the face. A later re-seat
+    /// must not discard the person's action.
+    func routeAcceptedFacePress(flags: CGEventFlags) {
+        let secondary = flags.contains(.maskAlternate) || flags.contains(.maskControl)
+        route(secondary ? .menu : .face, from: content.faceButton)
     }
 
     /// What a click means. Internal so a test can drive the routing
@@ -351,6 +377,13 @@ final class MenuBarIconMirror: NSPanel {
                                   row: CGRect, primaryMaxY: CGFloat) -> NSRect {
         let quartzY = row.midY - height / 2
         return NSRect(x: seatMinX, y: primaryMaxY - quartzY - height, width: width, height: height)
+    }
+
+    /// The same panel before AppKit's vertical flip, in the event tap's
+    /// Quartz coordinate space.
+    nonisolated static func hitFrame(seatMinX: CGFloat, width: CGFloat,
+                                     height: CGFloat = itemHeight, row: CGRect) -> CGRect {
+        CGRect(x: seatMinX, y: row.midY - height / 2, width: width, height: height)
     }
 
     /// The ‹'s zone at the panel's left edge while anything is hidden —
@@ -567,8 +600,9 @@ private final class MirrorContentView: NSView {
     /// answering on the release would reopen whatever they just closed.
     override func mouseDown(with event: NSEvent) {
         let flags = event.modifierFlags
-        onClick?(click(for: event, secondary: flags.contains(.option) || flags.contains(.control)),
-                 faceButton)
+        let routed = click(for: event, secondary: flags.contains(.option) || flags.contains(.control))
+        MenuBarAssessmentBackend.log.debug("icon mirror: left press routed")
+        onClick?(routed, faceButton)
     }
 
     override func rightMouseDown(with event: NSEvent) {

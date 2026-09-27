@@ -85,6 +85,7 @@ final class DataHoarderCatalog {
     // reconstruct highlights — contentless modes delete the very text the
     // snippets pane needs (snippet() returns NULL there).
     private static let ftsSchema = "CREATE VIRTUAL TABLE segments_fts USING fts5(text)"
+    private static let sessionIndex = "CREATE INDEX IF NOT EXISTS records_session_imported ON records(session_id, imported_at DESC, name COLLATE NOCASE, id)"
 
     init(url: URL, create: Bool) throws {
         // Foundation may normalize /private/var back to /var. SQLite's
@@ -126,6 +127,9 @@ final class DataHoarderCatalog {
             }
             try execute("PRAGMA journal_mode = DELETE")
             if create { try createSchema() }
+            // An index is additive catalog maintenance, not a file-format
+            // change. Existing v3 archives gain it when next opened.
+            try execute(Self.sessionIndex)
             try validateSchema()
         } catch {
             sqlite3_close(database)
@@ -203,6 +207,23 @@ final class DataHoarderCatalog {
         defer { sqlite3_finalize(statement) }
         try bind(id, to: statement, at: 1)
         return try readRecord(statement)
+    }
+
+    /// Records for one session in the archive's established newest-first
+    /// order. The optional exclusion stays in SQL so a long archive never
+    /// materialises unrelated records merely to discard them in Swift.
+    func records(sessionID: String, excluding id: String? = nil) throws -> [ArchiveRecord] {
+        let statement = try prepare("""
+        SELECT \(Self.recordColumns) FROM records
+        WHERE session_id = ?1 AND (?2 IS NULL OR id != ?2)
+        ORDER BY imported_at DESC, name COLLATE NOCASE ASC
+        """)
+        defer { sqlite3_finalize(statement) }
+        try bind(sessionID, to: statement, at: 1)
+        try bindOptional(id, to: statement, at: 2)
+        var result: [ArchiveRecord] = []
+        while let record = try readRecord(statement) { result.append(record) }
+        return result
     }
 
     /// Every record matching a loose name/title/project/source substring —

@@ -9,6 +9,64 @@ import JRBarCore
 /// under the band ever opens a session on its own.
 @Suite struct ScreenBarInteractionTests {
 
+    @MainActor
+    @Test func accessibilityUsesTheExistingBandAndEarActions() {
+        let card = NotchCardPresenter(model: makeTestCardModel())
+        let focus = ScreenBarFocus(style: nil, label: "Codex", word: "Working", clickSession: "codex:1")
+        let interaction = ScreenBarInteraction(card: card, hitRects: { [] }, focus: { focus })
+        var ears: [ScreenBarWingSide] = []
+        var peekIntents: [ScreenBarPeekIntent] = []
+        var handleToggles = 0
+        var expanded = false
+        interaction.islandOwnsNotch = { true }
+        interaction.onIslandExpand = { expanded = true }
+        interaction.onWingActivate = { ears.append($0); return true }
+        interaction.onPeek = { peekIntents.append($0) }
+        interaction.rightWingOpensPeek = { true }
+        interaction.onMenuHandle = { handleToggles += 1 }
+
+        #expect(interaction.accessibilityPress())
+        #expect(expanded)
+        #expect(interaction.accessibilityActivateWing(.left))
+        #expect(ears == [.left])
+        #expect(interaction.accessibilityActivateWing(.right))
+        #expect(peekIntents == [.toggle])
+        #expect(interaction.accessibilityToggleMenuHandle())
+        #expect(handleToggles == 1)
+    }
+
+    @MainActor
+    @Test func aRightEarWithoutAPeekUsesItsOrdinaryWingAction() {
+        let focus = ScreenBarFocus(style: nil, label: "Codex", word: "Working", clickSession: "codex:1")
+        let interaction = ScreenBarInteraction(
+            card: NotchCardPresenter(model: makeTestCardModel()), hitRects: { [] }, focus: { focus })
+        var ears: [ScreenBarWingSide] = []
+        var peeked = false
+        interaction.onWingActivate = { ears.append($0); return true }
+        interaction.onPeek = { _ in peeked = true }
+
+        #expect(interaction.accessibilityActivateWing(.right))
+        #expect(ears == [.right])
+        #expect(!peeked)
+    }
+
+    @MainActor
+    @Test func aParkedBandRejectsEveryAccessibilityAction() {
+        let interaction = ScreenBarInteraction(
+            card: NotchCardPresenter(model: makeTestCardModel()),
+            hitRects: { [] }, focus: { ScreenBarFocus(style: nil, label: "Codex", word: "Idle", clickSession: nil) })
+        var acted = false
+        interaction.onWingActivate = { _ in acted = true; return true }
+        interaction.onMenuHandle = { acted = true }
+        interaction.setParked(true)
+
+        #expect(!interaction.accessibilityPress())
+        #expect(!interaction.accessibilityActivateWing(.left))
+        #expect(!interaction.accessibilityActivateWing(.right))
+        #expect(!interaction.accessibilityToggleMenuHandle())
+        #expect(!acted)
+    }
+
     @Test func aBandClickPinsThePeek() {
         #expect(ScreenBarInteraction.clickOutcome(pinned: false, inside: true) == .pin)
     }

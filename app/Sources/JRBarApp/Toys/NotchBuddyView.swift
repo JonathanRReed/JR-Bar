@@ -100,6 +100,12 @@ struct NotchBuddyView: View {
         .accessibilityLabel("Notch Buddy, \(toy.buddyName)")
         .accessibilityHint("Tap for a trick, drag to park it anywhere, right-click for the menu. While an ask is open, a tap on the \"!\" opens the session asking.")
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toy.accessibilityActivate() }
+        .accessibilityActions {
+            if toy.askingSession != nil {
+                Button("Open asking session") { toy.openAskingSession() }
+            }
+        }
     }
 
     /// The character with everything the frame reads off the toy: the

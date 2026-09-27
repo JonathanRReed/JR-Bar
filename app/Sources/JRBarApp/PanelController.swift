@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import OSLog
 import QuartzCore
 import SwiftUI
 
@@ -11,6 +12,7 @@ import SwiftUI
 /// `JRBAR_PLAIN_MATERIAL=1` to fall back to an `NSVisualEffectView`.
 @MainActor
 final class PanelController {
+    private static let log = Logger(subsystem: "devin.jrbar", category: "panel")
     static let cornerRadius: CGFloat = 14
     static let gapBelowStatusItem: CGFloat = 5
 
@@ -25,7 +27,14 @@ final class PanelController {
     private var whyHide: DispatchWorkItem?
     private var openedAt = Date.distantPast
     var onOpenStateChange: (@MainActor (Bool) -> Void)?
-    private(set) var isOpen = false { didSet { if isOpen != oldValue { onOpenStateChange?(isOpen) } } }
+    private(set) var isOpen = false {
+        didSet {
+            if isOpen != oldValue {
+                Self.log.debug("panel: open=\(self.isOpen, privacy: .public)")
+                onOpenStateChange?(isOpen)
+            }
+        }
+    }
 
     init(store: PanelStore) {
         self.store = store

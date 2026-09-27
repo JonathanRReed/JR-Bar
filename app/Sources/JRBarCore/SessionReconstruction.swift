@@ -118,8 +118,8 @@ public struct SessionReconstruction: Sendable, Equatable {
 
     /// The same rebuild with the proxy's requests attached (sorted and
     /// capped by `SessionProxyEvidence.sorted`).
-    public func withProxyRequests(_ requests: [CLIProxyRequest]) -> SessionReconstruction {
-        SessionReconstruction(items: items, story: story, gaps: gaps, totalLines: totalLines,
+    public func withProxyRequests(_ requests: [CLIProxyRequest], additionalGaps: [String] = []) -> SessionReconstruction {
+        SessionReconstruction(items: items, story: story, gaps: gaps + additionalGaps, totalLines: totalLines,
                               redactedLines: redactedLines,
                               proxyRequests: SessionProxyEvidence.sorted(requests))
     }
@@ -146,7 +146,7 @@ public enum SessionReconstructor {
     private static let maxItems = 5_000
     /// Mirrors TIMELINE_MAX_BYTES: beyond this the record is reported as a
     /// named gap instead of being silently sampled.
-    private static let maxBytes = 64 * 1024 * 1024
+    public static let timelineByteLimit = 64 * 1024 * 1024
     private static let intentLimit = 200
 
     /// The consent redactor's whole-value sentinels.
@@ -269,7 +269,8 @@ public enum SessionReconstructor {
     /// it from file mtime — without it, leading timestamp-less rows sort
     /// last and can falsely read as a mid-turn death.
     public static func reconstruct(segments: [Data], provider: String,
-                                   epochFallback: Date? = nil) -> SessionReconstruction {
+                                   epochFallback: Date? = nil,
+                                   totalByteCount: Int? = nil) -> SessionReconstruction {
         var gaps: [String] = []
         var items: [ReconstructedItem] = []
         var totalLines = 0
@@ -278,19 +279,18 @@ public enum SessionReconstructor {
         let supported = provider == "claude" || provider == "codex"
         if !supported { gaps.append("unsupported_provider") }
 
-        var totalBytes = 0
-        for segment in segments { totalBytes += segment.count }
-        var data = Data()
-        data.reserveCapacity(totalBytes)
-        for segment in segments { data.append(segment) }
-        if totalBytes > maxBytes {
-            let lines = data.reduce(0) { $0 + ($1 == 0x0A ? 1 : 0) }
-                + (data.last == 0x0A || data.isEmpty ? 0 : 1)
+        var loadedBytes = 0
+        for segment in segments { loadedBytes += segment.count }
+        let totalBytes = totalByteCount ?? loadedBytes
+        if totalBytes > timelineByteLimit {
             return SessionReconstruction(
                 items: [], story: story(for: []),
                 gaps: gaps + ["transcript_too_large:\(totalBytes)"],
-                totalLines: lines, redactedLines: 0)
+                totalLines: 0, redactedLines: 0)
         }
+        var data = Data()
+        data.reserveCapacity(loadedBytes)
+        for segment in segments { data.append(segment) }
 
         var fallbackAt: Double? = epochFallback?.timeIntervalSince1970
         var turnID: String? = nil
