@@ -5,26 +5,111 @@ import Testing
 
 private actor ScreenBarPlanGate {
     private var starts: [LEDSSampler] = []
-    private var startWaiters: [CheckedContinuation<LEDSSampler, Never>] = []
-    private var renders: [ObjectIdentifier: CheckedContinuation<LEDSKeyframePlan?, Never>] = [:]
+    private var startWaiters: [UUID: CheckedContinuation<LEDSSampler?, Never>] = [:]
+    private var startOrder: [UUID] = []
+    private var cancelledStarts: Set<UUID> = []
+    private var settledStarts: Set<UUID> = []
+    private var renders: [UUID: CheckedContinuation<LEDSKeyframePlan?, Never>] = [:]
+    private var renderKeys: [UUID: ObjectIdentifier] = [:]
+    private var renderOrder: [ObjectIdentifier: [UUID]] = [:]
+    private var cancelledRenders: Set<UUID> = []
+    private var settledRenders: Set<UUID> = []
 
     func render(_ sampler: LEDSSampler) async -> LEDSKeyframePlan? {
-        if startWaiters.isEmpty {
-            starts.append(sampler)
+        if let waiter = nextStartWaiter() {
+            waiter.resume(returning: sampler)
         } else {
-            startWaiters.removeFirst().resume(returning: sampler)
+            starts.append(sampler)
         }
-        return await withCheckedContinuation { renders[ObjectIdentifier(sampler)] = $0 }
+        let key = ObjectIdentifier(sampler)
+        let token = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if cancelledRenders.remove(token) != nil || Task.isCancelled {
+                    settledRenders.insert(token)
+                    continuation.resume(returning: nil)
+                } else {
+                    renders[token] = continuation
+                    renderKeys[token] = key
+                    renderOrder[key, default: []].append(token)
+                }
+            }
+        } onCancel: {
+            _ = Task { await self.cancelRender(token) }
+        }
     }
 
-    func nextStart() async -> LEDSSampler {
+    func nextStart() async -> LEDSSampler? {
         if !starts.isEmpty { return starts.removeFirst() }
-        return await withCheckedContinuation { startWaiters.append($0) }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if cancelledStarts.remove(id) != nil || Task.isCancelled {
+                    settledStarts.insert(id)
+                    continuation.resume(returning: nil)
+                } else {
+                    startWaiters[id] = continuation
+                    startOrder.append(id)
+                }
+            }
+        } onCancel: {
+            _ = Task { await self.cancelStart(id) }
+        }
     }
 
     func finish(_ sampler: LEDSSampler, plan: LEDSKeyframePlan?) {
-        renders.removeValue(forKey: ObjectIdentifier(sampler))?.resume(returning: plan)
+        let key = ObjectIdentifier(sampler)
+        while true {
+            guard var tokens = renderOrder[key], !tokens.isEmpty else { return }
+            let token = tokens.removeFirst()
+            renderOrder[key] = tokens.isEmpty ? nil : tokens
+            renderKeys[token] = nil
+            guard let continuation = renders.removeValue(forKey: token) else { continue }
+            settledRenders.insert(token)
+            continuation.resume(returning: plan)
+            return
+        }
     }
+
+    private func nextStartWaiter() -> CheckedContinuation<LEDSSampler?, Never>? {
+        while !startOrder.isEmpty {
+            let id = startOrder.removeFirst()
+            if let continuation = startWaiters.removeValue(forKey: id) {
+                settledStarts.insert(id)
+                return continuation
+            }
+        }
+        return nil
+    }
+
+    private func cancelStart(_ id: UUID) {
+        if settledStarts.remove(id) != nil { return }
+        if let continuation = startWaiters.removeValue(forKey: id) {
+            startOrder.removeAll { $0 == id }
+            continuation.resume(returning: nil)
+        } else {
+            cancelledStarts.insert(id)
+        }
+    }
+
+    private func cancelRender(_ token: UUID) {
+        if settledRenders.remove(token) != nil { return }
+        if let continuation = renders.removeValue(forKey: token) {
+            if let key = renderKeys.removeValue(forKey: token) {
+                renderOrder[key]?.removeAll { $0 == token }
+                if renderOrder[key]?.isEmpty == true { renderOrder[key] = nil }
+            }
+            settledRenders.insert(token)
+            continuation.resume(returning: nil)
+        } else {
+            cancelledRenders.insert(token)
+        }
+    }
+}
+
+private func nextPlanStart(_ gate: ScreenBarPlanGate) async throws -> LEDSSampler {
+    let sampler = await gate.nextStart()
+    return try #require(sampler)
 }
 
 @Suite("Screen Bar plan queue", .timeLimit(.minutes(1)))
@@ -46,7 +131,7 @@ struct ScreenBarPlanQueueTests {
         let latest = try sampler("#0000ff")
 
         queue.submit(generation: 1, sampler: first)
-        #expect(await gate.nextStart() === first)
+        #expect(try await nextPlanStart(gate) === first)
         queue.submit(generation: 2, sampler: skipped)
         queue.submit(generation: 3, sampler: latest)
         #expect(queue.renderStarts == 1)
@@ -54,7 +139,7 @@ struct ScreenBarPlanQueueTests {
         #expect(queue.pendingGeneration == 3)
 
         await gate.finish(first, plan: nil)
-        #expect(await gate.nextStart() === latest)
+        #expect(try await nextPlanStart(gate) === latest)
         #expect(queue.renderStarts == 2)
         #expect(delivered == [1])
         await gate.finish(latest, plan: nil)
@@ -71,13 +156,33 @@ struct ScreenBarPlanQueueTests {
         let first = try sampler("#ff0000")
         let pending = try sampler("#00ff00")
         queue.submit(generation: 1, sampler: first)
-        #expect(await gate.nextStart() === first)
+        #expect(try await nextPlanStart(gate) === first)
         queue.submit(generation: 2, sampler: pending)
         queue.cancel()
         await queue.waitUntilIdle()
-        await gate.finish(first, plan: nil)
         #expect(delivered == 0)
         #expect(queue.renderStarts == 1)
+    }
+
+    @Test("gate start and render waits finish when their tasks are cancelled")
+    func gateWaitsAreCancellationSafe() async throws {
+        let gate = ScreenBarPlanGate()
+        let startWait = Task { await gate.nextStart() }
+        startWait.cancel()
+        #expect(await startWait.value == nil)
+
+        let sample = try sampler("#ff0000")
+        let renderWait = Task { await gate.render(sample) }
+        #expect(try await nextPlanStart(gate) === sample)
+        renderWait.cancel()
+        #expect(await renderWait.value == nil)
+
+        // A canceled token for this sampler cannot consume the next render.
+        let reused = Task { await gate.render(sample) }
+        #expect(try await nextPlanStart(gate) === sample)
+        let plan = try #require(LEDSKeyframePlan.render(sampler: sample))
+        await gate.finish(sample, plan: plan)
+        #expect(await reused.value == plan)
     }
 
     @Test("a result callback submission replaces pending work without starting beside the finisher")
@@ -94,10 +199,10 @@ struct ScreenBarPlanQueueTests {
         }
 
         queue.submit(generation: 1, sampler: first)
-        #expect(await gate.nextStart() === first)
+        #expect(try await nextPlanStart(gate) === first)
         queue.submit(generation: 2, sampler: oldPending)
         await gate.finish(first, plan: nil)
-        let next = await gate.nextStart()
+        let next = try await nextPlanStart(gate)
         #expect(next === callbackLatest)
         #expect(queue.renderStarts == 2)
         #expect(queue.activeGeneration == 3)
@@ -117,6 +222,9 @@ struct ScreenBarAsynchronousPlanningTests {
         let gate = ScreenBarPlanGate()
         let controller = ScreenBarController(planRenderer: { await gate.render($0) }, reduceMotionOverride: false)
         let epoch = Date().timeIntervalSince1970 - 2
+        // The fixture's override survives the same workspace update that
+        // changed CI's host setting under the running suite.
+        controller.refreshReduceMotion()
         controller.apply(programText: moving, anchorEpoch: epoch)
         #expect(controller.planBuildStarts == 0, "a hidden bar does not plan")
         #expect(controller.motionDescription == "frame clock")
@@ -125,7 +233,7 @@ struct ScreenBarAsynchronousPlanningTests {
                 "a hidden bar keeps both fallback and planned motion parked")
         controller.show()
         defer { controller.hide() }
-        let sampler = await gate.nextStart()
+        let sampler = try await nextPlanStart(gate)
         #expect(controller.planBuildStarts == 1)
         let plan = try #require(LEDSKeyframePlan.render(sampler: sampler))
         await gate.finish(sampler, plan: plan)
@@ -142,7 +250,7 @@ struct ScreenBarAsynchronousPlanningTests {
         let firstEpoch = Date().timeIntervalSince1970 - 2
         let latestEpoch = firstEpoch + 1
         controller.apply(programText: moving, anchorEpoch: firstEpoch)
-        let sampler = await gate.nextStart()
+        let sampler = try await nextPlanStart(gate)
         controller.apply(programText: moving, anchorEpoch: latestEpoch)
         #expect(controller.planBuildStarts == 1)
         #expect(controller.programAnchorEpoch == latestEpoch)
@@ -161,13 +269,13 @@ struct ScreenBarAsynchronousPlanningTests {
         let skippedText = moving.replacingOccurrences(of: "#ff0000", with: "#00ff00")
         let latestText = moving.replacingOccurrences(of: "#ff0000", with: "#0000ff")
         controller.apply(programText: firstText)
-        let first = await gate.nextStart()
+        let first = try await nextPlanStart(gate)
         controller.apply(programText: skippedText)
         controller.apply(programText: latestText)
         #expect(controller.planBuildStarts == 1)
         #expect(controller.planBuildPending)
         await gate.finish(first, plan: LEDSKeyframePlan.render(sampler: first))
-        let latest = await gate.nextStart()
+        let latest = try await nextPlanStart(gate)
         #expect(latest.program.source == controller.programText)
         #expect(controller.motionDescription == "frame clock")
         await gate.finish(latest, plan: LEDSKeyframePlan.render(sampler: latest))
@@ -177,13 +285,13 @@ struct ScreenBarAsynchronousPlanningTests {
     }
 
     @Test("a nil plan leaves the phase-correct frame-clock fallback installed")
-    func nilPlanKeepsFallback() async {
+    func nilPlanKeepsFallback() async throws {
         let gate = ScreenBarPlanGate()
         let controller = ScreenBarController(planRenderer: { await gate.render($0) }, reduceMotionOverride: false)
         controller.show()
         defer { controller.hide() }
         controller.apply(programText: moving)
-        let sampler = await gate.nextStart()
+        let sampler = try await nextPlanStart(gate)
         await gate.finish(sampler, plan: nil)
         await controller.waitForPlanBuilds()
         #expect(controller.motionDescription == "frame clock")
@@ -202,11 +310,14 @@ struct ScreenBarAsynchronousPlanningTests {
         controller.show()
         defer { controller.hide() }
         controller.apply(programText: moving)
+        controller.refreshReduceMotion()
         #expect(controller.planBuildStarts == 0, "Reduce Motion admits no render")
         controller.setReduceMotion(false)
-        let sampler = await gate.nextStart()
+        controller.refreshReduceMotion()
+        let sampler = try await nextPlanStart(gate)
         #expect(controller.planBuildStarts == 1)
         controller.setReduceMotion(true)
+        controller.refreshReduceMotion()
         let plan = try #require(LEDSKeyframePlan.render(sampler: sampler))
         await gate.finish(sampler, plan: plan)
         await controller.waitForPlanBuilds()
@@ -221,7 +332,7 @@ struct ScreenBarAsynchronousPlanningTests {
             planRenderer: { await gate.render($0) }, reduceMotionOverride: false)
         controller.show()
         controller.apply(programText: moving)
-        let first = await gate.nextStart()
+        let first = try await nextPlanStart(gate)
         let latestText = moving.replacingOccurrences(of: "#ff0000", with: "#0000ff")
         controller.apply(programText: latestText)
         #expect(controller.planBuildPending)
@@ -233,7 +344,7 @@ struct ScreenBarAsynchronousPlanningTests {
 
         controller.show()
         defer { controller.hide() }
-        let latest = await gate.nextStart()
+        let latest = try await nextPlanStart(gate)
         #expect(latest.program.source == controller.programText)
         await gate.finish(latest, plan: LEDSKeyframePlan.render(sampler: latest))
         await controller.waitForPlanBuilds()

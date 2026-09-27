@@ -494,6 +494,9 @@ final class ScreenBarController {
     /// Reduce Motion: the band holds the program's brightest frame instead
     /// of playing it. Live-read and re-presented on the workspace's change.
     private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    /// Tests pin this across workspace notifications. Production leaves it
+    /// nil and continues following the live system preference.
+    private var reduceMotionOverride: Bool?
     var isShown: Bool { visibility.shown }
     /// The frame clock is ticking right now — false whenever nobody can
     /// see the band (the off-cost check reads it).
@@ -543,6 +546,7 @@ final class ScreenBarController {
     init(planRenderer: @escaping ScreenBarPlanQueue.Renderer = ScreenBarPlanQueue.defaultRenderer,
          reduceMotionOverride: Bool? = nil) {
         planQueue = ScreenBarPlanQueue(renderer: planRenderer)
+        self.reduceMotionOverride = reduceMotionOverride
         let screen = ScreenBarGeometry.preferredScreen()
         // The settings-document geometry lands through the properties
         // above on the first `coreDidChange`; the first frame uses the
@@ -833,10 +837,20 @@ final class ScreenBarController {
     /// Reduce Motion toggled in System Settings: freeze the moving program
     /// or hand a still one back to Core Animation.
     @objc private func reduceMotionChanged(_ note: Notification) {
-        setReduceMotion(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        refreshReduceMotion()
+    }
+
+    func refreshReduceMotion() {
+        applyReduceMotion(reduceMotionOverride
+                          ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
     func setReduceMotion(_ reduced: Bool) {
+        if reduceMotionOverride != nil { reduceMotionOverride = reduced }
+        applyReduceMotion(reduced)
+    }
+
+    private func applyReduceMotion(_ reduced: Bool) {
         guard reduceMotion != reduced else { return }
         reduceMotion = reduced
         syncPlanAdmission()
