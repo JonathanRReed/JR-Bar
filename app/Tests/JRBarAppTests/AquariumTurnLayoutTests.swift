@@ -469,12 +469,11 @@ struct AquariumTurnLayoutTests {
             t += dt
             let now = Date(timeIntervalSince1970: t)
             let age = t - leaver.stateSince.timeIntervalSince1970
-            tank.stepSwim(roster, in: size, t: t, now: now)
+            let meals = tank.stepSwim(roster, in: size, t: t, now: now)
             var layouts: [String: AquariumView.Layout] = [:]
             for fish in roster where !fish.isRetired(at: now) {
                 layouts[fish.id] = tank.layout(of: fish, in: size, at: t, now: now)
             }
-            let meals = tank.completionMeals(in: size, now: now, roster: roster)
             tank.applyPursuits(meals, to: &layouts, now: now)
             for fish in roster { if let l = layouts[fish.id] { tank.motion.swim.record(fish, layout: l, t: t) } }
             for eater in eaters { runs[eater.id, default: []].append(layouts[eater.id]!) }
@@ -540,8 +539,8 @@ struct AquariumTurnLayoutTests {
         roster = [leaver] + eaters
         let spots = tank.motion.bodies
         let now = Date(timeIntervalSince1970: t)
-        tank.stepSwim(roster, in: size, t: t, now: now)
-        let meal = try #require(tank.completionMeals(in: size, now: now, roster: roster).first)
+        let meals = tank.stepSwim(roster, in: size, t: t, now: now)
+        let meal = try #require(meals.first)
         // The meal falls where the leaver was when it finished.
         #expect(abs(meal.spawn.x - lb.x * size.width) < 1 && abs(meal.spawn.y - lb.y * size.height) < 1,
                 "the meal fell at \(meal.spawn), the leaver was at \(lb.x * size.width), \(lb.y * size.height)")
@@ -557,6 +556,39 @@ struct AquariumTurnLayoutTests {
             #expect(pellet.eater == nearest, "pellet \(i) went to \(pellet.eater ?? "nobody"), not \(nearest)")
             free.remove(nearest)
         }
+    }
+
+    @Test("frame meals drop departed eaters and expire with the leaving fish")
+    func returnedMealsFollowRosterAndExpiry() throws {
+        var leaver = makeFish("frame-meal-leaver", since: t0 - 100)
+        let eaters = (0..<2).map { index in
+            Fish(id: "frame-meal-eater-\(index)", label: "eater", providerID: "codex",
+                 state: .swimming, lane: 0.3 + Double(index) * 0.1, speed: 0.08,
+                 direction: 1, stateSince: Date(timeIntervalSince1970: t0 - 100),
+                 enteredAt: .distantPast, species: .clownfish)
+        }
+        var roster = [leaver] + eaters
+        let tank = makeTank(roster)
+        _ = tank.stepSwim(roster, in: size, t: t0,
+                          now: Date(timeIntervalSince1970: t0))
+
+        leaver.state = .leaving
+        leaver.stateSince = Date(timeIntervalSince1970: t0 + dt)
+        roster = [leaver] + eaters
+        let first = tank.stepSwim(roster, in: size, t: t0 + dt,
+                                  now: leaver.stateSince)
+        let firstMeal = try #require(first.first)
+        #expect(firstMeal.pellets.contains { $0.eater != nil })
+
+        let withoutEaters = tank.stepSwim([leaver], in: size, t: t0 + dt * 2,
+                                          now: Date(timeIntervalSince1970: t0 + dt * 2))
+        let mealWithoutEaters = try #require(withoutEaters.first)
+        #expect(mealWithoutEaters.pellets.allSatisfy { $0.eater == nil })
+
+        let expiredAt = leaver.stateSince.addingTimeInterval(11)
+        let expired = tank.stepSwim([leaver], in: size,
+                                    t: expiredAt.timeIntervalSince1970, now: expiredAt)
+        #expect(expired.isEmpty)
     }
 
     @Test("at the biggest Fish size no fin pokes out of the top of the tank")

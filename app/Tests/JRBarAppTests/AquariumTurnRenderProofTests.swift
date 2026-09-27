@@ -473,10 +473,9 @@ struct AquariumTurnRenderProofTests {
             t += Self.dt
             age = t - leaver.stateSince.timeIntervalSince1970
             let now = Date(timeIntervalSince1970: t)
-            view.stepSwim(roster, in: Self.tank, t: t, now: now)
+            let meals = view.stepSwim(roster, in: Self.tank, t: t, now: now)
             var layouts: [String: AquariumView.Layout] = [:]
             for fish in roster { layouts[fish.id] = view.layout(of: fish, in: Self.tank, at: t, now: now) }
-            let meals = view.completionMeals(in: Self.tank, now: now, roster: roster)
             view.applyPursuits(meals, to: &layouts, now: now)
             for fish in roster { view.motion.swim.record(fish, layout: layouts[fish.id]!, t: t) }
             if let next = moments.first(where: { abs($0 - age) < Self.dt / 2 }) {

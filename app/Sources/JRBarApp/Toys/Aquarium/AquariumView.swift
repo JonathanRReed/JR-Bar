@@ -258,8 +258,8 @@ struct AquariumView: View {
                 Canvas { canvas, size in
                     // One steering step per frame before anything
                     // reads a position: wander, glass, food, school.
-                    stepSwim(order.ordered, in: size, t: t, now: context.date,
-                             density: density)
+                    let meals = stepSwim(order.ordered, in: size, t: t, now: context.date,
+                                         density: density)
                     // The empty-tank caption's capsule: decor keeps
                     // clear of it, and it draws last, over the sand.
                     let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
@@ -314,8 +314,6 @@ struct AquariumView: View {
                     // who comes to eat them are planned before the
                     // fish draw, because an eater's dart bends its
                     // layout.
-                    let meals = completionMeals(in: size, now: context.date,
-                                                roster: order.ordered)
                     applyPursuits(meals, to: &layouts, now: context.date)
                     // The nameplate's target, off the previous
                     // frame's boxes: a fish wearing the tag skips
@@ -739,8 +737,9 @@ struct AquariumView: View {
     /// just reads the results. Special states (rise/sink/leave) hold
     /// their bodies still; the pose functions animate from the anchor
     /// recorded where the state changed.
+    @discardableResult
     func stepSwim(_ roster: [Fish], in size: CGSize, t: Double, now: Date,
-                  density: Double = 1) {
+                  density: Double = 1) -> [Meal] {
         let m = motion
         m.size = size
         // One read of the swim settings per frame.
@@ -804,12 +803,21 @@ struct AquariumView: View {
             m.bodies[fish.id] = body
         }
 
+        // Anchor transitions before planning food so a new leaver's meal
+        // starts where that fish draws, including the body-less fixture.
+        for fish in roster where !fish.isFry {
+            let body = m.bodies[fish.id]
+            if m.anchors[fish.id]?.state != fish.state {
+                m.anchors[fish.id] = (fish.state, body?.x ?? 0.5, body?.y ?? 0.5)
+            }
+        }
+
         // Claims: each pellet goes to the nearest swimmer.
         m.claims.removeAll(keepingCapacity: true)
         var foodByFish: [String: (x: Double, y: Double)] = [:]
         // A finished fish's meal: each eater swims for its pellet through
         // its own turn, and eats it when its mouth gets there (below).
-        let meals = completionMeals(in: size, now: now, roster: roster)
+        var meals = completionMeals(in: size, now: now, roster: roster)
         for meal in meals {
             let age = now.timeIntervalSince(meal.leaver.stateSince)
             for pellet in meal.pellets {
@@ -929,7 +937,8 @@ struct AquariumView: View {
 
         // A fish whose mouth reached its meal's pellet eats it: the
         // pellet blinks out, the mouth smiles, the body squash-stretches.
-        for meal in meals {
+        for mealIndex in meals.indices {
+            let meal = meals[mealIndex]
             let age = now.timeIntervalSince(meal.leaver.stateSince)
             for (i, pellet) in meal.pellets.enumerated() {
                 guard let eater = pellet.eater, let b = m.bodies[eater],
@@ -943,6 +952,10 @@ struct AquariumView: View {
                 if hypot(nose.x - at.x, nose.y - at.y) < bite
                     || hypot(cx - at.x, cy - at.y) < pellet.mouth * 0.7 {
                     mealEaten(meal.leaver, pellet: i, age: age)
+                    // The Canvas consumes this exact frame's meals. Mirror
+                    // the memory write here so the bitten pellet vanishes in
+                    // this draw without rebuilding the whole meal list.
+                    meals[mealIndex].pellets[i].gone = age
                     m.smileUntil[eater] = now.addingTimeInterval(3.5)
                     m.bounceUntil[eater] = now.addingTimeInterval(0.7)
                 }
@@ -975,14 +988,8 @@ struct AquariumView: View {
             m.pellets.removeAll { eaten.contains($0.id) }
         }
 
-        // Anchors & stage-change bounces for every adult, whatever
-        // state it's in — a rising/sinking/leaving fish poses from
-        // where the state found it.
+        // Stage-change bounces for every adult, whatever state it is in.
         for fish in roster where !fish.isFry {
-            let b = m.bodies[fish.id]
-            if m.anchors[fish.id]?.state != fish.state {
-                m.anchors[fish.id] = (fish.state, b?.x ?? 0.5, b?.y ?? 0.5)
-            }
             let stage = toy?.game.pets[fish.id]?.stage ?? 0
             if let seen = m.stages[fish.id], stage != seen {
                 if stage > seen { m.bounceUntil[fish.id] = now.addingTimeInterval(0.9) }
@@ -992,6 +999,7 @@ struct AquariumView: View {
             }
         }
         queueEventDrain()
+        return meals
     }
 
     /// Flush the game events a draw pass recorded, once the Canvas
