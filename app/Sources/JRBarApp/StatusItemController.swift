@@ -53,6 +53,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     private let detailItem = NSMenuItem()
     private let feedItem = NSMenuItem()
     private let coreItem = NSMenuItem()
+    private var lastCoreDescription: String?
     private let snoozedItem = NSMenuItem()
     private let escalationItem = NSMenuItem()
     private let showBarItem: NSMenuItem
@@ -797,6 +798,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     }
 
     func setCore(description: String) {
+        guard description != lastCoreDescription else { return }
+        lastCoreDescription = description
         coreItem.attributedTitle = NSAttributedString(string: "Monitor: \(description)", attributes: [
             .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: NSColor.tertiaryLabelColor,
