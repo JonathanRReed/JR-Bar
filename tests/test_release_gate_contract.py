@@ -290,6 +290,35 @@ def test_release_gate_requires_authorization_for_an_explicit_hardware_profile(
     assert "PACKAGING_REACHED" not in result.stdout
 
 
+def test_system_uninstall_refuses_a_second_home_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    (home / "Applications" / "JR-Bar.app").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("JRBAR_INSTALL_SCOPE", "system")
+
+    result = _run_release_ref_gate(tmp_path, arguments=("--preflight",))
+
+    assert result.returncode == 2
+    assert "home JR-Bar.app" in result.stderr
+    assert "PACKAGING_REACHED" not in result.stdout
+
+
+def test_system_uninstall_preflight_allows_a_migrated_home_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("JRBAR_INSTALL_SCOPE", "system")
+
+    result = _run_release_ref_gate(tmp_path, arguments=("--preflight",))
+
+    assert result.returncode == 0
+    assert "JR-Bar release gate (preflight)" in result.stdout
+
+
 def test_release_gate_discovers_the_developer_id_identity_from_the_keychain(
     tmp_path: Path,
 ) -> None:

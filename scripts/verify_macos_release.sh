@@ -106,6 +106,11 @@ case "$INSTALL_SCOPE" in
     home|system) ;;
     *) echo "JRBAR_INSTALL_SCOPE must be home or system." >&2; exit 2 ;;
 esac
+if [ "$INSTALL_SCOPE" = "system" ] && [ "${JRBAR_RUN_UNINSTALL:-0}" = "1" ] && \
+   { [ -e "$HOME/Applications/JR-Bar.app" ] || [ -L "$HOME/Applications/JR-Bar.app" ]; }; then
+    echo "The home JR-Bar.app is still present. A system uninstall would select it first; migrate it before this release check." >&2
+    exit 2
+fi
 case "$REQUIRED_HARDWARE" in
     software) ;;
     any|pro|dot|both)
