@@ -1049,7 +1049,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             appState.loginItemRegistered = true
             persistAppState()
         }
-        NSLog("JR-Bar login item: %@", Self.describe(SMAppService.mainApp.status))
     }
 
     private func refreshPackagedHooksIfNeeded(core: CoreModel) {
