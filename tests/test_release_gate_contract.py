@@ -556,6 +556,9 @@ def test_release_manifest_consumes_receipts_instead_of_asserting_success__and_2_
     assert "release upload" in text
     assert "release edit" in text
     assert "--cleanup-tag" in text
+    latest_edit = text.rfind('gh release edit "$tag"')
+    assert latest_edit > text.index('gh release upload updates "$appcast"')
+    assert "--latest" in text[latest_edit:latest_edit + 100]
 
 
 

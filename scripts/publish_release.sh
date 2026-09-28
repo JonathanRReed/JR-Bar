@@ -183,6 +183,11 @@ if [ "$updates_created" -eq 1 ]; then
         --repo JonathanRReed/JR-Bar \
         --draft=false
 fi
+# The durable feed is published after the versioned release. Put the app
+# release back in GitHub's Latest slot so downloads lead to the installer.
+gh release edit "$tag" \
+    --repo JonathanRReed/JR-Bar \
+    --latest
 trap - EXIT
 
 printf '%s\n' "Published $tag"
