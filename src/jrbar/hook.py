@@ -12,7 +12,7 @@ from . import audit
 from .hook_dedupe import HookEventDeduplicator
 from .ipc import ProviderRefreshHint, send_refresh_hint
 from .origin import annotate_payload_with_origin
-from .private_io import append_private_text_at
+from .private_io import append_private_text_at, ensure_private_directory
 from .provider_adapters import (
     InertProviderRecord,
     NormalizedProviderRecord,
@@ -22,6 +22,7 @@ from .provider_adapters import (
 )
 from .providers import (
     NegotiatedProviderSource,
+    default_log_path,
     detect_log_path,
     infer_provider_from_payload,
     negotiated_provider_sources,
@@ -165,12 +166,16 @@ def write_normalized_hook_record(
     file, or the write came in pieces)."""
     payload = normalized_provider_record_to_payload(record)
     line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
-    at = append_private_text_at(log_path.expanduser(), line)
+    log_path = log_path.expanduser()
+    managed_log = log_path == default_log_path(record.source_key.provider_id).expanduser()
+    if not managed_log:
+        ensure_private_directory(log_path.parent, tighten_existing=False)
+    at = append_private_text_at(log_path, line, tighten_parent=managed_log)
     # The append is already durable, so a compaction error must not
     # propagate: inside ``run_once`` it would skip token recording and a
     # later drain would append the same event again.
     try:
-        if audit.compact_jsonl_file(log_path.expanduser()):
+        if audit.compact_jsonl_file(log_path, tighten_parent=managed_log):
             at = None
     except OSError:
         pass

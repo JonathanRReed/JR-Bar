@@ -19,7 +19,9 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+from .capacity_types import SourceKey
 from .private_io import read_private_log_slice
+from .providers import default_log_path
 
 #: Fresh-start bound, matching the collector's historical tail replay.
 FRESH_START_MAX_LINES = 5_000
@@ -30,7 +32,7 @@ _LOCK_ATTR = "_reconcile_log_cursors_lock"
 
 def take_new_lines(
     monitor: object,
-    source_key: object,
+    source_key: SourceKey,
     log_path: Path,
     *,
     max_bytes: int,
@@ -54,10 +56,12 @@ def take_new_lines(
             setattr(monitor, _CURSORS_ATTR, cursors)
         cursor = cursors.get(source_key)
         try:
+            path = Path(log_path).expanduser()
             text, next_cursor = read_private_log_slice(
-                Path(log_path),
+                path,
                 cursor=cursor,
                 max_bytes=max_bytes,
+                tighten_parent=path == default_log_path(source_key.provider_id).expanduser(),
             )
         except OSError:
             return None

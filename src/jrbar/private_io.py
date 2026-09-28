@@ -56,7 +56,7 @@ def _validate_ancestors(path: Path) -> None:
         _require_directory(current, info)
 
 
-def _create_directory_chain(path: Path) -> None:
+def _create_directory_chain(path: Path, *, tighten_existing: bool = True) -> None:
     missing: list[Path] = []
     cursor = path
     while True:
@@ -70,24 +70,28 @@ def _create_directory_chain(path: Path) -> None:
         missing.append(cursor)
         cursor = parent
     for directory in reversed(missing):
+        created = True
         try:
             os.mkdir(directory, PRIVATE_DIRECTORY_MODE)
         except FileExistsError:
+            created = False
             info = directory.lstat()
             _require_directory(directory, info)
-        _chmod(directory, PRIVATE_DIRECTORY_MODE)
+        if created or tighten_existing:
+            _chmod(directory, PRIVATE_DIRECTORY_MODE)
 
 
-def ensure_private_directory(path: Path) -> Path:
-    """Create or tighten one sensitive directory without following symlinks."""
+def ensure_private_directory(path: Path, *, tighten_existing: bool = True) -> Path:
+    """Create a private directory; tighten an existing one when owned here."""
     target = Path(path).expanduser()
     _validate_ancestors(target)
     info = _lstat(target)
     if info is None:
-        _create_directory_chain(target)
+        _create_directory_chain(target, tighten_existing=tighten_existing)
     else:
         _require_directory(target, info)
-        _chmod(target, PRIVATE_DIRECTORY_MODE)
+        if tighten_existing:
+            _chmod(target, PRIVATE_DIRECTORY_MODE)
     return target
 
 
@@ -272,6 +276,7 @@ def atomic_private_write(
     overwrite: bool = True,
     mode: int = PRIVATE_FILE_MODE,
     durable_directory: bool = True,
+    tighten_parent: bool = True,
 ) -> Path:
     """Publish a sensitive file atomically; optional create-only never replaces.
 
@@ -281,7 +286,7 @@ def atomic_private_write(
     if mode not in (PRIVATE_FILE_MODE, PRIVATE_DIRECTORY_MODE):
         raise ValueError("private file mode must be 0o600 or 0o700")
     payload = data.encode("utf-8") if isinstance(data, str) else bytes(data)
-    with _private_parent(path) as (target, parent_descriptor, name):
+    with _private_parent(path, tighten=tighten_parent) as (target, parent_descriptor, name):
         _require_private_leaf(target, parent_descriptor, name)
         scratch_name = (
             f"{name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
@@ -652,12 +657,14 @@ def append_private_text(path: Path, text: str) -> Path:
     return path
 
 
-def append_private_text_at(path: Path, text: str) -> tuple[int, int, int, int] | None:
+def append_private_text_at(
+    path: Path, text: str, *, tighten_parent: bool = True
+) -> tuple[int, int, int, int] | None:
     """Append like ``append_private_text``; returns ``(device, inode, start,
     end)`` of the bytes this call wrote, or None when that cannot be said
     for certain (the write took more than one call, so another appender
     may sit between its pieces)."""
-    with _private_parent(path) as (target, parent_descriptor, name):
+    with _private_parent(path, tighten=tighten_parent) as (target, parent_descriptor, name):
         expected = _require_private_leaf(target, parent_descriptor, name)
         descriptor = os.open(
             name,
@@ -668,6 +675,8 @@ def append_private_text_at(path: Path, text: str) -> tuple[int, int, int, int] |
         try:
             opened = os.fstat(descriptor)
             _require_opened_leaf(target, expected, opened)
+            if opened.st_uid != os.getuid():
+                raise OSError(f"refusing private append to foreign-owned file: {target}")
             os.fchmod(descriptor, PRIVATE_FILE_MODE)
             data = str(text).encode("utf-8")
             written = os.write(descriptor, data) if data else 0
@@ -797,6 +806,7 @@ def read_private_log_slice(
     cursor: tuple[int, int, int] | None,
     max_bytes: int,
     tighten: bool = True,
+    tighten_parent: bool | None = None,
     encoding: str = "utf-8",
     errors: str = "replace",
 ) -> tuple[str, tuple[int, int, int]]:
@@ -814,7 +824,7 @@ def read_private_log_slice(
     """
     if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
         raise ValueError("max_bytes must be a positive integer")
-    with _private_parent(path, tighten=tighten) as (
+    with _private_parent(path, tighten=tighten if tighten_parent is None else tighten_parent) as (
         target,
         parent_descriptor,
         name,

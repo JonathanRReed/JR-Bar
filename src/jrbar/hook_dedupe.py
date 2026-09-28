@@ -10,6 +10,9 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from .private_io import ensure_private_directory
+from .state_paths import default_state_dir
+
 _STATE_VERSION = 1
 _MAX_STATE_BYTES = 64 * 1024
 _MAX_TOKEN_BYTES = 1024
@@ -34,11 +37,10 @@ class HookEventDeduplicator:
         )
 
     def _open(self) -> int:
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        try:
-            os.chmod(self.path.parent, 0o700)
-        except OSError:
-            pass
+        ensure_private_directory(
+            self.path.parent,
+            tighten_existing=self.path.parent == default_state_dir(),
+        )
         flags = os.O_RDWR | os.O_CREAT
         flags |= getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)

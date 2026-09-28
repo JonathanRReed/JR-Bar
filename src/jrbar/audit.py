@@ -173,13 +173,13 @@ def _is_hook_queue_or_quarantine(name: str) -> bool:
     )
 
 
-def compact_jsonl_file(path: Path) -> bool:
+def compact_jsonl_file(path: Path, *, tighten_parent: bool = True) -> bool:
     """Atomically bound one active JSONL file to its newest useful tail."""
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_size <= TRIM_THRESHOLD_BYTES:
         return False
-    lines = read_private_text(path, errors="replace").splitlines(keepends=True)
-    atomic_private_write(path, "".join(_bounded_tail(lines)))
+    lines = read_private_text(path, errors="replace", tighten=tighten_parent).splitlines(keepends=True)
+    atomic_private_write(path, "".join(_bounded_tail(lines)), tighten_parent=tighten_parent)
     return True
 
 

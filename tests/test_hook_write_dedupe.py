@@ -1,10 +1,74 @@
 from __future__ import annotations
 
+import json
+import os
+import stat
 from types import SimpleNamespace
 
 import pytest
 
 from jrbar import hook
+from jrbar.capacity_types import SourceKey
+from jrbar.providers import default_log_path
+from jrbar.reconcile_cursors import take_new_lines
+
+CLAUDE_ASK = json.dumps({
+    "hook_event_name": "PermissionRequest",
+    "session_id": "session",
+    "request_id": "request",
+})
+
+
+def test_custom_hook_log_does_not_change_its_parent_mode(tmp_path, monkeypatch) -> None:
+    parent = tmp_path / "shared"
+    parent.mkdir(mode=0o755)
+    os.chmod(parent, 0o755)
+    log_path = parent / "claude.jsonl"
+    monkeypatch.setattr(hook.audit, "TRIM_THRESHOLD_BYTES", 1)
+
+    outcome = hook.process_hook_payload(
+        "claude", log_path, CLAUDE_ASK, refresh=False,
+    )
+
+    assert outcome is hook.HookProcessingOutcome.WRITTEN
+    assert stat.S_IMODE(parent.stat().st_mode) == 0o755
+    assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(hook.hook_dedupe_path(log_path).stat().st_mode) == 0o600
+    os.chmod(log_path, 0o644)
+    source = SourceKey("claude", "hooks", "local", "live_agent_events")
+    assert take_new_lines(SimpleNamespace(), source, log_path, max_bytes=4096)
+    assert stat.S_IMODE(parent.stat().st_mode) == 0o755
+    assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+
+
+def test_custom_hook_log_creates_only_missing_directories(tmp_path) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o755)
+    os.chmod(shared, 0o755)
+    parent = shared / "new" / "logs"
+    log_path = parent / "claude.jsonl"
+
+    outcome = hook.process_hook_payload("claude", log_path, CLAUDE_ASK, refresh=False)
+    assert outcome is hook.HookProcessingOutcome.WRITTEN
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o755
+    assert stat.S_IMODE(parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+
+
+def test_managed_hook_log_still_tightens_its_state_directory(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state-home"))
+    log_path = default_log_path("claude")
+    log_path.parent.mkdir(parents=True, mode=0o755)
+    os.chmod(log_path.parent, 0o755)
+
+    outcome = hook.process_hook_payload("claude", log_path, CLAUDE_ASK, refresh=False)
+    assert outcome is hook.HookProcessingOutcome.WRITTEN
+    assert stat.S_IMODE(log_path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+    os.chmod(log_path.parent, 0o755)
+    source = SourceKey("claude", "hooks", "local", "live_agent_events")
+    assert take_new_lines(SimpleNamespace(), source, log_path, max_bytes=4096)
+    assert stat.S_IMODE(log_path.parent.stat().st_mode) == 0o700
 
 
 def test_hook_log_main_appends_and_notifies_once_per_event_token(
