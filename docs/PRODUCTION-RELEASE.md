@@ -82,7 +82,7 @@ JR-Bar <version> (<commit>)
   The app is notarized and stapled *before* the ZIP and the PKG are cut, so
   both carry the ticket.
 - **The PKG signature** needs a `Developer ID Installer` certificate. This
-  Mac now has one in the login keychain. The 0.9.14 test PKG is signed,
+  Mac now has one in the login keychain. The 0.9.15 test PKG is signed,
   notarized and stapled; Gatekeeper accepted it. On another Mac, create the
   certificate at developer.apple.com → Certificates → Developer ID Installer,
   download it, import it into Keychain Access, and `make package` picks it up.
@@ -284,9 +284,11 @@ the packager and the publisher call it. Before building a release, bump:
 
 As of 2026-09-28, `./scripts/verify_macos_release.sh --preflight` finds both
 Developer ID identities, the `jrbar-notary` profile and the Sparkle key. It
-still reports **no measured performance evidence**. A signed, notarized 0.9.14
-test PKG passed 18 local receipts, including a home install and settings
-preservation. Publication still needs controlled performance, a strict upgrade
-from an older installed version, and the system uninstall receipt. This Mac
-now runs 0.9.14, so the final candidate must have a newer version. Until the
-full gate passes, `publish_release.sh` cannot ship anything.
+still reports **no measured performance evidence**. This Mac runs a signed,
+notarized 0.9.15 test build from `e04fffd0`. Its installed tree matches the
+candidate, and its settings file stayed byte-for-byte the same across the
+install. The upgrade receipt failed after installation because the verifier
+contained invalid Python syntax; that verifier is fixed on `main`. Publication
+still needs an exact-current-commit build, controlled performance evidence, a
+fresh strict upgrade receipt, and the system uninstall receipt. Until the full
+gate passes, `publish_release.sh` cannot ship anything.
