@@ -33,7 +33,7 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.14"
+    static let releaseID = "0.9.15"
 
     /// The header's one line.
     static let headline = "Provider choices survive upgrades, and timeline and Screen Bar work is bounded."
