@@ -21,6 +21,26 @@ def test_release_gate_embedded_python_compiles() -> None:
         compile(snippet, "verify_macos_release.sh", "exec")
 
 
+def test_software_release_does_not_skip_hardware_receipt() -> None:
+    text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
+    start = text.index('phase "hardware smoke"')
+    end = text.index("\n# ---", start)
+    script = "\n".join(
+        (
+            "set -euo pipefail",
+            "REQUIRED_HARDWARE=software",
+            "skipped=()",
+            "phase() { :; }",
+            'skip() { skipped+=("$1"); }',
+            "record_receipt() { exit 99; }",
+            text[start:end],
+            'test "${#skipped[@]}" -eq 0',
+        )
+    )
+    result = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def _write_executable(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

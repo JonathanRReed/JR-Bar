@@ -604,7 +604,7 @@ if [ "$REQUIRED_HARDWARE" != "software" ]; then
         "$PYTHON" scripts/verify_hardware_release.py \
             --confirm-write --require "$REQUIRED_HARDWARE"
 else
-    skip hardware-smoke "JRBAR_REQUIRED_HARDWARE is software; no device write was authorized"
+    echo "Hardware smoke does not apply to the software profile; no device write was made."
 fi
 
 # --------------------------------------------------------------- installed app
