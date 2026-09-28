@@ -18,6 +18,8 @@ All notable changes to JR-Bar are documented here.
 - The menu's connection row updates only when its text changes.
 - Dock previews reuse accessibility readings while the pointer rests on
   an icon. Moving between icons and deliberate gestures still read live.
+- Release receipts now carry verified installed-app and settings hashes, and
+  home installs read their package receipt from the home volume.
 - Upgrade refresh waits for the supervised daemon's hello, so a retiring
   daemon cannot consume the new build's refresh attempt.
 - Aquarium swimming and drawing share each frame's completion meals, with

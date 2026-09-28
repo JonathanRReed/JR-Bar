@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import plistlib
 import subprocess
@@ -682,6 +683,91 @@ def test_receipt_runner_never_echoes_secret_command_output(
     assert not output.exists()
 
 
+@pytest.mark.parametrize("kind", ("settings-preservation", "clean-install", "installed-upgrade"))
+def test_installed_receipts_supply_details_the_manifest_requires(tmp_path: Path, kind: str) -> None:
+    fixture = _fixture(tmp_path)
+    candidate = fixture["candidate"]
+    assert isinstance(candidate, dict)
+    candidate_path = tmp_path / "candidate.json"
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+    output = tmp_path / f"{kind}.json"
+    before = tmp_path / "before-settings.json"
+    after = tmp_path / "after-settings.json"
+    before.write_text('{"settings_schema_version": 1, "chosen": true}\n', encoding="utf-8")
+    after.write_text('{"settings_schema_version": 2, "chosen": true, "new": 1}\n', encoding="utf-8")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "package_identifier": "com.jonathanreed.jrbar",
+                "bundle_identifier": "com.jonathanreed.jrbar",
+                "team_identifier": "ABCDE12345",
+                "version": "0.4.0",
+                "app_sha256": "3" * 64,
+                "package_receipt_sha256": "4" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    options = {
+        "settings-preservation": ("--before-settings", str(before), "--after-settings", str(after)),
+        "clean-install": ("--installed-app", str(fixture["app"])),
+        "installed-upgrade": (
+            "--installed-app", str(fixture["app"]), "--pre-upgrade-baseline", str(baseline)
+        ),
+    }[kind]
+
+    result = release_evidence.main(
+        (
+            "run-receipt", "--root", str(tmp_path), "--candidate", str(candidate_path),
+            "--kind", kind, "--input", str(fixture["pkg"]), "--output", str(output),
+            *options, "--", sys.executable, "-c", "print('verified')",
+        )
+    )
+
+    assert result == 0
+    receipt = json.loads(output.read_text(encoding="utf-8"))
+    release_evidence._validate_details(kind, receipt["details"], candidate=candidate, hardware_profile="software")
+    receipts = [receipt if item["kind"] == kind else item for item in _receipts(fixture)]
+    _manifest(fixture, receipts)
+    if kind == "settings-preservation":
+        assert receipt["details"]["before_settings_sha256"] == release_evidence.sha256_file(before)
+        assert receipt["details"]["after_settings_sha256"] == release_evidence.sha256_file(after)
+    elif kind == "installed-upgrade":
+        assert receipt["details"]["previous_version"] == "0.4.0"
+
+
+def test_installed_receipts_refuse_unverified_state(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    candidate_path = tmp_path / "candidate.json"
+    candidate_path.write_text(json.dumps(fixture["candidate"]), encoding="utf-8")
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+    before.write_text('{"settings_schema_version": 1, "chosen": true}\n', encoding="utf-8")
+    after.write_text('{"settings_schema_version": 2, "chosen": false}\n', encoding="utf-8")
+    output = tmp_path / "receipt.json"
+    common = (
+        "run-receipt", "--root", str(tmp_path), "--candidate", str(candidate_path),
+        "--input", str(fixture["pkg"]), "--output", str(output),
+    )
+
+    assert release_evidence.main((
+        *common, "--kind", "settings-preservation", "--before-settings", str(before),
+        "--after-settings", str(after), "--", sys.executable, "-c", "print('verified')",
+    )) == 1
+    assert not output.exists()
+
+    substituted = tmp_path / "other.app"
+    substituted.mkdir()
+    (substituted / "other").write_bytes(b"another app")
+    assert release_evidence.main((
+        *common, "--kind", "clean-install", "--installed-app", str(substituted),
+        "--", sys.executable, "-c", "print('verified')",
+    )) == 1
+    assert not output.exists()
+
+
 def test_manifest_rejects_duplicate_and_unknown_receipts(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     receipts = _receipts(fixture)
@@ -864,4 +950,34 @@ def test_upgrade_baseline_rejects_settings_without_an_installed_app__and_1_more(
             runner=no_receipt,
             team_reader=lambda _app: "ABCDE12345",
         )
+
+
+def test_upgrade_baseline_reads_the_home_install_receipt(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    app = home / "Applications" / "JR-Bar.app"
+    executable = app / "Contents" / "MacOS" / "JR-Bar"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"old-app")
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleIdentifier": "com.jonathanreed.jrbar",
+        "CFBundleShortVersionString": "0.4.0",
+    }))
+    settings = home / "settings.json"
+    settings.write_text('{"choice": true}\n', encoding="utf-8")
+
+    def home_receipt(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command == [
+            "/usr/sbin/pkgutil", "--volume", str(home), "--pkg-info", "com.jonathanreed.jrbar"
+        ]
+        return subprocess.CompletedProcess(command, 0, "package-id: com.jonathanreed.jrbar\n", "")
+
+    baseline = capture_installed_release_baseline.capture_baseline(
+        app=app, settings=settings, volume=home, runner=home_receipt,
+        team_reader=lambda _app: "ABCDE12345",
+    )
+
+    assert baseline["version"] == "0.4.0"
+    assert baseline["package_receipt_sha256"] == hashlib.sha256(
+        b"package-id: com.jonathanreed.jrbar\n"
+    ).hexdigest()
 

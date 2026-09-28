@@ -430,6 +430,10 @@ def test_release_gate_quiesces_the_running_app_before_it_installs_over_it__and_2
     assert 'INSTALL_SCOPE="${JRBAR_INSTALL_SCOPE:-home}"' in text
     # A home install records its receipt on the home volume, not on /.
     assert '"--volume" "$HOME"' in text
+    baseline_call = text.split("scripts/capture_installed_release_baseline.py", 1)[1].split(
+        "|| baseline_ready", 1
+    )[0]
+    assert '"${PKGUTIL_VOLUME[@]}"' in baseline_call
     # The system path is still reachable, and still the only one that can
     # exercise the root-only supported uninstaller.
     assert 'INSTALLED_APP="/Applications/JR-Bar.app"' in text
@@ -484,6 +488,8 @@ def test_release_manifest_consumes_receipts_instead_of_asserting_success__and_2_
     assert "the upgraded app is not the exact candidate" in text
     assert "require_strict_version_upgrade" in text
     assert "sha256_tree" in text
+    assert '--before-settings "$before_settings" --after-settings "$SETTINGS_PATH"' in text
+    assert '--installed-app "$INSTALLED_APP" --pre-upgrade-baseline "$upgrade_baseline"' in text
 
     # --- scenario: release_publication_is_draft_first_and_rolls_back_on_failure
     text = (ROOT / "scripts" / "publish_release.sh").read_text()

@@ -42,6 +42,7 @@ def capture_baseline(
     *,
     app: Path,
     settings: Path,
+    volume: Path = Path("/"),
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     team_reader: Callable[[Path], str] = _team_identifier,
 ) -> dict[str, object]:
@@ -63,7 +64,7 @@ def capture_baseline(
     if not isinstance(version, str) or not version.strip():
         raise ValueError("pre-upgrade application version is missing")
     package_info = runner(
-        ["/usr/sbin/pkgutil", "--pkg-info", PACKAGE_IDENTIFIER],
+        ["/usr/sbin/pkgutil", "--volume", str(volume), "--pkg-info", PACKAGE_IDENTIFIER],
         capture_output=True,
         text=True,
         timeout=30,
@@ -89,13 +90,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--settings", type=Path, required=True)
+    parser.add_argument("--volume", type=Path, default=Path("/"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     try:
         release_evidence.write_json(
             args.output,
-            capture_baseline(app=args.app, settings=args.settings),
+            capture_baseline(app=args.app, settings=args.settings, volume=args.volume),
         )
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"pre-upgrade baseline capture failed: {exc}", file=sys.stderr)

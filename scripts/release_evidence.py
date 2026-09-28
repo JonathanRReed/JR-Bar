@@ -933,6 +933,60 @@ def write_json(path: Path, value: Mapping[str, object]) -> None:
     )
 
 
+def _installed_receipt_details(
+    args: argparse.Namespace, candidate: Mapping[str, object]
+) -> dict[str, object]:
+    app = candidate.get("app")
+    if not isinstance(app, Mapping):
+        raise EvidenceError("candidate app record is missing")
+    if args.kind == "settings-preservation":
+        if args.before_settings is None or args.after_settings is None:
+            raise EvidenceError("settings preservation needs before and after files")
+        before = load_json_object(args.before_settings, label="pre-install settings")
+        after = load_json_object(args.after_settings, label="installed settings")
+        lost = sorted(
+            key for key, value in before.items()
+            if key != "settings_schema_version" and after.get(key, object()) != value
+        )
+        if lost or type(after.get("settings_schema_version")) is not int:
+            raise EvidenceError("the install did not preserve valid settings")
+        return {
+            "settings_state": "preserved",
+            "before_settings_sha256": sha256_file(args.before_settings),
+            "after_settings_sha256": sha256_file(args.after_settings),
+        }
+    if args.kind in {"clean-install", "installed-upgrade"}:
+        if args.installed_app is None:
+            raise EvidenceError(f"{args.kind} needs the installed app path")
+        installed_sha = sha256_tree(args.installed_app)
+        if installed_sha != app.get("sha256"):
+            raise EvidenceError("the installed app is not the exact candidate")
+        if args.kind == "clean-install":
+            return {"installed_app_sha256": installed_sha}
+        if args.pre_upgrade_baseline is None:
+            raise EvidenceError("installed upgrade needs a pre-upgrade baseline")
+        baseline = load_json_object(args.pre_upgrade_baseline, label="pre-upgrade baseline")
+        expected = {
+            "schema_version": 1,
+            "package_identifier": EXPECTED_BUNDLE_IDENTIFIER,
+            "bundle_identifier": EXPECTED_BUNDLE_IDENTIFIER,
+            "team_identifier": candidate.get("team_identifier"),
+        }
+        if any(baseline.get(key) != value for key, value in expected.items()):
+            raise EvidenceError("pre-upgrade baseline belongs to another installation")
+        previous_version = _require_text(baseline.get("version"), "previous installed version")
+        require_strict_version_upgrade(previous_version, str(candidate.get("version")))
+        return {
+            "installed_app_sha256": installed_sha,
+            "previous_version": previous_version,
+            "previous_app_sha256": _assert_sha256(baseline.get("app_sha256"), "previous app SHA-256"),
+            "previous_package_receipt_sha256": _assert_sha256(
+                baseline.get("package_receipt_sha256"), "previous package receipt SHA-256"
+            ),
+        }
+    return {}
+
+
 def _run_receipt_command(args: argparse.Namespace) -> int:
     candidate = load_json_object(args.candidate, label="candidate")
     command = list(args.command)
@@ -985,6 +1039,7 @@ def _run_receipt_command(args: argparse.Namespace) -> int:
         details["team_identifier"] = candidate.get("team_identifier")
     elif args.kind == "signed-appcast":
         details["archive_sha256"] = candidate_archive.get("sha256")
+    details.update(_installed_receipt_details(args, candidate))
     command_bytes = complete_output.encode("utf-8", errors="replace")
     details.update(
         {
@@ -1245,6 +1300,10 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--input", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--timeout", type=int, default=1800)
+    run.add_argument("--before-settings", type=Path)
+    run.add_argument("--after-settings", type=Path)
+    run.add_argument("--installed-app", type=Path)
+    run.add_argument("--pre-upgrade-baseline", type=Path)
     run.add_argument("command", nargs=argparse.REMAINDER)
     run.set_defaults(handler=_run_receipt_command)
 

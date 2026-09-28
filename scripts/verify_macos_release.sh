@@ -398,13 +398,23 @@ record_receipt() {
     local kind="$1"
     local input="$2"
     local output="$EVIDENCE_DIR/$kind.json"
+    local detail_args=()
     shift 2
+    case "$kind" in
+        installed-upgrade)
+            detail_args=(--installed-app "$INSTALLED_APP" --pre-upgrade-baseline "$upgrade_baseline") ;;
+        settings-preservation)
+            detail_args=(--before-settings "$before_settings" --after-settings "$SETTINGS_PATH") ;;
+        clean-install)
+            detail_args=(--installed-app "$INSTALLED_APP") ;;
+    esac
     "$PYTHON" scripts/release_evidence.py run-receipt \
         --root "$ROOT_DIR" \
         --candidate "$candidate" \
         --kind "$kind" \
         --input "$input" \
         --output "$output" \
+        "${detail_args[@]}" \
         -- "$@"
     receipt_files+=("$output")
 }
@@ -673,7 +683,8 @@ else
         "$PYTHON" scripts/capture_installed_release_baseline.py \
             --app "$INSTALLED_APP" \
             --settings "$SETTINGS_PATH" \
-            --output "$upgrade_baseline" || baseline_ready=0
+            --output "$upgrade_baseline" \
+            "${PKGUTIL_VOLUME[@]}" || baseline_ready=0
     fi
 
     install_pkg
