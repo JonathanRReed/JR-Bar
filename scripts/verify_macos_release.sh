@@ -403,15 +403,16 @@ record_receipt() {
     local kind="$1"
     local input="$2"
     local output="$EVIDENCE_DIR/$kind.json"
-    local detail_args=()
+    # Bash 3.2 treats an empty array expansion as unset under set -u.
+    local detail_args=(--timeout 1800)
     shift 2
     case "$kind" in
         installed-upgrade)
-            detail_args=(--installed-app "$INSTALLED_APP" --pre-upgrade-baseline "$upgrade_baseline") ;;
+            detail_args+=(--installed-app "$INSTALLED_APP" --pre-upgrade-baseline "$upgrade_baseline") ;;
         settings-preservation)
-            detail_args=(--before-settings "$before_settings" --after-settings "$SETTINGS_PATH") ;;
+            detail_args+=(--before-settings "$before_settings" --after-settings "$SETTINGS_PATH") ;;
         clean-install)
-            detail_args=(--installed-app "$INSTALLED_APP") ;;
+            detail_args+=(--installed-app "$INSTALLED_APP") ;;
     esac
     "$PYTHON" scripts/release_evidence.py run-receipt \
         --root "$ROOT_DIR" \

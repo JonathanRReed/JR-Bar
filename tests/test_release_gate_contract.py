@@ -571,3 +571,31 @@ def test_release_gate_binds_exact_sparkle_assets_and_app_notary_evidence__and_1_
     evidence["menu_open_p95_ms"] = 75
     assert any(failure.startswith("menu_open_p95_ms") for failure in validate_performance_evidence(evidence))
 
+
+def test_receipt_wrapper_handles_optional_details_on_macos_bash(tmp_path: Path) -> None:
+    text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
+    start = text.index("record_receipt() {")
+    end = text.index("\n}\n", start) + 2
+    wrapper = text[start:end]
+    script = (
+        "set -euo pipefail\n"
+        f'EVIDENCE_DIR="{tmp_path}"\n'
+        f'ROOT_DIR="{tmp_path}"\n'
+        f'candidate="{tmp_path}/candidate.json"\n'
+        "PYTHON=/usr/bin/true\n"
+        f'INSTALLED_APP="{tmp_path}/JR-Bar.app"\n'
+        f'upgrade_baseline="{tmp_path}/baseline.json"\n'
+        f'before_settings="{tmp_path}/before.json"\n'
+        f'SETTINGS_PATH="{tmp_path}/after.json"\n'
+        "receipt_files=()\n"
+        f"{wrapper}\n"
+        f'record_receipt source-gate "{tmp_path}/candidate.pkg" /usr/bin/true\n'
+        f'record_receipt installed-upgrade "{tmp_path}/candidate.pkg" /usr/bin/true\n'
+        f'record_receipt settings-preservation "{tmp_path}/candidate.pkg" /usr/bin/true\n'
+        f'record_receipt clean-install "{tmp_path}/candidate.pkg" /usr/bin/true\n'
+        'test "${#receipt_files[@]}" -eq 4\n'
+    )
+
+    result = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr

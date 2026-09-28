@@ -22,6 +22,8 @@ All notable changes to JR-Bar are documented here.
   home installs read their package receipt from the home volume.
 - The system uninstall release check refuses to remove a second home app by
   mistake; that copy must be migrated first.
+- Release receipts run under macOS's Bash 3.2 even when a check has no
+  optional detail fields.
 - Upgrade refresh waits for the supervised daemon's hello, so a retiring
   daemon cannot consume the new build's refresh attempt.
 - Aquarium swimming and drawing share each frame's completion meals, with
