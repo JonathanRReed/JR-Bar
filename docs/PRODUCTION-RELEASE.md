@@ -50,15 +50,16 @@ Intermediate outputs, in case you need to look at one:
 `build/macos-pkg/pyinstaller/jrbar-core.app` is PyInstaller's raw output, and
 `build/macos-pkg/app/JR-Bar.app` is the assembled, signed candidate.
 
-The summary at the end says exactly what happened:
+On a Mac with both Developer ID identities and notarization configured, a
+successful build reports:
 
 ```text
-JR-Bar 0.8.0 (<commit>)
-  JR-Bar-0.8.0.pkg: ... (20M)
-  JR-Bar-0.8.0.zip: ... (20M)
+JR-Bar <version> (<commit>)
+  JR-Bar-<version>.pkg: ...
+  JR-Bar-<version>.zip: ...
   signed:     developer-id (Developer ID Application: Jonathan Reed (AJ9VWBRNZN))
-  installer:  unsigned
-  notarized:  not notarized
+  installer:  signed (Developer ID Installer: Jonathan Reed (AJ9VWBRNZN))
+  notarized:  yes (app stapled, PKG stapled)
 ```
 
 ### What is signed when
@@ -80,11 +81,11 @@ JR-Bar 0.8.0 (<commit>)
 
   The app is notarized and stapled *before* the ZIP and the PKG are cut, so
   both carry the ticket.
-- **The PKG signature** needs a `Developer ID Installer` certificate. There
-  is not one in this keychain yet, so the PKG is unsigned and cannot be
-  notarized in its own right; the stapled app inside it still is. Create the
+- **The PKG signature** needs a `Developer ID Installer` certificate. This
+  Mac now has one in the login keychain. The 0.9.14 test PKG is signed,
+  notarized and stapled; Gatekeeper accepted it. On another Mac, create the
   certificate at developer.apple.com → Certificates → Developer ID Installer,
-  download it, double-click it, and `make package` picks it up with no edit.
+  download it, import it into Keychain Access, and `make package` picks it up.
 - **The feed** is signed when the private half of
   `packaging/sparkle_public_ed_key.txt` is in the login keychain (accounts
   tried, in order: `SPARKLE_KEY_ACCOUNT`, `ed25519`, `io.jrbar.app`,
@@ -132,7 +133,8 @@ candidate's SHA-256 so a receipt cannot be reused for a different build.
 for the Developer ID Application identity (required — it refuses to certify an
 ad-hoc candidate), the Developer ID Installer identity, the `jrbar-notary`
 profile and the Sparkle account. Anything missing turns its phases into a
-printed `SKIP` with the reason, and the run ends with
+printed `SKIP` with the reason. For example, a Mac missing the Installer
+identity and notary profile would end with
 
 ```text
 This candidate was verified but is NOT publishable:
@@ -275,14 +277,11 @@ the packager and the publisher call it. Before building a release, bump:
 
 ## What is still missing on this Mac
 
-As of 2026-09-10, `./scripts/verify_macos_release.sh --preflight` reports:
-
-- **no Developer ID Installer identity** — the PKG is unsigned, so
-  `pkg-signature` and `pkg-gatekeeper` are skipped.
-- **no `jrbar-notary` keychain profile** — nothing is notarized or stapled,
-  and `spctl` would reject the app as "Unnotarized Developer ID".
-- **no measured performance evidence** — set `JRBAR_PERFORMANCE_EVIDENCE`.
-
-The Developer ID Application identity and the Sparkle signing key are both
-present. Until the other three are, the gate verifies but does not certify,
-and `publish_release.sh` cannot ship anything.
+As of 2026-09-28, `./scripts/verify_macos_release.sh --preflight` finds both
+Developer ID identities, the `jrbar-notary` profile and the Sparkle key. It
+still reports **no measured performance evidence**. A signed, notarized 0.9.14
+test PKG passed 18 local receipts, including a home install and settings
+preservation. Publication still needs controlled performance, a strict upgrade
+from an older installed version, and the system uninstall receipt. This Mac
+now runs 0.9.14, so the final candidate must have a newer version. Until the
+full gate passes, `publish_release.sh` cannot ship anything.

@@ -1,6 +1,6 @@
 # JR-Bar roadmap
 
-Updated 2026-09-27. Version 0.9.14 is in local testing with a signed,
+Updated 2026-09-28. Version 0.9.14 is in local testing with a signed,
 notarized and stapled app. The public release is still pending.
 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented capabilities;
 a source path is not a physical acceptance receipt.
@@ -22,10 +22,11 @@ a source path is not a physical acceptance receipt.
    budgets. Two uncontrolled native traces show less Dock work on the
    installed candidate, but they cannot certify the release budget. Complete
    the [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md).
-4. Finish signing and release acceptance. Both Developer ID identities,
-   notarization and Sparkle keys are available. The installer has not been
-   signed and notarized. Physical hardware/provider checks and the system
-   uninstall receipt also remain open. The
+4. Finish release acceptance. The 0.9.14 test installer is signed,
+   notarized, stapled and verified through a home install. Controlled
+   performance, a strict upgrade from an older installed version and the
+   system uninstall receipt remain open. Optional hardware and provider
+   checks remain open too. The
    [production release gate](PRODUCTION-RELEASE.md) must pass before publishing.
 5. Verify the public entry. Keep setup instructions and screenshots current,
    make the support route usable, then publish the signed installer and

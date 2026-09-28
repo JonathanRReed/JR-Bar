@@ -126,7 +126,7 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| `make package`: one signed bundle (app, frozen daemon as a nested helper app, shim, pinned Sparkle), PKG for `/` or `~`, Sparkle ZIP, signed appcast when the key is in the keychain | Implemented (Developer ID signed, notarized and stapled; the PKG is installable but unsigned — no Developer ID Installer identity, so it can't be notarized itself) | Manual |
+| `make package`: one signed bundle (app, frozen daemon as a nested helper app, shim, pinned Sparkle), PKG for `/` or `~`, Sparkle ZIP, signed appcast when the key is in the keychain | Implemented; the 0.9.14 test PKG and app are Developer ID signed, notarized and stapled, and the PKG passed a home install. No public release has passed the full gate. | Manual |
 | `make clean-install`: home-directory install without a password | Implemented | Manual |
 | Doctor: `jrbar doctor` and Settings › Advanced (commit the daemon was built from, memory, sockets, hooks, devices, checks) | Implemented | Manual |
 | SidePulse → JR-Bar migration of config, state, data, hooks, LaunchAgents, Keychain items | Implemented | Automatic, once |
