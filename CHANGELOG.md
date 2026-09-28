@@ -2,7 +2,7 @@
 
 All notable changes to JR-Bar are documented here.
 
-## 0.9.13 (unreleased)
+## 0.9.14 (unreleased)
 
 - Transcript reconstruction streams lines across segments without a merged
   buffer or an allocation for every line. Failure stories use indexed tool
