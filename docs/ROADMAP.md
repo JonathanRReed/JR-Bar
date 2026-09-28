@@ -1,6 +1,6 @@
 # JR-Bar roadmap
 
-Updated 2026-09-28. Version 0.9.14 is in local testing with a signed,
+Updated 2026-09-28. Version 0.9.15 is in local testing with a signed,
 notarized and stapled app. The public release is still pending.
 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented capabilities;
 a source path is not a physical acceptance receipt.
@@ -11,8 +11,9 @@ a source path is not a physical acceptance receipt.
    parsing now streams lines, Screen Bar planning runs off-main with bounded
    admission, and resting Dock previews reuse their Accessibility readings.
    Upgrades preserve chosen hook integrations. Setup asks
-   about permissions used by enabled features. Combined tests pass locally;
-   packaging and installed parity must follow the final source changes.
+   about permissions used by enabled features. The signed test build passed
+   installed parity, and its app code passed CI. The final release commit
+   still needs its own package check.
 2. Verify an early weekly quota reset on a real account. Jonathan accepted
    Fold at rest with parking off, menu-bar clicks, long Dock titles,
    centered compact actions and fish hover on the installed test build.
@@ -20,13 +21,15 @@ a source path is not a physical acceptance receipt.
 3. Collect controlled performance measurements. Record warm launch, menu
    and pane latency, main-thread work and idle CPU against the release
    budgets. Two uncontrolled native traces show less Dock work on the
-   installed candidate, but they cannot certify the release budget. Complete
-   the [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md).
-4. Finish release acceptance. The 0.9.14 test installer is signed,
+   installed candidate, but they cannot certify the release budget. The
+   native renderer needs a current exporter before the
+   [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md) can be completed.
+4. Finish release acceptance. The 0.9.15 test installer is signed,
    notarized, stapled and verified through a home install. Controlled
    performance, a strict upgrade from an older installed version and the
-   system uninstall receipt remain open. Optional hardware and provider
-   checks remain open too. The
+   system uninstall receipt remain open. Test uninstall in isolation so real
+   provider configurations stay intact. Optional hardware and provider checks
+   remain open too. The
    [production release gate](PRODUCTION-RELEASE.md) must pass before publishing.
 5. Verify the public entry. Keep setup instructions and screenshots current,
    make the support route usable, then publish the signed installer and
