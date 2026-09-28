@@ -767,6 +767,34 @@ import Testing
                 "the preflight is a tccd round trip on every call")
     }
 
+    @Test func aRestingDockPointerStopsRepeatedAXWalks() {
+        var cadence = DockAXReadCadence()
+        let point = CGPoint(x: 500, y: 900)
+        cadence.observe(pointer: point, at: 10)
+        #expect(!cadence.reuseList(cachedAt: 10, inside: true, nearEdge: true, force: false, at: 10.05))
+        #expect(!cadence.reuseItems(cachedAt: 10, live: true, force: false, at: 10.05))
+
+        cadence.observe(pointer: point, at: 10.6)
+        #expect(cadence.reuseList(cachedAt: 10.5, inside: true, nearEdge: true, force: false, at: 10.6))
+        #expect(cadence.reuseItems(cachedAt: 10.5, live: true, force: false, at: 10.6))
+        #expect(!cadence.reuseList(cachedAt: 10.05, inside: true, nearEdge: true, force: false, at: 10.6))
+
+        cadence.observe(pointer: CGPoint(x: 503, y: 900), at: 10.7)
+        #expect(!cadence.reuseList(cachedAt: 10.6, inside: true, nearEdge: true, force: false, at: 10.7))
+        #expect(!cadence.reuseItems(cachedAt: 10.6, live: true, force: false, at: 10.7))
+        #expect(!cadence.reuseItems(cachedAt: 10.6, live: false, force: true, at: 10.7))
+    }
+
+    @Test func aRestingPointerStillChecksAnAutoHiddenDockNearTheEdge() {
+        var cadence = DockAXReadCadence()
+        cadence.observe(pointer: CGPoint(x: 500, y: 900), at: 0)
+        cadence.observe(pointer: CGPoint(x: 500, y: 900), at: 2)
+        #expect(cadence.reuseList(cachedAt: 1.85, inside: false, nearEdge: true, force: false, at: 2))
+        #expect(!cadence.reuseList(cachedAt: 1.79, inside: false, nearEdge: true, force: false, at: 2))
+        #expect(cadence.reuseList(cachedAt: 1.5, inside: false, nearEdge: false, force: false, at: 2))
+        #expect(!cadence.reuseList(cachedAt: 1.99, inside: false, nearEdge: false, force: true, at: 2))
+    }
+
     // MARK: Dock hold-out
 
     /// The in-memory driver — the CoreDock verbs as a fake so the hold

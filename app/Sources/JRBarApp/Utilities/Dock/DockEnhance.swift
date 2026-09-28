@@ -45,6 +45,53 @@ struct DockTickPark: Equatable {
     }
 }
 
+/// Keep Dock AX reads live while the pointer moves, then reuse them while
+/// it rests. A stationary preview needs a timer for hover, not a full
+/// Dock tree walk on every timer fire.
+@MainActor
+struct DockAXReadCadence {
+    static let settleInterval: TimeInterval = 0.4
+    static let restedTTL: TimeInterval = 0.5
+
+    private var lastPoint: CGPoint?
+    private var lastMovedAt: TimeInterval = 0
+
+    mutating func observe(pointer: CGPoint, at now: TimeInterval) {
+        guard let lastPoint else {
+            self.lastPoint = pointer
+            lastMovedAt = now
+            return
+        }
+        let dx = pointer.x - lastPoint.x
+        let dy = pointer.y - lastPoint.y
+        if dx * dx + dy * dy >= 1 {
+            self.lastPoint = pointer
+            lastMovedAt = now
+        }
+    }
+
+    private func rested(at now: TimeInterval) -> Bool {
+        now - lastMovedAt >= Self.settleInterval
+    }
+
+    func reuseList(cachedAt: TimeInterval, inside: Bool, nearEdge: Bool,
+                   force: Bool, at now: TimeInterval) -> Bool {
+        guard !force, now >= cachedAt else { return false }
+        let age = now - cachedAt
+        if inside { return rested(at: now) && age < Self.restedTTL }
+        let ttl = nearEdge ? DockEnhanceController.edgeListFrameTTL : DockEnhanceController.listFrameTTL
+        return age < ttl
+    }
+
+    func reuseItems(cachedAt: TimeInterval, live: Bool, force: Bool,
+                    at now: TimeInterval) -> Bool {
+        guard !force, now >= cachedAt else { return false }
+        let age = now - cachedAt
+        if rested(at: now) { return age < Self.restedTTL }
+        return !live && age < DockEnhanceController.itemsTTL
+    }
+}
+
 // MARK: - Controller
 
 /// Enhance mode: Apple's Dock stays; we watch the pointer over it
@@ -134,6 +181,7 @@ final class DockEnhanceController {
     @ObservationIgnored private var generation = 0
     /// The dock list element and its AX frame, with the time read.
     @ObservationIgnored private var cachedList: (element: AXUIElement, frame: CGRect, at: TimeInterval)?
+    @ObservationIgnored private var axReadCadence = DockAXReadCadence()
     /// Apple's Dock magnification, re-read with the permission probe.
     /// Under magnification the tiles' Accessibility frames are the
     /// unmagnified layout while the icons slide under the pointer: a
@@ -447,6 +495,8 @@ final class DockEnhanceController {
         panelWarmupTimer = nil
         tracker.reset()
         cachedList = nil
+        cachedItems = nil
+        axReadCadence = DockAXReadCadence()
         mirroredQuitTargets = []
         quitTargetsStamp = nil
         switcher.setQuickQuitTargets([])
@@ -647,10 +697,12 @@ final class DockEnhanceController {
         }
         let axPoint = DockEnhanceMath.axPoint(
             NSEvent.mouseLocation, mainScreenHeight: DockDisplays.primaryHeight())
+        let now = CACurrentMediaTime()
+        axReadCadence.observe(pointer: axPoint, at: now)
         var hovered: DockAXItem?
-        if let list = dockList(near: axPoint) {
+        if let list = dockList(near: axPoint, at: now) {
             if Self.listReach(of: list.frame).contains(axPoint) {
-                hovered = tiles(of: list).first { $0.frame.contains(axPoint) }
+                hovered = tiles(of: list, at: now).first { $0.frame.contains(axPoint) }
             }
         }
         // The tap decides synchronously whether a ⌘-right-click is a
@@ -662,7 +714,7 @@ final class DockEnhanceController {
             optionHeld: NSEvent.modifierFlags.contains(.option))
         // A keyboard-opened preview holds like one with the pointer on it.
         let action = tracker.note(hovered: tracked, pointerInPanel: inPanel || keyboardPinned,
-                                  now: CACurrentMediaTime(), delay: preferences.previewDelay)
+                                  now: now, delay: preferences.previewDelay)
         switch action {
         case .show:
             if let hovered {
@@ -722,13 +774,13 @@ final class DockEnhanceController {
 
     /// The list's app tiles — the cached read while it is fresh and the
     /// list has not moved, else one walk.
-    private func tiles(of list: (element: AXUIElement, frame: CGRect)) -> [DockAXItem] {
-        let now = CACurrentMediaTime()
-        // Fresh frames while a panel is up: under magnification the
-        // tiles move with the pointer, and a panel anchored on a
-        // quarter-second-old frame sat visibly off its icon.
+    private func tiles(of list: (element: AXUIElement, frame: CGRect),
+                       force: Bool = false, at now: TimeInterval) -> [DockAXItem] {
+        // Movement keeps magnified icons live. A resting pointer can
+        // reuse the last tile walk without making the panel drift.
         let live = tracker.shown != nil
-        if !live, let cached = cachedItems, cached.listFrame == list.frame, now - cached.at < Self.itemsTTL {
+        if let cached = cachedItems, cached.listFrame == list.frame,
+           axReadCadence.reuseItems(cachedAt: cached.at, live: live, force: force, at: now) {
             return cached.items
         }
         let items = AppleDockReader.items(list: list.element)
@@ -746,15 +798,14 @@ final class DockEnhanceController {
 
     static let log = Logger(subsystem: "devin.jrbar", category: "dock")
 
-    /// The dock list, re-read from AX when the cache is stale or the
-    /// pointer is inside the last known frame (a magnified or moved
-    /// Dock reflows its list, and only a live read follows it).
-    private func dockList(near point: CGPoint) -> (element: AXUIElement, frame: CGRect)? {
-        let now = CACurrentMediaTime()
+    /// The Dock list stays live under a moving pointer. At rest it has
+    /// a bounded cache, including when the pointer is over the Dock.
+    private func dockList(near point: CGPoint, force: Bool = false,
+                          at now: TimeInterval) -> (element: AXUIElement, frame: CGRect)? {
         if let cached = cachedList {
             let inside = Self.listReach(of: cached.frame).contains(point)
-            let ttl = Self.nearScreenEdge(point) ? Self.edgeListFrameTTL : Self.listFrameTTL
-            if !inside, now - cached.at < ttl {
+            if axReadCadence.reuseList(cachedAt: cached.at, inside: inside,
+                                      nearEdge: Self.nearScreenEdge(point), force: force, at: now) {
                 return (cached.element, cached.frame)
             }
         }
@@ -765,6 +816,7 @@ final class DockEnhanceController {
             // pid kept for it — the next read asks the workspace again.
             AppleDockReader.forgetDockPID()
             cachedList = nil
+            cachedItems = nil
             return nil
         }
         cachedList = (list, frame, now)
@@ -1936,9 +1988,9 @@ final class DockEnhanceController {
         if let last = lastQuickQuit, now - last.at < 0.3,
            hypot(last.point.x - axPoint.x, last.point.y - axPoint.y) < 3 { return }
         lastQuickQuit = (axPoint, now)
-        guard let list = dockList(near: axPoint),
+        guard let list = dockList(near: axPoint, force: true, at: now),
               Self.listReach(of: list.frame).contains(axPoint),
-              let item = tiles(of: list).first(where: { $0.frame.contains(axPoint) }),
+              let item = tiles(of: list, force: true, at: now).first(where: { $0.frame.contains(axPoint) }),
               let appURL = item.url,
               let bundleID = Bundle(url: appURL)?.bundleIdentifier,
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
@@ -1985,9 +2037,10 @@ final class DockEnhanceController {
         let axPoint = DockEnhanceMath.axPoint(point, mainScreenHeight: DockDisplays.primaryHeight())
         guard accessibilityTrusted else { return nil }
         if let cached = cachedList, !Self.listReach(of: cached.frame).contains(axPoint) { return nil }
-        guard let list = dockList(near: axPoint),
+        let now = CACurrentMediaTime()
+        guard let list = dockList(near: axPoint, force: true, at: now),
               Self.listReach(of: list.frame).contains(axPoint) else { return nil }
-        return tiles(of: list).first { $0.frame.contains(axPoint) }
+        return tiles(of: list, force: true, at: now).first { $0.frame.contains(axPoint) }
     }
 
     /// The Middle Click trigger: a middle click on a tile opens its
