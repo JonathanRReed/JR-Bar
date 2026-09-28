@@ -81,11 +81,9 @@ JR-Bar <version> (<commit>)
 
   The app is notarized and stapled *before* the ZIP and the PKG are cut, so
   both carry the ticket.
-- **The PKG signature** needs a `Developer ID Installer` certificate. This
-  Mac now has one in the login keychain. The 0.9.15 test PKG is signed,
-  notarized and stapled; Gatekeeper accepted it. On another Mac, create the
-  certificate at developer.apple.com → Certificates → Developer ID Installer,
-  download it, import it into Keychain Access, and `make package` picks it up.
+- **The PKG signature** needs a `Developer ID Installer` certificate. Create
+  it at developer.apple.com → Certificates → Developer ID Installer, download
+  it, and import it into Keychain Access. `make package` then signs the PKG.
 - **The feed** is signed when the private half of
   `packaging/sparkle_public_ed_key.txt` is in the login keychain (accounts
   tried, in order: `SPARKLE_KEY_ACCOUNT`, `ed25519`, `io.jrbar.app`,
@@ -280,15 +278,11 @@ the packager and the publisher call it. Before building a release, bump:
 - `src/jrbar/__init__.py` → `__version__`
 - `CHANGELOG.md` → a `## <version>` heading
 
-## What is still missing on this Mac
+## Check release readiness
 
-As of 2026-09-28, `./scripts/verify_macos_release.sh --preflight` finds both
-Developer ID identities, the `jrbar-notary` profile and the Sparkle key. It
-still reports **no measured performance evidence**. This Mac runs a signed,
-notarized 0.9.15 test build from `e04fffd0`. Its installed tree matches the
-candidate, and its settings file stayed byte-for-byte the same across the
-install. The upgrade receipt failed after installation because the verifier
-contained invalid Python syntax; that verifier is fixed on `main`. Publication
-still needs an exact-current-commit build, controlled performance evidence, a
-fresh strict upgrade receipt, and the system uninstall receipt. Until the full
-gate passes, `publish_release.sh` cannot ship anything.
+Run `./scripts/verify_macos_release.sh --preflight` on the signing Mac to see
+which identities and keys are available. The full gate also needs controlled
+performance evidence, an upgrade from an older installed version, and the
+system uninstall receipt. A signed test package or a passing CI run cannot
+replace those checks. `publish_release.sh` requires the complete
+`dist/release-verification.json` manifest before it publishes anything.

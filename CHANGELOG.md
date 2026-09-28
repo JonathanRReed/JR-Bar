@@ -16,6 +16,8 @@ All notable changes to JR-Bar are documented here.
   grants optional. Unknown active grants remain unresolved.
 - An older setup-note expiry cannot clear a newer integration reply.
 - The menu's connection row updates only when its text changes.
+- Routine launch no longer queries macOS login-item status for a diagnostic
+  log; Settings reads it off the main thread when needed.
 - Dock previews reuse accessibility readings while the pointer rests on
   an icon. Moving between icons and deliberate gestures still read live.
 - Release receipts now carry verified installed-app and settings hashes, and
@@ -24,6 +26,8 @@ All notable changes to JR-Bar are documented here.
   mistake; that copy must be migrated first.
 - Release receipts run under macOS's Bash 3.2 even when a check has no
   optional detail fields.
+- Software-only release checks do not require an LED write, and an interrupted
+  upgrade check relaunches JR-Bar.
 - Upgrade refresh waits for the supervised daemon's hello, so a retiring
   daemon cannot consume the new build's refresh attempt.
 - Aquarium swimming and drawing share each frame's completion meals, with
