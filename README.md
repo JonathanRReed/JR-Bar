@@ -19,9 +19,12 @@ bundled inside it owns the facts.
 
 ## Build and install
 
-There is no public release yet. On an Apple silicon Mac running macOS 26 or
-newer, build the current source with Xcode Command Line Tools, Swift 6.2 or
-newer, and Python 3.12:
+[Download the signed JR-Bar 0.9.15 installer](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
+for an Apple silicon Mac running macOS 26 or newer. Open the PKG to install
+JR-Bar in `~/Applications` without an administrator password.
+
+To build the current source instead, use Xcode Command Line Tools, Swift 6.2
+or newer, and Python 3.12:
 
 ```sh
 git clone https://github.com/JonathanRReed/JR-Bar.git && cd JR-Bar

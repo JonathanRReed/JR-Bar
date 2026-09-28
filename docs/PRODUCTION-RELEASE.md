@@ -286,3 +286,12 @@ performance evidence, an upgrade from an older installed version, and the
 system uninstall receipt. A signed test package or a passing CI run cannot
 replace those checks. `publish_release.sh` requires the complete
 `dist/release-verification.json` manifest before it publishes anything.
+
+Version 0.9.15 was published at Jonathan's direction through a manual
+release path. Its exact source passed CI, and its app, installer and signed
+update archive passed signing, notarization, Gatekeeper and installed parity
+checks. Controlled performance, a strict older-version upgrade receipt and
+an isolated system-uninstall receipt were not completed. The
+[0.9.15 release notes](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
+disclose these limits. This exception did not change the fail-closed release
+scripts or create a passing manifest.

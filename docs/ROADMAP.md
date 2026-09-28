@@ -1,19 +1,19 @@
 # JR-Bar roadmap
 
-Updated 2026-09-28. Version 0.9.15 is in local testing with a signed,
-notarized and stapled app. The public release is still pending.
+Updated 2026-09-28. [Version 0.9.15](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
+is public with a signed, notarized and stapled installer. Its release notes
+name the acceptance checks that remain open.
 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented capabilities;
 a source path is not a physical acceptance receipt.
 
-## Before the first public release
+## Remaining acceptance work
 
 1. Finish the audit repairs and verify the installed candidate. Transcript
    parsing now streams lines, Screen Bar planning runs off-main with bounded
    admission, and resting Dock previews reuse their Accessibility readings.
    Upgrades preserve chosen hook integrations. Setup asks
-   about permissions used by enabled features. The signed test build passed
-   installed parity, and its app code passed CI. The final release commit
-   still needs its own package check.
+   about permissions used by enabled features. The signed release build
+   passed installed parity, and its source passed CI.
 2. Verify an early weekly quota reset on a real account. Jonathan accepted
    Fold at rest with parking off, menu-bar clicks, long Dock titles,
    centered compact actions and fish hover on the installed test build.
@@ -24,17 +24,16 @@ a source path is not a physical acceptance receipt.
    installed candidate, but they cannot certify the release budget. The
    native renderer needs a current exporter before the
    [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md) can be completed.
-4. Finish release acceptance. The 0.9.15 test installer is signed,
+4. Finish release acceptance. The published 0.9.15 installer is signed,
    notarized, stapled and verified through a home install. Controlled
    performance, a strict upgrade from an older installed version and the
    system uninstall receipt remain open. Test uninstall in isolation so real
    provider configurations stay intact. Optional hardware and provider checks
-   remain open too. The
-   [production release gate](PRODUCTION-RELEASE.md) must pass before publishing.
-5. Verify the public entry. Keep setup instructions and screenshots current,
-   make the support route usable, then publish the signed installer and
-   update archive once their receipts pass. Until then, Releases has no
-   downloadable public build.
+   remain open too. The [production release gate](PRODUCTION-RELEASE.md)
+   remains fail-closed for future releases; 0.9.15's exceptions are public.
+5. Keep the public entry current. The signed installer, update archive,
+   setup guide and support route are live. Recheck their links and content
+   with each release.
 
 ## Later work
 

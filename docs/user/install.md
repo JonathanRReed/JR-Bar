@@ -6,10 +6,9 @@ app bundle that carries the daemon (`jrbar-core`) and the hook shim
 
 ## From a release
 
-Once a release is published on
-[GitHub](https://github.com/JonathanRReed/JR-Bar/releases), download
-`JR-Bar-<version>.pkg` and open it. The installer's default is your own
-`~/Applications`, which needs no password.
+From [GitHub Releases](https://github.com/JonathanRReed/JR-Bar/releases),
+download the current `JR-Bar-<version>.pkg` and open it. The installer's
+default is your own `~/Applications`, which needs no password.
 
 ## From source
 
