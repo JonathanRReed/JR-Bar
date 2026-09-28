@@ -164,6 +164,22 @@ come from a 300-second Instruments session recorded against the installed
 candidate and handed over as `JRBAR_PERFORMANCE_EVIDENCE`. The budgets live in
 `scripts/verify_performance_budget.py`.
 
+For a CPU diagnostic, attach Instruments' Activity Monitor template to the
+installed JR-Bar process for at least five minutes in each controlled state.
+Confirm the process path first, then export its live process table:
+
+```sh
+xcrun xctrace export activity.trace \
+  --xpath '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-live"]' \
+  --output activity-live.xml
+.venv/bin/python scripts/analyze_activity_trace.py activity-live.xml
+```
+
+The analyzer reports interval coverage, time-weighted CPU, peak physical
+memory and a hash of the XML export. Keep the raw `.trace` and record which
+state was held. This diagnostic cannot classify the state, measure launch or
+interaction latency, or produce the complete release performance evidence.
+
 ## Publication
 
 Publication is a separate, explicit action:
