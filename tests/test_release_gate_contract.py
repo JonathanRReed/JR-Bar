@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,6 +11,14 @@ from scripts import verify_hardware_release
 from scripts.verify_performance_budget import validate_performance_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_release_gate_embedded_python_compiles() -> None:
+    script = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
+    snippets = re.findall(r'"\$PYTHON" -c \'\n(.*?)\n\'', script, flags=re.DOTALL)
+    assert len(snippets) == 2
+    for snippet in snippets:
+        compile(snippet, "verify_macos_release.sh", "exec")
 
 
 def _write_executable(path: Path, text: str) -> None:

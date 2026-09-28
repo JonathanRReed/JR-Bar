@@ -656,6 +656,10 @@ installed_version() {
 }
 before_settings=""
 cleanup() {
+    if [ "$was_running" = "1" ] && [ -x "$INSTALLED_APP/Contents/MacOS/JR-Bar" ] && \
+       ! /usr/bin/pgrep -x JR-Bar >/dev/null 2>&1; then
+        /usr/bin/open -a "$INSTALLED_APP" || true
+    fi
     [ -z "$before_settings" ] || /bin/rm -f "$before_settings"
 }
 trap cleanup EXIT
@@ -724,7 +728,7 @@ release_evidence.require_strict_version_upgrade(baseline["version"], candidate["
 installed = release_evidence.sha256_tree(app)
 if installed != candidate["app"]["sha256"]:
     raise SystemExit("the upgraded app is not the exact candidate")
-print(f"upgraded {baseline[\"version\"]} -> {candidate[\"version\"]}, tree {installed}")
+print("upgraded {} -> {}, tree {}".format(baseline["version"], candidate["version"], installed))
 ' "$upgrade_baseline" "$candidate" "$INSTALLED_APP" "$expected_team"
     else
         skip installed-upgrade \
