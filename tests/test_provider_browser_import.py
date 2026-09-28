@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from jrbar import provider_browser_import
+from jrbar.browser_session_import import import_devin_session_from_profile
+from jrbar.provider_browser_access import _consented_devin_session
 from jrbar.provider_browser_consent import BrowserConsentStore
 from jrbar.provider_browser_import import (
     BrowserImportState,
@@ -113,6 +116,32 @@ def test_leveldb_is_copied_before_reading_and_prefix_keys_are_bounded(tmp_path: 
     assert result["last-internal-org-for-external-org-v1-fixture"] == "org_fixture"
     assert opened and opened[0] != root / "Local Storage" / "leveldb"
     assert not opened[0].exists()
+
+
+def test_consented_chrome_profile_returns_its_devin_session(tmp_path: Path, monkeypatch) -> None:
+    profile(tmp_path)
+    records = [
+        Record(1, KeyState.Live, b"_https://app.devin.ai\x00\x01auth1_session",
+               b"\x01" + json.dumps({"token": "auth1_fixture_value_long"}).encode("latin-1")),
+        Record(2, KeyState.Live,
+               b"_https://app.devin.ai\x00\x01last-internal-org-for-external-org-v1-fixture",
+               b"\x01org_fixture"),
+    ]
+    monkeypatch.setattr(
+        provider_browser_import,
+        "_default_leveldb_runtime",
+        lambda: (lambda path: RawDb(path, records, []), KeyState.Live, KeyState.Deleted),
+    )
+
+    session = _consented_devin_session(
+        home=tmp_path,
+        consents=consent(),
+        session_reader=import_devin_session_from_profile,
+    )
+
+    assert session is not None
+    assert session.token == "auth1_fixture_value_long"
+    assert session.organization == "org_fixture"
 
 
 def test_import_requires_exact_provider_browser_profile_consent(tmp_path: Path):

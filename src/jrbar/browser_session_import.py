@@ -1,35 +1,17 @@
-"""Import a provider's existing browser session instead of asking for a key.
+"""Read Devin sessions from browser local storage without changing profiles.
 
-Reported as "Why do I need an API key? The implementation inside of
-CodexBar doesn't require an API key" -- correct, and the staged flow was
-worse than it looked: "Enable Devin browser access" only ever flipped a
-preference flag. NOTHING in this app read a browser. The single thing
-the button promised was the one thing it did not do, so the only way to
-reach Devin usage was to go find an API key by hand.
-
-CodexBar reads Devin's own web session out of Chromium local storage
-(SweetCookieKit -> leveldb) and sends it as a bearer token. That works,
-but Chromium's data directory is TCC-protected on current macOS, so it
-costs the user a Full Disk Access grant -- which CodexBar documents.
-
-Firefox-family browsers (Zen, Firefox, LibreWolf, Waterfox) keep local
-storage in a plain SQLite file that is NOT TCC-protected, so the same
-session imports with no permission grant at all. That is the path
-implemented here, and it is the path that matters on this install: the
-default browser is Zen, and its profile holds a live app.devin.ai
-``auth1_session``.
-
-Read discipline, matching _read_grok_auth: the sqlite file is opened
-immutable (never locking or writing to a browser's live database), only
-the one requested origin is touched, sizes are bounded, and symlinks are
-refused. Nothing here runs in the background -- an import happens only
-when the user clicks Import.
+Firefox-family readers copy a bounded SQLite database and its WAL; Chromium
+uses a private LevelDB snapshot. The exact-profile entrypoint runs after a
+provider-scoped consent check, including for optional background repair.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -165,52 +147,77 @@ def _decoded(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def read_local_storage(database: Path) -> dict[str, str]:
-    """Only Devin session and organization fields from one origin.
-
-    Opened ``immutable=1``: no lock is taken and no journal is written,
-    so a running browser is never disturbed and a read can never corrupt
-    the profile.
-    """
-    path = Path(database)
+def _storage_stamp(path: Path) -> tuple[int, int, int, int] | None:
     try:
-        if path.is_symlink() or not path.is_file():
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_LOCAL_STORAGE_BYTES:
+        raise OSError("unsafe browser storage file")
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
+def _copy_storage_file(path: Path, target: Path, stamp: tuple[int, int, int, int]) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "rb") as source:
+        info = os.fstat(source.fileno())
+        if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != stamp:
+            raise OSError("browser storage changed during import")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+        output = os.open(target, flags, 0o600)
+        with os.fdopen(output, "wb") as destination:
+            remaining = MAX_LOCAL_STORAGE_BYTES
+            while chunk := source.read(min(65_536, remaining + 1)):
+                if len(chunk) > remaining:
+                    raise OSError("browser storage exceeded import limit")
+                destination.write(chunk)
+                remaining -= len(chunk)
+
+
+def read_local_storage(database: Path) -> dict[str, str]:
+    """Read one origin's Devin fields from a private SQLite/WAL snapshot."""
+    path = Path(database)
+    wal = path.with_name(path.name + "-wal")
+    try:
+        database_stamp = _storage_stamp(path)
+        if database_stamp is None:
             return {}
-        if path.stat().st_size > MAX_LOCAL_STORAGE_BYTES:
-            return {}
-    except OSError:
+        wal_stamp = _storage_stamp(wal)
+        with tempfile.TemporaryDirectory(prefix="jrbar-browser-import-") as directory:
+            snapshot = Path(directory) / path.name
+            _copy_storage_file(path, snapshot, database_stamp)
+            if wal_stamp is not None:
+                _copy_storage_file(wal, snapshot.with_name(snapshot.name + "-wal"), wal_stamp)
+            if _storage_stamp(path) != database_stamp or _storage_stamp(wal) != wal_stamp:
+                return {}
+            connection = sqlite3.connect(f"{snapshot.as_uri()}?mode=ro", uri=True, timeout=1.0)
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT key, value, compression_type
+                    FROM data
+                    WHERE key GLOB ?
+                       OR key GLOB ?
+                       OR key GLOB ?
+                       OR key GLOB ?
+                       OR key GLOB ?
+                    LIMIT ?
+                    """,
+                    (
+                        f"*{_AUTH1_SUFFIX}",
+                        f"*{_AUTH0_MARKER}*",
+                        f"{_EXTERNAL_ORG_PREFIX}*",
+                        f"*{_ORG_NAME_MARKER}*",
+                        f"{_FEATURE_FLAG_ORG_PREFIX}*",
+                        MAX_STORAGE_ROWS,
+                    ),
+                ).fetchall()
+            finally:
+                connection.close()
+    except (OSError, sqlite3.Error):
         return {}
     entries: dict[str, str] = {}
-    try:
-        connection = sqlite3.connect(f"file:{path}?immutable=1", uri=True, timeout=1.0)
-    except sqlite3.Error:
-        return {}
-    try:
-        with connection:
-            rows = connection.execute(
-                """
-                SELECT key, value, compression_type
-                FROM data
-                WHERE key GLOB ?
-                   OR key GLOB ?
-                   OR key GLOB ?
-                   OR key GLOB ?
-                   OR key GLOB ?
-                LIMIT ?
-                """,
-                (
-                    f"*{_AUTH1_SUFFIX}",
-                    f"*{_AUTH0_MARKER}*",
-                    f"{_EXTERNAL_ORG_PREFIX}*",
-                    f"*{_ORG_NAME_MARKER}*",
-                    f"{_FEATURE_FLAG_ORG_PREFIX}*",
-                    MAX_STORAGE_ROWS,
-                ),
-            ).fetchall()
-    except sqlite3.Error:
-        return {}
-    finally:
-        connection.close()
     for key, value, compression in rows:
         if not isinstance(key, str):
             continue
@@ -452,7 +459,32 @@ def import_devin_session_from_profile(
     browser: str,
     profile: str,
 ) -> BrowserSession | None:
-    """Read exactly one consented Firefox-family browser profile."""
+    """Read one named profile after the caller checks its consent grant."""
+    if str(browser).lower() in {"brave", "chrome", "chromium", "edge"}:
+        from .provider_browser_consent import extract_devin_session
+        from .provider_browser_import import (
+            chromium_profile_directory,
+            read_chromium_local_storage,
+        )
+
+        profile_root = chromium_profile_directory(Path(home), browser=browser, profile=profile)
+        if profile_root is None:
+            return None
+        try:
+            storage = read_chromium_local_storage(
+                profile_root,
+                origin=DEVIN_ORIGIN,
+                allowed_keys=("auth1_session",),
+                allowed_prefixes=(_EXTERNAL_ORG_PREFIX,),
+            )
+        except (ModuleNotFoundError, OSError):
+            return None
+        token, organization = extract_devin_session(storage)
+        if token is None:
+            return None
+        internal_id = organization if organization and is_internal_organization_id(organization) else None
+        return BrowserSession(token, organization, internal_id, f"{browser.title()} {profile}")
+
     profile_root = firefox_profile_directory(
         Path(home),
         browser=browser,

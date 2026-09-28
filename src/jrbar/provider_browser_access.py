@@ -158,8 +158,7 @@ def _import_browser_session(
     This is what "browser access" was always supposed to mean. Returns
     the success message, or None when there is no session to take -- in
     which case the caller falls back to the manual paste. Devin only for
-    now: it is the provider whose session is a plain token in
-    Firefox-family local storage.
+    now: its session is a token in Firefox or Chromium local storage.
     """
     if provider_id != "devin":
         return None
@@ -184,7 +183,7 @@ def _import_browser_session(
                     session.token,
                 )
         except Exception:
-            pass
+            return "JR-Bar couldn't save this browser session to Keychain. Check the login keychain and try Import again."
         loaded = load_provider_usage_settings()
         settings = loaded.settings
         if session.organization:

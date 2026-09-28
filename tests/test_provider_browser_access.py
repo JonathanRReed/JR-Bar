@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from jrbar import provider_browser_access
+from jrbar.browser_session_import import BrowserSession
 from jrbar.provider_browser_access import (
     handle_provider_usage_action,
     plausible_token,
@@ -14,6 +18,35 @@ class FakeStore:
 
     def set(self, provider_id, account, secret):
         self.saved[(provider_id, account)] = secret
+
+
+def test_failed_keychain_write_does_not_claim_browser_sign_in(monkeypatch) -> None:
+    class FailingStore:
+        def set(self, *_args):
+            raise OSError("synthetic Keychain failure")
+
+    class Settings:
+        def with_option(self, *_args, **_kwargs):
+            return self
+
+    saves: list[object] = []
+    monkeypatch.setattr(
+        provider_browser_access,
+        "_load_consented_devin_session",
+        lambda **_kwargs: BrowserSession("auth1_fixture_value_long", "org_fixture", None, "Zen Default"),
+    )
+    monkeypatch.setattr("jrbar.provider_credential_store.ProviderCredentialStore", FailingStore)
+    monkeypatch.setattr(
+        provider_browser_access,
+        "load_provider_usage_settings",
+        lambda: SimpleNamespace(settings=Settings()),
+    )
+    monkeypatch.setattr(provider_browser_access, "save_provider_usage_settings", lambda *_args, **_kwargs: saves.append(True))
+
+    message = provider_browser_access._import_browser_session("devin")
+
+    assert message is not None and "Keychain" in message and "Signed in" not in message
+    assert saves == []
 
 
 def test_import_with_token_on_clipboard_stores_it__and_2_more() -> None:
@@ -149,4 +182,3 @@ def test_import_takes_the_browser_session_and_never_mentions_a_key__and_2_more()
     )
     assert opened == []
     assert "Zen" in message
-

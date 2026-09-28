@@ -21,6 +21,7 @@ from jrbar.browser_session_import import (
     devin_session_from_entries,
     firefox_profile_directories,
     import_devin_session,
+    import_devin_session_from_profile,
     is_internal_organization_id,
     origin_directory_name,
     read_local_storage,
@@ -75,6 +76,10 @@ def test_a_real_shaped_zen_profile_yields_token_and_organization(tmp_path) -> No
     assert session.organization == "org/acme-7535461b"
     assert session.internal_organization_id == ORG_ID
     assert session.source_label.startswith("Zen")
+    exact = import_devin_session_from_profile(
+        home=tmp_path, browser="zen", profile=profile.name,
+    )
+    assert exact == session
 
 
 def test_a_compressed_value_still_contributes_its_key(tmp_path) -> None:
@@ -144,6 +149,30 @@ def test_the_reader_never_writes_to_the_browsers_database(tmp_path) -> None:
     assert database.stat().st_mtime_ns == before
     assert not (database.parent / "data.sqlite-wal").exists()
     assert not (database.parent / "data.sqlite-journal").exists()
+
+
+def test_a_running_zen_profile_exposes_its_uncheckpointed_session(tmp_path) -> None:
+    profile = zen_profile(tmp_path)
+    database = write_local_storage(profile, [])
+    writer = sqlite3.connect(database)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        value = json.dumps({"token": TOKEN})
+        writer.execute(
+            "INSERT INTO data (key, utf16_length, conversion_type, compression_type, value)"
+            " VALUES (?, ?, ?, ?, ?)",
+            ("auth1_session", len(value), 0, 0, value.encode("utf-8")),
+        )
+        writer.commit()
+        wal = database.with_name(database.name + "-wal")
+        assert wal.exists()
+        before = {path.name: path.stat().st_mtime_ns for path in database.parent.iterdir()}
+
+        assert read_local_storage(database)["auth1_session"] == value
+        assert {path.name: path.stat().st_mtime_ns for path in database.parent.iterdir()} == before
+    finally:
+        writer.close()
 
 
 def test_a_garbage_database_is_survivable(tmp_path) -> None:
