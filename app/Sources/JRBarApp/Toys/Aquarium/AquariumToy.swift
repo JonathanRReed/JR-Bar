@@ -122,10 +122,17 @@ final class AquariumToy: Toy {
         if isOn { present(activate: false) }
         observeAmbientSettings()
         observeRosterSettings()
-        // A save still on its way lands before the process ends.
+        // The last tick may still be waiting for its five-minute batch.
+        // Save it before the app ends, then wait for the writer.
         terminateObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-        ) { [saveWriter] _ in saveWriter.flush() }
+            forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.persist()
+                self.saveWriter.flush()
+            }
+        }
     }
 
     /// The card's roster rows — Fish at once, Raised fish stay and the

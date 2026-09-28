@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import JRBarCore
@@ -61,6 +62,25 @@ struct AquariumTankToyTests {
         #expect(tank.game.hats["p0"] == ShopItem.hatCrown.rawValue)
         tank.flushSave()
         #expect(file.load().game.pets.count == 799)
+        withExtendedLifetime(toys) {}
+    }
+
+    @Test("quitting saves a game change still waiting for the next batch")
+    func quitSavesCurrentGame() throws {
+        let file = scratch()
+        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        var saved = AquariumGame()
+        _ = saved.apply(.setWindowOpen(true), now: Date(timeIntervalSince1970: 1_000))
+        try file.save(AquariumSave(game: saved))
+
+        let core = CoreModel()
+        let toys = store(core)
+        let tank = AquariumToy(core: core, store: toys, saveFile: file)
+        #expect(!tank.game.windowOpen)
+        #expect(file.load().game.windowOpen)
+
+        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+        #expect(!file.load().game.windowOpen)
         withExtendedLifetime(toys) {}
     }
 
