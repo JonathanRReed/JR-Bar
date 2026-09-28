@@ -1,21 +1,21 @@
 # JR-Bar roadmap
 
-Updated 2026-09-27. The installed baseline is 0.9.12, build 2313. It is
-signed, notarized and stapled. Source improvements after that baseline are
-unreleased. [FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented
-capabilities; a source path is not a physical acceptance receipt.
+Updated 2026-09-27. Version 0.9.13 is in local testing with a signed,
+notarized and stapled app. The public release is still pending.
+[FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented capabilities;
+a source path is not a physical acceptance receipt.
 
 ## Before the first public release
 
 1. Finish the audit repairs and verify the installed candidate. Transcript
    parsing now streams lines, Screen Bar planning runs off-main with bounded
    admission, and upgrades preserve chosen hook integrations. Setup asks
-   about permissions used by enabled features. Combined tests, packaging
-   and installed parity must follow the final source changes.
-2. Verify the reported native interactions on the Mac. Repeat Fold at rest
-   with parking off, menu-bar clicks, long Dock titles, centered compact
-   actions, fish hover and an early weekly quota reset. Fixture coverage
-   cannot prove how the lid or pointer feels in daily use.
+   about permissions used by enabled features. Combined tests pass locally;
+   packaging and installed parity must follow the final source changes.
+2. Verify an early weekly quota reset on a real account. Jonathan accepted
+   Fold at rest with parking off, menu-bar clicks, long Dock titles,
+   centered compact actions and fish hover on the installed test build.
+   Fixture coverage cannot prove a natural reset celebration.
 3. Collect controlled performance measurements. Record warm launch, menu
    and pane latency, main-thread work and idle CPU against the release
    budgets. Complete the [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md).

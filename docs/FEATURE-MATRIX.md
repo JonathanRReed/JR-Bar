@@ -1,8 +1,8 @@
 # JR-Bar feature matrix
 
-Updated 2026-09-27. The installed local candidate is 0.9.13, build 2324,
-Developer ID signed, notarized and stapled. Later source commits change CI
-only. No public release has been published.
+Updated 2026-09-27. Version 0.9.13 is in local testing. The installed
+candidate is Developer ID signed, notarized and stapled. No public release
+has been published.
 
 - **Implemented** means a reachable source path with regression coverage.
   It does not establish current physical acceptance for every provider,
@@ -72,7 +72,7 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| Fold: the desktop folds into the screen as the lid closes — the portal room (lid-angle sensor, two ScreenCaptureKit streams, Metal overlay); Bendy or Lid Plane can render it instead | Implemented | Off; needs Screen Recording |
+| Fold: lid-angle animation with Duo as the default look, Room as an alternate, and optional Bendy or Lid Plane handoff | Implemented | Off; needs Screen Recording |
 | Aquarium: every live session is a fish in a resizable tank window; idle game (pearls, shop, level, streaks, achievements, residents, fry schools) | Implemented | Off |
 | Notch Buddy: a creature by the notch that lives by agent state; ten characters, draggable off the notch, Tamagotchi-lite care log | Implemented | Off |
 | Confetti: a burst in the provider's colours out of the notch's lip (or the icon, the corners, or rain), landing on window tops and the Dock — weekly reset by default; session-completion, per-provider, banked-credits, all-clear and milestone triggers opt in; sizes, palettes, shapes, seasonal and moment styles | Implemented | Off |
@@ -109,7 +109,7 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | Reset countdown on the quota ear (drain arc inside the ring + words in the peek and island card) and provider incident badges from the status feeds (ear tone, panel row, Usage Center header) | Implemented | On |
 | Quota Runway device display | Implemented | Selectable per device |
 | Capacity history and operator history behind retention consent | Implemented | Off |
-| Browser-session import for provider auth, secrets in Keychain | Daemon only | Off |
+| Devin browser-session import: exact CLI consent, Usage Center import and revoke, token in Keychain | Implemented | Off |
 
 ## Remote and integrations
 

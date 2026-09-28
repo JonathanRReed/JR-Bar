@@ -9,7 +9,7 @@ JR-Bar owns provider accounting directly. CodexBar is an engineering reference o
 | ChatGPT / Codex | Codex OAuth usage API, `codex app-server`, local Codex records | whichever of the five-hour and weekly account limits the plan actually has, plan name, dynamic sub-cap lanes such as Spark, credits, resets, tokens, models, and estimates |
 | Claude | Claude OAuth usage API, consented Claude browser session, local Claude records | five-hour, weekly, arbitrary model- or feature-scoped limits such as Fable, credits, extra usage, tokens, cache savings, and estimates |
 | Cursor | Cursor.app read-only SQLite auth, consented browser session | included plan, Auto/Composer, API/model usage, extra usage, resets, account identity |
-| Devin | encrypted JR-Bar manual bearer or consented Chromium localStorage | daily and weekly quota, reset times, organization identity |
+| Devin | JR-Bar Keychain token or consented Firefox-family or Chromium browser session | daily and weekly quota, reset times, organization identity |
 | Grok | `~/.grok/auth.json`, Grok billing API, local signals | subscription credit usage, cycle reset, account/plan, local token activity |
 | Antigravity | running Antigravity or `agy` loopback quota server | Gemini session/weekly and Claude+GPT session/weekly pools, dynamic detail lanes |
 | OpenAI API | encrypted JR-Bar Admin API key | organization/project spend, tokens, requests, models, daily history |
@@ -123,7 +123,7 @@ jrbar providers browser-consent revoke cursor \
   --browser chrome --profile Default
 ```
 
-The packaged reader supports Chromium-family cookie/localStorage databases and Firefox cookies. It copies stores to an isolated temporary directory before reading, never mutates browser data, restricts reads to the provider's allowlist, and stores validated imported values encrypted. Safari remains unavailable until a signed-bundle WebKit import path passes the same consent and account-isolation tests.
+The packaged reader supports Chromium-family cookie/localStorage databases and Firefox-family cookies and localStorage. It copies stores to an isolated temporary directory before reading, never mutates browser data, restricts reads to the provider's allowlist, and stores validated imported values encrypted. Safari remains unavailable until a signed-bundle WebKit import path passes the same consent and account-isolation tests.
 
 ## Which windows an account actually has
 

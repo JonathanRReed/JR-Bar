@@ -46,6 +46,25 @@ A window that can drive the lights is a 5-hour or weekly window the
 provider states plainly. Any other window is shown as detail and never
 lights anything.
 
+### Devin browser sessions
+
+Browser reading starts off. Grant one exact profile before importing a
+session, for example:
+
+```sh
+jrbar providers configure devin --browser-sources on
+jrbar providers browser-consent grant devin --browser zen --profile 'your-profile-name'
+```
+
+Use the exact folder name from
+`~/Library/Application Support/zen/Profiles` for `--profile`.
+Then use **Import Devin browser session** in Usage Center. JR-Bar copies
+the selected browser store to a private temporary directory, reads the
+session there, and saves its token in Keychain. A Chrome profile can be
+granted with `--browser chrome --profile Default` instead. The same card
+shows the grant and lets you revoke it. Background repair is a separate
+`--background-repair` option on the grant command.
+
 ## More sources
 
 - [Where the usage numbers come from](usage-sources.md): OpenCode Go,

@@ -20,6 +20,13 @@ All notable changes to JR-Bar are documented here.
   daemon cannot consume the new build's refresh attempt.
 - Aquarium swimming and drawing share each frame's completion meals, with
   eaten pellets updated before that frame draws.
+- Aquarium saves the latest game state when JR-Bar quits, even between its
+  scheduled writes.
+- Custom hook log paths leave their parent directory's permissions alone;
+  JR-Bar's own state directory and the log files stay private.
+- Devin browser import reads live Firefox-family WAL sessions from a private
+  snapshot and honors consented Chromium profiles. A failed Keychain write
+  no longer reports a successful sign-in.
 - The GitHub entry has a current synthetic panel image, quick-start and
   recovery guides, accurate hook instructions and a working Issues route.
 
