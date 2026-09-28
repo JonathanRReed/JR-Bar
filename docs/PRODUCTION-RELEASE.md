@@ -195,6 +195,11 @@ administrator password and no `sudo` prompt can stall the run. Use
 `JRBAR_INSTALL_SCOPE=system` when you want to exercise the `/Applications`
 path and the root-only uninstaller.
 
+For a system uninstall check, the gate refuses to proceed while a second
+`~/Applications/JR-Bar.app` exists. The supported uninstaller would choose
+that home copy first. Back up and migrate the home install before testing the
+system path; the gate never removes the other copy silently.
+
 It quits a running JR-Bar for the install phase and relaunches it afterwards.
 That is deliberate: a running app rewrites its own settings as devices and
 sessions come and go, so a field that moved on its own could not be told apart

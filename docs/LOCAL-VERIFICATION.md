@@ -163,6 +163,10 @@ launch, menu-open p95, pane-switch p95, longest main-thread task, and idle CPU
 come from a 300-second Instruments session recorded against the installed
 candidate and handed over as `JRBAR_PERFORMANCE_EVIDENCE`. The budgets live in
 `scripts/verify_performance_budget.py`.
+The 16 ms limit applies to routine main-thread work while the interface is
+interactive. A run-loop iteration can include several callbacks, waiting and
+one-time system window setup. Record those separately; its total duration is
+not a measurement of one routine task.
 
 For a CPU diagnostic, attach Instruments' Activity Monitor template to the
 installed JR-Bar process for at least five minutes in each controlled state.
