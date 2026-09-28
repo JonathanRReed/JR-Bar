@@ -1,6 +1,6 @@
 # JR-Bar feature matrix
 
-Updated 2026-09-27. Version 0.9.13 is in local testing. The installed
+Updated 2026-09-27. Version 0.9.14 is in local testing. The installed
 candidate is Developer ID signed, notarized and stapled. No public release
 has been published.
 

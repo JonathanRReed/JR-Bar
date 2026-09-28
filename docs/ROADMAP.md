@@ -1,6 +1,6 @@
 # JR-Bar roadmap
 
-Updated 2026-09-27. Version 0.9.13 is in local testing with a signed,
+Updated 2026-09-27. Version 0.9.14 is in local testing with a signed,
 notarized and stapled app. The public release is still pending.
 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented capabilities;
 a source path is not a physical acceptance receipt.
@@ -9,7 +9,8 @@ a source path is not a physical acceptance receipt.
 
 1. Finish the audit repairs and verify the installed candidate. Transcript
    parsing now streams lines, Screen Bar planning runs off-main with bounded
-   admission, and upgrades preserve chosen hook integrations. Setup asks
+   admission, and resting Dock previews reuse their Accessibility readings.
+   Upgrades preserve chosen hook integrations. Setup asks
    about permissions used by enabled features. Combined tests pass locally;
    packaging and installed parity must follow the final source changes.
 2. Verify an early weekly quota reset on a real account. Jonathan accepted
@@ -18,12 +19,13 @@ a source path is not a physical acceptance receipt.
    Fixture coverage cannot prove a natural reset celebration.
 3. Collect controlled performance measurements. Record warm launch, menu
    and pane latency, main-thread work and idle CPU against the release
-   budgets. Complete the [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md).
-   Synthetic parsing benchmarks are useful evidence for that parser only.
-4. Finish signing and release acceptance. Developer ID Application,
-   notarization and Sparkle keys are available. The Developer ID Installer
-   identity is still missing. Physical hardware/provider checks and the
-   system uninstall receipt also remain open. The
+   budgets. Two uncontrolled native traces show less Dock work on the
+   installed candidate, but they cannot certify the release budget. Complete
+   the [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md).
+4. Finish signing and release acceptance. Both Developer ID identities,
+   notarization and Sparkle keys are available. The installer has not been
+   signed and notarized. Physical hardware/provider checks and the system
+   uninstall receipt also remain open. The
    [production release gate](PRODUCTION-RELEASE.md) must pass before publishing.
 5. Verify the public entry. Keep setup instructions and screenshots current,
    make the support route usable, then publish the signed installer and
