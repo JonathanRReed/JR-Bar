@@ -141,6 +141,32 @@ import Testing
         #expect(plan.overlay == .attentionBuoy)
     }
 
+    @Test func aWorkerWaitingWithNoAskStaysQuiet() {
+        // A sub-agent's prompt with no ask published for it: the shape a
+        // worker has while sub-agent asks are off. No question, no rise.
+        let worker = CoreSession(id: "w1", provider: "claude", kind: "worker", parent: "s1",
+                                 mode: "waiting_for_input", lifecycle: "active", nextActor: "user")
+        let plan = AquariumPlanner.plan(for: worker, now: now)
+        #expect(plan.action == .patrol)
+        #expect(plan.state == .swimming)
+        #expect(plan.overlay == nil)
+        // The inspector still cites what it read.
+        #expect(plan.evidence.contains("mode=waiting_for_input"))
+    }
+
+    @Test func aWorkerWithAPublishedAskAndAWaitingMainStillAsk() {
+        let ask = CoreAsk(kind: "permission", summary: "Run the build?")
+        let worker = CoreSession(id: "w1", provider: "claude", kind: "worker", parent: "s1",
+                                 mode: "waiting_for_input", lifecycle: "active", nextActor: "user", ask: ask)
+        let asked = AquariumPlanner.plan(for: worker, now: now)
+        #expect(asked.action == .attentionBuoy)
+        #expect(asked.state == .surfacing)
+        let main = AquariumPlanner.plan(for: session(mode: "waiting_for_input", nextActor: "user"), now: now)
+        #expect(main.action == .surfaceQuestion)
+        #expect(main.overlay == .questionBubble)
+        #expect(main.state == .surfacing)
+    }
+
     // MARK: - Outcomes (AQ20–AQ24)
 
     @Test func aq20_failedHoldsAtWarningBuoy() {

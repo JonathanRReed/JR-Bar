@@ -393,6 +393,37 @@ struct AquariumModelTests {
         #expect(fish[1].state == .sinking)
     }
 
+    @Test("a worker the daemon keeps quiet does not rise to the glass or count as needing you")
+    func quietWorkerStaysInTheSchool() {
+        // Waiting on its own prompt, with no ask published for it: the
+        // shape a worker has while sub-agent asks are off.
+        let quiet = Self.session("w", mode: "waiting_for_input", kind: "worker", parent: "a")
+        let now = Date()
+        let fish = AquariumModel.reduce(sessions: [Self.session("a"), quiet], previous: [], now: now)
+        #expect(fish[1].isFry)
+        #expect(fish[1].state == .swimming)
+        let summary = AquariumActivityPresentation.summary(states: fish.map(\.state), residents: 0, connected: true)
+        #expect(!summary.contains("need you"))
+        // Staying quiet is stable: no state change, so no new clock.
+        let again = AquariumModel.reduce(sessions: [Self.session("a"), quiet], previous: fish, now: now + 5)
+        #expect(again[1].state == .swimming)
+        #expect(again[1].stateSince == fish[1].stateSince)
+    }
+
+    @Test("a worker with a published ask still rises, and a waiting main always does")
+    func askedWorkerAndWaitingMainStillRise() {
+        let now = Date()
+        let fish = AquariumModel.reduce(sessions: [
+            Self.session("a", mode: "waiting_for_input"),
+            Self.session("w", mode: "working", ask: true, kind: "worker", parent: "a"),
+        ], previous: [], now: now)
+        #expect(fish[0].state == .surfacing)
+        #expect(fish[1].isFry)
+        #expect(fish[1].state == .surfacing)
+        let summary = AquariumActivityPresentation.summary(states: fish.map(\.state), residents: 0, connected: true)
+        #expect(summary.contains("2 need you"))
+    }
+
     @Test("the decor set is seeded: same seed, same layout")
     func decor() {
         let a = AquariumModel.decorSet()
