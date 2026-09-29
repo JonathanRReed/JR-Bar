@@ -53,10 +53,13 @@ hand-written examples.
 - Coalescing: `state` at most 20/s, `lights` 30/s, `settings` 10/s, latest
   wins. `event`, `reply` and `log` are never coalesced; the bounded
   dispatch queue (128 frames) sheds its OLDEST frames on overflow and a
-  client whose sends keep blocking is dropped outright — but events stay
-  replayable from the journal (512 entries, larger than the queue on
-  purpose) until it evicts them, after which `replay_events` says so
-  (`cursor_expired`, with the `dropped` count) instead of pretending.
+  client whose send blocks past the send deadline (1 s) is dropped at once:
+  a timed-out send may have put half a frame on the wire, so the stream
+  cannot be repaired. The client recovers by reconnecting and replaying,
+  because events stay replayable from the journal (512 entries, larger than
+  the queue on purpose) until it evicts them, after which `replay_events`
+  says so (`cursor_expired`, with the `dropped` count) instead of
+  pretending.
 
 ## Daemon → app
 
