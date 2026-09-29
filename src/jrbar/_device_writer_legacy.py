@@ -59,6 +59,23 @@ def take_applied_at() -> float | None:
     return value
 
 
+def _under_test_on_live_volume(path: Path) -> bool:
+    """A test must never write a real device by accident.
+
+    Fixtures name ``/Volumes/SidePulse`` for fake devices, and on a desk
+    with a strip or Dot plugged in that path is live. ``JRBAR_TESTING`` is
+    set for the whole test process and its children, so it still holds
+    when pytest has unset ``PYTEST_CURRENT_TEST`` between tests. Fake
+    devices belong in ``tmp_path`` or under ``JRBAR_TEST_VOLUME_ROOT``.
+    """
+    from .env import env_value
+
+    in_sandbox = env_value("JRBAR_TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ
+    if not in_sandbox:
+        return False
+    return os.path.abspath(os.fspath(path)).startswith(str(MOUNT_ROOT) + "/")
+
+
 def write_led_program(
     text: str,
     *,
@@ -75,6 +92,10 @@ def write_led_program(
         return target
     if type(preserve_existing_inode) is not bool:
         raise DeviceWriteError("invalid device write mode")
+    if _under_test_on_live_volume(target):
+        # An OSError, like an unmounted volume: every caller already handles
+        # it, and a DeviceWriteError would count as a refusal on a device card.
+        raise OSError(f"refusing a live device write under test: {target}")
 
     payload = program.encode("utf-8")
     with _device_parent(target) as (parent_descriptor, parent_identity):
