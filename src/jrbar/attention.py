@@ -9,6 +9,7 @@ from .freshness import bounded_age_seconds
 from .models import AgentMode, AgentStatus
 from .operator_state import (
     COMPLETED_RECENT_SECONDS,
+    CanonicalOperatorState,
     SemanticEventKey,
 )
 from .provider_facts import RequestKey, WorkKey
@@ -171,6 +172,37 @@ def actionable_request(status: AgentStatus, settings: AgentMonitorSettings) -> b
         "PermissionRequest",
         "Notification",
     }
+
+
+def quiet_worker_request_keys(
+    state: CanonicalOperatorState,
+    *,
+    subagent_asks_alert: bool,
+) -> frozenset[RequestKey]:
+    """The requests that belong to a sub-agent while sub-agent asks are off.
+
+    ``actionable_request`` already keeps such an ask off the panel, the
+    banner and the sound. This is the same rule for the readers of canonical
+    state, which see a worker's request as a live one because the reducer
+    keeps it honest: the ambient light cues and the history tally ask this
+    before they treat a request as something to interrupt for.
+
+    A request counts as a worker's when its work has a parent. Turning the
+    setting on empties the set, and a main session's request is never in it.
+    The requests stay in canonical state either way.
+    """
+    if subagent_asks_alert:
+        return frozenset()
+    worker_works = frozenset(
+        work.key for work in state.works if work.parent_key is not None
+    )
+    if not worker_works:
+        return frozenset()
+    return frozenset(
+        request.key
+        for request in state.requests
+        if request.key.work_key in worker_works
+    )
 
 
 def project_attention(

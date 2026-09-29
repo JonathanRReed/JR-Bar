@@ -3,22 +3,29 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from jrbar.ambient_effect_runtime import install_ambient_effect_runtime
 from jrbar.attention import (
     LifecycleMode,
     SignalKind,
     project_attention,
+    quiet_worker_request_keys,
     regate_actionable_attention,
     stable_event_key,
 )
 from jrbar.capacity_types import SourceKey
-from jrbar.collector import MonitorSnapshot, aggregate_status
-from jrbar.models import AgentMode, AgentStatus
+from jrbar.collector import LiveAgentMonitor, MonitorSnapshot, aggregate_status
+from jrbar.dnd_policy import compose_dnd_contributions
+from jrbar.effect_assignment_store import EffectAssignmentCache
+from jrbar.models import AgentMode, AgentStatus, HookEvent
+from jrbar.operator_state import BootIdentifier, ClockSample
+from jrbar.provider_adapters import minimize_hook_event, provider_facts_for_record
 from jrbar.provider_facts import (
     RequestIdentifier,
     RequestKey,
     WorkIdentifier,
     WorkKey,
 )
+from jrbar.providers import negotiated_provider_sources
 from jrbar.settings import AgentMonitorSettings
 
 
@@ -392,3 +399,126 @@ def test_regate_keeps_keyless_asks_and_returns_identity_when_unchanged() -> None
     )
 
     assert regate_actionable_attention(projection, frozenset()) is projection
+
+
+_CLAUDE_HOOKS = SourceKey("claude", "hooks", "global", "live_agent_events")
+_CANONICAL_BASE = 1_786_536_000.0
+
+
+def _canonical_permission_request_snapshot(
+    *, session_id: str, agent_id: str | None
+) -> MonitorSnapshot:
+    """One Claude PermissionRequest, carried through the real canonical path."""
+    source = next(
+        row
+        for row in negotiated_provider_sources()
+        if row.source_key == _CLAUDE_HOOKS
+    )
+    boot = BootIdentifier("boot:attention")
+    monitor = LiveAgentMonitor(
+        clock_sampler=lambda: ClockSample(_CANONICAL_BASE + 1.0, 101.0, boot),
+    )
+    ingress = HookEvent(
+        provider="claude",
+        logged_at=datetime.fromtimestamp(_CANONICAL_BASE, tz=timezone.utc),
+        event_name="PermissionRequest",
+        raw={"request_id": "request:one", "event_id": "event:one", "sequence": 1},
+        session_id=session_id,
+        agent_id=agent_id,
+        tool_name="Bash",
+    )
+    normalized = minimize_hook_event(
+        ingress,
+        source_key=source.source_key,
+        contract=source.contract,
+        observation_authority=source.registration.observation_authority,
+    )
+    batch = provider_facts_for_record(
+        normalized,
+        contract=source.contract,
+        observation_authority=source.registration.observation_authority,
+        observed_at_epoch=_CANONICAL_BASE,
+    )
+    monitor.ingest_batch(batch, clock=ClockSample(_CANONICAL_BASE, 100.0, boot))
+    return monitor.snapshot()
+
+
+def _ambient_probe(settings: AgentMonitorSettings):
+    """A controller that only carries what the ambient runtime reads."""
+
+    class Probe:
+        _effect_assignment_cache = EffectAssignmentCache()
+
+        def __init__(self) -> None:
+            self.settings = settings
+            self.virtual_status_device = object()
+            self._notification_action_bindings = {}
+
+        def current_dnd_projection(self):
+            return compose_dnd_contributions(())
+
+        def _deliver_semantic_notification(self, *_args, **_kwargs):
+            return False
+
+        def _activate_notification_action(self, _token):
+            return False
+
+        def observe_operator_history_events(self, _events, _state):
+            return None
+
+    install_ambient_effect_runtime(Probe)
+    return Probe()
+
+
+def test_a_workers_permission_request_agrees_across_the_panel_and_the_lights() -> None:
+    worker = _canonical_permission_request_snapshot(
+        session_id="session:main",
+        agent_id="agent:worker",
+    )
+    main = _canonical_permission_request_snapshot(
+        session_id="session:main",
+        agent_id=None,
+    )
+    assert [status.is_subagent for status in worker.statuses] == [True]
+    assert [status.is_subagent for status in main.statuses] == [False]
+
+    for alert in (False, True):
+        settings = replace(AgentMonitorSettings(), subagent_asks_alert=alert)
+        panel_asks = len(project_attention(worker, settings).actionable_attention)
+        controller = _ambient_probe(settings)
+        controller.observe_operator_history_events(
+            worker.operator_events,
+            worker.operator_state,
+        )
+        quiet = quiet_worker_request_keys(
+            worker.operator_state,
+            subagent_asks_alert=alert,
+        )
+
+        # One setting, one answer: the panel's asks, the ambient heartbeat and
+        # the quiet set never disagree about whether the worker's ask counts.
+        assert panel_asks == (1 if alert else 0)
+        assert controller._ask_heartbeat_plan.request_count == panel_asks
+        assert len(quiet) == (0 if alert else 1)
+        # The request is canonical truth either way.
+        assert len(worker.operator_state.requests) == 1
+
+    # A main session's ask is never quiet, and rings with the setting off.
+    off = AgentMonitorSettings()
+    controller = _ambient_probe(off)
+    controller.observe_operator_history_events(main.operator_events, main.operator_state)
+    assert len(project_attention(main, off).actionable_attention) == 1
+    assert controller._ask_heartbeat_plan.request_count == 1
+    assert quiet_worker_request_keys(main.operator_state, subagent_asks_alert=False) == frozenset()
+
+
+def test_the_quiet_set_is_empty_without_workers_and_when_the_setting_is_on() -> None:
+    worker = _canonical_permission_request_snapshot(
+        session_id="session:main",
+        agent_id="agent:worker",
+    )
+    state = worker.operator_state
+    request_keys = {request.key for request in state.requests}
+
+    assert quiet_worker_request_keys(state, subagent_asks_alert=False) == request_keys
+    assert quiet_worker_request_keys(state, subagent_asks_alert=True) == frozenset()
