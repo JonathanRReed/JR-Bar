@@ -1244,13 +1244,17 @@ can still refuse.
 | code | when | message |
 | --- | --- | --- |
 | `not_found` | the daemon's canonical state has no live request for that session | `no live ask for that session` |
-| `unsupported` | the provider's contract does not declare `answering`, or the answer controller would not accept the action (a typed reply, an already-sending attempt) | `this ask cannot be answered from here` |
+| `unsupported` | the provider's contract does not declare `answering`, or the answer controller would not accept the action (a typed reply, an attempt already sending, or already sent and waiting for the agent) | `this ask cannot be answered from here` |
 | `stale_ask` | the request left the live phase between the command and the keystroke -- answered in the terminal, timed out, superseded -- or the delivery overran `answer_local.DELIVERY_BUDGET_SECONDS` (4 s). Re-checked immediately before the key is posted, so a resolved ask never leaves a keystroke pending. | reason `resolved_elsewhere`, `resolved_while_sending`, `budget_exceeded`, `not_in_canonical_state` |
 | `session_gone` | the session's process is not running, or the daemon has no row for it, or it is stopped (Ctrl-Z) so its terminal is showing the shell | reason `no_live_process`, `no_session_row`, `process_stopped` |
 | `not_frontmost` | the window in front is not this session's. Reasons: `no_frontmost_app`; `unknown_host` (JR-Bar cannot say which app hosts the session); `frontmost_is:<bundle id>`; `other_window` (the frontmost application's process is not the one the session descends from); `other_tab:<tty>` (Terminal.app / iTerm2 named a focused tab that is not this session's); `other_surface` (Ghostty's focused terminal is in another directory than the session's process). Ghostty names no tty: its proof is the focused terminal of its front window being the surface recorded when the session started, still in the session's directory (`window_evidence: "recorded_surface"`); with no recorded surface -- or a recorded one Ghostty no longer lists -- it refuses `focused_tab_unproven`, however few terminals share the directory, since an agent that moves itself into a worktree leaves a plain shell there looking like its own. With `only_if_frontmost: false` the session's own tab (by tty), tmux pane or Ghostty terminal is raised first (`answer_surfaces.raise_for_answer`), then the app. | the sentence plus the reason |
 | `accessibility_required` | `AXIsProcessTrusted()` is false, so a posted key would silently go nowhere | `JR-Bar cannot answer this ask until macOS lets it send the keystroke. Turn on System Settings > Privacy & Security > Accessibility > <row>.` The row is the daemon's own bundle name -- `jrbar-core` on an installed deployment, since the helper is a separate TCC client from JR-Bar.app. |
 | `send_failed` | macOS refused to build or deliver the event | the failure's name |
 | `busy` | the answer worker did not finish inside `ANSWER_REPLY_BUDGET_SECONDS` (6 s) | `answering did not finish in time` |
+
+A refused, failed or timed-out send never blocks a later Approve or Deny.
+Every `answer_ask` is a fresh verdict: all of the checks above run again in
+full, and nothing retries on its own.
 
 The same surface backs the panel's Approve/Deny, the notification actions and a
 Creator Micro session key, so a refusal reads identically wherever it happens;
