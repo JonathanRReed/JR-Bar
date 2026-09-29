@@ -241,10 +241,23 @@ enclosure points at
 `https://github.com/JonathanRReed/JR-Bar/releases/download/v<version>/JR-Bar-<version>.zip`.
 
 ```sh
-./scripts/publish_release.sh
+make release-check   # the tree, branch, CHANGELOG, tag and build number; publishes nothing
+make release         # the same checks, then scripts/publish_release.sh
 ```
 
-That script is the supported path and it does the ordering correctly:
+`make release` runs `./scripts/release.sh`, which refuses a dirty tree, a
+branch other than `main`, a local `main` that is not exactly `origin/main`, a
+CHANGELOG whose top section is not `## <version>` or still says unreleased, an
+existing tag and a build number that is not above the last release's, writes
+the release notes from the CHANGELOG, and hands them to
+`scripts/publish_release.sh`. Run `make release-check` first: it stops before
+the release gate, signing and the check for an existing GitHub release, so a
+passing dry run is not a passing release. Calling
+`./scripts/publish_release.sh` by itself skips the CHANGELOG and notes checks
+and publishes with generated notes, so do not.
+
+`scripts/publish_release.sh` does the publishing and it does the ordering
+correctly:
 
 1. Refuses a dirty tree, a branch that is not `main`, a local `main` that is
    not exactly `origin/main`, an existing `v<version>` tag, and an existing

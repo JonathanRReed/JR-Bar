@@ -186,14 +186,20 @@ interaction latency, or produce the complete release performance evidence.
 
 ## Publication
 
-Publication is a separate, explicit action:
+Publication is a separate, explicit action. `make release-check` runs the
+preconditions and writes the release notes without publishing anything;
+`make release` runs the same checks and then publishes:
 
 ```sh
-./scripts/publish_release.sh
+make release-check
+make release
 ```
 
-It refuses a dirty tree, a branch that is not `main`, a local `main` that is not
-exactly `origin/main`, an existing tag and an existing release; runs the release
-gate; creates the version release as a draft, uploads every artifact, and only
-then publishes it; and updates the durable `updates` feed metadata-first,
-appcast-last. It does not publish to PyPI.
+`make release` runs `./scripts/release.sh`, which refuses a dirty tree, a
+branch that is not `main`, a local `main` that is not exactly `origin/main`, a
+CHANGELOG whose top section is not this version's or still says unreleased, an
+existing tag and a build number that did not go up, then hands the notes to
+`./scripts/publish_release.sh`. That script refuses an existing release; runs
+the release gate; creates the version release as a draft, uploads every
+artifact, and only then publishes it; and updates the durable `updates` feed
+metadata-first, appcast-last. It does not publish to PyPI.
