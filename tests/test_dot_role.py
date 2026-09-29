@@ -16,6 +16,7 @@ from jrbar.dot_role import (
     DotRoleColors,
     apply_brightness_line,
     beacon_program,
+    _resting_source_state,
     downsample_program,
     migrated_role_for_display,
     normalize_dot_role,
@@ -133,8 +134,10 @@ def test_extend_leaves_a_whole_bar_program_alone__and_2_more() -> None:
     # line after it restores the period so the Dot keeps the strip's clock.
     assert narrowed == (
         "0:#FF9F0A 420ms pulse 0ms; 1:#FF9F0A 420ms pulse 720ms\n"
-        "0:#FF9F0A 1:#FF9F0A 540ms none"
+        "0:#000000 1:#000000 540ms none"
     )
+    # The hold rests on black, not on the pulse's amber peak: a pulse falls
+    # back to the colour the line began with, which was black here.
 
 
 
@@ -1006,3 +1009,180 @@ def test_continue_follows_each_device_s_direction__and_1_more() -> None:
     assert plan.program == forward.program
     unturned = plan_dot_surface(role="extend", strip_program=turned)
     assert unturned is not None and unturned.rung != "continue"
+
+
+# --- a pulse rests on the colour it began with, not on its peak --------------
+#
+# The brightest rung carries a pulse line through as a pulse, and the strip's
+# firmware brings every pulsing LED back to the colour it had when the line
+# began. The hold line and the missing-band fill paint "what the source line
+# left the band on", so they must paint that resting colour. The average rung
+# is the other way round: it needs the pulse's peak as its target.
+
+
+def _paint_steps(program: str, led_count: int):
+    from jrbar.animation import PaintStep
+
+    animation, _problems = read_program(program, led_count=led_count)
+    return [step for step in animation.steps if type(step) is PaintStep]
+
+
+def _hold_indexes(steps, led_count: int = DOT_LED_COUNT) -> list[int]:
+    """Positions of the one-line ``none`` paints of every band that follow a
+    pulse line: the hold lines that pay a shortened line back."""
+    from jrbar.animation import IndexedPaint
+
+    holds = []
+    for position, step in enumerate(steps):
+        only = step.segments[0] if len(step.segments) == 1 else None
+        is_hold = (
+            type(only) is IndexedPaint
+            and only.timing.easing == "none"
+            and not only.timing.delay_ms
+            and {int(index) for index, _color in only.assignments} == set(range(led_count))
+        )
+        if is_hold and position and any(
+            segment.timing.easing == "pulse" for segment in steps[position - 1].segments
+        ):
+            holds.append(position)
+    return holds
+
+
+def _hold_lines(program: str, led_count: int = DOT_LED_COUNT):
+    steps = _paint_steps(program, led_count)
+    return [steps[position] for position in _hold_indexes(steps, led_count)]
+
+
+def test_a_pulse_leaves_the_strips_resting_colour_not_its_peak() -> None:
+    ripple = next(program for name, program, _leds in CORPUS if name == "effect_ripple_8led")
+    narrowed = downsample_program(ripple, source_leds=8)
+    assert narrowed is not None
+    holds = _hold_lines(narrowed)
+    assert holds, "the ripple's staggered line must be paid back as a hold line"
+    for hold in holds:
+        colors = {color for _band, color in hold.segments[0].assignments}
+        assert colors == {"#000203"}, colors
+    assert "0:#007280 1:#007280 660ms none" not in narrowed
+
+    synthetic = (
+        "#000203 60ms cosine\n"
+        "0:#007280 500ms pulse 200ms; 3:#007280 500ms pulse; "
+        "4:#007280 500ms pulse 200ms; 7:#007280 500ms pulse\n"
+        "repeat"
+    )
+    narrowed = downsample_program(synthetic, source_leds=8)
+    assert narrowed is not None
+    hold = _hold_lines(narrowed)
+    assert len(hold) == 1
+    assert hold[0].segments[0].assignments == ((0, "#000203"), (1, "#000203"))
+    assert hold[0].segments[0].timing.duration_ms == 200
+
+
+def test_every_hold_line_after_a_pulse_line_rests_on_the_source_colour() -> None:
+    """Corpus-wide and exact. A line the narrowing shortened is paid back by
+    one hold line; its colours must be the per-band brightest of what the
+    strip rests on after that source line. The expectation comes from the
+    linked pair's own resting-state model, threaded across the source's
+    lines, and from a band pick written out here, not from the code under
+    test."""
+    from jrbar.animation import IndexedPaint, step_duration_ms
+    from jrbar.linked_sync import resting_state
+
+    def rgb(color: str) -> tuple[int, int, int]:
+        return (int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16))
+
+    def brightest(members: list[tuple[int, int, int]]) -> tuple[int, int, int]:
+        best, best_luma = (0, 0, 0), 0.0
+        for red, green, blue in members:
+            luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+            if luma > best_luma:
+                best, best_luma = (red, green, blue), luma
+        return best
+
+    after_a_pulse = 0
+    for name, program, source_leds in CORPUS:
+        if source_leds <= DOT_LED_COUNT:
+            continue
+        narrowed = downsample_program(program, source_leds=source_leds)
+        if narrowed is None:
+            continue
+        source_lines = _paint_steps(program, source_leds)
+        narrowed_lines = _paint_steps(narrowed, DOT_LED_COUNT)
+
+        state = [(0, 0, 0)] * source_leds
+        position = 0
+        for source_line in source_lines:
+            line = narrowed_lines[position]
+            position += 1
+            state = resting_state(source_line, state, source_leds)
+            shortfall = step_duration_ms(source_line) - step_duration_ms(line)
+            if shortfall <= 0:
+                continue
+            hold = narrowed_lines[position]
+            position += 1
+            (segment,) = hold.segments
+            assert type(segment) is IndexedPaint
+            assert segment.timing.easing == "none"
+            assert segment.timing.duration_ms == shortfall, name
+            expected = [
+                brightest(state[band * source_leds // DOT_LED_COUNT : (band + 1) * source_leds // DOT_LED_COUNT])
+                for band in range(DOT_LED_COUNT)
+            ]
+            painted = [rgb(color) for _band, color in segment.assignments]
+            assert painted == expected, f"{name}: hold paints {painted}, strip rests on {expected}"
+            if any(part.timing.easing == "pulse" for part in line.segments):
+                after_a_pulse += 1
+        assert position == len(narrowed_lines), f"{name}: unexplained extra lines"
+    assert after_a_pulse >= 5, "the corpus must exercise the hold line after a pulse"
+
+
+def test_the_missing_band_fill_after_a_pulse_is_the_resting_colour() -> None:
+    land = next(program for name, program, _leds in CORPUS if name == "finish_land_2led")
+    narrowed = downsample_program(land, source_leds=2)
+    assert narrowed is not None
+    assert "0:#005924 500ms" not in narrowed
+    fill = "1:#00732E 500ms cosine; 0:#000000 500ms"
+    assert fill in narrowed.splitlines()
+
+    synthetic = (
+        "0:#00FF00 500ms pulse\n"
+        "1:#FF0000 500ms\n"
+        "repeat"
+    )
+    narrowed = downsample_program(synthetic, source_leds=2)
+    assert narrowed is not None
+    assert "1:#FF0000 500ms; 0:#000000 500ms" in narrowed.splitlines()
+
+
+def test_the_average_rung_still_reaches_the_pulse_peak() -> None:
+    """The average rung paints each pulse's PEAK as its target and lets the
+    firmware bring it back; resting on the start colour there would turn
+    every pulse into a pulse to itself."""
+    scanner = next(program for name, program, _leds in CORPUS if name == "effect_scanner_8led")
+    averaged = downsample_program(scanner, source_leds=8, band="average")
+    assert averaged == (
+        "0:#005661 1:#007280 723ms linear\n"
+        "0:#007280 1:#005661 723ms linear\n"
+        "repeat"
+    )
+    assert "#007280" in averaged
+
+    pulse_only = "0:#FF0000 500ms pulse; 1:#FF0000 500ms pulse"
+    assert downsample_program(pulse_only, source_leds=8, band="average") == (
+        "0:#800000 1:#000000 500ms pulse"
+    )
+
+
+def test_a_later_pulse_resets_an_earlier_assignment_on_the_same_led() -> None:
+    (step,) = _paint_steps("0:#FF0000 300ms; 0:#00FF00 300ms pulse", DOT_LED_COUNT)
+    start = ["#112233", "#445566"]
+    assert _resting_source_state(step, source_leds=2, state=start) == start
+
+    (step,) = _paint_steps("0:#00FF00 300ms pulse; 0:#FF0000 300ms", DOT_LED_COUNT)
+    assert _resting_source_state(step, source_leds=2, state=start) == ["#FF0000", "#445566"]
+
+    (step,) = _paint_steps("#00FF00 300ms pulse", DOT_LED_COUNT)
+    assert _resting_source_state(step, source_leds=2, state=start) == start
+
+    (step,) = _paint_steps("#00FF00 #FF0000 300ms pulse", DOT_LED_COUNT)
+    assert _resting_source_state(step, source_leds=2, state=start) == start
