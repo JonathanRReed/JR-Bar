@@ -6636,8 +6636,14 @@ def build_headless_controller_class() -> type:
             so rather than claiming a window opened."""
             server = getattr(self, "_core", None)
             try:
-                connected = server is not None and server.client_count() > 0
+                # client_count is a property on CoreServer, not a method.
+                connected = server is not None and server.client_count > 0
             except Exception:
+                # A deck press must never crash the input worker, but a
+                # probe that fails has to show in the log.
+                legacy.log_status_bar(
+                    f"core: app request probe failed: {traceback.format_exc(limit=4)}"
+                )
                 connected = False
             if not connected:
                 return False
