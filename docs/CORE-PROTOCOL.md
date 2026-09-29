@@ -37,7 +37,10 @@ hand-written examples.
   Python status bar included, owns the hook event socket. A supervised
   daemon (`JRBAR_SUPERVISED=1`) exits on its own when its parent is gone.
   On connect the daemon sends `hello`, then the latest full `state`,
-  `lights` and `settings`. After that it pushes documents as they change.
+  `lights` and `settings`. Frames published while that greeting is being
+  sent are held and follow it, in order: `hello` is always the first frame,
+  and a live frame never lands ahead of an older snapshot of its own kind.
+  After that it pushes documents as they change.
   When the daemon terminates (`quit`, SIGTERM, its supervisor gone) it
   writes `off` to every mounted strip, Pro and Dot alike, straight to
   each volume after the legacy teardown, past the controllers' dedupe
