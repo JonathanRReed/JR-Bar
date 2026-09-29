@@ -555,6 +555,11 @@ def read_t3_snapshot(
             turn_state = ("(SELECT CASE WHEN COUNT(*) = 1 THEN MIN(observed_turn.state) ELSE NULL END "
                           "FROM projection_turns AS observed_turn WHERE observed_turn.thread_id = threads.thread_id "
                           "AND observed_turn.turn_id = COALESCE(sessions.active_turn_id, threads.latest_turn_id))")
+        # The cap keeps the most recently active threads, ranked by the same
+        # three timestamps the panel shows as a thread's updated time. Older
+        # threads are already hidden as idle or stale, so the ones a person
+        # is working in are never the ones dropped. MAX() is NULL when any
+        # argument is NULL, so each one is coalesced.
         rows = connection.execute(
             f"""
             SELECT
@@ -591,7 +596,13 @@ def read_t3_snapshot(
             WHERE threads.deleted_at IS NULL
               AND projects.deleted_at IS NULL
               AND threads.archived_at IS NULL
-            ORDER BY threads.created_at ASC, threads.thread_id ASC
+            ORDER BY
+              MAX(
+                COALESCE(threads.updated_at, ''),
+                COALESCE(sessions.updated_at, ''),
+                COALESCE(threads.settled_at, '')
+              ) DESC,
+              threads.thread_id ASC
             LIMIT ?
             """,
             (T3_MAX_THREADS + 1,),

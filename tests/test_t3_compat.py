@@ -604,3 +604,171 @@ def test_a_t3_0_0_43_schema_stays_compatible(tmp_path: Path) -> None:
     assert snapshot.compatible is True
     assert [thread.thread_id for thread in snapshot.threads] == ["thread-1"]
     assert t3_compat.T3_MAXIMUM_TESTED_VERSION == "0.0.43"
+
+
+def _stamp(index: int) -> str:
+    return f"2026-08-16T12:{index // 60:02d}:{index % 60:02d}Z"
+
+
+def _seed_threads(
+    database: Path,
+    count: int,
+    *,
+    updated_at=_stamp,
+) -> None:
+    """Insert `count` synthetic threads, oldest first, in one transaction."""
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "INSERT INTO projection_projects VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "project-1",
+            "Synthetic",
+            "/repo/synthetic",
+            "2026-08-16T11:00:00Z",
+            "2026-08-16T11:00:00Z",
+            None,
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, branch, worktree_path, latest_turn_id, created_at,
+          updated_at, archived_at, settled_at, pending_approval_count,
+          pending_user_input_count, has_actionable_proposed_plan, deleted_at,
+          additive_future_column
+        ) VALUES (?, ?, ?, '{}', 'full-access', 'default', NULL, NULL, NULL,
+                  ?, ?, NULL, NULL, 0, 0, 0, NULL, NULL)
+        """,
+        [
+            (
+                f"thread-{index:04d}",
+                "project-1",
+                f"Thread {index}",
+                updated_at(index),
+                updated_at(index),
+            )
+            for index in range(count)
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+
+def test_t3_snapshot_over_the_cap_keeps_the_most_recently_active_threads(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    _seed_threads(database, 600)
+
+    snapshot = read_t3_snapshot(base_dir=tmp_path)
+
+    assert snapshot.truncated is True
+    assert len(snapshot.threads) == t3_compat.T3_MAX_THREADS
+    assert {thread.thread_id for thread in snapshot.threads} == {
+        f"thread-{index:04d}" for index in range(88, 600)
+    }
+    kept = {thread.thread_id for thread in snapshot.threads}
+    assert "thread-0599" in kept
+    assert "thread-0000" not in kept
+
+
+def test_t3_snapshot_ranks_by_the_latest_of_thread_session_and_settled_time(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    _seed_threads(database, 600)
+    connection = sqlite3.connect(database)
+    # thread-0000 is only fresh through its session row.
+    connection.execute(
+        "INSERT INTO projection_thread_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "thread-0000",
+            "running",
+            "Codex",
+            "codex-main",
+            "provider-thread-0",
+            "full-access",
+            None,
+            None,
+            "2026-08-16T13:00:00Z",
+        ),
+    )
+    # thread-0001 has a stale session row but a fresh thread row.
+    connection.execute(
+        "INSERT INTO projection_thread_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "thread-0001",
+            "ready",
+            "Codex",
+            "codex-main",
+            "provider-thread-1",
+            "full-access",
+            None,
+            None,
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    connection.execute(
+        "UPDATE projection_threads SET updated_at = ? WHERE thread_id = ?",
+        ("2026-08-16T13:00:01Z", "thread-0001"),
+    )
+    # thread-0002 is only fresh through settled_at.
+    connection.execute(
+        "UPDATE projection_threads SET settled_at = ? WHERE thread_id = ?",
+        ("2026-08-16T13:00:02Z", "thread-0002"),
+    )
+    connection.commit()
+    connection.close()
+
+    snapshot = read_t3_snapshot(base_dir=tmp_path)
+
+    kept = {thread.thread_id for thread in snapshot.threads}
+    assert snapshot.truncated is True
+    assert {"thread-0000", "thread-0001", "thread-0002"} <= kept
+    # The 88 dropped threads are the least recently updated of the rest.
+    assert kept == {"thread-0000", "thread-0001", "thread-0002"} | {
+        f"thread-{index:04d}" for index in range(91, 600)
+    }
+    by_id = {thread.thread_id: thread for thread in snapshot.threads}
+    assert by_id["thread-0000"].updated_at == t3_compat._latest_time(
+        _stamp(0), "2026-08-16T13:00:00Z", None
+    )
+    assert by_id["thread-0001"].updated_at == t3_compat._latest_time(
+        "2026-08-16T13:00:01Z", "2026-01-01T00:00:00Z", None
+    )
+    assert by_id["thread-0002"].updated_at == t3_compat._latest_time(
+        _stamp(2), None, "2026-08-16T13:00:02Z"
+    )
+
+
+@pytest.mark.parametrize(
+    ("count", "expected_truncated"),
+    ((512, False), (513, True)),
+)
+def test_t3_snapshot_at_the_cap_is_not_truncated(
+    tmp_path: Path,
+    count: int,
+    expected_truncated: bool,
+) -> None:
+    database = _database(tmp_path)
+    _seed_threads(database, count)
+
+    snapshot = read_t3_snapshot(base_dir=tmp_path)
+
+    assert snapshot.truncated is expected_truncated
+    assert len(snapshot.threads) == t3_compat.T3_MAX_THREADS
+
+
+def test_t3_snapshot_cap_is_deterministic_for_equal_timestamps(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    _seed_threads(database, 600, updated_at=lambda _index: "2026-08-16T12:00:00Z")
+
+    first = read_t3_snapshot(base_dir=tmp_path)
+    second = read_t3_snapshot(base_dir=tmp_path)
+
+    first_ids = [thread.thread_id for thread in first.threads]
+    assert first_ids == [thread.thread_id for thread in second.threads]
+    assert set(first_ids) == {f"thread-{index:04d}" for index in range(512)}
