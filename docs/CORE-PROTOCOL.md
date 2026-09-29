@@ -438,7 +438,10 @@ Vocabulary:
   quiet, and null while nothing is in effect -- a merely upcoming quiet
   period never surfaces as an end time.
 - `escalation.stage`: `none`, `ramp`, `menu_bar`, `final` (0…3);
-  `since` is when the oldest unanswered ask started blocking.
+  `since` is when the oldest unanswered ask started blocking, a wall-clock
+  epoch fixed for the episode: it does not move from build to build or
+  across a sleep. A new oldest ask, a Resume Escalation and a daemon
+  restart each start a new episode.
 - `power` says why the Mac is (or is not) held awake. `keep_awake` is true
   while anybody wants it awake -- the agents (working, or in the grace
   after) or the person's lease -- and nothing has made the holds yield.
