@@ -564,6 +564,10 @@ _CONFORMANCE = (
     ("grok", "SubagentStop", "subagent_stop", WorkLifecycle.COMPLETED, False),
     ("grok", "Stop", "stop", WorkLifecycle.COMPLETED, False),
     ("grok", "StopFailure", "stop_failure", WorkLifecycle.FAILED, False),
+    # A turn that ended unfinished (Ctrl+C, a declined prompt, the turn limit).
+    ("grok", "StopCancelled", "interrupt", WorkLifecycle.IDLE, False),
+    # The persisted normalized record's spelling, which a replay re-reads.
+    ("grok", "Interrupt", "interrupt", WorkLifecycle.IDLE, False),
     ("grok", "SessionEnd", "session_end", WorkLifecycle.COMPLETED, False),
     # Cursor native names
     ("cursor", "sessionStart", "session_start", WorkLifecycle.IDLE, False),

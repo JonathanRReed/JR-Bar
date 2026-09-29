@@ -100,6 +100,12 @@ GROK_EVENTS = (
     "SubagentStop",
     "Stop",
     "StopFailure",
+    # Runs INSTEAD of Stop when a turn ends without completing: Ctrl+C or a
+    # client stop, a declined permission prompt, the turn limit, or Grok
+    # giving up making progress (grok 1.0.41 hook guide). Observation only.
+    # Without it a cancelled turn left the row Working until the next
+    # prompt. A Grok build that does not know the name skips it.
+    "StopCancelled",
     "SessionEnd",
 )
 
@@ -1909,6 +1915,17 @@ def parse_log_line(provider: str, line: str) -> HookEvent | None:
             event_name = "PermissionRequest"
 
     normalized_raw = normalize_event_payload(raw, event_name, logged_at)
+    if (
+        provider == "grok"
+        and event_name == "StopCancelled"
+        and _first_string(normalized_raw, "subagentType", "subagent_type")
+    ):
+        # Grok's guide: "A subagent's stop is not the session's". A worker's
+        # own turn limit or declined prompt also fires StopCancelled, always
+        # carrying its subagentType. Dropping it here (not marking it inert,
+        # which would read as the source going quiet) keeps a busy session
+        # from flipping to Idle.
+        return None
 
     session_id = _first_string(normalized_raw, "session_id", "sessionId")
     agent_id = _first_string(normalized_raw, "agent_id", "agentId")

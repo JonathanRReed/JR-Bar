@@ -58,6 +58,10 @@ _TURN_END_HOOK_EVENTS = frozenset(
     {
         "Stop",
         "StopFailure",
+        # A turn that ended unfinished (Grok's Ctrl+C or declined prompt,
+        # Codex's Interrupt) is an end like any other, never a heartbeat.
+        "StopCancelled",
+        "Interrupt",
         "SubagentStop",
         "SessionEnd",
         "Notification",

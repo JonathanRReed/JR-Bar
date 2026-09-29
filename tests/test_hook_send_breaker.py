@@ -58,6 +58,17 @@ def test_ordinary_sends_stop_after_repeated_failure__and_2_more(breaker) -> None
 
 
 
+def test_a_cancelled_turn_is_never_suppressed(breaker) -> None:
+    """A cancelled Grok turn (and an interrupted Codex one) ends a turn: not a heartbeat."""
+    now = 100.0
+    for _ in range(HOOK_BREAKER_TRIP_AFTER * 5):
+        breaker.record(delivered=False, now=now)
+
+    assert breaker.should_attempt("StopCancelled", now) is True
+    assert breaker.should_attempt("Interrupt", now) is True
+    assert breaker.should_attempt("PreToolUse", now) is False
+
+
 def test_suppression_expires_on_its_own__and_1_more(breaker) -> None:
     # --- scenario: suppression_expires_on_its_own
     for _ in range(HOOK_BREAKER_TRIP_AFTER):

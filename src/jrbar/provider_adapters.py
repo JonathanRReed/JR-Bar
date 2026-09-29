@@ -516,6 +516,15 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
         "StopFailure": _STOP_FAILURE,
+        # A turn that ended unfinished (Ctrl+C, a declined prompt, the turn
+        # limit): the session stays open and idle, as after a Codex
+        # Interrupt. The report can arrive after the next prompt's
+        # UserPromptSubmit; a brief false idle then corrects itself at the
+        # next hook, so no per-turn id is tracked for it.
+        "StopCancelled": _INTERRUPT,
+        # The persisted normalized record's canonical spelling: a replay
+        # re-reads a StopCancelled as "Interrupt" and must still reduce it.
+        "Interrupt": _INTERRUPT,
         "SessionEnd": _SESSION_END,
     },
     "cursor": {
