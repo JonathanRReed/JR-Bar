@@ -48,10 +48,17 @@ covers the first useful checks.
   sessions and their sub-agent workers are told apart; a finished task you
   have not looked at yet is different from one you have.
 - **Escalates only for real asks.** A permission prompt, an input request
-  or an error turns the light amber, then pulses the menu-bar icon, then
-  chimes every 30 s until you answer. A turn that merely ended with a
-  question does not. Asks are pinned at the top of the panel with Approve
-  and Deny (⌘↩ / ⌘D) and arrive as banners with the same two actions.
+  or another ask turns the light amber. Asks are pinned at the top of the
+  panel with Approve and Deny (⌘↩ / ⌘D) and arrive as banners with the same
+  two actions. Left unanswered, an ask steps up: the light brightens after
+  30 s and the menu-bar icon pulses after 2 min. If you choose Chime or
+  Take over in **Settings > Notifications & Focus > Escalation > Loudest
+  stage**, a chime repeats every 30 s from 5 min on until you answer, and
+  Take over also grows the ask out of the notch. By default it stops at the
+  menu-bar pulse. The three delays are editable in the same group. A failed
+  session is a red light, one banner and a short sound. It is not an ask and
+  never escalates, and neither does a turn that merely ended with a
+  question.
 - **The Screen Bar.** A 6 pt band under the notch playing the same LEDS
   program as the strip, phase-locked to it, blended from eight samples into
   one gradient (never a row of segments). Hover shows the top session and a

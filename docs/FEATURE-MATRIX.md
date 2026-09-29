@@ -64,7 +64,7 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | Provider colours (dichromacy-safe defaults), blend modes, cycle speed, pulse floor and ceiling, done celebration | Implemented | Reviewed defaults |
 | Effects: builtins and provider animations, data-only packs, assignments by device / project / provider instance / provider / scene / state / default, reserved Needs-you and Failed effects, 2 Hz clamp (1 Hz saturated red), Reduce Motion fallback | Implemented | Provider animations |
 | Signals: asks, failures, completions, low battery, calendar, reminders, quota crossed, quota reset sunrise | Implemented, per-feature opt-ins | Mixed |
-| Escalation: light ramp → menu-bar pulse → chime every 30 s; webhook | Implemented | Conservative timings |
+| Escalation: light ramp → menu-bar pulse → chime every 30 s (opt-in tier: the default stops at the menu-bar pulse); webhook | Implemented | Light after 30 s, menu-bar pulse after 2 min, stops there |
 | Smart suppression: an ask whose terminal pane is frontmost gets its banner but no burst, pulse or chime (host bundle + process-ancestry proof, `answer_local`'s read); walking away re-arms the stage | Implemented | On |
 | Studio: hand-written LEDS programs, `INIT.LED` burn | Daemon only | Off |
 
