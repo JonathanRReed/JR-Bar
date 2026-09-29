@@ -1546,6 +1546,38 @@ hook's stdout must be a JSON object, so the shim prints `{}`. Transcript
 fallback (`transcript_monitoring.gemini`) reads
 `~/.gemini/tmp/<project>/chats/session-*.jsonl`.
 
+### OpenCode
+
+`jrbar agent-monitor install opencode` writes a plugin that hands the shim
+one small Claude-shaped payload per OpenCode event, in order, on stdin:
+`{hook_event_name, session_id?, request_id?, notification_type?}` plus the
+event's `sequence` and `timestamp` when it has them. Only opaque ids are
+forwarded, never a prompt, command, path or question text. The events it
+forwards:
+
+| OpenCode event | hook event |
+| --- | --- |
+| `session.created` | `SessionStart` |
+| `session.status` (`active` or `busy`) | `UserPromptSubmit` |
+| `session.idle` | `Stop` |
+| `session.error` | `StopFailure` |
+| `permission.asked` | `PermissionRequest` |
+| `question.asked` | `Notification` with `notification_type: "input_required"` |
+| `permission.replied`, `question.replied`, `question.rejected` | `PostToolUse` |
+| `tool.execute.before`, `tool.execute.after` | `PreToolUse`, `PostToolUse` |
+| `session.compacting` (or `session.compact.before`) | `PreCompact` |
+| `session.compacted` (or `session.compact.after`) | `PostCompact` |
+
+An ask is named by its request id, and the two halves of the pair spell it
+differently: `permission.asked` and `question.asked` carry it as
+`properties.id`, while `permission.replied`, `question.replied` and
+`question.rejected` carry it as `requestID`. The plugin reads the id from
+each event the way that event spells it, so a reply resolves the ask it
+answers. An asked event whose id is not an opaque identifier is forwarded
+without a `request_id` and reads as an ask with no identity; a replied or
+rejected event with a malformed `requestID`, or any event with a malformed
+session id, is dropped.
+
 ## Running it
 
 ```sh
