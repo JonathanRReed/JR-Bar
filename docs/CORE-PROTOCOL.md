@@ -1398,8 +1398,8 @@ line to `$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and
 exits 0; at 16 MiB the file rotates to `<provider>.overflow.jsonl` (one
 generation) and a fresh one starts. A record ends at a newline and nowhere
 else: U+2028, U+2029 and U+0085 inside a payload are data (the shim copies
-every byte at or above 0x80 verbatim), so the drain, the doctor's
-`pending_lines` count and the daemon's pending-lines check split the file on
+every byte at or above 0x80 verbatim), so the drain, `hooks_doctor`'s
+`pending_lines` and `doctor`'s "pending hook lines" check split the file on
 `\n` only. Every append and rotation holds an
 `flock` on the file its path still names, and the daemon takes that lock on
 a file it has renamed to drain, so no line lands in a file after it was
