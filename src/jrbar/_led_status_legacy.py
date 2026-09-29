@@ -90,7 +90,14 @@ DEVICE_SERIAL_LED_COUNTS = {
 # on a slow FAT volume once blocked that thread 13.7 s). Memoized per root
 # for 60 s; a disconnect invalidates the root so a swapped device is
 # re-read (2026-09-11 audit).
+#
+# A read that raised OSError says nothing about the firmware, so it is not
+# "no serial": a serial never changes for a mount, and the disconnect
+# invalidation above is what protects a swapped device. A failed read keeps
+# the last good count (honest states: the last good reading survives) and is
+# tried again after _LED_COUNT_RETRY_SECONDS, not after a minute (2026-09-29).
 _LED_COUNT_TTL_SECONDS = 60.0
+_LED_COUNT_RETRY_SECONDS = 5.0
 _LED_COUNT_CACHE: dict[Path, tuple[float, int | None]] = {}
 
 
@@ -108,7 +115,12 @@ def _led_count_from_serial(root: Path) -> int | None:
     try:
         text = (root / "STATUS.TXT").read_text(errors="replace")[:4096]
     except OSError:
-        text = ""
+        held = cached[1] if cached is not None else None
+        _LED_COUNT_CACHE[root] = (
+            now - (_LED_COUNT_TTL_SECONDS - _LED_COUNT_RETRY_SECONDS),
+            held,
+        )
+        return held
     for line in text.splitlines():
         if not line.startswith("serial "):
             continue

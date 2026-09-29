@@ -236,6 +236,137 @@ def test_led_count_serial_read_is_memoized_and_expires(tmp_path: Path, monkeypat
     assert len(reads) == 3
 
 
+class _StatusReads:
+    """Count (and optionally fail) reads of STATUS.TXT under one test."""
+
+    def __init__(self, monkeypatch) -> None:
+        self.reads = 0
+        self.failing = False
+        real_read = Path.read_text
+        owner = self
+
+        def counting(path: Path, *args, **kwargs):
+            if path.name == "STATUS.TXT":
+                owner.reads += 1
+                if owner.failing:
+                    raise OSError(5, "input/output error")
+            return real_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", counting)
+
+
+def _bare_label_root(tmp_path: Path, status: str) -> Path:
+    """A device that mounts as plain "SidePulse", which no name rule can
+    classify: only its serial says Dot or Pro."""
+    root = tmp_path / "SidePulse"
+    root.mkdir()
+    (root / "LEDS.LED").write_text("off")
+    (root / "STATUS.TXT").write_text(status)
+    return root
+
+
+def _backdate(led_status, root: Path, seconds: float) -> None:
+    stamp, count = led_status._LED_COUNT_CACHE[root]
+    led_status._LED_COUNT_CACHE[root] = (stamp - seconds, count)
+
+
+def test_a_failed_status_read_keeps_the_last_good_led_count(tmp_path: Path, monkeypatch) -> None:
+    import time
+
+    from jrbar import _led_status_legacy as led_status
+
+    root = _bare_label_root(tmp_path, "serial SPD-000120\n")
+    status = _StatusReads(monkeypatch)
+    led_status._LED_COUNT_CACHE.clear()
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+
+    # The entry expires, and the next read of the volume fails.
+    _backdate(led_status, root, led_status._LED_COUNT_TTL_SECONDS)
+    status.failing = True
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2, (
+        "a failed read is not 'no serial': the Dot must not fall back to eight"
+    )
+    assert status.reads == 2
+    stamp, count = led_status._LED_COUNT_CACHE[root]
+    assert count == 2
+    remaining = led_status._LED_COUNT_TTL_SECONDS - (time.monotonic() - stamp)
+    assert remaining <= led_status._LED_COUNT_RETRY_SECONDS
+
+    # Inside the retry window nothing hammers the volume.
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    assert status.reads == 2
+
+    # After the retry window the volume is read once more, and answers.
+    _backdate(led_status, root, led_status._LED_COUNT_RETRY_SECONDS)
+    status.failing = False
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    assert status.reads == 3
+    assert led_status._LED_COUNT_CACHE[root][1] == 2
+
+
+def test_a_failed_first_status_read_is_retried_within_seconds_not_a_minute(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from jrbar import _led_status_legacy as led_status
+
+    root = _bare_label_root(tmp_path, "serial SPD-000120\n")
+    status = _StatusReads(monkeypatch)
+    status.failing = True
+    led_status._LED_COUNT_CACHE.clear()
+
+    # Nothing good to keep: the honest answer is the name rule's eight.
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert status.reads == 1
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert status.reads == 1, "a failed read must not be repeated on every call"
+
+    _backdate(led_status, root, led_status._LED_COUNT_RETRY_SECONDS)
+    status.failing = False
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    assert status.reads == 2
+
+
+def test_a_status_file_without_a_serial_is_still_memoized_for_the_full_ttl(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An old-firmware Dot has no serial line. That is an answer, and it
+    stays cached for the whole minute: only a failed read is a non-answer."""
+    from jrbar import _led_status_legacy as led_status
+
+    root = _bare_label_root(tmp_path, "reads 1\nticks 2\n")
+    status = _StatusReads(monkeypatch)
+    led_status._LED_COUNT_CACHE.clear()
+
+    for _ in range(3):
+        assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert status.reads == 1
+
+    _backdate(led_status, root, led_status._LED_COUNT_TTL_SECONDS - 1.0)
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert status.reads == 1
+
+    _backdate(led_status, root, 1.0)
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert status.reads == 2
+
+
+def test_a_disconnect_still_drops_a_retained_count(tmp_path: Path, monkeypatch) -> None:
+    from jrbar import _led_status_legacy as led_status
+
+    root = _bare_label_root(tmp_path, "serial SPD-000120\n")
+    status = _StatusReads(monkeypatch)
+    led_status._LED_COUNT_CACHE.clear()
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    _backdate(led_status, root, led_status._LED_COUNT_TTL_SECONDS)
+    status.failing = True
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+
+    # The device went away. Whatever mounts at this path next must never
+    # inherit the previous device's count.
+    led_status.invalidate_led_count_cache(root)
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+
+
 def test_a_failed_probe_keeps_the_identity_until_the_mount_changes__and_2_more(tmp_path: Path) -> None:
     # --- scenario: a_failed_probe_keeps_the_identity_until_the_mount_changes
     """Under load ``diskutil info`` times out now and then. The Dot used to
