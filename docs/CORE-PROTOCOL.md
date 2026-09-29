@@ -746,6 +746,12 @@ volatile fields: `lights` follows the same `doc_significant_equal` rule as
   clocks meet in this one field and they are not interchangeable: a
   monotonic reading subtracted from a wall-clock `now` is what made a
   surface report 1.79e9 seconds, which the app rendered as "20704 d".
+  `seconds_in_state` is as of the frame's build, and a frame that differs
+  from the last one only in it is not sent (it is one of the volatile
+  fields), so a held frame's number goes stale. A client that shows it live
+  ages it on its own clock from `sessions[].since` (or `asks[].opened_at`
+  for a light that is about an ask), and falls back to the number when it
+  has no such anchor.
   Every duration-shaped field in `state` and `lights` carries the same
   bound (`core_projection.MAX_DURATION_SECONDS`), `health.sources.*.heard_age_seconds`
   included; `health.intake.silence_seconds` is the policy window, not an
