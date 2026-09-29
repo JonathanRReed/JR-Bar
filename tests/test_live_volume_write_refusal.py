@@ -22,8 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from jrbar import _battery_legacy, _device_writer_legacy, _led_status_legacy, cli
-from jrbar import device_writer, write_health
+from jrbar import _battery_legacy, _device_writer_legacy, _led_status_legacy, cli, device_writer, write_health
 from jrbar.firmware_validation import (
     FirmwareValidationUnavailableError,
     require_firmware_program,
