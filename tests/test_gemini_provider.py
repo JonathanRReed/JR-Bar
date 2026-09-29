@@ -77,6 +77,68 @@ def test_native_names_canonicalise_and_tool_permission_is_an_ask() -> None:
     assert done is not None and done.event_name == "Stop"
 
 
+def test_gemini_notifications_stay_source_neutral_and_tool_permission_stays_an_ask() -> None:
+    """Gemini's other notifications say nothing about the source, and the ask still opens."""
+    from jrbar._collector_legacy import _registered_hook_source
+    from jrbar.provider_adapters import (
+        InertProviderRecord,
+        NormalizedProviderRecord,
+        minimize_hook_event,
+        provider_facts_for_record,
+    )
+    from jrbar.provider_facts import (
+        ProviderRequestState,
+        RequestKind,
+        SourceFreshness,
+        SourceHealth,
+        WorkLifecycle,
+    )
+
+    source = _registered_hook_source("gemini")
+    assert source is not None
+
+    def batch_for(notification_type: str, **extra: str):
+        line = json.dumps(
+            {
+                "hook_event_name": "Notification",
+                "notification_type": notification_type,
+                "session_id": "gemini-session-01",
+                "timestamp": "2026-09-10T12:00:00Z",
+                **extra,
+            }
+        )
+        event = parse_log_line("gemini", line)
+        assert event is not None
+        record = minimize_hook_event(
+            event,
+            source_key=source.source_key,
+            contract=source.contract,
+            observation_authority=source.registration.observation_authority,
+        )
+        batch = provider_facts_for_record(
+            record,
+            contract=source.contract,
+            observation_authority=source.registration.observation_authority,
+            observed_at_epoch=1_800_000_000.0,
+        )
+        return record, batch
+
+    record, batch = batch_for("Other")
+    assert type(record) is InertProviderRecord
+    assert batch.source_health is SourceHealth.HEALTHY
+    assert batch.source_freshness is SourceFreshness.FRESH
+    assert batch.work_facts == () and batch.request_facts == ()
+    assert tuple(item.identifier.value for item in batch.diagnostics) == ("unknown_notification_kind",)
+
+    record, batch = batch_for("ToolPermission", request_id="gemini-request-01")
+    assert type(record) is NormalizedProviderRecord
+    (work,) = batch.work_facts
+    assert work.lifecycle is WorkLifecycle.WAITING
+    (request,) = batch.request_facts
+    assert request.state is ProviderRequestState.LIVE and request.request_kind is RequestKind.PERMISSION
+    assert batch.source_health is SourceHealth.HEALTHY
+
+
 def test_hook_client_prints_the_empty_verdict_for_gemini__and_1_more(tmp_path: Path) -> None:
     # --- scenario: hook_client_prints_the_empty_verdict_for_gemini
     completed = subprocess.run(

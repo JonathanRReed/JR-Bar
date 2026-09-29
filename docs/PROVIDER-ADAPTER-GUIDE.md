@@ -52,10 +52,10 @@ The implementation boundary is `src/jrbar/provider_adapters.py`.
 1. Accept the provider's native event only at the outer boundary as `HookEvent`.
 2. Call `minimize_hook_event(record, source_key=..., contract=..., observation_authority=...)`.
 3. Copy only typed, allowlisted scalars into `NormalizedProviderRecord`. The result includes `event_name`, time, event token, work/request identity, parent identity, safe label, notification kind, sequence, and terminal cause. It does not retain prompt text, transcript text, paths, URLs, or credentials.
-4. Unknown, malformed, mismatched, or unsupported input becomes an `InertProviderRecord` with a bounded diagnostic such as `unknown_provider_event`, `invalid_provider_identity`, or `contract_not_observable`.
+4. Unknown, malformed, mismatched, or unsupported input becomes an `InertProviderRecord` with a bounded diagnostic such as `unknown_provider_event`, `invalid_provider_identity`, or `contract_not_observable`. A notification type the adapter does not recognise stays inert and keeps its `unknown_notification_kind` diagnostic, but it carries no facts and does not degrade the source. Other unknown input still does.
 5. Pass either record to `provider_facts_for_record(..., observed_at_epoch=...)` to produce a source-scoped `ProviderFactBatch`.
 
-The normalizer uses `_PROVIDER_EVENT_RULES` and provider-specific refinements for Cursor, Hermes, and Antigravity. Add native aliases in `providers.py` and event rules in `provider_adapters.py`; do not teach downstream reducers about provider-specific event spelling. Event tokens are preserved when valid, otherwise deterministically derived. Work and request IDs are bounded opaque identities. A provider's notification must map to one of the closed `NotificationKind` values.
+The normalizer uses `_PROVIDER_EVENT_RULES` and provider-specific refinements for Cursor, Hermes, and Antigravity. Add native aliases in `providers.py` and event rules in `provider_adapters.py`; do not teach downstream reducers about provider-specific event spelling. Event tokens are preserved when valid, otherwise deterministically derived. Work and request IDs are bounded opaque identities. Map a notification type to a `NotificationKind` only when it waits on the owner. A type that only informs, such as Claude's `idle_prompt`, is left unmapped: it names no lifecycle and no request, so it changes nothing.
 
 ```python
 normalized = minimize_hook_event(
@@ -72,7 +72,7 @@ facts = provider_facts_for_record(
 )
 ```
 
-`provider_facts_for_record` enforces the source and contract match. Request facts additionally require `actionable_requests` and direct provider observation. A transcript fallback must never manufacture an actionable request. Preserve partial health and diagnostics rather than replacing unknown data with an apparently idle state.
+`provider_facts_for_record` enforces the source and contract match. Request facts additionally require `actionable_requests` and direct provider observation. A transcript fallback must never manufacture an actionable request. Preserve partial health and diagnostics rather than replacing unknown data with an apparently idle state. The one exception is a notification type the adapter does not recognise: it keeps its diagnostic, but a routine notification from one session must not read as the whole provider going quiet and hold every other session's ask.
 
 ## Instances and settings ownership
 

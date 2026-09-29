@@ -15,6 +15,7 @@ from jrbar.operator_state import (
     reduce_operator_state,
 )
 from jrbar.provider_adapters import (
+    _INERT_DIAGNOSTIC_IDS,
     InertProviderRecord,
     NormalizedProviderRecord,
     NotificationKind,
@@ -24,10 +25,11 @@ from jrbar.provider_adapters import (
     normalized_provider_record_to_payload,
     provider_facts_for_record,
 )
-from jrbar.provider_contracts import negotiate_provider_contract
+from jrbar.provider_contracts import DiagnosticIdentifier, negotiate_provider_contract
 from jrbar.provider_facts import (
     NextActor,
     ObservationAuthority,
+    ProviderFactDiagnostic,
     ProviderRequestState,
     ProviderTerminalCause,
     RequestKind,
@@ -696,8 +698,10 @@ def test_notification_text_is_semantically_inert_without_typed_kind__and_2_more(
         assert batch.request_facts == ()
         assert batch.source_health is SourceHealth.HEALTHY
 
-    # --- scenario: unknown_typed_notification_kind_is_inert_partial
-    """A future typed notification value must stay visible without gaining semantics."""
+    # --- scenario: unknown_typed_notification_kind_is_inert_and_leaves_the_source_healthy
+    """A future typed notification value stays visible without gaining semantics
+    and without reading as the source going quiet: it names no lifecycle and no
+    request, so it says nothing about the source's ability to report."""
     normalized, batch = _batch(
         _event(
             "claude",
@@ -710,7 +714,11 @@ def test_notification_text_is_semantically_inert_without_typed_kind__and_2_more(
     assert normalized.diagnostic.identifier.value == "unknown_notification_kind"
     assert batch.work_facts == ()
     assert batch.request_facts == ()
-    assert batch.source_health is SourceHealth.PARTIAL
+    assert batch.source_health is SourceHealth.HEALTHY
+    assert batch.source_freshness is SourceFreshness.FRESH
+    assert tuple(item.identifier.value for item in batch.diagnostics) == (
+        "unknown_notification_kind",
+    )
 
     # --- scenario: allowlisted_typed_notification_requires_exact_request_identity
     """A typed notification without a request key must not open an unanswerable ask."""
@@ -1119,3 +1127,92 @@ def test_permission_request_with_tool_call_derives_its_request_identity__and_1_m
         "missing_request_identity",
     )
 
+
+
+
+# Notification types a provider sends about itself that name no lifecycle and
+# no ask. The adapter maps only the types that wait on the owner, so each of
+# these stays inert, and none may read as the source going quiet.
+_INFORMATIONAL_NOTIFICATIONS = (
+    ("claude", "idle_prompt"),
+    ("claude", "auth_success"),
+    ("claude", "agent_completed"),
+    ("claude", "push_notification"),
+    ("claude", "computer_use_enter"),
+    ("claude", "computer_use_exit"),
+    ("claude", "quota_auto_resume_scheduled"),
+    ("claude", "model_refusal_fallback"),
+    # Not mapped to an ask: nothing in the repo proves it waits on the owner.
+    ("claude", "worker_permission_prompt"),
+    ("grok", "idle_prompt"),
+    ("grok", "task_complete"),
+    ("gemini", "Other"),
+)
+
+
+@pytest.mark.parametrize(("provider", "notification_type"), _INFORMATIONAL_NOTIFICATIONS)
+def test_an_informational_notification_type_leaves_the_source_healthy(
+    provider: str,
+    notification_type: str,
+) -> None:
+    """An idle nudge from one session must not read as the whole provider going quiet."""
+    normalized, batch = _batch(
+        _event(provider, "Notification", raw={"notification_type": notification_type})
+    )
+
+    assert type(normalized) is InertProviderRecord
+    assert normalized.diagnostic.identifier.value == "unknown_notification_kind"
+    assert batch.work_facts == ()
+    assert batch.request_facts == ()
+    assert batch.source_health is SourceHealth.HEALTHY
+    assert batch.source_freshness is SourceFreshness.FRESH
+    assert tuple(item.identifier.value for item in batch.diagnostics) == (
+        "unknown_notification_kind",
+    )
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    sorted(_INERT_DIAGNOSTIC_IDS - {"unknown_notification_kind"}),
+)
+def test_every_other_inert_diagnostic_still_reads_as_source_loss(identifier: str) -> None:
+    """The neutral set is exactly one id: any other inert record stays PARTIAL/PARTIAL."""
+    source = _source("claude")
+    contract = _contract("claude")
+    record = InertProviderRecord(
+        source,
+        _EPOCH,
+        ProviderFactDiagnostic(DiagnosticIdentifier(identifier), 1),
+    )
+
+    batch = provider_facts_for_record(
+        record,
+        contract=contract,
+        observation_authority=ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
+        observed_at_epoch=_EPOCH + 0.25,
+    )
+
+    assert batch.source_health is SourceHealth.PARTIAL
+    assert batch.source_freshness is SourceFreshness.PARTIAL
+    assert batch.work_facts == ()
+    assert batch.request_facts == ()
+
+
+@pytest.mark.parametrize(
+    ("notification_type", "kind"),
+    [
+        ("permission_prompt", NotificationKind.PERMISSION_REQUEST),
+        ("elicitation_dialog", NotificationKind.INPUT_REQUIRED),
+    ],
+)
+def test_a_mapped_notification_type_keeps_its_kind(
+    notification_type: str,
+    kind: NotificationKind,
+) -> None:
+    """Widening what is neutral must not touch the types the adapter does map."""
+    normalized, _batch_unused = _batch(
+        _event("claude", "Notification", raw={"notification_type": notification_type})
+    )
+
+    assert type(normalized) is NormalizedProviderRecord
+    assert normalized.notification_kind is kind
