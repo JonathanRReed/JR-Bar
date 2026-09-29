@@ -176,6 +176,14 @@ class PermissionFacts:
     cwd: str | None = None
     #: The questions, when this request is a question to pick answers for.
     choices: tuple[ChoiceQuestion, ...] = ()
+    #: The sub-agent that raised the request, when the payload names one.
+    agent_id: str | None = None
+
+    @property
+    def is_worker(self) -> bool:
+        """A sub-agent's request: its payload names an agent other than the
+        session itself. The main session's own request is never one."""
+        return self.agent_id is not None and self.agent_id != self.session_id
 
 
 def _request_identity(provider: str, payload_text: str) -> tuple[str, Any] | None:
@@ -251,6 +259,7 @@ def permission_facts(provider: object, payload_text: object) -> PermissionFacts 
         ),
         cwd=record.cwd if type(record.cwd) is str else None,
         choices=choices,
+        agent_id=record.agent_id if type(record.agent_id) is str and record.agent_id else None,
     )
 
 

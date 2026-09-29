@@ -88,12 +88,13 @@ class _Seen(list):
             return self._condition.wait_for(lambda: len(self) >= count, timeout=5.0)
 
 
-def _service(sock_dir: Path, broker: DecisionBroker, seen: _Seen) -> HookIngressService:
+def _service(sock_dir: Path, broker: DecisionBroker, seen: _Seen, **kwargs) -> HookIngressService:
     service = HookIngressService(
         process=seen,
         socket_path=sock_dir / "hook-ingress.sock",
         rejection_path=sock_dir / "rejections.jsonl",
         decision_broker=broker,
+        **kwargs,
     )
     service.start()
     return service
@@ -220,6 +221,76 @@ def test_a_stopping_daemon_lets_parked_hooks_fall_through(shim: Path, sock_dir: 
     assert stdout == b"" and process.returncode == 0
     assert time.monotonic() - started < NOT_HELD_SECONDS
     assert broker.parked_count() == 0
+
+
+#: A sub-agent's hook payload names its own agent next to the parent session.
+WORKER_PERMISSION = {**PERMISSION, "agent_id": "decide-worker"}
+
+
+def _not_held(shim: Path, sock_dir: Path, provider: str, payload: dict) -> None:
+    """Run ``--decide`` for a request and prove it came straight back."""
+    started = time.monotonic()
+    process = _spawn(shim, sock_dir, provider, payload, "--decide")
+    stdout, _ = process.communicate(timeout=NOT_HELD_SECONDS)
+    assert stdout == b"" and process.returncode == 0
+    assert time.monotonic() - started < NOT_HELD_SECONDS
+
+
+def test_a_sub_agents_request_is_not_held_while_worker_asks_are_off(shim: Path, sock_dir: Path) -> None:
+    broker = _broker()
+    seen = _Seen()
+    service = _service(sock_dir, broker, seen, subagent_asks_alert=lambda: False)
+    try:
+        # --- scenario: a Claude worker's hook returns at once and holds nothing
+        _not_held(shim, sock_dir, "claude", WORKER_PERMISSION)
+        assert broker.parked_count() == 0
+        assert not broker.parked_event.is_set()
+
+        # --- scenario: a Codex worker's prompt is not delayed behind the hook
+        codex_worker = {**WORKER_PERMISSION, "turn_id": "t-1"}
+        _not_held(shim, sock_dir, "codex", codex_worker)
+        assert broker.parked_count() == 0
+        assert not broker.parked_event.is_set()
+
+        # --- scenario: the payload is still queued, so canonical state stays honest
+        assert seen.wait_for(2)
+        assert [json.loads(request.payload_text).get("agent_id") for request in seen] == [
+            "decide-worker",
+            "decide-worker",
+        ]
+
+        # --- scenario: a main session's request still parks and still takes a click
+        process = _spawn(shim, sock_dir, "claude", PERMISSION, "--decide")
+        request_id = broker.next_parked()
+        assert broker.decide("claude", request_id, DecisionVerb.ALLOW) is DecisionResult.SENT
+        stdout, _ = process.communicate(timeout=5)
+        assert json.loads(stdout) == decision_document("claude", DecisionVerb.ALLOW)
+    finally:
+        assert service.close(timeout_seconds=2.0)
+
+
+def test_a_sub_agents_request_is_held_when_worker_asks_are_on(shim: Path, sock_dir: Path) -> None:
+    for reader in (lambda: True, None):
+        broker = _broker()
+        service = _service(sock_dir, broker, _Seen(), subagent_asks_alert=reader)
+        try:
+            process = _spawn(shim, sock_dir, "claude", WORKER_PERMISSION, "--decide")
+            request_id = broker.next_parked()
+            assert broker.decide("claude", request_id, DecisionVerb.DENY) is DecisionResult.SENT
+            stdout, _ = process.communicate(timeout=5)
+            assert json.loads(stdout) == decision_document("claude", DecisionVerb.DENY)
+        finally:
+            assert service.close(timeout_seconds=2.0)
+
+
+def test_the_worker_ask_reader_is_a_callable_or_nothing(sock_dir: Path) -> None:
+    for bad in ("yes", True, 1):
+        with pytest.raises(ValueError):
+            HookIngressService(
+                socket_path=sock_dir / "hook-ingress.sock",
+                rejection_path=sock_dir / "rejections.jsonl",
+                subagent_asks_alert=bad,
+            )
 
 
 def test_the_wire_carries_the_decide_wait_and_the_verdict_line__and_2_more(sock_dir: Path) -> None:

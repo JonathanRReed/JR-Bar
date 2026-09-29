@@ -307,6 +307,7 @@ class HookIngressService:
         surface_recorder: object | None = None,
         backlog_cleared: Callable[[], object] | None = None,
         statusline_enabled: Callable[[], bool] | None = None,
+        subagent_asks_alert: Callable[[], bool] | None = None,
         epoch: Callable[[], float] = time.time,
     ) -> None:
         if not callable(process):
@@ -327,6 +328,8 @@ class HookIngressService:
             raise ValueError("invalid hook ingress backlog handler")
         if statusline_enabled is not None and not callable(statusline_enabled):
             raise ValueError("invalid hook ingress statusline reader")
+        if subagent_asks_alert is not None and not callable(subagent_asks_alert):
+            raise ValueError("invalid hook ingress sub-agent ask reader")
         if not callable(epoch):
             raise ValueError("invalid hook ingress epoch clock")
         if receipt_handler is not None and not callable(receipt_handler):
@@ -366,6 +369,9 @@ class HookIngressService:
         # The daemon hands its live settings flag so each statusline frame
         # does not stat and parse the settings document behind a 5 s cache.
         self._statusline_enabled = statusline_enabled
+        # The daemon's live "sub-agent asks alert" flag. ``None`` reads as
+        # "not told", and every request the lane can decide is then held.
+        self._subagent_asks_alert = subagent_asks_alert
         # Wall clock for the statusline lane: ``monotonic`` times the queue
         # but cannot be compared with a window's epoch ``resets_at``.
         self._epoch = epoch
@@ -821,6 +827,17 @@ class HookIngressService:
         except Exception:
             pass
 
+    def _worker_asks_are_quiet(self) -> bool:
+        """True only when the daemon says sub-agent asks are off. Not told,
+        or a reader that fails, keeps the lane holding every request."""
+        reader = self._subagent_asks_alert
+        if reader is None:
+            return False
+        try:
+            return not bool(reader())
+        except Exception:
+            return False
+
     def _park_decision(self, request: HookIngressRequest):
         """A ``--decide`` request the lane can hold, parked BEFORE the payload
         is queued, so the state that shows the ask already shows it as
@@ -833,6 +850,12 @@ class HookIngressService:
 
             facts = permission_facts(request.provider, request.payload_text)
             if facts is None:
+                return None
+            if facts.is_worker and self._worker_asks_are_quiet():
+                # Nobody is asked about a sub-agent's request while sub-agent
+                # asks are off, so a hold could never be answered. The shim
+                # gets the ordinary reply and the agent's own prompt shows at
+                # once, which for Codex is not delayed behind the hook.
                 return None
             slot = self._broker().park(
                 facts,

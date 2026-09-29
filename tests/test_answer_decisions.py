@@ -156,6 +156,24 @@ def test_permission_facts_key_the_request_the_way_canonical_state_does__and_3_mo
     assert first.request_id != other_turn.request_id
 
 
+def test_permission_facts_mark_a_sub_agents_request() -> None:
+    for provider, make, session in (
+        ("claude", _claude_payload, "claude-session-1"),
+        ("codex", _codex_payload, "codex-session-1"),
+    ):
+        main = permission_facts(provider, make())
+        worker = permission_facts(provider, make(agent_id="agent-9"))
+        # A payload that names the session as its own agent is the main.
+        itself = permission_facts(provider, make(agent_id=session))
+        assert main is not None and worker is not None and itself is not None
+        assert main.agent_id is None and main.is_worker is False
+        assert worker.agent_id == "agent-9" and worker.is_worker is True
+        assert itself.is_worker is False
+        # The derived request id does not move: asks already in flight at an
+        # upgrade must still resolve.
+        assert worker.request_id == main.request_id
+
+
 def test_always_allow_keeps_only_the_agents_own_allow_rules__and_1_more() -> None:
     # --- scenario: modes, directories, deny rules and junk are dropped
     suggestions = [
