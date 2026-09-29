@@ -1420,6 +1420,14 @@ For Cursor and Gemini CLI the shim prints `{}` on stdout as those hook
 contracts require (`--emit-empty-json` forces it for any provider);
 otherwise it prints nothing.
 
+A `ppid` of 1 or less in a frame means the agent had already exited and
+launchd had adopted the hook. The daemon reads such a frame as carrying no
+`ppid` (and no `ppid_start`), so it registers no process from it, and
+delivers the event instead of refusing it, whether the frame arrives live
+or from the spool. A `--decide` frame with such a `ppid` is still refused
+`refused_invalid`: an agent that is gone cannot be waiting for a verdict, so
+nothing is parked.
+
 `--decide` (the decide lane, installed only on Claude's and Codex's
 `PermissionRequest`) adds `"decide_ms":50000` to the header. Delivery and
 spooling are unchanged and keep the 250 ms budget; the shim then keeps
