@@ -24,6 +24,11 @@ def _names(text: str, token: str) -> bool:
     return re.search("`" + re.escape(token) + r"\b", text) is not None
 
 
+def _names_field(text: str, token: str) -> bool:
+    """Like `_names`, but a field may be named by its path: `usage.providers[].incident`."""
+    return re.search(r"`(?:[\w-]+(?:\[\])?\.)*" + re.escape(token) + r"\b", text) is not None
+
+
 def _section(doc: str, heading: str) -> str:
     """The text from `heading` to the next same-level heading."""
     start = doc.index(heading)
@@ -52,3 +57,9 @@ def test_the_deck_settings_row_names_its_ownership_arguments() -> None:
     missing = [token for token in ("ownership", "layer_owners") if not _names(row, token)]
     assert missing == [], f"the deck_set_settings row does not name: {missing}"
 
+
+def test_the_state_section_names_the_fields_the_daemon_sends() -> None:
+    state = _section(_doc(), "### state (full)")
+    fields = ("incident", "ownership", "layer_owners", "owner", "axes")
+    missing = [token for token in fields if not _names_field(state, token)]
+    assert missing == [], f"the state section does not name: {missing}"

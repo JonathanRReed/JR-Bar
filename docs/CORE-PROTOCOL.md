@@ -93,7 +93,8 @@ protocol 1. Timestamps are Unix epoch seconds.
     "since":1788982891.0,"updated_at":1788982891.0,"stale":false,
     "pid":9170,"origin":{"kind":"claude_app","label":"Claude App","bundle_id":"com.anthropic.claudefordesktop"},
     "ask":null,"remote":false,"terminal":{"app":"Ghostty","bundle_id":"com.mitchellh.ghostty","tty":"/dev/ttys004"},
-    "workers":1,"snoozed_until":null,"event":"PreToolUse","tool":"Bash","message":null}
+    "workers":1,"snoozed_until":null,"event":"PreToolUse","tool":"Bash","message":null,
+    "axes":{"outcome":"none","review":"pending","freshness":"live"}}
  ],
  "hidden_count":3,
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build",
@@ -107,7 +108,7 @@ protocol 1. Timestamps are Unix epoch seconds.
           "providers":[{"id":"claude","instance":"default","account":{"plan":null,"label":"Max","fidelity":"official"},
                         "windows":[{"name":"5h","id":"five_hour","used_pct":42.0,"resets_at":…,"scope":"account","model":null},
                                    {"name":"7d","id":"seven_day","used_pct":61.0,"resets_at":…}],
-                        "fidelity":"official","state":"ready","reason":null,"action":null,"observed_at":…,
+                        "fidelity":"official","state":"ready","incident":null,"reason":null,"action":null,"observed_at":…,
                         "tokens":{"input":1200,"cached_input":800,"output":300},"estimated_cost_usd":null,"credits_remaining":null,
                         "forecast":{"window_id":"five_hour","remaining_pct":58.0,"exhausts_at":1789000292.4,"pace":"under","rate_pct_per_hour":12.0,"samples":13}}]},
  "power":{"keep_awake":true,"closed_lid":{"policy":"agents","holding":false,"helper_installed":true}},
@@ -209,6 +210,16 @@ Vocabulary:
   the row; a `scope: "run"` snooze covers this row alone; the later
   deadline wins), null while none is in effect -- the panel reads it to
   say "Snoozed until…" and to offer Unsnooze.
+- `axes` is `{outcome, review, freshness}`: three separate facts about a
+  row that `lifecycle` alone would run together. `outcome` is what the
+  provider reported: `none` while the run is not over, `succeeded`,
+  `failed`, `unreported` for a run that ended without saying how, and
+  `unknown` when the row is too thin to classify. `review` is `pending`
+  while the run is live, `unreviewed` once it finished and nobody has
+  cleared it, and `reviewed` once Clear Agents acknowledged it.
+  `freshness` is `live` while the source is delivering, `delayed` once it
+  stopped (`stale`), and `unknown` when the row has no observation clock.
+  A `list_roster` row carries the same three.
 - `sessions` is what the panel should be looking at, not everything the
   daemon remembers (`completion_visibility`): live sessions -- working,
   tool running, waiting, blocked, idle-ready -- while they are still being
@@ -362,6 +373,11 @@ Vocabulary:
   (`rateLimitResetCredits.availableCount`), the CLIProxyAPI hub's credit list
   for a hub account, or a Grok billing answer that carries its coupons. A
   count to show; nothing in JR-Bar redeems a credit.
+- `usage.providers[].incident` is the provider's status-feed incident as
+  one line (`"Anthropic: Elevated errors"`), or null. It is an outage on
+  the vendor's side, never a quota verdict. It is null the moment the feed
+  goes stale or has not answered, so a present value is current and the
+  wire never invents one.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
   names it): `exhausts_at` (epoch, or null when nothing is burning),
@@ -519,11 +535,12 @@ field is one the Control Center and the Rail decode.
  "banks":{"index":0,"count":1},
  "rail":{"edge":"left"},
  "keymap":{"state":"applied","backup_at":1788896492.4,"generation":3,
-           "layers":[{"profile":0,"layer":0,"label":"Profile 1 / Layer 1: Base","scope":"automatic"}]},
+           "layers":[{"profile":0,"layer":0,"label":"Profile 1 / Layer 1: Base","scope":"automatic","owner":"jrbar"}]},
  "input_check":false,
  "last_input":{"index":1,"kind":"press","at":1788982888.4},
  "settings":{"enabled":true,"session_mode":true,"analog_enabled":false,
-             "bindings":[],"layer_map":[{"layer":1,"scope":"codex"},{"layer":2,"scope":"claude"}],"scopes":[]}}
+             "bindings":[],"layer_map":[{"layer":1,"scope":"codex"},{"layer":2,"scope":"claude"}],"scopes":[],
+             "ownership":"hold","layer_owners":[]}}
 ```
 
 - `device` is `null` when no pad is known (nothing approved, nothing
@@ -574,7 +591,9 @@ field is one the Control Center and the Rail decode.
   `unknown` (files that do not parse); `backup_at` is the backup file's
   mtime; `generation` counts setup results since the daemon started;
   `layers` lists the editable profile/layer pairs of the inspected (or
-  backed-up) keymap, each with the `scope` the layer map assigns it.
+  backed-up) keymap, each with the `scope` the layer map assigns it and
+  the `owner` `settings.layer_owners` gives it (`jrbar` for every layer not
+  handed to an external writer).
 - `input_check`: inputs are shown as `deck_input` events and every
   bound action is paused (also turned on by a verified keymap write, as
   the Python app did). `last_input` is the last observed control
@@ -582,9 +601,19 @@ field is one the Control Center and the Rail decode.
   AG16..19, `analog` for the calibrated sectors 20..23).
 - `settings` mirrors `deck-controls.json` (`enabled`, `session_mode`,
   `analog_enabled`, the explicit aux `bindings`, the `layer_map` from
-  hardware layer to board scope, and extra `scopes`; the Python defaults
-  are all off, with layers 1 and 2 mapped to `codex` and `claude` on a
-  fresh install).
+  hardware layer to board scope, extra `scopes`, `ownership` and
+  `layer_owners`; the Python defaults are all off, with layers 1 and 2
+  mapped to `codex` and `claude` on a fresh install). `ownership` is `yield`
+  or `hold` and says how the pad answers another app writing to it: `yield`
+  pauses JR-Bar's output while the adapter waits out its conflict retry,
+  `hold` absorbs the accusation on a layer JR-Bar owns and writes its
+  latest frame back. It is `hold` on a fresh install and for a file written
+  before the field existed. `layer_owners` is `[{layer, owner}]`, who may
+  paint each hardware layer: `jrbar` (the auto layer, painted from the
+  session board and what any layer not listed is), `everything`, or a
+  provider id, which hands the layer to that external writer so JR-Bar
+  leaves it alone while the pad sits there. Layer 0 is always `jrbar`.
+  `deck_set_settings` writes both.
 
 ### lights
 The presentation program for each surface, exactly the LEDS DSL text the
@@ -1086,7 +1115,7 @@ the main thread). Unknown args are ignored.
 | `presence` | mic, camera, screen_shared (bools), locked? (bool), idle_seconds? (≥ 0), focus? (bool, INFocusStatusCenter's `isFocused` from the app's grant), meeting_until? (epoch of a calendar meeting's end, at most 12 h ahead), next_event_start? (epoch, or null for "nothing coming"), reminders_due? (list of up to 32 reminder ids) | The app's report of what it senses (`jrbar.presence`). `next_event_start` and `reminders_due` are the app's own Calendar and Reminders readings: while they keep arriving (each stands 180 s), the calendar and reminder glows use them and the helper never asks EventKit or needs a grant of its own -- one reader, so the glow and the shelf cannot disagree; absent keys leave the helper's own read in place, and a malformed one refuses the whole report. A live microphone, camera or screen share is a call: the quiet policy gains a `call` source per `call_quiet_mode` (default `sounds`: every light and banner stays, `audible_allowed` goes false), the escalation ladder holds at `ramp` (no menu-bar pulse on a shared screen, no chime into a headset; `escalation_stage` events follow the held stage), and `state.presence.celebrations_held` asks the app's celebrations to hold their burst. A meeting adds a `calendar` source per `meeting_quiet_mode` (default `off`) until `meeting_until`. `locked`, or `idle_seconds` of 300 or more, is away: an ask that reaches the menu-bar stage goes straight to the finale (still capped by `escalation_tier`). `focus: true` stands in for the daemon's own Focus reading while the daemon holds no Focus Status grant (Follow Focus must be on). A report stands for 180 s: the app renews it at least every minute while a sensor is live or `focus` is true, and a stale one ends the call (and the Focus stand-in) on its own. Unknown keys are ignored; a known key of the wrong type is `invalid_args`. `{presence}` (the `state.presence` document). |
 | `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `label` is the name the last published `state.sessions` row gives that session (the provider's own title), falling back to the label recorded with the row for a session `sessions` no longer lists; a `detail` that only repeated the new label is dropped. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
 | `list_commands` | | The durable command journal: what was asked and how it settled. `answer_ask` writes its intent there before it types, so a crash mid-answer leaves a record behind. `{outcome_unknown[], counts{completed, failed, pending}, commands[]}`. `commands` is the newest 50 settled records, newest first, each `{command_id, command, args, status, accepted_at, settled_at, receipt, error}` with `status` `completed` or `failed`. `outcome_unknown` is the ids of records that are still `accepted` with no settlement: a command whose effect was never confirmed, which a restart must not pretend finished. `counts.pending` is its length. |
-| `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape plus `schema` (record contract version), `pinned` (open ask), `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`), and `axes`: `{outcome, review, freshness}` — `outcome` is `none`/`succeeded`/`failed`/`unreported`/`unknown` (what the provider reported, separate from `lifecycle`), `review` is `pending`/`unreviewed`/`reviewed` (Clear Agents acknowledgement is the review receipt), `freshness` is `live`/`delayed`/`unknown` (is the source still delivering). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
+| `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape, `axes` included (`{outcome, review, freshness}`, described once under `state`; Clear Agents acknowledgement is the review receipt), plus `schema` (record contract version), `pinned` (open ask) and `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
 | `session_timeline` | id? or session+provider, cwd?, limit (default 100, max 500), before? | A session's provider transcript as bounded, paginated items — the Overview inspector's Timeline (S7.2). `id` is a roster row id and resolves the status's provider/`session_id`/cwd itself (`not_found` for an unknown id); an ended session whose status aged out is still inspectable via `session` (the provider uuid) + `provider` + optional `cwd`. Items are `{seq, at, kind, role?, name?, text?, tool_use_id?, is_error?, sidechain?, model?, uuid?, parent_uuid?, origin:"transcript", recorded_at:null, untrusted?}` — `kind` is `message`/`tool_use`/`tool_result`/`turn_end`; `tool_use`/`tool_result` pair on `tool_use_id`; `at` is the row's own stamp (occurrence) and `recorded_at` stays null because per-row ingestion time was never kept. `untrusted` marks tool output and assistant text — content, never a command. `before` is the seq of the oldest item the caller holds; the reply is `{schema, events[], has_more, next_before, total, source{provider, file}, gaps[]}` where `gaps` names `transcript_not_found`, `transcript_unreadable`, `transcript_too_large:N`, `timeline_item_cap:N`, or `unsupported_provider` (providers without a transcript reader answer that, not an empty success). Supported: `claude` (`~/.claude/projects/**/*.jsonl`) and `codex` (`~/.codex/sessions/**/*.jsonl`), matched by uuid-in-filename. Reads are bounded (64 MB file cap, 5000-item cap, 600-char text, secret-run redaction). `invalid_value` without a provider. |
 | `compare_sessions` | a, b (roster ids, different) | Two runs side by side on retained facts only (S7.4). `{t:"compare_runs", schema, generated_at, a, b, shared{provider, workspace, model:null}, warnings[], gaps[]}` — each side is `{id, label, provider, cwd, lifecycle, mode, axes, remote, activity, interruptions, artifacts, model:null, gaps[]}`. `activity` is the transcript aggregate `{counts{user_messages, assistant_messages, tool_uses, tool_failures, retried_tools, turn_ends, sidechain_rows}, tools{name:count}, span{first_at, last_at, duration_s}, file}` or `null` with a named gap (`transcript_not_found`/`unsupported_provider`); `interruptions` counts the ledger's `asked`/`blocked`/`completed` rows for that agent id. `artifacts` is the files the run's edit tools named, read from each tool call's input (Claude Edit/Write/MultiEdit/NotebookEdit `file_path`, Codex `*** Add/Update/Delete File:` patch headers): `{files[{path, edits}], total, truncated}`, paths relative to the run's cwd or `~`, most-edited first, at most 200; `null` when the transcript was not read, and then `gaps` names `artifacts_not_tracked`. `model` is always `null` (per-session models come from `session_usage`) and `gaps` names `model_not_tracked`. `warnings` always includes `not_a_controlled_benchmark` plus `different_providers`/`different_workspaces` when the sides differ. `invalid_value` for missing/identical ids; `not_found` for an id not in the retained set. |
 | `session_usage` | ids[] (roster ids, up to 64), since? (epoch) | Per-session model, tokens, cost and context for the panel's rows, the Overview's Model/Cost columns and Compare runs. Each id resolves its status's provider/`session_id`/cwd like `session_timeline`, and the session's own transcript is read incrementally (only bytes appended since the last request; a shrunk or replaced file is re-read). `{schema, sessions{id: {provider, model, models{model: tokens}, tokens{input, cached_input, cache_creation, output}, turns, estimated_cost_usd, cost_estimated, unpriced_models[], context_tokens, context_window, context_window_source, first_at, last_at, partial, window_tokens, tokens_since?}}, gaps{id: reason}, since, pricing{as_of, table_version, semantics:"api_equivalent_estimate"}}`. Every id lands in exactly one of `sessions` or `gaps` (`remote`, `not_found`, `unsupported_provider`, `transcript_not_found`, `transcript_unreadable`, `reading`) — never a zero. A request reads for at most 1.5 s (checked between lines and between files, a line at a time); an id whose transcript it did not finish, or did not reach, answers `reading` rather than a partial total, and the next request carries on from the saved offset. A lookup that finds no transcript is trusted for 60 s. Counting follows `usage_stats` (Claude: first sighting of a message id; Codex: `last_token_usage` deltas or cumulative differences, cache reads/writes split out of input). `estimated_cost_usd` is the Usage Center's list-price estimate (`cost_estimated` when a stand-in rate priced any model, null when no model had a price). `context_tokens` is the newest main-chain turn's prompt; `context_window` is Codex's `model_context_window` (`reported`) or, for Claude, 200k/1M `inferred` from the largest prompt seen. `partial` when a transcript past 64 MB was read from its tail. `since` adds `tokens_since` (turns at or after it). `window_tokens` is the session's tokens since its provider's primary usage window opened (`resets_at` minus the window's length, on the window the Usage Center's card leads with, this Mac's own account), for the Agent Overview's derived "≈ N %" window share; null when the provider reports no window, the session has no token timeline, or a tail read starts inside the window. `invalid_value` for an empty `ids`. |
