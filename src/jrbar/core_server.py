@@ -40,12 +40,17 @@ LIGHTS_MIN_INTERVAL_SECONDS: Final = 1.0 / 30.0
 SETTINGS_MIN_INTERVAL_SECONDS: Final = 1.0 / 10.0
 # SO_SNDTIMEO on every accepted client: the flusher fans frames out
 # serially, so one peer that stops reading must not wedge publishing for
-# the rest. A send that blocks longer than this counts one strike; a
-# client with CLIENT_MAX_BLOCKED_SENDS consecutive strikes is dropped
-# (a timed-out sendall may have written a partial frame, so the stream
-# is already suspect by then).
+# the rest. A send that blocks longer than this drops the client at once:
+# a timed-out sendall may have written part of a frame, so the stream is
+# already suspect. The app reconnects with backoff and replays the events
+# it missed (``replay_events``).
 CLIENT_SEND_TIMEOUT_SECONDS: Final = 1.0
-CLIENT_MAX_BLOCKED_SENDS: Final = 3
+# The kernel's default send buffer for a Unix socket is 8 KB on macOS, so a
+# 30-60 KB state frame stalls the moment the peer is a little slow. A
+# larger buffer on the daemon's side lets a reader that pauses for a moment
+# catch up without being dropped. Best effort: a failure to set it is not
+# a reason to refuse the client.
+CLIENT_SEND_BUFFER_BYTES: Final = 256 * 1024
 # Bound on queued event/log frames waiting for the flusher. Coalesced
 # kinds (state/lights/settings) live in `_pending` latest-wins and are
 # already bounded; this cap keeps an absent flusher or a burst of logs
@@ -142,12 +147,17 @@ def _envelope(kind: str, document: dict[str, Any]) -> dict[str, Any]:
 
 
 class _Client:
-    def __init__(self, connection: socket.socket, index: int) -> None:
+    def __init__(
+        self,
+        connection: socket.socket,
+        index: int,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
         self.connection = connection
         self.index = index
         self.write_lock = threading.Lock()
         self.alive = True
-        self.blocked_sends = 0
+        self._log = log or (lambda _line: None)
 
     def send(self, frame: bytes) -> bool:
         if not self.alive:
@@ -155,19 +165,19 @@ class _Client:
         with self.write_lock:
             try:
                 self.connection.sendall(frame)
-            except TimeoutError:
+            except (TimeoutError, BlockingIOError):
                 # SO_SNDTIMEO fired: the peer stopped draining its buffer.
-                # Tolerate a few consecutive blocked sends (a busy app may
-                # just be slow), then declare the client dead so the
-                # flusher stops paying the timeout on every frame.
-                self.blocked_sends += 1
-                if self.blocked_sends >= CLIENT_MAX_BLOCKED_SENDS:
-                    self.alive = False
-                return self.alive
+                # On a blocking socket the kernel deadline surfaces as
+                # BlockingIOError (EAGAIN), not TimeoutError. The stall may
+                # have left a partial NDJSON line on the wire, so nothing
+                # can safely follow it: drop the client now. It recovers by
+                # reconnecting and replaying the events it missed.
+                self.alive = False
+                self._log(f"core dropped client {self.index}: send stalled")
+                return False
             except OSError:
                 self.alive = False
                 return False
-            self.blocked_sends = 0
             return True
 
     def close(self) -> None:
@@ -663,6 +673,12 @@ class CoreServer:
             except OSError:
                 connection.close()
                 continue
+            try:
+                connection.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_SNDBUF, CLIENT_SEND_BUFFER_BYTES
+                )
+            except OSError:
+                pass
             if not _same_uid_peer(connection, self._peer_uid_reader):
                 self.stats["refused_clients"] += 1
                 self._log("core refused a foreign-uid peer")
@@ -678,7 +694,7 @@ class CoreServer:
                     connection.close()
                     continue
                 self._client_counter += 1
-                client = _Client(connection, self._client_counter)
+                client = _Client(connection, self._client_counter, self._log)
                 self._clients.append(client)
             try:
                 threading.Thread(
