@@ -8,7 +8,9 @@ settings, state, provider configuration, LaunchAgent domain, or mounted LEDs.
 from __future__ import annotations
 
 import functools
+import ipaddress
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -288,3 +290,104 @@ def block_live_volume_writes():
     with pytest.MonkeyPatch.context() as mp:
         _arm_volume_guards(mp)
         yield
+
+
+def _remote_host(family: int, address: object) -> str | None:
+    """The host a connect would reach, or None when it stays on this machine.
+
+    Only internet-family sockets can leave the Mac. Loopback and the
+    unspecified address are this machine; any other name would need DNS.
+    """
+    if family not in (socket.AF_INET, socket.AF_INET6):
+        return None
+    if not isinstance(address, tuple) or not address:
+        return None  # malformed: let the real connect raise its own error
+    host = address[0]
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    if not isinstance(host, str):
+        return None
+    name = host.split("%", 1)[0]
+    if name in ("", "localhost") or name.endswith(".localhost"):
+        return None
+    try:
+        ip = ipaddress.ip_address(name)
+    except ValueError:
+        return host
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return None if ip.is_loopback or ip.is_unspecified else host
+
+
+@pytest.fixture(autouse=True)
+def block_live_network_connects():
+    """Refuse a connect to anything but loopback and unix sockets.
+
+    A test that wants a remote answer injects a fake. The caller may swallow
+    the AssertionError (a poller's fetch does), so the run stays quiet but
+    nothing leaves the Mac.
+    """
+    original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
+
+    def refuse_remote(sock, address):
+        host = _remote_host(sock.family, address)
+        if host is not None:
+            raise AssertionError(f"test tried to reach the network: {host}")
+
+    @_mark_guard(original_connect, "network")
+    def guarded_connect(sock, address):
+        refuse_remote(sock, address)
+        return original_connect(sock, address)
+
+    @_mark_guard(original_connect_ex, "network")
+    def guarded_connect_ex(sock, address):
+        refuse_remote(sock, address)
+        return original_connect_ex(sock, address)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(socket.socket, "connect", guarded_connect)
+        mp.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+        yield
+
+
+def _make_inert_status_feed_poller():
+    from jrbar.status_feeds import StatusFeedPoller
+
+    def refuse_fetch(*_args, **_kwargs):
+        raise AssertionError("test fetched a provider status page")
+
+    class InertStatusFeedPoller(StatusFeedPoller):
+        """Records which providers were asked for; starts nothing, fetches nothing."""
+
+        def __init__(self):
+            super().__init__(fetch_json=refuse_fetch)
+            self.started: list[tuple[str, ...]] = []
+
+        def start(self, *, provider_ids=None):
+            selected = tuple(self._feeds) if provider_ids is None else tuple(provider_ids)
+            self.started.append(selected)
+
+        def poll_once(self, *, provider_ids=None):
+            return None
+
+    return InertStatusFeedPoller()
+
+
+@pytest.fixture(autouse=True)
+def inert_status_feed_poller():
+    """The provider status-page poller starts no thread and asks no vendor.
+
+    The refresh loop starts `shared_status_feed_poller()` for every provider
+    it refreshes, so any test that builds a `ProviderUsageService` without an
+    `incident_lookup` would otherwise run daemon threads that GET the
+    vendors' status pages. `StatusFeedPoller.__init__` binds its fetch
+    function as a default at definition time, so patching the fetch does
+    nothing; the shared accessor is looked up at call time and is the seam.
+    A test that wants an incident patches it again with its own fake.
+    """
+    poller = _make_inert_status_feed_poller()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("jrbar.status_feeds.shared_status_feed_poller", lambda: poller)
+        yield poller
