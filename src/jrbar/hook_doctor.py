@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .core_server import default_core_socket_path
-from .hook_pending import pending_hook_files
+from .hook_pending import pending_hook_files, pending_line_count
 from .install import hook_command_arguments, hook_shim_path
 from .providers import (
     HOOK_CLIENT_MODULES,
@@ -206,7 +206,7 @@ def hook_doctor_report(
     pending = []
     for path in pending_hook_files(state_dir):
         try:
-            lines = sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+            lines = pending_line_count(path)
         except OSError:
             lines = -1
         pending.append({"file": path.name, "lines": lines})

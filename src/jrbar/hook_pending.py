@@ -209,6 +209,23 @@ def _sibling(path: Path, suffix: str) -> Path:
     return path.with_name(base + suffix)
 
 
+def spool_lines(text: str) -> list[str]:
+    """Whole lines of a spool file. A record ends at "\n" only: U+2028,
+    U+2029 and U+0085 inside a payload are data (the shim copies bytes at or
+    above 0x80 verbatim), which ``str.splitlines`` would cut in half."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()  # the newline that ended the last record
+    return lines
+
+
+def pending_line_count(path: Path) -> int:
+    """How many records wait in the spool file ``path``. Raises ``OSError``
+    when it cannot be read, so a caller can say it is unknown."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return sum(1 for line in spool_lines(text) if line.strip())
+
+
 def _read_newest(path: Path, limit: int) -> tuple[str, int]:
     """The text of ``path``'s newest whole lines within ``limit`` bytes, and
     the size of the older head left unread (0 when the file fits)."""
@@ -383,7 +400,7 @@ def drain_pending_hooks(
             text, head_bytes = _read_newest(draining, MAX_PENDING_FILE_BYTES)
         except OSError:
             continue
-        lines = text.splitlines()
+        lines = spool_lines(text)
         retry: list[str] = []
         rejected: list[str] = []
         for line in lines[:MAX_PENDING_LINES_PER_DRAIN]:

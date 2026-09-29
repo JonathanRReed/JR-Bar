@@ -3,6 +3,7 @@ through the core server, and answers commands on the main thread."""
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -678,6 +679,27 @@ def test_state_builds_feed_the_usage_sample_buffer(headless, tmp_path: Path) -> 
     buffer.path.unlink()
     controller.applicationWillTerminate_(None)
     assert buffer.path.exists()
+
+
+def test_the_pending_lines_check_counts_records_not_line_separators(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from jrbar import hook_pending
+
+    spool_dir = tmp_path / "spool"
+    spool_dir.mkdir()
+    monkeypatch.setattr(hook_pending, "default_state_dir", lambda *_: spool_dir)
+    rows = [
+        {"provider": "claude", "payload": '{"prompt":"a\u2028b"}'},
+        {"provider": "claude", "payload": '{"hook_event_name":"Stop"}'},
+    ]
+    (spool_dir / "claude.pending.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8"
+    )
+    headless.applicationDidFinishLaunching_(None)
+
+    doctor = headless._core_dispatch("doctor", {})
+
+    check = next(check for check in doctor["checks"] if check["name"] == "pending hook lines")
+    assert check["detail"] == "1 files, 2 lines"
 
 
 def test_doctor_and_history_answer_without_a_snapshot__and_1_more(headless) -> None:

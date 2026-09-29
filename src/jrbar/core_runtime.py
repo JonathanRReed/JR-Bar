@@ -65,6 +65,7 @@ from .hook_pending import (
     PendingHookDrainer,
     orphaned_drain_files,
     pending_hook_files,
+    pending_line_count,
 )
 from .state_paths import default_state_dir
 
@@ -7870,8 +7871,7 @@ def build_headless_controller_class() -> type:
             backlog = 0
             for path in pending:
                 try:
-                    backlog += sum(1 for line in path.read_text(
-                        encoding="utf-8", errors="replace").splitlines() if line.strip())
+                    backlog += pending_line_count(path)
                 except OSError:
                     backlog = -1
                     break
