@@ -399,6 +399,15 @@ Vocabulary:
   the vendor's side, never a quota verdict. It is null the moment the feed
   goes stale or has not answered, so a present value is current and the
   wire never invents one.
+- For Claude and Codex, `usage.providers[].tokens` and `estimated_cost_usd`
+  are local totals for the last 30 days, read from the usage scan cache and
+  never from a scan of their own. Each message or turn is counted once (the
+  first sighting wins, and a Codex fork or copied rollout counts under its
+  parent), across the primary home and every extra home. A Claude reading
+  whose scan cache does not yet cover the 30 days shows zero tokens and a
+  null cost until it does, not a partial figure; a Codex reading counts only
+  the days its cache still covers, never more. `estimated_cost_usd` is null
+  unless every counted record was priced.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
   names it): `exhausts_at` (epoch, or null when nothing is burning),
