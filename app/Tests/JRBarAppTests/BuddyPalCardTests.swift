@@ -106,6 +106,50 @@ struct BuddyPalCardTests {
         #expect(store.state.notchBuddy.care.longestAskSeconds == 95)
     }
 
+    private func buddyStore() -> (store: ToysStore, buddy: NotchBuddyToy) {
+        let core = CoreModel()
+        var state = ToysState()
+        state.notchBuddy.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state,
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        return (store, store.notchBuddy)
+    }
+
+    @Test("a sub-agent the daemon keeps quiet adds nothing to the care log")
+    func quietWorkerIsNotLogged() {
+        let (store, buddy) = buddyStore()
+        // A gated worker: waiting on its own prompt, with no ask published.
+        let worker = CoreSession(id: "claude:w", provider: "claude", kind: "worker", parent: "claude:m",
+                                 mode: "waiting_for_input", lifecycle: "active", nextActor: "user")
+        buddy.noteState(CoreState(sessions: [worker]))
+        // The document where nothing waits closes whatever the buddy watched
+        // open: two minutes later on the caller's clock, no timers involved.
+        buddy.noteAsks([], at: Date().addingTimeInterval(120))
+        #expect(store.state.notchBuddy.care.longestAskSeconds == 0)
+    }
+
+    @Test("a main session waiting on you still lands in the care log through a state document")
+    func waitingMainIsLogged() {
+        let (store, buddy) = buddyStore()
+        let main = CoreSession(id: "claude:m", provider: "claude", mode: "waiting_for_input",
+                               lifecycle: "active", nextActor: "user")
+        let worker = CoreSession(id: "claude:w", provider: "claude", kind: "worker", parent: "claude:m",
+                                 mode: "waiting_for_input", lifecycle: "active", nextActor: "user")
+        buddy.noteState(CoreState(sessions: [main, worker]))
+        buddy.noteAsks([], at: Date().addingTimeInterval(120))
+        #expect(store.state.notchBuddy.care.longestAskSeconds >= 119)
+    }
+
+    @Test("a worker with no parent to hang under is a main row, as the panel lists it")
+    func parentlessWorkerFollowsThePanelRule() {
+        let (store, buddy) = buddyStore()
+        let orphan = CoreSession(id: "claude:o", provider: "claude", kind: "worker", parent: nil,
+                                 mode: "waiting_for_input", lifecycle: "active", nextActor: "user")
+        buddy.noteState(CoreState(sessions: [orphan]))
+        buddy.noteAsks([], at: Date().addingTimeInterval(120))
+        #expect(store.state.notchBuddy.care.longestAskSeconds >= 119)
+    }
+
     @Test("a completion's crumb is credited to its session's agent")
     func crumbCarriesProvider() {
         let core = CoreModel()
