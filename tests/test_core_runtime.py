@@ -98,6 +98,81 @@ def test_device_transitions_key_on_the_device_name__and_1_more() -> None:
 
 
 
+def test_escalation_since_is_fixed_for_the_episode_and_does_not_move_across_sleep__and_3_more(headless) -> None:
+    # --- scenario: a_stopped_monotonic_clock_does_not_move_since
+    """The monotonic clock stops while the Mac sleeps and the wall clock
+    does not, so re-converting the stamp on every build slid ``since``
+    forward by the length of the nap. The epoch is fixed once."""
+    controller = headless
+    controller.ask_blocked_since = 100.0
+    first = controller._core_escalation_since(wall=lambda: 1_000_000.0, mono=lambda: 160.0)
+    assert first == 1_000_000.0 - 60.0
+    eight_hours = 8 * 3600.0
+    later = controller._core_escalation_since(wall=lambda: 1_000_000.0 + eight_hours, mono=lambda: 160.0)
+    assert later == first
+    # Awake time passing moves nothing either: the stamp is the episode's.
+    assert controller._core_escalation_since(wall=lambda: 1_000_000.0 + eight_hours + 5.0, mono=lambda: 165.0) == first
+
+    # --- scenario: a_new_monotonic_stamp_is_a_new_episode
+    controller.ask_blocked_since = 150.0  # Resume Escalation, or a new oldest ask
+    restarted = controller._core_escalation_since(wall=lambda: 2_000_000.0, mono=lambda: 170.0)
+    assert restarted == 2_000_000.0 - 20.0
+    assert controller._core_escalation_since(wall=lambda: 2_000_500.0, mono=lambda: 170.0) == restarted
+
+    # --- scenario: assigning_the_same_stamp_again_does_not_re_anchor
+    controller.ask_blocked_since = 150.0
+    assert controller._core_escalation_since(wall=lambda: 9_000_000.0, mono=lambda: 999.0) == restarted
+
+    # --- scenario: no_ask_blocking_clears_the_anchor
+    controller.ask_blocked_since = None
+    assert controller._core_escalation_since(wall=lambda: 1.0, mono=lambda: 1.0) is None
+    assert controller._core_escalation_anchor is None
+    controller.ask_blocked_since = 150.0
+    assert controller._core_escalation_since(wall=lambda: 3_000_000.0, mono=lambda: 160.0) == 3_000_000.0 - 10.0
+
+
+def test_a_blocking_ask_does_not_churn_the_state_document(headless) -> None:
+    """``since`` used to jitter by microseconds on every build, so the
+    significance check never saw two equal state documents while an ask
+    blocked, and every build broadcast."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_intake_report = lambda: None
+    controller.last_snapshot = _visibility_snapshot(time.time())
+    controller.ask_blocked_since = time.monotonic() - 30.0
+    server = controller._core
+    server.published.clear()
+
+    first = controller._core_build_state()
+    second = controller._core_build_state()
+    assert first["escalation"]["since"] is not None
+    assert first["escalation"]["since"] == second["escalation"]["since"]
+
+    controller._core_publish_state()
+    controller._core_publish_state()
+    controller._core_publish_state()
+    assert [kind for kind, _ in server.published] == ["state"]
+
+
+def test_since_holds_across_builds_while_an_ask_blocks(headless) -> None:
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_intake_report = lambda: None
+    controller.last_snapshot = _visibility_snapshot(time.time())
+    controller.ask_blocked_since = time.monotonic() - 400.0
+    assert controller.current_escalation_stage() > 0
+
+    one = controller._core_build_state()
+    two = controller._core_build_state()
+
+    assert one["escalation"]["stage"] == two["escalation"]["stage"] != "none"
+    assert one["escalation"]["since"] is not None
+    assert one["escalation"]["since"] == two["escalation"]["since"]
+    assert two["now"] >= one["now"]
+    # The episode began about 400 s before the build, on the wall clock.
+    assert one["now"] - one["escalation"]["since"] == pytest.approx(400.0, abs=5.0)
+
+
 def test_settings_round_trip_validates_through_the_real_loader(tmp_path: Path) -> None:
     from jrbar.settings import AgentMonitorSettings
 

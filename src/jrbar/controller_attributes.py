@@ -52,6 +52,7 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_core_deck_keymap_layers_memo": None,
         "_core_detected_agents_cache": None,
         "_core_dot_plan_gap_logged": None,
+        "_core_escalation_anchor": None,
         "_core_linked_dot_plan_seen": None,
         "_core_linked_sent_mark": None,
         "_core_pending_hints": None,

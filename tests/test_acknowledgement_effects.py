@@ -217,6 +217,25 @@ class AcknowledgementEscalationTests(unittest.TestCase):
         self.assertEqual(self.controller.ask_blocked_by_agent.get(self.row.agent_id),
                          self.controller.ask_blocked_since)
 
+    def test_resume_escalation_publishes_a_later_since_than_the_first_episode(self) -> None:
+        from jrbar.core_runtime import anchored_since
+
+        # An episode that began 400 s ago, published once.
+        self.controller.ask_blocked_since = time.monotonic() - 400.0
+        anchor, first = anchored_since(None, self.controller.ask_blocked_since)
+        self.assertIsNotNone(first)
+
+        self._acknowledge()
+        anchor, none = anchored_since(anchor, self.controller.ask_blocked_since)
+        self.assertIsNone(none)
+
+        self._resume()
+        anchor, second = anchored_since(anchor, self.controller.ask_blocked_since)
+
+        # ``since`` is the escalation episode's clock, not the ask's own
+        # ``opened_at``: the resumed episode starts over, so it is later.
+        self.assertGreater(second, first + 300.0)
+
 
 class MonitorAcknowledgementTests(unittest.TestCase):
     """The reduced truth itself: monitors must re-derive live request phases

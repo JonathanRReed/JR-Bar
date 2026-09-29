@@ -181,6 +181,32 @@ def mono_to_epoch(value: object) -> float | None:
     return time.time() + (float(value) - time.monotonic())
 
 
+def anchored_since(
+    memo: tuple[float, float] | None,
+    blocked_since: object,
+    *,
+    wall: Callable[[], float] = time.time,
+    mono: Callable[[], float] = time.monotonic,
+) -> tuple[tuple[float, float] | None, float | None]:
+    """The wall-clock epoch an escalation episode began, fixed once.
+
+    ``blocked_since`` is a ``time.monotonic()`` stamp, and that clock stands
+    still while the Mac sleeps. Converting it afresh on every state build
+    (``mono_to_epoch``) slides the epoch forward by the length of each nap,
+    so the light says the ask waited less than the ask's own ``opened_at``
+    shows. The epoch is worked out when the stamp first appears and kept
+    with it in ``memo``; a different stamp (a new oldest ask, Resume
+    Escalation) is a new episode and anchors again. Returns the memo to
+    keep and the epoch, both ``None`` when nothing is blocking."""
+    if blocked_since is None or isinstance(blocked_since, bool) or not isinstance(blocked_since, (int, float)):
+        return None, None
+    value = float(blocked_since)
+    if memo is not None and memo[0] == value:
+        return memo, memo[1]
+    epoch = wall() - (mono() - value)
+    return (value, epoch), epoch
+
+
 def split_path(path: str) -> list[str | int]:
     parts: list[str | int] = []
     for piece in str(path).split("."):
@@ -6629,6 +6655,25 @@ def build_headless_controller_class() -> type:
             document.update({key: value for key, value in fields.items() if value is not None})
             server.publish_event(document)
 
+        def _core_escalation_since(
+            self,
+            *,
+            wall: Callable[[], float] = time.time,
+            mono: Callable[[], float] = time.monotonic,
+        ) -> float | None:
+            """``state.escalation.since``: when the oldest blocking ask's
+            escalation episode began, as a wall-clock epoch fixed for the
+            episode (``anchored_since``), so it neither drifts across a
+            sleep nor changes between two builds of an unchanged state."""
+            memo, since = anchored_since(
+                getattr(self, "_core_escalation_anchor", None),
+                getattr(self, "ask_blocked_since", None),
+                wall=wall,
+                mono=mono,
+            )
+            self._core_escalation_anchor = memo
+            return since
+
         def _core_request_app(self, kind: str, **fields: Any) -> bool:
             """Ask the connected app for one of its own commands on behalf of
             a deck key: ``open_window {window}`` or ``reveal_ask``. The app
@@ -7291,7 +7336,7 @@ def build_headless_controller_class() -> type:
                 dnd_projection=self.current_dnd_projection(),
                 escalation=EscalationFacts(
                     stage=int(self.current_escalation_stage()),
-                    since=mono_to_epoch(getattr(self, "ask_blocked_since", None)),
+                    since=self._core_escalation_since(),
                 ),
                 intake_report=intake,
                 settings_generation=self._core_settings_generation,
@@ -8096,6 +8141,7 @@ __all__ = [
     "CORE_VERSION",
     "CoreCommandBox",
     "HeadlessNotificationClient",
+    "anchored_since",
     "build_headless_controller_class",
     "command_names",
     "deck_probe",
