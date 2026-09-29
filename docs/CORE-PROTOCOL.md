@@ -288,9 +288,17 @@ Vocabulary:
   own reply and nothing is typed. `hold_until` is the epoch at which the
   hold lapses and the agent's own prompt carries on; `always` says an
   Always allow can be sent (Claude, when its `permission_suggestions`
-  carry an allow rule); `decided` is true for the few seconds after an
-  answer, while the provider's events catch up. A hold that lapses, is let
-  go or is answered republishes `state` at once, not at the next refresh.
+  carry an allow rule); `decided` is true from the moment an answer is
+  delivered to the hook until the agent's own events close the request --
+  the tool's `PostToolUse` or `PostToolUseFailure`, a fresh
+  `PermissionRequest` for the same request, or the turn ending or moving on
+  (`Stop`, `StopFailure`, `SessionEnd`, `UserPromptSubmit`, `Interrupt`) --
+  however long the tool runs, with an hour as the cap. While it is true a
+  second `answer_ask` for that request is refused `stale_ask` instead of
+  typing into a terminal that is busy running the approved tool; an answer
+  the hook could not take is not `decided`, so the keystroke path stays
+  open. A hold that lapses, is let go or is answered republishes `state` at
+  once, not at the next refresh.
   `preview` is one bounded
   line of what the agent wants to run (the command, the file, the URL,
   `server · tool` for MCP; token-shaped runs masked) and `risk` is
@@ -1334,8 +1342,9 @@ while the answer is still delivered.
   answer may carry -- `approve`/`deny` only while the ask is `answerable`,
   `always` only when the agent offered a rule to remember, `answer` only
   for a held question (`choices`); once the decide lane has `decided`, the
-  hold is spent and neither `always` nor `answer` (nor its `choices`) is
-  offered.
+  hold is spent, and stays spent until the agent's own events close the
+  request (an hour at most): neither `always` nor `answer` (nor its
+  `choices`) is offered.
 - `POST /answer` names one `session` (the daemon's id) or one `slot` and an
   explicit `decision`, in the query string (`/answer?slot=2&decision=deny`,
   for a key that can only send a URL) or a JSON object body (which wins
