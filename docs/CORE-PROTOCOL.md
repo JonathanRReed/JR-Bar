@@ -77,11 +77,20 @@ event kinds are not recovered on a fresh connection. The journal is bounded
 not a daemon restart.
 
 ### state (full)
-Sent on connect, at the end of every controller refresh (a 15 s timer plus
-every hook event), on DND changes, on escalation stage changes, when a
-client connects, and after every command that changes the world. The app
-replaces its model wholesale; there is no partial state message in
-protocol 1. Timestamps are Unix epoch seconds.
+A state document is built at the end of every controller refresh (a 15 s
+timer plus every hook event), on DND changes, on escalation stage changes,
+when a client connects, and after commands that change the world. It is
+broadcast only when it differs from the last frame sent, ignoring the
+fields that move on every build without the document having changed
+(`doc_significant_equal`, which reads `_VOLATILE_DOC_PATHS` in
+`core_runtime.py`). A quiet daemon therefore sends nothing between changes:
+there is no state heartbeat. A client that connects is handed the last
+frame that was sent. `now` is the stamp of that last broadcast, not the
+current time, and `generation` counts builds, not frames, so gaps in it are
+normal. A client that wants the age of what it holds stamps its own arrival
+time, as the app's `CoreModel.lastStateAt` does. The app replaces its model
+wholesale; there is no partial state message in protocol 1. Timestamps are
+Unix epoch seconds.
 
 ```json
 {"t":"state","v":1,"generation":4812,"now":1788982892.4,
@@ -620,7 +629,9 @@ The presentation program for each surface, exactly the LEDS DSL text the
 hardware receives, plus the anchor the app needs to phase-lock the Screen
 Bar to the strip. Sent whenever a program changes on any surface (every
 Screen Bar sync, every completed hardware write, every preview start and
-end) and with every refresh.
+end), and at the end of a refresh when anything in it moved beyond the
+volatile fields: `lights` follows the same `doc_significant_equal` rule as
+`state`, so an unchanged frame is not re-sent.
 
 ```json
 {"t":"lights","v":1,
