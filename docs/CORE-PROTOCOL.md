@@ -304,7 +304,7 @@ Vocabulary:
   `server · tool` for MCP; token-shaped runs masked) and `risk` is
   `"destructive"` when a shell command matches a pattern that loses work
   if it runs by mistake (`rm -r`, `sudo`, a forced push, `reset --hard`,
-  `curl … | sh`, …) -- a mark, never a block. `decision` is `null` for an
+  `find … -delete`, `curl … | sh`, …) -- a mark, never a block. `decision` is `null` for an
   ask the lane does not hold; `preview` and `risk` still come from the
   `PermissionRequest` the ingress saw for that exact request id (Claude,
   Codex, Devin, Grok, OpenCode, pi; remembered for an hour), and are `null`
