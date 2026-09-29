@@ -41,6 +41,18 @@ def _error(reply) -> dict:
     return reply["error"]
 
 
+def test_auto_dim_mock_clock_covers_the_exclusive_end_minute(world) -> None:
+    world.document["auto_dim"] = {
+        "mode": "schedule",
+        "schedule": {"start_minutes": 0, "end_minutes": 1439, "fraction": 0.25},
+    }
+    world.auto_dim_now_minutes = 720
+    assert world.auto_dim()["factor"] == 0.25
+
+    world.auto_dim_now_minutes = 1439
+    assert world.auto_dim()["factor"] == 1.0
+
+
 def test_sessions_carry_remote_flags__and_2_more(world) -> None:
     # --- scenario: sessions_carry_remote_flags
     sessions = world.state()["sessions"]

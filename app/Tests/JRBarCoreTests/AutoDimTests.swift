@@ -188,7 +188,8 @@ struct AutoDimMockTests {
     @MainActor
     func roundTrip() async throws {
         let socket = MockCoreIntegrationTests.temporarySocketPath()
-        let mock = try MockCoreIntegrationTests.launchMock(socket: socket, extraArguments: ["--step", "60"])
+        let mock = try MockCoreIntegrationTests.launchMock(
+            socket: socket, extraArguments: ["--step", "60", "--auto-dim-now-minutes", "720"])
         defer {
             mock.terminate()
             try? FileManager.default.removeItem(atPath: socket)

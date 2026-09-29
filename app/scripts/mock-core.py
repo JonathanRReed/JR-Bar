@@ -1443,6 +1443,7 @@ class World:
         self.lock = threading.RLock()
         self.step_seconds = step_seconds
         self.loop = loop
+        self.auto_dim_now_minutes: int | None = None
         self.generation = 4800
         self.settings_generation = 17
         self.clients: list[Client] = []
@@ -2092,8 +2093,11 @@ class World:
         schedule = doc.get("schedule") if isinstance(doc.get("schedule"), dict) else {}
         display = doc.get("display") if isinstance(doc.get("display"), dict) else {}
         if mode == "schedule":
-            now = time.localtime()
-            minutes = now.tm_hour * 60 + now.tm_min
+            if self.auto_dim_now_minutes is None:
+                now = time.localtime()
+                minutes = now.tm_hour * 60 + now.tm_min
+            else:
+                minutes = self.auto_dim_now_minutes
             start = int(schedule.get("start_minutes", 1320))
             end = int(schedule.get("end_minutes", 420))
             if start == end:
@@ -3645,6 +3649,7 @@ def main() -> int:
     parser.add_argument("--i-know-this-is-the-real-socket", action="store_true",
                         help=f"allow binding {REAL_SOCKET}, which the installed JR-Bar.app connects to")
     parser.add_argument("--step", type=float, default=2.0, help="seconds between timeline steps")
+    parser.add_argument("--auto-dim-now-minutes", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--once", action="store_true", help="send hello/state/lights/settings to the first client, then exit")
     parser.add_argument("--loop", action="store_true",
                         help="replay the timeline forever (default: once, so its sounds and banners stop)")
@@ -3675,6 +3680,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.parent_pid is not None and args.parent_pid <= 1:
         parser.error("--parent-pid must name a process other than launchd")
+    if args.auto_dim_now_minutes is not None and not 0 <= args.auto_dim_now_minutes < 1440:
+        parser.error("--auto-dim-now-minutes must be from 0 through 1439")
 
     path = Path(args.socket).expanduser()
     if not args.i_know_this_is_the_real_socket and (
@@ -3699,6 +3706,7 @@ def main() -> int:
 
     stop = threading.Event()
     world = World(step_seconds=args.step, loop=args.loop and not args.no_loop)
+    world.auto_dim_now_minutes = args.auto_dim_now_minutes
     world.hot_history = args.hot_history
     world.history_scan_seconds = max(0.0, args.history_scan)
     world.hidden_count = max(0, args.hidden)
