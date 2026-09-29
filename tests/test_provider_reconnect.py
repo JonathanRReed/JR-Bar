@@ -438,6 +438,21 @@ def test_credential_fingerprint_tracks_the_source_file(tmp_path):
     assert credential_fingerprint(tmp_path, "grok") != first
 
 
+def test_credential_fingerprint_watches_the_gemini_oauth_file(tmp_path):
+    assert credential_fingerprint(tmp_path, "gemini") is None
+    creds = tmp_path / ".gemini" / "oauth_creds.json"
+    creds.parent.mkdir()
+    creds.write_text(json.dumps({"access_token": "x" * 24}), encoding="utf-8")
+    first = credential_fingerprint(tmp_path, "gemini")
+    assert first is not None
+    creds.write_text(json.dumps({"access_token": "y" * 48}), encoding="utf-8")
+    assert credential_fingerprint(tmp_path, "gemini") != first
+    # Only providers whose sign-in is one file JR-Bar never rewrites are
+    # watched; the others have no stable file to stat.
+    assert credential_fingerprint(tmp_path, "opencode") is None
+    assert credential_fingerprint(tmp_path, "cursor") is None
+
+
 # --- transitions -----------------------------------------------------------
 
 
