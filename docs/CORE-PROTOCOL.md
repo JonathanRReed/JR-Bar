@@ -372,7 +372,13 @@ Vocabulary:
   `least_headroom` and `candidates` is how many windows were eligible.
   Null when nothing applicable was measured. The app's card leads with
   this window and explains the pick when it departs from the `5h`
-  convention; an unclassified lane cannot win it even at 1 % left.
+  convention; an unclassified lane cannot win it even at 1 % left. Only a
+  window whose `resets_at` is null or after `state.now` is eligible (and
+  counted in `candidates`): a window whose reset has passed describes a
+  window that no longer exists, so it cannot win `constrained` however full
+  it last read. Lapsed windows stay in `windows` unchanged. The quota-runway
+  light on the Pro and the Dot and the Screen Bar's quota ember use the same
+  rule.
 - `usage.providers[].quota_source` is whether this reading can carry a
   quota at all: a quota collector exists for the provider (read off
   `provider_usage_platform`'s descriptors), AND the snapshot is not
