@@ -1428,6 +1428,12 @@ or from the spool. A `--decide` frame with such a `ppid` is still refused
 `refused_invalid`: an agent that is gone cannot be waiting for a verdict, so
 nothing is parked.
 
+A connection that closes before sending a byte is a liveness probe (`jrbar
+hooks doctor` and the daemon's own `hooks_doctor` connect and close the
+ingress socket). It is answered `refused_invalid` as before, so a bare
+close is never read as delivered, but it is neither counted nor written to
+the rejection log. A non-empty frame that fails to decode still is.
+
 `--decide` (the decide lane, installed only on Claude's and Codex's
 `PermissionRequest`) adds `"decide_ms":50000` to the header. Delivery and
 spooling are unchanged and keep the 250 ms budget; the shim then keeps
