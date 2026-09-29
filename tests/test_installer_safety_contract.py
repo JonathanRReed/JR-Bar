@@ -7,8 +7,8 @@ def test_package_installs_payload_without_mutating_external_integrations__and_2_
     # --- scenario: package_installs_payload_without_mutating_external_integrations
     text = (ROOT / "packaging" / "scripts" / "postinstall").read_text()
 
-    # The package owns its payload only: the app installs hooks and the
-    # login item itself on launch, so the postinstall touches nothing else.
+    # The package owns its payload only: the app registers its own login item,
+    # and hooks are installed from Settings, so the postinstall touches nothing else.
     assert "setup --sd-eject-guard-scope user" not in text
     assert "status-bar install-sleep-helper" not in text
     assert "agent-monitor" not in text

@@ -34,10 +34,13 @@ fail-closed by construction: it writes `release-verification.json` only when
 every receipt kind is present, passed and bound to the same candidate, and
 `scripts/publish_release.sh` will not publish without it.
 
-**As of 2026-09-10 no release meets that bar.** The release Mac has a Developer
-ID Application identity and the Sparkle signing key, but no Developer ID
-Installer certificate and no notarization profile, so the PKG is unsigned and
-nothing is notarized. Treat every current artifact as a development build.
+**As of 2026-09-29 no release meets that bar.** Version 0.9.15 was published
+by hand at the owner's direction. Its app, installer and update archive passed
+signing, notarization and Gatekeeper checks, but the controlled performance,
+strict older-version upgrade and system-uninstall receipts were not completed,
+so it is not production-supported under this policy. The
+[0.9.15 release notes](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
+say so, and the fail-closed scripts were not loosened for it.
 
 Updates arrive through Sparkle from a feed pinned in the app
 (`SUFeedURL`, an asset of the durable `updates` release) with `SUPublicEDKey`,

@@ -45,14 +45,17 @@ daemon boundary, the hook path or packaging. The wire contract itself is
   waits at most 200 ms for a disposition and exits 0. With no daemon
   listening it appends the payload to `<provider>.pending.jsonl` and the
   daemon drains that file at start and every 30 s. Everything after it
-  has read stdin is capped at 250 ms; measured 6 ms wall per spawn, of
-  which the shim's own work is about 3 ms (the old Python hook client took
-  88 ms).
+  has read stdin is capped at 250 ms, with two exceptions: the decide lane
+  (a `PermissionRequest` hook, held up to 50 s for a person's Approve or
+  Deny) and the opt-in `--statusline --then` wrapper (3 s). Measured 6 ms
+  wall per spawn on the plain path, of which the shim's own work is about
+  3 ms (the old Python hook client took 88 ms).
 
 Session truth is the daemon's, built from four sources that agree or
 disagree in the open: hook events (with the hook's `ppid` and process
-start time), the process registry and a 5 s liveness sweep (a dead pid
-ends its session within seconds), Claude's `~/.claude/sessions/<pid>.json`
+start time), the process registry and a liveness sweep (a 5 s tick that
+re-reads the process table at most every 15 s, so a dead pid ends its
+session within about 20 s), Claude's `~/.claude/sessions/<pid>.json`
 status files, and transcript tails for providers whose hooks say too
 little (Codex rollouts, pi and Gemini session logs). A session the daemon
 cannot confirm is `stale`, shown as such, never silently dropped.
@@ -80,7 +83,8 @@ cannot confirm is `stale`, shown as such, never silently dropped.
 | `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.pi/agent/extensions/jrbar.ts`, … | providers | hook registrations JR-Bar writes and recognises (`install.py`) |
 
 `XDG_CONFIG_HOME` / `XDG_STATE_HOME` move the first two trees;
-`JRBAR_STATE_DIR` moves the sockets for tests. Pre-rename SidePulse trees
+`JRBAR_STATE_DIR` moves the sockets for tests and gives the installer's shim
+probe a private state dir. Pre-rename SidePulse trees
 are copied forward once by `migration.py` on first launch and recorded in
 `~/.local/state/jrbar/migrated-from-sidepulse.json`.
 
@@ -89,7 +93,7 @@ are copied forward once by `migration.py` on first launch and recorded in
 | Moment | What happens |
 | --- | --- |
 | Login | `SMAppService` launches `JR-Bar.app` (registered on first launch; Settings › General turns it off). |
-| App launch | The app reads `app-state.json`, spawns the daemon, shows the status item, restores the Screen Bar if it was on. On the first launch of a build it runs `jrbar-core agent-monitor install all` so every provider with a config on the Mac runs the bundled shim, then registers the login item. |
+| App launch | The app reads `app-state.json`, spawns the daemon, shows the status item, restores the Screen Bar if it was on. On the first launch it records the build and registers the login item; it installs no provider hooks by itself (Settings › Agents does). On the first launch of an upgraded build it refreshes only the hooks the detector proves are JR-Bar's. |
 | Daemon start | Loads settings, migrates from SidePulse if needed, drains pending hook files, starts the hook ingress listener, the process registry, the usage refresh worker, device discovery (volumes named `SidePulse` / `PulseDot`, the Creator Micro 2 over HID every 10 s), the keep-awake and DND controllers, remote peers, cloud ingest, then the core socket. |
 | A hook fires | provider → shim → ingress → collector → canonical operator state → projection → `state` and `lights` frames within one refresh. |
 | Every 15 s | A controller refresh: liveness sweep, transcript tails, usage staleness, device writes if the program changed. |
@@ -130,7 +134,8 @@ listed is a helper of the row it sits next to alphabetically.
 The one-release `sidepulse` import shim and console alias are gone. Hook
 commands registered before the rename (`python -m sidepulse.hook_client`
 and the rest) are still recognised by `providers.py` and `install.py`, and
-the first launch rewrites them to the bundled shim.
+connecting a provider from Settings › Agents, or an upgrade's refresh of a
+provider JR-Bar already owns, rewrites them to the bundled shim.
 
 ## The Swift package
 

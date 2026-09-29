@@ -38,8 +38,10 @@ done the owner uses (the Mac runs the commit you just made).
   or command in [docs/CORE-PROTOCOL.md](docs/CORE-PROTOCOL.md) first; the
   app never reads the daemon's files behind its back. Additive fields are
   free; `v` bumps only for incompatible changes.
-- `hook/` is the shim. It must never block a provider for more than 250 ms
-  or lose a payload it could queue.
+- `hook/` is the shim. Except the decide lane (`PermissionRequest`, held up
+  to 50 s for a person's Approve or Deny) and the opt-in `--statusline
+  --then` wrapper (3 s), it must never block a provider for more than
+  250 ms, or lose a payload it could queue.
 - `packaging/` builds and signs the bundle. Every external tool sits behind
   an overridable seam so `tests/test_app_bundle_security.py` can run the
   whole script with doubles.
@@ -65,9 +67,10 @@ done the owner uses (the Mac runs the commit you just made).
 
 ## The SidePulse name
 
-0.8 renamed everything. The `sidepulse` command, the `sidepulse.*` import
-shim and the `SIDEPULSE_*` environment fallbacks exist for this one release
-so installs re-point themselves, and are deleted in the next. Do not add
+0.8 renamed everything. The `sidepulse` command and the `sidepulse.*` import
+shim are gone. The `SIDEPULSE_*` environment variables remain as read-only
+fallbacks for their `JRBAR_*` names (see
+[Migrating from SidePulse](README.md#migrating-from-sidepulse)). Do not add
 to them, and do not add new dual names.
 
 ## Pull requests

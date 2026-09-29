@@ -27,9 +27,10 @@ directory of Python files cannot be sealed, PyInstaller's bundle layout
 (binaries in `Frameworks`, data in `Resources`) can. The app runs
 `Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core core` as its
 supervised child with `JRBAR_SUPERVISED=1`, `JRBAR_HOOK_EXEC` pointing at the
-bundled shim and `JRBAR_COMMIT` from `JRBarCommit`; on the first launch of a
-build it runs `jrbar-core agent-monitor install all` so every provider's hook
-is the bundled shim, and registers itself as a login item (`SMAppService`).
+bundled shim and `JRBAR_COMMIT` from `JRBarCommit`. On the first launch it
+registers itself as a login item (`SMAppService`); provider hooks are
+installed from Settings > Agents, and an upgrade refreshes only the hooks it
+already owns.
 
 ## What the builder does
 
