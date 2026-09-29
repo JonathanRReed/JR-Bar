@@ -123,7 +123,13 @@ def _document_digest(document: dict[str, object]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _read_document(target: Path) -> dict[str, object]:
+def _read_document(target: Path) -> tuple[dict[str, object], str]:
+    """Read the settings document and its digest.
+
+    A document that comes back is always strictly serializable: json.loads
+    accepts NaN, Infinity and 1e999, but the digest refuses them, so a
+    non-finite number raises ValueError here, alongside a parse error.
+    """
     target.lstat()
     _legacy.ensure_private_directory(target.parent)
     value = json.loads(
@@ -134,7 +140,7 @@ def _read_document(target: Path) -> dict[str, object]:
     )
     if not isinstance(value, dict):
         raise ValueError("settings document must be an object")
-    return value
+    return value, _document_digest(value)
 
 
 def _device_to_dict(self) -> dict[str, object]:
@@ -297,7 +303,7 @@ def _merge_unknown_fields(
 def load_settings_document(path: Path | None = None) -> LoadedSettings:
     target = _settings_path(path)
     try:
-        data = _read_document(target)
+        data, source_digest = _read_document(target)
     except FileNotFoundError:
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         _remember_document(target, compatibility, {}, source_digest=None)
@@ -312,7 +318,6 @@ def load_settings_document(path: Path | None = None) -> LoadedSettings:
         _forget_document(target)
         return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
 
-    source_digest = _document_digest(data)
     try:
         source_version = _settings_schema_version(data)
     except ValueError:
@@ -412,16 +417,28 @@ def save_settings(
         expected_digest = _SOURCE_DIGEST_BY_PATH.get(target)
         if tracked:
             try:
-                current_document = _read_document(target)
-                current_digest = _document_digest(current_document)
+                _, current_digest = _read_document(target)
             except FileNotFoundError:
                 current_digest = None
+            except ValueError as error:
+                # The file was readable when it was loaded, so one that can no
+                # longer be parsed changed underneath us.
+                raise SettingsConcurrentWriteError(
+                    "settings changed after they were loaded and can no "
+                    "longer be read; reload before saving"
+                ) from error
             if current_digest != expected_digest:
                 raise SettingsConcurrentWriteError(
                     "settings changed after they were loaded; reload before saving"
                 )
         elif target.exists():
-            current_document = _read_document(target)
+            try:
+                current_document, _ = _read_document(target)
+            except ValueError as error:
+                # Never overwrite a file that cannot be read.
+                raise SettingsWriteRefusedError(
+                    "settings file is unreadable; load it before saving"
+                ) from error
             current_version = _settings_schema_version(current_document)
             if current_version > CURRENT_SETTINGS_SCHEMA_VERSION:
                 raise SettingsWriteRefusedError(

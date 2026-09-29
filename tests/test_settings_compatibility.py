@@ -6,6 +6,8 @@ import pytest
 
 from jrbar.settings import (
     CURRENT_SETTINGS_SCHEMA_VERSION,
+    AgentMonitorSettings,
+    SettingsConcurrentWriteError,
     SettingsWriteRefusedError,
     load_settings,
     load_settings_document,
@@ -283,3 +285,71 @@ def test_current_schema_round_trip_is_idempotent__and_1_more(tmp_path: Path) -> 
     corrupt = target.with_name("settings.json.corrupt")
     assert json.loads(corrupt.read_text(encoding="utf-8"))["sentinel"] == "keep"
 
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        '{"screen_bar_gap_width": NaN, "sentinel": "keep"}',
+        '{"sentinel": 1e999}',
+        '{"sentinel": -Infinity}',
+        '{"devices": [{"brightness": Infinity}], "sentinel": "keep"}',
+    ),
+)
+def test_non_finite_number_quarantines_document(tmp_path: Path, text: str) -> None:
+    target = tmp_path / "settings.json"
+    target.write_text(text, encoding="utf-8")
+
+    loaded = load_settings_document(target)
+
+    assert loaded.settings == AgentMonitorSettings()
+    assert loaded.compatibility.read_only is False
+    assert not target.exists()
+    corrupt = target.with_name("settings.json.corrupt")
+    assert corrupt.read_text(encoding="utf-8") == text
+
+    save_settings(loaded.settings, target, compatibility=loaded.compatibility)
+
+    assert target.exists()
+    assert corrupt.read_text(encoding="utf-8") == text
+
+
+def test_finite_exponent_numbers_still_load(tmp_path: Path) -> None:
+    target = tmp_path / "settings.json"
+    target.write_text(
+        '{"settings_schema_version": 2, "sentinel": 1e5, "other": 2.5e-3}',
+        encoding="utf-8",
+    )
+
+    loaded = load_settings_document(target)
+
+    assert not target.with_name("settings.json.corrupt").exists()
+    save_settings(loaded.settings, target, compatibility=loaded.compatibility)
+    document = json.loads(target.read_text(encoding="utf-8"))
+    assert document["sentinel"] == 1e5
+    assert document["other"] == 2.5e-3
+
+
+@pytest.mark.parametrize("overwrite", ('{"x": NaN}', '{"x": '))
+def test_tracked_save_refuses_when_document_becomes_unreadable(
+    tmp_path: Path, overwrite: str
+) -> None:
+    target = tmp_path / "settings.json"
+    save_settings(AgentMonitorSettings(), target)
+    loaded = load_settings_document(target)
+    target.write_text(overwrite, encoding="utf-8")
+
+    with pytest.raises(SettingsConcurrentWriteError):
+        save_settings(loaded.settings, target, compatibility=loaded.compatibility)
+
+    assert target.read_text(encoding="utf-8") == overwrite
+
+
+def test_untracked_save_refuses_unreadable_existing_file(tmp_path: Path) -> None:
+    target = tmp_path / "settings.json"
+    target.write_text('{"x": NaN}', encoding="utf-8")
+
+    with pytest.raises(SettingsWriteRefusedError):
+        save_settings(AgentMonitorSettings(), target)
+
+    assert target.read_text(encoding="utf-8") == '{"x": NaN}'
