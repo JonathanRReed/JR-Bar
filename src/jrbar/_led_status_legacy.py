@@ -479,15 +479,6 @@ def scale_nominal_brightness(code: int, fraction: float) -> int:
     return normalize_brightness(round(255.0 * linear_to_srgb(light)))
 
 
-def brightness_light_fraction(code: int) -> float:
-    """What ``brightness N`` actually delivers, 0.0-1.0 of full drive.
-
-    ``lights.surfaces.*.brightness`` reports this rather than the policy's own
-    percentage: the app was showing 51% beside a device being driven at 23%.
-    """
-    return brightness_drive_code(code) / 255.0
-
-
 def _strip_drive_float(code: int, gain: float) -> float:
     """strip_drive_code before rounding/clamping -- the true ratio."""
     code = max(0, min(255, int(code)))
