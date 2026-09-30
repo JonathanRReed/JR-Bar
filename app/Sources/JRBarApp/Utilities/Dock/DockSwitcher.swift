@@ -815,6 +815,17 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// The tap, under the lock: written by `start`/`stop` on main, read
     /// by the callback's re-enable on the tap's own thread.
     private var tap: CFMachPort?
+    /// Whether a tap stands. False while macOS refuses one (no
+    /// Accessibility yet), which `DockSwitcherController.reviveTap` retries.
+    var tapLive: Bool { lock.withLock { tap != nil } }
+    /// How a tap is made: the system's `CGEvent.tapCreate` by default,
+    /// nil when macOS refuses. A seam so tests never reach the real API,
+    /// where a granted Terminal would install a key tap that eats ⌥⇥
+    /// machine-wide for the run.
+    var makeTap: (SwitcherKeyTap) -> CFMachPort? = { SwitcherKeyTap.systemTap(for: $0) }
+    /// The refusal is logged once per streak, so a retry on every card
+    /// edit does not fill the log. Main only, like `start` and `stop`.
+    private var refusalLogged = false
     /// The thread servicing the tap (`DockTapThread`) — main only.
     private var thread: DockTapThread?
 
@@ -842,6 +853,22 @@ final class SwitcherKeyTap: @unchecked Sendable {
         lock.lock(); previewOpen = value; lock.unlock()
     }
 
+    /// The system's key tap, or nil when macOS refuses it. Its callback
+    /// finds the tap through the refcon, never a capture.
+    static func systemTap(for owner: SwitcherKeyTap) -> CFMachPort? {
+        let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
+            | (1 << CGEventType.flagsChanged.rawValue)
+            | (1 << CGEventType.rightMouseDown.rawValue)
+            | (1 << CGEventType.rightMouseUp.rawValue)
+        return CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                 options: .defaultTap, eventsOfInterest: mask,
+                                 callback: { _, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            return Unmanaged<SwitcherKeyTap>.fromOpaque(refcon)
+                .takeUnretainedValue().handle(type: type, event: event)
+        }, userInfo: Unmanaged.passUnretained(owner).toOpaque())
+    }
+
     /// The tap runs on a thread of its own (`DockTapThread`): it is
     /// active, so every key and right click on the Mac waits on its
     /// callback, and on the main run loop that meant waiting on whatever
@@ -849,20 +876,14 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// under `lock` and hops to main for everything it acts on.
     func start() {
         guard lock.withLock({ self.tap == nil }) else { return }
-        let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
-            | (1 << CGEventType.flagsChanged.rawValue)
-            | (1 << CGEventType.rightMouseDown.rawValue)
-            | (1 << CGEventType.rightMouseUp.rawValue)
-        guard let created = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
-                                              options: .defaultTap, eventsOfInterest: mask,
-                                              callback: { _, type, event, refcon in
-            guard let refcon else { return Unmanaged.passUnretained(event) }
-            return Unmanaged<SwitcherKeyTap>.fromOpaque(refcon)
-                .takeUnretainedValue().handle(type: type, event: event)
-        }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            Self.log.notice("switcher tap unavailable — accessibility permission missing")
+        guard let created = makeTap(self) else {
+            if !refusalLogged {
+                refusalLogged = true
+                Self.log.notice("switcher tap unavailable — accessibility permission missing")
+            }
             return
         }
+        refusalLogged = false
         // An active tap nobody services holds every key until the system
         // times it out — never leave one standing.
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, created, 0) else {
@@ -878,6 +899,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
     }
 
     func stop() {
+        refusalLogged = false
         let tap = lock.withLock { () -> CFMachPort? in
             defer { self.tap = nil }
             return self.tap
@@ -1142,7 +1164,7 @@ final class SwitcherKeyTap: @unchecked Sendable {
 final class DockSwitcherController {
     static let log = Logger(subsystem: "devin.jrbar", category: "switcher")
 
-    private let tap = SwitcherKeyTap()
+    private let tap: SwitcherKeyTap
     private var panel: DockSwitcherPanel?
     /// Click-away for a latched strip: with no held modifier left to
     /// release, the latch would otherwise keep every keystroke on the
@@ -1246,8 +1268,26 @@ final class DockSwitcherController {
         tap.setFrontEnabled(isFrontAllowed())
     }
 
+    init(tap: SwitcherKeyTap = SwitcherKeyTap()) {
+        self.tap = tap
+    }
+
+    /// Try the key tap again if macOS refused it when the switcher
+    /// started: Accessibility granted after launch, or a settings apply.
+    /// Never starts a tap for a switcher nobody started, and does none of
+    /// `start`'s wiring a second time.
+    func reviveTap() {
+        guard running, !tap.tapLive else { return }
+        tap.start()
+    }
+
     func start() {
-        guard !running else { return }
+        guard !running else {
+            // Every card edit reconciles through here: a tap that was
+            // refused is asked for again.
+            reviveTap()
+            return
+        }
         running = true
         tap.onTab = { [weak self] shifted in self?.tab(shifted: shifted) }
         tap.onCommit = { [weak self] in self?.commit() }

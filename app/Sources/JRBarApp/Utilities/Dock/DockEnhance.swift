@@ -123,6 +123,8 @@ final class DockEnhanceController {
     private(set) var accessibilityTrusted = false
     private(set) var screenCaptureGranted = false
     @ObservationIgnored private var permissionsCheckedAt = Date.distantPast
+    /// Accessibility's answer — `AXIsProcessTrusted` unless a test swaps it.
+    @ObservationIgnored var trustProbe: () -> Bool = { AXIsProcessTrusted() }
     /// The minimum gap between Accessibility and magnification
     /// re-reads. Screen Recording keeps its own 30 s cache — see
     /// `refreshPermissions`.
@@ -520,7 +522,7 @@ final class DockEnhanceController {
         guard force || Date().timeIntervalSince(permissionsCheckedAt) > Self.permissionTTL else { return }
         permissionsCheckedAt = Date()
         let wasTrusted = accessibilityTrusted
-        accessibilityTrusted = AXIsProcessTrusted()
+        accessibilityTrusted = trustProbe()
         screenCaptureGranted = force ? FoldCapturePermission.recheck() : FoldCapturePermission.granted
         let dockDefaults = UserDefaults(suiteName: "com.apple.dock")
         magnificationOn = dockDefaults?.bool(forKey: "magnification") ?? false
@@ -528,6 +530,10 @@ final class DockEnhanceController {
         if running, !wasTrusted, accessibilityTrusted {
             schedulePanelWarmup(layoutOnly: panel != nil)
         }
+        // Accessibility arriving after launch is when a key tap macOS
+        // refused at start can finally be made. The switcher gates this
+        // on its own running, so it holds with the previews parked too.
+        if !wasTrusted, accessibilityTrusted { switcher.reviveTap() }
     }
 
     /// Prepare the retained, empty panel before the first hover. Default

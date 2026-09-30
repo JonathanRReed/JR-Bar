@@ -767,6 +767,51 @@ import Testing
                 "the preflight is a tccd round trip on every call")
     }
 
+    /// The Accessibility answer a test flips, and a key tap asked for
+    /// through a counting factory (never the real `CGEvent.tapCreate`).
+    private final class TrustAndTap {
+        var trusted = false
+        var asked = 0
+        func tap() -> SwitcherKeyTap {
+            let tap = SwitcherKeyTap()
+            tap.makeTap = { [self] _ in
+                self.asked += 1
+                return nil
+            }
+            return tap
+        }
+    }
+
+    @Test func trustArrivingLaterRetriesTheSwitcherTap() {
+        let world = TrustAndTap()
+        let switcher = DockSwitcherController(tap: world.tap())
+        switcher.start()
+        defer { switcher.stop() }
+        #expect(world.asked == 1, "refused at start: no Accessibility yet")
+        let controller = DockEnhanceController(switcher: switcher)
+        controller.trustProbe = { world.trusted }
+        controller.refreshPermissions(force: true)
+        #expect(world.asked == 1, "still untrusted: nothing to retry")
+
+        world.trusted = true
+        controller.refreshPermissions(force: true)
+        #expect(world.asked == 2, "the grant is the moment the tap is asked for again")
+        controller.refreshPermissions(force: true)
+        #expect(world.asked == 2, "trust unchanged: no retry on the next read")
+    }
+
+    @Test func trustArrivingStartsNoTapForAStoppedSwitcher() {
+        let world = TrustAndTap()
+        let switcher = DockSwitcherController(tap: world.tap())
+        let controller = DockEnhanceController(switcher: switcher)
+        controller.trustProbe = { world.trusted }
+        controller.refreshPermissions(force: true)
+        world.trusted = true
+        controller.refreshPermissions(force: true)
+        #expect(world.asked == 0, "the switcher was never started, so the edge starts no tap")
+        #expect(!switcher.running)
+    }
+
     @Test func aRestingDockPointerStopsRepeatedAXWalks() {
         var cadence = DockAXReadCadence()
         let point = CGPoint(x: 500, y: 900)
