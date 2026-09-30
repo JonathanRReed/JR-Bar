@@ -12,7 +12,6 @@ RECEIPT_ROOT = (
     / "2026-08-30-jr-bar-p3-38-manual-scheduled-dnd"
 )
 MANIFEST_PATH = RECEIPT_ROOT / "task-5-renders" / "manifest.json"
-HARNESS_PATH = RECEIPT_ROOT / "render_dnd_receipts.py"
 STATES = (
     "off",
     "manual_mute",
