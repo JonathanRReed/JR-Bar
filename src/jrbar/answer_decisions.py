@@ -526,9 +526,27 @@ def tool_preview(tool_name: object, tool_input: object) -> str | None:
     return None
 
 
-#: Where a command word may start: the start of the text, whitespace, or a
-#: shell separator.
-_START: Final = r"(?:^|[\s;&|(])"
+# What the card marks "destructive". It is advice for the person deciding and
+# never a block, so the patterns favour recall over precision, and a few false
+# positives are the accepted price:
+#
+# * A command word counts after a quote, a backtick or `$(` as well as after
+#   whitespace and shell separators. That is the only way to see through
+#   `bash -c 'rm -rf build'` or `ssh host "rm -rf x"` without a shell parser,
+#   and it means `grep "rm -rf" notes` and `echo rm -rf` are marked too.
+# * It also counts after `\` (`\rm`, which skips an alias) and after an
+#   absolute, home or dot path (`/bin/rm`, `~/bin/git`, `./rm`). A path that
+#   only ends in the word (`docs/sudo`, `b/rm`) is not the command.
+# * `dd if=a of=b` is marked whatever `of=` points at; a judgement call.
+#
+# Every pattern reads the command in one pass with no open-ended scan forward
+# from each anchor, so a long or hostile command costs time proportional to
+# its length and nothing is cut off before it is read.
+_PATH_TOKEN: Final = r"[^\s;&|()`'\"]"
+_START: Final = (
+    r"(?:^|[\s;&|(`'\"]|\$\()"
+    r"(?:\\|/(?:" + _PATH_TOKEN + r"*/)?|[~.]" + _PATH_TOKEN + r"*/)?"
+)
 
 #: Patterns that mean "this loses work" wherever they sit in the text. Each is
 #: a plain search with no open-ended scan forward, so the cost is linear in the
@@ -536,10 +554,11 @@ _START: Final = r"(?:^|[\s;&|(])"
 _DESTRUCTIVE: Final = tuple(
     re.compile(pattern)
     for pattern in (
-        # One flag token holding an r or R (-rf, -fr, -R) or --recursive. The
-        # lookahead finds the r in one pass and the letters are then read once;
+        # Any flags, then one holding an r or R (-rf, -fr, -R) or --recursive:
+        # `rm -f -r` and `rm --force --recursive` count. The lookahead finds
+        # the r in one pass and the letters are then read once;
         # `-[A-Za-z]*[rR][A-Za-z]*` retried every split of a long flag.
-        _START + r"rm\s+(?:-(?=[A-Za-z]*[rR])[A-Za-z]+|--recursive)\b",
+        _START + r"rm\s+(?:-{1,2}[A-Za-z][\w-]*\s+)*(?:-(?=[A-Za-z]*[rR])[A-Za-z]+|--recursive)\b",
         _START + r"sudo\s",
         _START + r"git\s+reset\s+--hard\b",
         _START + r"git\s+clean\s+-[A-Za-z]*f",
@@ -554,17 +573,23 @@ _DESTRUCTIVE: Final = tuple(
     )
 )
 
-#: A command that pushes, writes with dd, or fetches is only destructive for
-#: what comes later in the SAME simple command. Each is found once per segment
+#: A command that pushes, writes with dd, finds or fetches is only destructive
+#: for what comes later in the SAME simple command. Each is found once per segment
 #: (the text between `;`, `&` and `|`) by its anchor, then one search for the
 #: tail from where the anchor ended. Scanning forward from every anchor would
 #: be quadratic on a long run of them; the tail does not depend on which anchor
 #: matched, so if the first anchor's tail is missing every later one is too.
 _SEGMENT_SPLIT: Final = re.compile(r"([;&|])")
 _PUSH_ANCHOR: Final = re.compile(_START + r"git\s+push\b")
-_PUSH_TAIL: Final = re.compile(r"\s(?:--force(?:-with-lease)?|-f)\b")
+#: A forced push (--force, --force-with-lease, -f alone or among short flags,
+#: `+ref`) and a remote deletion (--delete, -d, `:ref`) both lose remote work.
+_PUSH_TAIL: Final = re.compile(
+    r"\s(?:(?:--force(?:-with-lease)?|--delete|-(?=[A-Za-z]*[fd])[A-Za-z]+)\b|\+\S|:\S)"
+)
 _DD_ANCHOR: Final = re.compile(_START + r"dd\s+")
 _DD_TAIL: Final = re.compile(r"\bof=")
+_FIND_ANCHOR: Final = re.compile(_START + r"find\b")
+_FIND_TAIL: Final = re.compile(r"\s-delete\b")
 _FETCH: Final = re.compile(r"\b(?:curl|wget)\b")
 _SHELL_HEAD: Final = re.compile(r"\s*(?:sudo\s+)?(?:sh|bash|zsh)\b")
 
@@ -575,12 +600,14 @@ def _anchored_tail(segment: str, anchor: re.Pattern[str], tail: re.Pattern[str])
 
 
 def _segment_destructive(command: str) -> bool:
-    """The push, dd and pipe-to-shell shapes, read one simple command at a time."""
+    """The push, dd, find and pipe-to-shell shapes, one simple command at a time."""
     parts = _SEGMENT_SPLIT.split(command)
     for index in range(0, len(parts), 2):
         segment = parts[index]
-        if _anchored_tail(segment, _PUSH_ANCHOR, _PUSH_TAIL) or _anchored_tail(
-            segment, _DD_ANCHOR, _DD_TAIL
+        if (
+            _anchored_tail(segment, _PUSH_ANCHOR, _PUSH_TAIL)
+            or _anchored_tail(segment, _DD_ANCHOR, _DD_TAIL)
+            or _anchored_tail(segment, _FIND_ANCHOR, _FIND_TAIL)
         ):
             return True
         # `curl ... | sh`: the fetch ends in a pipe and the next command is a shell.

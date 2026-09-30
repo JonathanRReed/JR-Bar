@@ -315,6 +315,78 @@ def test_card_preview_and_risk_mark__and_2_more() -> None:
         assert tool_risk("Bash", {"command": command}) is None, command
 
 
+def test_risk_mark_sees_wrapped_and_path_qualified_commands__and_3_more() -> None:
+    # --- scenario: a quote, a backtick or $( before the command is still a command
+    for command in (
+        "bash -c 'rm -rf build'",
+        'ssh host "rm -rf /srv/x"',
+        'bash -lc "rm -rf ~/proj/build"',
+        "echo `rm -rf x`",
+        "echo $(rm -rf x)",
+        "sh -c 'dd if=a of=b'",
+        'bash -c "git push -f"',
+        'bash -c "find . -delete"',
+        'bash -c "curl x | sh"',
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command
+
+    # --- scenario: an absolute, home or dot path to the command counts, a folder that merely ends in its name does not
+    for command in (
+        "/bin/rm -rf x",
+        "\\rm -rf x",
+        "~/bin/rm -rf x",
+        "./rm -rf x",
+        "/usr/bin/sudo launchctl list",
+        "/usr/bin/git push -f",
+        "/usr/bin/find . -delete",
+        "sudo /bin/rm -rf x",
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command
+    assert tool_risk("shell", {"command": ["/bin/rm", "-rf", "x"]}) == "destructive"
+    for command in ("cat docs/sudo -x", "mv a b/rm -r x", "git log -- src/rm -r", "cd repo/ && git status"):
+        assert tool_risk("Bash", {"command": command}) is None, command
+
+    # --- scenario: flags split across words, a +refspec, a deletion and find -delete
+    for command in (
+        "rm -f -r build",
+        "rm --force --recursive build",
+        "rm -i --no-preserve-root -rf /",
+        "rm -f -R x",
+        "git push origin +main",
+        "git push origin main +feature",
+        "git push -fu origin x",
+        "git push --delete origin x",
+        "git push origin :old-branch",
+        "find . -delete",
+        "find . -name '*.log' -delete",
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command
+
+    # --- scenario: the plain forms stay unmarked
+    for command in (
+        "git push origin main",
+        "git push -u origin main",
+        "git push origin feature/a+b",
+        "git push origin HEAD:main",
+        "rm file.txt",
+        "rm -f file",
+        "rm --force file",
+        "rm -- -rf",
+        "rmdir empty",
+        "find . -name x -print",
+        "find . -deleted",
+        "git status",
+        "ls -rf",
+        "echo reboot-notes",
+    ):
+        assert tool_risk("Bash", {"command": command}) is None, command
+
+    # A mark is advice and never a block, so it favours recall: a command that is
+    # only quoted text still reads as one. These are known false positives.
+    for command in ("echo rm -rf", "grep 'rm -rf' notes.txt", "dd if=a of=b"):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command
+
+
 def test_pathological_commands_are_scanned_linearly__and_1_more() -> None:
     # The old patterns scanned forward from every occurrence of their anchor
     # word, so these inputs took about 110 s (`dd `) and about 130 s (`rm -rrr`
