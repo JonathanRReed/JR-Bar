@@ -1335,10 +1335,21 @@ def log(message: str) -> None:
 # the daemon's wire shape (`usage.providers[]`), rebuilt on every state so
 # the resets keep counting down.
 
-USAGE_SCENARIOS = ("opencode", "statusline", "hub")
+USAGE_SCENARIOS = ("opencode", "statusline", "hub", "stale")
 
 
 def scenario_usage(name: str, now: float) -> list[dict]:
+    """The scenario's rows, each with a `read_at` the way the daemon sends
+    one: equal to `observed_at` unless the scenario says its numbers were
+    read earlier."""
+    rows = _scenario_rows(name, now)
+    for row in rows:
+        if "observed_at" in row:
+            row.setdefault("read_at", row["observed_at"])
+    return rows
+
+
+def _scenario_rows(name: str, now: float) -> list[dict]:
     def window(key, label, used, resets_in, *, bindable=True, source=None, detail=False):
         row = {"id": key, "name": label, "used_pct": used, "resets_at": now + resets_in, "bindable": bindable,
                "detail": detail}
@@ -1405,6 +1416,26 @@ def scenario_usage(name: str, now: float) -> list[dict]:
              "fidelity": "official", "observed_at": now - 30, "reset_credits": 1,
              "account": {"plan": "Pro", "label": "ChatGPT", "fidelity": "official"},
              "windows": [window("weekly", "7d", 30.0, 5 * 86400, source="cliproxy")]},
+        ]
+    if name == "stale":
+        return [
+            # Claude's OAuth read started failing five hours ago. Each failed
+            # poll moves `observed_at` to now; `read_at` stays where the
+            # numbers were read, so the card says "read 5h 10m ago" beside
+            # its Stale badge instead of "read 1m ago". Its 5h window has
+            # rolled over since; the weekly one has not.
+            {"id": "claude", "instance": "default", "quota_source": True, "state": "stale",
+             "fidelity": "stale", "reason": "rate_limited", "action": "Retry",
+             "observed_at": now - 60, "read_at": now - (5 * 3600 + 600),
+             "account": {"plan": "Max 20×", "label": None, "fidelity": "stale"},
+             "windows": [window("five-hour", "5h", 52.0, -20 * 60, source="claude-oauth"),
+                         window("weekly", "7d", 61.0, 3 * 86400 + 5 * 3600, source="claude-oauth")],
+             "tokens": tokens},
+            # Codex read fine a minute ago: a live reading names its own time.
+            {"id": "codex", "instance": "default", "quota_source": True, "state": "ready",
+             "fidelity": "official", "observed_at": now - 60,
+             "account": {"plan": "Pro", "label": None, "fidelity": "official"},
+             "windows": [window("weekly", "7d", 30.0, 5 * 86400)]},
         ]
     return []
 
@@ -3674,7 +3705,8 @@ def main() -> int:
     parser.add_argument("--usage-scenario", choices=USAGE_SCENARIOS, default=None,
                         help="replace the usage providers with a focused set: opencode (a Go subscription and a "
                              "Mac with no quota source), statusline (Claude read from Claude Code's statusLine), "
-                             "hub (a second Claude and a Codex account read through CLIProxyAPI)")
+                             "hub (a second Claude and a Codex account read through CLIProxyAPI), "
+                             "stale (a Claude reading kept five hours through failed polls)")
     parser.add_argument("--parent-pid", type=int, default=None, metavar="PID",
                         help="stop by itself once process PID exits (tests pass their own pid, so a killed "
                              "test run leaves no mock behind); without it the mock runs until it is stopped")
