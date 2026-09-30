@@ -38,6 +38,14 @@ All notable changes to JR-Bar are documented here.
   time, and now catches wrapped and path-qualified forms such as
   `bash -c 'rm -rf x'`, `/bin/rm -rf`, `git push origin +main` and
   `find -delete`.
+- An ask you already answered from JR-Bar no longer keeps offering Approve
+  and Deny while the approved tool runs. The panel, the Rail, the Dock,
+  `/asks.json` and the Stream Deck plugin stop drawing a verb for it, the
+  card keeps its command and destructive mark, and the panel says "Answered,
+  waiting for the agent" where the buttons were.
+- `jrbar serve` and the Stream Deck plugin now show each provider's quota.
+  The endpoint only read the usage store's first schema, so its usage was
+  always empty. It reads the versions the store itself reads.
 - Quiet modes hold what they promise: Mute, Fully Dark and a call's
   no-sounds quiet now hold sounds and banners, and Fully Dark withholds the
   banner. A provider capped below stage 3, or with asks off, no longer grows
@@ -60,6 +68,11 @@ All notable changes to JR-Bar are documented here.
   window. Usage > Sessions draws the days before a hook-only provider's first
   retained event as gaps, not zeros. A signed-out Gemini card clears on the
   next refresh once the Gemini CLI saves its sign-in.
+  A month too busy to fit the scan cache no longer shows a partial total as
+  30 days: Claude shows nothing and Codex counts the days that are whole.
+  `jrbar usage`, `providers status` and cross-Mac sync no longer show a
+  saved invented Antigravity lane or a lapsed window as the tightest one.
+  Rebuilding the Sessions graph reads each hook ledger once, not twice.
 - Agent detection and hooks: a slow login shell right after login no longer
   hides installed CLIs; Settings shows one it cannot place yet as unknown,
   not as not installed. A hook that fires after its agent has already exited
