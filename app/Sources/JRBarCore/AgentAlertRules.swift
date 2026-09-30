@@ -180,6 +180,6 @@ public enum AgentAlertRules {
         // hold still have the last word. The one thing that goes past them
         // is `notifyWhenDone`, applied after this: a watch is the explicit
         // ask for that one banner.
-        return EventPolicy.holdingQuiet(out, focus: state?.focus)
+        return EventPolicy.holdingQuiet(out, for: event, focus: state?.focus)
     }
 }

@@ -127,7 +127,7 @@ Unix epoch seconds.
                         "tokens":{"input":1200,"cached_input":800,"output":300},"estimated_cost_usd":null,"credits_remaining":null,
                         "forecast":{"window_id":"five_hour","remaining_pct":58.0,"exhausts_at":1789000292.4,"pace":"under","rate_pct_per_hour":12.0,"samples":13}}]},
  "power":{"keep_awake":true,"closed_lid":{"policy":"agents","holding":false,"helper_installed":true}},
- "focus":{"mode":"dim","source":"schedule","until":…,"display":"all","brightness_factor":0.15,"banner_allowed":true,"audible_allowed":false,"summary":"Dim until 07:00"},
+ "focus":{"mode":"dim","source":"schedule","until":…,"display":"all","outbound":"all","brightness_factor":0.15,"banner_allowed":true,"audible_allowed":false,"summary":"Dim until 07:00"},
  "escalation":{"stage":"menu_bar","since":1788982800.0},
  "health":{"hooks":{"claude":"ok","codex":"stale","pi":"missing"},
            "managed_hooks":["claude","codex"],
@@ -464,7 +464,15 @@ Vocabulary:
   `until` is when *this* quiet ends: the override's own expiry for a
   manual quiet, the schedule interval's end for a scheduled or Focus
   quiet, and null while nothing is in effect -- a merely upcoming quiet
-  period never surfaces as an end time.
+  period never surfaces as an end time. `display` is the lights' axis
+  (which kinds may light up) and `outbound` is the admission for banners,
+  sounds and webhooks by kind class: `all`, `critical` (asks, failures and
+  the escalation ladder), `asks` (asks and the escalation ladder only) or
+  `none`. The two can disagree -- a Dim schedule under a Mute Focus lights
+  everything and admits nothing outbound -- so a client reads each for its
+  own job. `mode` is only the first contribution's word, so a client
+  gates on `banner_allowed`, `audible_allowed` and `outbound`, and falls
+  back to `mode` only when the axes are absent.
 - `escalation.stage`: `none`, `ramp`, `menu_bar`, `final` (0…3);
   `since` is when the oldest unanswered ask started blocking, a wall-clock
   epoch fixed for the episode: it does not move from build to build or
@@ -865,7 +873,12 @@ Transient things the app should react to once. The daemon states the fact
 and leaves sounds and banners to the app's `EventPolicy` (it never posts a
 macOS notification or plays a sound itself in headless mode), so `notify`
 and `sound` are usually absent; `sound: "glass"` marks the chime edge of
-`escalation_stage` 3.
+`escalation_stage` 3. The app's `EventPolicy` holds sounds by
+`focus.audible_allowed` and banners by `focus.banner_allowed`, and admits
+either by kind class through `focus.outbound`: `ask_opened` and
+`escalation_stage` are asks, `failed` is critical, and `completed` and the
+`quota_*` kinds are courtesy. That hold never withdraws a banner already
+delivered and never touches the status pulse.
 ```json
 {"t":"event","v":1,"id":"ev-12","kind":"completed","session":"…","provider":"claude","label":"jr-bar-b7","detail":null,"at":…,"cursor":"1234-abc123:ev-12"}
 {"t":"event","v":1,"id":"ev-13","kind":"escalation_stage","session":"…","label":"sidepulse-core","stage":3,"sound":"glass","at":…,"cursor":"1234-abc123:ev-13"}

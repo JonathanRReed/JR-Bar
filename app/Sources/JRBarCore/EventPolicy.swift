@@ -117,19 +117,26 @@ public enum EventPolicy {
     }
 
     /// `delivery` with quiet's hold applied: sounds cleared (and a starting
-    /// chime turned into a stop) while the focus holds sounds, the banner
-    /// cleared while it holds banners. It never touches a withdrawal, the
-    /// status pulse, a stop, the takeover or a toast: the light and the
-    /// panel keep telling the truth, and a banner taken back stays taken
-    /// back. Pure, so it runs both where the policy decides and again after
-    /// a provider rule may have widened the delivery.
-    public static func holdingQuiet(_ delivery: EventDelivery, focus: CoreFocus?) -> EventDelivery {
+    /// chime turned into a stop) while the focus holds sounds or its
+    /// outbound admission leaves this kind of event out, the banner cleared
+    /// while it holds banners or leaves the kind out. Asks Only admits the
+    /// asks, Pause adds failures, Mute and Dark admit nothing; a courtesy
+    /// kind (a finish, a quota crossing) is admitted only under `all`. It
+    /// never touches a withdrawal, the status pulse, a stop, the takeover
+    /// or a toast: the light and the panel keep telling the truth, and a
+    /// banner taken back stays taken back. Pure, so it runs both where the
+    /// policy decides and again after a provider rule may have widened the
+    /// delivery.
+    public static func holdingQuiet(_ delivery: EventDelivery, for event: CoreEvent, focus: CoreFocus?) -> EventDelivery {
         var out = delivery
-        if soundsHeld(by: focus) {
+        let admitted = focus?.admitsOutbound(kind: event.kind) ?? true
+        let soundsOff = !admitted || soundsHeld(by: focus)
+        let bannersOff = !admitted || bannersHeld(by: focus)
+        if soundsOff {
             out.sound = nil
             if out.chime == .start { out.chime = .stop }
         }
-        if bannersHeld(by: focus) { out.notification = nil }
+        if bannersOff { out.notification = nil }
         return out
     }
 
@@ -142,7 +149,7 @@ public enum EventPolicy {
     public static func delivery(for event: CoreEvent, state: CoreState?, settings: SettingsDocument?,
                                 askingFrontmost: Bool = false) -> EventDelivery {
         let decided = decision(for: event, state: state, settings: settings, askingFrontmost: askingFrontmost)
-        return holdingQuiet(decided, focus: state?.focus)
+        return holdingQuiet(decided, for: event, focus: state?.focus)
     }
 
     private static func decision(for event: CoreEvent, state: CoreState?, settings: SettingsDocument?,

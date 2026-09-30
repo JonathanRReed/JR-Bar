@@ -65,7 +65,7 @@ struct EventPolicyTests {
     }
 
     @Test("dim keeps the banner and drops the sound; pause also stops the chime")
-    func quiet() {
+    func dimKeepsBannersPauseStopsChime() {
         let completed = CoreEvent(id: "6", kind: "completed", session: "codex:1", sound: "glass", notify: true)
         let dim = EventPolicy.delivery(for: completed, state: Self.state(focus: "dim"), settings: Self.settings(["completion_notification_enabled": .bool(true)]))
         #expect(dim.sound == nil)
@@ -96,7 +96,7 @@ struct EventPolicyTests {
 
     @Test("mute holds every banner and sound, and leaves the escalation's picture standing")
     func mute() {
-        let axes = CoreFocus(mode: "mute", bannerAllowed: false, audibleAllowed: false)
+        let axes = CoreFocus(mode: "mute", bannerAllowed: false, audibleAllowed: false, outbound: "none")
         let muted = Self.state(quiet: axes, sessions: [Self.codex])
         for event in [Self.completedEvent, Self.askEvent, Self.failedEvent, Self.quotaEvent] {
             let delivery = EventPolicy.delivery(for: event, state: muted, settings: Self.bannersOn)
@@ -152,13 +152,84 @@ struct EventPolicyTests {
         #expect(delivery.notification == nil)
     }
 
+    static let quotaPaceEvent = CoreEvent(id: "q7", kind: "quota_pace", label: "5-hour", notify: true, provider: "codex",
+                                          detail: "30% left · runs out around 3:40 PM · resets 5:30 PM")
+    static let quotaResetEvent = CoreEvent(id: "q8", kind: "quota_reset", notify: true, provider: "codex")
+
+    @Test("asks only lets an ask through and holds the rest by kind, though the switches allow them")
+    func asksOnly() {
+        let axes = CoreFocus(mode: "asks_only", bannerAllowed: true, audibleAllowed: true, outbound: "asks")
+        let quiet = Self.state(quiet: axes, sessions: [Self.codex])
+        for event in [Self.completedEvent, Self.failedEvent, Self.quotaEvent, Self.quotaPaceEvent, Self.quotaResetEvent] {
+            let delivery = EventPolicy.delivery(for: event, state: quiet, settings: Self.bannersOn)
+            #expect(delivery.sound == nil, Comment(rawValue: event.kind))
+            #expect(delivery.notification == nil, Comment(rawValue: event.kind))
+        }
+        let ask = EventPolicy.delivery(for: Self.askEvent, state: quiet, settings: Self.bannersOn)
+        #expect(ask.sound == "Funk")
+        #expect(ask.notification?.category == .ask)
+        // The frontmost-pane rule is the same as ever: no burst, the banner for the record.
+        let watched = EventPolicy.delivery(for: Self.askEvent, state: quiet, settings: Self.bannersOn, askingFrontmost: true)
+        #expect(watched.sound == nil)
+        #expect(watched.notification?.category == .ask)
+        // The ladder that climbs for an ask is an ask: it keeps its chime.
+        let chime = Self.settings(["escalation_tier": .string("chime")])
+        let ladder = EventPolicy.delivery(for: Self.stage3Event, state: quiet, settings: chime)
+        #expect(ladder.chime == .start)
+        #expect(ladder.statusPulse == true)
+        // An answered ask still takes its banner back.
+        let resolved = EventPolicy.delivery(for: CoreEvent(id: "q9", kind: "ask_resolved", session: "codex:1"),
+                                            state: Self.state(quiet: axes), settings: Self.bannersOn)
+        #expect(resolved.withdrawNotification == "ask:codex:1")
+    }
+
+    @Test("pause keeps asks and failures, holds the courtesy kinds, and still holds every sound")
+    func pause() {
+        let axes = CoreFocus(mode: "pause", outbound: "critical")
+        let paused = Self.state(quiet: axes, sessions: [Self.codex])
+        let finish = EventPolicy.delivery(for: Self.completedEvent, state: paused, settings: Self.bannersOn)
+        #expect(finish.sound == nil)
+        #expect(finish.notification == nil)
+        for event in [Self.quotaEvent, Self.quotaPaceEvent, Self.quotaResetEvent] {
+            #expect(EventPolicy.delivery(for: event, state: paused, settings: Self.bannersOn).notification == nil,
+                    Comment(rawValue: event.kind))
+        }
+        let failure = EventPolicy.delivery(for: Self.failedEvent, state: paused, settings: Self.bannersOn)
+        #expect(failure.notification?.title == "sidepulse-core failed")
+        #expect(failure.sound == nil, "pause has always held every sound")
+        let question = EventPolicy.delivery(for: Self.askEvent, state: paused, settings: Self.bannersOn)
+        #expect(question.notification?.category == .ask)
+        #expect(question.sound == nil)
+        let chime = Self.settings(["escalation_tier": .string("chime")])
+        let ladder = EventPolicy.delivery(for: Self.stage3Event, state: paused, settings: chime)
+        #expect(ladder.chime == .stop)
+        #expect(ladder.statusPulse == true)
+    }
+
+    @Test("the outbound word alone decides by kind, and 'all' or an unknown word changes nothing")
+    func outboundAlone() {
+        // No effect booleans at all: only `outbound` speaks.
+        let none = Self.state(quiet: CoreFocus(mode: "off", outbound: "none"), sessions: [Self.codex])
+        for event in [Self.completedEvent, Self.askEvent, Self.failedEvent, Self.quotaEvent] {
+            let delivery = EventPolicy.delivery(for: event, state: none, settings: Self.bannersOn)
+            #expect(delivery.sound == nil, Comment(rawValue: event.kind))
+            #expect(delivery.notification == nil, Comment(rawValue: event.kind))
+        }
+        let baseline = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(), settings: Self.bannersOn)
+        for word in ["all", "someday"] {
+            let state = Self.state(quiet: CoreFocus(mode: "off", outbound: word))
+            let delivery = EventPolicy.delivery(for: Self.completedEvent, state: state, settings: Self.bannersOn)
+            #expect(delivery == baseline, Comment(rawValue: word))
+        }
+    }
+
     @Test("holding quiet clears sounds and banners and touches nothing else")
     func holdingQuiet() {
         let banner = EventDelivery.Notification(identifier: "ask:codex:1", title: "needs you", body: "?", category: .ask)
         let loud = EventDelivery(sound: "Funk", soundRepeats: 3, notification: banner, toast: "Dock connected",
                                  withdrawNotification: "ask:codex:0", statusPulse: true, chime: .start, takeover: true)
         let muted = CoreFocus(mode: "mute", bannerAllowed: false, audibleAllowed: false)
-        let held = EventPolicy.holdingQuiet(loud, focus: muted)
+        let held = EventPolicy.holdingQuiet(loud, for: Self.askEvent, focus: muted)
         #expect(held.sound == nil)
         #expect(held.notification == nil)
         #expect(held.chime == .stop, "a starting chime is a sound")
@@ -169,23 +240,40 @@ struct EventPolicyTests {
 
         // Sounds alone, on the axis: the banner stays.
         let call = CoreFocus(mode: "off", source: "call", bannerAllowed: true, audibleAllowed: false)
-        let soundsOnly = EventPolicy.holdingQuiet(loud, focus: call)
+        let soundsOnly = EventPolicy.holdingQuiet(loud, for: Self.askEvent, focus: call)
         #expect(soundsOnly.sound == nil)
         #expect(soundsOnly.notification == banner)
 
         // Banners alone, on the axis: the sound stays.
         let silentBanners = CoreFocus(mode: "off", bannerAllowed: false, audibleAllowed: true)
-        let bannersOnly = EventPolicy.holdingQuiet(loud, focus: silentBanners)
+        let bannersOnly = EventPolicy.holdingQuiet(loud, for: Self.askEvent, focus: silentBanners)
         #expect(bannersOnly.sound == "Funk")
         #expect(bannersOnly.notification == nil)
         #expect(bannersOnly.chime == .start)
 
+        // A kind the outbound admission leaves out loses its sound, chime
+        // and banner, and nothing else; an admitted kind comes back as it was.
+        let asks = CoreFocus(mode: "asks_only", bannerAllowed: true, audibleAllowed: true, outbound: "asks")
+        let left = EventPolicy.holdingQuiet(loud, for: Self.completedEvent, focus: asks)
+        #expect(left.sound == nil)
+        #expect(left.notification == nil)
+        #expect(left.chime == .stop)
+        #expect(left.toast == "Dock connected")
+        #expect(left.withdrawNotification == "ask:codex:0")
+        #expect(left.statusPulse == true)
+        #expect(left.takeover)
+        let kept = EventPolicy.holdingQuiet(loud, for: Self.askEvent, focus: asks)
+        #expect(kept == loud)
+        let critical = CoreFocus(mode: "off", outbound: "critical")
+        #expect(EventPolicy.holdingQuiet(loud, for: Self.failedEvent, focus: critical) == loud)
+        #expect(EventPolicy.holdingQuiet(loud, for: Self.quotaEvent, focus: critical).notification == nil)
+
         // No focus, or an open one: the delivery comes back as it was.
-        #expect(EventPolicy.holdingQuiet(loud, focus: nil) == loud)
-        #expect(EventPolicy.holdingQuiet(loud, focus: CoreFocus(mode: "off")) == loud)
+        #expect(EventPolicy.holdingQuiet(loud, for: Self.completedEvent, focus: nil) == loud)
+        #expect(EventPolicy.holdingQuiet(loud, for: Self.completedEvent, focus: CoreFocus(mode: "off")) == loud)
         // A stop and an unchanged chime are not sounds.
         let stopping = EventDelivery(statusPulse: false, chime: .stop)
-        #expect(EventPolicy.holdingQuiet(stopping, focus: muted) == stopping)
+        #expect(EventPolicy.holdingQuiet(stopping, for: Self.askEvent, focus: muted) == stopping)
     }
 
     @Test("an absent or open focus changes nothing")
@@ -193,7 +281,8 @@ struct EventPolicyTests {
         let baseline = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(), settings: Self.bannersOn)
         #expect(baseline.sound == "Glass")
         #expect(baseline.notification != nil)
-        for focus in [CoreFocus(mode: "off"), CoreFocus(mode: nil), CoreFocus(mode: "off", bannerAllowed: true, audibleAllowed: true)] {
+        let openFocuses = [CoreFocus(mode: "off"), CoreFocus(mode: nil), CoreFocus(mode: "off", bannerAllowed: true, audibleAllowed: true, outbound: "all")]
+        for focus in openFocuses {
             let delivery = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(quiet: focus), settings: Self.bannersOn)
             #expect(delivery == baseline, Comment(rawValue: String(describing: focus.mode)))
         }

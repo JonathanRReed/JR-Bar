@@ -1622,13 +1622,17 @@ public struct CoreFocus: Codable, Hashable, Sendable {
     /// sounds, so `audibleAllowed == false` is how a reader learns it.
     public var bannerAllowed: Bool?
     public var audibleAllowed: Bool?
+    /// Which kinds of event may reach a banner or a sound right now
+    /// (`all`, `critical`, `asks` or `none`): the daemon's outbound
+    /// admission. `display` is the lights' own axis and is not decoded here.
+    public var outbound: String?
     public var summary: String?
     /// Whether the daemon's helper can read which Focus is on (it needs
     /// Full Disk Access of its own); nil until it has tried.
     public var namedReadable: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case mode, source, until, summary
+        case mode, source, until, summary, outbound
         case bannerAllowed = "banner_allowed"
         case audibleAllowed = "audible_allowed"
         case namedReadable = "named_readable"
@@ -1636,6 +1640,25 @@ public struct CoreFocus: Codable, Hashable, Sendable {
 
     /// False only when the daemon says sounds are off right now.
     public var soundsAllowed: Bool { audibleAllowed != false }
+
+    /// The event kinds that are asks to the daemon's admission: an ask
+    /// opening and the escalation ladder that climbs for it.
+    static let askKinds: Set<String> = ["ask_opened", "escalation_stage"]
+
+    /// Whether `outbound` lets an event of this kind reach a banner or a
+    /// sound. `asks` admits the asks, `critical` adds failures, `none`
+    /// admits nothing, and every other kind (completions, quota) is
+    /// courtesy, admitted only under `all`. A document without the key, or
+    /// with a word this build does not know, admits everything, so an old
+    /// daemon keeps the behaviour it always had.
+    public func admitsOutbound(kind: String) -> Bool {
+        switch outbound?.lowercased() {
+        case "none": return false
+        case "asks": return Self.askKinds.contains(kind)
+        case "critical": return Self.askKinds.contains(kind) || kind == "failed"
+        default: return true
+        }
+    }
 }
 
 public struct CoreEscalation: Codable, Hashable, Sendable {
