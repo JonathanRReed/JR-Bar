@@ -69,6 +69,23 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         (timeSensitive ?? (category == .ask)) ? .timeSensitive : .active
     }
 
+    /// What to do with the permission the bridge remembers. A grant posts
+    /// at once, in the same turn, so a banner cannot land after the
+    /// withdraw for the ask it was posted for. A remembered denial is
+    /// read from the system once before it is believed, because the person
+    /// may have switched JR-Bar on in System Settings since. A denial the
+    /// system confirms is skipped and never prompts again. Anything
+    /// undecided goes to the lazy system prompt.
+    enum AuthorizationGate: Equatable { case send, askSystem, recheck, skip }
+
+    nonisolated static func gate(for status: UNAuthorizationStatus, rechecked: Bool) -> AuthorizationGate {
+        switch status {
+        case .authorized, .provisional: return .send
+        case .denied: return rechecked ? .skip : .recheck
+        default: return .askSystem
+        }
+    }
+
     /// `request` rides an ask banner's userInfo, so its Approve and Deny
     /// answer the episode it was posted for and no later one.
     /// `timeSensitive` overrides the urgency the category would give.
@@ -114,14 +131,27 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Lazy: the system prompt appears the first time a notification is due.
-    private func ensureAuthorized(_ completion: @escaping @MainActor (Bool) -> Void) {
+    /// A remembered denial is read again from the system first, so banners
+    /// return after the person turns them on in System Settings without a
+    /// relaunch. That read never prompts.
+    private func ensureAuthorized(rechecked: Bool = false, _ completion: @escaping @MainActor (Bool) -> Void) {
         guard let center else { completion(false); return }
-        switch authorization {
-        case .authorized, .provisional:
+        switch Self.gate(for: authorization, rechecked: rechecked) {
+        case .send:
             completion(true)
-        case .denied:
+        case .skip:
             completion(false)
-        default:
+        case .recheck:
+            center.getNotificationSettings { [weak self] settings in
+                let live = settings.authorizationStatus
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if live != .denied { self.onLog?("notification permission changed since it was refused") }
+                    self.authorization = live
+                    self.ensureAuthorized(rechecked: true, completion)
+                }
+            }
+        case .askSystem:
             center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in
                 Task { @MainActor [weak self] in
                     self?.authorization = granted ? .authorized : .denied

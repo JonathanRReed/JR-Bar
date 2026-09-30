@@ -104,8 +104,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // reads as doubled bands and ghost surfaces. This runs after the
         // env-var early exits so `JRBAR_LOGIN_ITEM` still answers from a
         // direct exec while the app is up.
-        guard let lock = SingleInstanceLock.acquire() else {
-            print("JR-Bar is already running — this instance yields.")
+        // Only proven contention yields. A lock that cannot be taken here at
+        // all (an unwritable state directory, no `flock`) is said and the
+        // app runs on, so it never quits silently as "already running".
+        let instanceLog = Logger(subsystem: "devin.jrbar", category: "instance")
+        var lockNotice: String?
+        guard let lock = SingleInstanceLock.acquire(onUnavailable: { code in
+            let notice = "single-instance lock unavailable (errno \(code): \(String(cString: strerror(code)))) - continuing without it"
+            instanceLog.error("\(notice, privacy: .public)")
+            NSLog("JR-Bar: %@", notice)
+            lockNotice = notice
+        }) else {
+            let line = "JR-Bar is already running — this instance yields."
+            instanceLog.notice("\(line, privacy: .public)")
+            print(line)
             NSApp.terminate(nil)
             return
         }
@@ -120,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         terminationSignal = source
 
         let core = CoreModel()
+        if let lockNotice { core.appendLocalLog(level: "supervisor", lockNotice) }
         let store = PanelStore(core: core, screenBarShown: appState.showScreenBar)
         // The daemon first. It takes seconds to be ready, and every
         // surface below is built in the meantime rather than before it
@@ -1241,11 +1254,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// daemon value that is already present initializes the app side;
     /// when the daemon carries none, the app's remembered state is
     /// pushed once so the `screen_bar` device agrees with the window.
-    private var screenBarSyncedWithDaemon = false
-    /// A `set_setting` write we sent but whose echo has not landed yet;
-    /// while it is in flight a mismatch is the old value, not a user's
-    /// new choice.
-    private var pendingScreenBarWrite: (value: Bool, at: Date)?
+    /// A choice made while the daemon is down is the exception: it wins
+    /// on reconnect and is pushed then, because the daemon's value at
+    /// that moment is only what it last heard, never a newer choice.
+    /// `ScreenBarDaemonSync` decides each case; this class only acts.
+    private var screenBarSync = ScreenBarDaemonSync()
 
     private func setScreenBar(shown: Bool, syncDaemon: Bool = true) {
         appState.showScreenBar = shown
@@ -1258,62 +1271,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if syncDaemon { pushScreenBarSetting(shown) }
     }
 
-    /// `set_setting virtual_status_device_enabled`: the write-through half
-    /// of the sync. Quiet when the core is down — the reconcile pushes the
-    /// remembered value on first contact instead.
+    /// The write-through half of the sync, for a person's toggle. With the
+    /// daemon connected the value is written at once. With it down, the
+    /// choice is remembered as made offline and pushed when the daemon
+    /// comes back, ahead of whatever value it still holds.
     private func pushScreenBarSetting(_ shown: Bool) {
-        guard core?.isLive == true else { return }
-        pendingScreenBarWrite = (shown, Date())
-        Task { @MainActor [weak self] in
+        let live = core?.isLive == true
+        screenBarSync.toggled(shown: shown, live: live, now: Date())
+        guard live else { return }
+        sendScreenBarSetting(shown)
+    }
+
+    /// `set_setting virtual_status_device_enabled`.
+    private func sendScreenBarSetting(_ shown: Bool) {
+        _ = Task { @MainActor [weak self] in
             guard let self, let core = self.core else { return }
             do {
                 let reply = try await core.setSetting("virtual_status_device_enabled", value: .bool(shown))
                 if !reply.ok {
-                    self.pendingScreenBarWrite = nil
+                    self.screenBarSync.pushRefused()
                     core.appendLocalLog(level: "warn", "screen bar: virtual_status_device_enabled refused (\(reply.error?.code ?? "?"))")
                 }
             } catch {
-                self.pendingScreenBarWrite = nil
+                // A daemon that went away under the write may never have
+                // heard it: keep it as an offline choice for the reconnect.
+                if core.isLive {
+                    self.screenBarSync.pushRefused()
+                } else {
+                    self.screenBarSync.pushLostOffline()
+                }
             }
         }
     }
 
-    /// The adopt half of the sync, run on every core change: when the
-    /// settings document's `virtual_status_device_enabled` disagrees with
-    /// what the band is doing and it is not our own write still landing,
-    /// the daemon's value is the user's latest choice and the band follows.
+    /// Run on every core change: `ScreenBarDaemonSync` compares the
+    /// settings document's `virtual_status_device_enabled` with what the
+    /// band is doing, and this carries out its answer. A mismatch that is
+    /// not our own write still landing is the daemon's newer choice (the
+    /// user's, from Settings › Devices or another client) and the band
+    /// follows; a choice made while the daemon was down is pushed to it.
     private func reconcileScreenBarSetting() {
         guard let core else { return }
-        guard core.isLive else {
-            screenBarSyncedWithDaemon = false
-            pendingScreenBarWrite = nil
-            return
-        }
         let document = core.settings.map { SettingsDocument($0.document) }
-        guard let daemonValue = document?.bool("virtual_status_device_enabled") else {
-            // First contact and the daemon has never heard the fact: push
-            // the app's remembered visibility so its `screen_bar` device
-            // agrees with the window that is actually up. (A daemon with
-            // the key is left alone — `guard`ed below.)
-            if core.isLive && !screenBarSyncedWithDaemon {
-                screenBarSyncedWithDaemon = true
-                pushScreenBarSetting(appState.showScreenBar)
-            }
-            return
+        let decision = screenBarSync.reconcile(live: core.isLive,
+                                               daemonValue: document?.bool("virtual_status_device_enabled"),
+                                               appValue: appState.showScreenBar, now: Date())
+        switch decision {
+        case .none, .agree, .wait:
+            break
+        case .push(let value):
+            sendScreenBarSetting(value)
+        case .adopt(let value):
+            setScreenBar(shown: value, syncDaemon: false)
         }
-        if daemonValue == appState.showScreenBar {
-            screenBarSyncedWithDaemon = true
-            if pendingScreenBarWrite?.value == daemonValue { pendingScreenBarWrite = nil }
-            return
-        }
-        if let pending = pendingScreenBarWrite, Date().timeIntervalSince(pending.at) < 10 { return }
-        pendingScreenBarWrite = nil
-        // A daemon value that is present and disagrees is the user's
-        // latest choice (Settings › Devices, another client), and it is
-        // also the first-contact initializer for `appState.showScreenBar`
-        // when the two stores had never met. Adopt it; don't write back.
-        screenBarSyncedWithDaemon = true
-        setScreenBar(shown: daemonValue, syncDaemon: false)
     }
 
     // MARK: Core observation
