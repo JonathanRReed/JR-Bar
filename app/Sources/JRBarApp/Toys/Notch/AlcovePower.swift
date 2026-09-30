@@ -73,8 +73,6 @@ final class AlcovePowerFeed {
 /// decides what each is worth.
 @MainActor
 final class AlcovePowerMonitor {
-    static let interval: TimeInterval = AlcovePowerFeed.interval
-
     /// (old, new) on a real change — old is never nil (the baseline
     /// stays silent) and the two never equal.
     var onTransition: (@MainActor (AlcovePowerState, AlcovePowerState) -> Void)?
