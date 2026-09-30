@@ -71,10 +71,16 @@ extension JSONValue: Codable {
             self = .null
         } else if let value = try? container.decode(Bool.self) {
             self = .bool(value)
+        } else if let value = try? container.decode(String.self) {
+            // String comes before Double on purpose. CoreCodec's decoder
+            // converts the strings "nan", "inf" and "-inf" to doubles, so a
+            // string tried as a Double first turns a folder or session
+            // named nan into a non-finite number that cannot be encoded
+            // again, and the whole row is lost. A JSON number never decodes
+            // as a String, so real numbers are unaffected.
+            self = .string(value)
         } else if let value = try? container.decode(Double.self) {
             self = .number(value)
-        } else if let value = try? container.decode(String.self) {
-            self = .string(value)
         } else if let value = try? container.decode([JSONValue].self) {
             self = .array(value)
         } else if let value = try? container.decode([String: JSONValue].self) {
