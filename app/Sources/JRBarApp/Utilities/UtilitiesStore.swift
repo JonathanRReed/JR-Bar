@@ -141,16 +141,10 @@ final class UtilitiesStore {
     /// Raise the exact window a live agent session runs in, if one
     /// window exclusively hosts it (`SessionWindowLocator`). True when
     /// that window is now in front; false leaves the caller's fallback
-    /// (`open_session`) to act — it resumes, it doesn't raise.
-    @discardableResult
-    func raiseSessionWindow(_ sessionID: String) -> Bool {
-        dock.raiseSessionWindow(sessionID) == .raised
-    }
-
-    /// The same, for an async caller (`SessionOpener`): the window lists
-    /// and the walk for another Space's window run on `DockAXWorker`, so
-    /// a hung host app never holds the main thread; the activation and
-    /// the answer come back to it.
+    /// (`open_session`) to act — it resumes, it doesn't raise. The
+    /// window lists and the walk for another Space's window run on
+    /// `DockAXWorker`, so a hung host app never holds the main thread;
+    /// the activation and the answer come back to it.
     @discardableResult
     func raiseSessionWindow(_ sessionID: String) async -> Bool {
         await dock.raiseSessionWindow(sessionID) == .raised

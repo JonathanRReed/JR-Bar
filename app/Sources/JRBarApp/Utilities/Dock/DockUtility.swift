@@ -50,15 +50,9 @@ final class DockUtility {
     /// Raise the window a live session runs in — the shared locator the
     /// panel's Open, the Agent Overview and a Screen Bar notice can try
     /// before the daemon's `open_session` (which resumes rather than
-    /// raises). Needs only Accessibility, not the Dock card.
-    @discardableResult
-    func raiseSessionWindow(_ sessionID: String) -> SessionWindowLocator.Outcome {
-        SessionWindowLocator.raise(sessionID: sessionID, marks: agentMarks())
-    }
-
-    /// The same, for an async caller: the window lists and the walk for
-    /// another Space's window run on `DockAXWorker`, so a hung host app
-    /// never holds the main thread.
+    /// raises). Needs only Accessibility, not the Dock card. The window
+    /// lists and the walk for another Space's window run on
+    /// `DockAXWorker`, so a hung host app never holds the main thread.
     @discardableResult
     func raiseSessionWindow(_ sessionID: String) async -> SessionWindowLocator.Outcome {
         await SessionWindowLocator.raise(sessionID: sessionID, marks: agentMarks())
@@ -96,7 +90,7 @@ final class DockUtility {
         }
     }
 
-    /// The card's write path for the picker — same shape as `bind`.
+    /// The card's write path for the picker.
     var providerBinding: Binding<DockProvider> {
         Binding(get: { self.settings().provider },
                 set: { p in self.update { $0.provider = p } })
@@ -401,14 +395,6 @@ final class DockUtility {
         var draft = settings()
         mutate(&draft)
         onSettingsChange?(draft)
-    }
-
-    /// A binding into the persisted settings; the store's `didSet`
-    /// debounces the write, so a dragged slider doesn't stream saves.
-    func bind<T>(_ keyPath: WritableKeyPath<DockSettings, T>) -> Binding<T> {
-        Binding(
-            get: { self.settings()[keyPath: keyPath] },
-            set: { value in self.update { $0[keyPath: keyPath] = value } })
     }
 }
 
