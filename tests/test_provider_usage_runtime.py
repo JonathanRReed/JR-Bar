@@ -418,6 +418,109 @@ def test_last_known_good_is_retained_when_refresh_fails__and_2_more(tmp_path) ->
 
 
 
+def _read_time_service(tmp_path, *, script, clock, state_loader=None, state_saver=None):
+    """One Codex collector driven by ``script["mode"]``: a real reading, a
+    failed poll, or a scan that found no quota evidence."""
+    settings = default_provider_usage_settings().with_enabled("grok", False)
+
+    def collector(_pref, _home, observed, _credentials):
+        if script["mode"] == "read":
+            return snapshot("codex", remaining=48, observed=observed)
+        if script["mode"] == "no_evidence":
+            return dataclass_replace(snapshot("codex", observed=observed), lanes=())
+        return snapshot(
+            "codex", state=ProviderSourceState.UNAVAILABLE, observed=observed
+        )
+
+    return ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"codex": collector},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: clock["now"],
+        state_loader=state_loader,
+        state_saver=state_saver,
+        incident_lookup=lambda *_args: None,
+    )
+
+
+def test_failed_polls_keep_the_time_the_retained_reading_was_read(tmp_path) -> None:
+    clock = {"now": 1000.0}
+    script = {"mode": "read"}
+    service = _read_time_service(tmp_path, script=script, clock=clock)
+
+    first = service.refresh_now(providers=("codex",), force=True).by_provider("codex")
+    assert first.state is ProviderSourceState.READY
+    assert first.read_at is None
+    assert first.effective_read_at == 1000.0
+
+    script["mode"] = "fail"
+    for now in (1100.0, 1200.0, 1300.0):
+        clock["now"] = now
+        stale = service.refresh_now(providers=("codex",), force=True).by_provider("codex")
+        # The attempt moves with the clock; the numbers stay as old as they are.
+        assert stale.state is ProviderSourceState.STALE
+        assert stale.observed_at == now
+        assert stale.effective_read_at == 1000.0
+        assert stale.lanes[0].remaining_percent == 48
+    service.close()
+
+
+def test_a_scan_with_no_quota_evidence_keeps_the_time_of_the_last_real_reading(
+    tmp_path,
+) -> None:
+    clock = {"now": 1000.0}
+    script = {"mode": "read"}
+    service = _read_time_service(tmp_path, script=script, clock=clock)
+    service.refresh_now(providers=("codex",), force=True)
+
+    script["mode"] = "no_evidence"
+    clock["now"] = 1500.0
+    codex = service.refresh_now(providers=("codex",), force=True).by_provider("codex")
+    assert codex.state is ProviderSourceState.STALE
+    assert codex.reason_code == "reading_evidence_missing"
+    assert codex.observed_at == 1500.0
+    assert codex.effective_read_at == 1000.0
+
+    script["mode"] = "read"
+    clock["now"] = 2000.0
+    live = service.refresh_now(providers=("codex",), force=True).by_provider("codex")
+    assert live.state is ProviderSourceState.READY
+    assert live.read_at is None
+    assert live.effective_read_at == 2000.0
+    service.close()
+
+
+def test_the_read_time_survives_a_save_and_a_restart(tmp_path) -> None:
+    clock = {"now": 1000.0}
+    script = {"mode": "read"}
+    saved: list[ProviderUsageState] = []
+    service = _read_time_service(
+        tmp_path, script=script, clock=clock, state_saver=saved.append
+    )
+    service.refresh_now(providers=("codex",), force=True)
+    script["mode"] = "fail"
+    clock["now"] = 1100.0
+    service.refresh_now(providers=("codex",), force=True)
+    service.close()
+    persisted = saved[-1]
+    assert persisted.by_provider("codex").effective_read_at == 1000.0
+
+    restarted = _read_time_service(
+        tmp_path,
+        script=script,
+        clock=clock,
+        state_loader=lambda: persisted,
+    )
+    clock["now"] = 1200.0
+    codex = restarted.refresh_now(providers=("codex",), force=True).by_provider("codex")
+
+    assert codex.state is ProviderSourceState.STALE
+    assert codex.observed_at == 1200.0
+    assert codex.effective_read_at == 1000.0
+    restarted.close()
+
+
 def test_the_cadence_ladder_is_pure_and_ordered():
     from jrbar.provider_usage_runtime import _interval_for
 

@@ -1157,9 +1157,16 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// A credit balance, for providers that bill in credits rather than
     /// percent-of-window.
     public var creditsRemaining: Double?
-    /// When the snapshot was taken (epoch seconds): the age a stale lane
-    /// should name instead of posing as current.
+    /// When the daemon last asked the provider (epoch seconds). A failed
+    /// poll moves it to now while the card keeps its last good numbers, so
+    /// it is the age of the attempt, not of the reading: `readingAt` is the
+    /// age a stale lane should name.
     public var observedAt: Double?
+    /// When the numbers, tokens and cost on this row were actually read
+    /// (epoch seconds), never later than `observedAt`. Equal to it on a live
+    /// reading and earlier on a stale one that kept its last good numbers.
+    /// Nil from a daemon that predates the field.
+    public var readAt: Double?
     /// The window the daemon says is worth watching — least headroom of
     /// the applicable measured lanes, with its reason — so the card can
     /// lead with it and say why (S6.4). Nil when nothing applicable was
@@ -1180,7 +1187,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
                 instance: String? = nil, quotaSource: Bool = true, tokens: CoreUsageTokens? = nil,
                 estimatedCostUSD: Double? = nil, creditsRemaining: Double? = nil, observedAt: Double? = nil,
-                constrained: CoreConstrainedLane? = nil, incident: String? = nil) {
+                constrained: CoreConstrainedLane? = nil, incident: String? = nil, readAt: Double? = nil) {
         self.id = id
         self.windows = windows
         self.fidelity = fidelity
@@ -1195,6 +1202,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         self.estimatedCostUSD = estimatedCostUSD
         self.creditsRemaining = creditsRemaining
         self.observedAt = observedAt
+        self.readAt = readAt
         self.constrained = constrained
         self.incident = incident
     }
@@ -1218,6 +1226,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         estimatedCostUSD = try? c.decodeIfPresent(Double.self, forKey: .estimatedCostUSD)
         creditsRemaining = try? c.decodeIfPresent(Double.self, forKey: .creditsRemaining)
         observedAt = try? c.decodeIfPresent(Double.self, forKey: .observedAt)
+        readAt = try? c.decodeIfPresent(Double.self, forKey: .readAt)
         constrained = try? c.decodeIfPresent(CoreConstrainedLane.self, forKey: .constrained)
         incident = try? c.decodeIfPresent(String.self, forKey: .incident)
         let credits = try? c.decodeIfPresent(Int.self, forKey: .resetCredits)
@@ -1237,8 +1246,14 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         case estimatedCostUSD = "estimated_cost_usd"
         case creditsRemaining = "credits_remaining"
         case observedAt = "observed_at"
+        case readAt = "read_at"
         case resetCredits = "reset_credits"
     }
+
+    /// When these numbers were read: `readAt`, else `observedAt` (a daemon
+    /// that predates the field read them when it observed). The age a card
+    /// says "read ... ago" from.
+    public var readingAt: Double? { readAt ?? observedAt }
 
     /// `not_signed_in`, `signed_out`, `unauthenticated`, `no_auth`: the CLI
     /// has to log in before the daemon can read anything.

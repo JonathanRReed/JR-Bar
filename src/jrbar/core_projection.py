@@ -1314,6 +1314,18 @@ def usage_document(
                 "reason": "only_measured" if len(candidates) == 1 else "least_headroom",
                 "candidates": len(candidates),
             }
+        # `observed_at` is when the daemon last asked; `read_at` is when the
+        # numbers on this row were read. A retained stale reading is
+        # re-stamped with each failed poll's time, so only `read_at` can say
+        # how old it really is. A snapshot that names no read time was read
+        # when it was observed, and a read time is never later than the
+        # attempt that carried it.
+        observed_at = epoch(getattr(snapshot, "observed_at", None))
+        read_at = epoch(getattr(snapshot, "read_at", None))
+        if read_at is None:
+            read_at = observed_at
+        elif observed_at is not None:
+            read_at = min(read_at, observed_at)
         providers.append(
             {
                 "id": provider_id,
@@ -1351,7 +1363,8 @@ def usage_document(
                 "reset_credits": getattr(snapshot, "reset_credits", None),
                 "reason": getattr(snapshot, "reason_code", None),
                 "action": getattr(snapshot, "action_label", None),
-                "observed_at": epoch(getattr(snapshot, "observed_at", None)),
+                "observed_at": observed_at,
+                "read_at": read_at,
                 "tokens": {
                     "input": getattr(snapshot, "input_tokens", 0),
                     "cached_input": getattr(snapshot, "cached_input_tokens", 0),

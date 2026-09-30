@@ -209,6 +209,9 @@ def fixture_inputs() -> dict:
                 reason_code="rate_limited",
                 action_label="Retry later",
                 observed_at=NOW - 900.0,
+                # The poll at NOW - 900 failed; the numbers are the ones
+                # read five hours before NOW.
+                read_at=NOW - 18000.0,
                 input_tokens=0,
                 cached_input_tokens=0,
                 output_tokens=0,
@@ -412,6 +415,10 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     assert claude["windows"][0]["used_pct"] == 42.0
     assert claude["windows"][1]["resets_at"] == NOW + 277200.0
     assert codex["fidelity"] == "stale" and codex["state"] == "stale"
+    # `observed_at` is the failed attempt; `read_at` is when its numbers were
+    # read. A live reading names its own time for both.
+    assert codex["observed_at"] == NOW - 900.0 and codex["read_at"] == NOW - 18000.0
+    assert claude["read_at"] == claude["observed_at"] == NOW - 42.4
     assert codex["windows"][0]["resets_at"] is None
     # The forecast is about the primary (5h) window, from the sample buffer.
     assert claude["forecast"]["window_id"] == "five_hour" and claude["forecast"]["pace"] == "under"
@@ -1892,3 +1899,73 @@ def test_a_decided_ask_the_ingress_never_previewed_still_reads_as_answered() -> 
     assert document["decision"]["decided"] is True
     assert document["preview"] is None and document["risk"] is None
     assert document["summary"] == "Run: rm -rf build"
+
+
+def _usage_with(snapshot) -> dict:
+    usage = SimpleNamespace(
+        refreshed_at=NOW, next_refresh_at=None, refreshing=False, snapshots=(snapshot,)
+    )
+    return usage_document(usage)["providers"][0]
+
+
+def test_a_real_stale_snapshot_reports_the_old_read_time_beside_the_new_attempt() -> None:
+    from jrbar.provider_usage_platform import (
+        ProviderSourceState,
+        ProviderUsageSnapshot,
+        UsageLane,
+    )
+
+    lane = UsageLane(
+        provider_id="claude", lane_id="five_hour", label="5h", remaining_percent=48.0,
+        reset_at=NOW + 600.0, scope="all", model=None, feature=None, bindable=True,
+        source_id="claude-oauth",
+    )
+    stale = ProviderUsageSnapshot(
+        provider_id="claude", account_label=None, observed_at=NOW,
+        state=ProviderSourceState.STALE, reason_code="rate_limited", action_label="Retry",
+        lanes=(lane,), input_tokens=0, cached_input_tokens=0, output_tokens=0,
+        model_count=0, estimated_cost_usd=None, cache_savings_usd=None,
+        credits_remaining=None, incident=None, read_at=NOW - 18000.0,
+    )
+
+    provider = _usage_with(stale)
+
+    assert provider["state"] == "stale"
+    assert provider["observed_at"] == NOW
+    assert provider["read_at"] == NOW - 18000.0
+
+
+def test_a_snapshot_without_a_read_time_reports_its_observed_time() -> None:
+    # A test double (or an older object) with no `read_at` at all.
+    bare = SimpleNamespace(
+        provider_id="claude", source_instance_id="default", account_label=None, lanes=(),
+        state=SimpleNamespace(value="ready"), reason_code=None, action_label=None,
+        observed_at=NOW - 30.0, input_tokens=0, cached_input_tokens=0, output_tokens=0,
+        estimated_cost_usd=None, credits_remaining=None,
+    )
+    assert _usage_with(bare)["read_at"] == NOW - 30.0
+
+    unset = SimpleNamespace(**{**vars(bare), "read_at": None})
+    assert _usage_with(unset)["read_at"] == NOW - 30.0
+
+    # No observed time at all: nothing to fall back on, so nothing is claimed.
+    nothing = SimpleNamespace(**{**vars(bare), "observed_at": None})
+    assert _usage_with(nothing)["read_at"] is None
+
+
+def test_a_read_time_after_the_attempt_is_clamped_to_the_attempt() -> None:
+    later = SimpleNamespace(
+        provider_id="claude", source_instance_id="default", account_label=None, lanes=(),
+        state=SimpleNamespace(value="ready"), reason_code=None, action_label=None,
+        observed_at=NOW - 30.0, read_at=NOW + 500.0, input_tokens=0,
+        cached_input_tokens=0, output_tokens=0, estimated_cost_usd=None,
+        credits_remaining=None,
+    )
+
+    provider = _usage_with(later)
+
+    assert provider["observed_at"] == NOW - 30.0
+    assert provider["read_at"] == NOW - 30.0
+
+    junk = SimpleNamespace(**{**vars(later), "read_at": float("nan")})
+    assert _usage_with(junk)["read_at"] == NOW - 30.0

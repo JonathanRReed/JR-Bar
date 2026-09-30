@@ -125,3 +125,57 @@ def test_store_preserves_two_same_provider_instances__and_1_more(tmp_path: Path)
     loaded = load_provider_usage_state(target)
     assert loaded.snapshots[0].source_instance_id == "default"
     assert loaded.snapshots[0].account_discriminator is None
+
+
+def _stale_retained() -> ProviderUsageState:
+    """A stale card: asked at 1000, but its numbers were read at 850."""
+    kept = replace(
+        state().snapshots[0],
+        state=ProviderSourceState.STALE,
+        reason_code="network_unavailable",
+        action_label="Retry",
+        read_at=850.0,
+    )
+    return ProviderUsageState((kept,), 1000, 1060, False)
+
+
+def test_the_read_time_of_a_retained_reading_round_trips(tmp_path: Path) -> None:
+    target = tmp_path / "usage.json"
+    save_provider_usage_state(_stale_retained(), target)
+
+    loaded = load_provider_usage_state(target)
+
+    assert loaded == _stale_retained()
+    assert loaded.snapshots[0].read_at == 850.0
+    assert loaded.snapshots[0].observed_at == 1000.0
+    # No schema bump: an older build must still read this file.
+    assert PROVIDER_USAGE_STORE_SCHEMA_VERSION == 3
+    assert json.loads(target.read_text())["schema_version"] == 3
+
+
+def test_a_saved_file_without_a_read_time_loads_with_none(tmp_path: Path) -> None:
+    target = tmp_path / "usage.json"
+    save_provider_usage_state(_stale_retained(), target)
+    document = json.loads(target.read_text())
+    del document["snapshots"][0]["read_at"]
+    target.write_text(json.dumps(document))
+
+    loaded = load_provider_usage_state(target)
+
+    assert loaded.snapshots[0].read_at is None
+    assert loaded.snapshots[0].effective_read_at == 1000.0
+
+
+def test_a_junk_read_time_is_dropped_and_the_snapshot_kept(tmp_path: Path) -> None:
+    target = tmp_path / "usage.json"
+    save_provider_usage_state(_stale_retained(), target)
+    for junk in ("x", -5, True, [1], {"a": 1}, float("nan"), float("inf")):
+        document = json.loads(target.read_text())
+        document["snapshots"][0]["read_at"] = junk
+        target.write_text(json.dumps(document))
+
+        loaded = load_provider_usage_state(target)
+
+        assert len(loaded.snapshots) == 1, junk
+        assert loaded.snapshots[0].read_at is None, junk
+        assert loaded.snapshots[0].lanes == _stale_retained().snapshots[0].lanes

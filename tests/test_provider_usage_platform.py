@@ -149,6 +149,25 @@ def test_last_known_good_is_retained_as_stale_when_sources_fail__and_2_more() ->
     assert merged.lanes == previous.lanes
     assert merged.reason_code == "network"
 
+    # --- scenario: a_retained_reading_keeps_the_time_it_was_read
+    # The failed poll moves `observed_at` (the attempt), never `read_at`
+    # (when the 21% was actually read), however many polls fail in a row.
+    assert previous.read_at is None
+    assert previous.effective_read_at == 900.0
+    assert merged.observed_at == 1000.0
+    assert merged.read_at == 900.0
+    assert merged.effective_read_at == 900.0
+    second_failure = _snapshot(
+        state=ProviderSourceState.UNAVAILABLE,
+        reason="network",
+        action="Retry",
+        observed=1100,
+    )
+    again = select_authoritative_snapshot((second_failure,), last_known_good=merged)
+    assert again.state is ProviderSourceState.STALE
+    assert again.observed_at == 1100.0
+    assert again.read_at == 900.0
+
     # --- scenario: most_constrained_lane_ignores_detail_only_unknown_lanes
     known = _lane(lane_id="weekly", remaining=25, bindable=True)
     detail = _lane(lane_id="fable", remaining=5, bindable=False)
@@ -202,3 +221,27 @@ def test_most_constrained_lane_with_a_clock_still_ignores_detail_only_lanes() ->
     detail = _lane(lane_id="fable", remaining=5, bindable=False, reset=5000.0)
 
     assert most_constrained_lane(_snapshot(lanes=(known, detail)), now=1000.0) is known
+
+
+def test_read_at_is_a_finite_nonnegative_number_or_nothing() -> None:
+    import dataclasses
+
+    import pytest
+
+    base = _snapshot(lanes=(_lane(),))
+    assert dataclasses.replace(base, read_at=850).read_at == 850.0
+    assert isinstance(dataclasses.replace(base, read_at=850).read_at, float)
+    assert dataclasses.replace(base, read_at=0).read_at == 0.0
+    # A clock step back must not make a snapshot unconstructible: a read
+    # time after the attempt time is allowed here (the wire clamps it).
+    assert dataclasses.replace(base, read_at=base.observed_at + 5).read_at == 1005.0
+    for bad in (float("nan"), float("inf"), -1.0, True, "x"):
+        with pytest.raises(ValueError):
+            dataclasses.replace(base, read_at=bad)  # type: ignore[arg-type]
+
+
+def test_a_live_reading_reports_its_own_time_as_the_read_time() -> None:
+    live = _snapshot(lanes=(_lane(),), observed=1234.0)
+
+    assert live.read_at is None
+    assert live.effective_read_at == 1234.0

@@ -123,7 +123,7 @@ Unix epoch seconds.
           "providers":[{"id":"claude","instance":"default","account":{"plan":null,"label":"Max","fidelity":"official"},
                         "windows":[{"name":"5h","id":"five_hour","used_pct":42.0,"resets_at":…,"scope":"account","model":null},
                                    {"name":"7d","id":"seven_day","used_pct":61.0,"resets_at":…}],
-                        "fidelity":"official","state":"ready","incident":null,"reason":null,"action":null,"observed_at":…,
+                        "fidelity":"official","state":"ready","incident":null,"reason":null,"action":null,"observed_at":…,"read_at":…,
                         "tokens":{"input":1200,"cached_input":800,"output":300},"estimated_cost_usd":null,"credits_remaining":null,
                         "forecast":{"window_id":"five_hour","remaining_pct":58.0,"exhausts_at":1789000292.4,"pace":"under","rate_pct_per_hour":12.0,"samples":13}}]},
  "power":{"keep_awake":true,"closed_lid":{"policy":"agents","holding":false,"helper_installed":true}},
@@ -405,6 +405,16 @@ Vocabulary:
   (`rateLimitResetCredits.availableCount`), the CLIProxyAPI hub's credit list
   for a hub account, or a Grok billing answer that carries its coupons. A
   count to show; nothing in JR-Bar redeems a credit.
+- `usage.providers[].read_at` (additive, 2026-09-30) is when the numbers on
+  this row (the windows, the tokens and the cost) were actually read, in epoch
+  seconds. `observed_at` stays when the daemon last asked, so a poll that
+  failed moves `observed_at` to now and leaves `read_at` where it was: a
+  `stale` row that kept its last good reading shows the reading's real age,
+  not the age of the failed attempt. On a live reading the two are equal.
+  Never later than `observed_at`, and always present when `observed_at` is (a
+  daemon that could not say falls back to `observed_at`). An app reads "read
+  N ago" from `read_at`, and treats a missing key (an older daemon) as
+  `observed_at`.
 - `usage.providers[].incident` is the provider's status-feed incident as
   one line (`"Anthropic: Elevated errors"`), or null. It is an outage on
   the vendor's side, never a quota verdict. It is null the moment the feed

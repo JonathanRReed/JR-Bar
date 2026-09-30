@@ -253,6 +253,14 @@ class ProviderUsageSnapshot:
     #: Private stable account scope. None means the collector cannot prove
     #: continuity, so caches and reset detectors must not bridge observations.
     account_discriminator: str | None = None
+    #: When the numbers on this snapshot (the lanes, the tokens, the cost)
+    #: were actually read, in epoch seconds. ``observed_at`` is when the
+    #: daemon last ASKED: a retained stale reading is re-stamped with the
+    #: failed poll's time so retry gates and reset detectors see the attempt,
+    #: which would make hours-old numbers look minutes old. None means the
+    #: numbers were read at ``observed_at`` (every live reading); it is set
+    #: only when an older reading is carried forward, and never invented.
+    read_at: float | None = None
 
     def __post_init__(self) -> None:
         provider_descriptor(self.provider_id)
@@ -317,6 +325,15 @@ class ProviderUsageSnapshot:
                 or float(value) < 0.0
             ):
                 raise ValueError(f"{name} must be a finite nonnegative value")
+        # Not held to `read_at <= observed_at`: a clock that stepped back
+        # must not make a saved snapshot unconstructible. The wire clamps it.
+        if self.read_at is not None and (
+            isinstance(self.read_at, bool)
+            or not isinstance(self.read_at, (int, float))
+            or not math.isfinite(float(self.read_at))
+            or float(self.read_at) < 0.0
+        ):
+            raise ValueError("read_at must be a finite nonnegative time")
         if self.state in _ACTIONABLE_STATES and not (
             isinstance(self.action_label, str) and self.action_label.strip()
         ):
@@ -331,6 +348,8 @@ class ProviderUsageSnapshot:
         ):
             raise ValueError("invalid provider reason code")
         object.__setattr__(self, "observed_at", float(self.observed_at))
+        if self.read_at is not None:
+            object.__setattr__(self, "read_at", float(self.read_at))
         object.__setattr__(
             self,
             "source_instance_id",
@@ -341,6 +360,11 @@ class ProviderUsageSnapshot:
     def identity(self) -> tuple[str, str]:
         """The exact non-display key for this provider usage snapshot."""
         return self.provider_id, self.source_instance_id
+
+    @property
+    def effective_read_at(self) -> float:
+        """When these numbers were read: ``read_at``, else ``observed_at``."""
+        return self.observed_at if self.read_at is None else self.read_at
 
 
 def _model_from_lane(lane_id: str, label: str) -> str | None:
@@ -413,6 +437,8 @@ def select_authoritative_snapshot(
         return replace(
             last_known_good,
             observed_at=failure.observed_at,
+            # The attempt failed now; the numbers are as old as they were.
+            read_at=last_known_good.effective_read_at,
             state=ProviderSourceState.STALE,
             reason_code=failure.reason_code or "source_unavailable",
             action_label=failure.action_label or "Retry",

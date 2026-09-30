@@ -513,6 +513,7 @@
     "instance": "default",
     "observed_at": 1788982850.0,
     "quota_source": true,
+    "read_at": 1788982850.0,
     "reason": null,
     "state": "ready",
     "tokens": {
@@ -588,6 +589,7 @@
     "instance": "default",
     "observed_at": 1788981992.4,
     "quota_source": true,
+    "read_at": 1788964892.4,
     "reason": "rate_limited",
     "state": "stale",
     "tokens": {

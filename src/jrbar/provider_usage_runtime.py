@@ -753,6 +753,8 @@ class ProviderUsageService:
                     replace(
                         previous_good,
                         observed_at=candidate.observed_at,
+                        # The scan ran now; the numbers were read earlier.
+                        read_at=previous_good.effective_read_at,
                         state=ProviderSourceState.STALE,
                         reason_code="reading_evidence_missing",
                         action_label=previous_good.action_label or "Retry",

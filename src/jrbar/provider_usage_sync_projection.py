@@ -30,6 +30,10 @@ def apply_merged_sync_to_state(
                 current,
                 account_label=remote.account_label or current.account_label,
                 observed_at=remote.observed_at,
+                # The lanes are the remote's now, so the local card's read
+                # time (an older reading it kept through a failed poll) no
+                # longer describes them.
+                read_at=remote.read_at,
                 state=remote.state,
                 reason_code=remote.reason_code,
                 action_label=remote.action_label,

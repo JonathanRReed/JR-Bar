@@ -10,7 +10,15 @@ from jrbar.provider_usage_sync import MergedProviderSync
 from jrbar.provider_usage_sync_projection import apply_merged_sync_to_state
 
 
-def snapshot(observed, remaining, *, input_tokens, source_instance_id="default"):
+def snapshot(
+    observed,
+    remaining,
+    *,
+    input_tokens,
+    source_instance_id="default",
+    state=ProviderSourceState.READY,
+    read_at=None,
+):
     lane = UsageLane(
         provider_id="claude",
         lane_id="weekly",
@@ -27,9 +35,9 @@ def snapshot(observed, remaining, *, input_tokens, source_instance_id="default")
         provider_id="claude",
         account_label="account-fixture",
         observed_at=observed,
-        state=ProviderSourceState.READY,
-        reason_code=None,
-        action_label=None,
+        state=state,
+        reason_code=None if state is ProviderSourceState.READY else "network_unavailable",
+        action_label=None if state is ProviderSourceState.READY else "Retry",
         lanes=(lane,),
         input_tokens=input_tokens,
         cached_input_tokens=0,
@@ -40,6 +48,7 @@ def snapshot(observed, remaining, *, input_tokens, source_instance_id="default")
         credits_remaining=None,
         incident=None,
         source_instance_id=source_instance_id,
+        read_at=read_at,
     )
 
 
@@ -97,3 +106,38 @@ def test_fresher_remote_quota_replaces_lanes_but_preserves_local_usage_fields__a
     assert by_key[("claude", "personal")].lanes[0].remaining_percent == 25
     assert by_key[("claude", "work")].lanes[0].remaining_percent == 70
 
+
+def test_a_fresher_remote_reading_is_not_labelled_with_the_local_stale_read_time() -> None:
+    # The local card kept a reading from t=500 through a failed poll at t=1000.
+    local = snapshot(
+        1000, 40, input_tokens=100, state=ProviderSourceState.STALE, read_at=500
+    )
+    remote = snapshot(1100, 25, input_tokens=999)
+    merged = MergedProviderSync((remote,), (), 0, 0, 0, None, None)
+
+    state = apply_merged_sync_to_state(
+        ProviderUsageState((local,), 1000, 1100, False), merged
+    )
+    result = state.by_provider("claude")
+
+    assert result.state is ProviderSourceState.READY
+    assert result.lanes[0].remaining_percent == 25
+    # The remote lanes were read when the remote asked, not at t=500.
+    assert result.read_at is None
+    assert result.effective_read_at == 1100.0
+
+
+def test_an_older_remote_reading_leaves_the_local_read_time_alone() -> None:
+    local = snapshot(
+        1100, 40, input_tokens=100, state=ProviderSourceState.STALE, read_at=500
+    )
+    remote = snapshot(1000, 25, input_tokens=999)
+    merged = MergedProviderSync((remote,), (), 0, 0, 0, None, None)
+
+    state = apply_merged_sync_to_state(
+        ProviderUsageState((local,), 1100, 1200, False), merged
+    )
+    result = state.by_provider("claude")
+
+    assert result.lanes[0].remaining_percent == 40
+    assert result.read_at == 500.0
