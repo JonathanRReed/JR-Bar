@@ -603,6 +603,10 @@ class ProviderUsageService:
         }
         snapshots: list[ProviderUsageSnapshot] = []
         refreshed_provider_ids: set[str] = set()
+        #: Providers with at least one source found on this Mac. Only these
+        #: are asked about an incident: a status page is never contacted for
+        #: a provider that is not installed.
+        found_provider_ids: set[str] = set()
         collector_incidents: dict[tuple[str, str], str] = {}
         for preference in collection_settings.providers:
             if generation is not None:
@@ -708,6 +712,11 @@ class ProviderUsageService:
                     action="Retry",
                     source_instance_id=preference.source_instance_id,
                 )
+            if candidate.state is not ProviderSourceState.SOURCE_NOT_FOUND:
+                # A source that is there but failing (signed out, rate
+                # limited, erroring) is exactly when "the provider is down"
+                # is worth saying, so only a missing source is skipped.
+                found_provider_ids.add(provider_id)
             if candidate.incident:
                 collector_incidents[identity] = candidate.incident
             if candidate.state in _TERMINAL_FAILURE_STATES:
@@ -790,6 +799,11 @@ class ProviderUsageService:
                 snapshots.append(candidate)
         incident_decisions: dict[str, str | None] = {}
         for provider_id in sorted(refreshed_provider_ids):
+            if provider_id not in found_provider_ids:
+                # No lookup, but the provider still takes part below so its
+                # collector's own note stands as it always did.
+                incident_decisions[provider_id] = None
+                continue
             try:
                 incident_decisions[provider_id] = self._incident_lookup(
                     provider_id, observed_at
