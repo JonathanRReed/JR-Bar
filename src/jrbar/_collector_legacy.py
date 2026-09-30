@@ -3289,7 +3289,18 @@ def strip_markdown_inline_code(text: str) -> str:
 def aggregate_status(
     statuses: tuple[AgentStatus, ...],
     stale_statuses: tuple[AgentStatus, ...] = (),
+    *,
+    quiet_subagents: bool = False,
 ) -> AggregateStatus:
+    """The one mode and reason that stand for every status.
+
+    The representative is the most urgent status of all of them, workers
+    included, so a waiting sub-agent under a working main reads as Ask.
+    ``quiet_subagents`` picks it among the main agents instead, and falls
+    back to every status only when there is no main agent at all (the rule
+    ``attention`` uses for the light), for a reader that must not call a
+    quiet worker's wait the state of the whole fleet.
+    """
     if not statuses:
         return AggregateStatus(
             mode=AgentMode.IDLE_READY,
@@ -3298,8 +3309,11 @@ def aggregate_status(
             representative=None,
         )
 
+    candidates = statuses
+    if quiet_subagents:
+        candidates = tuple(status for status in statuses if not status.is_subagent) or statuses
     representative = min(
-        statuses,
+        candidates,
         key=lambda status: (
             MODE_PRIORITY.get(status.mode, MODE_PRIORITY[AgentMode.UNKNOWN]),
             -status.updated_at.timestamp(),
@@ -3317,6 +3331,21 @@ def aggregate_status(
         ),
         stale_count=len(stale_statuses),
         representative=representative,
+    )
+
+
+def with_quiet_subagents(snapshot: MonitorSnapshot) -> MonitorSnapshot:
+    """The same snapshot with its aggregate led by the main agents.
+
+    Every row stays; only ``aggregate`` is recomputed, so a legacy reader
+    (``jrbar leds``, ``jrbar status``) can show a worker's wait only when
+    sub-agent asks are on.
+    """
+    return replace(
+        snapshot,
+        aggregate=aggregate_status(
+            snapshot.statuses, snapshot.stale_statuses, quiet_subagents=True
+        ),
     )
 
 

@@ -577,3 +577,187 @@ def test_an_idle_only_fleet_keeps_its_ambient_presence__and_1_more() -> None:
         f"saw peaks {peaks}"
     )
 
+
+
+# --- the legacy CLI's aggregate: a quiet worker never picks the mode -------
+#
+# ``jrbar leds`` writes the LED strip from ``snapshot.aggregate.mode`` and
+# ``jrbar status`` prints the aggregate's representative as its "Reason:".
+# ``aggregate_status`` picks that representative over every status, so a
+# waiting worker under a working main set the mode to Ask. The raw aggregate
+# stays what it always was (the app reads the attention projection instead,
+# and its tests build the raw one to show the leak); the CLI opts in to the
+# quiet one unless sub-agent asks are on.
+
+
+def _snapshot_of(*statuses: AgentStatus):
+    from jrbar.collector import MonitorSnapshot
+
+    return MonitorSnapshot(
+        aggregate=aggregate_status(tuple(statuses)),
+        statuses=tuple(statuses),
+        stale_statuses=(),
+        sources=(),
+        collected_at=_NOW + timedelta(seconds=_OBSERVED_FANOUT + 1),
+    )
+
+
+def test_the_raw_aggregate_still_lets_a_waiting_worker_set_the_mode() -> None:
+    statuses = (
+        _main("main", AgentMode.WORKING),
+        _worker(1, AgentMode.WAITING_FOR_INPUT),
+    )
+
+    raw = aggregate_status(statuses)
+
+    assert raw.mode is AgentMode.WAITING_FOR_INPUT
+    assert raw.representative is statuses[1]
+
+
+def test_a_quiet_aggregate_is_led_by_the_main_agents() -> None:
+    main = _main("main", AgentMode.WORKING)
+    waiting_worker = _worker(1, AgentMode.WAITING_FOR_INPUT)
+    busy_workers = tuple(_worker(index, AgentMode.WORKING) for index in range(2, 6))
+
+    quiet = aggregate_status(
+        (main, waiting_worker, *busy_workers), quiet_subagents=True
+    )
+
+    assert quiet.mode is AgentMode.WORKING
+    assert quiet.representative is main
+    # Counting was already main-only; the flag changes nothing there.
+    assert quiet.active_count == aggregate_status((main, waiting_worker, *busy_workers)).active_count == 1
+
+
+def test_a_quiet_aggregate_still_rings_for_a_main_agents_ask() -> None:
+    asking = _main("asker", AgentMode.WAITING_FOR_INPUT)
+    busy_worker = _worker(1, AgentMode.WORKING)
+
+    quiet = aggregate_status((busy_worker, asking), quiet_subagents=True)
+
+    assert quiet.mode is AgentMode.WAITING_FOR_INPUT
+    assert quiet.representative is asking
+
+
+def test_a_quiet_aggregate_with_only_workers_falls_back_to_them() -> None:
+    """Workers with no main above them are still the only thing happening
+    (the rule ``attention`` states for the light): nothing is dropped."""
+    blocked = _worker(1, AgentMode.WAITING_FOR_INPUT)
+    busy = _worker(2, AgentMode.WORKING)
+
+    quiet = aggregate_status((busy, blocked), quiet_subagents=True)
+    empty = aggregate_status((), quiet_subagents=True)
+
+    assert quiet.mode is AgentMode.WAITING_FOR_INPUT
+    assert quiet.representative is blocked
+    assert empty.mode is AgentMode.IDLE_READY and empty.representative is None
+
+
+def test_the_quiet_snapshot_keeps_every_row_and_only_swaps_the_aggregate() -> None:
+    from jrbar.collector import with_quiet_subagents
+
+    snapshot = _snapshot_of(
+        _main("main", AgentMode.WORKING),
+        _worker(1, AgentMode.WAITING_FOR_INPUT),
+    )
+
+    quiet = with_quiet_subagents(snapshot)
+
+    assert snapshot.aggregate.mode is AgentMode.WAITING_FOR_INPUT
+    assert quiet.aggregate.mode is AgentMode.WORKING
+    assert quiet.statuses == snapshot.statuses
+    assert quiet.stale_statuses == snapshot.stale_statuses
+    assert quiet.collected_at == snapshot.collected_at
+
+
+class _RecordingLeds:
+    """Stands in for ``AgentLedController``: records the mode, opens no device."""
+
+    modes: list[AgentMode] = []
+
+    def __init__(self, **_kwargs) -> None:
+        pass
+
+    def sync_mode(self, mode: AgentMode):
+        from jrbar.led_status import LedDisplayState, LedStatusWrite
+
+        _RecordingLeds.modes.append(mode)
+        return LedStatusWrite(
+            state=LedDisplayState.IDLE, target=None, program="", changed=True
+        )
+
+
+def _run_leds_once(snapshot, *, subagent_asks_alert: bool, monkeypatch) -> list[AgentMode]:
+    """``jrbar leds --once --dry-run`` against a fixed snapshot and a fake strip."""
+    from argparse import Namespace
+
+    from jrbar import cli
+
+    _RecordingLeds.modes = []
+    settings = AgentMonitorSettings().with_subagent_asks_alert(subagent_asks_alert)
+    monkeypatch.setattr(
+        cli, "monitor_from_args", lambda _args: type("M", (), {"snapshot": lambda _s: snapshot})()
+    )
+    monkeypatch.setattr(cli, "AgentLedController", _RecordingLeds)
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **k: settings)
+    status = cli.cmd_leds(
+        Namespace(device=None, file_name="LEDS.LED", dry_run=True, once=True, interval=1.0)
+    )
+    assert status == 0
+    return list(_RecordingLeds.modes)
+
+
+def test_jrbar_leds_writes_the_main_agents_mode_not_a_quiet_workers(monkeypatch) -> None:
+    snapshot = _snapshot_of(
+        _main("main", AgentMode.WORKING),
+        _worker(1, AgentMode.WAITING_FOR_INPUT),
+    )
+
+    modes = _run_leds_once(snapshot, subagent_asks_alert=False, monkeypatch=monkeypatch)
+
+    assert modes == [AgentMode.WORKING]
+
+
+def test_jrbar_leds_still_writes_a_main_ask_and_a_worker_ask_when_they_are_on(
+    monkeypatch,
+) -> None:
+    worker_asks = _snapshot_of(
+        _main("main", AgentMode.WORKING),
+        _worker(1, AgentMode.WAITING_FOR_INPUT),
+    )
+    main_asks = _snapshot_of(
+        _main("main", AgentMode.WAITING_FOR_INPUT),
+        _worker(1, AgentMode.WORKING),
+    )
+
+    on = _run_leds_once(worker_asks, subagent_asks_alert=True, monkeypatch=monkeypatch)
+    main = _run_leds_once(main_asks, subagent_asks_alert=False, monkeypatch=monkeypatch)
+
+    assert on == [AgentMode.WAITING_FOR_INPUT]
+    assert main == [AgentMode.WAITING_FOR_INPUT]
+
+
+def test_jrbar_status_names_a_main_agent_as_the_reason_for_the_aggregate(
+    monkeypatch, capsys
+) -> None:
+    from argparse import Namespace
+
+    from jrbar import cli
+
+    snapshot = _snapshot_of(
+        _main("main", AgentMode.WORKING),
+        _worker(1, AgentMode.WAITING_FOR_INPUT),
+    )
+    monitor = type("M", (), {"snapshot": lambda _s: snapshot})()
+    monkeypatch.setattr(cli, "monitor_from_args", lambda _args: monitor)
+
+    for alert, reason_names in ((False, "main:"), (True, "worker 1:")):
+        monkeypatch.setattr(
+            cli,
+            "load_settings",
+            lambda *a, alert=alert, **k: AgentMonitorSettings().with_subagent_asks_alert(alert),
+        )
+        assert cli.cmd_status(Namespace(json=False, all=False)) == 0
+        out = capsys.readouterr().out
+        (reason,) = [line for line in out.splitlines() if line.startswith("Reason:")]
+        assert reason.startswith(f"Reason: {reason_names}"), reason

@@ -16,7 +16,7 @@ from .battery import (
     read_battery_snapshot,
     render_battery_snapshot,
 )
-from .collector import AgentMonitor, SourceSpec, default_sources
+from .collector import AgentMonitor, SourceSpec, default_sources, with_quiet_subagents
 from .demo_sandbox import available_scenarios, build_demo_run
 from .device_writer import DEFAULT_FILE_NAME, DeviceWriteError, write_led_program
 from .doctor import (
@@ -1107,7 +1107,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     monitor = monitor_from_args(args)
-    snapshot = monitor.snapshot()
+    snapshot = current_snapshot(monitor)
     if args.json:
         print(json.dumps(snapshot.to_dict(), indent=2))
     else:
@@ -1122,7 +1122,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         if sys.stdout.isatty():
             print("\033[?25l", end="")
         while True:
-            snapshot = monitor.snapshot()
+            snapshot = current_snapshot(monitor)
             print("\033[2J\033[H", end="")
             print(
                 render_watch_dashboard(
@@ -1229,7 +1229,7 @@ def cmd_leds(args: argparse.Namespace) -> int:
 
     try:
         while True:
-            snapshot = monitor.snapshot()
+            snapshot = current_snapshot(monitor)
             result = leds.sync_mode(snapshot.aggregate.mode)
             if result.changed or result.error or args.once:
                 print(render_led_sync_result(result, snapshot, dry_run=args.dry_run))
@@ -1334,6 +1334,15 @@ def monitor_from_args(args: argparse.Namespace) -> AgentMonitor:
         tool_running_timeout_seconds=args.tool_running_timeout,
         max_lines_per_source=args.max_lines,
     )
+
+
+def current_snapshot(monitor: AgentMonitor):
+    """One snapshot whose aggregate a quiet sub-agent's wait cannot set,
+    unless sub-agent asks are on."""
+    snapshot = monitor.snapshot()
+    if load_settings().subagent_asks_alert:
+        return snapshot
+    return with_quiet_subagents(snapshot)
 
 
 def install_log_path(provider: str, args: argparse.Namespace) -> Path:
