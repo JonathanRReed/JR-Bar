@@ -4887,10 +4887,6 @@ class StatusBarController(NSObject):
         )
 
 
-    # --- Signal style cards --------------------------------------------
-
-    # --- Agents pane: motion, other Macs, cloud agents -------------------
-
     @objc.IBAction
     def redrawSignalPreviews_(self, _timer):
         if self.settings_window is None or not self.settings_window.isVisible():
@@ -4925,8 +4921,6 @@ class StatusBarController(NSObject):
             color=None,
             led_count=led_count,
         )
-
-    # --- Saved looks (the animation library) ----------------------------
 
     def why_panel_body(self, *, why_context=None) -> str:
         return why_panel_module.panel_body(self, why_context=why_context)
