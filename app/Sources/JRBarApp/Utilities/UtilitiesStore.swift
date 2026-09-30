@@ -47,10 +47,11 @@ final class UtilitiesStore {
     let menuBar: MenuBarUtility
     /// The Dock utility: the hover-preview watcher over Apple's Dock.
     let dock: DockUtility
-    /// The Agent Overview utility: the roster's management seat — the
-    /// compact state-grouped list, the counts, and the session verbs
-    /// (`open_session`, `answer_ask`, `dismiss_session`,
-    /// `clear_completed`, `snooze`) the panel already owns.
+    /// The Agent Overview utility: each provider's alert rules, "quiet
+    /// while you watch", and the way into the Overview window. The roster
+    /// and its session verbs (`open_session`, `answer_ask`,
+    /// `dismiss_session`, `clear_completed`, `snooze`) live in the panel
+    /// and the Overview, not on the card.
     let agents: AgentUtility
     let dataHoarder = DataHoarderUtility()
 

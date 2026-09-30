@@ -194,10 +194,10 @@ public struct ObservedToolMap: Hashable, Sendable {
     }
 }
 
-/// The project a session works in, from its folder alone — the Agent
-/// Overview card's grouping when no git lookup is at hand: a linked
-/// worktree under `.claude/worktrees/…` or `.worktrees/…` names the
-/// repository holding it, anything else its own folder.
+/// The project a session works in, from its folder alone — the Overview
+/// graph's grouping: a linked worktree under `.claude/worktrees/…` or
+/// `.worktrees/…` names the repository holding it, anything else its own
+/// folder.
 public enum AgentProject {
     public static func name(of cwd: String?) -> String? {
         guard let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !cwd.isEmpty else { return nil }
@@ -207,12 +207,6 @@ public enum AgentProject {
             if claudeWorktree || part == ".worktrees" { return parts[index - 1] }
         }
         return parts.last
-    }
-
-    /// The repository name git itself implies (the main worktree's
-    /// folder), else the folder heuristic.
-    public static func name(of cwd: String?, workspace: GitWorkspace?) -> String? {
-        workspace?.repositoryName ?? name(of: cwd)
     }
 }
 

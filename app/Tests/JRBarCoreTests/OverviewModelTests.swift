@@ -140,4 +140,13 @@ struct OverviewModelTests {
         #expect(map.totalCalls == 6)
         #expect(ObservedToolMap.splitMCP("mcp__bad") == nil)
     }
+
+    @Test("a folder names its project; a linked worktree names its repository")
+    func projectNames() {
+        #expect(AgentProject.name(of: "/Users/j/JR-Bar") == "JR-Bar")
+        #expect(AgentProject.name(of: "/Users/j/JR-Bar/.claude/worktrees/wf-1/app") == "JR-Bar")
+        #expect(AgentProject.name(of: "/src/api/.worktrees/fix-auth") == "api")
+        #expect(AgentProject.name(of: "") == nil)
+        #expect(AgentProject.name(of: nil) == nil)
+    }
 }
