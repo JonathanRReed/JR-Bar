@@ -689,7 +689,7 @@ volatile fields: `lights` follows the same `doc_significant_equal` rule as
 
 - `hardware` is the first connected 8-LED strip (a second one is
   `hardware:<device id>`), `dot` the connected 2-LED device, `screen_bar`
-  the program the Python Screen Bar would draw (calibration and resting
+  the program the Screen Bar plays (calibration and resting
   glow applied). The `screen_bar` surface mirrors `hardware` only while
   the bar is linked (`link_screen_bar_to_hardware`) and a strip is
   connected; unlinked it publishes nothing unless a live bar program is

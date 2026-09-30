@@ -52,6 +52,6 @@ The status authority for what ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
 | Browser-session import for provider auth | 2 | Daemon only; no Swift consent flow yet |
 | Price table served by the daemon | 3 | The Usage Center reads "no price table" until it exists |
 | Dial and Joystick mapping editor | 3 | Settings › Devices shows the mappings but cannot edit them. The Python editor (`deck_settings_pane.py`, with mapping import and export) is last in commit `50ea7f57` |
-| Screen Bar notch-silhouette measurement and standing gauges | 2 | Python had them; the Swift band uses the notch's auxiliary areas |
+| Screen Bar notch-silhouette measurement and standing gauges | 2 | Python had them; the Swift band uses the notch's auxiliary areas. The Python bar's drawing code (`virtual_device.py`, its views and its profile exporter) is last in commit `8c0864cb` |
 | Linux headless daemon | 2 | The daemon boundary makes it possible; no demand yet |
 | Windows | 0 | No |

@@ -41,7 +41,7 @@ install it. This page lists everything else.
   Bar and Dock share the top of the display
 - [Effect authoring guide](EFFECT-AUTHORING-GUIDE.md)
 - [Integration boundary](INTEGRATIONS-NATIVE.md)
-- [Screen Bar profiling](SCREEN-BAR-PROFILING.md)
+- [Screen Bar profiling](SCREEN-BAR-PROFILING.md): the Instruments scenarios
 - [Packaging and signing](../packaging/README.md), and
   [running the app from a checkout](../app/README.md)
 

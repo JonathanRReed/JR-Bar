@@ -439,9 +439,8 @@ class AgentMonitorSettings:
     # Extends the Screen Bar's glow beyond the notch's own width, reaching
     # toward the menu bar's edges on both sides -- an opt-in look (default
     # off) since how much room is actually safe to use depends on how
-    # cluttered the user's own menu bar is (see virtual_device.wing_width_
-    # for_screen, which measures the real per-user safe area rather than
-    # assuming a fixed amount).
+    # cluttered the user's own menu bar is (the app measures the real
+    # per-user safe area rather than assuming a fixed amount).
     virtual_status_device_wraps_menu_bar: bool = False
     # Manual Screen Bar geometry, both None = Automatic. Jonathan's ask,
     # and the durable answer to notch-adjacent apps (Alcove) whose visual

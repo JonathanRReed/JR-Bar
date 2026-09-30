@@ -707,8 +707,8 @@ class ScreenBarSampler:
                     return None
                 channels.append(value / 255.0)
             # Alpha carries "how lit is this LED" -- the convention every
-            # downstream consumer was written for (virtual_device's
-            # legacy path derives exactly this). The hard-coded 1.0 that
+            # downstream consumer was written for (the Python bar's legacy
+            # path derived exactly this). The hard-coded 1.0 that
             # used to sit here made dark LEDs opaque black: it killed
             # the min-glow legibility floor, forced bracket "auto" to
             # spatial forever, averaged darkness into the identity

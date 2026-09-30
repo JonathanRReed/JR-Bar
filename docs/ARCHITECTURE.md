@@ -103,7 +103,7 @@ are copied forward once by `migration.py` on first launch and recorded in
 
 ## The Python daemon by responsibility
 
-`src/jrbar` is large (337 modules) because the 0.8 daemon is the old
+`src/jrbar` is large (328 modules) because the 0.8 daemon is the old
 application minus its windows. The map below is by job; a module not
 listed is a helper of the row it sits next to alphabetically.
 
@@ -118,7 +118,7 @@ listed is a helper of the row it sits next to alphabetically.
 | Signals and presentation | `signals.py`, `signal_coordinator.py`, `signal_selection.py`, `presentation_policy.py`, `presentation_scheduler.py`, `presentation_compiler.py`, `render_policy.py`, `brightness_policy.py`, `auto_dim.py`, `display_brightness.py`, `interruption_policy.py`, `notification_arbitration.py`, `courtesy_signatures.py` |
 | Effects | `effect_registry.py`, `effect_packs.py`, `effect_pack_store.py`, `effect_assignment_store.py`, `effect_studio.py`, `semantic_effect_router.py`, `ambient_effect_*.py`, `scenes.py`, `scene_packs.py`, `animation.py`, `colors.py`, `celebrations.py`, `firefly_completion.py`, `rainstick_idle.py`, `turn_length_ember.py`, `finite_effect_policy.py` |
 | LED output | `led_status.py`, `led_wasm.py` (+ the packaged `sdled.wasm` firmware parser), `device_writer.py`, `hardware_write_policy.py`, `hardware_write_contract.py`, `firmware_validation.py`, `device_identity.py`, `device_inventory.py`, `device_projection.py`, `dot_binary_heartbeat.py`, `draw_guard.py` |
-| Screen Bar (geometry the app ports) | `virtual_device.py`, `screen_bar_design.py`, `screen_bar_pipeline.py`, `screen_bar_runtime.py`, `notch_silhouette.py`, `alcove_observation.py`, `alcove_window_probe.py` |
+| Screen Bar (the app draws it; the daemon only computes its program) | `headless_screen_bar.py` (the object the controller pushes Screen Bar settings at; it draws nothing), `screen_bar_pipeline.py`, `alcove_observation.py` |
 | Usage and quota | `provider_usage_*.py` (platform, runtime, store, sync, parsers, collectors, center, menu), `provider_capacity.py`, `capacity_*.py`, `claude_quota.py`, `usage_stats.py`, `usage_file_index.py`, `usage_pace.py`, `usage_percent_history.py`, `quota_runway.py`, `quota_power_hold.py`, `provider_reset_*.py`, `provider_credential_store.py`, `credentials.py`, `provider_browser_*.py` |
 | Power | `keep_awake.py` (`caffeinate -ims`), `power_policy.py`, `lid_sleep.py` (the `pmset` helper behind `/etc/sudoers.d/jrbar-disablesleep`), `lid_presets.py`, `battery.py`, `battery_runtime.py` |
 | Quiet and Focus | `dnd_policy.py`, `dnd_controller.py`, `focus_status.py`, `focus_sync.py`, `local_time_boundary.py`, `temporal_safety.py` |
@@ -160,8 +160,9 @@ Everything not in this list comes from a daemon document.
 - Panel geometry (`PanelLayout`), motion, keyboard handling, hover and
   selection.
 - The Screen Bar's band geometry from the notch's auxiliary areas, and the
-  raised-cosine blend between the eight samples (ported from
-  `screen_bar_design.py`).
+  raised-cosine blend between the eight samples (ported from the Python
+  bar the app replaced; `docs/feature-disposition.md` names the last commit
+  that still has it).
 - Which sound or banner an `event` earns (`EventPolicy`), notification
   permission, the ask banner's Approve / Deny actions (they send
   `answer_ask`).
