@@ -1855,8 +1855,8 @@ public struct CoreState: Codable, Hashable, Sendable {
     /// `health.sources[provider]` decoded: whether the provider's hook
     /// feed is still delivering (`fresh`) and how many seconds since the
     /// last event it accepted, nil when it never has. `health` stays a
-    /// reserved JSONValue subtree — this and `intakeHealth` are the parts
-    /// of it consumers need typed.
+    /// reserved JSONValue subtree — this is the part of it consumers need
+    /// typed.
     ///
     /// The age comes from `heard_at` when the daemon sends it: the moment
     /// itself stays put between frames, so the age is measured against
@@ -1871,16 +1871,6 @@ public struct CoreState: Codable, Hashable, Sendable {
             return (fresh, max(0, reference - heardAt))
         }
         return (fresh, source["heard_age_seconds"]?.doubleValue)
-    }
-
-    /// `health.intake`: the intake report's verdict codes (`hook_state`,
-    /// `source_health`) and the `silence_seconds` bound it judges
-    /// quiet by; nil from a daemon that reports no intake at all.
-    public var intakeHealth: (hookState: String?, sourceHealth: String?, silenceSeconds: Double?)? {
-        guard let intake = health?["intake"], !intake.isNull else { return nil }
-        return (intake["hook_state"]?.stringValue,
-                intake["source_health"]?.stringValue,
-                intake["silence_seconds"]?.doubleValue)
     }
 }
 
