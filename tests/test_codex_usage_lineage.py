@@ -539,3 +539,82 @@ def test_inventory_overflow_keeps_the_newest_rollouts(tmp_path: Path) -> None:
 
     assert totals.codex_tokens == 12
     assert totals.source_coverage["codex"].truncated_files == 2
+
+
+_SECRET = b"\x07" * 32
+
+
+def _canonical_record(
+    session: str,
+    *,
+    parent: str | None,
+    ownership: str,
+    epoch: float,
+    stamp: str,
+    totals: tuple[int, int, int, int],
+    tokens: int,
+) -> tuple:
+    """One synthetic Codex record, keyed the way the scanner keys them."""
+    dedupe = usage_stats._codex_event_dedupe(
+        f"codex-session:{session}",
+        f"codex-session:{parent}" if parent is not None else None,
+        None,
+        stamp,
+        totals,
+        _SECRET,
+        ownership=ownership,
+    )
+    return ("codex", f"codex-session:{session}", "codex", epoch, tokens, 0, 0, 0, dedupe)
+
+
+def test_canonical_window_records_resolve_lineage_before_the_window() -> None:
+    stamp = "2026-08-13T10:00:00Z"
+    parent_event = _canonical_record(
+        "parent",
+        parent=None,
+        ownership="own",
+        epoch=100.0,
+        stamp=stamp,
+        totals=(100, 0, 0, 0),
+        tokens=100,
+    )
+    # Two forks each hold a current copy of an event whose original lies
+    # outside the window. The copies still belong to the ancestor's event, so
+    # one of them counts and it carries the ancestor's own key.
+    first_copy = _canonical_record(
+        "left",
+        parent="parent",
+        ownership="inherited",
+        epoch=900.0,
+        stamp=stamp,
+        totals=(100, 0, 0, 0),
+        tokens=100,
+    )
+    second_copy = _canonical_record(
+        "right",
+        parent="parent",
+        ownership="inherited",
+        epoch=900.0,
+        stamp=stamp,
+        totals=(100, 0, 0, 0),
+        tokens=100,
+    )
+
+    window = usage_stats._canonical_window_records(
+        [parent_event, first_copy, second_copy], 500.0
+    )
+
+    assert len(window) == 1
+    assert window[0][1] == first_copy[1]
+    assert window[0][8] == parent_event[8]
+    assert not window[0][8].startswith("codex-unresolved:")
+
+
+def test_canonical_window_records_let_an_old_copy_never_suppress_a_current_record() -> None:
+    old_copy = ("claude", "s1", "claude-opus-4", 100.0, 10, 0, 0, 5, "message-1")
+    current = ("claude", "s1", "claude-opus-4", 900.0, 10, 0, 0, 5, "message-1")
+
+    assert usage_stats._canonical_window_records([old_copy, current], 500.0) == [current]
+    # A window that reaches the old copy counts the message once, the first.
+    assert usage_stats._canonical_window_records([old_copy, current], 0.0) == [old_copy]
+    assert usage_stats._canonical_window_records([], 0.0) == []

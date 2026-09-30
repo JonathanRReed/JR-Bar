@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -53,6 +54,11 @@ def _credential(credentials, provider_id: str, account: str) -> str | None:
     return value
 
 
+#: The period the Usage Center's token figures cover. Both card paths (the
+#: deduped scan and the cache reader) use it, so they cannot drift apart.
+LOCAL_TOKEN_WINDOW_SECONDS = 30 * 24 * 60 * 60
+
+
 def _default_provider_local_scan(
     provider_id: str,
     home: Path,
@@ -91,7 +97,7 @@ def _default_provider_local_scan(
         else primary_claude_projects(home=home)
     )
     cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
-    since = max(0.0, observed_at - 30 * 24 * 60 * 60)
+    since = max(0.0, observed_at - LOCAL_TOKEN_WINDOW_SECONDS)
     try:
         result, totals = usage_stats._scan_provider_usage_with_totals(
             source,
@@ -181,6 +187,19 @@ def _cached_claude_local_scan(home: Path, observed_at: float) -> dict[str, objec
     return _cached_provider_local_scan("claude", home, observed_at)
 
 
+def _cache_entry_floor(entry: dict) -> float:
+    """How far back one cache entry reaches: the floor it was trimmed to.
+
+    A missing floor counts as 0.0 (nothing was trimmed); one that cannot be
+    read counts as unbounded, so it is never trusted to cover a window.
+    """
+    try:
+        floor = float(entry.get("since", 0.0))
+    except (TypeError, ValueError):
+        return math.inf
+    return floor if not math.isnan(floor) else math.inf
+
+
 def _cached_provider_local_scan(
     provider_id: str,
     home: Path,
@@ -191,8 +210,13 @@ def _cached_provider_local_scan(
     The current quota UI needs the newest percentage quickly. Walking the full
     transcript tree on every refresh can take tens of seconds on large local
     histories, which stalls publication of a newer live rate-limit reading.
+
+    The cache is written for other callers' windows: it holds raw per-file
+    records, back to the widest graph range that last ran plus a few days,
+    with copies a fork or resume repeated. The floor it recorded is the truth
+    about how far back it reaches, so a card never sums the raw entries. It
+    counts the last 30 days once each, and never more than the cache covers.
     """
-    del observed_at
     try:
         from . import usage_stats
         from .providers import negotiated_provider_sources
@@ -233,10 +257,8 @@ def _cached_provider_local_scan(
             and isinstance(dedupes, list)
         ):
             continue
-        input_tokens = 0
-        cached_input_tokens = 0
-        output_tokens = 0
-        model_ids: set[str] = set()
+        all_records: list[tuple] = []
+        floor = 0.0
         windows: tuple[dict[str, object], ...] = ()
         newest_window_marker: tuple[float, str] | None = None
         for key, entry in tuple(files.items())[: usage_stats.USAGE_CACHE_MAX_FILES]:
@@ -250,12 +272,8 @@ def _cached_provider_local_scan(
                 expected_provider=provider_id,
             )
             if records is not None:
-                input_tokens += sum(record[4] for record in records)
-                cached_input_tokens += sum(record[5] for record in records)
-                output_tokens += sum(record[7] for record in records)
-                model_ids.update(
-                    record[2] for record in records if isinstance(record[2], str)
-                )
+                all_records.extend(records)
+            floor = max(floor, _cache_entry_floor(entry))
             raw_mtime = entry.get("mtime")
             raw_windows = entry.get("rate_limit_windows")
             if (
@@ -274,6 +292,12 @@ def _cached_provider_local_scan(
                 ):
                     windows = admitted
                     newest_window_marker = marker
+        start = max(0.0, observed_at - LOCAL_TOKEN_WINDOW_SECONDS, floor)
+        canonical = usage_stats._canonical_window_records(all_records, start)
+        input_tokens = sum(record[4] for record in canonical)
+        cached_input_tokens = sum(record[5] for record in canonical)
+        output_tokens = sum(record[7] for record in canonical)
+        model_ids = {record[2] for record in canonical if isinstance(record[2], str)}
         if (
             (provider_id != "codex" or not windows)
             and input_tokens == 0

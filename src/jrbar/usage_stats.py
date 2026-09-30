@@ -2479,78 +2479,14 @@ def _scan_inventory_usage_with_index(
             except OSError:
                 pass
 
-    # Forked rollouts contain an exact copy of their ancestor's token events.
-    # Resolve those copies only through the admitted lineage graph. This keeps
-    # sibling branches independent even when they happen to reach the same
-    # cumulative endpoint at the same timestamp.
-    codex_parents: dict[str, str] = {}
-    codex_roots: dict[str, str] = {}
-    codex_own_events: dict[tuple[str, str], str] = {}
-    for record in all_records:
-        if record[0] != "codex":
-            continue
-        identity = _codex_event_identity(record[8])
-        if identity is None:
-            continue
-        kind, session_id, parent_id, root_id, event_id = identity
-        if parent_id is not None:
-            codex_parents.setdefault(session_id, parent_id)
-        if root_id is not None:
-            codex_roots.setdefault(session_id, root_id)
-        if kind == "own":
-            codex_own_events.setdefault((session_id, event_id), record[8])
-
-    normalized_records: list[tuple] = []
-    for record in all_records:
-        if record[0] != "codex":
-            normalized_records.append(record)
-            continue
-        identity = _codex_event_identity(record[8])
-        if identity is None or identity[0] == "own":
-            normalized_records.append(record)
-            continue
-        _kind, session_id, parent_id, root_id, event_id = identity
-        owner = parent_id
-        visited: set[str] = set()
-        canonical = None
-        while owner is not None and owner not in visited:
-            visited.add(owner)
-            canonical = codex_own_events.get((owner, event_id))
-            if canonical is not None:
-                break
-            owner = codex_parents.get(owner)
-        if canonical is None and root_id is not None:
-            canonical = codex_own_events.get((root_id, event_id))
-        if canonical is None and identity[0] == "boundary":
-            # Equality is ambiguous at timestamp resolution. Reconcile it
-            # only when the admitted ancestor has the exact event; otherwise
-            # retain branch ownership so sibling work cannot collapse.
-            normalized_records.append(record)
-            continue
-        if canonical is None:
-            unresolved_owner = parent_id or root_id or session_id
-            canonical = f"codex-unresolved:{unresolved_owner}:{event_id}"
-        normalized_records.append((*record[:8], canonical))
-    all_records = normalized_records
-
     totals = UsageTotals()
     totals.source_coverage = {provider_id: coverage.finalize() for provider_id, coverage in coverage_states.items()}
-    seen: set[str] = set()
     priced_records = 0
     total_pricing_records = 0
     priced_token_count = 0
     total_pricing_token_count = 0
-    for record in all_records:
+    for record in _canonical_window_records(all_records, since_epoch):
         provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
-        if epoch < since_epoch:
-            continue
-        # Global first-seen dedupe across ALL files -- resumed/forked
-        # sessions copy records forward and content blocks repeat usage. Apply
-        # the requested window first so an old copy cannot suppress a current
-        # one, and expose exactly the same canonical stream downstream.
-        if dedupe in seen:
-            continue
-        seen.add(dedupe)
         totals.records.append(record)
         totals.sessions.add(session)
         if provider == "codex":
@@ -2600,6 +2536,87 @@ def _scan_inventory_usage_with_index(
     global _LATEST_CODEX_RATE_LIMITS
     _LATEST_CODEX_RATE_LIMITS = latest
     return totals
+
+
+def _canonical_window_records(
+    records: list[tuple],
+    since_epoch: float,
+) -> list[tuple]:
+    """The one record stream a window's totals are summed from.
+
+    Three steps, in this order: (a) resolve Codex fork and copy lineage over
+    ALL the records given, so an ancestor outside the window still names the
+    copy of its event; (b) drop records before ``since_epoch``; (c) keep only
+    the first record for each dedupe key. The window comes before the dedupe
+    so an old copy cannot suppress a current record.
+
+    The scan and every cached reader sum this stream, so a card and the graph
+    cannot disagree about what one window holds.
+    """
+    # Forked rollouts contain an exact copy of their ancestor's token events.
+    # Resolve those copies only through the admitted lineage graph. This keeps
+    # sibling branches independent even when they happen to reach the same
+    # cumulative endpoint at the same timestamp.
+    codex_parents: dict[str, str] = {}
+    codex_roots: dict[str, str] = {}
+    codex_own_events: dict[tuple[str, str], str] = {}
+    for record in records:
+        if record[0] != "codex":
+            continue
+        identity = _codex_event_identity(record[8])
+        if identity is None:
+            continue
+        kind, session_id, parent_id, root_id, event_id = identity
+        if parent_id is not None:
+            codex_parents.setdefault(session_id, parent_id)
+        if root_id is not None:
+            codex_roots.setdefault(session_id, root_id)
+        if kind == "own":
+            codex_own_events.setdefault((session_id, event_id), record[8])
+
+    normalized_records: list[tuple] = []
+    for record in records:
+        if record[0] != "codex":
+            normalized_records.append(record)
+            continue
+        identity = _codex_event_identity(record[8])
+        if identity is None or identity[0] == "own":
+            normalized_records.append(record)
+            continue
+        _kind, session_id, parent_id, root_id, event_id = identity
+        owner = parent_id
+        visited: set[str] = set()
+        canonical = None
+        while owner is not None and owner not in visited:
+            visited.add(owner)
+            canonical = codex_own_events.get((owner, event_id))
+            if canonical is not None:
+                break
+            owner = codex_parents.get(owner)
+        if canonical is None and root_id is not None:
+            canonical = codex_own_events.get((root_id, event_id))
+        if canonical is None and identity[0] == "boundary":
+            # Equality is ambiguous at timestamp resolution. Reconcile it
+            # only when the admitted ancestor has the exact event; otherwise
+            # retain branch ownership so sibling work cannot collapse.
+            normalized_records.append(record)
+            continue
+        if canonical is None:
+            unresolved_owner = parent_id or root_id or session_id
+            canonical = f"codex-unresolved:{unresolved_owner}:{event_id}"
+        normalized_records.append((*record[:8], canonical))
+
+    window: list[tuple] = []
+    seen: set[str] = set()
+    for record in normalized_records:
+        if record[3] < since_epoch:
+            continue
+        dedupe = record[8]
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+        window.append(record)
+    return window
 
 
 def _provider_inventory(
