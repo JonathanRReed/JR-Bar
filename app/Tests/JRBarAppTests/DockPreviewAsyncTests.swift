@@ -296,6 +296,23 @@ struct DockPreviewAsyncTests {
         #expect(bench.presented == ["Beta"], "another app is asked as usual")
     }
 
+    @Test("an answer clears the rest: a recovered app is asked on every show again")
+    func answerClearsTheRest() {
+        let bench = Bench()
+        bench.ax.hang(Bench.alphaPID)
+        bench.showAndLand("Alpha")
+        bench.clock += DockAXBackoff.backoff + 1
+        bench.ax.hang(Bench.alphaPID, false)
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.showAndLand("Alpha")
+        #expect(!bench.controller.switcher.axSkips(Bench.alphaPID, now: bench.clock), "it answered, so it no longer rests")
+        bench.clock += 0.1
+        bench.controller.showPreview(for: bench.tile("Alpha"))
+        #expect(bench.lane.waiting == 1, "asked again at once: nothing rests it")
+        bench.lane.runNext()
+        #expect(bench.ax.reads.count == 3)
+    }
+
     @Test("⌥`'s walk starts on the list that landed, not before")
     func frontWalkWaitsForTheList() {
         let bench = Bench()
@@ -608,5 +625,143 @@ struct DockPreviewVerbAsyncTests {
         bench.lane.runAll()
         #expect(bench.controller.preview.appName == "Beta")
         #expect(bench.controller.preview.windows.map(\.minimized) == [false], "Alpha's minimize never reached Beta's cards")
+    }
+}
+
+// MARK: - The verbs that touch several cards
+
+/// Minimize all, close all, shake and the swipe each run as one job on
+/// the preview lane and land their marks by card id.
+@MainActor
+@Suite("Dock preview bulk verbs, off the main thread")
+struct DockPreviewBulkVerbTests {
+    private func landed(titles: [String]) -> (Bench, DockPreviewActions) {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, titles.enumerated().map { card($0.offset + 1, $0.element) })
+        bench.showAndLand("Alpha")
+        return (bench, bench.controller.ensurePanel().actions)
+    }
+
+    @Test("minimize all writes each open card in one job and marks the ones that took it")
+    func minimizeAllIsOneJob() {
+        let (bench, actions) = landed(titles: ["One", "Two", "Three"])
+        bench.ax.refuseMinimize(of: 3)
+        actions.onMinimizeAll?()
+        #expect(bench.lane.waiting == 1, "one job for the whole verb")
+        #expect(bench.ax.minimized.isEmpty)
+        bench.lane.runNext()
+        #expect(Set(bench.ax.minimized.map(\.id)) == [1, 2, 3])
+        #expect(bench.controller.preview.windows.map(\.minimized) == [true, true, false])
+    }
+
+    @Test("minimize all with nothing open asks for no job")
+    func minimizeAllWithNothingOpen() {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One", minimized: true)])
+        bench.showAndLand("Alpha")
+        bench.controller.ensurePanel().actions.onMinimizeAll?()
+        #expect(bench.lane.waiting == 0)
+    }
+
+    @Test("shake minimizes the siblings in one job and leaves the shaken card up")
+    func shakeIsOneJob() {
+        let (bench, actions) = landed(titles: ["One", "Two", "Three"])
+        actions.onShake?(bench.controller.preview.windows[1])
+        #expect(bench.lane.waiting == 1)
+        bench.lane.runNext()
+        #expect(Set(bench.ax.minimized.map(\.id)) == [1, 3])
+        #expect(bench.controller.preview.windows.map(\.minimized) == [true, false, true])
+    }
+
+    @Test("a swipe down minimizes the card once the write lands, and a swipe that changes nothing asks for nothing")
+    func swipeMinimizes() {
+        let (bench, actions) = landed(titles: ["One", "Two"])
+        actions.onSwipeMinimize?(bench.controller.preview.windows[0], true)
+        #expect(bench.ax.minimized.isEmpty)
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.first?.minimized == true)
+        actions.onSwipeMinimize?(bench.controller.preview.windows[0], true)
+        #expect(bench.lane.waiting == 0, "already minimized: no write")
+    }
+
+    @Test("every bulk verb's result is dropped when the preview hid before it landed")
+    func staleGenerationDropsEachVerb() {
+        let verbs: [(String, (Bench, DockPreviewActions) -> Void)] = [
+            ("minimize all", { _, actions in actions.onMinimizeAll?() }),
+            ("close all", { _, actions in actions.onCloseAll?() }),
+            ("shake", { bench, actions in actions.onShake?(bench.controller.preview.windows[0]) }),
+            ("swipe", { bench, actions in actions.onSwipeMinimize?(bench.controller.preview.windows[0], true) }),
+        ]
+        for (name, press) in verbs {
+            let (bench, actions) = landed(titles: ["One", "Two"])
+            press(bench, actions)
+            #expect(bench.lane.waiting == 1, "\(name): one job")
+            bench.controller.hidePreview()
+            bench.lane.runNext()
+            #expect(bench.controller.preview.windows.map(\.id) == [1, 2], "\(name): the cards are untouched")
+            #expect(bench.controller.preview.windows.allSatisfy { !$0.minimized }, "\(name): no flag landed")
+        }
+    }
+
+    // MARK: Close all and the agent guard
+
+    private static let liveTitle = "✳ Build the thing"
+
+    private func liveMarks() -> [DockAgentMark] {
+        DockAgentMark.marks(from: [
+            CoreSession(id: "claude:session:a", provider: "claude", label: "Build the thing", mode: "working",
+                        terminal: CoreTerminal(app: "Ghostty", bundleId: Bench.ghostty)),
+        ])
+    }
+
+    /// Ghostty's tile with a live agent's window (id 2) and two plain ones.
+    private func landedWithAgent() -> (Bench, DockPreviewActions) {
+        let bench = Bench(agents: liveMarks())
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "zsh"), card(2, Self.liveTitle), card(3, "vim")])
+        bench.showAndLand("Ghost")
+        #expect(bench.controller.preview.agents.keys.contains(2), "the agent's window is marked")
+        return (bench, bench.controller.ensurePanel().actions)
+    }
+
+    @Test("close all sends the writer only the windows no live agent runs in, in one job")
+    func closeAllSparesLiveAgents() {
+        let (bench, actions) = landedWithAgent()
+        actions.onCloseAll?()
+        #expect(bench.lane.waiting == 1)
+        #expect(bench.ax.closed.isEmpty)
+        bench.lane.runNext()
+        #expect(Set(bench.ax.closed) == [1, 3], "the agent's window is never passed to the writer")
+        #expect(bench.controller.preview.windows.map(\.id) == [2])
+        #expect(bench.controller.preview.headerNote == "Kept the window an agent is running in")
+    }
+
+    @Test("close all keeps a card whose close failed")
+    func closeAllKeepsFailures() {
+        let (bench, actions) = landedWithAgent()
+        bench.ax.failClose(of: 3)
+        actions.onCloseAll?()
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.map(\.id) == [2, 3])
+    }
+
+    @Test("close all removes what closed by id even when the list changed under it")
+    func closeAllRemovesByID() {
+        let (bench, actions) = landedWithAgent()
+        actions.onCloseAll?()
+        // A live refresh landed a new window while the writes ran.
+        bench.controller.preview.windows.append(card(4, "new"))
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.map(\.id) == [2, 4], "the newcomer was never asked to close")
+    }
+
+    @Test("close all on plain windows empties the list and hides the preview")
+    func closeAllHidesWhenNothingIsLeft() {
+        let (bench, actions) = landed(titles: ["One", "Two"])
+        actions.onCloseAll?()
+        bench.lane.runNext()
+        #expect(Set(bench.ax.closed) == [1, 2])
+        #expect(bench.controller.preview.windows.isEmpty)
+        #expect(!bench.controller.previewUp)
+        #expect(bench.controller.preview.headerNote == nil)
     }
 }

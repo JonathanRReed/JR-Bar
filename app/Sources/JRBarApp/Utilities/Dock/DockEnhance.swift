@@ -2130,14 +2130,22 @@ final class DockEnhanceController {
     /// DockDoor's minimise-all: every open window of the previewed app
     /// goes to the Dock in one verb. Minimized rows are left alone.
     private func minimizeAll() {
-        var changed = false
-        for index in preview.windows.indices where !preview.windows[index].minimized {
-            if AppleDockReader.setMinimized(preview.windows[index], true) {
-                preview.windows[index].minimized = true
+        let open = preview.windows.filter { !$0.minimized }
+        guard !open.isEmpty else { return }
+        // One lane job for the whole verb; the cards that took it are
+        // marked by id when it lands.
+        let generationAtPress = generation
+        let setMinimized = ax.setMinimized
+        ax.lane.run({ open.filter { setMinimized($0, true) }.map(\.id) }, then: { [weak self] done in
+            guard let self else { return }
+            var changed = false
+            for id in done {
+                guard let index = self.cardIndex(of: id, at: generationAtPress) else { continue }
+                self.preview.windows[index].minimized = true
                 changed = true
             }
-        }
-        if changed { reframe() }
+            if changed { self.reframe() }
+        })
     }
 
     /// Close-all: every window of the previewed app closes in one verb
@@ -2146,49 +2154,66 @@ final class DockEnhanceController {
     /// person can keep working the set. Windows hosting a working or
     /// waiting agent are skipped, and the header says so.
     private func closeAll() {
+        // The split is made here, on main, at the press: a window that
+        // hosts a live agent never goes to the lane. One lane job closes
+        // the rest and answers with the ids that would not close.
         let split = DockEnhanceMath.closable(preview.windows, agents: preview.agents)
-        var keptIDs = Set(split.keep.map(\.id))
-        for window in split.close where !AppleDockReader.close(window) {
-            keptIDs.insert(window.id)
-        }
-        preview.windows = preview.windows.filter { keptIDs.contains($0.id) }
-        if !split.keep.isEmpty {
-            preview.headerNote = split.keep.count == 1
-                ? "Kept the window an agent is running in"
-                : "Kept \(split.keep.count) windows agents are running in"
-        }
-        if preview.windows.isEmpty {
-            tracker.reset()
-            hidePreview()
-        } else {
-            reframe()
-        }
+        let targets = split.close
+        let keptCount = split.keep.count
+        let generationAtPress = generation
+        let closeWindow = ax.close
+        ax.lane.run({ targets.filter { !closeWindow($0) }.map(\.id) }, then: { [weak self] failed in
+            guard let self, self.generation == generationAtPress else { return }
+            // Only what closed leaves, by id: a window a live refresh
+            // added meanwhile was never asked to close and stays.
+            let closed = Set(targets.map(\.id)).subtracting(failed)
+            self.preview.windows.removeAll { closed.contains($0.id) }
+            if keptCount > 0 {
+                self.preview.headerNote = keptCount == 1
+                    ? "Kept the window an agent is running in"
+                    : "Kept \(keptCount) windows agents are running in"
+            }
+            if self.preview.windows.isEmpty {
+                self.tracker.reset()
+                self.hidePreview()
+            } else {
+                self.reframe()
+            }
+        })
     }
 
     /// Aero shake — minimise the rest of the app's windows, or bring
     /// them all back when the shaken card is the only one left up.
     private func shakeOthers(_ window: DockPreviewWindow) {
         guard let plan = DockEnhanceMath.shakePlan(preview.windows, shaken: window.id) else { return }
-        var changed = Set<Int>()
-        for other in plan.targets {
-            guard AppleDockReader.setMinimized(other, plan.minimize),
-                  let index = preview.windows.firstIndex(where: { $0.id == other.id })
-            else { continue }
-            preview.windows[index].minimized = plan.minimize
-            changed.insert(other.id)
-        }
-        acknowledge(changed)
-        if !changed.isEmpty { reframe() }
+        let targets = plan.targets
+        let minimize = plan.minimize
+        let generationAtPress = generation
+        let setMinimized = ax.setMinimized
+        ax.lane.run({ targets.filter { setMinimized($0, minimize) }.map(\.id) }, then: { [weak self] done in
+            guard let self else { return }
+            var changed = Set<Int>()
+            for id in done {
+                guard let index = self.cardIndex(of: id, at: generationAtPress) else { continue }
+                self.preview.windows[index].minimized = minimize
+                changed.insert(id)
+            }
+            self.acknowledge(changed)
+            if !changed.isEmpty { self.reframe() }
+        })
     }
 
     /// A vertical flick on a card — down minimises, up restores.
     private func swipeMinimize(_ window: DockPreviewWindow, _ minimize: Bool) {
-        guard window.minimized != minimize,
-              AppleDockReader.setMinimized(window, minimize),
-              let index = preview.windows.firstIndex(where: { $0.id == window.id })
-        else { return }
-        preview.windows[index].minimized = minimize
-        acknowledge([window.id])
+        guard window.minimized != minimize else { return }
+        let generationAtPress = generation
+        let setMinimized = ax.setMinimized
+        ax.lane.run({ setMinimized(window, minimize) }, then: { [weak self] done in
+            guard let self, done,
+                  let index = self.cardIndex(of: window.id, at: generationAtPress) else { return }
+            self.preview.windows[index].minimized = minimize
+            self.acknowledge([window.id])
+        })
     }
 
     /// A shake or flick landed: a level-change tick under the trackpad
@@ -2484,13 +2509,26 @@ final class DockEnhanceController {
                 appPID: app.processIdentifier,
                 frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
                 lastActivation: lastActivation, clickAt: clickAt) else { return }
-        let visible = answeredWindows(pid: app.processIdentifier).filter { !$0.minimized }
-        guard !visible.isEmpty else { return }
-        for window in visible { AppleDockReader.setMinimized(window, true) }
-        if tracker.shown == item.hoverID {
-            tracker.reset()
-            hidePreview()
-        }
+        // The window read and the writes are the preview lane's; a hung
+        // app is not asked while the backoff rests it.
+        let pid = app.processIdentifier
+        guard !switcher.axSkips(pid, now: uptime()) else { return }
+        let hoverID = item.hoverID
+        let read = ax.read
+        let setMinimized = ax.setMinimized
+        ax.lane.run({ () -> (unresponsive: Bool, minimized: Bool) in
+            let reading = read(pid, 0)
+            guard !reading.unresponsive else { return (true, false) }
+            let visible = reading.windows.filter { !$0.minimized }
+            for window in visible { _ = setMinimized(window, true) }
+            return (false, !visible.isEmpty)
+        }, then: { [weak self] result in
+            guard let self else { return }
+            self.noteAX(pid, unresponsive: result.unresponsive)
+            guard result.minimized, self.tracker.shown == hoverID else { return }
+            self.tracker.reset()
+            self.hidePreview()
+        })
     }
 
     /// How long a plain quit gets before "still running" is the truth.
