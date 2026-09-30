@@ -842,6 +842,9 @@ def test_detection_never_waits_on_the_login_shell_and_never_says_not_installed__
     controller._core_detected_agents_cache = None
     assert "codex" not in controller._core_detected_agents()
     assert len(probe.started) == 2
+    # The state document leaves the key out too: the app reads that as unknown.
+    published_detected = controller._core_build_state()["health"]["detected"]
+    assert "codex" not in published_detected and published_detected["cursor"] is False
 
     # --- scenario: the_answer_clears_the_cache_and_republishes
     probe.is_resolved = True
