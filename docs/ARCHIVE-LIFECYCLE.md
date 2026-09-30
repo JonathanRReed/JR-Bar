@@ -17,9 +17,13 @@ imports and index maintenance and stops capture. Already accepted file/database
 work can finish; cancellation is not a rollback of saved content.
 
 Read-only storage and status information loads when an archive is explicitly
-opened with capture off. A disabled, closed utility starts neither status reads
-nor indexing. Presentation generations reject results from windows that have
-since closed; capture generations reject obsolete settings applications.
+opened with capture off. An open archive measures its storage again after an
+import, a move to Archive Trash, a restore or an empty, so the footer and the
+Empty Archive Trash button follow the change; a closed archive does no idle
+walk, and reopening measures once. A disabled, closed utility starts neither
+status reads nor indexing. Presentation generations reject results from windows
+that have since closed; capture generations reject obsolete settings
+applications.
 
 ## Search
 

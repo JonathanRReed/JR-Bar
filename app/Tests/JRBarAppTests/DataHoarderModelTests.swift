@@ -66,6 +66,116 @@ struct DataHoarderModelTests {
         #expect(model.busy == false && model.enabled == false)
     }
 
+    // MARK: The storage footer follows what changed the archive
+
+    /// One synthetic file in a fresh archive, and a model over it with the
+    /// archive window open and the footer measured.
+    private func archiveWithOneFile(open: Bool = true) async throws
+        -> (model: DataHoarderModel, archive: DataHoarderArchive, root: URL, source: URL) {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appending(path: "trace.jsonl")
+        try Data("fixture".utf8).write(to: source)
+        let archive = DataHoarderArchive(root: root.appending(path: "archive"))
+        _ = try await archive.importFile(source)
+        let model = DataHoarderModel(archive: archive)
+        if open { model.archiveWindowDidOpen() }
+        await model.reload()
+        if open { await model.refreshStorage() }
+        return (model, archive, root, source)
+    }
+
+    @Test func storageFooterFollowsTrashAndRestore() async throws {
+        let (model, _, root, _) = try await archiveWithOneFile()
+        defer { model.archiveWindowDidClose(); try? FileManager.default.removeItem(at: root) }
+        #expect(model.storageUsage?.recordCount == 1)
+        #expect(model.storageUsage?.trashedRecordCount == 0)
+        #expect(model.canEmptyTrash == false, "a measured empty trash has nothing to empty")
+
+        await model.moveSelectedToTrash()
+        #expect(model.busy == false)
+        #expect(model.storageUsage?.recordCount == 0)
+        #expect(model.storageUsage?.trashedRecordCount == 1)
+        #expect(model.storageUsage?.trashedContentBytes == 7)
+        #expect(model.canEmptyTrash, "Empty Archive Trash follows the file into the trash")
+
+        model.showTrash = true
+        await model.reload()
+        await model.restoreSelected()
+        #expect(model.storageUsage?.recordCount == 1)
+        #expect(model.storageUsage?.trashedRecordCount == 0)
+        #expect(model.canEmptyTrash == false)
+    }
+
+    @Test func emptyingTheTrashRemeasuresTheFooter() async throws {
+        let (model, archive, root, _) = try await archiveWithOneFile()
+        defer { model.archiveWindowDidClose(); try? FileManager.default.removeItem(at: root) }
+        await model.moveSelectedToTrash()
+        #expect(model.storageUsage?.trashedRecordCount == 1)
+        await model.confirmEmptyTrash { _ in true }?.value
+        #expect(try await archive.trashedRecords().isEmpty)
+        #expect(model.storageUsage?.trashedRecordCount == 0)
+        #expect(model.storageUsage?.trashedContentBytes == 0)
+        #expect(model.storageUsage?.recordCount == 0)
+        #expect(model.busy == false)
+        #expect(model.canEmptyTrash == false, "the button stands down once the trash is empty")
+    }
+
+    @Test func aDeclinedEmptyDoesNotWalkTheArchive() async throws {
+        let (model, archive, root, _) = try await archiveWithOneFile()
+        defer { model.archiveWindowDidClose(); try? FileManager.default.removeItem(at: root) }
+        await model.moveSelectedToTrash()
+        let measured = model.storageUsage
+        #expect(measured?.trashedRecordCount == 1)
+        // A second file lands behind the model's back: a decline that
+        // walked the archive would show it in the footer.
+        let other = root.appending(path: "other.jsonl")
+        try Data("another fixture".utf8).write(to: other)
+        _ = try await archive.importFile(other)
+        await model.confirmEmptyTrash { _ in false }?.value
+        #expect(try await archive.trashedRecords().count == 1)
+        #expect(model.storageUsage == measured, "declined: nothing changed, nothing measured")
+        #expect(model.busy == false)
+    }
+
+    @Test func aFinishedImportRemeasuresTheFooter() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "trace.jsonl")
+        try Data("fixture".utf8).write(to: source)
+        let model = DataHoarderModel(archive: DataHoarderArchive(root: root.appending(path: "archive")))
+        model.enabled = true
+        model.copyContents = true
+        model.candidates = [ArchiveImportCandidate(url: source, size: 7, modified: nil)]
+        model.archiveWindowDidOpen()
+        defer { model.archiveWindowDidClose() }
+        await model.importSelected()
+        #expect(model.busy == false)
+        #expect(model.storageUsage?.recordCount == 1)
+        #expect(model.storageUsage?.contentBytes == 7)
+    }
+
+    @Test func aClosedArchiveDoesNoIdleMeasuring() async throws {
+        let (model, _, root, _) = try await archiveWithOneFile(open: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        await model.moveSelectedToTrash()
+        #expect(model.storageUsage == nil, "no window, no walk: reopening measures")
+        #expect(model.measuringStorage == false)
+        #expect(model.canEmptyTrash, "an unmeasured footer leaves the button on")
+    }
+
+    @Test func theStorageGuardDoesNotSwallowTheRemeasure() async throws {
+        // refreshStorage returns at once while `busy` is set, so the
+        // re-measure has to wait until the action has let go of it.
+        let (model, _, root, _) = try await archiveWithOneFile()
+        defer { model.archiveWindowDidClose(); try? FileManager.default.removeItem(at: root) }
+        model.storageUsage = nil
+        await model.moveSelectedToTrash()
+        #expect(model.busy == false)
+        #expect(model.storageUsage != nil)
+    }
+
     @Test func storageTotalsIgnoreSearchAndReportCatalogFailures() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
