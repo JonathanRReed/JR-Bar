@@ -192,14 +192,18 @@ def test_the_screen_bar_paints_the_working_agents_brand__and_2_more() -> None:
 
 
 
-def test_the_settings_windows_brand_chips_are_the_brand_colours__and_2_more() -> None:
-    # --- scenario: the_settings_windows_brand_chips_are_the_brand_colours
-    """One table cannot disagree with the other if there is one table."""
-    from jrbar import settings_window
+def test_the_brand_seed_swatches_are_the_brand_colours__and_2_more() -> None:
+    # --- scenario: the_brand_seed_swatches_are_the_brand_colours
+    """One table cannot disagree with the other if there is one table.
 
-    assert settings_window.BRAND_SWATCHES is colors_module.BRAND_SEED_COLORS
-    assert dict(settings_window.BRAND_SWATCHES)["Codex"] == PROVIDER_BRAND_COLORS["codex"]
-    assert dict(settings_window.BRAND_SWATCHES)["Claude"] == PROVIDER_BRAND_COLORS["claude"]
+    The named "Brand" swatch group every provider row leads with is built
+    from ``colors.BRAND_SEED_COLORS``, so that table is what has to carry the
+    same hex a provider's brand does.
+    """
+    swatches = dict(colors_module.BRAND_SEED_COLORS)
+
+    assert swatches["Codex"] == PROVIDER_BRAND_COLORS["codex"]
+    assert swatches["Claude"] == PROVIDER_BRAND_COLORS["claude"]
 
     # --- scenario: both_surfaces_route_a_crowd_the_same_way
     """The notch and the strip must not speak two colour languages.
