@@ -56,6 +56,8 @@ enum SettingsSearch {
         .init(.usage, "Display", "Graphs", subtitle: "Per-provider history, cost and pace, for the range above."),
         .init(.usage, "Claude", "Read plan limits", subtitle: "Reads your subscription's official 5-hour and 7-day windows from Anthropic. Off until you opt in."),
         .init(.usage, "Quota alerts", "Alert at thresholds", subtitle: "A nudge, then a warning, as a usage window fills."),
+        .init(.usage, "Incidents", "Provider status pages", subtitle: ProviderStatusPagesCopy.subtitle,
+              keywords: ["incident", "outage", "status page", "statuspage", "anthropic", "openai", "cursor", "network"]),
         .init(.usage, "Claude Code status line", "Read Claude Code's status line",
               subtitle: "Claude Code reports your 5-hour and weekly limits after each reply.",
               keywords: ["statusline", "status line", "claude code", "rate limits", "ccusage"]),

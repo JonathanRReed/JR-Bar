@@ -1180,6 +1180,7 @@ def default_settings_document() -> dict:
         "milestone_odometer_steps": [10, 25, 50, 100],
         "notification_policy_version": 1,
         "operator_history_retention_days": 0,
+        "provider_status_feeds_enabled": False,
         "quota_alert_thresholds": [90.0, 95.0],
         "quota_alerts_enabled": True,
         "rainstick_idle_enabled": False,

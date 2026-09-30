@@ -34,3 +34,18 @@ def test_the_setting_round_trips_and_a_mistyped_value_is_off(tmp_path) -> None:
     # A settings file from before the key existed has the feeds off too.
     document.pop("provider_status_feeds_enabled")
     assert settings_from_document(document, scratch_dir=tmp_path).provider_status_feeds_enabled is False
+
+
+def test_the_apps_settings_key_is_a_key_the_daemon_serves() -> None:
+    import re
+    from pathlib import Path
+
+    from jrbar.settings import AgentMonitorSettings
+
+    catalogue = Path(__file__).parents[1] / "app" / "Sources" / "JRBarCore" / "SettingsDocument.swift"
+    keys = set(
+        re.findall(r'SettingsKey\(\.\w+, "([^"]+)", \.\w+\)', catalogue.read_text(encoding="utf-8"))
+    )
+
+    assert "provider_status_feeds_enabled" in keys
+    assert "provider_status_feeds_enabled" in AgentMonitorSettings().to_dict()
