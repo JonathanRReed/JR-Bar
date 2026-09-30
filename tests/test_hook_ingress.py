@@ -670,3 +670,85 @@ def test_a_connection_past_every_worker_slot_is_answered_refused_full(
                 holder.close()
         finally:
             assert service.close(timeout_seconds=1.0)
+
+
+def _probe_service(tmp_path: Path) -> tuple[HookIngressService, Path]:
+    """A service to drive by hand: nothing listens, so a test calls
+    ``_handle_connection`` itself over a socketpair and nothing races."""
+    rejection_path = tmp_path / "rejections.jsonl"
+    service = HookIngressService(
+        process=lambda _request_value: None,
+        rejection_path=rejection_path,
+        peer_uid_reader=lambda _connection: os.geteuid(),
+        backlog_cleared=lambda: None,
+    )
+    return service, rejection_path
+
+
+def _serve_one_connection(service: HookIngressService, sent: bytes) -> bytes:
+    """Send ``sent`` (then EOF) to the service and return its wire answer."""
+    server_end, client = socket.socketpair()
+    try:
+        client.settimeout(1.0)
+        if sent:
+            client.sendall(sent)
+        client.shutdown(socket.SHUT_WR)
+        assert service._handle_connection(server_end) is None
+        return client.recv(64)
+    finally:
+        client.close()
+        server_end.close()
+
+
+def test_a_connection_that_closes_without_a_byte_is_not_a_rejection(
+    tmp_path: Path,
+) -> None:
+    """`jrbar hooks doctor` (and the daemon's own hooks_doctor command, which
+    Settings > Agents runs each time it shows) connects to the ingress socket
+    and closes. That is a liveness probe, not a refused frame: it must not
+    count as refused_invalid or add a line to the rejection log."""
+    service, rejection_path = _probe_service(tmp_path)
+    try:
+        # The wire answer is unchanged, so a bare EOF is never read as delivered.
+        assert _serve_one_connection(service, b"") == b"refused_invalid\n"
+        snapshot = service.snapshot()
+        assert snapshot.refused_invalid == 0
+        assert snapshot.submitted == 0
+        assert not rejection_path.exists()
+
+        # Positive control: a truncated frame that did send bytes still counts.
+        truncated = encode_hook_ingress_request(_request("x"))[:-1]
+        assert _serve_one_connection(service, truncated) == b"refused_invalid\n"
+        snapshot = service.snapshot()
+        assert snapshot.refused_invalid == 1
+        assert snapshot.submitted == 1
+        lines = rejection_path.read_text().splitlines()
+        assert len(lines) == 1
+        document = json.loads(lines[0])
+        assert document["reason"] == "refused_invalid"
+        assert frozenset(document) == {
+            "recorded_at",
+            "provider",
+            "reason",
+            "sequence",
+            "version",
+        }
+
+        # Only the empty connection changed: a bare header is still refused.
+        assert _serve_one_connection(service, b"JRBARHOOK\x01") == b"refused_invalid\n"
+        assert service.snapshot().refused_invalid == 2
+    finally:
+        assert service.close(timeout_seconds=1.0)
+
+
+def test_an_oversize_frame_is_still_counted_and_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("jrbar.hook_ingress.MAX_HOOK_INGRESS_WIRE_BYTES", 8)
+    service, rejection_path = _probe_service(tmp_path)
+    try:
+        assert _serve_one_connection(service, b"x" * 16) == b"refused_invalid\n"
+        assert service.snapshot().refused_invalid == 1
+        assert len(rejection_path.read_text().splitlines()) == 1
+    finally:
+        assert service.close(timeout_seconds=1.0)

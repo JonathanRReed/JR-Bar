@@ -927,6 +927,15 @@ class HookIngressService:
                 )
                 return None
             chunks.append(chunk)
+        if total == 0:
+            # A connection that closes before sending a byte is a liveness
+            # probe (`jrbar hooks doctor` and the daemon's own hooks_doctor
+            # command connect and close), not a refused frame. Timeouts
+            # above are silent too. Answer as before, so a bare EOF is
+            # never read as delivered, but neither count it nor write the
+            # rejection log.
+            self._send_response(connection, HookIngressDisposition.REFUSED_INVALID)
+            return None
         request = decode_hook_ingress_request(b"".join(chunks))
         parked = None
         if request is None:
