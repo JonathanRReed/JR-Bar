@@ -58,6 +58,24 @@ struct StudioAnalysisTests {
         #expect(fast.compiled.program != fast.text)
     }
 
+    @Test func aFlashSlowedLoopIsNamedHonestly() {
+        // Ten 100 ms lines make a 1000 ms loop: it clears the 500 ms floor, so
+        // what slows it is its measured 5 Hz, and the note must say so.
+        var lines: [String] = []
+        for _ in 0..<5 {
+            lines.append("#FFFFFF 100ms none")
+            lines.append("#000000 100ms none")
+        }
+        lines.append("repeat")
+        let analysis = LEDSStudioAnalysis(lines.joined(separator: "\n"))
+        #expect(analysis.playable)
+        #expect(analysis.compiled.reasons == ["loop_cadence_clamped"])
+        #expect(analysis.compiled.program.hasPrefix("#FFFFFF 300ms none\n#000000 300ms none"))
+        let note = analysis.compilerNote ?? ""
+        #expect(note.contains("flashes at most twice a second"))
+        #expect(!note.contains("stretched to at least 500 ms"))
+    }
+
     @Test func blankTextIsNotPlayable() {
         #expect(!LEDSStudioAnalysis("  \n").playable)
         #expect(LEDSStudioAnalysis("// only a note").strip.accepted)

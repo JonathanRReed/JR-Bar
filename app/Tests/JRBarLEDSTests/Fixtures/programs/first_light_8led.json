@@ -2,7 +2,7 @@
  "name": "first_light_8led",
  "led_count": 8,
  "program": "off 160ms cosine\n#6E7278 1900ms cosine\noff 2550ms cosine",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

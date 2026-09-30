@@ -84,7 +84,7 @@ public struct LEDSStudioAnalysis: Equatable, Sendable {
             parts.append("rolls take at least 250 ms")
         }
         if compiled.reasons.contains("loop_cadence_clamped") {
-            parts.append("the loop is stretched to at least 500 ms (1 s with saturated red)")
+            parts.append("the loop is slowed so the whole bar flashes at most twice a second (once for saturated red) and lasts at least 500 ms (1 s with saturated red)")
         }
         guard !parts.isEmpty else { return "The presentation compiler adjusts the timing before it plays." }
         return "Slowed to stay under 2 Hz: " + parts.joined(separator: "; ") + "."

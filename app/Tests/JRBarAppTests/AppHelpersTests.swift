@@ -221,6 +221,26 @@ import JRBarUI
         #expect(decision.programText != nil && decision.programText != text)
     }
 
+    @Test func aFiveHertzBlinkIsSlowedByTheMeasuredGate() {
+        // A 1000 ms loop of 100 ms white and black lines clears the cycle
+        // floor, so only the measured 5 Hz can slow it. The Screen Bar's own
+        // gate must give it the 300 ms phases the daemon's gate gives a device.
+        var lines: [String] = []
+        var slowed: [String] = []
+        for _ in 0..<5 {
+            lines.append("#FFFFFF 100ms none")
+            lines.append("#000000 100ms none")
+            slowed.append("#FFFFFF 300ms none")
+            slowed.append("#000000 300ms none")
+        }
+        lines.append("repeat")
+        slowed.append("repeat")
+        let decision = ScreenBarController.programDecision(lines.joined(separator: "\n"), fallback: "off")
+        #expect(decision.rejection == nil)
+        #expect(decision.program != nil)
+        #expect(decision.programText == slowed.joined(separator: "\n"))
+    }
+
     @Test func anUnparseableProgramIsRefusedWithItsParseError() {
         let decision = ScreenBarController.programDecision("#fff", fallback: "off")
         #expect(decision.program == nil)
@@ -233,6 +253,36 @@ import JRBarUI
         let decision = ScreenBarController.programDecision("roll-left 0s", fallback: "off")
         #expect(decision.program == nil)
         #expect(decision.rejection == "invalid_program")
+    }
+}
+
+/// With `JRBAR_RENDER_PROOF=1`: Effect Studio's program editor with a 5 Hz
+/// white blink typed in, on a dark and a light stage, so the compiler note
+/// and the "What plays" text read as the person reads them. The PNGs go to
+/// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/studio-flash-note-proof`).
+@Suite @MainActor struct StudioFlashNoteRenderProof {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the Studio flash-note PNGs"))
+    func aFlashSlowedLoopIsNamedInTheStudio() throws {
+        let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+            ?? "/tmp/studio-flash-note-proof", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var lines: [String] = []
+        for _ in 0..<5 {
+            lines.append("#FFFFFF 100ms none")
+            lines.append("#000000 100ms none")
+        }
+        lines.append("repeat")
+        let store = EffectStudioStore(core: CoreModel(socketPath: "/nonexistent.sock"))
+        let model = LEDSStudioModel(core: CoreModel(socketPath: "/nonexistent.sock"), defaults: nil)
+        model.text = lines.joined(separator: "\n")
+        #expect(model.analysis.compilerNote?.contains("flashes at most twice a second") == true)
+        for dark in [true, false] {
+            let view = LEDSStudioView(store: store, model: model)
+            let rep = try LEDPreviewStripTests.hosted(view, size: CGSize(width: 900, height: 620), dark: dark)
+            let png = try #require(rep.representation(using: .png, properties: [:]))
+            try png.write(to: directory.appendingPathComponent("studio-flash-note-\(dark ? "dark" : "light").png"))
+        }
     }
 }
 

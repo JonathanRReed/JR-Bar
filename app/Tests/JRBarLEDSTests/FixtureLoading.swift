@@ -31,6 +31,16 @@ struct CompilerFixture: Decodable {
     let output: String
 }
 
+/// `flash_analysis.analyse` of one program, as Python measures it.
+struct FlashFixture: Decodable {
+    let program: String
+    let led_count: Int
+    let hertz: Double
+    let flashes: Int
+    let span_ms: Int
+    let peak_area: Double
+}
+
 enum Fixtures {
     static var root: URL {
         Bundle.module.resourceURL!.appending(path: "Fixtures")
@@ -50,5 +60,9 @@ enum Fixtures {
 
     static func compiler() throws -> [CompilerFixture] {
         try JSONDecoder().decode([CompilerFixture].self, from: Data(contentsOf: root.appending(path: "compiler.json")))
+    }
+
+    static func flash() throws -> [FlashFixture] {
+        try JSONDecoder().decode([FlashFixture].self, from: Data(contentsOf: root.appending(path: "flash.json")))
     }
 }

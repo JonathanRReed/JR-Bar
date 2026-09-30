@@ -2,7 +2,7 @@
  "name": "edge_all_easings_8led",
  "led_count": 8,
  "program": "#000000\n#FFFFFF 700ms linear\n#000000 700ms ease\n#FF8800 700ms ease-in\n#000000 700ms ease-out\n#00AAFF 700ms ease-in-out\n#000000 700ms cosine\n#FF00FF 900ms pulse\n#101010 400ms none\nrepeat",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

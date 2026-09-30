@@ -2,7 +2,7 @@
  "name": "edge_zero_and_frame_lines_8led",
  "led_count": 8,
  "program": "#ff0000\n#00ff00\n#0000ff 0ms linear\n#ffffff 0ms linear 100ms\n#101010 1ms linear\n#ff00ff 5ms\nroll 0ms\n#00ffff 300ms linear\n#404040 none 100ms",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

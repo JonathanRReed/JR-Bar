@@ -2,7 +2,7 @@
  "name": "mode_waiting_for_input_ask_8led",
  "led_count": 8,
  "program": "off 160ms cosine\n#FF3A00 1.6s pulse\nrepeat",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

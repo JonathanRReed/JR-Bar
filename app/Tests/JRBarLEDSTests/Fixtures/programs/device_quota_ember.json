@@ -2,7 +2,7 @@
  "name": "device_quota_ember",
  "led_count": 8,
  "program": "#000000 160ms cosine\n0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; 3:#1D050A 420ms pulse 540ms; 4:#1D050A 420ms pulse 720ms; 5:#1D050A 420ms pulse 900ms; 6:#1D050A 420ms pulse 1080ms; 7:#1D050A 420ms pulse 1260ms\n#000000 600ms none\nrepeat",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

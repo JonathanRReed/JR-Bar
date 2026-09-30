@@ -14,7 +14,7 @@ Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
 | Path | What it is |
 | --- | --- |
 | `Package.swift` | SwiftPM package `JRBar` (tools 6.2, macOS 26). |
-| `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, keyframe renderer, presentation-safety compiler. No AppKit. |
+| `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, keyframe renderer, presentation-safety compiler and its measured-flash pass. No AppKit. |
 | `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the panel's layout math, label and activity rules, the usage sparkline reduction, the history model, the Creator Micro 2 deck model and rail geometry, the Alcove capsule geometry, and the child-process supervisor. Foundation only. |
 | `Sources/JRBarUI/` | AppKit pieces small enough to test on their own: the status item icon renderer (glyph styles and the meter strip). |
 | `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings, History, Usage Center, Effect Studio and Control Center windows, the deck rail, notifications, sounds, HUD, file-feed fallback. |
@@ -62,11 +62,18 @@ test` right after a plain `swift build` complains that the `TestingMacros`
 plugin was not found, that is the swiftbuild backend reusing a stale module
 graph: `rm -rf .build` and run `swift test` again.
 
-Regenerate fixtures after changing the reference programs:
+Regenerate fixtures after changing the reference programs, from the
+repository root:
 
 ```sh
-/Users/jonathanreed/Downloads/JR-Bar/.venv/bin/python app/scripts/gen_leds_fixtures.py
+.venv/bin/python app/scripts/gen_leds_fixtures.py
+.venv/bin/python app/scripts/gen_leds_fixtures.py --compiler-only
 ```
+
+The second form rewrites only `compiler.json` and `flash.json`: it needs no
+firmware and leaves `programs/` alone. `tests/test_leds_fixtures_match_reference.py` compares every
+stored fixture to what the generator would write today, so a stale one fails
+the Python suite.
 
 `@State` is a macro on the macOS 26 SDK and the Command Line Tools ship no
 `SwiftUIMacros` plugin either, so the views use `@ViewState`, a typealias for
@@ -195,6 +202,7 @@ program.cycleDuration, program.isStatic, program.motionEndsAt
 LEDSKeyframePlan.render(sampler: sampler)   // lead + loop keyframe tracks for Core Animation, nil when too long
 plan.codes(atMilliseconds: ms)              // what the animation shows (linear between keyframes)
 LEDSPresentationCompiler.compile(text)   // port of presentation_compiler.py (2 Hz / 1 Hz red clamps)
+LEDSFlashAnalysis.analyse(steps, ledCount: 8)   // port of flash_analysis.py: measured hertz, flashes, span, peak area
 ```
 
 Colour note: the sampler's floats are the firmware codes over 255. The strip
@@ -222,17 +230,24 @@ within the tolerance at the firmware's own sample times.
 
 ### Parity
 
-`scripts/gen_leds_fixtures.py` samples 29 programs through
-`sidepulse._led_wasm_legacy.SdLedWasmController` (raw firmware engine:
+`scripts/gen_leds_fixtures.py` samples 30 programs through
+`jrbar._led_wasm_legacy.SdLedWasmController` (raw firmware engine:
 `reset(0)`, `parse(program, 0)`, `step(t_ms)`) at the required times
 (0, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.7 s) plus a 37 ms sweep over the
-first four seconds. Programs: the device's current `LEDS.LED`, every
+first four seconds. Programs: one embedded device program, every
 `AgentMode` at 8 and 2 LEDs via `program_for_display_state`, the done
 celebration, failure, first light, and hand-written edge cases covering every
-syntax feature. The Swift sampler matches within one code per channel at every
-sample. The same script records 250 firmware parse verdicts (accept / error
-name) and 41 `compile_presentation_program` results, which the parser and
-compiler ports reproduce exactly.
+syntax feature. Nothing is read from a mounted device, so regenerating gives
+the same files on any Mac. The Swift sampler matches within one code per
+channel at every sample. The same script records 250 firmware parse verdicts
+(accept / error name), 68 `compile_presentation_program` results and 67
+`flash_analysis.analyse` measurements (`flash.json`: hertz, flashes, span and
+peak area), which the parser, compiler and flash-analysis ports reproduce
+exactly. The compiler rows include the loops only the measured pass can judge:
+a 5 Hz whole-bar blink whose loop already clears the 500 ms floor (slowed to
+300 ms phases, 500 ms in saturated red), a field-wide indexed blink, a head that
+only travels (untouched), untimed named-LED lines inside a loop (exempt from
+the phase floor, as in Python), and the 2 Hz and 1 Hz boundaries.
 
 ## The core protocol (`JRBarCore`)
 
@@ -686,7 +701,7 @@ three layers):
   all Spaces, click-through, sized by the ports of
   `virtual_window_frame_for_screen` / `rounded_band_bounds` /
   `screen_bar_design.py`: the notch slot from `auxiliaryTopLeftArea` /
-  `auxiliaryTopRightArea`, 14 pt auto wings, a 6 pt band with 3 pt corners
+  `auxiliaryTopRightArea`, 14 pt auto wings, a 4 pt band with rounded ends
   1 pt below the notch (197 pt on this MacBook Pro). The eight LED samples
   become one horizontal `CAGradientLayer` through the Python's raised-cosine
   inter-LED blend (2 pt columns, 1/1024 quantised, coalesced runs), plus a
@@ -959,7 +974,9 @@ three layers):
   unless `quota_alerts_enabled` is false. Nothing is done for
   `peer_arrived` / `peer_departed` beyond the toast. Escalation stage 3 is
   a repeating chime (Hero, every 30 s); the `takeover` tier gets the same
-  chime, no full-screen takeover.
+  chime and sets `delivery.takeover` (`JRBarCore/EventPolicy.swift`): the notch
+  island grows into the ask card and holds it until the person answers, opens
+  or swipes it away.
 * Software Update: the app owns a `SparkleUpdater` (`SparkleUpdater.swift`)
   over the embedded framework: "Check for Updates…" in the app menu
   (`AppDelegate.checkForUpdates(_:)`, validated by

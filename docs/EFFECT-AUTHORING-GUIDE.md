@@ -105,6 +105,18 @@ The bar an author has to clear is therefore about the *field*, not the pixels:
 if most of the strip gets brighter and darker again more than twice a second,
 it will be slowed; if light merely moves, it will not be touched.
 
+The Screen Bar plays its program through a Swift copy of this gate
+(`app/Sources/JRBarLEDS/LEDSPresentationCompiler.swift` and
+`LEDSFlashAnalysis.swift`), because Effect Studio and the offline file feed
+reach it with no daemon in between. The copy is held to the Python gate by
+fixtures, not by hand. `app/scripts/gen_leds_fixtures.py` writes `compiler.json`
+and `flash.json` from the functions above, `tests/test_leds_fixtures_match_reference.py`
+fails when either one is stale, and `cd app && swift test --filter JRBarLEDSTests`
+(`CompilerTests` and `FlashAnalysisTests`) checks the port against them, number
+for number. Change the Python gate, regenerate with
+`.venv/bin/python app/scripts/gen_leds_fixtures.py --compiler-only`, and port the
+change until the Swift suites pass.
+
 ### Writing a shape that stays smooth
 
 `src/jrbar/motion_shapes.py` holds the geometry every JR-Bar animation is
@@ -168,6 +180,6 @@ The runtime owner composes routing, finite planning, admission and power policy,
 
 ## Verification map
 
-The authoritative tests are `tests/test_presentation_safety_compiler.py`, `tests/test_flash_analysis.py`, `tests/test_motion_shapes.py`, `tests/test_effect_registry.py`, `tests/test_semantic_effect_router.py`, `tests/test_finite_effect_policy.py`, `tests/test_effect_packs.py`, `tests/test_effect_history.py`, `tests/test_effect_history_store.py`, `tests/test_effect_studio.py`, `tests/test_ambient_effect_runtime.py`, `tests/test_semantic_effect_router.py`, and `tests/test_settings_accessibility.py`. Add runtime and surface tests for every destination declared by an effect.
+The authoritative tests are `tests/test_presentation_safety_compiler.py`, `tests/test_flash_analysis.py`, `tests/test_motion_shapes.py`, `tests/test_effect_registry.py`, `tests/test_semantic_effect_router.py`, `tests/test_finite_effect_policy.py`, `tests/test_effect_packs.py`, `tests/test_effect_history.py`, `tests/test_effect_history_store.py`, `tests/test_effect_studio.py`, `tests/test_ambient_effect_runtime.py`, `tests/test_semantic_effect_router.py`, and `tests/test_settings_accessibility.py`. The Screen Bar's Swift copy of the compiler is checked by `tests/test_leds_fixtures_match_reference.py` (the fixtures are what Python says today) and the Swift parity suites `CompilerTests` and `FlashAnalysisTests` in `app/Tests/JRBarLEDSTests`. Add runtime and surface tests for every destination declared by an effect.
 
 Acceptance requires source and rendered evidence: the definition validates, semantic selection is deterministic, policy is finite and accessible, packs remain inert JSON, history remains content-free, settings previews expose usable controls, and the installed surface honors suppression, Reduce Motion, power, and device-write policy.

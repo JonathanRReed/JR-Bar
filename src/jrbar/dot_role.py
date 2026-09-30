@@ -365,6 +365,45 @@ def _paint_source_state(step: PaintStep, *, source_leds: int, state: list[str]) 
     return after
 
 
+def _resting_source_state(step: PaintStep, *, source_leds: int, state: list[str]) -> list[str]:
+    """The colours the source strip RESTS on after one paint line.
+
+    ``_paint_source_state`` records each segment's target, and for a pulse
+    that target is the peak. A pulse rises to it and falls back to the
+    colour the line began with, so the strip's resting colour after a pulse
+    is ``state``, not the peak. The brightest rung carries pulse lines
+    through as pulses, so the hold line and the missing-band fill that
+    follow must paint this resting colour; the average rung needs the peak
+    as its target and keeps ``_paint_source_state``.
+
+    Segments apply in order, so a later one wins on an LED they share, the
+    way the firmware keeps the last assignment an LED gets on a line.
+    """
+    start = list(state)
+    after = list(state)
+    for segment in step.segments:
+        pulse = segment.timing.easing == "pulse"
+        if type(segment) is WholeBar:
+            color = BLACK if segment.color == OFF else normalize_color(segment.color)
+            after = list(start) if pulse else [color] * source_leds
+        elif type(segment) is ColorList:
+            colors = [normalize_color(color) for color in segment.colors]
+            after = (
+                list(start)
+                if pulse
+                else [
+                    colors[index] if index < len(colors) else BLACK
+                    for index in range(source_leds)
+                ]
+            )
+        elif type(segment) is IndexedPaint:
+            for index, color in segment.assignments:
+                position = int(index)
+                if 0 <= position < source_leds:
+                    after[position] = start[position] if pulse else normalize_color(color)
+    return after
+
+
 def _addressed_bands(segments, led_count: int) -> set[int]:
     """Which destination LEDs a rendered line actually paints.
 
@@ -575,7 +614,11 @@ def _downsample_program(
     steps: list[object] = []
     for step in animation.steps:
         if type(step) is PaintStep:
-            state = _paint_source_state(step, source_leds=max(source_leds, led_count), state=state)
+            # The brightest rung carries a pulse line through as a pulse, so
+            # the colours below (the hold line, the missing-band fill) must be
+            # what the strip RESTS on after it, not the pulse's peak. The
+            # average rung is the other way round; see _average_program.
+            state = _resting_source_state(step, source_leds=max(source_leds, led_count), state=state)
             resolved = tuple(
                 _brightest(tuple(state[start:stop])) for start, stop in bounds
             )

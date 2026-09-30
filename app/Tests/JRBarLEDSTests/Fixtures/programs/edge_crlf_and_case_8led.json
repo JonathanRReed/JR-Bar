@@ -2,7 +2,7 @@
  "name": "edge_crlf_and_case_8led",
  "led_count": 8,
  "program": "OFF 100MS COSINE\r\n#FfAa00 1S PULSE\r\n0:#00FF00 250ms Ease-In 100ms; 1:#0000FF 0.5s EASE-OUT\r\nRepeat\r\n",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

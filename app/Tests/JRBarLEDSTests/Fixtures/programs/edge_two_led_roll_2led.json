@@ -2,7 +2,7 @@
  "name": "edge_two_led_roll_2led",
  "led_count": 2,
  "program": "#ff0000 #00ff00 #0000ff\nroll 800ms linear\nroll-left 800ms ease-in\nrepeat",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

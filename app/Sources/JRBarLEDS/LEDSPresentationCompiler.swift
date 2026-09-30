@@ -4,15 +4,31 @@ import Foundation
 /// light surface runs before a program is displayed.
 ///
 /// Nothing on the product may flash faster than 2 Hz (1 Hz for saturated
-/// red). The compiler only ever lengthens timings: untimed steps inside a
-/// loop get concrete minimum durations, rolls get a minimum phase, and a loop
-/// shorter than the minimum cycle is scaled up by an integer factor. Delays
-/// are never clamped (they are phase offsets and cannot raise the flash rate).
+/// red). The compiler only ever lengthens timings, by three rules, and the
+/// strictest one wins:
+///
+/// * A field-wide paint (a whole-bar colour or a colour list) written without
+///   a duration inside a loop gets a concrete minimum phase, and a roll gets a
+///   minimum phase. A per-LED (`index:#colour`) paint keeps whatever phase it
+///   was written with: it is spatial motion, and a floor on it would only cap
+///   how fast light may travel.
+/// * The compiled loop is rendered (`LEDSFlashAnalysis`) and its MEASURED flash
+///   rate must sit at or under the limit. A loop that flashes faster is
+///   stretched by the whole-number factor that brings it under, which keeps
+///   every overlap and stagger exactly as written.
+/// * A loop is never shorter than the minimum cycle.
+///
+/// Delays are never clamped (they are phase offsets and cannot raise the flash
+/// rate). Nothing is refused for being lively; it is slowed. The port is held
+/// to the Python compiler by `compiler.json` and `flash.json`, which
+/// `app/scripts/gen_leds_fixtures.py` writes from the Python side.
 public enum LEDSPresentationCompiler {
     public static let minPresentationCycleMs = 500
     public static let minPresentationPhaseMs = 250
     public static let minSaturatedRedCycleMs = 1000
     public static let minSaturatedRedPhaseMs = 500
+    public static let maxPresentationHz = 2.0
+    public static let maxSaturatedRedHz = 1.0
     public static let safeFallbackProgram = "off"
 
     public struct Result: Hashable, Sendable {
@@ -77,8 +93,28 @@ public enum LEDSPresentationCompiler {
         return (updated, updated != timing)
     }
 
+    /// Python `_slowdown_factor`: by how much this loop has to be stretched,
+    /// as a whole number. The cycle floor is a product rule and the flash floor
+    /// is the measured accessibility one; the stricter wins. A whole factor
+    /// divides the flash rate by exactly that integer and leaves the shape
+    /// untouched.
+    static func slowdownFactor(_ steps: [LEDSStep], loopMs: Int?, requiredCycleMs: Int, ledCount: Int, saturatedRed: Bool) -> Int {
+        guard let loopMs, loopMs > 0 else { return 1 }
+        var cycleFactor = 1
+        if loopMs < requiredCycleMs {
+            cycleFactor = Int((Double(requiredCycleMs) / Double(loopMs)).rounded(.up))
+        }
+        let limit = saturatedRed ? maxSaturatedRedHz : maxPresentationHz
+        let measured = LEDSFlashAnalysis.analyse(steps, ledCount: ledCount).hertz
+        var flashFactor = 1
+        if measured > limit {
+            flashFactor = Int((measured / limit).rounded(.up))
+        }
+        return max(1, cycleFactor, flashFactor)
+    }
+
     /// Python `_safe_animation`.
-    public static func safeSteps(_ steps: [LEDSStep]) throws(SafetyError) -> (steps: [LEDSStep], reasons: [String]) {
+    public static func safeSteps(_ steps: [LEDSStep], ledCount: Int = 8) throws(SafetyError) -> (steps: [LEDSStep], reasons: [String]) {
         var reasons: [String] = []
         var transformed: [LEDSStep] = []
         var sawRed = false
@@ -92,6 +128,15 @@ public enum LEDSPresentationCompiler {
                 var safeSegments: [LEDSSegment] = []
                 var changed = false
                 for segment in segments {
+                    if case .indexed = segment.kind {
+                        // A named-LED paint is spatial motion, not a field
+                        // flash: it moves a few LEDs and the rest hold, so a
+                        // phase floor on it only caps how fast light may
+                        // travel. The measured flash pass below keeps
+                        // staggered paints honest instead.
+                        safeSegments.append(segment)
+                        continue
+                    }
                     let (timing, segmentChanged) = try safeTiming(segment.timing, saturatedRed: red, forceTimed: forceTimed)
                     safeSegments.append(LEDSSegment(kind: segment.kind, timing: timing))
                     changed = changed || segmentChanged
@@ -110,8 +155,14 @@ public enum LEDSPresentationCompiler {
 
         if let repeatIndex {
             let required = sawRed ? minSaturatedRedCycleMs : minPresentationCycleMs
-            if let loopMs = loopDurationMs(transformed), loopMs > 0, loopMs < required {
-                let factor = Int((Double(required) / Double(loopMs)).rounded(.up))
+            let factor = slowdownFactor(
+                transformed,
+                loopMs: loopDurationMs(transformed),
+                requiredCycleMs: required,
+                ledCount: ledCount,
+                saturatedRed: sawRed
+            )
+            if factor > 1 {
                 var scaled: [LEDSStep] = []
                 for (index, step) in transformed.enumerated() {
                     if index >= repeatIndex { scaled.append(step); continue }
@@ -171,7 +222,7 @@ public enum LEDSPresentationCompiler {
         }
         let safe: (steps: [LEDSStep], reasons: [String])
         do {
-            safe = try safeSteps(parsed.steps)
+            safe = try safeSteps(parsed.steps, ledCount: parsed.ledCount)
         } catch {
             return Result(program: fallback, accepted: false, transformed: program != fallback, reasons: ["unsafe_program"])
         }
