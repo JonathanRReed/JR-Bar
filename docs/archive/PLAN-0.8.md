@@ -1,5 +1,9 @@
 # JR-Bar 0.8 plan (living)
 
+> **Historical.** The working plan of the 0.8 rebuild, agreed 2026-09-09. The
+> rebuild shipped; open work is tracked in [`docs/ROADMAP.md`](../ROADMAP.md) and
+> what ships is in [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md).
+
 Agreed with Jonathan on 2026-09-09. This file is the working plan for the 0.8
 rebuild. Update it as phases land; it is the only plan that matters.
 

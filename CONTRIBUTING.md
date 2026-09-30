@@ -26,8 +26,8 @@ hardware, permissions and notarization only happen on a real Mac.
 
 Running the app from a checkout, against a checkout's daemon or the mock
 daemon, is in [app/README.md](app/README.md). Install the result on your
-own Mac with `make clean-install`; `docs/PLAN-0.8.md` has the definition of
-done the owner uses (the Mac runs the commit you just made).
+own Mac with `make clean-install`; the Mac should be running the commit you
+just made (`jrbar doctor` reports the daemon's commit).
 
 ## Where things live
 
