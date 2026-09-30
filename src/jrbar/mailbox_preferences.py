@@ -696,47 +696,6 @@ def _normalize_preference(
     )
 
 
-def _preference_choice_key(
-    preference: LegacyMailboxPreference,
-    *,
-    now: float,
-) -> tuple[float, bool, float, int, tuple[float, float, float]]:
-    epochs = (
-        epoch
-        for epoch in (preference.snoozed_at, preference.last_visited_at)
-        if epoch is not None
-    )
-    meaningful_epoch = max(epochs, default=-math.inf)
-    future_snooze = (
-        preference.snoozed_until is not None and preference.snoozed_until > now
-    )
-    pin_order = (
-        float(preference.pin_order)
-        if _valid_pin_order(preference.pin_order)
-        else math.inf
-    )
-    mode_priority = {
-        MailboxPreferenceMode.DEFAULT: 0,
-        MailboxPreferenceMode.WATCHED: 1,
-        MailboxPreferenceMode.PINNED: 2,
-    }[preference.mode]
-    deterministic_epochs = tuple(
-        epoch if epoch is not None else -math.inf
-        for epoch in (
-            preference.snoozed_at,
-            preference.snoozed_until,
-            preference.last_visited_at,
-        )
-    )
-    return (
-        meaningful_epoch,
-        not future_snooze,
-        -pin_order,
-        mode_priority,
-        deterministic_epochs,
-    )
-
-
 def _snooze_result(
     row: MailboxRow,
     preference: LegacyMailboxPreference,
