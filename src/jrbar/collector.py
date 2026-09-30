@@ -97,10 +97,6 @@ class LiveAgentMonitor(_LegacyLiveAgentMonitor):
             if normalized != previous:
                 self.revision += 1
 
-    def external_statuses_by_source(self) -> dict[str, tuple[AgentStatus, ...]]:
-        with self.lock:
-            return dict(self._external_statuses_by_source)
-
     def _external_statuses_locked(self) -> tuple[AgentStatus, ...]:
         return tuple(
             status
