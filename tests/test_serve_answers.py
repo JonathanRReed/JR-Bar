@@ -137,19 +137,20 @@ def test_asks_say_which_answers_each_one_takes() -> None:
 
 
 def test_an_ask_already_decided_offers_no_always_and_no_choice() -> None:
-    # The seconds after an answer, while the agent's events catch up: the
-    # hold is spent, so a key must not draw an Always allow or a choice the
-    # answer path would only refuse as stale.
+    # From the answer until the agent's own events close the request (however
+    # long the approved tool runs, an hour at most) the hold is spent: the ask
+    # is not answerable, and a key must not draw an Approve, Deny, Always
+    # allow or choice the answer path would only refuse as stale.
     decided = {
         **STATE,
         "asks": [
-            {**ask, "decision": {**ask["decision"], "decided": True}}
+            {**ask, "answerable": False, "decision": {**ask["decision"], "decided": True}}
             for ask in STATE["asks"]
             if "decision" in ask
         ],
     }
     first, second = public_asks(decided)
-    assert first["decisions"] == ["approve", "deny"]
+    assert first["decisions"] == [] and first["choices"] == []
     assert second["decisions"] == [] and second["choices"] == []
 
 

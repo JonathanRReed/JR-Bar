@@ -75,9 +75,13 @@ MIN_DECISION_HOLD_SECONDS: Final = 2.0
 #: Parked requests at once. Each one holds a socket and a thread; a burst
 #: past this just falls through to the agents' own prompts.
 MAX_PARKED_DECISIONS: Final = 16
-#: How long an answered request stays answerable-looking and refuses a
-#: second answer, while the provider's own events catch the state up.
-DECIDED_TOMBSTONE_SECONDS: Final = 15.0
+#: The most an answered request is remembered as answered. It is forgotten
+#: much sooner in practice, when the agent's own events close the request
+#: (``DecisionBroker.observe``): the tool's PostToolUse, a fresh
+#: PermissionRequest for it, or the turn ending or moving on. This is only the
+#: upper bound, equal to ``operator_state.REQUEST_LIVE_GRACE_SECONDS``, after
+#: which canonical state stops treating a live request as live anyway.
+DECIDED_TOMBSTONE_CAP_SECONDS: Final = 3600.0
 #: How long ``decide`` waits for the parked connection to write the line.
 DELIVERY_WAIT_SECONDS: Final = 2.0
 
@@ -142,7 +146,7 @@ class DecisionResult(str, Enum):
     NOT_DELIVERED = "not_delivered"
     #: Nothing is parked for that request.
     NOT_PARKED = "not_parked"
-    #: Somebody answered it a moment ago.
+    #: Its verdict was already sent, and the agent has not moved on yet.
     ALREADY_DECIDED = "already_decided"
     #: That verb cannot be sent for this request: Always without rules, a
     #: bare allow on a question, answers that pick nothing offered.
@@ -652,7 +656,8 @@ class ParkedDecision:
     can_always_allow: bool
     preview: str | None
     risk: str | None
-    #: True for a request answered moments ago (the tombstone).
+    #: True for a request whose verdict the hook took, until the agent's own
+    #: events close the request (the tombstone).
     decided: bool = False
     #: A held question's questions and options (``answer``); ``()`` for a
     #: yes/no request.
@@ -805,8 +810,11 @@ class DecisionBroker:
         self._lock = threading.Lock()
         self._token = 0
         self._slots: dict[int, _Slot] = {}
-        #: (provider, work id, request id) -> when the tombstone lapses.
-        self._decided: dict[tuple[str, str, str], float] = {}
+        #: (provider, work id, request id) -> (the cap, the session), for a
+        #: verdict the hook took. Kept until the agent's own events close the
+        #: request (``observe``) or the cap; the session says whose turn ending
+        #: closes it.
+        self._decided: dict[tuple[str, str, str], tuple[float, str]] = {}
         self._on_change = on_change
 
     def set_on_change(self, on_change: Callable[[], object] | None) -> None:
@@ -909,13 +917,16 @@ class DecisionBroker:
             verdict = slot.verdict if slot.state == "decided" else None
         # Every lapse, release and decision ends here; the handler runs
         # outside the lock, since it may build the state that reads it.
+        self._notify_change()
+        return verdict
+
+    def _notify_change(self) -> None:
         on_change = self._on_change
         if on_change is not None:
             try:
                 on_change()
             except Exception:
                 pass
-        return verdict
 
     def delivered(self, slot: _Slot, ok: bool) -> None:
         """The parked connection's report: the verdict line was written."""
@@ -983,11 +994,21 @@ class DecisionBroker:
             slot.verdict = verdict
             slot.state = "decided"
             self._slots.pop(slot.token, None)
-            self._decided[(provider, slot.facts.work_id, request_id)] = now + DECIDED_TOMBSTONE_SECONDS
+            # Written before delivery is known, under the lock, so a second
+            # click during the delivery wait already meets ALREADY_DECIDED.
+            key = (provider, slot.facts.work_id, request_id)
+            tombstone = (now + DECIDED_TOMBSTONE_CAP_SECONDS, slot.facts.session_id)
+            self._decided[key] = tombstone
             slot.event.set()
-        if not slot.delivered_event.wait(DELIVERY_WAIT_SECONDS):
-            return DecisionResult.NOT_DELIVERED
-        return DecisionResult.SENT if slot.delivered else DecisionResult.NOT_DELIVERED
+        if slot.delivered_event.wait(DELIVERY_WAIT_SECONDS) and slot.delivered:
+            return DecisionResult.SENT
+        # The hook had already gone, so nothing was decided: the agent's own
+        # prompt is showing, and the keystroke path is the way to answer it.
+        with self._lock:
+            if self._decided.get(key) is tombstone:
+                del self._decided[key]
+        self._notify_change()
+        return DecisionResult.NOT_DELIVERED
 
     def release(
         self,
@@ -1030,13 +1051,26 @@ class DecisionBroker:
             return len(slots)
 
     def observe(self, provider: object, payload_text: object) -> int:
-        """Release what a later hook event proves is no longer on screen:
-        the tool ran (its ``PostToolUse``), or the turn ended or moved on.
-        Parses nothing while nothing is parked for that provider."""
+        """Release what a later hook event proves is no longer on screen --
+        the tool ran (its ``PostToolUse``), or the turn ended or moved on --
+        and forget an answered request the same events close. Returns the
+        number of holds released. Parses nothing while nothing is parked or
+        answered for that provider.
+
+        An answered request stays answered for as long as the tool it
+        approved may be running, so a second click cannot type into a busy
+        terminal. What closes it: the tool's PostToolUse or PostToolUseFailure,
+        a fresh PermissionRequest for the same request (a new ask, whether or
+        not it is held), or the turn ending or moving on (Stop, StopFailure,
+        SessionEnd, UserPromptSubmit, Interrupt)."""
         if type(provider) is not str or type(payload_text) is not str:
             return 0
         with self._lock:
-            if not any(slot.facts.provider == provider for slot in self._slots.values()):
+            self._expire_locked(self._clock())
+            if not (
+                any(slot.facts.provider == provider for slot in self._slots.values())
+                or any(key[0] == provider for key in self._decided)
+            ):
                 return 0
         try:
             payload = json.loads(payload_text)
@@ -1054,9 +1088,11 @@ class DecisionBroker:
             # is the session's, and ends everything held under it.
             agent_id = payload.get("agent_id") or payload.get("agentId")
             if type(agent_id) is str and agent_id and agent_id != session_id:
+                self._forget_decided(provider, session_id=session_id, work_id=agent_id)
                 return self.release(provider, session_id=session_id, work_id=agent_id)
+            self._forget_decided(provider, session_id=session_id)
             return self.release(provider, session_id=session_id)
-        if event in _TOOL_RAN_EVENTS:
+        if event in _TOOL_RAN_EVENTS or event == "PermissionRequest":
             from .provider_adapters import hook_request_identity
 
             routed = _request_identity(provider, payload_text)
@@ -1069,8 +1105,32 @@ class DecisionBroker:
             record = routed[1]
             ran_session = record.session_id if type(record.session_id) is str else session_id
             work_id = record.agent_id if type(record.agent_id) is str and record.agent_id else ran_session
+            self._forget_decided(provider, request_id=request_id, work_id=work_id)
+            if event == "PermissionRequest":
+                # A new ask: it is the ingress's to hold, not this event's to release.
+                return 0
             return self.release(provider, request_id=request_id, work_id=work_id)
         return 0
+
+    def _forget_decided(
+        self,
+        provider: str,
+        *,
+        request_id: str | None = None,
+        session_id: str | None = None,
+        work_id: str | None = None,
+    ) -> None:
+        """Drop the answered-request memory that matches every given field."""
+        with self._lock:
+            for key, (_until, decided_session) in list(self._decided.items()):
+                decided_provider, decided_work, decided_request = key
+                if (
+                    decided_provider == provider
+                    and (request_id is None or decided_request == request_id)
+                    and (session_id is None or decided_session == session_id)
+                    and (work_id is None or decided_work == work_id)
+                ):
+                    del self._decided[key]
 
     # -- reading (the projection side) --
 
@@ -1096,7 +1156,7 @@ class DecisionBroker:
             if decided_work is not None:
                 return ParkedDecision(
                     provider=provider,
-                    session_id="",
+                    session_id=self._decided[(provider, decided_work, request_id)][1],
                     request_id=request_id,
                     tool_name="",
                     hold_until_epoch=self._wall(),
@@ -1157,7 +1217,7 @@ class DecisionBroker:
         request_id: str,
         work_id: str | None,
     ) -> str | None:
-        """The work of a request answered moments ago, if one matches."""
+        """The work of an answered request the agent has not closed yet, if one matches."""
         if work_id is not None:
             return work_id if (provider, work_id, request_id) in self._decided else None
         for decided_provider, decided_work, decided_request in self._decided:
@@ -1177,7 +1237,7 @@ class DecisionBroker:
                 slot.state = "expired"
                 self._slots.pop(slot.token, None)
                 slot.event.set()
-        for key, until in list(self._decided.items()):
+        for key, (until, _session) in list(self._decided.items()):
             if until <= now:
                 del self._decided[key]
 
@@ -1504,7 +1564,7 @@ __all__ = [
     "ALWAYS_ALLOW_PROVIDERS",
     "CHOICE_PROVIDERS",
     "CHOICE_TOOLS",
-    "DECIDED_TOMBSTONE_SECONDS",
+    "DECIDED_TOMBSTONE_CAP_SECONDS",
     "DECIDE_PROVIDERS",
     "DECISION_HOLD_SECONDS",
     "DENY_MESSAGE",
