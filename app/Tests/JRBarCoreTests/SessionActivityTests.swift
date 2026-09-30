@@ -127,10 +127,10 @@ struct SessionActivityTests {
             ("main", nil), ("main", "p"), ("worker", nil), ("worker", "p"), ("subagent", nil), ("subagent", "p"),
         ]
         for shape in shapes {
-            let session = CoreSession(id: "x", provider: "claude", kind: shape.kind, parent: shape.parent)
-            let listed = CoreState(sessions: [session]).mainSessions.count == 1
-            #expect(session.isChildWorker == !listed, "\(shape.kind) \(shape.parent ?? "-")")
-            #expect(session.isChildWorker == !AquariumModel.isMain(session), "\(shape.kind) \(shape.parent ?? "-")")
+            let subject = CoreSession(id: "x", provider: "claude", kind: shape.kind, parent: shape.parent)
+            let listed = CoreState(sessions: [subject]).mainSessions.count == 1
+            #expect(subject.isChildWorker == !listed, "\(shape.kind) \(shape.parent ?? "-")")
+            #expect(subject.isChildWorker == !AquariumModel.isMain(subject), "\(shape.kind) \(shape.parent ?? "-")")
         }
     }
 
