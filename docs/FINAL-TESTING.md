@@ -1,6 +1,6 @@
-# Final testing for 0.8
+# Final testing
 
-0.8 is a Swift menu-bar app over a Python daemon. Both halves have to pass, and
+JR-Bar is a Swift menu-bar app over a Python daemon. Both halves have to pass, and
 the parts that matter most -- a real agent CLI, a real device, a real account --
 cannot be proved by either test suite. This is the order to run them in, what
 each one actually covers, and what is left over for the owner's own eyes.
@@ -53,7 +53,9 @@ macro plugin note.
 `packaging/build_macos_pkg.sh`: builds the Swift app in release, embeds the
 Python daemon and the compiled hook shim, signs with the Developer ID identity,
 verifies the bundle, entitlements and the Sparkle framework, and writes
-`dist/JR-Bar-0.8.0.pkg`, the zip, and a signed appcast. It does not notarize.
+`dist/JR-Bar-<version>.pkg`, the zip, and a signed appcast. It notarizes and
+staples only when the `jrbar-notary` keychain profile exists; without it the
+build says `not notarized` and is for the Mac that made it.
 
 Never run two at once -- `pgrep -f build_macos_pkg` before starting.
 
@@ -62,7 +64,7 @@ To put the build live, so the daemon under test is the one just built:
 ```sh
 kill -TERM "$(pgrep -f 'JR-Bar.app/Contents/MacOS/JR-Bar')"
 while pgrep -f 'jrbar-core core' >/dev/null; do sleep 1; done
-installer -pkg dist/JR-Bar-0.8.0.pkg -target CurrentUserHomeDirectory
+installer -pkg dist/JR-Bar-<version>.pkg -target CurrentUserHomeDirectory
 open ~/Applications/JR-Bar.app
 ```
 
@@ -93,10 +95,16 @@ start if a mock server is already running. Exit 0 when nothing failed.
 
 What it will not prove: Gemini CLI is skipped because it refuses a local
 endpoint ("Invalid auth method selected"), so its hooks are unexercised here.
-`answer_ask` reaches `unsupported` on every provider -- the ask is seen and
-listed, but no in-place answer handler is registered in the daemon, so nothing
-can be approved from JR-Bar yet. Both are recorded as what they are, not as
-passes.
+The `--asks` drills do not prove that an approval lands. They send `answer_ask`
+for the ask in `state.asks` and record what the daemon replies: an answer it
+delivered, or the refusal it names. A pty is never the frontmost window, so a
+typed answer is usually refused `not_frontmost`, and a provider whose contract
+declares no `answering` is refused `unsupported`. Answering in place is real --
+the daemon types into the session's own terminal, and the decide lane answers a
+held request through the agent's `PermissionRequest` hook
+([CORE-PROTOCOL.md](CORE-PROTOCOL.md), "answer_ask: the checks" and "The decide
+lane") -- but approving from the panel with the owner watching is on the
+owner's list below. Both gaps are recorded as what they are, not as passes.
 
 ## What no gate covers
 
@@ -119,8 +127,9 @@ absent, an unsupported schema, offline and stale state, expired credentials, an
 account switch, the integration disabled. No two accounts or sources may merge.
 Every navigation action must reach the session it names.
 
-**The app in use.** The menu bar at each width, the panel, the Usage window
-against a cold and a warm scan, History, Effect Studio, Settings. Sleep, wake,
+**The app in use.** The menu bar at each width, the panel with a real ask
+answered from it (Approve, Deny, and a typed reply), the Usage window against a
+cold and a warm scan, History, Effect Studio, Settings. Sleep, wake,
 display changes, log out and back in.
 
 **Release.** Signing, notarization, receipt installation, updater upgrade and
