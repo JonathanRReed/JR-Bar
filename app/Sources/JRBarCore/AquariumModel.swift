@@ -38,17 +38,6 @@ public enum FishSpecies: String, Equatable, Sendable, CaseIterable {
     /// Small & slim with a bright stripe.
     case tetra
 
-    /// The marking the view paints over the silhouette.
-    public enum Pattern: String, Equatable, Sendable {
-        case plain
-        /// Vertical bars, clownfish-style.
-        case bars
-        /// A scatter of dark dots.
-        case spots
-        /// One bold band over the tail end.
-        case band
-    }
-
     /// The picker's name for the species.
     public var displayName: String {
         switch self {
@@ -106,15 +95,6 @@ public enum FishSpecies: String, Equatable, Sendable, CaseIterable {
         case .minnow: return 0.52
         case .tetra: return 0.42
         case .shark: return 0.36
-        }
-    }
-
-    public var pattern: Pattern {
-        switch self {
-        case .clownfish: return .bars
-        case .puffer: return .spots
-        case .tang: return .band
-        case .minnow, .angelfish, .shark, .seahorse, .betta, .tetra: return .plain
         }
     }
 }
@@ -488,19 +468,6 @@ public enum AquariumModel {
             plan: plan)
         fish.cue = AquariumStations.cue(for: session, plan: plan, now: now)
         return fish
-    }
-
-    /// The tank's reading of a session, in `SessionActivity`'s words.
-    /// `ended` sinks with `failed`: the run is over without a
-    /// completion, which is not a drift off the edge.
-    static func state(for session: CoreSession) -> FishState {
-        switch SessionActivity.reduce(session) {
-        case .working: return .swimming
-        case .idle: return .idling
-        case .waiting: return .surfacing
-        case .failed, .ended: return .sinking
-        case .done: return .leaving
-        }
     }
 
     /// FNV-1a over the string's UTF-8. Stable across runs and processes.
