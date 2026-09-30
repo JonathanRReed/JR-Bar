@@ -1,5 +1,8 @@
 # JR-Bar Master Upgrade — Implementation Ledger
 
+> **Historical.** The implementation ledger of the 2026-09-13 master upgrade,
+> kept for provenance. Open work is tracked in [`docs/ROADMAP.md`](../../ROADMAP.md).
+
 Single ledger for the 2026-09-13 master upgrade
 (`JR-Bar-Master-Upgrade-Devin-SWE2-2026-09-13.md`). Statuses per the spec's
 vocabulary: **not started / in progress / implemented / verified with

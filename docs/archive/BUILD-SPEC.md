@@ -1,5 +1,10 @@
 # JR-BAR — the build spec (round two)
 
+> **Historical.** The pre-0.8 round-two build spec (2026-08-14), written against
+> the PyObjC status bar that the Swift app replaced. The live documents are
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) and
+> [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md).
+
 From source-first study of CodexBar (c4ed34d0) and t3code (96bfa67b),
 the SidePulse community forks, Alcove, and macOS menu-bar practice.
 Accessed 2026-08-14.

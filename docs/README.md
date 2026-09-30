@@ -50,7 +50,7 @@ install it. This page lists everything else.
   agents)
 - [Local verification](LOCAL-VERIFICATION.md) and
   [final testing](FINAL-TESTING.md)
-- [Repair handoff, 2026-09-26](REPAIR-HANDOFF-2026-09-26.md): implemented
+- [Repair handoff, 2026-09-26](archive/REPAIR-HANDOFF-2026-09-26.md): implemented
   utility/toy fixes, remaining code work, and pending native acceptance
 - [Audit and release preparation, 2026-09-26](archive/audits/2026-09-26-release-readiness.md):
   Fold and reset repairs, branch consolidation, verification and release gates
@@ -62,17 +62,17 @@ install it. This page lists everything else.
   `scripts/check_upstreams.py` shows what each upstream has changed since
   the last review
 - [Feature matrix](FEATURE-MATRIX.md), [roadmap](ROADMAP.md) and
-  [feature disposition](feature-disposition.md)
+  [feature disposition](archive/feature-disposition.md)
 
 ## History
 
 Plans, audits and research notes, kept for provenance. Nothing in the
 build reads them.
 
-- Plans: [0.8 plan](PLAN-0.8.md), [build spec](BUILD-SPEC.md),
-  [vision](VISION.md), [production task contract](production-task-contract.md),
-  [toy parity](TOY-PARITY.md), [upgrade ledger](upgrade/STATUS.md)
-- Audits: [rescue report](RESCUE-REPORT.md)
+- Plans: [0.8 plan](PLAN-0.8.md), [build spec](archive/BUILD-SPEC.md),
+  [vision](VISION.md), [production task contract](archive/production-task-contract.md),
+  [toy parity](TOY-PARITY.md), [upgrade ledger](archive/upgrade/STATUS.md)
+- Audits: [rescue report](archive/audits/RESCUE-REPORT.md)
 - Research: [ecosystem](ECOSYSTEM-RESEARCH.md),
   [providers](PROVIDER-RESEARCH.md),
   [upstream refresh 2026-08-30](UPSTREAM-REFRESH-2026-08-30.md),

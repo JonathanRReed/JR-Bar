@@ -1,5 +1,10 @@
 # JR-Bar production task contract
 
+> **Historical.** The 2026-09-05 completion contract for the first JR-Bar release
+> from the SidePulse fork. Its release claims are out of date: releases are now
+> signed, notarized and stapled, as [`docs/PRODUCTION-RELEASE.md`](../PRODUCTION-RELEASE.md)
+> describes.
+
 Updated: 2026-09-05
 
 ## Objective and completion boundary

@@ -1,5 +1,8 @@
 # SidePulse Rescue Report
 
+> **Historical.** A 2026-08-15 repair report on the PyObjC-era SidePulse code
+> that the 0.8 Swift app replaced. Kept for provenance.
+
 Prepared from `a07895c34ad22809a2260da752c69d6bfb9036fa` on August 15, 2026.
 
 ## Confirmed defects repaired

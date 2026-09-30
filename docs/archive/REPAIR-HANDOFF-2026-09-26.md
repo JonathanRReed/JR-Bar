@@ -1,5 +1,9 @@
 # Utility and toy repair handoff — 2026-09-26
 
+> **Historical.** A point-in-time handoff from 2026-09-26, kept for provenance.
+> Open work is tracked in [`docs/ROADMAP.md`](../ROADMAP.md) and implemented
+> capabilities in [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md).
+
 This is a focused continuation of the attached repair plan, not a declaration
 that all nine work packages are complete. Keep the repair PR unmerged until
 Jonathan and Devin have run the native checks below. A portable test pass is
@@ -172,7 +176,7 @@ single-agent source/diff review, not an independent native code review.
 
 Use this PR's branch, not `main`. Keep all mock daemons, state, archives,
 render output, and fixture configuration in scratch locations as required
-by [AGENTS](../AGENTS.md). Do not synthesize input or write global Dock/menu
+by [AGENTS](../../AGENTS.md). Do not synthesize input or write global Dock/menu
 preferences. Hardware interaction here is a human-driven acceptance pass.
 
 First run the documented gates in the pinned environment:

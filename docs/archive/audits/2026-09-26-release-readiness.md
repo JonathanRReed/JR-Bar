@@ -91,7 +91,7 @@ rather than an exhaustive security assessment.
   device acceptance checks. Tests did not write to real LED devices or
   replace the installed app.
 
-The older [repair handoff](../../REPAIR-HANDOFF-2026-09-26.md) records
+The older [repair handoff](../REPAIR-HANDOFF-2026-09-26.md) records
 broader product plans. Aquarium runtime redesign, notch geometry work and
 Dock thumbnail sizing remain separate follow-up work, not completion
 claims for this release preparation.

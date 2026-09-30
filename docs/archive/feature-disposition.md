@@ -1,9 +1,13 @@
 # Feature disposition
 
+> **Historical.** The keep, cut and half-built ledger of the 0.8 rebuild,
+> last updated 2026-09-10. What ships now is in
+> [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md).
+
 What was kept, cut or left half-built in the 0.8 rebuild, and why. Scores
 are value to JR-Bar from 0 (remove) to 5 (essential). Updated 2026-09-10;
 the September 4 inventory this replaces is resolved line by line below.
-The status authority for what ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
+The status authority for what ships is [FEATURE-MATRIX.md](../FEATURE-MATRIX.md).
 
 ## Kept and shipped in 0.8
 
