@@ -264,7 +264,7 @@ def fixture_inputs() -> dict:
     }
     deck = build_deck_document(
         device=device_document(
-            serial="D0CF130481EC", transport="bluetooth", connected=True, approved=True, layer=0, profile=0,
+            serial="A1B2C3D4E5F6", transport="bluetooth", connected=True, approved=True, layer=0, profile=0,
             receipt={"code": "ready", "message": "Creator Micro 2 ready.", "at": NOW - 30.0},
         ),
         slots=[
@@ -317,7 +317,7 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     # --- scenario: state_document_carries_the_deck_when_given
     document = build_state_document(**fixture_inputs())
     deck = document["deck"]
-    assert deck["device"]["serial"] == "D0CF130481EC" and deck["device"]["transport"] == "bluetooth"
+    assert deck["device"]["serial"] == "A1B2C3D4E5F6" and deck["device"]["transport"] == "bluetooth"
     assert len(deck["slots"]) == 13 and deck["slots"][0]["color"] == "#FF3A00" and deck["slots"][1]["color"] == "#00E5FF"
     assert deck["slots"][2]["state"] == "unavailable" and deck["slots"][2]["color"] == "#020204"
     assert [row["mapping"] for row in deck["aux"]][:2] == ["previous_bank", "next_bank"]

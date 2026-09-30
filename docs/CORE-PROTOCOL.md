@@ -576,7 +576,7 @@ field is one the Control Center and the Rail decode.
 
 ```json
 "deck":{
- "device":{"serial":"D0CF130481EC","name":"Creator Micro 2","transport":"bluetooth","connected":true,"approved":true,
+ "device":{"serial":"A1B2C3D4E5F6","name":"Creator Micro 2","transport":"bluetooth","connected":true,"approved":true,
            "firmware":null,"layer":0,"profile":0,"conflict":null,
            "receipt":{"code":"ready","message":"Creator Micro 2 ready.","at":1788982862.4}},
  "slots":[{"index":0,"identity":"<sha256 of the work key>","session":"codex:session:…","label":"sidepulse-core","provider":"codex",

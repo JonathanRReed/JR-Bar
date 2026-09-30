@@ -98,7 +98,7 @@ struct DeckModelTests {
         }
         let deck = try #require(state.deck)
         let device = try #require(deck.device, "a remembered serial is a device even while the pad is off")
-        #expect(device.serial == "D0CF130481EC" && device.name == "Creator Micro 2")
+        #expect(device.serial == "A1B2C3D4E5F6" && device.name == "Creator Micro 2")
         #expect(device.transport == nil && device.firmware == nil && device.layer == nil && device.profile == nil)
         #expect(!device.connected && !device.approved && !device.hasConflict && !device.isUsable)
         #expect(device.receipt == nil)

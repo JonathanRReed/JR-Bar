@@ -44,7 +44,7 @@ DECK_COMMANDS = {
     "deck_apply_keymap", "deck_restore_keymap", "deck_approve_device", "deck_check_input", "deck_set_settings",
     "deck_answer",
 }
-SERIAL = "D0CF130481EC"
+SERIAL = "A1B2C3D4E5F6"
 NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
 
 

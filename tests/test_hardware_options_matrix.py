@@ -913,7 +913,7 @@ def test_the_creator_micro_receipts_stay_truthful__and_2_more(headless_daemon) -
 
     controller = headless_daemon
     controller._core_deck_probe_rows = lambda: []
-    controller._core_deck_integration = lambda: (True, "D0CF130481EC")
+    controller._core_deck_integration = lambda: (True, "A1B2C3D4E5F6")
     controller.applyCreatorMicroOutputReceipt_(
         CreatorMicroOutputReceipt(False, "reconnecting", "Creator Micro 2 not found")
     )
