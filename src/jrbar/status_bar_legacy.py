@@ -4851,7 +4851,6 @@ class StatusBarController(NSObject):
             self.set_settings_message(f"Could not update DND: {reason}.")
         self._menu_signature = None
         self._focus_summary_cache = None
-        self._refresh_dnd_settings_controls()
         return applied
 
     def _set_dnd_for_duration(self, mode: DndMode, seconds: float) -> bool:

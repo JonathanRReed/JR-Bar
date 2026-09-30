@@ -627,6 +627,54 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_mor
     assert payload.snooze_preset == "15-minutes"
 
 
+class _DndOverrideSink:
+    """A DND controller that records each override and answers with a fixed
+    result, so the daemon's ``quiet`` command runs against the real legacy
+    handlers (``_set_dnd_for_duration``, ``endDndOverride_`` and
+    ``_finish_dnd_change``) without touching the system's Focus state."""
+
+    def __init__(self, *, applied: bool) -> None:
+        self.applied = applied
+        self.overrides: list = []
+
+    def set_override(self, override):
+        self.overrides.append(override)
+        failure = None if self.applied else SimpleNamespace(value="unavailable")
+        return SimpleNamespace(applied=self.applied, projection=None, failure=failure)
+
+
+def test_quiet_starts_and_ends_an_override_through_the_real_handlers__and_1_more(headless) -> None:
+    # --- scenario: quiet_starts_and_ends_an_override_through_the_real_handlers
+    """``quiet`` sets the override through the legacy handlers, and their
+    shared tail (``_finish_dnd_change``) must run whole: the override is
+    applied and the command answers."""
+    from jrbar.dnd_policy import DndMode
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    sink = _DndOverrideSink(applied=True)
+    controller.dnd_controller = sink
+
+    started = core_runtime._cmd_quiet(controller, {"mode": "pause", "seconds": 600})
+
+    (override,) = sink.overrides
+    assert override.mode is DndMode.PAUSE
+    assert started["mode"] == DndMode.PAUSE.value
+    assert started["until"] == pytest.approx(override.until_epoch)
+
+    ended = core_runtime._cmd_quiet(controller, {"mode": "pause", "seconds": 0})
+
+    assert ended == {"until": None}
+    assert sink.overrides[-1] is None
+
+    # --- scenario: quiet_names_a_refused_override_instead_of_crashing
+    """A DND controller that refuses the override answers ``refused`` to the
+    app; the shared tail records why, and nothing else goes wrong."""
+    sink.applied = False
+    with pytest.raises(CommandError) as refused:
+        core_runtime._cmd_quiet(controller, {"mode": "dim", "seconds": 600})
+    assert refused.value.code == "refused"
+
 
 def test_peer_arrive_depart_events_fire_on_reachability_edges(headless) -> None:
     """``peer_arrived``/``peer_departed`` are emitted on the reachable-set
