@@ -16,11 +16,22 @@ from pathlib import Path
 import pytest
 
 import jrbar.provider_usage_codex_claude as subject
-from jrbar import usage_stats
+from jrbar import provider_homes, usage_stats
 from jrbar.state_paths import default_state_dir
 from tests.test_codex_usage_lineage import _meta, _tokens, _write
+from tests.test_usage_cache_bounds import _claude_line, _write_transcript
 
 DAY = 24 * 60 * 60
+
+
+@pytest.fixture(autouse=True)
+def _default_homes_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reader's default homes come from the environment; pin them."""
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    subject._local_tokens_memo.clear()
+
+
 #: A fixed "now" (2026-08-29T10:40:00Z) so no window depends on the wall clock.
 OBSERVED = 1_788_000_000.0
 
@@ -203,3 +214,344 @@ def test_cached_and_cold_provider_scans_agree(tmp_path: Path) -> None:
     for key in ("input_tokens", "cached_input_tokens", "output_tokens", "model_count"):
         assert cached[key] == cold[key], key
     assert _card_tokens(cached) == 140
+
+
+# --- Claude: the reader must find the cache the scan writes -----------------
+
+
+def _claude_projects(home: Path) -> Path:
+    return home / ".claude" / "projects"
+
+
+def _claude_usage_line(
+    message_id: str,
+    epoch: float,
+    *,
+    model: str = "claude-opus-4",
+    cache_read: int = 0,
+) -> str:
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+    return json.dumps(
+        {
+            "type": "assistant",
+            "sessionId": "session-1",
+            "timestamp": stamp,
+            "message": {
+                "id": message_id,
+                "model": model,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": cache_read,
+                    "cache_creation_input_tokens": 0,
+                },
+            },
+        }
+    )
+
+
+def _claude_transcript(root: Path, name: str, lines: list[str]) -> Path:
+    target = _write_transcript(root, name, lines)
+    os.utime(target, (OBSERVED - DAY, OBSERVED - DAY))
+    return target
+
+
+def _scan_claude(home: Path, *, graph_days: int, extras: dict | None = None) -> None:
+    provider_homes.scan_usage_all_homes(
+        _state_cache(home),
+        since_epoch=OBSERVED - graph_days * DAY,
+        provider_ids=("claude",),
+        env={},
+        home=home,
+        extras=extras or {},
+    )
+
+
+def _claude_card(home: Path, extras: tuple[str, ...] = ()) -> dict | None:
+    return subject._cached_claude_local_scan(home, OBSERVED, extra_homes=extras)
+
+
+def test_claude_cached_scan_reads_what_scan_usage_wrote(tmp_path: Path) -> None:
+    # One message whose usage repeats on three content-block lines, and a
+    # second message from 45 days ago.
+    repeated = [
+        _claude_line("s1", "resumed", OBSERVED - 2 * DAY),
+        _claude_line("s1", "resumed", OBSERVED - 2 * DAY),
+        _claude_line("s1", "resumed", OBSERVED - 2 * DAY),
+    ]
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "session.jsonl",
+        [*repeated, _claude_line("s1", "ancient", OBSERVED - 45 * DAY)],
+    )
+    cache = _state_cache(tmp_path)
+    usage_stats.scan_usage(
+        _claude_projects(tmp_path), cache, since_epoch=OBSERVED - 365 * DAY
+    )
+
+    document = _claude_card(tmp_path)
+
+    assert document is not None, "the reader looked for a cache the scan never writes"
+    assert document["input_tokens"] == 10
+    assert document["cached_input_tokens"] == 0
+    assert document["output_tokens"] == 5
+    assert document["model_count"] == 1
+
+
+def test_claude_cached_scan_counts_a_resumed_message_once(tmp_path: Path) -> None:
+    line = _claude_line("s1", "shared", OBSERVED - 3 * DAY)
+    _claude_transcript(_claude_projects(tmp_path), "first.jsonl", [line])
+    _claude_transcript(_claude_projects(tmp_path), "resumed.jsonl", [line])
+    scanned = usage_stats.scan_usage(
+        _claude_projects(tmp_path),
+        _state_cache(tmp_path),
+        since_epoch=OBSERVED - 30 * DAY,
+    )
+
+    document = _claude_card(tmp_path)
+
+    assert document is not None
+    assert document["input_tokens"] == scanned.input_tokens == 10
+    assert document["output_tokens"] == scanned.output_tokens == 5
+
+
+def test_claude_cached_scan_refuses_a_cache_that_does_not_cover_30_days(
+    tmp_path: Path,
+) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "session.jsonl",
+        [
+            _claude_line("s1", "recent", OBSERVED - 2 * DAY),
+            _claude_line("s1", "older", OBSERVED - 20 * DAY),
+        ],
+    )
+    _scan_claude(tmp_path, graph_days=7)
+
+    # The default graph range keeps about ten days. A card that said "last
+    # 30 days" over that would read as complete and undercount.
+    assert _claude_card(tmp_path) is None
+
+    _scan_claude(tmp_path, graph_days=30)
+    document = _claude_card(tmp_path)
+
+    assert document is not None
+    assert document["input_tokens"] == 20
+    assert document["output_tokens"] == 10
+
+
+def test_claude_cached_scan_adds_each_extra_home_once(tmp_path: Path) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "primary.jsonl",
+        [_claude_line("primary", "p1", OBSERVED - 2 * DAY)],
+    )
+    extra = tmp_path / "work-claude"
+    _claude_transcript(
+        extra / "projects",
+        "work.jsonl",
+        [
+            _claude_line("work", "w1", OBSERVED - 3 * DAY),
+            _claude_line("work", "w2", OBSERVED - 4 * DAY),
+        ],
+    )
+    link = tmp_path / "primary-link"
+    link.symlink_to(tmp_path / ".claude")
+    _scan_claude(tmp_path, graph_days=30, extras={"claude": [str(extra)]})
+
+    # The extra home twice and a symlink to the primary one are each still
+    # one home.
+    document = _claude_card(tmp_path, extras=(str(extra), str(extra), str(link)))
+
+    assert document is not None
+    assert document["input_tokens"] == 30
+    assert document["output_tokens"] == 15
+
+
+def test_claude_cached_scan_withholds_the_total_until_an_extra_home_is_scanned(
+    tmp_path: Path,
+) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "primary.jsonl",
+        [_claude_line("primary", "p1", OBSERVED - 2 * DAY)],
+    )
+    extra = tmp_path / "work-claude"
+    _claude_transcript(
+        extra / "projects", "work.jsonl", [_claude_line("work", "w1", OBSERVED - 3 * DAY)]
+    )
+    _scan_claude(tmp_path, graph_days=30)
+
+    # The extra home was added after the last graph scan: its days are not in
+    # any cache yet, so the card shows nothing rather than half a total.
+    assert _claude_card(tmp_path, extras=(str(extra),)) is None
+
+
+def test_claude_cached_scan_cost_only_when_every_record_is_priced(tmp_path: Path) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "priced.jsonl",
+        [_claude_usage_line("m1", OBSERVED - 2 * DAY, cache_read=40)],
+    )
+    _scan_claude(tmp_path, graph_days=30)
+
+    priced = _claude_card(tmp_path)
+
+    assert priced is not None
+    assert priced["input_tokens"] == 10
+    assert priced["cached_input_tokens"] == 40
+    assert isinstance(priced["estimated_cost_usd"], float)
+    assert priced["estimated_cost_usd"] > 0
+    assert isinstance(priced["cache_savings_usd"], float)
+    assert priced["cache_savings_usd"] > 0
+
+    # One record on a model with no price makes the total a floor: tokens
+    # still show, the dollar figure does not.
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "priced.jsonl",
+        [
+            _claude_usage_line("m1", OBSERVED - 2 * DAY, cache_read=40),
+            _claude_usage_line("m2", OBSERVED - 3 * DAY, model="no-such-model-x"),
+        ],
+    )
+    _scan_claude(tmp_path, graph_days=30)
+
+    partial = _claude_card(tmp_path)
+
+    assert partial is not None
+    assert partial["input_tokens"] == 20
+    assert partial["estimated_cost_usd"] is None
+    assert partial["cache_savings_usd"] is None
+
+
+def test_claude_cached_scan_reuses_result_while_cache_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "session.jsonl",
+        [_claude_line("s1", "m1", OBSERVED - 2 * DAY)],
+    )
+    _scan_claude(tmp_path, graph_days=30)
+    loads: list[Path] = []
+    real_load = usage_stats._load_cache
+
+    def counting_load(cache_path, source_key=None):
+        loads.append(cache_path)
+        return real_load(cache_path, source_key)
+
+    monkeypatch.setattr(usage_stats, "_load_cache", counting_load)
+
+    first = _claude_card(tmp_path)
+    second = _claude_card(tmp_path)
+
+    assert first is not None and first == second
+    assert len(loads) == 1
+
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "session.jsonl",
+        [
+            _claude_line("s1", "m1", OBSERVED - 2 * DAY),
+            _claude_line("s1", "m2", OBSERVED - 3 * DAY),
+        ],
+    )
+    _scan_claude(tmp_path, graph_days=30)  # the scan loads the cache too
+    loads.clear()
+    third = _claude_card(tmp_path)
+
+    assert len(loads) == 1, "a rewritten cache was not reloaded"
+    assert third is not None and third["input_tokens"] == 20
+
+
+def test_claude_quota_path_never_walks_the_transcripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "session.jsonl",
+        [_claude_line("s1", "m1", OBSERVED - 2 * DAY)],
+    )
+    _scan_claude(tmp_path, graph_days=30)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("the quota path walked the transcripts")
+
+    monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
+    monkeypatch.setattr(subject, "_default_provider_local_scan", refuse)
+
+    document = subject._default_claude_local_scan(tmp_path, OBSERVED)
+
+    assert document is not None and document["input_tokens"] == 10
+
+
+def test_cached_codex_scan_keeps_its_quota_windows_and_their_age(tmp_path: Path) -> None:
+    started = OBSERVED - 2 * DAY
+    event = _tokens(100, 100, _at(started + 60))
+    event["payload"]["rate_limits"] = {
+        "primary": {
+            "used_percent": 40.0,
+            "window_minutes": 300,
+            "resets_at": started + 3600,
+        }
+    }
+    root = _codex_rollouts(
+        tmp_path, {"limits.jsonl": [_meta("limits", timestamp=_at(started)), event]}
+    )
+    rollout = root / "limits.jsonl"
+    os.utime(rollout, (OBSERVED - 3600, OBSERVED - 3600))
+    _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
+
+    document = subject._cached_codex_local_scan(tmp_path, OBSERVED)
+
+    assert document is not None
+    assert document["windows_observed_at"] == OBSERVED - 3600
+    windows = document["windows"]
+    assert isinstance(windows, list) and len(windows) == 1
+    assert windows[0]["label"] == "primary"
+    assert windows[0]["used_percent"] == 40.0
+    assert _card_tokens(document) == 100
+
+
+def test_cached_codex_scan_adds_an_extra_home_but_keeps_the_primary_quota(
+    tmp_path: Path,
+) -> None:
+    started = OBSERVED - 3 * DAY
+    primary_root = _codex_rollouts(
+        tmp_path,
+        {
+            "primary.jsonl": [
+                _meta("primary", timestamp=_at(started)),
+                _tokens(100, 100, _at(started + 60)),
+            ]
+        },
+    )
+    extra_home = tmp_path / "second-codex"
+    _write(
+        extra_home / "sessions" / "second.jsonl",
+        [
+            _meta("second", timestamp=_at(started)),
+            _tokens(70, 70, _at(started + 60)),
+        ],
+    )
+    os.utime(extra_home / "sessions" / "second.jsonl", (OBSERVED - DAY, OBSERVED - DAY))
+    _scan_codex(tmp_path, primary_root, since_epoch=OBSERVED - 30 * DAY)
+    provider_homes.scan_usage_all_homes(
+        _state_cache(tmp_path),
+        since_epoch=OBSERVED - 30 * DAY,
+        provider_ids=("codex",),
+        env={},
+        home=tmp_path,
+        extras={"codex": [str(extra_home)]},
+    )
+
+    alone = subject._cached_provider_local_scan(
+        "codex", tmp_path, OBSERVED, extra_homes=()
+    )
+    both = subject._cached_provider_local_scan(
+        "codex", tmp_path, OBSERVED, extra_homes=(str(extra_home),)
+    )
+
+    assert _card_tokens(alone) == 100
+    assert _card_tokens(both) == 170

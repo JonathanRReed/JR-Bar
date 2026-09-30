@@ -503,3 +503,76 @@ def test_invalid_index_document_cannot_replace_source_usage(tmp_path: Path, corr
     assert recovered.input_tokens == 10
     assert recovered.output_tokens == 5
     assert recovered.source_coverage["claude"].files_read == 1
+
+
+def test_provider_cache_path_matches_what_scan_usage_writes(tmp_path: Path) -> None:
+    """The reader of a provider's scan cache asks ``provider_cache_path`` for
+    its name, so the file it opens has to be the one ``scan_usage`` wrote.
+    Claude keeps the bare name (renaming it would send every warm cache back
+    to a cold scan); Codex's name carries its source key."""
+    now = 1_788_000_000.0
+    claude_root = tmp_path / "projects"
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - DAY))
+    _write_transcript(claude_root, "session.jsonl", [_claude_line("s1", "m1", now - DAY)])
+    codex_root = tmp_path / "sessions"
+    codex_root.mkdir()
+    (codex_root / "rollout.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "timestamp": stamp,
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 5,
+                            "cached_input_tokens": 0,
+                            "cache_write_input_tokens": 0,
+                            "output_tokens": 1,
+                        }
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cache = tmp_path / "state" / "usage-scan-cache.json"
+
+    usage_stats.scan_usage(
+        claude_root, cache, codex_root=codex_root, since_epoch=now - 30 * DAY
+    )
+
+    keys = {
+        row.source_key.provider_id: row.source_key
+        for row in usage_stats.negotiated_provider_sources()
+        if row.source_key.capability_id == "transcript_usage"
+    }
+    written = {
+        path
+        for path in cache.parent.iterdir()
+        if path.name.startswith(cache.name) and not path.name.endswith(".sqlite3")
+    }
+    assert written == {
+        usage_stats.provider_cache_path(cache, keys["claude"]),
+        usage_stats.provider_cache_path(cache, keys["codex"]),
+    }
+    assert usage_stats.provider_cache_path(cache, keys["claude"]) == cache
+    assert usage_stats.provider_cache_path(cache, keys["codex"]) != cache
+    assert usage_stats.provider_cache_path(None, keys["codex"]) is None
+
+
+def test_totals_from_records_windows_first_then_counts_each_key_once() -> None:
+    """The scan and the cache readers total through this one function."""
+    old = ("claude", "s1", "opus", 100.0, 99, 0, 0, 99, "k-old")
+    first = ("claude", "s1", "opus", 900.0, 10, 4, 0, 5, "k1")
+    repeat = ("claude", "s1", "opus", 901.0, 10, 4, 0, 5, "k1")
+    other = ("claude", "s2", "no-such-model-x", 902.0, 1, 0, 0, 2, "k2")
+
+    totals = usage_stats._totals_from_records([old, first, repeat, other], 500.0)
+
+    assert totals.records == [first, other]
+    assert totals.sessions == {"s1", "s2"}
+    assert (totals.input_tokens, totals.cached_input_tokens, totals.output_tokens) == (11, 4, 7)
+    assert totals.pricing_coverage.total_records == 2
+    assert totals.pricing_coverage.priced_records == 1

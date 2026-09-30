@@ -1151,7 +1151,7 @@ def cached_codex_rate_limits(cache_path: Path) -> dict | None:
     )
     if source is None:
         return None
-    provider_cache = _secondary_provider_cache_path(cache_path, source.source_key)
+    provider_cache = provider_cache_path(cache_path, source.source_key)
     cache = _load_cache(provider_cache, source.source_key)
     files = cache.get("files")
     if not isinstance(files, dict):
@@ -2479,47 +2479,8 @@ def _scan_inventory_usage_with_index(
             except OSError:
                 pass
 
-    totals = UsageTotals()
+    totals = _totals_from_records(all_records, since_epoch)
     totals.source_coverage = {provider_id: coverage.finalize() for provider_id, coverage in coverage_states.items()}
-    priced_records = 0
-    total_pricing_records = 0
-    priced_token_count = 0
-    total_pricing_token_count = 0
-    for record in _canonical_window_records(all_records, since_epoch):
-        provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
-        totals.records.append(record)
-        totals.sessions.add(session)
-        if provider == "codex":
-            totals.codex_sessions.add(session)
-            totals.codex_tokens += inp + cached_in + cache_create + out
-            continue
-        totals.input_tokens += inp
-        totals.cached_input_tokens += cached_in
-        totals.cache_creation_tokens += cache_create
-        totals.output_tokens += out
-        total_pricing_records += 1
-        record_tokens = inp + cached_in + cache_create + out
-        total_pricing_token_count += record_tokens
-        pricing = _pricing_for_model(model)
-        if pricing is None:
-            continue
-        priced_records += 1
-        priced_token_count += record_tokens
-        input_rate, output_rate = pricing
-        cache_read_rate = cache_read_rate_for_model(model)
-        totals.estimated_cost_usd += (
-            inp * input_rate
-            + cached_in * input_rate * cache_read_rate
-            + cache_create * input_rate * cache_write_rate_for_model(model)
-            + out * output_rate
-        ) / 1_000_000.0
-        totals.estimated_cache_savings_usd += (cached_in * input_rate * (1.0 - cache_read_rate)) / 1_000_000.0
-    totals.pricing_coverage = PricingCoverageMetrics(
-        priced_records=priced_records,
-        total_records=total_pricing_records,
-        priced_token_count=priced_token_count,
-        total_token_count=total_pricing_token_count,
-    )
     if rate_candidates:
         newest = max(rate_candidates, key=lambda item: item[0])
         totals.codex_rate_limit_evidence = newest[1]
@@ -2617,6 +2578,56 @@ def _canonical_window_records(
         seen.add(dedupe)
         window.append(record)
     return window
+
+
+def _totals_from_records(records: list[tuple], since_epoch: float) -> UsageTotals:
+    """Sum one window's canonical records: tokens, sessions and estimated cost.
+
+    The scan and the cache readers both come through here, so a token figure
+    and its dollar estimate cannot be computed two different ways. Coverage
+    and rate-limit evidence are the caller's to fill in.
+    """
+    totals = UsageTotals()
+    priced_records = 0
+    total_pricing_records = 0
+    priced_token_count = 0
+    total_pricing_token_count = 0
+    for record in _canonical_window_records(records, since_epoch):
+        provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
+        totals.records.append(record)
+        totals.sessions.add(session)
+        if provider == "codex":
+            totals.codex_sessions.add(session)
+            totals.codex_tokens += inp + cached_in + cache_create + out
+            continue
+        totals.input_tokens += inp
+        totals.cached_input_tokens += cached_in
+        totals.cache_creation_tokens += cache_create
+        totals.output_tokens += out
+        total_pricing_records += 1
+        record_tokens = inp + cached_in + cache_create + out
+        total_pricing_token_count += record_tokens
+        pricing = _pricing_for_model(model)
+        if pricing is None:
+            continue
+        priced_records += 1
+        priced_token_count += record_tokens
+        input_rate, output_rate = pricing
+        cache_read_rate = cache_read_rate_for_model(model)
+        totals.estimated_cost_usd += (
+            inp * input_rate
+            + cached_in * input_rate * cache_read_rate
+            + cache_create * input_rate * cache_write_rate_for_model(model)
+            + out * output_rate
+        ) / 1_000_000.0
+        totals.estimated_cache_savings_usd += (cached_in * input_rate * (1.0 - cache_read_rate)) / 1_000_000.0
+    totals.pricing_coverage = PricingCoverageMetrics(
+        priced_records=priced_records,
+        total_records=total_pricing_records,
+        priced_token_count=priced_token_count,
+        total_token_count=total_pricing_token_count,
+    )
+    return totals
 
 
 def _provider_inventory(
@@ -2739,6 +2750,74 @@ def _secondary_provider_cache_path(
     return cache_path.with_name(f"{cache_path.name}.{suffix}")
 
 
+def provider_cache_path(
+    cache_path: Path | None,
+    source_key: SourceKey,
+) -> Path | None:
+    """The file ``scan_usage`` keeps one provider's scan cache in.
+
+    Claude keeps the bare ``cache_path`` (renaming it would send every warm
+    Claude cache back to a cold scan); every other provider gets a name with
+    its source key appended. The scan and every reader of that cache ask
+    here, so the writer and a reader can never look at different files.
+    """
+    if source_key.provider_id == "claude":
+        return cache_path
+    return _secondary_provider_cache_path(cache_path, source_key)
+
+
+def cache_entry_floor(entry: dict) -> float:
+    """How far back one cache entry reaches: the floor it was trimmed to.
+
+    A missing floor counts as 0.0 (nothing was trimmed). One that cannot be
+    read counts as unbounded, so it is never trusted to cover a window.
+    """
+    try:
+        floor = float(entry.get("since", 0.0))
+    except (TypeError, ValueError):
+        return math.inf
+    return math.inf if math.isnan(floor) else floor
+
+
+def cache_provider_records(
+    cache: dict,
+    provider_id: str,
+) -> tuple[list[tuple], float] | None:
+    """Every record a loaded scan cache holds, and how far back it reaches.
+
+    The cache is written for whichever window last scanned: raw per-file
+    records, with the copies a fork or resume repeated and everything back to
+    that window's floor. Callers total them through
+    ``_totals_from_records`` and never sum them as they stand. The second
+    value is the newest floor any entry was trimmed to, the earliest moment
+    the whole cache can vouch for. ``None`` when the cache is not readable.
+    A file whose records cannot be decoded is skipped, as elsewhere.
+    """
+    files = cache.get("files")
+    sessions = cache.get("sessions")
+    models = cache.get("models")
+    dedupes = cache.get("dedupes")
+    if not (
+        isinstance(files, dict)
+        and isinstance(sessions, list)
+        and isinstance(models, list)
+        and isinstance(dedupes, list)
+    ):
+        return None
+    records: list[tuple] = []
+    floor = 0.0
+    for key, entry in tuple(files.items())[:USAGE_CACHE_MAX_FILES]:
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        decoded = _decode_records(
+            entry, sessions, models, dedupes, expected_provider=provider_id
+        )
+        if decoded is not None:
+            records.extend(decoded)
+        floor = max(floor, cache_entry_floor(entry))
+    return records, floor
+
+
 def _merge_usage_totals(parts: tuple[UsageTotals, ...]) -> UsageTotals:
     merged = UsageTotals()
     for part in parts:
@@ -2817,11 +2896,7 @@ def scan_usage(
         source_inventory = by_provider.get(provider_id)
         if source is None or source_inventory is None:
             continue
-        provider_cache = (
-            cache_path
-            if provider_id == "claude"
-            else _secondary_provider_cache_path(cache_path, source.source_key)
-        )
+        provider_cache = provider_cache_path(cache_path, source.source_key)
         _result, totals = _scan_provider_usage_with_totals(
             source,
             provider_root,
