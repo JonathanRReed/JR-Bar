@@ -403,11 +403,14 @@ section covers the preview's air and where it sits.
 
 ## Agent Overview
 
-The utility that replaces "a dozen terminal tabs you can't see": one card
-summarizing every live agent session `CoreModel.sessions` knows about, plus
-a **Full overview…** button that opens the Overview window (sortable roster
-table + inspector) — its own independent panel, opened from the app
-menu, the status-item menu, the notch card, the utility card, or ⌘O.
+The utility that replaces "a dozen terminal tabs you can't see" is two
+surfaces over one feed, `CoreModel.sessions`. The roster is the panel's and
+the Overview window's (sortable roster table + inspector), its own
+independent panel, opened from the app menu, the status-item menu, the
+notch card, the utility card, or ⌘O. The utility's own card on the Utilities
+page keeps no list and no session verbs: it sets how loud each agent may
+be, holds the "Quiet while you watch" switch, and has an **Open the
+Overview** button into that window.
 The Obsidian-style force-directed session graph was removed: the Aquarium
 and the agent Overview are the ambient surfaces now, not a separate
 constellation map. The After Dark / flying-toaster screensaver lineage is
@@ -419,15 +422,24 @@ likewise gone — same reason.
   state, every provider with its quota read. Evidence stays honest:
   "source not found" and "disabled" show as what they are instead of
   invented numbers (`OverviewLinks`, a pure builder over `CoreModel`).
-- **Counts that matter**: sessions grouped by state (working, asking,
-  done, idle) and by provider; asks always surface first — a pending ask
-  is the thing that stalls a run.
-- **Quick actions** ride the existing `CoreModel` commands — open the
-  session, approve/deny an ask, dismiss, snooze, clear completed, undo
-  the clear, copy the working directory, reveal it in Finder. Nothing is
-  re-tracked; the card is a lens over the daemon's session feed.
-- Settings: enabled toggle plus which state groups count toward the
-  card's badge; the session source of truth stays `CoreModel` either way.
+- **Asks first**: the panel lists a session with an open ask above
+  everything else (longest-unanswered leading), then waiting, failed,
+  working, done, ended and idle. A pending ask is the thing that stalls a
+  run. The card does not repeat that list or count it by state.
+- **Quick actions** live in the panel and the Overview window, not on the
+  card, and ride the existing `CoreModel` commands — open the session,
+  approve/deny an ask, snooze, clear completed, undo the clear. Nothing is
+  re-tracked; both are a lens over the daemon's session feed.
+- **Alert rules**: one row per provider with hooks or a session on
+  record — asks, finishes, failures, sounds, and how far its escalation may
+  climb. A blank rule follows Settings › Notifications, and a rule can
+  only narrow or widen what the global policy already decided for that
+  provider's events.
+- Settings: an **enabled** toggle that shows or parks the card, **Quiet
+  while you watch**, and the alert rules. The session source of truth stays
+  `CoreModel` either way. A settings file from an older build may still
+  carry grouping, row-limit and show/hide keys for a list the card no
+  longer has; they are ignored on read and dropped on the next save.
 - **Smart suppression** ("Quiet while you watch"): when the ask's own
   terminal pane is frontmost the escalation ladder stays silent — no
   sound burst, no amber pulse, no stage-3 chime — because the user is
