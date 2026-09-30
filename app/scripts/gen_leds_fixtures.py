@@ -62,9 +62,15 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
 from jrbar import _led_status_legacy as led_status  # noqa: E402
-from jrbar._led_wasm_legacy import SdLedWasmController  # noqa: E402  (raw firmware engine)
 from jrbar.animation import errors_only, read_program  # noqa: E402
 from jrbar.flash_analysis import analyse  # noqa: E402
+
+# The raw firmware engine. Importing ``SdLedWasmController`` from
+# ``jrbar._led_wasm_legacy`` is order-dependent: once anything imports
+# ``jrbar.led_wasm`` (the safety facade), that name is the facade, which
+# compiles every program before it parses it and would sample the compiler's
+# output instead of the text. ``RawSdLedWasmController`` is the engine either way.
+from jrbar.led_wasm import RawSdLedWasmController as SdLedWasmController  # noqa: E402
 from jrbar.models import AgentMode  # noqa: E402
 from jrbar.presentation_compiler import compile_presentation_program  # noqa: E402
 

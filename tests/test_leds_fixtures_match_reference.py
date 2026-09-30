@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+import jrbar.led_wasm
 from jrbar._led_wasm_legacy import LedWasmUnavailableError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,6 +146,17 @@ def test_program_fixtures_are_what_the_firmware_renders_today(generator) -> None
         assert stored["led_count"] == fresh["led_count"], path.name
         assert stored["engine"] == fresh["engine"], path.name
         assert stored["samples"] == fresh["samples"], f"{path.name} is stale: re-run the generator"
+
+
+def test_the_generator_samples_the_raw_engine_not_the_safety_facade(generator) -> None:
+    """Once ``jrbar.led_wasm`` is imported (the suite does, at import), the
+    ``_led_wasm_legacy`` name is the facade that compiles a program before it
+    parses it. The fixtures must be the firmware's own answers, so the
+    generator holds the raw engine by name: a program the safety compiler
+    refuses still samples."""
+    assert generator.SdLedWasmController is jrbar.led_wasm.RawSdLedWasmController
+    refused = "#ff0000\n#00ff00\n#0000ff 0ms linear\nroll 0ms\n#404040 none 100ms"
+    _needs_firmware(lambda: generator.sample(refused, 8, [0, 100]))
 
 
 def test_the_generator_reads_no_device_volume() -> None:
