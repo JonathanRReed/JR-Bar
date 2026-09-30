@@ -262,7 +262,6 @@ struct MenuBarTriggerEngine: Sendable {
 protocol MenuBarTriggerSource: AnyObject {
     /// Every event the source produces lands here.
     var onEvent: (@MainActor (MenuBarTriggerEvent) -> Void)? { get set }
-    func start()
     func stop()
 }
 
