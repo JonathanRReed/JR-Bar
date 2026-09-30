@@ -262,7 +262,7 @@ def test_pack_identifiers_cannot_traverse_the_store(
         store.remove(pack_id)
 
 
-@pytest.mark.parametrize("operation", ("inspect", "list", "update", "remove"))
+@pytest.mark.parametrize("operation", ("inspect", "list", "update", "remove", "fingerprint"))
 def test_store_refuses_symlinked_pack_leaf_without_touching_target(
     tmp_path: Path,
     operation: str,
@@ -281,6 +281,9 @@ def test_store_refuses_symlinked_pack_leaf_without_touching_target(
             store.list()
         elif operation == "update":
             store.update(_pack())
+        elif operation == "fingerprint":
+            # An unsafe store never yields a value a caller could cache.
+            store.fingerprint()
         else:
             store.remove("calm-pack")
 
@@ -419,3 +422,70 @@ def test_import_refuses_hard_linked_source(tmp_path: Path) -> None:
 
     with pytest.raises(EffectPackStoreError):
         EffectPackStore(tmp_path / "store").install(source)
+
+
+def test_fingerprint_is_stable_and_moves_with_every_kind_of_change(tmp_path: Path) -> None:
+    store = EffectPackStore(tmp_path / "store")
+    absent = store.fingerprint()
+    assert store.fingerprint() == absent
+
+    assert store.install(_pack()).status is PackMutationStatus.INSTALLED
+    installed = store.fingerprint()
+    assert installed != absent
+    # Reading the store, which re-tightens what it reads, does not move it.
+    store.list()
+    assert store.fingerprint() == installed
+    assert store.fingerprint() == installed
+
+    leaf = tmp_path / "store" / "calm-pack.json"
+    updated = _pack(name="Calm Pack, Revised")
+    assert store.update(updated).status is PackMutationStatus.UPDATED
+    after_update = store.fingerprint()
+    assert after_update != installed
+
+    # A new modification time alone moves it (a same-size replace, or a
+    # copy that restored the bytes).
+    stat_result = leaf.stat()
+    os.utime(leaf, ns=(stat_result.st_atime_ns, stat_result.st_mtime_ns + 5_000_000_000))
+    after_utime = store.fingerprint()
+    assert after_utime != after_update
+
+    # A loosened mode moves it, so the read that tightens it runs again.
+    leaf.chmod(0o666)
+    loosened = store.fingerprint()
+    assert loosened != after_utime
+    store.list()
+    assert _mode(leaf) == 0o600
+    tightened = store.fingerprint()
+    assert tightened != loosened
+    assert store.fingerprint() == tightened
+
+    assert store.rename("calm-pack", "calm-pack-two", "Calm Pack Two").accepted
+    renamed = store.fingerprint()
+    assert renamed != tightened
+    assert store.install(_pack(id="second-pack", name="Second")).accepted
+    assert store.fingerprint() != renamed
+    assert store.remove("second-pack").status is PackMutationStatus.REMOVED
+    # The same packs again; the directory itself was touched twice since.
+    assert store.fingerprint()[1] == renamed[1]
+
+    assert store.remove("calm-pack-two").status is PackMutationStatus.REMOVED
+    assert store.fingerprint() not in (absent, renamed)
+
+
+def test_fingerprint_of_an_absent_root_is_one_stable_value(tmp_path: Path) -> None:
+    first = EffectPackStore(tmp_path / "none").fingerprint()
+    assert EffectPackStore(tmp_path / "none").fingerprint() == first
+    assert EffectPackStore(tmp_path / "other").fingerprint() == first
+    assert not (tmp_path / "none").exists()
+
+
+def test_fingerprint_refuses_an_unsafe_root_like_list_does(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (tmp_path / "store").symlink_to(target)
+    store = EffectPackStore(tmp_path / "store")
+    with pytest.raises(EffectPackStoreError):
+        store.list()
+    with pytest.raises(EffectPackStoreError):
+        store.fingerprint()

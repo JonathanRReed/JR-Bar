@@ -1740,13 +1740,49 @@ def _effects_cache(self):
 
 
 def _effect_packs(self) -> tuple:
-    from .effect_pack_store import EffectPackStore
+    """The installed effect packs.
 
+    ``EffectPackStore.list`` decodes, validates and re-exports every pack,
+    which a state build paid on every refresh, so the list is cached on a
+    store fingerprint (``EffectPackStore.fingerprint``, one stat pass): an
+    unchanged store is not read again, and a pack the ``jrbar effects`` CLI
+    installs, updates or removes while the daemon runs is seen at the next
+    build. The store still fails closed: one pack that is not canonical
+    makes every pack unavailable, and that verdict is cached under the
+    fingerprint too, so it is logged once per change to the files and not
+    once per build. A store that cannot even be stamped (a link, a foreign
+    entry) and an error that may pass (an ``OSError``) are logged and never
+    cached.
+    """
+    from .effect_pack_store import EffectPackStore, EffectPackStoreError
+
+    store = EffectPackStore()
     try:
-        return tuple(EffectPackStore().list())
+        key = (str(store.root), store.fingerprint())
     except Exception as exc:
         self._core_log(f"core: effect packs unavailable: {exc.__class__.__name__}")
         return ()
+    cached = getattr(self, "_core_effect_packs_cache", None)
+    if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == key:
+        return cached[1]
+    keep = True
+    try:
+        packs = tuple(store.list())
+    except EffectPackStoreError as exc:
+        self._core_log(f"core: effect packs unavailable: {exc.__class__.__name__}")
+        packs = ()
+    except Exception as exc:
+        self._core_log(f"core: effect packs unavailable: {exc.__class__.__name__}")
+        return ()
+    try:
+        # Kept only if nothing moved while it was read: a change in that
+        # window would otherwise be served under the stamp taken before it.
+        keep = (str(store.root), store.fingerprint()) == key
+    except Exception:
+        keep = False
+    if keep:
+        self._core_effect_packs_cache = (key, packs)
+    return packs
 
 
 def _effect_catalog(self) -> dict[str, Any]:
@@ -2092,6 +2128,9 @@ def _cmd_clear_assignment(self, args):
 def _reload_effect_registry(self) -> None:
     from . import core_effects
 
+    # The daemon changed the store itself: drop the kept list rather than
+    # trust that the fingerprint moved (timestamps have a granularity).
+    self._core_effect_packs_cache = None
     cache = _effects_cache(self)
     cache.replace(cache.snapshot(), registry=core_effects.registry_with_packs(_effect_packs(self)))
 
