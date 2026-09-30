@@ -3077,12 +3077,19 @@ def usage_graph_model(
     provider_ids: tuple[str, ...],
     now: datetime | None = None,
     extra_sessions: dict[str, dict[str, int]] | None = None,
+    ledger_first_day: dict[str, str] | None = None,
 ) -> dict:
     """Build one shared-axis, range-consistent graph projection.
 
     Only providers with an admitted local usage record are returned. The
     selected metric is common to every series, so unlike the old dual-axis
     chart, line height always means the same thing.
+
+    ``ledger_first_day`` maps a provider whose sessions come only from its
+    hook ledger to the ISO day that ledger now begins. The ledger is trimmed
+    to its newest events, so an empty day before that one is unknown, not
+    zero: in the ``sessions`` metric it becomes a gap day (``-1.0``), which
+    the client draws as a break in the line.
     """
     if metric not in {"tokens", "cost", "sessions"}:
         raise ValueError("usage metric is tokens, cost, or sessions")
@@ -3111,6 +3118,12 @@ def usage_graph_model(
     series = []
     for provider_id in provider_ids:
         values = tuple(bucket["providers"].get(provider_id, {}).get(metric, 0) for bucket in buckets.values())
+        first_day = (ledger_first_day or {}).get(provider_id) if metric == "sessions" else None
+        if first_day is not None:
+            values = tuple(
+                -1.0 if day < first_day and not value else value
+                for day, value in zip(buckets, values, strict=True)
+            )
         if any(float(value) > 0.0 for value in values):
             series.append({"provider_id": provider_id, "values": values})
     maximum = max(
