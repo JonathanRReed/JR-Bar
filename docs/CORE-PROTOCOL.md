@@ -9,7 +9,9 @@ over one Unix socket.
 This document is the contract, written to what the daemon does today.
 Both sides are tested against it: `tests/test_core_server.py`,
 `tests/test_core_projection.py`, `tests/test_core_runtime.py` on the
-Python side; `app/Tests/JRBarCoreTests` on the Swift side, including
+Python side, and `tests/test_core_protocol_doc_contract.py`, which fails
+when the daemon answers a command this file never names;
+`app/Tests/JRBarCoreTests` on the Swift side, including
 `Fixtures/python-state.json`, a `state` frame produced by the Python
 projection (`JRBAR_UPDATE_FIXTURES=1 pytest tests/test_core_projection.py`
 regenerates it) and decoded back by
@@ -35,7 +37,10 @@ hand-written examples.
   Python status bar included, owns the hook event socket. A supervised
   daemon (`JRBAR_SUPERVISED=1`) exits on its own when its parent is gone.
   On connect the daemon sends `hello`, then the latest full `state`,
-  `lights` and `settings`. After that it pushes documents as they change.
+  `lights` and `settings`. Frames published while that greeting is being
+  sent are held and follow it, in order: `hello` is always the first frame,
+  and a live frame never lands ahead of an older snapshot of its own kind.
+  After that it pushes documents as they change.
   When the daemon terminates (`quit`, SIGTERM, its supervisor gone) it
   writes `off` to every mounted strip, Pro and Dot alike, straight to
   each volume after the legacy teardown, past the controllers' dedupe
@@ -48,10 +53,13 @@ hand-written examples.
 - Coalescing: `state` at most 20/s, `lights` 30/s, `settings` 10/s, latest
   wins. `event`, `reply` and `log` are never coalesced; the bounded
   dispatch queue (128 frames) sheds its OLDEST frames on overflow and a
-  client whose sends keep blocking is dropped outright — but events stay
-  replayable from the journal (512 entries, larger than the queue on
-  purpose) until it evicts them, after which `replay_events` says so
-  (`cursor_expired`, with the `dropped` count) instead of pretending.
+  client whose send blocks past the send deadline (1 s) is dropped at once:
+  a timed-out send may have put half a frame on the wire, so the stream
+  cannot be repaired. The client recovers by reconnecting and replaying,
+  because events stay replayable from the journal (512 entries, larger than
+  the queue on purpose) until it evicts them, after which `replay_events`
+  says so (`cursor_expired`, with the `dropped` count) instead of
+  pretending.
 
 ## Daemon → app
 
@@ -75,11 +83,20 @@ event kinds are not recovered on a fresh connection. The journal is bounded
 not a daemon restart.
 
 ### state (full)
-Sent on connect, at the end of every controller refresh (a 15 s timer plus
-every hook event), on DND changes, on escalation stage changes, when a
-client connects, and after every command that changes the world. The app
-replaces its model wholesale; there is no partial state message in
-protocol 1. Timestamps are Unix epoch seconds.
+A state document is built at the end of every controller refresh (a 15 s
+timer plus every hook event), on DND changes, on escalation stage changes,
+when a client connects, and after commands that change the world. It is
+broadcast only when it differs from the last frame sent, ignoring the
+fields that move on every build without the document having changed
+(`doc_significant_equal`, which reads `_VOLATILE_DOC_PATHS` in
+`core_runtime.py`). A quiet daemon therefore sends nothing between changes:
+there is no state heartbeat. A client that connects is handed the last
+frame that was sent. `now` is the stamp of that last broadcast, not the
+current time, and `generation` counts builds, not frames, so gaps in it are
+normal. A client that wants the age of what it holds stamps its own arrival
+time, as the app's `CoreModel.lastStateAt` does. The app replaces its model
+wholesale; there is no partial state message in protocol 1. Timestamps are
+Unix epoch seconds.
 
 ```json
 {"t":"state","v":1,"generation":4812,"now":1788982892.4,
@@ -91,7 +108,8 @@ protocol 1. Timestamps are Unix epoch seconds.
     "since":1788982891.0,"updated_at":1788982891.0,"stale":false,
     "pid":9170,"origin":{"kind":"claude_app","label":"Claude App","bundle_id":"com.anthropic.claudefordesktop"},
     "ask":null,"remote":false,"terminal":{"app":"Ghostty","bundle_id":"com.mitchellh.ghostty","tty":"/dev/ttys004"},
-    "workers":1,"snoozed_until":null,"event":"PreToolUse","tool":"Bash","message":null}
+    "workers":1,"snoozed_until":null,"event":"PreToolUse","tool":"Bash","message":null,
+    "axes":{"outcome":"none","review":"pending","freshness":"live"}}
  ],
  "hidden_count":3,
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build",
@@ -105,7 +123,7 @@ protocol 1. Timestamps are Unix epoch seconds.
           "providers":[{"id":"claude","instance":"default","account":{"plan":null,"label":"Max","fidelity":"official"},
                         "windows":[{"name":"5h","id":"five_hour","used_pct":42.0,"resets_at":…,"scope":"account","model":null},
                                    {"name":"7d","id":"seven_day","used_pct":61.0,"resets_at":…}],
-                        "fidelity":"official","state":"ready","reason":null,"action":null,"observed_at":…,
+                        "fidelity":"official","state":"ready","incident":null,"reason":null,"action":null,"observed_at":…,
                         "tokens":{"input":1200,"cached_input":800,"output":300},"estimated_cost_usd":null,"credits_remaining":null,
                         "forecast":{"window_id":"five_hour","remaining_pct":58.0,"exhausts_at":1789000292.4,"pace":"under","rate_pct_per_hour":12.0,"samples":13}}]},
  "power":{"keep_awake":true,"closed_lid":{"policy":"agents","holding":false,"helper_installed":true}},
@@ -207,6 +225,16 @@ Vocabulary:
   the row; a `scope: "run"` snooze covers this row alone; the later
   deadline wins), null while none is in effect -- the panel reads it to
   say "Snoozed until…" and to offer Unsnooze.
+- `axes` is `{outcome, review, freshness}`: three separate facts about a
+  row that `lifecycle` alone would run together. `outcome` is what the
+  provider reported: `none` while the run is not over, `succeeded`,
+  `failed`, `unreported` for a run that ended without saying how, and
+  `unknown` when the row is too thin to classify. `review` is `pending`
+  while the run is live, `unreviewed` once it finished and nobody has
+  cleared it, and `reviewed` once Clear Agents acknowledged it.
+  `freshness` is `live` while the source is delivering, `delayed` once it
+  stopped (`stale`), and `unknown` when the row has no observation clock.
+  A `list_roster` row carries the same three.
 - `sessions` is what the panel should be looking at, not everything the
   daemon remembers (`completion_visibility`): live sessions -- working,
   tool running, waiting, blocked, idle-ready -- while they are still being
@@ -260,15 +288,23 @@ Vocabulary:
   own reply and nothing is typed. `hold_until` is the epoch at which the
   hold lapses and the agent's own prompt carries on; `always` says an
   Always allow can be sent (Claude, when its `permission_suggestions`
-  carry an allow rule); `decided` is true for the few seconds after an
-  answer, while the provider's events catch up. A hold that lapses, is let
-  go or is answered republishes `state` at once, not at the next refresh.
+  carry an allow rule); `decided` is true from the moment an answer is
+  delivered to the hook until the agent's own events close the request --
+  the tool's `PostToolUse` or `PostToolUseFailure`, a fresh
+  `PermissionRequest` for the same request, or the turn ending or moving on
+  (`Stop`, `StopFailure`, `SessionEnd`, `UserPromptSubmit`, `Interrupt`) --
+  however long the tool runs, with an hour as the cap. While it is true a
+  second `answer_ask` for that request is refused `stale_ask` instead of
+  typing into a terminal that is busy running the approved tool; an answer
+  the hook could not take is not `decided`, so the keystroke path stays
+  open. A hold that lapses, is let go or is answered republishes `state` at
+  once, not at the next refresh.
   `preview` is one bounded
   line of what the agent wants to run (the command, the file, the URL,
   `server · tool` for MCP; token-shaped runs masked) and `risk` is
   `"destructive"` when a shell command matches a pattern that loses work
   if it runs by mistake (`rm -r`, `sudo`, a forced push, `reset --hard`,
-  `curl … | sh`, …) -- a mark, never a block. `decision` is `null` for an
+  `find … -delete`, `curl … | sh`, …) -- a mark, never a block. `decision` is `null` for an
   ask the lane does not hold; `preview` and `risk` still come from the
   `PermissionRequest` the ingress saw for that exact request id (Claude,
   Codex, Devin, Grok, OpenCode, pi; remembered for an hour), and are `null`
@@ -344,7 +380,13 @@ Vocabulary:
   `least_headroom` and `candidates` is how many windows were eligible.
   Null when nothing applicable was measured. The app's card leads with
   this window and explains the pick when it departs from the `5h`
-  convention; an unclassified lane cannot win it even at 1 % left.
+  convention; an unclassified lane cannot win it even at 1 % left. Only a
+  window whose `resets_at` is null or after `state.now` is eligible (and
+  counted in `candidates`): a window whose reset has passed describes a
+  window that no longer exists, so it cannot win `constrained` however full
+  it last read. Lapsed windows stay in `windows` unchanged. The quota-runway
+  light on the Pro and the Dot and the Screen Bar's quota ember use the same
+  rule.
 - `usage.providers[].quota_source` is whether this reading can carry a
   quota at all: a quota collector exists for the provider (read off
   `provider_usage_platform`'s descriptors), AND the snapshot is not
@@ -360,6 +402,20 @@ Vocabulary:
   (`rateLimitResetCredits.availableCount`), the CLIProxyAPI hub's credit list
   for a hub account, or a Grok billing answer that carries its coupons. A
   count to show; nothing in JR-Bar redeems a credit.
+- `usage.providers[].incident` is the provider's status-feed incident as
+  one line (`"Anthropic: Elevated errors"`), or null. It is an outage on
+  the vendor's side, never a quota verdict. It is null the moment the feed
+  goes stale or has not answered, so a present value is current and the
+  wire never invents one.
+- For Claude and Codex, `usage.providers[].tokens` and `estimated_cost_usd`
+  are local totals for the last 30 days, read from the usage scan cache and
+  never from a scan of their own. Each message or turn is counted once (the
+  first sighting wins, and a Codex fork or copied rollout counts under its
+  parent), across the primary home and every extra home. A Claude reading
+  whose scan cache does not yet cover the 30 days shows zero tokens and a
+  null cost until it does, not a partial figure; a Codex reading counts only
+  the days its cache still covers, never more. `estimated_cost_usd` is null
+  unless every counted record was priced.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
   names it): `exhausts_at` (epoch, or null when nothing is burning),
@@ -405,7 +461,10 @@ Vocabulary:
   quiet, and null while nothing is in effect -- a merely upcoming quiet
   period never surfaces as an end time.
 - `escalation.stage`: `none`, `ramp`, `menu_bar`, `final` (0…3);
-  `since` is when the oldest unanswered ask started blocking.
+  `since` is when the oldest unanswered ask started blocking, a wall-clock
+  epoch fixed for the episode: it does not move from build to build or
+  across a sleep. A new oldest ask, a Resume Escalation and a daemon
+  restart each start a new episode.
 - `power` says why the Mac is (or is not) held awake. `keep_awake` is true
   while anybody wants it awake -- the agents (working, or in the grace
   after) or the person's lease -- and nothing has made the holds yield.
@@ -490,7 +549,12 @@ Vocabulary:
   (installed, running, nothing arriving), `missing` (not installed).
   `health.detected[provider]` is whether the provider's CLI/surface was
   actually found on this Mac (the installed-agent inventory), so the app
-  can say "not installed" instead of implying a dead hook.
+  can say "not installed" instead of implying a dead hook. The key is
+  omitted while the daemon cannot yet answer for that provider: a CLI that
+  is found by searching PATH stays unanswered until the login-shell PATH
+  probe has finished (it runs off the state build and is retried after a
+  failure), so a missing key means unknown and is never read as "not
+  installed". An explicit `false` means the daemon looked and found nothing.
 - `catalog_generation` is the effect catalog's content-derived generation
   (the same derivation as `list_effects`' `generation`): it moves when the
   registry, installed packs or assignments change, so a client can decide
@@ -517,11 +581,12 @@ field is one the Control Center and the Rail decode.
  "banks":{"index":0,"count":1},
  "rail":{"edge":"left"},
  "keymap":{"state":"applied","backup_at":1788896492.4,"generation":3,
-           "layers":[{"profile":0,"layer":0,"label":"Profile 1 / Layer 1: Base","scope":"automatic"}]},
+           "layers":[{"profile":0,"layer":0,"label":"Profile 1 / Layer 1: Base","scope":"automatic","owner":"jrbar"}]},
  "input_check":false,
  "last_input":{"index":1,"kind":"press","at":1788982888.4},
  "settings":{"enabled":true,"session_mode":true,"analog_enabled":false,
-             "bindings":[],"layer_map":[{"layer":1,"scope":"codex"},{"layer":2,"scope":"claude"}],"scopes":[]}}
+             "bindings":[],"layer_map":[{"layer":1,"scope":"codex"},{"layer":2,"scope":"claude"}],"scopes":[],
+             "ownership":"hold","layer_owners":[]}}
 ```
 
 - `device` is `null` when no pad is known (nothing approved, nothing
@@ -572,7 +637,9 @@ field is one the Control Center and the Rail decode.
   `unknown` (files that do not parse); `backup_at` is the backup file's
   mtime; `generation` counts setup results since the daemon started;
   `layers` lists the editable profile/layer pairs of the inspected (or
-  backed-up) keymap, each with the `scope` the layer map assigns it.
+  backed-up) keymap, each with the `scope` the layer map assigns it and
+  the `owner` `settings.layer_owners` gives it (`jrbar` for every layer not
+  handed to an external writer).
 - `input_check`: inputs are shown as `deck_input` events and every
   bound action is paused (also turned on by a verified keymap write, as
   the Python app did). `last_input` is the last observed control
@@ -580,16 +647,28 @@ field is one the Control Center and the Rail decode.
   AG16..19, `analog` for the calibrated sectors 20..23).
 - `settings` mirrors `deck-controls.json` (`enabled`, `session_mode`,
   `analog_enabled`, the explicit aux `bindings`, the `layer_map` from
-  hardware layer to board scope, and extra `scopes`; the Python defaults
-  are all off, with layers 1 and 2 mapped to `codex` and `claude` on a
-  fresh install).
+  hardware layer to board scope, extra `scopes`, `ownership` and
+  `layer_owners`; the Python defaults are all off, with layers 1 and 2
+  mapped to `codex` and `claude` on a fresh install). `ownership` is `yield`
+  or `hold` and says how the pad answers another app writing to it: `yield`
+  pauses JR-Bar's output while the adapter waits out its conflict retry,
+  `hold` absorbs the accusation on a layer JR-Bar owns and writes its
+  latest frame back. It is `hold` on a fresh install and for a file written
+  before the field existed. `layer_owners` is `[{layer, owner}]`, who may
+  paint each hardware layer: `jrbar` (the auto layer, painted from the
+  session board and what any layer not listed is), `everything`, or a
+  provider id, which hands the layer to that external writer so JR-Bar
+  leaves it alone while the pad sits there. Layer 0 is always `jrbar`.
+  `deck_set_settings` writes both.
 
 ### lights
 The presentation program for each surface, exactly the LEDS DSL text the
 hardware receives, plus the anchor the app needs to phase-lock the Screen
 Bar to the strip. Sent whenever a program changes on any surface (every
 Screen Bar sync, every completed hardware write, every preview start and
-end) and with every refresh.
+end), and at the end of a refresh when anything in it moved beyond the
+volatile fields: `lights` follows the same `doc_significant_equal` rule as
+`state`, so an unchanged frame is not re-sent.
 
 ```json
 {"t":"lights","v":1,
@@ -693,6 +772,12 @@ end) and with every refresh.
   clocks meet in this one field and they are not interchangeable: a
   monotonic reading subtracted from a wall-clock `now` is what made a
   surface report 1.79e9 seconds, which the app rendered as "20704 d".
+  `seconds_in_state` is as of the frame's build, and a frame that differs
+  from the last one only in it is not sent (it is one of the volatile
+  fields), so a held frame's number goes stale. A client that shows it live
+  ages it on its own clock from `sessions[].since` (or `asks[].opened_at`
+  for a light that is about an ask), and falls back to the number when it
+  has no such anchor.
   Every duration-shaped field in `state` and `lights` carries the same
   bound (`core_projection.MAX_DURATION_SECONDS`), `health.sources.*.heard_age_seconds`
   included; `health.intake.silence_seconds` is the policy window, not an
@@ -1060,9 +1145,10 @@ the main thread). Unknown args are ignored.
 | `usage_hooks_test` | event (one of the seven), provider, rule? | Runs the rules a made-up event would match (or just `rule`), whatever the master switch says, with `state: "test"` in the event, and waits at most 8 s: `{event, provider, results[…last_result shape…], status}`. `invalid_args` for an unknown event or rule. The Test button. Off the main thread. |
 | `list_providers` | provider?, instance? | The inspect surface behind `jrbar providers status`: one row per configured provider *instance* — `{id, instance, label, enabled, menu_visible, browser_sources_enabled, supports_browser_sources, supports_local_tokens, supports_quota, source_order, options, consents[], credentials[], imported_credential, state, reason, action, account_label, observed_at}`. `consents` carry `source_instance_id` so a row only lists the grants its own instance holds; `credentials` report `{account, available}` — availability, never the secret; `imported_credential` says the stored token came from a consented browser import (the only credential a revoke may remove). `state`/`reason`/`action` mirror the live snapshot for that exact instance. |
 | `set_provider_enabled` | provider, enabled, instance? | Persists the per-instance enabled flag through the settings document's optimistic concurrency — a concurrent edit answers `settings_changed`, never a silent merge; `unknown_instance` when no configured instance exists. `{provider}` is the row as persisted, and an enable triggers a usage refresh for that provider. |
+| `provider_add_instance` | provider, instance, label? | Configures one more account for a provider (a second Codex or Claude sign-in, say). The instance starts enabled and metered with browser sources off; `label` is optional, not blank, at most 128 characters with no control characters, and defaults to `<Provider> · <instance>`. It is written through the settings document's optimistic concurrency, like `set_provider_enabled`, and forces a usage refresh for that provider. `{provider}` is the new row in the `list_providers` shape. `unknown_provider` for an unregistered id, `unsupported` for a provider that reads this Mac's own sign-in and has no per-instance source (a second account would report the first one twice), `invalid_args` for a missing or malformed `provider`, `instance` or `label` and for the `default` instance every provider already has, `already_exists` for an instance already configured, `settings_changed` for a concurrent settings edit. |
 | `provider_consent` | action (`list`/`grant`/`revoke`), provider?, browser?, profile?, instance?, background_repair? | The exact-scope consent store. `grant` binds provider + browser + profile + the provider's declared domain/field allowlist and imports nothing — the import remains its own action. `list` returns `{consents[]}`; grant/revoke return `{consent}` with the bound scope, `was_granted`, and on revoke `imported_data`: `removed`/`replaced`/`retained`/`none` — the imported credential is deleted only while the stored value still matches the import's digest, so a user-replaced token survives. `unsupported` for providers with no consented browser source. |
 | `provider_action` | provider, instance? | Runs the staged flow behind the provider's CURRENT action label — clipboard/LevelDB import, reconnect, repair — and returns `{provider, instance, message}` with the exact string the daemon surfaced (it may be a success note, not only an error). `unsupported` when no staged action matches the live state, `unknown_provider` for an unregistered id. Ownership is preserved: a credential the provider's own CLI owns (Grok's auth.json, Gemini's oauth_creds.json) produces a message pointing at that CLI, never a JR-Bar-side rewrite. |
-| `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
+| `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, `null` while the daemon has not finished looking (see `health.detected`), and an install then goes ahead: only an explicit `false`, a CLI that was looked for and never found, is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
 | `refresh_hooks` | | Refreshes only integrations still owned by JR-Bar when the command executes. The daemon detects ownership and updates under the same cross-process mutation lock used by app and CLI installs/removals. It preserves provider-level disabled flags and leaves foreign hooks and removed integrations alone. Returns `{providers, results{provider: {ok, changed, config_path, codex_trust, warning}}}`. Per-provider failures remain failures; the app advances its build stamp only after the selected batch succeeds. No caller-supplied provider snapshot authorizes a refresh. |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
@@ -1082,7 +1168,8 @@ the main thread). Unknown args are ignored.
 | `list_focuses` | | The Focuses this Mac has configured, so a per-Focus rule can name a custom one: `{available, reason, focuses[{id, name}], active[]}`. macOS keeps the roster beside the Focus assertions it guards with Full Disk Access; without that grant `available` is false and `reason` says why. Socket thread. |
 | `presence` | mic, camera, screen_shared (bools), locked? (bool), idle_seconds? (≥ 0), focus? (bool, INFocusStatusCenter's `isFocused` from the app's grant), meeting_until? (epoch of a calendar meeting's end, at most 12 h ahead), next_event_start? (epoch, or null for "nothing coming"), reminders_due? (list of up to 32 reminder ids) | The app's report of what it senses (`jrbar.presence`). `next_event_start` and `reminders_due` are the app's own Calendar and Reminders readings: while they keep arriving (each stands 180 s), the calendar and reminder glows use them and the helper never asks EventKit or needs a grant of its own -- one reader, so the glow and the shelf cannot disagree; absent keys leave the helper's own read in place, and a malformed one refuses the whole report. A live microphone, camera or screen share is a call: the quiet policy gains a `call` source per `call_quiet_mode` (default `sounds`: every light and banner stays, `audible_allowed` goes false), the escalation ladder holds at `ramp` (no menu-bar pulse on a shared screen, no chime into a headset; `escalation_stage` events follow the held stage), and `state.presence.celebrations_held` asks the app's celebrations to hold their burst. A meeting adds a `calendar` source per `meeting_quiet_mode` (default `off`) until `meeting_until`. `locked`, or `idle_seconds` of 300 or more, is away: an ask that reaches the menu-bar stage goes straight to the finale (still capped by `escalation_tier`). `focus: true` stands in for the daemon's own Focus reading while the daemon holds no Focus Status grant (Follow Focus must be on). A report stands for 180 s: the app renews it at least every minute while a sensor is live or `focus` is true, and a stale one ends the call (and the Focus stand-in) on its own. Unknown keys are ignored; a known key of the wrong type is `invalid_args`. `{presence}` (the `state.presence` document). |
 | `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `label` is the name the last published `state.sessions` row gives that session (the provider's own title), falling back to the label recorded with the row for a session `sessions` no longer lists; a `detail` that only repeated the new label is dropped. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
-| `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape plus `schema` (record contract version), `pinned` (open ask), `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`), and `axes`: `{outcome, review, freshness}` — `outcome` is `none`/`succeeded`/`failed`/`unreported`/`unknown` (what the provider reported, separate from `lifecycle`), `review` is `pending`/`unreviewed`/`reviewed` (Clear Agents acknowledgement is the review receipt), `freshness` is `live`/`delayed`/`unknown` (is the source still delivering). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
+| `list_commands` | | The durable command journal: what was asked and how it settled. `answer_ask` writes its intent there before it types, so a crash mid-answer leaves a record behind. `{outcome_unknown[], counts{completed, failed, pending}, commands[]}`. `commands` is the newest 50 settled records, newest first, each `{command_id, command, args, status, accepted_at, settled_at, receipt, error}` with `status` `completed` or `failed`. `outcome_unknown` is the ids of records that are still `accepted` with no settlement: a command whose effect was never confirmed, which a restart must not pretend finished. `counts.pending` is its length. |
+| `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape, `axes` included (`{outcome, review, freshness}`, described once under `state`; Clear Agents acknowledgement is the review receipt), plus `schema` (record contract version), `pinned` (open ask) and `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
 | `session_timeline` | id? or session+provider, cwd?, limit (default 100, max 500), before? | A session's provider transcript as bounded, paginated items — the Overview inspector's Timeline (S7.2). `id` is a roster row id and resolves the status's provider/`session_id`/cwd itself (`not_found` for an unknown id); an ended session whose status aged out is still inspectable via `session` (the provider uuid) + `provider` + optional `cwd`. Items are `{seq, at, kind, role?, name?, text?, tool_use_id?, is_error?, sidechain?, model?, uuid?, parent_uuid?, origin:"transcript", recorded_at:null, untrusted?}` — `kind` is `message`/`tool_use`/`tool_result`/`turn_end`; `tool_use`/`tool_result` pair on `tool_use_id`; `at` is the row's own stamp (occurrence) and `recorded_at` stays null because per-row ingestion time was never kept. `untrusted` marks tool output and assistant text — content, never a command. `before` is the seq of the oldest item the caller holds; the reply is `{schema, events[], has_more, next_before, total, source{provider, file}, gaps[]}` where `gaps` names `transcript_not_found`, `transcript_unreadable`, `transcript_too_large:N`, `timeline_item_cap:N`, or `unsupported_provider` (providers without a transcript reader answer that, not an empty success). Supported: `claude` (`~/.claude/projects/**/*.jsonl`) and `codex` (`~/.codex/sessions/**/*.jsonl`), matched by uuid-in-filename. Reads are bounded (64 MB file cap, 5000-item cap, 600-char text, secret-run redaction). `invalid_value` without a provider. |
 | `compare_sessions` | a, b (roster ids, different) | Two runs side by side on retained facts only (S7.4). `{t:"compare_runs", schema, generated_at, a, b, shared{provider, workspace, model:null}, warnings[], gaps[]}` — each side is `{id, label, provider, cwd, lifecycle, mode, axes, remote, activity, interruptions, artifacts, model:null, gaps[]}`. `activity` is the transcript aggregate `{counts{user_messages, assistant_messages, tool_uses, tool_failures, retried_tools, turn_ends, sidechain_rows}, tools{name:count}, span{first_at, last_at, duration_s}, file}` or `null` with a named gap (`transcript_not_found`/`unsupported_provider`); `interruptions` counts the ledger's `asked`/`blocked`/`completed` rows for that agent id. `artifacts` is the files the run's edit tools named, read from each tool call's input (Claude Edit/Write/MultiEdit/NotebookEdit `file_path`, Codex `*** Add/Update/Delete File:` patch headers): `{files[{path, edits}], total, truncated}`, paths relative to the run's cwd or `~`, most-edited first, at most 200; `null` when the transcript was not read, and then `gaps` names `artifacts_not_tracked`. `model` is always `null` (per-session models come from `session_usage`) and `gaps` names `model_not_tracked`. `warnings` always includes `not_a_controlled_benchmark` plus `different_providers`/`different_workspaces` when the sides differ. `invalid_value` for missing/identical ids; `not_found` for an id not in the retained set. |
 | `session_usage` | ids[] (roster ids, up to 64), since? (epoch) | Per-session model, tokens, cost and context for the panel's rows, the Overview's Model/Cost columns and Compare runs. Each id resolves its status's provider/`session_id`/cwd like `session_timeline`, and the session's own transcript is read incrementally (only bytes appended since the last request; a shrunk or replaced file is re-read). `{schema, sessions{id: {provider, model, models{model: tokens}, tokens{input, cached_input, cache_creation, output}, turns, estimated_cost_usd, cost_estimated, unpriced_models[], context_tokens, context_window, context_window_source, first_at, last_at, partial, window_tokens, tokens_since?}}, gaps{id: reason}, since, pricing{as_of, table_version, semantics:"api_equivalent_estimate"}}`. Every id lands in exactly one of `sessions` or `gaps` (`remote`, `not_found`, `unsupported_provider`, `transcript_not_found`, `transcript_unreadable`, `reading`) — never a zero. A request reads for at most 1.5 s (checked between lines and between files, a line at a time); an id whose transcript it did not finish, or did not reach, answers `reading` rather than a partial total, and the next request carries on from the saved offset. A lookup that finds no transcript is trusted for 60 s. Counting follows `usage_stats` (Claude: first sighting of a message id; Codex: `last_token_usage` deltas or cumulative differences, cache reads/writes split out of input). `estimated_cost_usd` is the Usage Center's list-price estimate (`cost_estimated` when a stand-in rate priced any model, null when no model had a price). `context_tokens` is the newest main-chain turn's prompt; `context_window` is Codex's `model_context_window` (`reported`) or, for Claude, 200k/1M `inferred` from the largest prompt seen. `partial` when a transcript past 64 MB was read from its tail. `since` adds `tokens_since` (turns at or after it). `window_tokens` is the session's tokens since its provider's primary usage window opened (`resets_at` minus the window's length, on the window the Usage Center's card leads with, this Mac's own account), for the Agent Overview's derived "≈ N %" window share; null when the provider reports no window, the session has no token timeline, or a tail read starts inside the window. `invalid_value` for an empty `ids`. |
@@ -1097,7 +1184,7 @@ the main thread). Unknown args are ignored.
 | `session_in_front` | session | Whether the owner is looking at that session's own tab, pane or Ghostty terminal right now, for "Quiet while you watch" (every Ghostty window is one process, so the app alone cannot tell a background tab from the one in front): `{session, in_front, evidence, app}`. `in_front` is `true` only on proof -- `focused_tab_tty` (Terminal.app / iTerm2 named the focused tab and it is the session's), or `recorded_surface` (Ghostty's focused terminal is the one recorded at the session's SessionStart, still in the session's directory -- the process's, or the one it started in; being the only terminal in that directory is never enough); `false` for `other_app`, `other_tab` or `other_surface` (the focused Ghostty terminal is in another directory, or the recorded one is open and something else is focused); `null` when it cannot be told -- `tmux_unproven` (the terminal around a tmux pane is not the session's ancestor), `tab_unproven` (kitty, WezTerm, an IDE: the app is in front, the tab unknown), `automation_not_granted` (macOS has not yet allowed JR-Bar's Apple events to that terminal; this command never asks), `focused_tab_unproven`, `focused_surface_unproven`, `ownership_unproven`, `not_running`, `remote`. Nothing is raised, typed or prompted. A surface reads `null` as "keep its own rule". |
 | `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}], memory, performance}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `alcove_follow_state` never fails the daemon (Alcove following is the app's). `performance` is `{metrics{name: {count, p50_ms, p95_ms, max_ms, outcomes}}}` (the `PerformanceRegistry` timings the legacy Why panel renders), `cpu{user_s, system_s, percent_since_last}` (rusage deltas between doctor calls; `percent_since_last` is `null` on the first), and `frames{state_generation, lights_generation, state_per_minute, lights_per_minute}` (documents actually broadcast, counted over a rolling 60 s window). `jrbar doctor` appends these as a `performance:` section when a daemon answers (its `--socket` selects another daemon); `--json` carries it under `daemon.performance`. |
 | `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records, unpriced_records, unpriced_models[], models[{model, tokens, cost_usd, records, priced, estimated}]}`. `tokens_in` counts input plus cache writes. `models` splits the range's tokens and dollars by the model each record ran on, most tokens first (Claude records carry the pricing key, `opus-4-5`; Codex records the turn's model) — it sums to the `days` rows it was cut from. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. `unpriced_records`/`unpriced_models` are the other failure: counted records whose model has no quote at all (a provider with no price table and no reference rate) — their tokens are in the rows, the $0 they contribute is a real absence rather than a price, and they are never blended into `estimated`. Claude and Codex have transcripts; Gemini and any other provider answer empty rows, Gemini with its reference quote so the rate card still shows. Every dollar figure is approximate. The scan runs on its own thread and the reply waits for it at most 2 s (`core_usage_history.REPLY_BUDGET_SECONDS`): a warm scan (the on-disk cache under `~/.local/state/jrbar/usage-scan-cache.*` is incremental, keyed by file mtime and size, so only new or changed transcripts are parsed) answers inside that; a cold one answers what memory holds, `pending: true` with empty rows when there is nothing yet, or the last document with `stale: true`, and the `usage_history_ready` event follows when the scan lands. `scanned_at` is the epoch of the scan behind the rows (null while pending). A document younger than 60 s answers as is. The daemon warms both providers' 30-day scans 8 s after it is ready, so on the Mac the first request is normally warm (measured 2026-09-10: cold Codex 45 s, Claude 11 s; warm Codex 1.5 s, Claude 1.0 s, plus 0.3 s of bucketing). |
-| `usage_graph` | days? (`7`/`30`/`90`/`365`), metric? (`tokens`/`cost`/`sessions`/`percent`), providers? (nonempty list of registry ids) | The shared-axis multi-provider usage chart — the same local-transcript scan `usage_history` runs, assembled by `usage_graph_worker.usage_graph_document` into `{graph, summary}`. `graph` is `{days, period_label, metric, labels[] (strided "MM/DD", empty slots draw no tick), series[{provider_id, values[], source_instance_id?, identity?, label?}], scale_max, heatmap, providers[], partial_provider_ids[], cost_semantics?}` — `values` and `labels` are index-aligned one slot per calendar day, and a series value `< 0` is a gap day (before the provider had samples): the client must break the line there, not bridge it. Percent mode emits one series per (provider, source instance): two rows can share `provider_id`, so chart identity must carry `source_instance_id` (`label` is the daemon's display name, `provider · instance` for a non-default instance) — keying on `provider_id` alone merges them into a fabricated single line. `providers` echoes the resolved request so a picker can tell unchecked from checked-but-empty. `heatmap` is the JSON-projected day grid `{days[] (ISO), providers{id: {provider_id, cells[{day, tokens, sessions, intensity 0–4, color, accessibility_label}], totals{tokens, sessions}, data_status}}, aggregate, timezone}` — the same GitHub-style calendar the old Settings window drew. `summary` is the scan's own sentence ("Last 30 days: Claude 12.3M · 45 sessions") including its `Partial local history:` and `API-equivalent estimate` disclosures — the client shows it verbatim rather than recomputing. All three args are per-request overrides: absent means the stored `usage_graph_*` settings, and nothing the pane picks is written back. Invalid overrides are `invalid_args`, never a silent substitution. The scan is heavy on a cold transcript cache (~30 s): the command runs on the client's socket thread at utility QoS, so the reply can take that long — clients should pass a long timeout and show a scanning state. |
+| `usage_graph` | days? (`7`/`30`/`90`/`365`), metric? (`tokens`/`cost`/`sessions`/`percent`), providers? (nonempty list of registry ids) | The shared-axis multi-provider usage chart — the same local-transcript scan `usage_history` runs, assembled by `usage_graph_worker.usage_graph_document` into `{graph, summary}`. `graph` is `{days, period_label, metric, labels[] (strided "MM/DD", empty slots draw no tick), series[{provider_id, values[], source_instance_id?, identity?, label?}], scale_max, heatmap, providers[], partial_provider_ids[], cost_semantics?}` — `values` and `labels` are index-aligned one slot per calendar day, and a series value `< 0` is a gap day (before the provider had samples): the client must break the line there, not bridge it. In `sessions` mode a provider whose sessions are counted only from its hook log (it has no transcript reader) gets gap days for every day before the first event that log still retains, because the log is compacted to its newest events: those days are unknown, not zero. Percent mode emits one series per (provider, source instance): two rows can share `provider_id`, so chart identity must carry `source_instance_id` (`label` is the daemon's display name, `provider · instance` for a non-default instance) — keying on `provider_id` alone merges them into a fabricated single line. `providers` echoes the resolved request so a picker can tell unchecked from checked-but-empty. `heatmap` is the JSON-projected day grid `{days[] (ISO), providers{id: {provider_id, cells[{day, tokens, sessions, intensity 0–4, color, accessibility_label}], totals{tokens, sessions}, data_status}}, aggregate, timezone}` — the same GitHub-style calendar the old Settings window drew. `summary` is the scan's own sentence ("Last 30 days: Claude 12.3M · 45 sessions") including its `Partial local history:` and `API-equivalent estimate` disclosures — the client shows it verbatim rather than recomputing. All three args are per-request overrides: absent means the stored `usage_graph_*` settings, and nothing the pane picks is written back. Invalid overrides are `invalid_args`, never a silent substitution. The scan is heavy on a cold transcript cache (~30 s): the command runs on the client's socket thread at utility QoS, so the reply can take that long — clients should pass a long timeout and show a scanning state. |
 | `list_effects` | | `{effects[], packs[], cadences[], generation}`: every effect in the runtime registry (builtins, the provider animations and installed packs) with typed `parameters[]`, a `preview {program, led_count}` rendered at the defaults, the blink `cadence` when one applies; `packs[]` is `{id, name, version, effects[ids], license?, path?}` from the pack store; `cadences[]` the three safe blink cadences. `generation` is derived from the catalog's own content -- every effect id and version, every installed pack's id, version and effect list, plus the assignment cache's save counter -- so it changes when the registry, the installed packs or the assignments change, and does not otherwise (`core_effects.catalog_generation`). It is stable across daemon restarts and never 0. |
 | `render_effect` | effect_id, parameters, led_count, color? | `{effect_id, program, led_count, parameters, cadence}`: the LEDS program the daemon would play for those parameters (unknown parameters dropped, bounds enforced), through the presentation safety compiler. Builtins use their registered shapes, provider animations the live solo renderer (`duration_seconds` sets the cycle), pack effects their `motion`/`color`/`cadence` data or a primitive for their meaning. |
 | `list_assignments` | | `{assignments[{effect_id, scope, target_id, parameters}], active_scene, generation}` from the effect assignment store; `parameters` come from the daemon's sidecar (`effect-assignment-parameters.json`). `generation` is derived from the assignments and the active scene (`core_effects.assignments_generation`). |
@@ -1125,8 +1212,9 @@ the main thread). Unknown args are ignored.
 | `deck_apply_keymap` | profile, layer, include_auxiliary, layers? | `CreatorMicroSetup.apply` of that plan (private backup first, verified write, readback): `{code: keymap_verified\|already_configured, message, changes, state, backup_at, generation}`; input check turns on after a verified write. With `layers`, one write claims and names every listed layer (`apply` re-derives the whole plan, so a forged selection cannot write arbitrary JSON). Refusals are error replies whose code is the receipt (`keymap_changed`, `recovery_required`, `readback_mismatch`, …). No alert is shown; the confirmation is the app's. |
 | `deck_restore_keymap` | | `CreatorMicroSetup.restore` from the first private backup: `{code: keymap_restored\|already_restored, message, state, backup_at, generation}`, same refusals (`backup_invalid` with no backup, `keymap_changed` for later device edits). |
 | `deck_approve_device` | | The Devices pane's Enable, for a pad that is here: the daemon probes HID once more and refuses with `no_device` ("No Creator Micro 2 is connected.") when it sees none, so a remembered serial is never enabled blindly; otherwise the sole stable serial becomes `creator_micro_device_serial` with `creator_micro_enabled` and the output service is reconfigured. `{serial, approved}`; `ambiguous_device_identity`, `device_identity_unavailable`. |
+| `deck_disable` | | The off half of `deck_approve_device`: writes `creator_micro_enabled = false`, so the output service is torn down, and keeps the approved serial, so the next enable does not ask for the pad again. `{enabled: false}`; `busy` when the save did not finish in time, `refused` when it could not be saved. Off the main thread. |
 | `deck_check_input` | enabled | Input check on or off (queued input is revoked). `{enabled}`. |
-| `deck_set_settings` | enabled?, session_mode?, analog_enabled?, bindings?, layer_map?, scopes? | Writes `deck-controls.json`, reconfigures the deck runtime. `bindings` replaces the whole auxiliary set (`{index, action|null}` rows for controls 13…23 — 20…23 are the analog joystick sectors; a null unbinds; matrix-key bindings survive). `layer_map` (`{layer, scope}` rows) maps hardware layers to board scopes and `scopes` adds provider ids past the mapped ones; both are validated (no duplicates, `automatic` only inside `layer_map`). The three bools; `invalid_args` for anything else. |
+| `deck_set_settings` | enabled?, session_mode?, analog_enabled?, bindings?, layer_map?, scopes?, ownership?, layer_owners? | Writes `deck-controls.json`, reconfigures the deck runtime. `bindings` replaces the whole auxiliary set (`{index, action|null}` rows for controls 13…23 — 20…23 are the analog joystick sectors; a null unbinds; matrix-key bindings survive). `layer_map` (`{layer, scope}` rows) maps hardware layers to board scopes and `scopes` adds provider ids past the mapped ones; both are validated (no duplicates, `automatic` only inside `layer_map`). `enabled`, `session_mode` and `analog_enabled` are bools. `ownership` (`yield` or `hold`) is how the output owner answers a foreign writer on the pad's report stream: `yield` pauses JR-Bar's output while the adapter waits out its conflict retry, `hold` absorbs the accusation on a layer JR-Bar owns and writes its latest frame back. `layer_owners` (`{layer, owner}` rows, at most 24, one per layer) says who may paint each hardware layer: `jrbar` (the auto layer, and what any layer not listed is), `everything`, or a provider id, which hands the layer to that external writer so JR-Bar leaves it alone while the pad sits there; layer 0 always stays `jrbar`. Every argument is optional, but a request that names none is `invalid_args`, as is any value that breaks the rules above; `refused` when `deck-controls.json` changed underneath the request or could not be saved. `{enabled, session_mode, analog_enabled, bindings[{index, action}], layer_map[], scopes[], ownership, layer_owners[]}`, the settings as saved. |
 | `ping` | | `{pong, now}`. |
 | `quit` | | Replies, then the daemon releases its holds and exits. |
 
@@ -1164,13 +1252,17 @@ can still refuse.
 | code | when | message |
 | --- | --- | --- |
 | `not_found` | the daemon's canonical state has no live request for that session | `no live ask for that session` |
-| `unsupported` | the provider's contract does not declare `answering`, or the answer controller would not accept the action (a typed reply, an already-sending attempt) | `this ask cannot be answered from here` |
+| `unsupported` | the provider's contract does not declare `answering`, or the answer controller would not accept the action (a typed reply, an attempt already sending, or already sent and waiting for the agent) | `this ask cannot be answered from here` |
 | `stale_ask` | the request left the live phase between the command and the keystroke -- answered in the terminal, timed out, superseded -- or the delivery overran `answer_local.DELIVERY_BUDGET_SECONDS` (4 s). Re-checked immediately before the key is posted, so a resolved ask never leaves a keystroke pending. | reason `resolved_elsewhere`, `resolved_while_sending`, `budget_exceeded`, `not_in_canonical_state` |
 | `session_gone` | the session's process is not running, or the daemon has no row for it, or it is stopped (Ctrl-Z) so its terminal is showing the shell | reason `no_live_process`, `no_session_row`, `process_stopped` |
 | `not_frontmost` | the window in front is not this session's. Reasons: `no_frontmost_app`; `unknown_host` (JR-Bar cannot say which app hosts the session); `frontmost_is:<bundle id>`; `other_window` (the frontmost application's process is not the one the session descends from); `other_tab:<tty>` (Terminal.app / iTerm2 named a focused tab that is not this session's); `other_surface` (Ghostty's focused terminal is in another directory than the session's process). Ghostty names no tty: its proof is the focused terminal of its front window being the surface recorded when the session started, still in the session's directory (`window_evidence: "recorded_surface"`); with no recorded surface -- or a recorded one Ghostty no longer lists -- it refuses `focused_tab_unproven`, however few terminals share the directory, since an agent that moves itself into a worktree leaves a plain shell there looking like its own. With `only_if_frontmost: false` the session's own tab (by tty), tmux pane or Ghostty terminal is raised first (`answer_surfaces.raise_for_answer`), then the app. | the sentence plus the reason |
 | `accessibility_required` | `AXIsProcessTrusted()` is false, so a posted key would silently go nowhere | `JR-Bar cannot answer this ask until macOS lets it send the keystroke. Turn on System Settings > Privacy & Security > Accessibility > <row>.` The row is the daemon's own bundle name -- `jrbar-core` on an installed deployment, since the helper is a separate TCC client from JR-Bar.app. |
 | `send_failed` | macOS refused to build or deliver the event | the failure's name |
 | `busy` | the answer worker did not finish inside `ANSWER_REPLY_BUDGET_SECONDS` (6 s) | `answering did not finish in time` |
+
+A refused, failed or timed-out send never blocks a later Approve or Deny.
+Every `answer_ask` is a fresh verdict: all of the checks above run again in
+full, and nothing retries on its own.
 
 The same surface backs the panel's Approve/Deny, the notification actions and a
 Creator Micro session key, so a refusal reads identically wherever it happens;
@@ -1250,8 +1342,9 @@ while the answer is still delivered.
   answer may carry -- `approve`/`deny` only while the ask is `answerable`,
   `always` only when the agent offered a rule to remember, `answer` only
   for a held question (`choices`); once the decide lane has `decided`, the
-  hold is spent and neither `always` nor `answer` (nor its `choices`) is
-  offered.
+  hold is spent, and stays spent until the agent's own events close the
+  request (an hour at most): neither `always` nor `answer` (nor its
+  `choices`) is offered.
 - `POST /answer` names one `session` (the daemon's id) or one `slot` and an
   explicit `decision`, in the query string (`/answer?slot=2&decision=deny`,
   for a key that can only send a URL) or a JSON object body (which wins
@@ -1303,7 +1396,11 @@ all eight connection slots busy is answered `refused_full` unread), the shim app
 `{"provider","ppid","ppid_start","queued_at_ms","payload"}` as one JSON
 line to `$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and
 exits 0; at 16 MiB the file rotates to `<provider>.overflow.jsonl` (one
-generation) and a fresh one starts. Every append and rotation holds an
+generation) and a fresh one starts. A record ends at a newline and nowhere
+else: U+2028, U+2029 and U+0085 inside a payload are data (the shim copies
+every byte at or above 0x80 verbatim), so the drain, `hooks_doctor`'s
+`pending_lines` and `doctor`'s "pending hook lines" check split the file on
+`\n` only. Every append and rotation holds an
 `flock` on the file its path still names, and the daemon takes that lock on
 a file it has renamed to drain, so no line lands in a file after it was
 rotated or read. The daemon drains those files once
@@ -1322,6 +1419,20 @@ time) and does not wake the live monitor.
 For Cursor and Gemini CLI the shim prints `{}` on stdout as those hook
 contracts require (`--emit-empty-json` forces it for any provider);
 otherwise it prints nothing.
+
+A `ppid` of 1 or less in a frame means the agent had already exited and
+launchd had adopted the hook. The daemon reads such a frame as carrying no
+`ppid` (and no `ppid_start`), so it registers no process from it, and
+delivers the event instead of refusing it, whether the frame arrives live
+or from the spool. A `--decide` frame with such a `ppid` is still refused
+`refused_invalid`: an agent that is gone cannot be waiting for a verdict, so
+nothing is parked.
+
+A connection that closes before sending a byte is a liveness probe (`jrbar
+hooks doctor` and the daemon's own `hooks_doctor` connect and close the
+ingress socket). It is answered `refused_invalid` as before, so a bare
+close is never read as delivered, but it is neither counted nor written to
+the rejection log. A non-empty frame that fails to decode still is.
 
 `--decide` (the decide lane, installed only on Claude's and Codex's
 `PermissionRequest`) adds `"decide_ms":50000` to the header. Delivery and
@@ -1434,6 +1545,38 @@ becomes PermissionRequest on ingest), AfterAgent→Stop, SessionEnd. The
 hook's stdout must be a JSON object, so the shim prints `{}`. Transcript
 fallback (`transcript_monitoring.gemini`) reads
 `~/.gemini/tmp/<project>/chats/session-*.jsonl`.
+
+### OpenCode
+
+`jrbar agent-monitor install opencode` writes a plugin that hands the shim
+one small Claude-shaped payload per OpenCode event, in order, on stdin:
+`{hook_event_name, session_id?, request_id?, notification_type?}` plus the
+event's `sequence` and `timestamp` when it has them. Only opaque ids are
+forwarded, never a prompt, command, path or question text. The events it
+forwards:
+
+| OpenCode event | hook event |
+| --- | --- |
+| `session.created` | `SessionStart` |
+| `session.status` (`active` or `busy`) | `UserPromptSubmit` |
+| `session.idle` | `Stop` |
+| `session.error` | `StopFailure` |
+| `permission.asked` | `PermissionRequest` |
+| `question.asked` | `Notification` with `notification_type: "input_required"` |
+| `permission.replied`, `question.replied`, `question.rejected` | `PostToolUse` |
+| `tool.execute.before`, `tool.execute.after` | `PreToolUse`, `PostToolUse` |
+| `session.compacting` (or `session.compact.before`) | `PreCompact` |
+| `session.compacted` (or `session.compact.after`) | `PostCompact` |
+
+An ask is named by its request id, and the two halves of the pair spell it
+differently: `permission.asked` and `question.asked` carry it as
+`properties.id`, while `permission.replied`, `question.replied` and
+`question.rejected` carry it as `requestID`. The plugin reads the id from
+each event the way that event spells it, so a reply resolves the ask it
+answers. An asked event whose id is not an opaque identifier is forwarded
+without a `request_id` and reads as an ask with no identity; a replied or
+rejected event with a malformed `requestID`, or any event with a malformed
+session id, is dropped.
 
 ## Running it
 

@@ -40,6 +40,8 @@ CONTRACT_TESTS: Final = (
     "tests/test_dependency_and_entitlements.py",
     # The provider marks are current with their pinned sources.
     "tests/test_provider_logo_data.py",
+    # The protocol doc names every command the daemon answers.
+    "tests/test_core_protocol_doc_contract.py",
 )
 FIXTURE_TESTS: Final = (
     "tests/test_provider_adapters.py",
