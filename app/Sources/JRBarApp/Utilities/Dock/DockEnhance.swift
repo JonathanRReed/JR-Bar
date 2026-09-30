@@ -235,6 +235,13 @@ private struct PreviewLanding {
 /// 30 s cache (see `refreshPermissions`). With the displays asleep, the
 /// screen locked or the session switched away the timer parks
 /// (`DockTickPark`).
+///
+/// Nothing on the hover path waits on another app's Accessibility answer.
+/// A tile's window list and every card verb run on the preview lane of
+/// `DockAXWorker`, and the cards land on main when the answer comes back
+/// (`showPreview`, `land`), unless the preview has retargeted or closed in
+/// the meantime. An app that does not answer rests in the same backoff the
+/// ⌥⇥ strip keeps.
 @MainActor
 @Observable
 final class DockEnhanceController {
@@ -1670,28 +1677,6 @@ final class DockEnhanceController {
     private func narrowToDisplay(_ windows: [DockPreviewWindow]) -> [DockPreviewWindow] {
         guard preferences.previewThisDisplay, let display = DockDisplays.pointerDisplayQuartz() else { return windows }
         return DockEnhanceMath.onDisplay(windows, display: display)
-    }
-
-    /// One app's windows for a hover read — the fill, a live refresh, a
-    /// minimized tile's owner check and click-to-minimize — through the
-    /// switcher's hung-app backoff. A read is synchronous AX IPC with a
-    /// half-second timeout: an app that did not answer costs main one wait
-    /// per `DockAXBackoff.backoff`, not one per hover, sweep and burst,
-    /// and a hang the ⌥⇥ strip saw spares this side too.
-    private func readWindows(pid: pid_t) -> DockPreviewRead {
-        let read = switcher.readWindows(pid: pid, now: ProcessInfo.processInfo.systemUptime) {
-            AppleDockReader.windowsReading(pid: $0)
-        }
-        if case .unresponsive = read {
-            Self.log.notice("preview: pid \(pid, privacy: .public) didn't answer AX — skipped for \(DockAXBackoff.backoff, privacy: .public) s")
-        }
-        return read
-    }
-
-    /// The windows an app answered with, or none for a hung or resting
-    /// one — what a fill or a tile check shows as no cards.
-    private func answeredWindows(pid: pid_t) -> [DockPreviewWindow] {
-        readWindows(pid: pid).answered ?? []
     }
 
     /// Mark the cards whose windows host an agent session, and collect

@@ -187,30 +187,21 @@ enum AppleDockReader {
     /// ids never repeat, so a stale writer finds no row to land on.
     @MainActor private static var rowStamp = 0
 
-    @MainActor
-    static func windows(pid: pid_t) -> [DockPreviewWindow] {
-        windowsReading(pid: pid).windows
-    }
-
-    /// `windows(pid:)` plus whether the app failed to answer inside the
-    /// half-second timeout — a hung app, which the switcher then stops
-    /// asking for a while instead of paying the wait on every open.
-    @MainActor
-    static func windowsReading(pid: pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool) {
-        windowsReading(pid: pid, stamp: nextStamp())
-    }
-
     /// A fresh stamp for one app's rows — taken on main for a read that
-    /// runs elsewhere (the switcher's side-by-side reads).
+    /// runs elsewhere (the switcher's side-by-side reads, the preview
+    /// lane's).
     @MainActor
     static func nextStamp() -> Int {
         rowStamp &+= 1
         return rowStamp << 20
     }
 
-    /// The read itself, callable off the main thread (`DockAXWorker`):
-    /// `stamp` is folded into each row's id — a caller that never shows
-    /// the rows as cards (a ⌘⇥ commit's restore check) passes 0.
+    /// The read itself, which runs on a `DockAXWorker` lane and never on
+    /// main: the app's windows, and whether it failed to answer inside the
+    /// half-second timeout — a hung app, which the switcher and the
+    /// previews then stop asking for a while instead of paying the wait
+    /// on every open. `stamp` is folded into each row's id — a caller that
+    /// never shows the rows as cards (a ⌘⇥ commit's restore check) passes 0.
     static func windowsReading(pid: pid_t, stamp: Int) -> (windows: [DockPreviewWindow], unresponsive: Bool) {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
@@ -476,14 +467,15 @@ enum AppleDockReader {
 
 // MARK: - A hover-side window read
 
-/// One hover-side read of an app's windows, gated by the same hung-app
-/// backoff the ⌥⇥ switcher keeps (`DockAXBackoff`). The read itself is
-/// synchronous Accessibility IPC with a half-second timeout, so an app
-/// that does not answer would block main for that long on every hover,
-/// sweep and observer burst. Through the backoff a hung app costs one
-/// wait per `DockAXBackoff.backoff`, and a hang either surface saw
-/// spares the other. Pure: the reader and the clock come in as
-/// arguments.
+/// One hover-side read of an app's windows, as the preview lane brought it
+/// back. The read is synchronous Accessibility IPC with a half-second
+/// timeout, so it never runs on main: the controller asks the preview lane
+/// (`DockAXWorker`) for it. The hung-app backoff the ⌥⇥ switcher keeps
+/// (`DockAXBackoff`) gates it: a pid resting after a hang is not asked
+/// (`.skipped`), and a read that lapsed rests its pid when it lands — so a
+/// hung app costs one wait per `DockAXBackoff.backoff` instead of one per
+/// hover, sweep and observer burst, and a hang either surface saw spares
+/// the other.
 enum DockPreviewRead {
     /// The app answered: its windows, possibly none.
     case windows([DockPreviewWindow])
@@ -496,16 +488,6 @@ enum DockPreviewRead {
     /// A read the preview lane brought back: an answer, or the timeout.
     init(_ reading: (windows: [DockPreviewWindow], unresponsive: Bool)) {
         self = reading.unresponsive ? .unresponsive : .windows(reading.windows)
-    }
-
-    static func read(
-        pid: pid_t, backoff: inout DockAXBackoff, now: TimeInterval,
-        reader: (pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool)
-    ) -> DockPreviewRead {
-        guard !backoff.skips(pid, now: now) else { return .skipped }
-        let reading = reader(pid)
-        backoff.note(pid, unresponsive: reading.unresponsive, now: now)
-        return reading.unresponsive ? .unresponsive : .windows(reading.windows)
     }
 
     /// The windows the app answered with; nil when it did not (a hung or
