@@ -1,9 +1,10 @@
 #!/bin/sh
 # JR-Bar component postinstall. The package owns its payload and nothing
 # else: no LaunchAgents, no /usr/local links, no hooks, no receipts. The app
-# registers itself as a login item and installs provider hooks on its first
-# launch of a new version; a home-directory install ($2 under ~/Applications)
-# is the same payload for one user.
+# registers itself as a login item; provider hooks are installed from
+# Settings > Agents, and an upgrade refreshes only hooks it already owns. A
+# home-directory install ($2 under ~/Applications) is the same payload for
+# one user.
 set -eu
 
 INSTALL_LOCATION="${2:-/Applications}"

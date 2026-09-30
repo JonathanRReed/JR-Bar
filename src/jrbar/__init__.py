@@ -4,8 +4,8 @@ Exports resolve lazily (PEP 562). Importing this package used to cost ~117 ms
 because it eagerly pulled in `battery`, `collector`, `led_status` and their
 transitive graph -- and the single hottest importer is `hook_entry`, which runs
 as its own short-lived process on *every* hook event and needs none of it.
-`from jrbar import X` and `sidepulse.X` both still work; they just pay for
-the one module that actually defines X.
+`from jrbar import X` still works; it just pays for the one module that
+actually defines X.
 """
 
 from importlib import import_module

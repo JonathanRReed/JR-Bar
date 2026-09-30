@@ -37,3 +37,13 @@ security and private-state handling, and shipped regressions.
   `test_` prefix, so failures still identify the original case.
 - When adding tests near merged groups, prefer a separate `def` (or add
   a scenario block) rather than re-splitting the group.
+- `monkeypatch.undo()` reverts everything the test's `monkeypatch` holds,
+  including patches that the test's own fixtures made through it (the
+  `headless` fixture in `test_core_runtime.py`, for one). It does not
+  touch the sandbox guards in `conftest.py` (settings paths, launchctl,
+  `/Volumes`, the LED writer): each patches through a private
+  `pytest.MonkeyPatch` and stays armed for the whole test. In a new
+  scenario block, prefer `with monkeypatch.context() as m:` where
+  practical. It reverts the block's patches and nothing else. A guard
+  test never points at a real device volume; it uses a path that does not
+  exist.

@@ -15,6 +15,15 @@ hardware is required.
    reports. A missing window stays missing, and an old reading is marked
    stale.
 
+If an ask goes unanswered, it steps up: its light brightens after 30 s and
+the menu-bar icon pulses after 2 min. By default that is where it stops. To
+add a chime that repeats every 30 s from 5 min on, or a Take over card that
+grows out of the notch, pick Chime or Take over in **Settings >
+Notifications & Focus > Escalation > Loudest stage**. The three delays are in
+the same group. A failed session is different: it turns the light red and
+shows one banner with a short sound. A failure is not an ask and never
+escalates.
+
 If you use the Screen Bar, hover over the band to peek at its card. Click the
 band to pin the card. Click the session mark on the left wing to open the
 focused session.

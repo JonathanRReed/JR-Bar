@@ -133,5 +133,8 @@ def test_release_documentation_names_the_owner_mac_as_the_only_release_path() ->
     assert "make package" in release_doc
     assert "scripts/verify_macos_release.sh" in release_doc
     assert "scripts/publish_release.sh" in release_doc
+    # The checked front door, so a releaser does not go to the publisher directly.
+    assert "make release-check" in release_doc
+    assert "scripts/release.sh" in release_doc
     # The retirement has to be written down where a releaser will read it.
     assert "self-hosted" in release_doc

@@ -55,8 +55,8 @@ install it. This page lists everything else.
   utility/toy fixes, remaining code work, and pending native acceptance
 - [Audit and release preparation, 2026-09-26](archive/audits/2026-09-26-release-readiness.md):
   Fold and reset repairs, branch consolidation, verification and release gates
-- [Releasing](PRODUCTION-RELEASE.md); `make release-check` runs every
-  release check without publishing
+- [Releasing](PRODUCTION-RELEASE.md); `make release-check` runs the release
+  preconditions without publishing
 - [Repository hygiene](REPOSITORY-HYGIENE.md)
 - [Prior art and attribution](PRIOR-ART.md)
 - [Upstream research cadence](UPSTREAM-RESEARCH-CADENCE.md);

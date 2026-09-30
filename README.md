@@ -42,17 +42,25 @@ covers the first useful checks.
 
 - **Knows which sessions are real.** Every provider hook runs a 3 ms
   compiled shim. The daemon pairs each event with the agent's process,
-  sweeps the process table every 5 s, reads Claude's per-process session
-  files and tails Codex, pi and Gemini transcripts, so a session that died
-  is marked ended within seconds instead of glowing all afternoon. Main
+  runs a liveness sweep on a 5 s tick that re-reads the process table at
+  most every 15 s, reads Claude's per-process session files and tails
+  Codex, pi and Gemini transcripts, so a session that died is marked
+  ended within about 20 s instead of glowing all afternoon. Main
   sessions and their sub-agent workers are told apart; a finished task you
   have not looked at yet is different from one you have.
 - **Escalates only for real asks.** A permission prompt, an input request
-  or an error turns the light amber, then pulses the menu-bar icon, then
-  chimes every 30 s until you answer. A turn that merely ended with a
-  question does not. Asks are pinned at the top of the panel with Approve
-  and Deny (⌘↩ / ⌘D) and arrive as banners with the same two actions.
-- **The Screen Bar.** A 6 pt band under the notch playing the same LEDS
+  or another ask turns the light amber. Asks are pinned at the top of the
+  panel with Approve and Deny (⌘↩ / ⌘D) and arrive as banners with the same
+  two actions. Left unanswered, an ask steps up: the light brightens after
+  30 s and the menu-bar icon pulses after 2 min. If you choose Chime or
+  Take over in **Settings > Notifications & Focus > Escalation > Loudest
+  stage**, a chime repeats every 30 s from 5 min on until you answer, and
+  Take over also grows the ask out of the notch. By default it stops at the
+  menu-bar pulse. The three delays are editable in the same group. A failed
+  session is a red light, one banner and a short sound. It is not an ask and
+  never escalates, and neither does a turn that merely ended with a
+  question.
+- **The Screen Bar.** A 4 pt band under the notch playing the same LEDS
   program as the strip, phase-locked to it, blended from eight samples into
   one gradient (never a row of segments). Hover shows the top session and a
   plain-language line about the light. Click the band to pin its card. Click
@@ -157,9 +165,9 @@ Requirements: an Apple silicon Mac on macOS 26 or newer. JR-Bar is one
 signed app bundle carrying the daemon and the hook shim; nothing else is
 installed on the system.
 
-There is no public package yet. When one is published, it will appear on the
-[GitHub releases page](https://github.com/JonathanRReed/JR-Bar/releases).
-For now, build it yourself:
+The signed 0.9.15 installer is on the
+[GitHub releases page](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15).
+To build from source instead:
 
 ```sh
 git clone https://github.com/JonathanRReed/JR-Bar.git && cd JR-Bar

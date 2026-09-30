@@ -54,9 +54,9 @@ makes a false zero. Detail per provider is in
 ## SidePulse installs
 
 0.8 migrates a SidePulse 0.7 install automatically (files, hooks,
-LaunchAgents, Keychain items). The `sidepulse` command, the `sidepulse.*`
-import shim and the `SIDEPULSE_*` environment fallbacks are supported for
-this release only.
+LaunchAgents, Keychain items). The `sidepulse` command and the `sidepulse.*`
+import shim are gone; the `SIDEPULSE_*` environment variables remain as
+read-only fallbacks for their `JRBAR_*` names.
 
 ## Reporting
 

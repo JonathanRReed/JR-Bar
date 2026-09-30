@@ -1,21 +1,30 @@
 #!/bin/bash
 # Cut a JR-Bar release, stopping at the first thing that is not ready.
 #
-#   scripts/release.sh --dry-run   check everything and print what would run
+#   scripts/release.sh --dry-run   run the checks below, write the notes, publish nothing
 #   scripts/release.sh             the real thing (Jonathan runs it; it publishes)
+#
+# No argument is a real run, and --dry-run is the only argument it takes: an
+# empty or extra argument is a usage error, so a wrapper that expands an unset
+# variable into the flag cannot publish by accident.
 #
 # Before anything is built it refuses:
 #   - a dirty or untracked working tree;
+#   - a branch other than main, or no gh on PATH;
+#   - a local main that is not exactly origin/main (read with ls-remote, so
+#     nothing is fetched);
 #   - a CHANGELOG whose top section is not "## <version>" for the version in
 #     pyproject.toml, or still says "(unreleased)";
 #   - a tag v<version> that already exists here or on origin;
 #   - a build number (commits on HEAD, what CFBundleVersion uses) that is not
 #     higher than the last release tag's, since Sparkle orders updates by it.
 # It then writes the release notes from that CHANGELOG section to
-# dist/release-notes-<version>.md, runs scripts/publish_release.sh (verify,
-# notarized package, signed assets, GitHub release) with those notes on the
-# draft before publication. Nothing here runs in CI, and a dry run touches no remote but a
-# read of origin's tags.
+# dist/release-notes-<version>.md and runs scripts/publish_release.sh with
+# those notes on the draft before publication. That script owns the rest: the
+# release gate (verify_macos_release.sh), the notarized package, the signed
+# assets and whether the GitHub release already exists. A dry run stops
+# before it, so a passing dry run is not a passing release. Nothing here runs
+# in CI, and a dry run touches no remote beyond reading origin's main and tags.
 set -euo pipefail
 
 ROOT_DIR="${JRBAR_RELEASE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -23,10 +32,15 @@ PYTHON="${PYTHON:-$ROOT_DIR/.venv/bin/python}"
 [ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
 DRY_RUN=0
 
-case "${1:-}" in
-    --dry-run) DRY_RUN=1 ;;
-    "") ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+case "$#" in
+    0) ;;
+    1)
+        case "$1" in
+            --dry-run) DRY_RUN=1 ;;
+            -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+            *) echo "Usage: $0 [--dry-run]" >&2; exit 2 ;;
+        esac
+        ;;
     *) echo "Usage: $0 [--dry-run]" >&2; exit 2 ;;
 esac
 
@@ -35,6 +49,17 @@ fail() { echo "release: $*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
 
 [ -z "$(git status --porcelain --untracked-files=all)" ] || fail "the working tree is dirty or has untracked files"
+
+branch="$(git branch --show-current)"
+[ "$branch" = "main" ] || fail "releases are cut from main, and this is '${branch:-a detached HEAD}'"
+command -v gh >/dev/null 2>&1 || fail "GitHub CLI is required. Install gh and run gh auth login."
+if [ "${JRBAR_RELEASE_SKIP_REMOTE:-0}" = "1" ]; then
+    say "origin: not checked (JRBAR_RELEASE_SKIP_REMOTE=1)"
+else
+    origin_main="$(git ls-remote origin refs/heads/main 2>/dev/null | awk 'NR == 1 { print $1 }' || true)"
+    [ -n "$origin_main" ] && [ "$origin_main" = "$(git rev-parse HEAD)" ] || \
+        fail "local main is not exactly origin/main: push it, or check that origin is reachable"
+fi
 
 version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -1)"
 [ -n "$version" ] || fail "pyproject.toml names no version"
@@ -80,7 +105,7 @@ say "notes: $notes ($(wc -l < "$notes" | tr -d ' ') lines)"
 
 if [ "$DRY_RUN" -eq 1 ]; then
     say "would run: scripts/publish_release.sh --notes-file $notes"
-    say "dry run: every check passed; nothing was published"
+    say "dry run: the checks above passed; the release gate, signing and the GitHub release check run when you publish; nothing was published"
     exit 0
 fi
 

@@ -68,11 +68,16 @@ verify:
 verify-portable:
 	./scripts/verify.sh --portable
 
+# The checked front door. release.sh refuses a dirty tree, a branch other than
+# main, a local main that is not origin/main, a CHANGELOG top section that is
+# not this version's or still says unreleased, an existing tag and a build
+# number that did not go up, writes the notes, then hands off to
+# scripts/publish_release.sh. It publishes.
 release:
-	./scripts/publish_release.sh
+	./scripts/release.sh
 
-# Every release precondition (clean tree, CHANGELOG section, tag, build
-# number) checked and the notes written, with nothing published.
+# The same checks and the notes, with nothing published. The release gate,
+# signing and the check for an existing GitHub release wait for publish time.
 release-check:
 	./scripts/release.sh --dry-run
 
