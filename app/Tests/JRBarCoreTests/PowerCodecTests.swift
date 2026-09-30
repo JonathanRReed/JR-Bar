@@ -158,6 +158,52 @@ struct PowerCodecTests {
         #expect(odd.presence == nil)
     }
 
+    @Test("focus decodes the outbound admission, and an absent or unknown one admits everything")
+    func outboundAdmission() throws {
+        let asks = try Self.state("""
+        {"t":"state","v":1,"generation":5,"aggregate":{},"sessions":[],"asks":[],"devices":[],
+         "focus":{"mode":"asks_only","source":"override","until":null,"display":"asks","outbound":"asks",
+                  "banner_allowed":true,"audible_allowed":true,"summary":"DND: Manual Asks Only"}}
+        """)
+        let focus = try #require(asks.focus)
+        #expect(focus.outbound == "asks")
+        #expect(focus.admitsOutbound(kind: "ask_opened"))
+        #expect(focus.admitsOutbound(kind: "escalation_stage"))
+        #expect(!focus.admitsOutbound(kind: "failed"))
+        #expect(!focus.admitsOutbound(kind: "completed"))
+        #expect(!focus.admitsOutbound(kind: "quota_crossed"))
+
+        // A daemon that predates the key: nothing decodes, everything is admitted.
+        let old = try Self.state("""
+        {"t":"state","v":1,"generation":6,"aggregate":{},"sessions":[],"asks":[],"devices":[],
+         "focus":{"mode":"dim","source":"schedule","until":null,"banner_allowed":true,"audible_allowed":true}}
+        """)
+        let bare = try #require(old.focus)
+        #expect(bare.outbound == nil)
+        let oldKinds = ["ask_opened", "failed", "completed", "quota_pace"]
+        let oldAdmits = oldKinds.map { bare.admitsOutbound(kind: $0) }
+        #expect(oldAdmits == [true, true, true, true])
+
+        // The four words, and one this build has never heard of.
+        let kinds = ["ask_opened", "escalation_stage", "failed", "completed", "quota_crossed"]
+        func verdicts(for word: String?) -> [Bool] {
+            let focus = CoreFocus(mode: "off", outbound: word)
+            return kinds.map { focus.admitsOutbound(kind: $0) }
+        }
+        let everything = verdicts(for: "all")
+        let criticalOnly = verdicts(for: "critical")
+        let asksOnly = verdicts(for: "asks")
+        let nothing = verdicts(for: "none")
+        let unknown = verdicts(for: "someday")
+        let absent = verdicts(for: nil)
+        #expect(everything == [true, true, true, true, true])
+        #expect(criticalOnly == [true, true, true, false, false])
+        #expect(asksOnly == [true, true, false, false, false])
+        #expect(nothing == [false, false, false, false, false])
+        #expect(unknown == everything)
+        #expect(absent == everything)
+    }
+
     @Test("the preferences only the legacy window wrote are in the catalogue, saved data is not")
     func legacyWindowKeys() {
         let kinds = Dictionary(uniqueKeysWithValues: SettingsKey.all.map { ($0.path, $0.kind) })
