@@ -129,7 +129,11 @@ public enum AquariumPlanner {
     public static func plan(for session: CoreSession,
                             axes: CoreSessionAxes? = nil,
                             now: Date) -> FishPlan {
-        let activity = self.activity(for: session)
+        // The panel's own reading, so the tank and the panel cannot
+        // disagree: a sub-agent whose prompt is quiet (no ask on its
+        // row) keeps schooling rather than drawing an ask nobody was
+        // given. The evidence line still cites the mode it read.
+        let activity = SessionActivity.reduce(session)
         let overlay = self.overlay(for: session, axes: axes, activity: activity)
         let action = self.action(for: session, axes: axes, activity: activity, now: now)
         let markers = parallelMarkers(for: session, activity: activity)
@@ -137,19 +141,6 @@ public enum AquariumPlanner {
         return FishPlan(state: state(for: activity, action: action),
                         action: action, overlay: overlay,
                         parallelMarkers: markers, evidence: evidence)
-    }
-
-    /// What the tank acts on: the panel's reading, except for a worker
-    /// that reads "waiting" with no ask on its row. The daemon publishes
-    /// an ask for a sub-agent only while sub-agent asks are on, so this
-    /// is a worker whose prompt stays quiet by default; the tank keeps it
-    /// schooling rather than draw an ask nobody was given. The evidence
-    /// line still cites the mode it read.
-    static func activity(for session: CoreSession) -> SessionActivity {
-        let activity = SessionActivity.reduce(session)
-        guard activity == .waiting, session.ask == nil,
-              !AquariumModel.isMain(session) else { return activity }
-        return .working
     }
 
     /// AQ13 — parallel work markers: a working main session's schooling

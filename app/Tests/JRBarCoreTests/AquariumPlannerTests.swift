@@ -154,6 +154,40 @@ import Testing
         #expect(plan.evidence.contains("mode=waiting_for_input"))
     }
 
+    @Test func aWorkerThatNamesNoParentKeepsReadingAsAMainRow() {
+        // The panel lists a parentless worker as a main row, and the tank
+        // swims it full-size; its reading is unchanged by the quiet rule.
+        let worker = CoreSession(id: "w1", provider: "claude", kind: "worker",
+                                 mode: "waiting_for_input", lifecycle: "active", nextActor: "user")
+        let plan = AquariumPlanner.plan(for: worker, now: now)
+        #expect(plan.action == .surfaceQuestion)
+        #expect(plan.state == .surfacing)
+    }
+
+    @Test func theTankReadsASessionTheWayThePanelDoes() {
+        // One rule for "waiting on you": the tank surfaces a fish exactly
+        // when `SessionActivity` says waiting, so the two cannot drift.
+        let ask = CoreAsk(kind: "question", summary: "Which file?")
+        let sessions = [
+            session(mode: "waiting_for_input", nextActor: "user"),
+            session(mode: "working", nextActor: "user"),
+            session(mode: "working", ask: ask),
+            CoreSession(id: "w1", provider: "claude", kind: "worker", parent: "s1",
+                        mode: "waiting_for_input", lifecycle: "active", nextActor: "user"),
+            CoreSession(id: "w2", provider: "claude", kind: "worker",
+                        mode: "waiting_for_input", lifecycle: "active", nextActor: "user"),
+            CoreSession(id: "w3", provider: "claude", kind: "worker", parent: "s1",
+                        mode: "waiting_for_input", lifecycle: "active", nextActor: "user", ask: ask),
+            CoreSession(id: "w4", provider: "claude", kind: "worker", parent: "s1",
+                        mode: "working", lifecycle: "active"),
+        ]
+        for candidate in sessions {
+            let waiting = SessionActivity.reduce(candidate) == .waiting
+            let plan = AquariumPlanner.plan(for: candidate, now: now)
+            #expect((plan.state == .surfacing) == waiting, "\(candidate.id) \(candidate.mode ?? "-")")
+        }
+    }
+
     @Test func aWorkerWithAPublishedAskAndAWaitingMainStillAsk() {
         let ask = CoreAsk(kind: "permission", summary: "Run the build?")
         let worker = CoreSession(id: "w1", provider: "claude", kind: "worker", parent: "s1",
