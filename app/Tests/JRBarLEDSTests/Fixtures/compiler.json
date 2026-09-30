@@ -379,5 +379,254 @@
   "transformed": true,
   "reasons": [],
   "output": "#FFFFFF 40s\n#000000 40s\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 100ms none\n#000000 100ms none\n#FFFFFF 100ms none\n#000000 100ms none\n#FFFFFF 100ms none\n#000000 100ms none\n#FFFFFF 100ms none\n#000000 100ms none\n#FFFFFF 100ms none\n#000000 100ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "#FF0000 100ms none\n#000000 100ms none\n#FF0000 100ms none\n#000000 100ms none\n#FF0000 100ms none\n#000000 100ms none\n#FF0000 100ms none\n#000000 100ms none\n#FF0000 100ms none\n#000000 100ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FF0000 500ms none\n#000000 500ms none\n#FF0000 500ms none\n#000000 500ms none\n#FF0000 500ms none\n#000000 500ms none\n#FF0000 500ms none\n#000000 500ms none\n#FF0000 500ms none\n#000000 500ms none\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 60ms none\n#000000 60ms none\n#FFFFFF 60ms none\n#000000 60ms none\n#FFFFFF 60ms none\n#000000 60ms none\n#FFFFFF 60ms none\n#000000 60ms none\n#FFFFFF 60ms none\n#000000 60ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "0:#FFFFFF 100ms none; 1:#FFFFFF 100ms none; 2:#FFFFFF 100ms none; 3:#FFFFFF 100ms none; 4:#FFFFFF 100ms none; 5:#FFFFFF 100ms none; 6:#FFFFFF 100ms none; 7:#FFFFFF 100ms none\n#000000 100ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "0:#FFFFFF 300ms none; 1:#FFFFFF 300ms none; 2:#FFFFFF 300ms none; 3:#FFFFFF 300ms none; 4:#FFFFFF 300ms none; 5:#FFFFFF 300ms none; 6:#FFFFFF 300ms none; 7:#FFFFFF 300ms none\n#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "0:#00CCFF 80ms none\n0:#000000 80ms none; 1:#00CCFF 80ms none\n1:#000000 80ms none; 2:#00CCFF 80ms none\n2:#000000 80ms none; 3:#00CCFF 80ms none\n3:#000000 80ms none; 4:#00CCFF 80ms none\n4:#000000 80ms none; 5:#00CCFF 80ms none\n5:#000000 80ms none; 6:#00CCFF 80ms none\n6:#000000 80ms none; 7:#00CCFF 80ms none\n7:#000000 80ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "0:#00CCFF 80ms none\n0:#000000 80ms none; 1:#00CCFF 80ms none\n1:#000000 80ms none; 2:#00CCFF 80ms none\n2:#000000 80ms none; 3:#00CCFF 80ms none\n3:#000000 80ms none; 4:#00CCFF 80ms none\n4:#000000 80ms none; 5:#00CCFF 80ms none\n5:#000000 80ms none; 6:#00CCFF 80ms none\n6:#000000 80ms none; 7:#00CCFF 80ms none\n7:#000000 80ms none\nrepeat"
+ },
+ {
+  "program": "0:#FF0000\n1:#FF0000\n2:#000000\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "0:#FF0000 336ms\n1:#FF0000 336ms\n2:#000000 336ms\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 250ms none\n#000000 250ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "#FFFFFF 250ms none\n#000000 250ms none\nrepeat"
+ },
+ {
+  "program": "#FF0000 500ms none\n#000000 500ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "#FF0000 500ms none\n#000000 500ms none\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 200ms none\n#000000 200ms none\n#FFFFFF 200ms none\n#000000 200ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 400ms none\n#000000 400ms none\n#FFFFFF 400ms none\n#000000 400ms none\nrepeat"
+ },
+ {
+  "program": "#FFFFFF #000000 #FFFFFF #000000 #FFFFFF #000000 #FFFFFF #000000 400ms none\nroll-right 400ms linear\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "#FFFFFF #000000 #FFFFFF #000000 #FFFFFF #000000 #FFFFFF #000000 400ms none\nroll-right 400ms linear\nrepeat"
+ },
+ {
+  "program": "#00FF00 #0000FF #FFFFFF #000000 #808080 #FF00FF #00FFFF #FFFF00\n#000000 200ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped",
+   "loop_cadence_clamped"
+  ],
+  "output": "#00FF00 #0000FF #FFFFFF #000000 #808080 #FF00FF #00FFFF #FFFF00 500ms\n#000000 400ms none\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 200ms pulse\n#000000 200ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 400ms pulse\n#000000 400ms none\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 150ms cosine\n#000000 150ms cosine\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 300ms cosine\n#000000 300ms cosine\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 200ms linear\n#000000 200ms linear\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 400ms linear\n#000000 400ms linear\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 200ms ease\n#000000 200ms ease\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 400ms ease\n#000000 400ms ease\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 200ms ease-in-out\n#000000 200ms ease-in-out\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 400ms ease-in-out\n#000000 400ms ease-in-out\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 200ms\n#000000 200ms\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 400ms\n#000000 400ms\nrepeat"
+ },
+ {
+  "program": "brightness 128\n#FFFFFF 100ms none\n#000000 100ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "brightness 128\n#FFFFFF 300ms none\n#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "0:#FFFFFF 100ms none; 1:#FFFFFF 100ms none\n0:#000000 100ms none; 1:#000000 100ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "0:#FFFFFF 300ms none; 1:#FFFFFF 300ms none\n0:#000000 300ms none; 1:#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "0:#FFFFFF 100ms none\n0:#000000 100ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "0:#FFFFFF 300ms none\n0:#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 20s none\n#000000 20s none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "#FFFFFF 20s none\n#000000 20s none\nrepeat"
+ },
+ {
+  "program": "0:#FFFFFF 100ms none; 1:#FFFFFF 100ms none\n0:#000000 100ms none; 1:#000000 100ms none\nrepeat",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "0:#FFFFFF 300ms none; 1:#FFFFFF 300ms none\n0:#000000 300ms none; 1:#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "0:#FFFFFF 100ms none; 5:#FFFFFF 100ms none\n0:#000000 100ms none; 5:#000000 100ms none\nrepeat",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "0:#FFFFFF 300ms none; 5:#FFFFFF 300ms none\n0:#000000 300ms none; 5:#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "#FF0000 #00FF00 #0000FF\nroll 800ms linear\nrepeat",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#FF0000 #00FF00 #0000FF 500ms\nroll-right 800ms linear\nrepeat"
+ },
+ {
+  "program": "#FFFFFF 100ms none\n#000000 100ms none\n#FFFFFF 100ms none\n#000000 100ms none\n#FFFFFF 100ms none\n#000000 100ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\n#FFFFFF 300ms none\n#000000 300ms none\nrepeat"
+ },
+ {
+  "program": "0:#FFFFFF\n1:#00FF00\n#000000 500ms\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "0:#FFFFFF\n1:#00FF00\n#000000 500ms\nrepeat"
  }
 ]

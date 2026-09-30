@@ -54,6 +54,74 @@ def test_compiler_fixtures_are_what_the_compiler_returns_today(generator) -> Non
         assert old == new, f"compiler.json is stale for {new['program']!r}: re-run the generator"
 
 
+def test_flash_fixtures_are_what_the_analysis_measures_today(generator) -> None:
+    stored = json.loads((generator.FIXTURES / "flash.json").read_text())
+    fresh = _as_stored(generator.flash_rows())
+    assert len(stored) == len(fresh), "flash.json is stale: re-run the generator"
+    for old, new in zip(stored, fresh, strict=True):
+        assert old == new, f"flash.json is stale for {new['program']!r}: re-run the generator"
+
+
+def test_the_fixture_set_covers_what_only_the_measured_pass_can_see(generator) -> None:
+    """The Swift compiler once passed every recorded row while lacking the
+    measured-flash pass, because no row needed it. These rows do, and each
+    category below fails a Swift port that leaves the pass out."""
+    from jrbar.animation import loop_duration_ms, read_program
+
+    rows = {row["program"]: row for row in _as_stored(generator.compiler_rows())}
+
+    def row_for(program: str, led_count: int = 8) -> dict:
+        row = rows[program]
+        assert row["led_count"] == led_count
+        return row
+
+    def raw_loop_ms(program: str) -> int:
+        animation, _problems = read_program(program, led_count=8)
+        return loop_duration_ms(animation) or 0
+
+    # A whole-bar blink whose loop already clears the 500 ms floor, so only
+    # the measured rate can slow it: 300 ms phases, then 500 ms in red.
+    white = generator._alternating("#FFFFFF", 100, 5)
+    assert raw_loop_ms(white) >= 500
+    assert row_for(white)["reasons"] == ["loop_cadence_clamped"]
+    assert row_for(white)["output"] == generator._alternating("#FFFFFF", 300, 5)
+    red = generator._alternating("#FF0000", 100, 5)
+    assert row_for(red)["output"] == generator._alternating("#FF0000", 500, 5)
+
+    # A loop under the floor by ten short lines: 600 ms, eight flashes a second.
+    short = generator._alternating("#FFFFFF", 60, 5)
+    assert raw_loop_ms(short) >= 500
+    assert row_for(short)["reasons"] == ["loop_cadence_clamped"]
+
+    # A field-wide indexed blink is measured, and slowed.
+    field = generator.SUSTAINED_FLASH_PROGRAMS[3][0]
+    assert row_for(field)["reasons"] == ["loop_cadence_clamped"]
+
+    # A head that only travels is untouched.
+    head = generator.SUSTAINED_FLASH_PROGRAMS[4][0]
+    assert row_for(head)["transformed"] is False
+    assert row_for(head)["reasons"] == []
+
+    # Untimed indexed lines keep the phase they were written with: Python
+    # stretches only the loop, to 336 ms a line.
+    assert row_for("0:#FF0000\n1:#FF0000\n2:#000000\nrepeat")["output"] == (
+        "0:#FF0000 336ms\n1:#FF0000 336ms\n2:#000000 336ms\nrepeat"
+    )
+
+    # The thresholds: 2 Hz and 1 Hz cadences are unchanged.
+    for program in (
+        "#FFFFFF 250ms none\n#000000 250ms none\nrepeat",
+        "#FF0000 500ms none\n#000000 500ms none\nrepeat",
+    ):
+        assert row_for(program)["transformed"] is False
+        assert row_for(program)["reasons"] == []
+
+    # Every easing curve, a roll, a colour list and brightness are in the set.
+    programs = "\n".join(rows)
+    for needle in ("pulse", "cosine", "linear", "ease", "roll-right", "brightness 128"):
+        assert needle in programs, needle
+
+
 def test_parse_verdict_fixtures_are_what_the_firmware_says_today(generator) -> None:
     stored = json.loads((generator.FIXTURES / "parse_verdicts.json").read_text())
     fresh = _as_stored(_needs_firmware(generator.verdict_rows))

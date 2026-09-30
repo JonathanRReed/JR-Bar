@@ -7,8 +7,9 @@ Run from the repository root with the repo venv, so ``jrbar`` imports from
     .venv/bin/python app/scripts/gen_leds_fixtures.py
     .venv/bin/python app/scripts/gen_leds_fixtures.py --compiler-only
 
-The second form rewrites only ``compiler.json`` and needs no firmware, so
-the sampler fixtures are not re-sampled and ``programs/`` does not churn.
+The second form rewrites only ``compiler.json`` and ``flash.json`` and needs
+no firmware, so the sampler fixtures are not re-sampled and ``programs/`` does
+not churn.
 ``tests/test_leds_fixtures_match_reference.py`` compares every stored file
 to the rows built here and fails when one is stale.
 
@@ -43,6 +44,10 @@ Outputs (all under app/Tests/JRBarLEDSTests/Fixtures/):
 * ``parse_verdicts.json``   -- firmware parse results (ok / error name) for a
   list of edge-case programs at 8 and 2 LEDs.
 * ``compiler.json``         -- ``compile_presentation_program`` results.
+* ``flash.json``            -- ``flash_analysis.analyse`` measurements (hertz,
+  flashes, span, peak area) of the same programs, so the Swift port of the
+  measured-flash pass is checked number for number, not only through the
+  compiled text it decides.
 """
 
 from __future__ import annotations
@@ -58,6 +63,8 @@ sys.path.insert(0, str(REPO / "src"))
 
 from jrbar import _led_status_legacy as led_status  # noqa: E402
 from jrbar._led_wasm_legacy import SdLedWasmController  # noqa: E402  (raw firmware engine)
+from jrbar.animation import errors_only, read_program  # noqa: E402
+from jrbar.flash_analysis import analyse  # noqa: E402
 from jrbar.models import AgentMode  # noqa: E402
 from jrbar.presentation_compiler import compile_presentation_program  # noqa: E402
 
@@ -269,27 +276,107 @@ def verdict_rows() -> list[dict]:
     return verdicts
 
 
+#: Hand-written loops that stress the temporal-safety compiler's text rules.
+COMPILER_EXTRAS: list[tuple[str, int]] = [
+    ("#ff0000 50ms none\n#000000 50ms none\nrepeat", 8),
+    ("#ffffff 80ms none\n#000000\nrepeat", 8),
+    ("#ff0000\n#000000\nrepeat", 8),
+    ("0:#ffffff 90ms none\n2:#ff00ee 90ms none\n5:#00ccff 90ms none\noff 120ms ease-out\nrepeat", 8),
+    ("#ff0000 #00ff00\nroll 100ms\nrepeat", 8),
+    ("#e00000 100ms pulse\nrepeat", 8),
+    ("#ffffff pulse\n#000000 ease\nrepeat", 8),
+    ("#ffffff 200ms linear 100ms\n#000000 100ms\nrepeat", 8),
+    ("#ffffff 1s\nrepeat 3\noff", 8),
+    ("#ffffff 1s\noff", 8),
+    ("roll 100ms", 8),
+    ("#ffffff 40s\n#000000 40s\nrepeat", 8),
+]
+
+
+def _alternating(bright: str, phase_ms: int, cycles: int) -> str:
+    """``cycles`` bright/dark pairs of whole-bar lines, then ``repeat``."""
+    lines = []
+    for _ in range(cycles):
+        lines.append(f"{bright} {phase_ms}ms none")
+        lines.append(f"#000000 {phase_ms}ms none")
+    return "\n".join([*lines, "repeat"])
+
+
+def _indexed_field(color: str, leds: range, phase_ms: int) -> str:
+    return "; ".join(f"{index}:{color} {phase_ms}ms none" for index in leds)
+
+
+#: Loops the MEASURED flash pass has to judge, because their text alone does
+#: not say how fast the field reverses: a sustained whole-bar blink whose loop
+#: is long enough to pass the cycle floor, the same in saturated red, an
+#: indexed blink that is field-wide, a head that only travels (untouched), the
+#: untimed indexed lines the phase floor exempts, the 2 Hz and 1 Hz
+#: boundaries, a roll, a colour list, every easing curve, and brightness.
+#: Colours are uppercase so an untouched loop reports ``transformed: false``.
+SUSTAINED_FLASH_PROGRAMS: list[tuple[str, int]] = [
+    (_alternating("#FFFFFF", 100, 5), 8),
+    (_alternating("#FF0000", 100, 5), 8),
+    (_alternating("#FFFFFF", 60, 5), 8),
+    (
+        "\n".join(
+            [
+                _indexed_field("#FFFFFF", range(8), 100),
+                "#000000 100ms none",
+                "repeat",
+            ]
+        ),
+        8,
+    ),
+    (
+        "\n".join(
+            [
+                "0:#00CCFF 80ms none",
+                *(f"{k - 1}:#000000 80ms none; {k}:#00CCFF 80ms none" for k in range(1, 8)),
+                "7:#000000 80ms none",
+                "repeat",
+            ]
+        ),
+        8,
+    ),
+    ("0:#FF0000\n1:#FF0000\n2:#000000\nrepeat", 8),
+    ("#FFFFFF 250ms none\n#000000 250ms none\nrepeat", 8),
+    ("#FF0000 500ms none\n#000000 500ms none\nrepeat", 8),
+    ("#FFFFFF 200ms none\n#000000 200ms none\n#FFFFFF 200ms none\n#000000 200ms none\nrepeat", 8),
+    ("#FFFFFF #000000 #FFFFFF #000000 #FFFFFF #000000 #FFFFFF #000000 400ms none\nroll-right 400ms linear\nrepeat", 8),
+    ("#00FF00 #0000FF #FFFFFF #000000 #808080 #FF00FF #00FFFF #FFFF00\n#000000 200ms none\nrepeat", 8),
+    ("#FFFFFF 200ms pulse\n#000000 200ms none\nrepeat", 8),
+    ("#FFFFFF 150ms cosine\n#000000 150ms cosine\nrepeat", 8),
+    ("#FFFFFF 200ms linear\n#000000 200ms linear\nrepeat", 8),
+    ("#FFFFFF 200ms ease\n#000000 200ms ease\nrepeat", 8),
+    ("#FFFFFF 200ms ease-in-out\n#000000 200ms ease-in-out\nrepeat", 8),
+    ("#FFFFFF 200ms\n#000000 200ms\nrepeat", 8),
+    ("brightness 128\n#FFFFFF 100ms none\n#000000 100ms none\nrepeat", 8),
+    # Two of eight LEDs is exactly the area threshold and counts; one does not.
+    ("0:#FFFFFF 100ms none; 1:#FFFFFF 100ms none\n0:#000000 100ms none; 1:#000000 100ms none\nrepeat", 8),
+    ("0:#FFFFFF 100ms none\n0:#000000 100ms none\nrepeat", 8),
+    # A loop long enough to exhaust the sampling budget.
+    ("#FFFFFF 20s none\n#000000 20s none\nrepeat", 8),
+    # The Dot: two LEDs, and an index the Dot does not have.
+    ("0:#FFFFFF 100ms none; 1:#FFFFFF 100ms none\n0:#000000 100ms none; 1:#000000 100ms none\nrepeat", 2),
+    ("0:#FFFFFF 100ms none; 5:#FFFFFF 100ms none\n0:#000000 100ms none; 5:#000000 100ms none\nrepeat", 2),
+    ("#FF0000 #00FF00 #0000FF\nroll 800ms linear\nrepeat", 2),
+    # Three 100 ms pairs: a 600 ms loop that clears the cycle floor at 5 Hz.
+    (_alternating("#FFFFFF", 100, 3), 8),
+    # Untimed named-LED lines inside a loop that already clears the floor.
+    ("0:#FFFFFF\n1:#00FF00\n#000000 500ms\nrepeat", 8),
+]
+
+
+def compiler_programs() -> list[tuple[str, int]]:
+    """Every ``(program, led_count)`` the compiler and flash fixtures cover."""
+    return [*program_set().values(), *COMPILER_EXTRAS, *SUSTAINED_FLASH_PROGRAMS]
+
+
 def compiler_rows() -> list[dict]:
-    """``compile_presentation_program`` over every program fixture and a few
-    hand-written loops. Pure Python: no firmware is needed."""
-    compiler_programs = [
-        (p, n) for (p, n) in program_set().values()
-    ] + [
-        ("#ff0000 50ms none\n#000000 50ms none\nrepeat", 8),
-        ("#ffffff 80ms none\n#000000\nrepeat", 8),
-        ("#ff0000\n#000000\nrepeat", 8),
-        ("0:#ffffff 90ms none\n2:#ff00ee 90ms none\n5:#00ccff 90ms none\noff 120ms ease-out\nrepeat", 8),
-        ("#ff0000 #00ff00\nroll 100ms\nrepeat", 8),
-        ("#e00000 100ms pulse\nrepeat", 8),
-        ("#ffffff pulse\n#000000 ease\nrepeat", 8),
-        ("#ffffff 200ms linear 100ms\n#000000 100ms\nrepeat", 8),
-        ("#ffffff 1s\nrepeat 3\noff", 8),
-        ("#ffffff 1s\noff", 8),
-        ("roll 100ms", 8),
-        ("#ffffff 40s\n#000000 40s\nrepeat", 8),
-    ]
+    """``compile_presentation_program`` over every program fixture and the
+    hand-written loops above. Pure Python: no firmware is needed."""
     compiled = []
-    for program, led_count in compiler_programs:
+    for program, led_count in compiler_programs():
         result = compile_presentation_program(program, led_count=led_count)
         compiled.append(
             {
@@ -302,6 +389,28 @@ def compiler_rows() -> list[dict]:
             }
         )
     return compiled
+
+
+def flash_rows() -> list[dict]:
+    """``flash_analysis.analyse`` over the same programs, as the raw text
+    parses (before any compiler pass). Pure Python: no firmware is needed."""
+    rows = []
+    for program, led_count in compiler_programs():
+        animation, problems = read_program(program, led_count=led_count)
+        if errors_only(problems):
+            continue
+        measured = analyse(animation, led_count=led_count)
+        rows.append(
+            {
+                "program": program,
+                "led_count": led_count,
+                "hertz": measured.hertz,
+                "flashes": measured.flashes,
+                "span_ms": measured.span_ms,
+                "peak_area": measured.peak_area,
+            }
+        )
+    return rows
 
 
 def write_program_fixtures(rows: list[dict]) -> None:
@@ -325,13 +434,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--compiler-only",
         action="store_true",
-        help="rewrite only compiler.json: no firmware sampling, programs/ untouched",
+        help="rewrite only compiler.json and flash.json: no firmware sampling, programs/ untouched",
     )
     options = parser.parse_args(argv)
     if not options.compiler_only:
         write_program_fixtures(program_rows())
         write_json("parse_verdicts.json", verdict_rows(), "parse verdicts")
     write_json("compiler.json", compiler_rows(), "compiler fixtures")
+    write_json("flash.json", flash_rows(), "flash measurements")
 
 
 if __name__ == "__main__":

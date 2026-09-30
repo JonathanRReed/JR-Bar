@@ -14,7 +14,7 @@ Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
 | Path | What it is |
 | --- | --- |
 | `Package.swift` | SwiftPM package `JRBar` (tools 6.2, macOS 26). |
-| `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, keyframe renderer, presentation-safety compiler. No AppKit. |
+| `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, keyframe renderer, presentation-safety compiler and its measured-flash pass. No AppKit. |
 | `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the panel's layout math, label and activity rules, the usage sparkline reduction, the history model, the Creator Micro 2 deck model and rail geometry, the Alcove capsule geometry, and the child-process supervisor. Foundation only. |
 | `Sources/JRBarUI/` | AppKit pieces small enough to test on their own: the status item icon renderer (glyph styles and the meter strip). |
 | `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings, History, Usage Center, Effect Studio and Control Center windows, the deck rail, notifications, sounds, HUD, file-feed fallback. |
@@ -70,8 +70,8 @@ repository root:
 .venv/bin/python app/scripts/gen_leds_fixtures.py --compiler-only
 ```
 
-The second form rewrites only `compiler.json`: it needs no firmware and leaves
-`programs/` alone. `tests/test_leds_fixtures_match_reference.py` compares every
+The second form rewrites only `compiler.json` and `flash.json`: it needs no
+firmware and leaves `programs/` alone. `tests/test_leds_fixtures_match_reference.py` compares every
 stored fixture to what the generator would write today, so a stale one fails
 the Python suite.
 
@@ -202,6 +202,7 @@ program.cycleDuration, program.isStatic, program.motionEndsAt
 LEDSKeyframePlan.render(sampler: sampler)   // lead + loop keyframe tracks for Core Animation, nil when too long
 plan.codes(atMilliseconds: ms)              // what the animation shows (linear between keyframes)
 LEDSPresentationCompiler.compile(text)   // port of presentation_compiler.py (2 Hz / 1 Hz red clamps)
+LEDSFlashAnalysis.analyse(steps, ledCount: 8)   // port of flash_analysis.py: measured hertz, flashes, span, peak area
 ```
 
 Colour note: the sampler's floats are the firmware codes over 255. The strip
@@ -239,8 +240,14 @@ celebration, failure, first light, and hand-written edge cases covering every
 syntax feature. Nothing is read from a mounted device, so regenerating gives
 the same files on any Mac. The Swift sampler matches within one code per
 channel at every sample. The same script records 250 firmware parse verdicts
-(accept / error name) and 42 `compile_presentation_program` results, which the
-parser and compiler ports reproduce exactly.
+(accept / error name), 68 `compile_presentation_program` results and 67
+`flash_analysis.analyse` measurements (`flash.json`: hertz, flashes, span and
+peak area), which the parser, compiler and flash-analysis ports reproduce
+exactly. The compiler rows include the loops only the measured pass can judge:
+a 5 Hz whole-bar blink whose loop already clears the 500 ms floor (slowed to
+300 ms phases, 500 ms in saturated red), a field-wide indexed blink, a head that
+only travels (untouched), untimed named-LED lines inside a loop (exempt from
+the phase floor, as in Python), and the 2 Hz and 1 Hz boundaries.
 
 ## The core protocol (`JRBarCore`)
 
