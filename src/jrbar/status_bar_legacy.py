@@ -1987,7 +1987,6 @@ class StatusBarController(NSObject):
         self._discovery_revalidating = False
         self._focus_ids_cache = None
         self._focus_observation_available: bool | None = None
-        self._focus_summary_cache = None
         self._keepalive_poke_in_flight = False
         self._last_event_refresh_at = 0.0
         self._menu_rebuild_pending = None
@@ -2157,7 +2156,6 @@ class StatusBarController(NSObject):
             return
         self._consume_restricted_finite_cues(projection)
         self._menu_signature = None
-        self._focus_summary_cache = None
         if (
             getattr(self, "_runtime_started", False)
             and not getattr(self, "_runtime_termination_started", False)
@@ -4850,7 +4848,6 @@ class StatusBarController(NSObject):
             reason = getattr(failure, "value", "unavailable")
             self.set_settings_message(f"Could not update DND: {reason}.")
         self._menu_signature = None
-        self._focus_summary_cache = None
         return applied
 
     def _set_dnd_for_duration(self, mode: DndMode, seconds: float) -> bool:
