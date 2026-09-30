@@ -196,6 +196,16 @@ class AnswerRuntime:
     def has_handler(self, invocation: object) -> bool:
         return self._registry.resolve(invocation) is not None
 
+    def has_active_work(self) -> bool:
+        """True while a handler is queued or running, even after a timeout.
+
+        A timed-out attempt only orphans its future: a job that already started
+        keeps running, and a new send would queue behind it. The controller
+        asks this before it lets a fresh verdict replace a timed-out attempt.
+        """
+        with self._lock:
+            return self._active_work_count > 0
+
     def snapshot(
         self,
         request_identity: AnnouncerAlertIdentity,
