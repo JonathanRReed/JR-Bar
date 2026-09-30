@@ -110,4 +110,13 @@ struct FoldCaptureRetryTests {
         #expect(!retry.mayStart(.capture, at: 100.5))
         #expect(retry.mayStart(.capture, at: 50))
     }
+
+    @Test("a missing own-app entry is named apart from a missing display")
+    func ownAppMissingHasItsOwnWords() {
+        let display = FoldCaptureError.noBuiltinDisplay.errorDescription
+        let ownApp = FoldCaptureError.ownAppMissing.errorDescription
+        #expect(display?.isEmpty == false)
+        #expect(ownApp?.isEmpty == false)
+        #expect(display != ownApp)
+    }
 }

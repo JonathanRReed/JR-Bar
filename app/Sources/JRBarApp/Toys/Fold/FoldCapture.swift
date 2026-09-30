@@ -116,10 +116,15 @@ struct FoldCaptureRetry {
 
 enum FoldCaptureError: LocalizedError {
     case noBuiltinDisplay
+    /// ScreenCaptureKit lists no application entry for JR-Bar itself, as
+    /// happens while it has no listable windows: the fold keeps its own
+    /// pieces out of the picture through that entry.
+    case ownAppMissing
 
     var errorDescription: String? {
         switch self {
         case .noBuiltinDisplay: return "no built-in display to capture"
+        case .ownAppMissing: return "JR-Bar is not in the list of apps ScreenCaptureKit can capture"
         }
     }
 }
@@ -244,10 +249,11 @@ final class FoldCapture {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false)
         guard !stopRequested else { return }
-        guard let display = content.displays.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }),
-              let ownApp = content.applications.first(where: {
-                  $0.processID == ProcessInfo.processInfo.processIdentifier })
+        guard let display = content.displays.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 })
         else { throw FoldCaptureError.noBuiltinDisplay }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        guard let ownApp = content.applications.first(where: { $0.processID == ownPID })
+        else { throw FoldCaptureError.ownAppMissing }
         displayID = display.displayID
         displayFrameQuartz = CGDisplayBounds(display.displayID)
 
