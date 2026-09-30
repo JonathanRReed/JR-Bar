@@ -1,5 +1,5 @@
-"""Lid animation presets -- pure data, extracted from settings_window for
-its size ratchet (2026-08-26). Five looks per lid transition kind; every
+"""Lid animation presets -- pure data, once extracted from the retired Settings
+window for its size ratchet (2026-08-26). Five looks per lid transition kind; every
 program is firmware-parsed by tests.
 
 Most looks are one program that plays the same on every device. The Iris

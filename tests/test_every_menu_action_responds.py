@@ -1,15 +1,11 @@
 """Every click must do something.
 
-The dropdown walk that lived here went with the retired menu bar. What is
-left: the Screen Bar sampler's batched engine call, and the hook buttons
-Settings and Setup build for every provider.
+The dropdown walk that lived here went with the retired menu bar, and the
+hook buttons with the Python Settings window. What is left: the Screen Bar
+sampler's batched engine call.
 """
 
 from __future__ import annotations
-
-from types import SimpleNamespace
-
-from test_jrbar import isolate_controller
 
 
 def test_sampler_serves_frames_from_one_batched_engine_call() -> None:
@@ -66,25 +62,3 @@ def test_sampler_serves_frames_from_one_batched_engine_call() -> None:
     assert calls["batch"] == 1, "a served batch must not be re-rendered"
     assert calls["step"] == 0
     sampler.close(timeout_seconds=2.0)
-
-
-def test_every_hook_provider_has_install_and_uninstall_actions(request):
-    """Settings and Setup build install/uninstall buttons for EVERY entry
-    in HOOK_PROVIDERS via f"install{Provider}Hooks:" -- a provider added
-    without its controller IBActions ships dead buttons (opencode,
-    antigravity, and kiro did exactly that)."""
-    case = SimpleNamespace(
-        addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
-    )
-    isolate_controller(case)
-    controller = case.controller
-
-    from jrbar.providers import HOOK_PROVIDERS
-
-    dead: list[str] = []
-    for provider in HOOK_PROVIDERS:
-        for prefix in ("install", "uninstall"):
-            method = f"{prefix}{provider.title()}Hooks_"
-            if not callable(getattr(controller, method, None)):
-                dead.append(method)
-    assert dead == [], f"hook buttons with no action: {dead}"

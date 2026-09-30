@@ -36,6 +36,7 @@ import pytest
 
 from jrbar.capacity_authority import CapacityProjection
 from jrbar.capacity_history import HistoryInterval
+from jrbar.capacity_history_runtime import resolve_capacity_history_store
 from jrbar.capacity_types import (
     CapacitySourceHealth,
     CapacityUnit,
@@ -55,6 +56,12 @@ from jrbar.decision_trace import CAPACITY_SECTION_TITLE, capacity_detail_text
 from jrbar.persistence_writer import SerialPersistenceWriter
 from tests.test_activity_ledger import _limits, _run_codex_refresh
 from tests.test_jrbar import isolate_controller
+
+
+def _capacity_store(target):
+    """The store the controller records into, or None while consent is off."""
+    return resolve_capacity_history_store(target, log=lambda _message: None)
+
 
 NOW = 1_800_000_000.0
 
@@ -302,7 +309,7 @@ def test_capacity_history_records_nothing_until_the_owner_consents(
 
     _run_codex_refresh(target, status_bar, _limits(85.0))
 
-    assert target.capacity_history_store() is None
+    assert _capacity_store(target) is None
     assert not history_path.exists()
     assert "Capacity history ...." in target.why_panel_body().replace(
         "Capacity history ", "Capacity history "
@@ -322,7 +329,7 @@ def test_a_consented_refresh_writes_one_bounded_sample_per_lane(
     _run_codex_refresh(target, status_bar, _limits(85.0))
     assert target._persistence_writer.wait_idle(timeout_seconds=1.0)
 
-    store = target.capacity_history_store()
+    store = _capacity_store(target)
     assert store is not None
     assert store.state.capacity_samples, "no sample was admitted"
     assert history_path.exists(), "nothing reached disk"
@@ -358,7 +365,7 @@ def test_turning_history_off_deletes_what_was_already_kept(controller) -> None:
     assert history_path.exists()
 
     target.settings = target.settings.with_capacity_history_enabled(False)
-    assert target.capacity_history_store() is None
+    assert _capacity_store(target) is None
 
     assert not history_path.exists()
 
@@ -383,7 +390,7 @@ def test_turning_history_off_invalidates_a_pending_flush(controller) -> None:
     _run_codex_refresh(target, status_bar, _limits(86.0))
 
     target.settings = target.settings.with_capacity_history_enabled(False)
-    assert target.capacity_history_store() is None
+    assert _capacity_store(target) is None
     release.set()
     assert target._persistence_writer.wait_idle(timeout_seconds=1.0)
 
@@ -461,7 +468,7 @@ def test_shortening_retention_prunes_now_not_at_some_later_flush(
     target, status_bar, history_path = controller
     _enable_history(target, days=90)
     _run_codex_refresh(target, status_bar, _limits(85.0))
-    store = target.capacity_history_store()
+    store = _capacity_store(target)
     assert store is not None and store.state.capacity_samples
 
     # A sample well outside a 7-day window, written the way the store writes.

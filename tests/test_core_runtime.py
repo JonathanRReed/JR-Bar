@@ -75,15 +75,30 @@ def test_every_protocol_command_is_registered__and_2_more() -> None:
 
 def test_the_headless_controller_has_no_way_to_open_a_window() -> None:
     """The daemon composes the controller in a fresh interpreter: the class it
-    serves with must not carry the retired Settings window's entry points."""
+    serves with must not carry the retired Settings window's entry points, and
+    composing it must not import the window's modules."""
     script = """
+RETIRED_WINDOW_MODULES = {
+    "jrbar.settings_window",
+    "jrbar.native_ui",
+    "jrbar.settings_window_controls",
+    "jrbar.settings_category_runtime",
+    "jrbar.onboarding_runtime",
+    "jrbar.global_action_settings_pane",
+    "jrbar.dnd_settings_pane",
+    "jrbar.deck_settings_pane",
+}
 import json
+import sys
 
 from jrbar import core_runtime
 from jrbar.application_composition import compose_status_bar_application
 
 compose_status_bar_application()
 controller_class = core_runtime.build_headless_controller_class()
+assert not [name for name in sys.modules if name in RETIRED_WINDOW_MODULES], sorted(
+    name for name in sys.modules if name in RETIRED_WINDOW_MODULES
+)
 retired = [
     name
     for name in (

@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from jrbar import draw_guard, ipc
 from jrbar.capacity_types import SourceKey
 from jrbar.operator_state import (
@@ -84,44 +82,6 @@ def test_a_raising_draw_callback_never_reaches_appkit__and_2_more() -> None:
     assert len(failures) == draw_guard.MAX_TRACKED_DRAW_FAILURES + 1
     assert failures["other"] == 5
     draw_guard.reset_draw_failures()
-
-
-
-def test_the_usage_graph_survives_a_model_it_cannot_plot__and_1_more() -> None:
-    # --- scenario: the_usage_graph_survives_a_model_it_cannot_plot
-    """365 days of history reach this view; one bad value must not be fatal."""
-    status_bar = pytest.importorskip("jrbar.status_bar")
-    draw_guard.reset_draw_failures()
-
-    view = status_bar.UsageGraphView.alloc().initWithFrame_(((0, 0), (400, 200)))
-    view.setModel_(
-        {
-            "metric": "cost",
-            "labels": tuple(str(day) for day in range(365)),
-            "series": (
-                {"provider_id": "claude", "values": (None, "not a number", 1)},
-            ),
-            "scale_max": float("nan"),
-        }
-    )
-    rep = view.bitmapImageRepForCachingDisplayInRect_(view.bounds())
-    view.cacheDisplayInRect_toBitmapImageRep_(view.bounds(), rep)
-
-    assert draw_guard.draw_failures() == ()
-
-    # --- scenario: a_model_that_crossed_the_main_thread_boundary_is_still_read
-    """An NSDictionary proxy is not a `dict`; rejecting it drew an empty year."""
-    status_bar = pytest.importorskip("jrbar.status_bar")
-    Foundation = pytest.importorskip("Foundation")
-
-    view = status_bar.UsageGraphView.alloc().initWithFrame_(((0, 0), (400, 200)))
-    bridged = Foundation.NSDictionary.dictionaryWithDictionary_(
-        {"metric": "tokens", "labels": ("a",), "scale_max": 10}
-    )
-    view.setModel_(bridged)
-
-    assert not isinstance(bridged, dict)
-    assert view.model.get("metric") == "tokens"
 
 
 

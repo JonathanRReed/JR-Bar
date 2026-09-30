@@ -84,7 +84,6 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_jrbar_provider_usage_settings_snapshot": None,
         "_jrbar_provider_usage_window": None,
         "_jrbar_reset_delivery_timer": None,
-        "_jrbar_usage_menu_boxes": None,
         "_keepalive_fresh_stamps": None,
         "_keychain_consent_ledger": None,
         "_last_claude_quota_log": None,
@@ -108,7 +107,6 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_request_provider_usage": None,
         "_screen_bar_ask_latch": False,
         "_screen_bar_fleet_plan": None,
-        "_studio_builder_duration_labels": None,
         "_studio_led_count_cache": None,
         "_t3_read_only_policy": None,
         "_t3_snapshot_service": None,
@@ -129,8 +127,6 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "provider_usage_state": None,
         "quota_reset_celebration_provider": None,
         "quota_reset_celebration_until": 0.0,
-        "studio_builder_loop": True,
-        "studio_problem_label": None,
         "usage_graph_model": None,
         # Set by ``init``, and read with a getattr default before that on a
         # later controller (tests build several).
@@ -194,15 +190,11 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
 # read answers.
 UNDECLARED: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "_calibration_compare_baseline": "a fresh {} per read",
-        "_calibration_compare_stash": "a fresh {} per read",
         "_core_pack_paths": "initialised behind hasattr",
         "_deck_settings_save_generation": "read with 0 here and None in deck_settings_controller",
         "_installed_agent_inventory_roots": "the default is computed per read",
         "_jrbar_provider_usage_edge_baseline": "the default is computed per read",
         "_keepalive_logged_targets": "a fresh set() per read",
-        "_settings_category_children": "initialised behind hasattr",
-        "studio_builder_steps": "read with a computed default in studio_builder",
         # Set by ``init``, but a getattr somewhere reads them with a mutable
         # or computed default, or with defaults that disagree.
         "_activity_quota_percents": "a fresh {} per read",

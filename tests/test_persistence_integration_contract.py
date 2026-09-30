@@ -60,13 +60,10 @@ def test_percent_and_reset_state_use_the_shared_writer__and_2_more() -> None:
     assert "_persist_reset_delivery_state" in _calls(usage_apply)
     assert "Thread" not in _calls(usage_apply)
 
-    # --- scenario: operator_history_write_paths_use_the_shared_writer
-    retention = _function(STATUS_BAR, "start_operator_history_retention_change")
+    # --- scenario: operator_history_write_path_uses_the_shared_writer
     events = _function(STATUS_BAR, "_enqueue_operator_history_events")
 
-    assert "submit" in _calls(retention)
     assert "submit" in _calls(events)
-    assert "Thread" not in _calls(retention)
     assert "Thread" not in _calls(events)
 
     # --- scenario: capacity_reconciliation_queues_flush_and_fences_store_identity

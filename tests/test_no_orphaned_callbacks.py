@@ -31,11 +31,7 @@ FRAMEWORK_CALLBACKS = frozenset(
         # NSApplication invokes this delegate callback directly during
         # activation. It is intentionally framework-owned, not orphaned.
         "applicationDidBecomeActive_",
-        "drawRect_",
         "menuDidClose_",
-        "popoverDidClose_",
-        "textDidChange_",
-        "textDidEndEditing_",
     }
 )
 
@@ -53,21 +49,9 @@ def test_every_selector_shaped_callback_is_referenced__and_1_more() -> None:
         for match in re.finditer(r"^    def (_\w*_fired)\(self", text, re.M):
             defined.setdefault(match.group(1), name)
 
-    # Selectors built dynamically from the provider registry
-    # (settings_window and the setup window both do
-    # f"install{provider.title()}Hooks:").
-    from jrbar.providers import HOOK_PROVIDERS
-
-    dynamic = set()
-    for provider in HOOK_PROVIDERS:
-        dynamic.add(f"install{provider.title()}Hooks_")
-        dynamic.add(f"uninstall{provider.title()}Hooks_")
-
     orphans: list[str] = []
     for method, home in sorted(defined.items()):
         if method.startswith("__") or method in FRAMEWORK_CALLBACKS:
-            continue
-        if method in dynamic:
             continue
         selector = method[:-1] + ":" if method.endswith("_") else None
         references = blob.count(f".{method}(") + blob.count(f"self.{method}")

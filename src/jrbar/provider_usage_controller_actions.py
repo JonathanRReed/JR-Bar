@@ -59,10 +59,6 @@ def apply_provider_usage_settings_snapshot(
     set_privacy_mode = getattr(window, "set_privacy_mode", None)
     if callable(set_privacy_mode):
         set_privacy_mode(settings.menu_display.privacy_mode)
-    if getattr(controller, "_jrbar_usage_menu_boxes", None):
-        from .settings_category_runtime import refresh_native_usage_summary
-
-        refresh_native_usage_summary(controller)
     if notify_service:
         service = getattr(controller, "_jrbar_provider_usage_service", None)
         notify = getattr(service, "note_settings_updated", None)

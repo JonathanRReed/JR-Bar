@@ -680,21 +680,6 @@ else:
                 token,
             )
 
-        def popoverDidClose_(self, notification):
-            calibration = self.calibration_test
-            preview_key = getattr(
-                self,
-                "_active_calibration_preview_key",
-                None,
-            )
-            result = _LegacyStatusBarController.popoverDidClose_(self, notification)
-            if calibration is None or calibration[0] == _legacy.VIRTUAL_DEVICE_ID:
-                return result
-            if type(preview_key) is str:
-                self._hardware_write_worker.discard_pending(preview_key)
-            self._active_calibration_preview_key = None
-            return result
-
         def _core_state_store(self) -> CoreStateStore:
             store = getattr(self, "_production_core_state", None)
             if store is None:
@@ -911,21 +896,6 @@ else:
                     outcome=outcome,
                 )
 
-        def refresh_settings_window(self) -> None:
-            started = time.perf_counter()
-            outcome = "ok"
-            try:
-                return _LegacyStatusBarController.refresh_settings_window(self)
-            except BaseException:
-                outcome = "error"
-                raise
-            finally:
-                self._performance().record(
-                    "settings_refresh",
-                    (time.perf_counter() - started) * 1000.0,
-                    outcome=outcome,
-                )
-
         def why_panel_body(self, *, why_context=None) -> str:
             report = self._performance().snapshot()
             health = self.local_health_snapshot(performance=report)
@@ -943,20 +913,6 @@ else:
                 report=report,
             )
             return f"{body}\n\n{diagnostics}"
-
-        @_legacy.objc.IBAction
-        def applyEscalationWebhook_(self, sender):
-            url = str(sender.stringValue()).strip()
-            if url and not url.casefold().startswith("https://"):
-                self.set_settings_message(
-                    "Webhook delivery requires HTTPS. Local and cleartext URLs are refused."
-                )
-                return
-            self.settings = self.settings.with_escalation_webhook_url(url)
-            _legacy.save_settings(self.settings)
-            self.set_settings_message(
-                "Secure webhook set." if url else "Stage-3 webhook off."
-            )
 
         def _webhook_service(self) -> WebhookDeliveryService:
             service = getattr(self, "_production_webhook_service", None)

@@ -685,3 +685,25 @@ def test_a_restore_cache_can_skip_the_directory_fsync(tmp_path, monkeypatch) -> 
     assert synced == [] and target.read_text() == "{}"
     private_io.atomic_private_write(target, "[]")
     assert len(synced) == 1 and target.read_text() == "[]"
+
+
+def test_atomic_private_write_can_publish_owner_executable(tmp_path: Path) -> None:
+    target = tmp_path / "private" / "setup.command"
+
+    atomic_private_write(target, "#!/bin/zsh\nexit 0\n", mode=0o700)
+
+    assert target.read_text() == "#!/bin/zsh\nexit 0\n"
+    assert target.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize("file_mode", [0o755, 0o644, 0o777])
+def test_atomic_private_write_rejects_non_private_modes(
+    tmp_path: Path,
+    file_mode: int,
+) -> None:
+    target = tmp_path / "private" / "setup.command"
+
+    with pytest.raises(ValueError, match="private file mode"):
+        atomic_private_write(target, "payload", mode=file_mode)
+
+    assert not target.exists()

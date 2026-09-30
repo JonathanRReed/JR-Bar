@@ -24,7 +24,6 @@
 /src/jrbar/refresh_admission.py @JonathanRReed
 /src/jrbar/runtime_scheduler.py @JonathanRReed
 /src/jrbar/settings.py @JonathanRReed
-/src/jrbar/settings_window.py @JonathanRReed
 
 # Installer, signing, and release chain
 /packaging/ @JonathanRReed

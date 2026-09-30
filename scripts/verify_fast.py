@@ -31,7 +31,6 @@ CONTRACT_TESTS: Final = (
     "tests/test_status_bar_adapter_reload_contract.py",
     "tests/test_provider_usage_status_bar_contract.py",
     "tests/test_provider_usage_window_contract.py",
-    "tests/test_settings_window_injection_ratchet.py",
     "tests/test_workflow_contract.py",
     "tests/test_repository_hygiene.py",
     "tests/test_build_script_contract.py",
@@ -93,8 +92,8 @@ FOCUSED_TESTS: Final = (
     "tests/test_why_light_projection.py",
     "tests/test_why_panel.py",
     # The colour model, its motion and the preview lease, and the announcer's
-    # root views: live code whose coverage does not ride on the Settings
-    # window's tests.
+    # root views: live code that used to share test files with the retired
+    # Settings window.
     "tests/test_colors_model.py",
     "tests/test_announcer_stack_view.py",
 )

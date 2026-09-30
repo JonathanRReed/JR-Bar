@@ -7,10 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "src" / "jrbar" / "provider_usage_status_bar.py"
-SETTINGS_CATEGORY_MODULE = ROOT / "src" / "jrbar" / "settings_category_runtime.py"
-SETTINGS_WINDOW_MODULE = ROOT / "src" / "jrbar" / "settings_window.py"
-ONBOARDING_MODULE = ROOT / "src" / "jrbar" / "onboarding_runtime.py"
-RESET_ACTION_MODULE = ROOT / "src" / "jrbar" / "provider_reset_settings_action.py"
 STATUS_PROJECTION_MODULE = ROOT / "src" / "jrbar" / "provider_usage_status_projection.py"
 FEEDBACK_ACTIONS_MODULE = ROOT / "src" / "jrbar" / "provider_usage_feedback_actions.py"
 
@@ -101,8 +97,7 @@ def test_provider_usage_runs_through_background_service_and_main_thread_apply__a
     assert "load_provider_usage_settings" not in menu_settings_calls
 
 
-def test_provider_feedback_dispatch_is_extracted_behind_controller_methods__and_2_more() -> None:
-    # --- scenario: provider_feedback_dispatch_is_extracted_behind_controller_methods
+def test_provider_feedback_dispatch_is_extracted_behind_controller_methods() -> None:
     delegates = {
         "_alert_new_critical_pace": "alert_new_critical_pace",
         "_report_reconnect_outcome": "report_reconnect_outcome",
@@ -114,68 +109,8 @@ def test_provider_feedback_dispatch_is_extracted_behind_controller_methods__and_
         assert _calls(_method(method_name)).count(helper_name) == 1
         _function(FEEDBACK_ACTIONS_MODULE, helper_name)
 
-    # --- scenario: first_run_display_does_not_scan_system_provider_or_device_state
-    calls = set(_calls(_function(ONBOARDING_MODULE, "refresh_setup_window")))
 
-    assert not calls & {
-        "launch_agent_installed",
-        "sd_eject_guard_installed",
-        "sleep_helper_installed",
-        "provider_hooks_installed",
-        "configured_focus_modes",
-        "status_bar_devices",
-    }
-
-    # --- scenario: first_run_and_lighting_use_exact_sleep_and_idle_policies
-    setup_source = ast.unparse(_function(ONBOARDING_MODULE, "run_first_launch_setup"))
-    sleep_source = ast.unparse(_function(ONBOARDING_MODULE, "set_sleep_dim"))
-    idle_source = ast.unparse(_function(ONBOARDING_MODULE, "set_idle_auto_off"))
-
-    assert "with_sleep_dim_enabled" in setup_source
-    assert "with_idle_auto_off_enabled" in setup_source
-    assert "with_focus_sync_enabled" not in setup_source
-    assert "with_idle_dim_enabled" not in setup_source
-    assert "with_sleep_dim_enabled" in sleep_source
-    assert "with_idle_auto_off_enabled" in idle_source
-
-
-def test_settings_panes_consume_device_and_alcove_caches_without_probing__and_2_more() -> None:
-    # --- scenario: settings_panes_consume_device_and_alcove_caches_without_probing
-    devices_calls = set(_calls(_function(SETTINGS_WINDOW_MODULE, "_build_devices_pane")))
-    alcove_calls = set(_calls(_function(SETTINGS_WINDOW_MODULE, "alcove_follow_projection")))
-
-    assert "status_bar_devices" not in devices_calls
-    assert "_cached_settings_devices" in devices_calls
-    assert "alcove_follow_blocker" not in alcove_calls
-    assert "latest_alcove_status" in alcove_calls
-
-    # --- scenario: local_usage_settings_mutations_refresh_all_cached_projections
-    assert "apply_provider_usage_settings_snapshot" in _calls(
-        _method("toggleUsageMenuElement_")
-    )
-    provider_calls = _calls(_method("toggleUsageMenuProvider_"))
-    assert "toggle_provider_menu_visibility" in provider_calls
-    assert "load_provider_usage_settings" not in provider_calls
-
-    # --- scenario: per_provider_reset_selector_persists_master_and_each_channel
-    method = _function(RESET_ACTION_MODULE, "toggle_provider_reset_setting")
-    source = ast.unparse(method)
-
-    assert "with_reset_celebrations" in source
-    assert "with_reset_channel" in source
-    assert "save_provider_usage_settings" in source
-    assert "apply_provider_usage_settings_snapshot" in source
-    assert "refresh_native_usage_summary" in source
-
-
-def test_profile_settings_selector_delegates_save_and_ui_freshness_as_one_action__and_1_more() -> None:
-    # --- scenario: profile_settings_selector_delegates_save_and_ui_freshness_as_one_action
-    calls = _calls(_method("updateProviderInstanceProfile_"))
-
-    assert "save_provider_instance_profile_setting" in calls
-    assert "update_provider_instance_profile" not in calls
-
-    # --- scenario: usage_center_and_why_panel_forward_the_user_privacy_setting
+def test_usage_center_and_why_panel_forward_the_user_privacy_setting() -> None:
     source = MODULE.read_text(encoding="utf-8")
     why_method = _method("why_panel_body")
     why_helper = _function(STATUS_PROJECTION_MODULE, "provider_usage_why_panel_body")

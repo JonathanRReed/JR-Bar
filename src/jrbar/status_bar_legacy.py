@@ -3,57 +3,25 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
-import re
 import secrets
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar
 
 try:
     import objc
     from AppKit import (
-        NSAlert,
-        NSAlertFirstButtonReturn,
         NSApp,
-        NSApplicationActivationPolicyAccessory,
-        NSBezelStyleRounded,
-        NSBezierPath,
-        NSButton,
-        NSButtonTypeSwitch,
         NSColor,
-        NSColorPanel,
-        NSCompositingOperationSourceOver,
-        NSEventTypeLeftMouseDragged,
-        NSFont,
-        NSFontAttributeName,
-        NSForegroundColorAttributeName,
         NSImage,
-        NSLayoutConstraint,
-        NSLineBreakByTruncatingTail,
-        NSLineBreakByWordWrapping,
-        NSMaxYEdge,
-        NSMenu,
-        NSMenuItem,
-        NSOffState,
-        NSOnState,
-        NSPopover,
-        NSPopoverBehaviorTransient,
         NSScreen,
-        NSSlider,
         NSStatusBar,
-        NSTextField,
-        NSVariableStatusItemLength,
-        NSView,
-        NSViewController,
         NSWorkspace,
         NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
         NSWorkspaceDidWakeNotification,
@@ -65,15 +33,11 @@ try:
     )
     from Foundation import (
         NSURL,
-        NSAttributedString,
         NSDefaultRunLoopMode,
-        NSIndexSet,
-        NSMutableAttributedString,
         NSNotificationCenter,
         NSObject,
         NSRunLoop,
         NSRunLoopCommonModes,
-        NSString,
         NSSystemClockDidChangeNotification,
         NSSystemTimeZoneDidChangeNotification,
         NSTimer,
@@ -90,7 +54,6 @@ from . import (
     claude_quota,
     display_brightness,
     focus_sync,
-    native_ui,
     reminders_watch,
     usage_percent_history,
     usage_stats,
@@ -98,7 +61,6 @@ from . import (
 
 from . import colors as colors_module
 from . import signals as signals_module
-from .draw_guard import guard_draw
 from .accessibility_display import (
     AccessibilityDisplayPreferences,
     refresh_accessibility_display_preferences,
@@ -110,10 +72,8 @@ from .activity_ledger import (
     ActivityKind,
     ActivityLedger,
     ActivityValidationError,
-    activity_row_text,
     mark_activity_seen,
     record_activities,
-    relative_age_label,
     safe_activity_text,
 )
 from .activity_ledger_store import (
@@ -131,28 +91,17 @@ from .agent_browser_window import (
     AgentBrowserAnswerPayload,
     AgentBrowserOpenPayload,
     AgentBrowserWindowController,
-    SNOOZE_PRESETS,
-    build_agent_root_items,
 )
 from .animation import (
-    AnimationValidationError,
-    burn_power_up_animation,
-    describe_problems,
     errors_only,
-    parse_animation,
     problems_for_program,
-    warnings_only,
 )
 from .adaptive_refresh import admit_menu_open_refresh
 from .animation_store import (
     AnimationLibrary,
-    AnimationLibraryError,
     LibraryHealth,
-    default_animation_library_path,
-    load_animation_library,
-    save_animation_library,
 )
-from .app_bundle import default_app_bundle_path, running_inside_bundle
+from .app_bundle import running_inside_bundle
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .attention import (
     AttentionProjection,
@@ -196,7 +145,6 @@ from .answer_runtime import ANSWER_CLOSE_TIMEOUT_SECONDS  # noqa: E402
 from .global_action_controller import (  # noqa: E402
     GlobalActionLifecycleCoordinator,
     performRevealCurrentAsk_,
-    reveal_current_ask_menu_title,
 )
 from .global_actions import GlobalActionID  # noqa: E402
 from .global_hotkeys import (  # noqa: E402
@@ -216,12 +164,12 @@ from .dnd_policy import (
     DndMode,
     DndOverride,
     DndProjection,
-    DndSchedule,
     compose_dnd_contributions,
-    evaluate_dnd_schedule,
 )
-from .focus_status import FocusActivity, FocusAuthorization, FocusStatusObservation
-from .local_time_boundary import system_local_timezone
+from .focus_status import (
+    FocusActivity,
+    FocusAuthorization,
+)
 from .capacity_authority import (
     FALLBACK_OBSERVATION_STATES,
     CapacityProjection,
@@ -232,7 +180,6 @@ from .capacity_history_runtime import (
     build_capacity_history_presentation,
     flush_capacity_history_store_runtime,
     record_capacity_history_runtime,
-    resolve_capacity_history_store,
 )
 from .capacity_refresh import (
     CapacityRefreshCoordinator,
@@ -268,25 +215,10 @@ from .collector import (
     read_recent_lines,
 )
 from .colors import (
-    BLEND_MODE_CYCLE,
-    BLEND_MODE_DESCRIPTIONS,
-    BLEND_MODE_ROUND_ROBIN,
-    FADE_MODE_KEYS,
-    MODE_COLOR_KEYS,
     ColorSettings,
     plan_fleet_projection,
     program_for_projection,
     program_for_snapshot,
-)
-from .effect_selection import (
-    COLOR_PRESET_OPTIONS,
-    PROVIDER_ANIMATION_OPTIONS,
-    EffectSelectionDisposition,
-    plan_blend_mode_selection,
-    plan_color_preset_selection,
-    plan_provider_animation_selection,
-    preview_scenario_from_payload,
-    selected_option_index,
 )
 from .completions import (
     COMPLETION_NOTIFY_FRESHNESS_SECONDS as COMPLETION_NOTIFY_FRESHNESS_SECONDS,
@@ -298,21 +230,14 @@ from .completion_visibility import (
 )
 from .clear_agents import (
     ClearAgentsCommitPlan,
-    ClearAgentsPlanError,
     ClearAgentsPreview,
-    ClearAgentsRefusal,
     ClearAgentsState,
-    ClearAgentsUndoPlan,
     completion_presentation_key,
-    plan_clear_agents_commit,
-    plan_clear_agents_undo,
-    project_clear_agents_preview,
 )
 from .clear_agents_store import (
     ClearAgentsRestoreHealth,
     default_clear_agents_path,
     load_clear_agents_state,
-    save_clear_agents_state,
 )
 from .completions import (
     _ACTIVE_MODES,
@@ -325,14 +250,7 @@ from .credentials import (
     KeychainConsentLedger,
     read_keychain_secret,
 )
-from .decision_trace import (
-    MENU_ITEM_TITLE as WHY_PANEL_MENU_TITLE,
-)
-from .decision_trace import (
-    build_decision_trace,
-    capacity_detail_text,
-    decision_trace_text,
-)
+from .decision_trace import build_decision_trace
 from .why_light_context import format_why_light_context
 from .why_light_runtime import project_current_why_light_context
 from . import why_panel as why_panel_module
@@ -372,14 +290,7 @@ from .intake_health import (
     idle_disclosure,
     probe_providers,
 )
-from .interruption_policy import (
-    ActionTokenBinding,
-    InterruptionRoute,
-    action_token_metadata,
-    generic_notification_copy,
-    issue_action_token,
-    resolve_action_token,
-)
+from .interruption_policy import ActionTokenBinding
 from .hook_ingress import (
     AppOwnedHookIngressProcessor,
     HookIngressOutcome,
@@ -393,15 +304,13 @@ from .ipc import (
     default_latest_state_path,
 )
 from .keep_awake import battery_yields_hold, KEEPALIVE_FILE_NAME, KeepAwakeController
-from .celebrations import RESET_CELEBRATION_SECONDS, reset_celebration_program
+from .celebrations import reset_celebration_program
 from .hardware_write_policy import hardware_coalesce_key, hardware_write_policy
 from .hardware_write_contract import validate_hardware_write_metadata
 from .window_presentation import activate_app, present_window
 from .led_status import (
     FIRST_LIGHT_SECONDS,
     first_light_program,
-    MAX_CHANNEL_GAIN,
-    MIN_CHANNEL_GAIN,
     AgentLedController,
     LedDisplayState,
     LedStatusWrite,
@@ -409,23 +318,19 @@ from .led_status import (
     apply_channel_gain_to_program,
     apply_resting_glow_to_program,
     brightness_percent,
-    burn_saved_animation_to_power_up,
     failure_signal_program,
     led_count_for_target,
     notification_blink_program,
     normalize_brightness,
     normalized_device_name,
     quota_runway_program,
-    scale_hex_brightness,
     style_to_program,
-    write_mode_to_leds,
 )
-from .led_wasm import LedWasmUnavailableError, SdLedWasmController
+from .led_wasm import SdLedWasmController
 from .lid_sleep import (
     LID_POLL_SECONDS,
     ClosedLidAwakeController,
     read_lid_closed,
-    sleep_helper_install_command,
     sleep_helper_installed,
 )
 from .local_triage import (
@@ -442,7 +347,6 @@ from .macos_notifications import (
 )
 from .mailbox import (
     AgentMailboxProjection,
-    MailboxRow,
     MailboxSectionKind,
     project_canonical_mailbox,
     project_mailbox,
@@ -463,11 +367,13 @@ from .mailbox_preferences import (
 from .snooze_scope import filter_snoozed_statuses, status_snoozed
 from .menu_tracking import (
     ExactBoundarySchedule,
-    MenuItemState,
-    MenuPublicationKind,
     StableNativeMenuRegistry,
 )
-from .models import MODE_LABELS, AgentMode, AgentStatus, provider_label
+from .models import (
+    AgentMode,
+    AgentStatus,
+    provider_label,
+)
 from .navigation_policy import (
     OperatorActionKind,
     OperatorLocalActionState,
@@ -496,7 +402,6 @@ from .operator_history_store import (
     OperatorHistoryRestoreHealth,
     OperatorHistoryStore,
     default_operator_history_path,
-    save_operator_history,
 )
 from .operator_state import (
     COMPLETED_GLOW_SECONDS,
@@ -544,12 +449,10 @@ from .quota_power_hold import QuotaPowerHoldCoordinator, quota_adjusted_work_mod
 from .providers import (
     HOOK_PROVIDERS,
     PROVIDER_SPECS,
-    ProviderConfig,
     default_state_dir,
     detect_log_path,
     negotiated_provider_sources,
     parse_log_line,
-    provider_spec,
 )
 from .refresh_policy import (
     DEFAULT_FRESH_SECONDS,
@@ -592,22 +495,12 @@ from .runtime_scheduler import (
     RuntimeWorkerRegistry,
     SubmissionDisposition,
 )
-from .sd_eject_guard_launch import (
-    install_sd_eject_guard,
-    sd_eject_guard_installed,
-)
 from .session_actions import (
-    SESSION_OPEN_APP,
-    SESSION_OPEN_TERMINAL,
-    SESSION_OPEN_VSCODE,
     activate_navigation_resolution,
-    available_session_open_actions,
     default_session_open_action,
-    session_open_action_label,
     session_open_target,
 )
 from .settings import (
-    CALIBRATION_PROFILE_SLOTS,
     CLOSED_LID_AWAKE_AGENTS,
     CLOSED_LID_AWAKE_ALWAYS,
     CLOSED_LID_AWAKE_CHOICES,
@@ -621,23 +514,12 @@ from .settings import (
     LID_ANIMATION_CLOSED_ACTIVE,
     LID_ANIMATION_OPEN,
     LID_ANIMATION_OPEN_ACTIVE,
-    WEBHOOK_EVENT_KEYS,
     AgentMonitorSettings,
     LedAnimationSetting,
-    default_lid_animation,
     default_settings_path,
     load_settings,
     normalize_animation_duration,
     save_settings,
-)
-from .settings_window_controls import (  # noqa: F401
-    make_blend_mode_popup,
-    make_color_preset_popup,
-    make_preview_scenario_popup,
-    select_blend_mode,
-    select_color_preset,
-    select_effect_popup_item,
-    select_preview_scenario,
 )
 from .signal_coordinator import (
     ActiveSignal,
@@ -663,11 +545,7 @@ from .virtual_device import (
     VirtualLedView,
     VirtualStatusDevice,
     monotonic_ms,
-    slot_width_for_screen,
     virtual_display_state_for_projection,
-)
-from .virtual_device import (
-    WINDOW_HEIGHT as SCREEN_BAR_PREVIEW_HEIGHT,
 )
 
 
@@ -1371,7 +1249,6 @@ LED_DISPLAY_DND_DARK = "dnd_dark"
 LED_DISPLAY_CALENDAR = "calendar"
 LED_DISPLAY_ESCALATION = "escalation"
 LED_DISPLAY_TEST = "signal_test"
-SIGNAL_TEST_SECONDS = 5.0
 SETTINGS_SIGNAL_PREVIEW_INTERVAL_SECONDS = 1.0 / 8.0
 SETTINGS_COLOR_PREVIEW_INTERVAL_SECONDS = 1.0 / 12.0
 SETUP_DEMO_INTERVAL_SECONDS = 1.0 / 30.0
@@ -2247,16 +2124,6 @@ class StatusBarController(NSObject):
             return False
         return rank[retained.display_admission] >= rank[required]
 
-    def _refresh_dnd_settings_controls(self) -> None:
-        if getattr(self, "settings_window", None) is None:
-            return
-        try:
-            from .settings_window import refresh_dnd_settings_controls
-
-            refresh_dnd_settings_controls(self)
-        except Exception:
-            pass
-
     def _consume_restricted_finite_cues(self, projection: DndProjection) -> None:
         if (
             type(projection) is not DndProjection
@@ -2291,7 +2158,6 @@ class StatusBarController(NSObject):
         self._consume_restricted_finite_cues(projection)
         self._menu_signature = None
         self._focus_summary_cache = None
-        self._refresh_dnd_settings_controls()
         if (
             getattr(self, "_runtime_started", False)
             and not getattr(self, "_runtime_termination_started", False)
@@ -2524,11 +2390,6 @@ class StatusBarController(NSObject):
                 preferences,
                 generation=self._accessibility_generation,
             )
-        self._signal_card_rendered = {}
-        window = getattr(self, "settings_window", None)
-        if window is not None and window.isVisible():
-            self.refresh_settings_window()
-            self.refresh_colors_window()
         self._reconcile_current_presentation_inputs()
         snapshot = self.last_snapshot
         if snapshot is not None:
@@ -3388,6 +3249,24 @@ class StatusBarController(NSObject):
         self._published_ledger_at = now
         return written
 
+    def remove_published_ledger(self) -> bool:
+        """Take this desk's published ledger file back down.
+
+        Nothing in the daemon calls this yet: switching publishing off
+        through ``set_setting`` leaves the last file where it was until a
+        peer marks it stale.
+        """
+        self._published_ledger_signature = None
+        self._published_ledger_at = None
+        try:
+            default_remote_ledger_path().unlink()
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            log_status_bar(f"remote_peers unpublish error: {exc}")
+            return False
+        return True
+
     def refresh_why_panel(self) -> bool:
         return why_panel_module.refresh_visible_panel(self, self.why_panel_body())
 
@@ -3807,88 +3686,6 @@ class StatusBarController(NSObject):
         self._claude_needs_sign_in = False
         self._claude_credential = credential
         return credential.access_token
-
-    def invalidate_usage_providers(self, provider_ids: tuple[str, ...]) -> None:
-        """Make selected providers due and obsolete any older publishers."""
-        provider_ids = tuple(dict.fromkeys(provider_ids))
-        self.clear_capacity_timers(clear_attempts=True)
-        now = time.monotonic()
-        states = getattr(self, "_usage_provider_states", {})
-        models = getattr(self, "_usage_provider_models", {})
-        for provider_id in provider_ids:
-            state = states.get(provider_id)
-            refresh_key = self._capacity_refresh_keys_by_provider.get(provider_id)
-            if state is None or refresh_key is None:
-                continue
-            for timers in (
-                self._capacity_refresh_deadline_timers,
-                self._capacity_refresh_retry_timers,
-            ):
-                timer = timers.pop(refresh_key, None)
-                if timer is not None:
-                    timer.invalidate()
-            refresh_state = self._capacity_refresh_coordinator.invalidate_source(
-                refresh_key,
-                now=now,
-            )
-            states[provider_id] = dataclass_replace(
-                state,
-                last_success_at=None,
-                in_flight=False,
-                consecutive_failures=0,
-                retry_not_before=0.0,
-                error_text=None,
-                generation=refresh_state.generation,
-            )
-            old_model = models.get(provider_id)
-            if old_model is not None and not self._capacity_row_enabled(provider_id):
-                # Turning a capacity source off invalidates its windows, not
-                # the independent local-activity aggregate already on the
-                # model. Keeping that bounded snapshot avoids a transcript
-                # rescan merely to redraw the disabled state.
-                models[provider_id] = dataclass_replace(
-                    old_model,
-                    windows=(),
-                    refreshing=False,
-                    error_text=None,
-                )
-            else:
-                models.pop(provider_id, None)
-        self._usage_provider_states = states
-        self._usage_provider_models = models
-        fields = getattr(self, "settings_fields", None) or {}
-        if "codex" in provider_ids:
-            codex = models.get("codex")
-            self.codex_summary_text = (
-                codex.settings_text if codex is not None else None
-            )
-            label = fields.get("profile_codex_label")
-            if label is not None:
-                label.setStringValue_(self.codex_summary_text or "")
-        if "claude" in provider_ids:
-            claude = models.get("claude")
-            self.claude_plan_text = (
-                claude.settings_text if claude is not None else None
-            )
-            label = fields.get("profile_plan_label")
-            if label is not None:
-                label.setStringValue_(
-                    self.jr_capacity_settings_text("claude")
-                    or self.claude_plan_text
-                    or ""
-                )
-
-    def clear_capacity_timers(self, *, clear_attempts: bool) -> None:
-        for name in ("_capacity_reset_timer", "_capacity_countdown_timer"):
-            timer = getattr(self, name, None)
-            if timer is not None:
-                timer.invalidate()
-            setattr(self, name, None)
-        self._capacity_reset_plan = ResetBoundaryPlan(None, (), ())
-        self._capacity_reset_retry_deadline = None
-        self._capacity_countdown_deadline = None
-        if clear_attempts:
-            self._attempted_capacity_boundary_keys = ()
 
     def _normal_capacity_refresh_deadline(
         self,
@@ -4328,13 +4125,6 @@ class StatusBarController(NSObject):
             generations = {}
             self._capacity_source_generations = generations
         return int(generations.get(provider_id, 0))
-
-    def _advance_capacity_source_generation(self, provider_id: str) -> None:
-        """Retire every reset boundary attributed to the previous account."""
-        self._capacity_source_generations = {
-            **(getattr(self, "_capacity_source_generations", None) or {}),
-            provider_id: self._capacity_source_generation(provider_id) + 1,
-        }
 
     def _contract_capacity_observations(
         self,
@@ -5046,97 +4836,6 @@ class StatusBarController(NSObject):
             )
 
 
-    @objc.IBAction
-    def setProviderOpenPreference_(self, sender):
-        selected = sender.selectedItem()
-        payload = selected.representedObject() if selected is not None else None
-        if not isinstance(payload, dict):
-            return
-        provider = payload.get("provider")
-        action = payload.get("action")
-        if not isinstance(provider, str) or not isinstance(action, str):
-            return
-        try:
-            self.settings = self.settings.with_provider_session_open_action(provider, action)
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save {provider.title()} opener: {exc}")
-            self.settings = load_settings()
-            self.refresh_settings_window()
-            return
-        self.set_settings_message(
-            f"{provider.title()} sessions: {provider_open_action_label(provider, action)}."
-        )
-
-
-    @objc.IBAction
-    def setClosedLidAwakePolicyFromPopup_(self, sender):
-        payload = sender.selectedItem().representedObject() if sender.selectedItem() else None
-        if not payload or "policy" not in payload:
-            return
-        self.set_closed_lid_awake_policy(payload["policy"])
-
-    @objc.IBAction
-    def applyClosedLidGraceMinutes_(self, _sender):
-        field = self.settings_fields.get("closed_lid_grace_field")
-        minutes = parse_seconds_field(field)
-        if minutes is None:
-            return
-        try:
-            self.settings = self.settings.with_closed_lid_grace_minutes(minutes)
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save grace period: {exc}")
-            self.settings = load_settings()
-            return
-        self.refresh_settings_window()
-        self.set_settings_message(f"Closed-lid grace period: {self.settings.closed_lid_grace_minutes:g} min.")
-
-    @objc.IBAction
-    def toggleIdleDim_(self, sender):
-        self.settings = self.settings.with_idle_dim_enabled(checkbox_is_on(sender))
-        save_settings(self.settings)
-        self.refresh_settings_window()
-
-    @objc.IBAction
-    def applyIdleDimSettings_(self, _sender):
-        minutes_field = self.settings_fields.get("idle_dim_minutes_field")
-        fraction_field = self.settings_fields.get("idle_dim_fraction_field")
-        minutes = parse_seconds_field(minutes_field)
-        fraction_percent = parse_seconds_field(fraction_field)
-        if minutes is None or fraction_percent is None:
-            return
-        try:
-            settings = self.settings.with_idle_dim_after_minutes(minutes)
-            settings = settings.with_idle_dim_fraction(fraction_percent / 100.0)
-            self.settings = settings
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save idle dimming: {exc}")
-            self.settings = load_settings()
-            return
-        self.refresh_settings_window()
-        self.set_settings_message(
-            f"Idle dimming: after {self.settings.idle_dim_after_minutes:g} min, "
-            f"dim to {round(self.settings.idle_dim_fraction * 100)}%."
-        )
-
-    @objc.IBAction
-    def toggleFocusSync_(self, sender):
-        self._finish_dnd_change(
-            self.dnd_controller.set_follow_focus(checkbox_is_on(sender)),
-            success_message="Follow macOS Focus updated.",
-        )
-
-    @staticmethod
-    def _dnd_popup_value(sender) -> str | None:
-        item = sender.selectedItem() if sender is not None else None
-        value = item.representedObject() if item is not None else None
-        if type(value) is not str:
-            return None
-        normalized = value.strip()
-        return normalized or None
-
     def _finish_dnd_change(
         self,
         result: DndChangeResult,
@@ -5154,98 +4853,6 @@ class StatusBarController(NSObject):
         self._focus_summary_cache = None
         self._refresh_dnd_settings_controls()
         return applied
-
-    def _replace_dnd_schedule(self, **changes) -> bool:
-        current = self.settings.dnd_settings().schedule
-        try:
-            schedule = DndSchedule(
-                enabled=bool(changes.get("enabled", current.enabled)),
-                start_minutes=changes.get("start_minutes", current.start_minutes),
-                end_minutes=changes.get("end_minutes", current.end_minutes),
-                mode=changes.get("mode", current.mode),
-            )
-        except ValueError as exc:
-            self.set_settings_message(f"Could not update DND schedule: {exc}")
-            self._refresh_dnd_settings_controls()
-            return False
-        return self._finish_dnd_change(
-            self.dnd_controller.set_schedule(schedule),
-            success_message="DND schedule updated.",
-        )
-
-    @objc.IBAction
-    def toggleDndSchedule_(self, sender):
-        self._replace_dnd_schedule(enabled=checkbox_is_on(sender))
-
-    @objc.IBAction
-    def setDndScheduleStartTime_(self, sender):
-        try:
-            from .dnd_settings_pane import minutes_from_time_picker
-
-            minutes = minutes_from_time_picker(sender)
-        except Exception as exc:
-            self.set_settings_message(f"Could not read DND start time: {exc}")
-            self._refresh_dnd_settings_controls()
-            return
-        self._replace_dnd_schedule(start_minutes=minutes)
-
-    @objc.IBAction
-    def setDndScheduleEndTime_(self, sender):
-        try:
-            from .dnd_settings_pane import minutes_from_time_picker
-
-            minutes = minutes_from_time_picker(sender)
-        except Exception as exc:
-            self.set_settings_message(f"Could not read DND end time: {exc}")
-            self._refresh_dnd_settings_controls()
-            return
-        self._replace_dnd_schedule(end_minutes=minutes)
-
-    @objc.IBAction
-    def setDndScheduleMode_(self, sender):
-        raw = self._dnd_popup_value(sender)
-        try:
-            mode = DndMode(raw)
-        except (TypeError, ValueError):
-            self._refresh_dnd_settings_controls()
-            return
-        self._replace_dnd_schedule(mode=mode)
-
-    @objc.IBAction
-    def setDndDimFraction_(self, sender):
-        raw = self._dnd_popup_value(sender)
-        try:
-            fraction = float(raw)
-        except (TypeError, ValueError):
-            self._refresh_dnd_settings_controls()
-            return
-        self._finish_dnd_change(
-            self.dnd_controller.set_dim_fraction(fraction),
-            success_message=f"DND dim brightness set to {round(fraction * 100)}%.",
-        )
-
-    @objc.IBAction
-    def setDndFocusMode_(self, sender):
-        raw = self._dnd_popup_value(sender)
-        try:
-            mode = DndMode(raw)
-        except (TypeError, ValueError):
-            self._refresh_dnd_settings_controls()
-            return
-        self._finish_dnd_change(
-            self.dnd_controller.set_focus_mode(mode),
-            success_message="macOS Focus DND behavior updated.",
-        )
-
-    @objc.IBAction
-    def requestDndFocusAuthorization_(self, _sender):
-        started = self.dnd_controller.request_focus_authorization()
-        self.set_settings_message(
-            "Waiting for macOS Focus permission."
-            if started
-            else "macOS Focus permission is unavailable."
-        )
-        self._refresh_dnd_settings_controls()
 
     def _set_dnd_for_duration(self, mode: DndMode, seconds: float) -> bool:
         now = time.time()
@@ -5272,45 +4879,6 @@ class StatusBarController(NSObject):
             success_message=f"DND {label} for {duration_text}.",
         )
 
-    def _set_dnd_for_one_hour(self, mode: DndMode) -> bool:
-        return self._set_dnd_for_duration(mode, 3_600.0)
-
-    @objc.IBAction
-    def startDndOneHour_(self, sender):
-        raw = str(sender.identifier() or "") if sender is not None else ""
-        try:
-            mode = DndMode(raw)
-        except ValueError:
-            self._refresh_dnd_settings_controls()
-            return
-        self._set_dnd_for_one_hour(mode)
-
-
-    @objc.IBAction
-    def resumeDndUntilNextChange_(self, _sender):
-        now = time.time()
-        schedule = self.settings.dnd_settings().schedule
-        evaluation = evaluate_dnd_schedule(
-            schedule,
-            now=now,
-            local_timezone=system_local_timezone(now),
-        )
-        deadline = evaluation.next_transition_epoch
-        if not schedule.enabled or deadline is None or deadline <= now:
-            self.set_settings_message(
-                "Resume needs an enabled DND schedule with a future boundary."
-            )
-            self._refresh_dnd_settings_controls()
-            return
-        override = DndOverride.for_resume(
-            created_epoch=now,
-            until_epoch=deadline,
-        )
-        self._finish_dnd_change(
-            self.dnd_controller.set_override(override),
-            success_message="DND resumed until the next scheduled change.",
-        )
-
     @objc.IBAction
     def endDndOverride_(self, _sender):
         self._finish_dnd_change(
@@ -5319,418 +4887,9 @@ class StatusBarController(NSObject):
         )
 
 
-    @objc.IBAction
-    def setFocusDimRule_(self, sender):
-        identifier = str(sender.identifier() or "")
-        if not identifier:
-            return
-        item = sender.selectedItem()
-        raw = str(item.representedObject() or "default") if item is not None else "default"
-        fraction = None if raw == "default" else float(raw)
-        self.settings = self.settings.with_focus_dim_rule(identifier, fraction)
-        save_settings(self.settings)
-        label = item.title() if item is not None else "Shared dim"
-        self.set_settings_message(f"Focus rule saved: {label}.")
-        self.refresh_(None)
-
-    @objc.IBAction
-    def setFocusSignalPolicy_(self, sender):
-        identifier = str(sender.identifier() or "")
-        if not identifier:
-            return
-        item = sender.selectedItem()
-        policy = str(item.representedObject() or "all") if item is not None else "all"
-        self.settings = self.settings.with_focus_signal_policy(identifier, policy)
-        save_settings(self.settings)
-        label = item.title() if item is not None else "All signals"
-        self.set_settings_message(f"Focus signals: {label.lower()}.")
-        self._focus_summary_cache = None
-        self.refresh_(None)
-
-    @objc.IBAction
-    def openFullDiskAccessSettings_(self, _sender):
-        NSWorkspace.sharedWorkspace().openURL_(
-            NSURL.URLWithString_("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
-        )
-
-    @objc.IBAction
-    def revealFocusBinaryInFinder_(self, _sender):
-        """Shows the exact interpreter binary Full Disk Access must be
-        granted to -- users can drag it straight from this Finder window
-        into the Privacy Settings list."""
-        if running_inside_bundle():
-            target_path = str(default_app_bundle_path())
-        else:
-            target_path = os.path.realpath(sys.executable or "")
-        if target_path:
-            NSWorkspace.sharedWorkspace().activateFileViewerSelectingURLs_(
-                [NSURL.fileURLWithPath_(target_path)]
-            )
-
-    @objc.IBAction
-    def toggleCalendarAlerts_(self, sender):
-        enabled = bool(sender.state())
-        self.settings = self.settings.with_calendar_alerts_enabled(enabled)
-        save_settings(self.settings)
-        self.calendar_watch_retry_at = 0.0
-        self.reconcile_lid_observation()
-        if not enabled:
-            self.calendar_glow_until = 0.0
-            self.calendar_event_title = None
-            self.set_settings_message("Calendar glow off.")
-            self.refresh_(None)
-            return
-        try:
-            status = calendar_watch.authorization_status()
-        except calendar_watch.CalendarUnavailableError:
-            self.set_settings_message("Calendar access is unavailable on this system.")
-            return
-        if status == calendar_watch.AUTH_AUTHORIZED:
-            self.set_settings_message("Calendar glow on.")
-            self._calendar_observation_timer_fired()
-        elif status == calendar_watch.AUTH_NOT_DETERMINED:
-            self.set_settings_message("Calendar glow on — asking macOS for access…")
-
-            def _granted(ok):
-                # EventKit calls back off the main thread.
-                self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                    "calendarAccessResolved:", bool(ok), False
-                )
-
-            calendar_watch.request_access(_granted)
-        else:
-            self.set_settings_message(
-                f"Calendar access is denied — enable {PRODUCT_DISPLAY_NAME} under "
-                "Privacy & Security → Calendars."
-            )
-
     # --- Signal style cards --------------------------------------------
 
-    def _current_signal_style(self, key: str):
-        return self.settings.signal_style(key)
-
-    def _save_signal_style(self, key: str, style) -> None:
-        # Drag ticks preview only; commit once when the gesture ends.
-        if self._slider_event_is_drag():
-            self._render_signal_card(key, style.normalized())
-            return
-        self.settings = self.settings.with_signal_style(key, style)
-        save_settings(self.settings)
-        self.refresh_signal_card(key)
-        self.refresh_(None)
-
-    def refresh_signal_card(self, key: str) -> None:
-        # Card rendering builds WASM thumbnail programs -- skip entirely
-        # when the style hasn't changed since the last render (switching
-        # TO the Signals pane re-rendered every card synchronously,
-        # which read as "going between menus is so laggy").
-        style = self.settings.signal_style(key)
-        cache = getattr(self, "_signal_card_rendered", None)
-        if cache is None:
-            cache = {}
-            self._signal_card_rendered = cache
-        if cache.get(key) == style:
-            return
-        cache[key] = style
-        self._render_signal_card(key, style)
-
-    def _render_signal_card(self, key: str, style) -> None:
-        """Render one saved or transient signal-card style."""
-        preview_color = None
-        thumbs = self.settings_fields.get(f"signal_thumbs:{key}")
-        if isinstance(thumbs, dict):
-            for pattern, thumb in thumbs.items():
-                preview_style = signals_module.SignalStyle(
-                    style.color, pattern, style.speed_seconds, style.intensity
-                )
-                thumb.setProgram_(
-                    _signal_preview_program(self, preview_style, color=preview_color)
-                )
-            _apply_thumb_selection(thumbs, style.pattern)
-        preview = self.settings_fields.get(f"signal_preview:{key}")
-        if preview is not None:
-            preview.setProgram_(
-                _signal_preview_program(self, style, color=preview_color)
-            )
-        swatch = self.settings_fields.get(f"signal_color:{key}")
-        if swatch is not None:
-            swatch.setProgram_(style.color)
-
-    def _set_signal_color(self, key: str, new_color: str) -> None:
-        if key not in signals_module.DEFAULT_SIGNAL_STYLES:
-            return
-        style = self._current_signal_style(key)
-        self._save_signal_style(
-            key,
-            signals_module.SignalStyle(
-                new_color, style.pattern, style.speed_seconds, style.intensity
-            ),
-        )
-
-    @objc.IBAction
-    def pickSignalSwatch_(self, sender):
-        identifier = str(sender.identifier() or "")
-        if "|" not in identifier:
-            return
-        key, hex_color = identifier.split("|", 1)
-        self._set_signal_color(key, hex_color)
-
-    @objc.IBAction
-    def openSignalColorPanel_(self, sender):
-        key = str(sender.identifier() or "")
-        if key not in signals_module.DEFAULT_SIGNAL_STYLES:
-            return
-        self.color_panel_signal_key = key
-        self.active_color_target = None
-        panel = NSColorPanel.sharedColorPanel()
-        panel.setTarget_(self)
-        panel.setAction_("signalPanelColorChanged:")
-        panel.setColor_(nscolor_from_hex(self._current_signal_style(key).color))
-        panel.orderFront_(None)
-
-    @objc.IBAction
-    def signalPanelColorChanged_(self, sender):
-        key = getattr(self, "color_panel_signal_key", None)
-        if not key:
-            return
-        if self._slider_event_is_drag():
-            return
-        self._set_signal_color(key, hex_from_nscolor(sender.color()))
-
-    @objc.IBAction
-    def selectSignalPattern_(self, sender):
-        view = sender.representedObject() if hasattr(sender, "representedObject") else sender.view()
-        key = getattr(view, "signal_card_key", None)
-        pattern = getattr(view, "signal_card_pattern", None)
-        if not key or not pattern:
-            return
-        style = self._current_signal_style(key)
-        self._save_signal_style(
-            key,
-            signals_module.SignalStyle(
-                style.color, pattern, style.speed_seconds, style.intensity
-            ),
-        )
-        self.set_settings_message(f"{key.replace('_', ' ').title()}: {pattern} pattern.")
-
-    @objc.IBAction
-    def setSignalSpeed_(self, sender):
-        key = str(sender.identifier() or "")
-        if key not in signals_module.DEFAULT_SIGNAL_STYLES:
-            return
-        style = self._current_signal_style(key)
-        self._save_signal_style(
-            key,
-            signals_module.SignalStyle(
-                style.color, style.pattern, float(sender.doubleValue()), style.intensity
-            ),
-        )
-
-    @objc.IBAction
-    def setSignalIntensity_(self, sender):
-        key = str(sender.identifier() or "")
-        if key not in signals_module.DEFAULT_SIGNAL_STYLES:
-            return
-        style = self._current_signal_style(key)
-        self._save_signal_style(
-            key,
-            signals_module.SignalStyle(
-                style.color, style.pattern, style.speed_seconds, float(sender.doubleValue())
-            ),
-        )
-
     # --- Agents pane: motion, other Macs, cloud agents -------------------
-
-    @objc.IBAction
-    def setAgentAnimation_(self, sender):
-        """Pick a provider's motion from the Agents pane.
-
-        Writes the SAME `colors.provider_animation` entry the Studio's own
-        row writes. Two doors, one fact -- neither pane keeps a copy, so
-        they cannot disagree about what a provider is doing.
-        """
-        item = sender.selectedItem() if hasattr(sender, "selectedItem") else None
-        payload = item.representedObject() if item is not None else None
-        plan = plan_provider_animation_selection(self.settings.colors, payload)
-        if plan.disposition is not EffectSelectionDisposition.APPLY:
-            return
-        colors = plan.colors
-        self.settings = self.settings.with_colors(colors)
-        save_settings(self.settings)
-        self.refresh_(None)
-        self.refresh_colors_window()
-        self.set_settings_message(
-            f"{colors_module.provider_color_row(plan.provider, colors).label}: "
-            f"{colors_module.PROVIDER_ANIMATION_LABELS.get(plan.value, plan.value)}."
-        )
-
-    def _apply_remote_peer_setting(self, **changes) -> None:
-        self.settings = self.settings.with_remote_peers(
-            dataclass_replace(self.settings.remote_peers, **changes)
-        )
-        save_settings(self.settings)
-
-    @objc.IBAction
-    def toggleRemotePeers_(self, sender):
-        enabled = checkbox_is_on(sender)
-        self._apply_remote_peer_setting(enabled=enabled)
-        # Turning it ON fetches now rather than up to a minute from now;
-        # turning it OFF drops what the last fetch left behind, which is
-        # the same call, because start_remote_peer_refresh clears when
-        # the feature is off.
-        self.start_remote_peer_refresh()
-        self.refresh_settings_window()
-        self.set_settings_message(
-            "Looking for agents on your other Macs."
-            if enabled
-            else "Other Macs are hidden again."
-        )
-
-    @objc.IBAction
-    def toggleRemotePublish_(self, sender):
-        enabled = checkbox_is_on(sender)
-        self._apply_remote_peer_setting(publish_enabled=enabled)
-        if enabled:
-            snapshot = self.last_snapshot
-            self.publish_local_ledger_now(
-                getattr(snapshot, "statuses", ()) if snapshot is not None else ()
-            )
-        else:
-            # Stop publishing means the file stops being TRUE, so it stops
-            # existing -- a peer reading a frozen ledger forever is worse
-            # than a peer that can see this Mac went quiet.
-            self.remove_published_ledger()
-        self.set_settings_message(
-            "This Mac now publishes its agents for your other Macs."
-            if enabled
-            else "This Mac no longer publishes anything."
-        )
-
-    def remove_published_ledger(self) -> bool:
-        self._published_ledger_signature = None
-        self._published_ledger_at = None
-        try:
-            default_remote_ledger_path().unlink()
-        except FileNotFoundError:
-            return False
-        except OSError as exc:
-            log_status_bar(f"remote_peers unpublish error: {exc}")
-            return False
-        return True
-
-    @objc.IBAction
-    def toggleRemoteMessages_(self, sender):
-        enabled = checkbox_is_on(sender)
-        self._apply_remote_peer_setting(include_messages=enabled)
-        self._published_ledger_signature = None
-        snapshot = self.last_snapshot
-        self.publish_local_ledger_now(
-            getattr(snapshot, "statuses", ()) if snapshot is not None else ()
-        )
-        self.set_settings_message(
-            "Questions now travel with the row."
-            if enabled
-            else "Questions stay on the machine that asked them."
-        )
-
-    @objc.IBAction
-    def toggleRemoteInterrupts_(self, sender):
-        # The switch reads "let other Macs interrupt", the setting stores
-        # "remote interrupts are muted" -- so the switch is its inverse.
-        allow = checkbox_is_on(sender)
-        self._apply_remote_peer_setting(remote_interrupts_muted=not allow)
-        self.refresh_(None)
-        self.refresh_settings_window()
-        self.set_settings_message(
-            "Other Macs may take a light here."
-            if allow
-            else "Other Macs stay in the menu only."
-        )
-
-    @objc.IBAction
-    def toggleRemoteMachineInterrupt_(self, sender):
-        machine = str(sender.identifier() or "")
-        if not machine:
-            return
-        self.settings = self.settings.with_remote_machine_muted(
-            machine, not checkbox_is_on(sender)
-        )
-        save_settings(self.settings)
-        self.refresh_(None)
-        self.set_settings_message(
-            f"{machine} may interrupt."
-            if checkbox_is_on(sender)
-            else f"{machine} is menu-only."
-        )
-
-    @objc.IBAction
-    def refreshRemotePeersNow_(self, _sender):
-        if not self.settings.remote_peers.enabled:
-            self.set_settings_message("Turn on Other Macs first.")
-            return
-        self.start_remote_peer_refresh()
-        self.set_settings_message("Checking your other Macs…")
-
-    @objc.IBAction
-    def toggleCloudIngest_(self, sender):
-        enabled = checkbox_is_on(sender)
-        self.settings = dataclass_replace(self.settings, cloud_ingest_enabled=enabled)
-        save_settings(self.settings)
-        self.start_cloud_ingest_server()
-        self.refresh_settings_window()
-        server = self.cloud_ingest
-        if enabled and server is None:
-            self.set_settings_message(
-                "Cloud agents could not start listening — see the log."
-            )
-            return
-        self.set_settings_message(
-            f"Cloud agents can post to {server.address[0]}:{server.address[1]}."
-            if enabled and server is not None
-            else "Cloud agents are no longer accepted."
-        )
-
-    @objc.IBAction
-    def setEscalationTier_(self, sender):
-        item = sender.selectedItem()
-        tier = str(item.representedObject() or "") if item is not None else ""
-        try:
-            self.settings = self.settings.with_escalation_tier(tier)
-        except ValueError:
-            return
-        save_settings(self.settings)
-        self.apply_escalation()
-        self.set_settings_message(f"Escalation ceiling: {item.title()}.")
-
-    @objc.IBAction
-    def applyEscalationThresholds_(self, _sender):
-        def read(field_key, fallback):
-            field = self.settings_fields.get(field_key)
-            if field is None:
-                return fallback
-            try:
-                return float(str(field.stringValue()).strip())
-            except ValueError:
-                return fallback
-
-        self.settings = self.settings.with_escalation_thresholds(
-            ramp_seconds=read("escalation_ramp_field", self.settings.escalation_ramp_seconds),
-            menu_bar_seconds=read(
-                "escalation_menu_bar_field", self.settings.escalation_menu_bar_seconds
-            ),
-            final_seconds=read("escalation_final_field", self.settings.escalation_final_seconds),
-        )
-        save_settings(self.settings)
-        for field_key, value in (
-            ("escalation_ramp_field", self.settings.escalation_ramp_seconds),
-            ("escalation_menu_bar_field", self.settings.escalation_menu_bar_seconds),
-            ("escalation_final_field", self.settings.escalation_final_seconds),
-        ):
-            field = self.settings_fields.get(field_key)
-            if field is not None:
-                field.setStringValue_(f"{value:g}")
-        self.apply_escalation()
-        self.set_settings_message("Escalation timing saved.")
 
     @objc.IBAction
     def redrawSignalPreviews_(self, _timer):
@@ -5748,84 +4907,12 @@ class StatusBarController(NSObject):
                     if not thumb.isHiddenOrHasHiddenAncestor() and thumb.visibleRect().size.width > 0:
                         thumb.setNeedsDisplay_(True)
 
-    @objc.IBAction
-    def setFocusProfileRule_(self, sender):
-        identifier = str(sender.identifier() or "")
-        item = sender.selectedItem()
-        slot = str(item.representedObject() or "") if item is not None else ""
-        if not identifier:
-            return
-        try:
-            self.settings = self.settings.with_focus_profile_rule(identifier, slot or None)
-        except ValueError:
-            return
-        save_settings(self.settings)
-        self.set_settings_message(
-            f"Focus rule saved: {item.title() if item is not None else 'No profile'}."
-        )
-
     # NOTE: per-session identity-color OVERRIDES lost their only writer
     # when the pre-mailbox session options menu was deleted (2026-08-26).
     # Reads are still honored everywhere (colors.session_color); the next
     # writer surface is an owner call -- most likely an Agent Browser
     # action, which means extending the typed OperatorActionDescriptor
     # allowlist rather than resurrecting a right-click submenu.
-
-    @objc.IBAction
-    def toggleReminderAlerts_(self, sender):
-        enabled = bool(sender.state())
-        if enabled and self._reminders_permission_request_token is not None:
-            return
-        self.settings = self.settings.with_reminder_alerts_enabled(enabled)
-        save_settings(self.settings)
-        self.reminders_watch_retry_at = 0.0
-        self._reminders_permission_failed = False
-        self.reconcile_lid_observation()
-        if not enabled:
-            self._reminders_permission_generation += 1
-            self._reminders_permission_request_token = None
-            self.reminders_glow_until = 0.0
-            self._reconcile_current_presentation_inputs()
-            self.set_settings_message("Reminder glow off.")
-            self.refresh_(None)
-            return
-        try:
-            status = reminders_watch.authorization_status()
-        except reminders_watch.RemindersUnavailableError:
-            self._mark_reminders_permission_failed()
-            self.set_settings_message("Reminders access is unavailable on this system.")
-            return
-        if status == reminders_watch.AUTH_AUTHORIZED:
-            self.set_settings_message("Reminder glow on.")
-            self._reminders_observation_timer_fired()
-        elif status == reminders_watch.AUTH_NOT_DETERMINED:
-            self.set_settings_message("Reminder glow on — asking macOS for access…")
-            if threading.current_thread() is not threading.main_thread():
-                raise RuntimeError("Reminders permission request must run on main")
-            token = self._reminders_permission_generation
-            self._reminders_permission_request_token = token
-
-            def _granted(ok):
-                self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                    "reminderAccessResolved:",
-                    {"token": token, "granted": bool(ok)},
-                    False,
-                )
-
-            try:
-                reminders_watch.request_access(_granted)
-            except reminders_watch.RemindersUnavailableError:
-                self._reminders_permission_request_token = None
-                self._mark_reminders_permission_failed()
-                self.set_settings_message(
-                    "Reminders access is unavailable on this system."
-                )
-        else:
-            self._mark_reminders_permission_failed()
-            self.set_settings_message(
-                f"Reminders access is denied — enable {PRODUCT_DISPLAY_NAME} under "
-                "Privacy & Security → Reminders."
-            )
 
     def test_signal_program(self, brightness: float, led_count: int = 8) -> str:
         key = getattr(self, "test_signal_key", None) or signals_module.SIGNAL_LOW_BATTERY
@@ -5841,996 +4928,9 @@ class StatusBarController(NSObject):
 
     # --- Saved looks (the animation library) ----------------------------
 
-    def animation_library_path(self) -> Path:
-        return default_animation_library_path()
-
-    def ensure_animation_library(self) -> AnimationLibrary:
-        """Load the saved looks once, migrating their old home on the way.
-
-        Looks used to live in settings.json as an unbounded list of pairs.
-        Three things were wrong with that and all three are why this moved:
-        settings.json is not private-mode-enforced storage for a growing
-        blob, nothing bounded it, and nothing PARSED a look before storing
-        it -- so a program the device would reject could be saved happily
-        and only discovered a month later, by the person pressing Burn.
-        """
-        if self._animation_library_loaded:
-            return self.animation_library
-        self._animation_library_loaded = True
-        restore = load_animation_library(self.animation_library_path())
-        self.animation_library = restore.library
-        self.animation_library_health = restore.health
-        if restore.health not in (LibraryHealth.HEALTHY, LibraryHealth.MISSING):
-            log_status_bar(f"animation library {restore.health.value}")
-        self.migrate_studio_library()
-        return self.animation_library
-
-    def migrate_studio_library(self) -> int:
-        """Move settings.json's looks into the bounded library. Returns moved.
-
-        A look that will not parse is NOT deleted: it stays in
-        settings.json and is reported, because "we quietly dropped four of
-        your animations" is exactly the class of loss this project keeps
-        finding after the fact.
-        """
-        legacy = tuple(self.settings.studio_library or ())
-        if not legacy:
-            return 0
-        library = self.animation_library
-        led_count = self.studio_led_count()
-        kept: list[tuple[str, str]] = []
-        moved = 0
-        for entry in legacy:
-            try:
-                name, program = entry
-            except (TypeError, ValueError):
-                continue
-            try:
-                library = library.with_program(
-                    str(name), str(program), led_count=led_count
-                )
-            except AnimationLibraryError as exc:
-                log_status_bar(f"studio look {name!r} not migrated: {exc}")
-                kept.append((str(name), str(program)))
-                continue
-            moved += 1
-        if not moved:
-            return 0
-        try:
-            save_animation_library(self.animation_library_path(), library)
-        except (AnimationLibraryError, OSError) as exc:
-            log_status_bar(f"animation library save failed: {exc}")
-            return 0
-        self.animation_library = library
-        self.settings = dataclass_replace(
-            self.settings, studio_library=tuple(kept)
-        )
-        save_settings(self.settings)
-        if kept:
-            self.set_settings_message(
-                f"Moved {moved} saved looks; {len(kept)} could not be "
-                "migrated because the device would reject them."
-            )
-        return moved
-
-    def store_animation_library(self, library: AnimationLibrary) -> bool:
-        try:
-            save_animation_library(self.animation_library_path(), library)
-        except (AnimationLibraryError, OSError) as exc:
-            self.set_settings_message(f"Could not save your looks: {exc}")
-            return False
-        self.animation_library = library
-        self._animation_library_loaded = True
-        self._refresh_studio_library_popup()
-        return True
-
-    def _refresh_studio_library_popup(self) -> None:
-        popup = getattr(self, "studio_library_popup", None)
-        if popup is None:
-            return
-        popup.removeAllItems()
-        popup.addItemWithTitle_("Saved looks\u2026")
-        popup.lastItem().setRepresentedObject_("")
-        for look_name in self.ensure_animation_library().names:
-            popup.addItemWithTitle_(look_name)
-            popup.lastItem().setRepresentedObject_(look_name)
-
-    def selected_studio_look_name(self) -> str:
-        popup = getattr(self, "studio_library_popup", None)
-        if popup is None:
-            return ""
-        item = popup.selectedItem()
-        return str(item.representedObject() or "") if item is not None else ""
-
-    @objc.IBAction
-    def captureStudioProgram_(self, _sender):
-        """Snapshot the EXACT program rendering on the Screen Bar into
-        the editor -- any live moment you love becomes an editable
-        artifact. The baked `brightness` prefix is stripped so the look
-        re-renders correctly under your live brightness."""
-        view = getattr(self.virtual_status_device, "view", None)
-        program = getattr(view, "current_program", None) if view is not None else None
-        if not program:
-            self.set_settings_message("Nothing is playing on the Screen Bar.")
-            return
-        lines = [
-            line
-            for line in str(program).splitlines()
-            if not line.strip().lower().startswith("brightness")
-        ]
-        editor = getattr(self, "studio_editor", None)
-        if editor is None:
-            return
-        editor.setString_("\n".join(lines).strip())
-        # "It's yours now" has to survive closing the window: capture
-        # used to set the text and persist nothing.
-        self._persist_studio_editor_text()
-        self.set_settings_message("Captured. It's yours now -- edit away.")
-
-    @objc.IBAction
-    def saveStudioLook_(self, _sender):
-        editor = getattr(self, "studio_editor", None)
-        field = getattr(self, "studio_save_name_field", None)
-        if editor is None or field is None:
-            return
-        name = str(field.stringValue()).strip()
-        program = str(editor.string()).strip()
-        if not name:
-            self.set_settings_message("Name the look first.")
-            return
-        if not program:
-            self.set_settings_message("Write a program first.")
-            return
-        try:
-            normalized = normalize_led_text(program)
-            validate_led_text(normalized)
-        except Exception as exc:
-            self.set_settings_message(f"Can't save: {exc}")
-            return
-        dsl_error = self.validate_studio_program(normalized)
-        if dsl_error:
-            self.set_settings_message(f"Can't save: {dsl_error}.")
-            return
-        library = self.ensure_animation_library()
-        try:
-            # The store parses before it writes, so a look that could not
-            # be burned cannot end up in the library at all.
-            library = library.with_program(
-                name, program, led_count=self.studio_led_count()
-            )
-        except AnimationLibraryError as exc:
-            self.set_settings_message(f"Can't save: {exc}")
-            return
-        if self.store_animation_library(library):
-            self.set_settings_message(f"Saved \u201c{name}\u201d to your looks.")
-
-    @objc.IBAction
-    def loadStudioLook_(self, sender):
-        item = sender.selectedItem()
-        name = str(item.representedObject() or "") if item is not None else ""
-        if not name:
-            return
-        try:
-            saved = self.ensure_animation_library().get(name)
-        except AnimationLibraryError as exc:
-            self.set_settings_message(str(exc))
-            return
-        editor = getattr(self, "studio_editor", None)
-        if editor is not None:
-            editor.setString_(saved.program)
-        field = getattr(self, "studio_save_name_field", None)
-        if field is not None:
-            field.setStringValue_(saved.name)
-        self.set_settings_message(f"Loaded \u201c{name}\u201d.")
-
-    @objc.IBAction
-    def deleteStudioLook_(self, _sender):
-        name = self.selected_studio_look_name()
-        if not name:
-            self.set_settings_message("Pick a saved look to delete.")
-            return
-        try:
-            library = self.ensure_animation_library().without(name)
-        except AnimationLibraryError as exc:
-            self.set_settings_message(str(exc))
-            return
-        if self.store_animation_library(library):
-            self.set_settings_message(f"Deleted \u201c{name}\u201d.")
-
-    @objc.IBAction
-    def renameStudioLook_(self, _sender):
-        """Rename the selected look to whatever is in the name field.
-
-        Order is identity in that popup -- the owner has learned its
-        shape -- so the store renames IN PLACE rather than re-adding at
-        the bottom.
-        """
-        name = self.selected_studio_look_name()
-        field = getattr(self, "studio_save_name_field", None)
-        replacement = str(field.stringValue()).strip() if field is not None else ""
-        if not name:
-            self.set_settings_message("Pick a saved look to rename.")
-            return
-        if not replacement:
-            self.set_settings_message("Type the new name first.")
-            return
-        try:
-            library = self.ensure_animation_library().renamed(name, replacement)
-        except AnimationLibraryError as exc:
-            self.set_settings_message(str(exc))
-            return
-        if self.store_animation_library(library):
-            self.set_settings_message(
-                f"Renamed \u201c{name}\u201d to \u201c{replacement}\u201d."
-            )
-
-    # --- Studio builder (the no-typing composer; view in studio_builder.py)
-
-    def _studio_builder_state(self) -> tuple[list, bool]:
-        steps = getattr(self, "studio_builder_steps", None)
-        if steps is None:
-            from .studio_builder import DEFAULT_STEPS
-
-            steps = [dict(step) for step in DEFAULT_STEPS]
-            self.studio_builder_steps = steps
-        loop = bool(getattr(self, "studio_builder_loop", True))
-        self.studio_builder_loop = loop
-        return steps, loop
-
-    def _apply_studio_builder(self) -> None:
-        """Compile the builder's steps into the editor -- the same text,
-        validation, persistence, and preview path typing would take."""
-        from .studio_builder import compile_builder_program
-
-        steps, loop = self._studio_builder_state()
-        program = compile_builder_program(steps, loop)
-        editor = getattr(self, "studio_editor", None)
-        if editor is None:
-            return
-        editor.setString_(program)
-        self.refresh_studio_problem_label()
-        self._persist_studio_editor_text()
-
-    def _studio_builder_rebuild(self) -> None:
-        from .studio_builder import rebuild_builder_rows
-
-        rebuild_builder_rows(self)
-
-    @objc.IBAction
-    def studioBuilderAddStep_(self, _sender):
-        from .studio_builder import MAX_BUILDER_STEPS
-
-        steps, _loop = self._studio_builder_state()
-        if len(steps) >= MAX_BUILDER_STEPS:
-            self.set_settings_message(
-                f"{MAX_BUILDER_STEPS} steps is the device's whole budget."
-            )
-            return
-        steps.append(dict(steps[-1]) if steps else {"color": "#00E5FF", "ms": 800, "ease": "pulse"})
-        self._studio_builder_rebuild()
-        self._apply_studio_builder()
-
-    @objc.IBAction
-    def studioBuilderRemoveStep_(self, sender):
-        steps, _loop = self._studio_builder_state()
-        index = int(sender.tag())
-        if 0 <= index < len(steps) and len(steps) > 1:
-            steps.pop(index)
-            self._studio_builder_rebuild()
-            self._apply_studio_builder()
-
-    @objc.IBAction
-    def studioBuilderColorChanged_(self, sender):
-        steps, _loop = self._studio_builder_state()
-        index = int(sender.tag())
-        if not 0 <= index < len(steps):
-            return
-        steps[index]["color"] = hex_from_nscolor(sender.color())
-        self._apply_studio_builder()
-
-    @objc.IBAction
-    def studioBuilderDurationChanged_(self, sender):
-        steps, _loop = self._studio_builder_state()
-        index = int(sender.tag())
-        if not 0 <= index < len(steps):
-            return
-        value = int(sender.doubleValue())
-        steps[index]["ms"] = value
-        labels = getattr(self, "_studio_builder_duration_labels", None)
-        if labels and 0 <= index < len(labels) and labels[index] is not None:
-            labels[index].setStringValue_(f"{value}ms")
-        self._apply_studio_builder()
-
-    @objc.IBAction
-    def studioBuilderEaseChanged_(self, sender):
-        steps, _loop = self._studio_builder_state()
-        index = int(sender.tag())
-        item = sender.selectedItem()
-        if not 0 <= index < len(steps) or item is None:
-            return
-        steps[index]["ease"] = str(item.representedObject() or "none")
-        self._apply_studio_builder()
-
-    @objc.IBAction
-    def studioBuilderLoopToggled_(self, sender):
-        self._studio_builder_state()
-        self.studio_builder_loop = checkbox_is_on(sender)
-        self._apply_studio_builder()
-
-    @objc.IBAction
-    def applyStudioAsPowerUp_(self, _sender):
-        """Burns the Studio program into every connected device's
-        INIT.LED so the hardware BOOTS wearing your light.
-
-        Four gates per device, in order, all inside
-        ``animation.burn_power_up_animation``: the model validates, it
-        compiles, the device writer's size checks pass, and the REAL
-        firmware parser accepts it -- refusing when that parser is
-        unavailable rather than passing. Each device is validated at ITS
-        OWN LED count: this used to burn 8-LED-validated bytes onto a
-        2-LED Dot, which parses and then paints six LEDs that do not
-        exist.
-        """
-        editor = getattr(self, "studio_editor", None)
-        if editor is None:
-            return
-        program = str(editor.string()).strip()
-        if not program:
-            self.set_settings_message("Write a program first.")
-            return
-        written = 0
-        total_bytes = 0
-        warnings: list[str] = []
-        failures: list[str] = []
-        targets = [
-            device
-            for device in (self.status_bar_devices(remember=False) or [])
-            if device.connected and device.device_id != VIRTUAL_DEVICE_ID
-        ]
-        if not targets:
-            self.set_settings_message(
-                "No connected SidePulse Pro or SidePulse Dot hardware to write to."
-            )
-            return
-        for device in targets:
-            led_count = led_count_for_target(device.target)
-            try:
-                animation = parse_animation(program, led_count=led_count)
-                plan = burn_power_up_animation(
-                    animation,
-                    device_path=device.root,
-                    led_count=led_count,
-                    dry_run=False,
-                )
-            except AnimationValidationError as exc:
-                self.set_settings_message(f"Power-up look invalid: {exc}")
-                return
-            except Exception as exc:
-                log_status_bar(f"INIT.LED write failed for {device.name}: {exc}")
-                failures.append(device.name)
-                continue
-            written += 1
-            total_bytes = plan.byte_count
-            warnings.extend(problem.message for problem in plan.warnings)
-        if not written:
-            self.set_settings_message(
-                "Power-up look could not be written to "
-                f"{', '.join(failures) or 'any device'}."
-            )
-            return
-        plural = "device" if written == 1 else "devices"
-        message = (
-            f"Power-up look written to {written} {plural} ({total_bytes} bytes) "
-            "-- it plays now and every time the hardware boots."
-        )
-        if warnings:
-            message = f"{message} {warnings[0]}"
-        self.set_settings_message(message)
-
-    def burn_saved_look_as_power_up(self, name: str, *, dry_run: bool = True):
-        """Burn one saved look straight from the library, by name.
-
-        The popup's counterpart to the editor button: the thing you saved
-        is the thing that boots, without a round trip through the text
-        view where a stray keystroke could change it.
-        """
-        return burn_saved_animation_to_power_up(
-            name,
-            library_path=self.animation_library_path(),
-            dry_run=dry_run,
-        )
-
-    @objc.IBAction
-    def burnStudioLookAsPowerUp_(self, _sender):
-        name = self.selected_studio_look_name()
-        if not name:
-            self.set_settings_message("Pick a saved look to burn.")
-            return
-        try:
-            plan = self.burn_saved_look_as_power_up(name, dry_run=False)
-        except (AnimationValidationError, AnimationLibraryError) as exc:
-            self.set_settings_message(f"Can't burn \u201c{name}\u201d: {exc}")
-            return
-        except Exception as exc:
-            self.set_settings_message(f"Can't burn \u201c{name}\u201d: {exc}")
-            return
-        self.set_settings_message(
-            f"\u201c{name}\u201d written as the power-up look "
-            f"({plan.byte_count} bytes)."
-        )
-
-    @objc.IBAction
-    def previewStudioProgram_(self, _sender):
-        editor = getattr(self, "studio_editor", None)
-        if editor is None:
-            return
-        program = str(editor.string()).strip()
-        if not program:
-            return
-        try:
-            normalized = normalize_led_text(program)
-            validate_led_text(normalized)
-        except Exception as exc:
-            self.set_settings_message(f"Studio program error: {exc}")
-            return
-        dsl_error = self.validate_studio_program(normalized)
-        if dsl_error:
-            self.set_settings_message(f"Studio program error: {dsl_error}.")
-            return
-        self.settings = self.settings.with_studio_program(program)
-        save_settings(self.settings)
-        self.studio_preview_program = program
-        self.test_signal_key = "__studio__"
-        self.test_signal_until = time.monotonic() + 12.0
-        self.refresh_(None)
-        self._reconcile_current_presentation_inputs()
-        self.set_settings_message("Studio: playing your program on everything for 12s.")
-
-    @objc.IBAction
-    def stopStudioProgram_(self, _sender):
-        self.test_signal_until = 0.0
-        self.test_signal_key = None
-        self._reconcile_current_presentation_inputs()
-        self.refresh_(None)
-        self.set_settings_message("Studio preview stopped.")
-
-    @objc.IBAction
-    def applyFadePreset_(self, sender):
-        identifier = str(sender.identifier() or "")
-        if "|" not in identifier:
-            return
-        floor_pct, ceiling_pct = identifier.split("|", 1)
-        floor = max(0.0, min(1.0, float(floor_pct) / 100.0))
-        ceiling = max(0.0, min(1.0, float(ceiling_pct) / 100.0))
-        colors = self.settings.colors
-        for mode_key in FADE_MODE_KEYS:
-            colors = colors.with_fade_floor(mode_key, floor).with_fade_ceiling(
-                mode_key, ceiling
-            )
-        self.settings = self.settings.with_colors(colors)
-        save_settings(self.settings)
-        self.refresh_colors_window()
-        self.refresh_colors_preview()
-        if self.color_preview_enabled:
-            self.push_colors_preview_to_device()
-        self.refresh_(None)
-        self.set_settings_message(f"Fade preset: {sender.title()} ({floor_pct}–{ceiling_pct}%).")
-
-    @objc.IBAction
-    def testSignal_(self, sender):
-        key = str(sender.identifier() or "")
-        if key not in signals_module.DEFAULT_SIGNAL_STYLES:
-            return
-        self.test_signal_key = key
-        self.test_signal_until = time.monotonic() + SIGNAL_TEST_SECONDS
-        self.refresh_(None)
-        self._reconcile_current_presentation_inputs()
-        self.set_settings_message(
-            f"Testing the {key.replace('_', ' ')} signal on every surface…"
-        )
-
-    @objc.IBAction
-    def setDeviceDisplay_(self, sender):
-        device_id = str(sender.identifier() or "")
-        item = sender.selectedItem()
-        display = str(item.representedObject() or "") if item is not None else ""
-        if not device_id or display not in LED_DISPLAY_CHOICES:
-            return
-        self.settings = self.settings.with_device_display(device_id, display)
-        save_settings(self.settings)
-        self.refresh_(None)
-        self.set_settings_message(f"Display: {item.title()}.")
-
-    @objc.IBAction
-    def setDeviceSignalPolicy_(self, sender):
-        device_id = str(sender.identifier() or "")
-        if not device_id:
-            return
-        item = sender.selectedItem()
-        policy = str(item.representedObject() or "") if item is not None else ""
-        self.settings = self.settings.with_device_signal_policy(
-            device_id, policy or None
-        )
-        save_settings(self.settings)
-        label = item.title() if item is not None else "All signals"
-        self.set_settings_message(f"Device signals: {label.lower()}.")
-        self.refresh_(None)
-
-    @objc.IBAction
-    def setDeviceProviderPin_(self, sender):
-        device_id = str(sender.identifier() or "")
-        if not device_id:
-            return
-        item = sender.selectedItem()
-        pin = str(item.representedObject() or "") if item is not None else ""
-        self.settings = self.settings.with_device_provider_pin(device_id, pin or None)
-        save_settings(self.settings)
-        label = item.title() if item is not None else "All sessions"
-        self.set_settings_message(f"Device sessions: {label.lower()}.")
-        self.refresh_(None)
-
-    @objc.IBAction
-    def setDeviceBlendMode_(self, sender):
-        device_id = str(sender.identifier() or "")
-        item = sender.selectedItem()
-        mode = str(item.representedObject() or "") if item is not None else ""
-        if not device_id:
-            return
-        self.settings = self.settings.with_device_blend_mode(device_id, mode or None)
-        save_settings(self.settings)
-        self.refresh_(None)
-        self.set_settings_message(
-            f"{device_id} blend: {item.title() if item is not None else 'Global default'}."
-        )
-
-
-    @objc.IBAction
-    def toggleCapacityHistory_(self, sender):
-        """Consent for the only file JR-Bar keeps about your usage.
-
-        Turning it off deletes what is already on disk before the switch
-        redraws -- `capacity_history_store` does the deletion the first
-        time it is asked for a store the owner has withdrawn consent for.
-        """
-        enabled = bool(sender.state())
-        self.settings = self.settings.with_capacity_history_enabled(enabled)
-        save_settings(self.settings)
-        with self._capacity_history_lock:
-            self.capacity_history_store()
-        if enabled:
-            days = getattr(self.settings, "capacity_history_retention_days", 7)
-            self.set_settings_message(
-                f"Capacity history on — keeping {days} days on this Mac."
-            )
-        else:
-            self.set_settings_message("Capacity history off — what was kept is deleted.")
-
-    @objc.IBAction
-    def setCapacityHistoryRetention_(self, sender):
-        item = sender.selectedItem()
-        raw = str(item.representedObject() or "7") if item is not None else "7"
-        try:
-            self.settings = self.settings.with_capacity_history_retention_days(int(raw))
-        except (TypeError, ValueError):
-            return
-        save_settings(self.settings)
-        # A shorter retention has to prune NOW, not at the next flush: the
-        # owner just told us to stop keeping something.
-        with self._capacity_history_lock:
-            self.capacity_history_store()
-        self.set_settings_message(f"Capacity history kept for {raw} days.")
-
-    @objc.IBAction
-    def reminderAccessResolved_(self, granted):
-        payload = granted if isinstance(granted, dict) else {}
-        token = payload.get("token")
-        if (
-            type(token) is not int
-            or token != self._reminders_permission_request_token
-            or token != self._reminders_permission_generation
-        ):
-            return
-        self._reminders_permission_request_token = None
-        inputs = self._presentation_scheduler_inputs
-        lifecycle_active = bool(
-            self._runtime_started
-            and self.settings.reminder_alerts_enabled
-            and self._reminders_observation_active
-            and inputs is not None
-            and not inputs.display_asleep
-            and not inputs.app_terminating
-        )
-        if not lifecycle_active:
-            return
-        if bool(payload.get("granted")):
-            self._reminders_permission_failed = False
-            self.set_settings_message("Reminders access granted.")
-            self.reminders_watch_retry_at = 0.0
-            self._reconcile_current_presentation_inputs()
-            self._reminders_observation_timer_fired()
-        else:
-            self._mark_reminders_permission_failed()
-            self.set_settings_message(
-                "Reminders access was declined — the glow stays off until "
-                "it's granted in Privacy & Security → Reminders."
-            )
-
-    @objc.IBAction
-    def calendarAccessResolved_(self, granted):
-        if granted:
-            self.set_settings_message("Calendar access granted.")
-            self.calendar_watch_retry_at = 0.0
-            self.reconcile_lid_observation()
-            self._calendar_observation_timer_fired()
-        else:
-            self.set_settings_message(
-                "Calendar access was declined — the glow stays off until "
-                "it's granted in Privacy & Security → Calendars."
-            )
-
-    @objc.IBAction
-    def applyCalendarLead_(self, _sender):
-        field = self.settings_fields.get("calendar_lead_field")
-        if field is None:
-            return
-        try:
-            minutes = float(str(field.stringValue()).strip())
-        except ValueError:
-            field.setStringValue_(f"{self.settings.calendar_lead_minutes:g}")
-            return
-        self.settings = self.settings.with_calendar_lead_minutes(minutes)
-        save_settings(self.settings)
-        field.setStringValue_(f"{self.settings.calendar_lead_minutes:g}")
-        self.calendar_watch_retry_at = 0.0
-        previous_generation = self._os_poll_generation
-        self._os_poll_generation += 1
-        self._os_poll_worker.cancel_generation(previous_generation)
-        self.set_settings_message(
-            f"Calendar glow starts {self.settings.calendar_lead_minutes:g} minutes before events."
-        )
-
-    @objc.IBAction
-    def toggleCompletionSweep_(self, sender):
-        enabled = bool(sender.state())
-        self.settings = self.settings.with_completion_sweep_enabled(enabled)
-        save_settings(self.settings)
-        self.set_settings_message(
-            "Completion sweep on." if enabled else "Completion sweep off."
-        )
-
-
-    @objc.IBAction
-    def applyPalette_(self, sender):
-        name = str(sender.identifier() or "")
-        palette = colors_module.CURATED_PALETTES.get(
-            name
-        ) or colors_module.PROVIDER_PALETTES.get(name)
-        if palette is None:
-            return
-        colors = colors_module.apply_palette(self.settings.colors, palette)
-        self.settings = self.settings.with_colors(colors)
-        save_settings(self.settings)
-        self.refresh_colors_window()
-        self.refresh_(None)
-        self.set_settings_message(f"Palette: {name}. Every light just changed outfits.")
-
-    @objc.IBAction
-    def openProjectPage_(self, _sender):
-        from AppKit import NSWorkspace
-        from Foundation import NSURL
-
-        NSWorkspace.sharedWorkspace().openURL_(
-            NSURL.URLWithString_("https://github.com/JonathanRReed/sidepulse-JR-Fork")
-        )
-
-    @objc.IBAction
-    def setScreenBarMinGlow_(self, sender):
-        fraction = max(0.0, min(1.0, float(sender.doubleValue()) / 100.0))
-        # Track the thumb live on the pane's miniature; commit on release.
-        preview = self.settings_fields.get("screen_bar_preview_view")
-        if preview is not None:
-            preview.setMinGlow_(fraction)
-        event = NSApp.currentEvent()
-        if event is not None and event.type() == NSEventTypeLeftMouseDragged:
-            return
-        self.settings = self.settings.with_screen_bar_min_glow(fraction)
-        save_settings(self.settings)
-        label = "pitch black" if fraction <= 0.004 else f"{round(fraction * 100)}%"
-        self.set_settings_message(f"Screen Bar dim floor: {label}.")
-        self.refresh_(None)
-
-    @objc.IBAction
-    def setDeviceRestingGlow_(self, sender):
-        device_id = str(sender.identifier() or "")
-        if not device_id:
-            return
-        fraction = max(0.0, min(0.35, float(sender.doubleValue()) / 100.0))
-        self.settings = self.settings.with_device_resting_glow(device_id, fraction)
-        save_settings(self.settings)
-        self.reset_led_controllers_for_device(device_id)
-        self.set_settings_message(
-            "Resting glow off." if fraction <= 0.004 else f"Resting glow: {round(fraction * 100)}%."
-        )
-        self.refresh_(None)
-
-    @objc.IBAction
-    def setUsageDisplayMode_(self, sender):
-        item = sender.selectedItem()
-        if item is None:
-            return
-        try:
-            self.settings = self.settings.with_usage_display_mode(
-                str(item.representedObject())
-            )
-        except ValueError:
-            return
-        save_settings(self.settings)
-        from .settings_window import refresh_usage_graph_legend
-
-        refresh_usage_graph_legend(self)
-        self.invalidate_usage_providers(("codex", "claude"))
-        self.maybe_refresh_usage_summary()
-
-    @objc.IBAction
-    def toggleCodexPercent_(self, sender):
-        self.settings = self.settings.with_codex_percent_enabled(checkbox_is_on(sender))
-        save_settings(self.settings)
-        self.invalidate_usage_providers(("codex",))
-        self.maybe_refresh_usage_summary()
-
-    @objc.IBAction
-    def setUsageGraphRange_(self, sender):
-        item = sender.selectedItem()
-        if item is None:
-            return
-        try:
-            self.settings = self.settings.with_usage_graph_days(int(item.representedObject()))
-        except (TypeError, ValueError):
-            return
-        save_settings(self.settings)
-        # Rescan now -- the warm cache makes a year-range rebuild cheap.
-        from .settings_window import refresh_usage_graph_legend
-
-        refresh_usage_graph_legend(self)
-        self.invalidate_usage_providers(("codex", "claude"))
-        self.maybe_refresh_usage_summary()
-
-    @objc.IBAction
-    def toggleUsageGraphProvider_(self, sender):
-        provider_id = str(sender.identifier() or "")
-        # Any registry provider (the guard was hard-coded to two while
-        # the setter accepted the registry -- half-merged, 2026-08-26).
-        if provider_id not in set(HOOK_PROVIDERS) | {"claude", "codex"}:
-            return
-        selected = list(self.settings.usage_graph_providers)
-        if checkbox_is_on(sender):
-            if provider_id not in selected:
-                selected.append(provider_id)
-        else:
-            selected = [value for value in selected if value != provider_id]
-        if not selected:
-            sender.setState_(1)
-            self.set_settings_message("Keep at least one usage source selected.")
-            return
-        ordered = tuple(
-            value
-            for value in dict.fromkeys(("claude", "codex", *HOOK_PROVIDERS))
-            if value in selected
-        )
-        self.settings = self.settings.with_usage_graph_providers(ordered)
-        save_settings(self.settings)
-        from .settings_window import refresh_usage_graph_legend
-
-        refresh_usage_graph_legend(self)
-        self.invalidate_usage_providers(("codex", "claude"))
-        self.maybe_refresh_usage_summary()
-
-    @objc.IBAction
-    def toggleWebhookEvent_(self, sender):
-        event_key = str(sender.identifier() or "")
-        if not event_key:
-            return
-        try:
-            self.settings = self.settings.with_webhook_event(
-                event_key, checkbox_is_on(sender)
-            )
-        except ValueError:
-            return
-        save_settings(self.settings)
-        self.set_settings_message("Webhook events saved.")
-
-    @objc.IBAction
-    def applyEscalationWebhook_(self, sender):
-        url = str(sender.stringValue()).strip()
-        if url and not url.startswith(("http://", "https://")):
-            self.set_settings_message("Webhook must be an http(s) URL.")
-            return
-        self.settings = self.settings.with_escalation_webhook_url(url)
-        save_settings(self.settings)
-        self.set_settings_message(
-            "Stage-3 webhook set." if url else "Stage-3 webhook off."
-        )
-
-    @objc.IBAction
-    def toggleCompletionNotification_(self, sender):
-        self.settings = self.settings.with_completion_notification_enabled(
-            checkbox_is_on(sender)
-        )
-        save_settings(self.settings)
-        self.set_settings_message(
-            "Completion notifications on."
-            if self.settings.completion_notification_enabled
-            else "Completion notifications off."
-        )
-
-    @objc.IBAction
-    def toggleSubagentAsksAlert_(self, sender):
-        self.settings = self.settings.with_subagent_asks_alert(checkbox_is_on(sender))
-        save_settings(self.settings)
-        self.refresh_(None)
-
-    @objc.IBAction
-    def toggleClaudePlanLimits_(self, sender):
-        self.settings = self.settings.with_claude_plan_limits_enabled(
-            checkbox_is_on(sender)
-        )
-        save_settings(self.settings)
-        # Registrations are immutable, so the coordinator has to be rebuilt
-        # for the toggle to mean anything before the next relaunch.
-        self.rebuild_capacity_refresh_coordinator()
-        self._claude_credential = None
-        # Turning the source off and on is the one moment a different account
-        # can appear behind it, so the previous run's reset boundaries stop
-        # vouching for the new one here.
-        self._advance_capacity_source_generation("claude")
-        # Refresh immediately so the line appears without the 5-min wait.
-        self.invalidate_usage_providers(("claude",))
-        self.maybe_refresh_usage_summary()
-        self.refresh_(None)
-
-    @objc.IBAction
-    def toggleMenuBarLabel_(self, sender):
-        self.settings = self.settings.with_menu_bar_label_enabled(checkbox_is_on(sender))
-        save_settings(self.settings)
-        self.set_status(self.current_state, ask_count=self.current_ask_count)
-        self.refresh_(None)
-
-
     def why_panel_body(self, *, why_context=None) -> str:
         return why_panel_module.panel_body(self, why_context=why_context)
 
-
-    @objc.IBAction
-    def installCodexHooks_(self, _sender):
-        self.update_hooks("codex", install=True)
-
-    @objc.IBAction
-    def uninstallCodexHooks_(self, _sender):
-        self.update_hooks("codex", install=False)
-
-    @objc.IBAction
-    def installClaudeHooks_(self, _sender):
-        self.update_hooks("claude", install=True)
-
-    @objc.IBAction
-    def uninstallClaudeHooks_(self, _sender):
-        self.update_hooks("claude", install=False)
-
-    @objc.IBAction
-    def installDevinHooks_(self, _sender):
-        self.update_hooks("devin", install=True)
-
-    @objc.IBAction
-    def uninstallDevinHooks_(self, _sender):
-        self.update_hooks("devin", install=False)
-
-    @objc.IBAction
-    def installGrokHooks_(self, _sender):
-        self.update_hooks("grok", install=True)
-
-    @objc.IBAction
-    def uninstallGrokHooks_(self, _sender):
-        self.update_hooks("grok", install=False)
-
-    @objc.IBAction
-    def installCursorHooks_(self, _sender):
-        self.update_hooks("cursor", install=True)
-
-    @objc.IBAction
-    def uninstallCursorHooks_(self, _sender):
-        self.update_hooks("cursor", install=False)
-
-    @objc.IBAction
-    def installHermesHooks_(self, _sender):
-        self.update_hooks("hermes", install=True)
-
-    @objc.IBAction
-    def uninstallHermesHooks_(self, _sender):
-        self.update_hooks("hermes", install=False)
-
-    @objc.IBAction
-    def installOpenclawHooks_(self, _sender):
-        self.update_hooks("openclaw", install=True)
-
-    @objc.IBAction
-    def uninstallOpenclawHooks_(self, _sender):
-        self.update_hooks("openclaw", install=False)
-
-    @objc.IBAction
-    def installOpencodeHooks_(self, _sender):
-        self.update_hooks("opencode", install=True)
-
-    @objc.IBAction
-    def uninstallOpencodeHooks_(self, _sender):
-        self.update_hooks("opencode", install=False)
-
-    @objc.IBAction
-    def installAntigravityHooks_(self, _sender):
-        self.update_hooks("antigravity", install=True)
-
-    @objc.IBAction
-    def uninstallAntigravityHooks_(self, _sender):
-        self.update_hooks("antigravity", install=False)
-
-    @objc.IBAction
-    def installKiroHooks_(self, _sender):
-        self.update_hooks("kiro", install=True)
-
-    @objc.IBAction
-    def uninstallKiroHooks_(self, _sender):
-        self.update_hooks("kiro", install=False)
-
-    @objc.IBAction
-    def installPiHooks_(self, _sender):
-        self.update_hooks("pi", install=True)
-
-    @objc.IBAction
-    def uninstallPiHooks_(self, _sender):
-        self.update_hooks("pi", install=False)
-
-    @objc.IBAction
-    def installGeminiHooks_(self, _sender):
-        self.update_hooks("gemini", install=True)
-
-    @objc.IBAction
-    def uninstallGeminiHooks_(self, _sender):
-        self.update_hooks("gemini", install=False)
-
-    @objc.IBAction
-    def toggleCodexTranscripts_(self, sender):
-        self.set_transcript_monitoring("codex", sender.state() == NSOnState)
-
-    @objc.IBAction
-    def toggleClaudeTranscripts_(self, sender):
-        self.set_transcript_monitoring("claude", sender.state() == NSOnState)
-
-    @objc.IBAction
-    def setBatteryLedDisplayFromCheckbox_(self, sender):
-        self.set_battery_led_display(sender.state() == NSOnState)
-
-    @objc.IBAction
-    def setBatteryPowerPreviewFromCheckbox_(self, sender):
-        self.set_battery_power_preview(sender.state() == NSOnState)
-
-    @objc.IBAction
-    def setBatteryChargingIdleFromCheckbox_(self, sender):
-        self.set_battery_charging_idle(sender.state() == NSOnState)
-
-    @objc.IBAction
-    def toggleQuotaAlerts_(self, sender):
-        enabled = checkbox_is_on(sender)
-        try:
-            self.settings = self.settings.with_quota_alerts_enabled(enabled)
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save settings: {exc}")
-            self.settings = load_settings()
-            self.refresh_settings_window()
-            return
-        self.set_settings_message(
-            f"Quota alerts {'enabled' if enabled else 'disabled'}."
-        )
-        self.refresh_settings_window()
 
     @objc.IBAction
     def refreshUsageCenterTick_(self, timer):
@@ -6841,107 +4941,6 @@ class StatusBarController(NSObject):
         refresh = getattr(self, "_request_provider_usage", None)
         if callable(refresh):
             refresh(force=False)
-
-    @objc.IBAction
-    def toggleKeepAwakeOnBattery_(self, sender):
-        self.settings = self.settings.with_keep_awake_on_battery(
-            checkbox_is_on(sender)
-        )
-        save_settings(self.settings)
-        self.set_settings_message(
-            "Agents hold the Mac awake on battery too."
-            if self.settings.keep_awake_on_battery
-            else "On battery, agents no longer hold the Mac awake."
-        )
-
-    @objc.IBAction
-    def toggleLowBatteryAlert_(self, sender):
-        self.settings = self.settings.with_low_battery_alert_enabled(checkbox_is_on(sender))
-        save_settings(self.settings)
-        self.refresh_(None)
-
-    @objc.IBAction
-    def applyLowBatteryThreshold_(self, _sender):
-        field = self.settings_fields.get("low_battery_threshold_field")
-        if field is None:
-            return
-        try:
-            percent = float(str(field.stringValue()).strip().rstrip("%"))
-        except ValueError:
-            self.set_settings_message("Low-battery threshold must be a number.")
-            return
-        self.settings = self.settings.with_low_battery_threshold_percent(percent)
-        save_settings(self.settings)
-        set_field_value(field, f"{self.settings.low_battery_threshold_percent:g}")
-        self.set_settings_message(
-            f"Charge reminder below {self.settings.low_battery_threshold_percent:g}%."
-        )
-        self.refresh_(None)
-
-
-    @objc.IBAction
-    def setDeviceBrightness_(self, sender):
-        device_id = sender.identifier()
-        if device_id is None:
-            return
-        device_id = str(device_id)
-        value = sender.doubleValue()
-        controls = self.device_settings_controls.get(device_id)
-        if controls is not None:
-            self.set_brightness_preview_dots(controls.get("brightness_dots"), value)
-        if device_id == VIRTUAL_DEVICE_ID:
-            preview = self.settings_fields.get("screen_bar_preview_view")
-            if preview is not None:
-                preview.setPreviewWhiteBrightness_(value)
-        event = NSApp.currentEvent()
-        if event is not None and event.type() == NSEventTypeLeftMouseDragged:
-            # A live drag tick -- the preview above already tracks it;
-            # skip the expensive commit (settings save, hardware sync, a
-            # full settings-window refresh) until the drag actually ends,
-            # or every pixel of mouse movement would trigger all of that.
-            return
-        self.set_device_brightness(device_id, value)
-
-    @objc.IBAction
-    def toggleDeviceAutoBrightness_(self, sender):
-        device_id = sender.representedObject()
-        if device_id is None:
-            return
-        currently_enabled = self.settings.auto_brightness_enabled_for_device(str(device_id))
-        self.set_device_auto_brightness(str(device_id), not currently_enabled)
-
-    @objc.IBAction
-    def setDeviceRedGain_(self, sender):
-        device_id = sender.identifier()
-        if device_id is None:
-            return
-        self.set_device_channel_gain(str(device_id), "red", sender.doubleValue() / 100.0)
-
-    @objc.IBAction
-    def setDeviceGreenGain_(self, sender):
-        device_id = sender.identifier()
-        if device_id is None:
-            return
-        self.set_device_channel_gain(str(device_id), "green", sender.doubleValue() / 100.0)
-
-    @objc.IBAction
-    def setDeviceBlueGain_(self, sender):
-        device_id = sender.identifier()
-        if device_id is None:
-            return
-        self.set_device_channel_gain(str(device_id), "blue", sender.doubleValue() / 100.0)
-
-    @objc.IBAction
-    def startCalibrationTest_(self, sender):
-        payload = sender.representedObject()
-        if not isinstance(payload, dict):
-            return
-        device_id = str(payload.get("device_id") or "")
-        hex_color = str(payload.get("hex") or "")
-        if not device_id or not hex_color:
-            return
-        self.calibration_test = (device_id, hex_color)
-        self._send_calibration_test()
 
     def _send_calibration_test(self) -> None:
         """Lights the device under calibration with the chosen reference
@@ -6968,211 +4967,6 @@ class StatusBarController(NSObject):
             return
         controller = self.agent_controller_for_device(device)
         controller.sync_program(apply_brightness(program, controller.brightness), LedDisplayState.ASK)
-
-    def popoverDidClose_(self, _notification):
-        """NSPopover delegate: the calibration popover closed -- stop any
-        test color and hand the device straight back to live status."""
-        # The popover is transient: any outside click closes it. Closing
-        # mid-compare must not persist the "before" gains -- the stash
-        # holds the user's real tuning, so put it back before the
-        # popover is forgotten (2026-08-27 audit: three nudges, one
-        # stray click, calibration gone).
-        stashes = getattr(self, "_calibration_compare_stash", {})
-        for device_id in tuple(stashes):
-            stashed = stashes.pop(device_id)
-            for channel, value in zip(("red", "green", "blue"), stashed):
-                self.set_device_channel_gain(device_id, channel, value)
-        if self.calibration_test is not None:
-            self.calibration_test = None
-            self.refresh_(None)
-
-    @objc.IBAction
-    def resetDeviceColorCalibration_(self, sender):
-        device_id = sender.representedObject()
-        if device_id is None:
-            return
-        self.set_device_channel_gains_reset(str(device_id))
-
-    # One coarse temperature nudge (the stepper's "Too warm"/"Too cool"):
-    # red and blue move in opposite directions by this much per tap.
-    CALIBRATION_NUDGE_STEP = 0.04
-
-    @objc.IBAction
-    def nudgeCalibrationWarmth_(self, sender):
-        payload = sender.representedObject()
-        if not isinstance(payload, dict):
-            return
-        device_id = str(payload.get("device_id") or "")
-        fix = str(payload.get("fix") or "")
-        if not device_id or fix not in {"warmer", "cooler"}:
-            return
-        red, _green, blue = self.settings.channel_gains_for_device(device_id)
-        step = self.CALIBRATION_NUDGE_STEP if fix == "warmer" else -self.CALIBRATION_NUDGE_STEP
-
-        def clamp(value: float) -> float:
-            return max(MIN_CHANNEL_GAIN, min(MAX_CHANNEL_GAIN, value))
-
-        self.set_device_channel_gain(device_id, "red", clamp(red + step))
-        self.set_device_channel_gain(device_id, "blue", clamp(blue - step))
-        controls = self.device_settings_controls.get(device_id, {})
-        self.refresh_device_settings_controls(device_id, controls)
-
-    @objc.IBAction
-    def calibrationLooksWhite_(self, sender):
-        device_id = str(sender.representedObject() or "")
-        controls = self.device_settings_controls.get(device_id, {})
-        matched = controls.get("calibration_matched_label")
-        if matched is not None:
-            matched.setHidden_(False)
-        fine = controls.get("calibration_fine_section")
-        if fine is not None:
-            fine.setHidden_(True)
-        self.set_settings_message("Calibration matched to your eye.")
-
-    @objc.IBAction
-    def toggleCalibrationFineTune_(self, sender):
-        device_id = str(sender.representedObject() or "")
-        controls = self.device_settings_controls.get(device_id, {})
-        fine = controls.get("calibration_fine_section")
-        if fine is not None:
-            fine.setHidden_(not fine.isHidden())
-
-    @objc.IBAction
-    def toggleCalibrationCompare_(self, sender):
-        """A/B: show the gains from when the popover opened, tap again to
-        come back. Comparing by memory is how calibrations drift."""
-        device_id = str(sender.representedObject() or "")
-        if not device_id:
-            return
-        baselines = getattr(self, "_calibration_compare_baseline", {})
-        stashes = getattr(self, "_calibration_compare_stash", {})
-        self._calibration_compare_baseline = baselines
-        self._calibration_compare_stash = stashes
-        baseline = baselines.get(device_id)
-        if baseline is None:
-            return
-        controls = self.device_settings_controls.get(device_id, {})
-        button = controls.get("calibration_compare_button")
-        stashed = stashes.pop(device_id, None)
-        if stashed is None:
-            stashes[device_id] = self.settings.channel_gains_for_device(device_id)
-            apply = baseline
-            if button is not None:
-                button.setTitle_("Showing before — tap to return")
-        else:
-            apply = stashed
-            if button is not None:
-                button.setTitle_("Compare with before")
-        for channel, value in zip(("red", "green", "blue"), apply):
-            self.set_device_channel_gain(device_id, channel, value)
-        self.refresh_device_settings_controls(device_id, controls)
-
-    @objc.IBAction
-    def openDeviceCalibrationPopover_(self, sender):
-        device_id = sender.representedObject()
-        if device_id is None:
-            return
-        device_id = str(device_id)
-        device = next(
-            (d for d in self.status_bar_devices(remember=False) if d.device_id == device_id),
-            None,
-        )
-        if device is None:
-            return
-        stack, controls = build_calibration_popover_content(device, self)
-        content_view = NSView.alloc().init()
-        content_view.addSubview_(stack)
-        native_ui._pin_edges(stack, content_view, insets=(16.0, 16.0, 16.0, 16.0))
-        view_controller = NSViewController.alloc().init()
-        view_controller.setView_(content_view)
-        popover = NSPopover.alloc().init()
-        popover.setContentViewController_(view_controller)
-        popover.setBehavior_(NSPopoverBehaviorTransient)
-        # For popoverDidClose_ -- a dismissed calibration popover must
-        # stop any test color and return the device to live status.
-        popover.setDelegate_(self)
-        popover.showRelativeToRect_ofView_preferredEdge_(sender.bounds(), sender, NSMaxYEdge)
-        self._device_calibration_popover = popover
-        self.device_settings_controls.setdefault(device_id, {}).update(controls)
-        self.refresh_device_settings_controls(device_id, controls)
-        # White-first: light every LED true white immediately so the
-        # user starts matching without hunting for a patch to click.
-        self.calibration_test = (device_id, "#FFFFFF")
-        self._send_calibration_test()
-        # A stash that survived to a fresh open is tuning that never got
-        # restored -- put it back FIRST so the new baseline below is the
-        # real calibration, not the compare view's "before" gains.
-        stashes = getattr(self, "_calibration_compare_stash", {})
-        self._calibration_compare_stash = stashes
-        stranded = stashes.pop(device_id, None)
-        if stranded is not None:
-            for channel, value in zip(("red", "green", "blue"), stranded):
-                self.set_device_channel_gain(device_id, channel, value)
-        # The before-snapshot the Compare button flips to.
-        baselines = getattr(self, "_calibration_compare_baseline", {})
-        baselines[device_id] = self.settings.channel_gains_for_device(device_id)
-        self._calibration_compare_baseline = baselines
-
-    @objc.IBAction
-    def toggleVirtualStatusDevice_(self, _sender):
-        if not SCREEN_BAR_FEATURE_ENABLED:
-            self.set_virtual_status_device(False)
-            return
-        self.set_virtual_status_device(not self.settings.virtual_status_device_enabled)
-
-    @objc.IBAction
-    def saveLidAnimations_(self, _sender):
-        self.save_lid_animations_from_fields()
-
-    def textDidEndEditing_(self, notification):
-        """NSTextView delegate: the lid-animation editors AND the Studio
-        editor commit when editing ends -- the same instant-apply
-        contract as every text field (see native_ui.make_field). The
-        Studio editor used to be excluded: a program typed and never
-        previewed was silently gone on quit (audit, 2026-08-26)."""
-        editors = (
-            self.settings_fields.get("closed_animation_program"),
-            self.settings_fields.get("open_animation_program"),
-        )
-        if notification.object() in editors:
-            self.save_lid_animations_from_fields()
-            return
-        studio = getattr(self, "studio_editor", None)
-        if studio is not None and notification.object() is studio:
-            self._persist_studio_editor_text()
-
-    def _persist_studio_editor_text(self) -> None:
-        editor = getattr(self, "studio_editor", None)
-        if editor is None:
-            return
-        try:
-            program = str(editor.string() or "")
-            if program.strip() and program != (self.settings.studio_program or ""):
-                self.settings = self.settings.with_studio_program(program)
-                save_settings(self.settings)
-        except Exception:
-            pass
-
-    @objc.IBAction
-    def previewLidClosedAnimation_(self, _sender):
-        animation = self.lid_animation_from_fields(LID_ANIMATION_CLOSED)
-        if animation is not None:
-            self.play_lid_animation(LID_ANIMATION_CLOSED, animation=animation)
-
-    @objc.IBAction
-    def previewLidOpenAnimation_(self, _sender):
-        animation = self.lid_animation_from_fields(LID_ANIMATION_OPEN)
-        if animation is not None:
-            self.play_lid_animation(LID_ANIMATION_OPEN, animation=animation)
-
-    @objc.IBAction
-    def resetLidClosedAnimation_(self, _sender):
-        self.reset_lid_animation(LID_ANIMATION_CLOSED)
-
-    @objc.IBAction
-    def resetLidOpenAnimation_(self, _sender):
-        self.reset_lid_animation(LID_ANIMATION_OPEN)
-
 
     def _record_persistence_receipt(self, receipt: PersistenceReceipt) -> None:
         if (
@@ -7666,9 +5460,6 @@ class StatusBarController(NSObject):
                 continue
         return tuple(entries)
 
-    def capacity_history_store(self) -> CapacityHistoryStore | None:
-        return resolve_capacity_history_store(self, log=log_status_bar)
-
     def record_capacity_history(self, authorised, reset_decisions, *, now: float) -> int:
         return record_capacity_history_runtime(
             self,
@@ -7940,52 +5731,6 @@ class StatusBarController(NSObject):
         if all_done and no_asks:
             self.all_clear_until = self.completion_sweep_until + 3.6
         self._reconcile_current_presentation_inputs()
-
-    def active_focus_summary(self) -> str:
-        """Describe retained public Focus truth and its gated named detail."""
-        controller = getattr(self, "dnd_controller", None)
-        observation = getattr(controller, "focus_observation", None)
-        if type(observation) is not FocusStatusObservation:
-            return "Focus Status is unavailable."
-        authorization_text = {
-            FocusAuthorization.NOT_DETERMINED: (
-                "Focus Status permission has not been requested."
-            ),
-            FocusAuthorization.RESTRICTED: "Focus Status access is restricted.",
-            FocusAuthorization.DENIED: "Focus Status access is denied.",
-            FocusAuthorization.UNAVAILABLE: "Focus Status is unavailable.",
-        }.get(observation.authorization)
-        if authorization_text is not None:
-            return authorization_text
-        if observation.activity is FocusActivity.INACTIVE:
-            return "No Focus is active."
-        if observation.activity is not FocusActivity.ACTIVE:
-            return "Focus activity is unavailable."
-        if not self.settings.focus_sync_enabled:
-            return "A Focus is active, but Focus reactions are off."
-        named = getattr(controller, "named_focus_identifiers", ())
-        if type(named) is not tuple or not all(type(value) is str for value in named):
-            named = ()
-        if not named:
-            return "A Focus is active."
-        parts = []
-        for identifier in named:
-            rule = self.settings.focus_dim_rules.get(identifier)
-            if rule is None:
-                effect = "shared dim"
-            elif rule <= 0.0:
-                effect = "lights off"
-            elif rule >= 1.0:
-                effect = "no dimming"
-            else:
-                effect = f"dim to {round(rule * 100)}%"
-            policy = self.settings.focus_signal_policy.get(identifier)
-            if policy == "asks_only":
-                effect += ", asks only"
-            elif policy == "silent":
-                effect += ", silent"
-            parts.append(f"{identifier} \u2014 {effect}")
-        return "; ".join(parts)
 
     def quiet_active(self) -> bool:
         """Compatibility read for the durable one-hour Mute override."""
@@ -9690,171 +7435,6 @@ class StatusBarController(NSObject):
         for range_days, control in range_controls.items():
             control.setState_(1 if range_days == self.operator_history_range_days else 0)
 
-    def start_operator_history_restore(self) -> None:
-        if (
-            self._operator_history_restore_started
-            or self.settings.operator_history_retention_days == 0
-        ):
-            return
-        self._operator_history_restore_started = True
-        self._operator_history_restore_pending = True
-        self._operator_history_retention_generation += 1
-        generation = self._operator_history_retention_generation
-        path = self.operator_history_store.path
-
-        def _restore() -> None:
-            store = OperatorHistoryStore(
-                path,
-                retention_days=self.settings.operator_history_retention_days,
-            )
-            restored = store.restore()
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "applyOperatorHistoryRestore:",
-                (generation, store, restored.health),
-                False,
-            )
-
-        threading.Thread(
-            target=_restore,
-            daemon=True,
-            name="jrbar-operator-history-restore",
-        ).start()
-
-    @objc.IBAction
-    def applyOperatorHistoryRestore_(self, payload) -> None:
-        if not (
-            type(payload) is tuple
-            and len(payload) == 3
-            and payload[0] == self._operator_history_retention_generation
-            and type(payload[1]) is OperatorHistoryStore
-            and type(payload[2]) is OperatorHistoryRestoreHealth
-        ):
-            return
-        with self._operator_history_lock:
-            self.operator_history_store = payload[1]
-            self.operator_history_restore_health = payload[2]
-            self._operator_history_restore_pending = False
-        self.refresh_operator_history_projection()
-
-    @objc.IBAction
-    def changeOperatorHistoryRange_(self, sender) -> None:
-        value = sender.representedObject() if sender is not None else None
-        if type(value) is not int or value not in {1, 7, 30}:
-            return
-        self.operator_history_range_days = value
-        self.refresh_operator_history_projection()
-
-    @objc.IBAction
-    def changeOperatorHistoryRetention_(self, sender) -> None:
-        value = sender.representedObject() if sender is not None else None
-        if type(value) is int:
-            self.start_operator_history_retention_change(value)
-
-    def start_operator_history_retention_change(self, retention_days: int) -> None:
-        if type(retention_days) is not int or retention_days not in {0, 7, 30, 90}:
-            return
-        self._operator_history_retention_generation += 1
-        generation = self._operator_history_retention_generation
-        candidate_settings = dataclass_replace(
-            self.settings,
-            operator_history_retention_days=retention_days,
-        )
-        self._set_operator_history_status("Updating history retention.")
-
-        def _change() -> None:
-            try:
-                with self._operator_history_lock:
-                    if generation != self._operator_history_retention_generation:
-                        return
-                    current_state = self.operator_history_store.state
-                    path = self.operator_history_store.path
-                    save_settings(candidate_settings)
-                    state = save_operator_history(
-                        path,
-                        current_state,
-                        retention_days=retention_days,
-                        now=time.time(),
-                    )
-                    store = OperatorHistoryStore(
-                        path,
-                        retention_days=retention_days,
-                    )
-                    store.state = state
-                payload = (generation, retention_days, candidate_settings, store, None)
-            except Exception:
-                payload = (generation, retention_days, None, None, "History setting could not be saved.")
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "applyOperatorHistoryRetentionResult:",
-                payload,
-                False,
-            )
-
-        disposition = self._persistence_writer.submit(
-            "operator-history-retention",
-            _change,
-        )
-        if disposition in {
-            PersistenceDisposition.REFUSED_FULL,
-            PersistenceDisposition.REFUSED_CLOSED,
-        }:
-            self._set_operator_history_status(
-                "History retention update could not be queued."
-            )
-
-    @objc.IBAction
-    def applyOperatorHistoryRetentionResult_(self, payload) -> None:
-        if not (
-            type(payload) is tuple
-            and len(payload) == 5
-            and payload[0] == self._operator_history_retention_generation
-        ):
-            return
-        _generation, retention, settings, store, error = payload
-        self._operator_history_restore_pending = False
-        if error is not None:
-            self._set_operator_history_status(error)
-            self.refresh_operator_history_projection()
-            return
-        self.settings = settings
-        with self._operator_history_lock:
-            self.operator_history_store = store
-            self.operator_history_restore_health = (
-                OperatorHistoryRestoreHealth.MISSING
-                if retention == 0
-                else OperatorHistoryRestoreHealth.HEALTHY
-            )
-        self._set_operator_history_status(
-            "History is off."
-            if retention == 0
-            else f"History retention is {retention} days."
-        )
-        self.refresh_operator_history_projection()
-
-    @objc.IBAction
-    def confirmClearOperatorHistory_(self, _sender) -> bool:
-        alert = NSAlert.alloc().init()
-        alert.setMessageText_("Clear operator history?")
-        alert.setInformativeText_(
-            "This removes only the private derived operator-history file. "
-            "Mailbox preferences, capacity observations, and settings remain."
-        )
-        alert.addButtonWithTitle_("Clear History")
-        alert.addButtonWithTitle_("Cancel")
-        return alert.runModal() == NSAlertFirstButtonReturn
-
-    @objc.IBAction
-    def clearOperatorHistory_(self, sender) -> None:
-        if not self.confirmClearOperatorHistory_(sender):
-            return
-        try:
-            with self._operator_history_lock:
-                self.operator_history_store.clear()
-        except Exception:
-            self._set_operator_history_status("History could not be cleared.")
-            return
-        self._set_operator_history_status("History cleared.")
-        self.refresh_operator_history_projection()
-
     def append_operator_history_reel(self, phrase: str, _semantic_key=None) -> None:
         allowed = {
             "Agent became active",
@@ -10037,115 +7617,6 @@ class StatusBarController(NSObject):
     def _save_operator_triage(state) -> None:
         save_operator_triage(default_state_dir() / "operator-triage.json", state)
 
-    def refresh_colors_window(self) -> None:
-        if getattr(self, "color_fields", None) is None:
-            return
-        scenario_popup = self.color_fields.get("preview_scenario_popup")
-        if scenario_popup is not None:
-            select_preview_scenario(scenario_popup, self.color_preview_scenario)
-        colors = self.settings.colors
-        for key in MODE_COLOR_KEYS:
-            self.refresh_color_row(("mode", key), colors.mode_color(key))
-        for spec in PROVIDER_SPECS:
-            self.refresh_color_row(("agent", spec.provider), colors.agent_color(spec.provider))
-        refresh_blend_and_speed_fields(self)
-        fade_fields = self.color_fields.get("fade_fields") or {}
-        for key, fields in fade_fields.items():
-            floor, ceiling = colors.fade_range(key)
-            set_field_value(fields.get("floor"), f"{round(floor * 100)}")
-            set_field_value(fields.get("ceiling"), f"{round(ceiling * 100)}")
-            set_field_value(fields.get("floor_label"), f"{round(floor * 100)}%")
-            set_field_value(fields.get("ceiling_label"), f"{round(ceiling * 100)}%")
-        # Animation Style thumbnails: re-ring the selected style and
-        # re-bake each thumb's program -- presets/palettes change both
-        # the style AND the mode colors the thumbs preview, and these
-        # only got set at build time (the popups this loop used to sync
-        # were replaced by thumbnails and never existed at runtime).
-        for key, thumbs in getattr(self, "colors_animation_thumbs", {}).items():
-            _apply_thumb_selection(thumbs, colors.animation_style(key))
-            for style, thumb in thumbs.items():
-                thumb.setProgram_(_mode_animation_thumb_program(self, key, style))
-        self.refresh_colors_preview()
-
-    def refresh_color_row(self, key: tuple[str, str], hex_value: str) -> None:
-        for swatch_key, button in self.color_swatches.items():
-            row_key, swatch_hex = swatch_key
-            if row_key != key:
-                continue
-            is_selected = swatch_hex.upper() == hex_value.upper()
-            set_swatch_selected(button, is_selected)
-        label = self.color_hex_labels.get(key)
-        if label is not None:
-            label.setStringValue_(hex_value)
-
-    def refresh_colors_preview(self) -> None:
-        if not self.color_preview_rows:
-            return
-        if self.color_preview_scenario == colors_module.PREVIEW_SCENARIO_LIVE:
-            snapshot = self.last_snapshot
-            statuses = snapshot.statuses if snapshot is not None else ()
-            is_live = bool(statuses)
-            if not is_live:
-                # Nothing real happening right now -- show a fixed demo
-                # scenario instead of a blank/idle strip, so color and
-                # blend-mode choices are always visible, not just when an
-                # agent happens to be active.
-                statuses = colors_module.demo_statuses_for_preview()
-        else:
-            # A specific scenario was picked -- always show it, regardless
-            # of what's really running, so it can be compared side by side
-            # with other choices on demand.
-            statuses = colors_module.preview_statuses_for_scenario(self.color_preview_scenario)
-            is_live = False
-        legend_prefix = None
-        if self.color_preview_scenario != colors_module.PREVIEW_SCENARIO_LIVE:
-            label = colors_module.PREVIEW_SCENARIO_LABELS.get(self.color_preview_scenario, "Preview")
-            legend_prefix = f"{label}: "
-        for row in self.color_preview_rows:
-            led_count = row["led_count"]
-            legend = row["legend"]
-            _, program = colors_module.program_for_snapshot(
-                statuses, led_count=led_count, colors=self.settings.colors
-            )
-            controller = self.ensure_colors_preview_wasm(led_count, program)
-            if controller is None:
-                # WASM unavailable -- fall back to one static peak-color
-                # frame rather than nothing (matches the Screen Bar's own
-                # fallback for the same rare case).
-                static_colors = colors_module.preview_led_colors(
-                    statuses, led_count=led_count, colors=self.settings.colors
-                )
-                for dot, hex_color in zip(row["dots"], static_colors):
-                    set_preview_dot_color(dot, hex_color)
-            legend.setStringValue_(colors_legend_text(statuses, is_live=is_live, prefix=legend_prefix))
-        self.animate_colors_preview_once()
-        self.start_colors_preview_animation()
-
-    def ensure_colors_preview_wasm(self, led_count: int, program: str):
-        """Parses `program` into this row's WASM controller (creating it on
-        first use), skipping the reparse if the program text hasn't changed
-        so an in-progress breath doesn't restart on every refresh tick.
-        Returns None if the WASM engine is unavailable."""
-        if self.color_preview_programs.get(led_count) == program:
-            return self.color_preview_wasm.get(led_count)
-        self.color_preview_programs[led_count] = program
-        controller = self.color_preview_wasm.get(led_count)
-        if controller is None:
-            try:
-                controller = SdLedWasmController(led_count)
-            except LedWasmUnavailableError:
-                self.color_preview_wasm[led_count] = None
-                return None
-            self.color_preview_wasm[led_count] = controller
-        try:
-            controller.parse(program, monotonic_ms())
-        except Exception:
-            return None
-        return controller
-
-    def start_colors_preview_animation(self) -> None:
-        self._reconcile_current_presentation_inputs()
-
     def stop_colors_preview_animation(self) -> None:
         self._runtime_preview_fire_at.pop(
             RuntimeFeature.SETTINGS_COLOR_PREVIEW,
@@ -10173,79 +7644,6 @@ class StatusBarController(NSObject):
                 if not thumb.isHiddenOrHasHiddenAncestor() and thumb.visibleRect().size.width > 0:
                     thumb.setNeedsDisplay_(True)
 
-    def _refresh_lid_thumb_selection(self) -> None:
-        """Keep lid preview programs, rings, and accessible state current."""
-        thumbs = getattr(self, "lid_animation_thumbs", None) or {}
-        for (kind, name), view in thumbs.items():
-            layer = view.layer()
-            if layer is None:
-                continue
-            current = (self.settings.lid_animation(kind).program or "").strip()
-            preset_program = next(
-                (
-                    program
-                    for preset_name, _duration, program in LID_ANIMATION_PRESETS.get(kind, ())
-                    if preset_name == name
-                ),
-                None,
-            )
-            selected = preset_program is not None and preset_program.strip() == current
-            if preset_program is not None:
-                view.setProgram_startedAt_(
-                    _lid_preset_preview_program(self, preset_program), time.monotonic()
-                )
-            if selected:
-                layer.setBorderWidth_(2.0)
-                layer.setBorderColor_(NSColor.controlAccentColor().CGColor())
-            else:
-                layer.setBorderWidth_(0.0)
-            choice = getattr(view, "accessibility_choice_control", None)
-            if choice is not None:
-                choice.setState_(NSOnState if selected else NSOffState)
-
-    @objc.IBAction
-    def selectLidPresetThumb_(self, sender):
-        view = sender.representedObject() if hasattr(sender, "representedObject") else sender.view()
-        kind = getattr(view, "lid_preset_kind", None)
-        name = getattr(view, "lid_preset_name", None)
-        if not kind or not name:
-            return
-        for preset_name, duration, program in LID_ANIMATION_PRESETS.get(kind, ()):
-            if preset_name == name:
-                self.settings = self.settings.with_lid_animation(
-                    kind, program=program, duration_seconds=duration
-                )
-                save_settings(self.settings)
-                self.refresh_settings_window()
-                self.set_settings_message(f"Lid animation: {name}.")
-                self.play_lid_animation(kind)
-                return
-
-    @objc.IBAction
-    def selectModeAnimationThumb_(self, sender):
-        view = sender.representedObject() if hasattr(sender, "representedObject") else sender.view()
-        key = getattr(view, "mode_anim_key", None)
-        style = getattr(view, "mode_anim_style", None)
-        if not key or not style:
-            return
-        try:
-            self.settings = self.settings.with_colors(
-                self.settings.colors.with_mode_animation(key, style)
-            )
-        except ValueError:
-            return
-        save_settings(self.settings)
-        thumbs = getattr(self, "colors_animation_thumbs", {}).get(key)
-        if thumbs:
-            _apply_thumb_selection(thumbs, style)
-        self.refresh_colors_preview()
-        if self.color_preview_enabled:
-            self.push_colors_preview_to_device()
-        self.refresh_(None)
-        self.set_settings_message(
-            f"{key.title()}: {ANIMATION_STYLE_DISPLAY_LABELS.get(style, style)} animation."
-        )
-
     def animate_colors_preview_once(self) -> None:
         if self.settings_window is None or not self.settings_window.isVisible():
             self.stop_colors_preview_animation()
@@ -10263,329 +7661,6 @@ class StatusBarController(NSObject):
             for dot, pixel in zip(row["dots"], pixels[: row["led_count"]]):
                 set_preview_dot_rgb(dot, *pixel)
 
-    def push_colors_preview_to_device(self) -> None:
-        snapshot = self.last_snapshot
-        # Like every repaint between refreshes, this reads the last
-        # refresh's projection and hands over no raw statuses: the strip is
-        # drawn from them when there is no projection, and a waiting
-        # sub-agent among them was painted as an ask.
-        self.sync_leds(
-            (
-                self.resync_display_mode(snapshot)
-                if snapshot is not None
-                else AgentMode.IDLE_READY
-            ),
-            None,
-            LED_DISPLAY_AGENT,
-            (),
-            projection=getattr(self, "current_attention_projection", None),
-        )
-
-    @objc.IBAction
-    def toggleColorPreviewLive_(self, sender):
-        self.color_preview_enabled = checkbox_is_on(sender)
-        if self.color_preview_enabled:
-            self.push_colors_preview_to_device()
-
-    @objc.IBAction
-    def selectModeColorSwatch_(self, sender):
-        payload = sender.representedObject() or {}
-        key = payload.get("key")
-        hex_value = payload.get("hex")
-        if not key or not hex_value:
-            return
-        self.apply_color_change(("mode", key), hex_value)
-
-    @objc.IBAction
-    def openCustomAgentColor_(self, sender):
-        payload = sender.representedObject() or {}
-        provider = payload.get("provider")
-        if not provider:
-            return
-        self.open_custom_color_panel(("agent", provider), self.settings.colors.agent_color(provider))
-
-    @objc.IBAction
-    def openCustomModeColor_(self, sender):
-        payload = sender.representedObject() or {}
-        key = payload.get("key")
-        if not key:
-            return
-        self.open_custom_color_panel(("mode", key), self.settings.colors.mode_color(key))
-
-    def open_custom_color_panel(self, target_key: tuple[str, str], current_hex: str) -> None:
-        self.active_color_target = target_key
-        # Route exclusively to the Colors window (not a signal card).
-        self.color_panel_signal_key = None
-        panel = NSColorPanel.sharedColorPanel()
-        panel.setColor_(nscolor_from_hex(current_hex))
-        panel.setTarget_(self)
-        panel.setAction_("applyCustomColorFromPanel:")
-        panel.orderFront_(None)
-
-    @objc.IBAction
-    def applyCustomColorFromPanel_(self, sender):
-        if self.active_color_target is None:
-            return
-        # Commit on release only: the panel's continuous action fired a
-        # settings save + full Colors-window rebuild per drag tick.
-        if self._slider_event_is_drag():
-            return
-        hex_value = hex_from_nscolor(sender.color())
-        self.apply_color_change(self.active_color_target, hex_value)
-
-    def apply_color_change(self, target_key: tuple[str, str], hex_value: str) -> None:
-        kind, key = target_key
-        colors = self.settings.colors
-        if kind == "agent":
-            colors = colors.with_agent_color(key, hex_value)
-        else:
-            colors = colors.with_mode_color(key, hex_value)
-        self.settings = self.settings.with_colors(colors)
-        save_settings(self.settings)
-        self.refresh_colors_window()
-        if self.color_preview_enabled:
-            self.push_colors_preview_to_device()
-
-    @objc.IBAction
-    def setPreviewScenario_(self, sender):
-        payload = sender.selectedItem().representedObject() if sender.selectedItem() else None
-        scenario = preview_scenario_from_payload(payload)
-        if scenario is None:
-            return
-        self.color_preview_scenario = scenario
-        self.refresh_colors_preview()
-
-    @objc.IBAction
-    def setColorPreset_(self, sender):
-        payload = sender.selectedItem().representedObject() if sender.selectedItem() else None
-        plan = plan_color_preset_selection(self.settings.colors, payload)
-        if plan.disposition is EffectSelectionDisposition.INVALID:
-            return
-        if plan.disposition is EffectSelectionDisposition.NO_CHANGE:
-            # Custom isn't a package to apply -- it's the honest label for
-            # "you've tweaked things yourself".
-            refresh_blend_and_speed_fields(self)
-            return
-        colors = plan.colors
-        self.settings = self.settings.with_colors(colors)
-        save_settings(self.settings)
-        # Full refresh, not just blend/speed: presets also change the
-        # animation style and every fade floor/ceiling. Refreshing only
-        # part of the window left those controls stale -- and the next
-        # fade-field edit committed the stale values back, silently
-        # reverting the preset the user just applied.
-        self.refresh_colors_window()
-        self.refresh_colors_preview()
-        if self.color_preview_enabled:
-            self.push_colors_preview_to_device()
-        self.refresh_(None)
-        option_index = selected_option_index(COLOR_PRESET_OPTIONS, plan.value)
-        if option_index is None:
-            return
-        label = COLOR_PRESET_OPTIONS[option_index].label
-        self.set_settings_message(f"Preset applied: {label}.")
-
-    @objc.IBAction
-    def setBlendMode_(self, sender):
-        payload = sender.selectedItem().representedObject() if sender.selectedItem() else None
-        plan = plan_blend_mode_selection(self.settings.colors, payload)
-        if plan.disposition is not EffectSelectionDisposition.APPLY:
-            return
-        colors = plan.colors
-        description = self.color_fields.get("blend_description")
-        if description is not None:
-            description.setStringValue_(BLEND_MODE_DESCRIPTIONS.get(plan.value, ""))
-            description.setToolTip_(colors_module.BLEND_MODE_TOOLTIPS.get(plan.value, ""))
-        # Route through the shared commit like every sibling control:
-        # it re-derives the preset chip. Hand-rolling the save left the
-        # chip reading a preset the settings no longer matched, so the
-        # obvious next move -- re-clicking that preset to "confirm" --
-        # silently reapplied the whole package over the mode just set.
-        self._commit_colors_and_refresh(colors)
-
-    @objc.IBAction
-    def applyCycleSpeed_(self, _sender):
-        field = self.color_fields.get("speed_field")
-        seconds = parse_seconds_field(field)
-        if seconds is None:
-            return
-        colors = self.settings.colors.with_cycle_speed(seconds)
-        self._commit_colors_and_refresh(colors)
-
-    @objc.IBAction
-    def toggleUrgencyAlert_(self, sender):
-        colors = self.settings.colors.with_round_robin_urgency_alert(checkbox_is_on(sender))
-        self._commit_colors_and_refresh(colors)
-
-    @objc.IBAction
-    def toggleColorByProject_(self, sender):
-        colors = self.settings.colors.with_color_by_project(checkbox_is_on(sender))
-        self._commit_colors_and_refresh(colors)
-
-    @objc.IBAction
-    def toggleDoneCelebration_(self, sender):
-        enabled = checkbox_is_on(sender)
-        self.settings = self.settings.with_completion_sweep_enabled(enabled)
-        colors = self.settings.colors.with_done_celebration_enabled(enabled)
-        self._commit_colors_and_refresh(colors)
-
-    @objc.IBAction
-    def toggleRoundRobinUseGlobalSpeed_(self, sender):
-        self._toggle_speed_override(BLEND_MODE_ROUND_ROBIN, use_global=checkbox_is_on(sender))
-
-    @objc.IBAction
-    def toggleCycleUseGlobalSpeed_(self, sender):
-        self._toggle_speed_override(BLEND_MODE_CYCLE, use_global=checkbox_is_on(sender))
-
-    def _toggle_speed_override(self, mode_key: str, *, use_global: bool) -> None:
-        colors = self.settings.colors
-        if use_global:
-            colors = colors.with_global_speed_for_mode(mode_key)
-        else:
-            # Switching on: seed the override with the mode's current
-            # effective speed (i.e. whatever the global was showing) rather
-            # than silently jumping to some other default the moment the
-            # checkbox is unchecked.
-            colors = colors.with_speed_override(mode_key, colors.effective_speed_seconds(mode_key))
-        self._commit_colors_and_refresh(colors)
-
-    @objc.IBAction
-    def applyRoundRobinSpeed_(self, _sender):
-        self._apply_mode_speed(BLEND_MODE_ROUND_ROBIN, "round_robin_speed_field")
-
-    @objc.IBAction
-    def applyCycleModeSpeed_(self, _sender):
-        self._apply_mode_speed(BLEND_MODE_CYCLE, "cycle_speed_field")
-
-    def _apply_mode_speed(self, mode_key: str, field_key: str) -> None:
-        field = self.color_fields.get(field_key)
-        seconds = parse_seconds_field(field)
-        if seconds is None:
-            return
-        colors = self.settings.colors.with_speed_override(mode_key, seconds)
-        self._commit_colors_and_refresh(colors)
-
-    def _commit_colors_and_refresh(self, colors: ColorSettings) -> None:
-        self.settings = self.settings.with_colors(colors)
-        save_settings(self.settings)
-        refresh_blend_and_speed_fields(self)
-        self.refresh_colors_preview()
-        if self.color_preview_enabled:
-            self.push_colors_preview_to_device()
-
-    @objc.IBAction
-    def resetColorsToDefaults_(self, _sender):
-        self.settings = self.settings.with_colors(ColorSettings.defaults())
-        save_settings(self.settings)
-        self.refresh_colors_window()
-        if self.color_preview_enabled:
-            self.push_colors_preview_to_device()
-
-    @objc.IBAction
-    def applyFadeIntensity_(self, _sender):
-        fade_fields = self.color_fields.get("fade_fields") or {}
-        colors = self.settings.colors
-        for key, fields in fade_fields.items():
-            floor_fraction = parse_percent_field(fields.get("floor"))
-            ceiling_fraction = parse_percent_field(fields.get("ceiling"))
-            if floor_fraction is not None:
-                colors = colors.with_fade_floor(key, floor_fraction)
-            if ceiling_fraction is not None:
-                colors = colors.with_fade_ceiling(key, ceiling_fraction)
-        self.settings = self.settings.with_colors(colors)
-        save_settings(self.settings)
-        self.refresh_colors_window()
-        if self.color_preview_enabled:
-            self.push_colors_preview_to_device()
-
-    @objc.IBAction
-    def setScreenBarGapWidth_(self, sender):
-        self._apply_screen_bar_geometry_from_sliders(commit=not self._slider_event_is_drag())
-
-    def _slider_event_is_drag(self) -> bool:
-        event = NSApp.currentEvent()
-        return event is not None and event.type() == NSEventTypeLeftMouseDragged
-
-    def _apply_screen_bar_geometry_from_sliders(self, *, commit: bool) -> None:
-        """Live geometry while dragging (no disk writes per tick), the
-        settings save on release -- the same feel as the brightness
-        slider, so the bar visibly follows the thumb."""
-        gap_slider = self.settings_fields.get("screen_bar_gap_slider")
-        if gap_slider is None:
-            return
-        gap = float(gap_slider.doubleValue())
-        if not commit:
-            self.virtual_status_device.set_geometry_overrides(gap, None)
-            self.virtual_status_device.reposition()
-            return
-        self.settings = self.settings.with_screen_bar_gap_width(gap)
-        save_settings(self.settings)
-        self.reposition_virtual_status_device_now()
-        self.set_settings_message(f"Bar size: gap {gap:g} pt.")
-
-    @objc.IBAction
-    def resetScreenBarGeometry_(self, _sender):
-        self.settings = self.settings.with_screen_bar_gap_width(None).with_screen_bar_wing_length(None)
-        save_settings(self.settings)
-        self.reposition_virtual_status_device_now()
-        # Snap the sliders back to what Automatic computes right now.
-        try:
-            auto_gap = slot_width_for_screen(NSScreen.mainScreen())
-        except Exception:
-            auto_gap = SCREEN_BAR_AUTOMATIC_GAP_FALLBACK
-        gap_slider = self.settings_fields.get("screen_bar_gap_slider")
-        if gap_slider is not None:
-            gap_slider.setDoubleValue_(float(auto_gap))
-        self.set_settings_message("Bar size back to Automatic.")
-
-    @objc.IBAction
-    def toggleScreenBarFollowAlcove_(self, sender):
-        self.settings = self.settings.with_screen_bar_follow_alcove(
-            checkbox_is_on(sender)
-        )
-        save_settings(self.settings)
-        self.refresh_(None)
-
-    @objc.IBAction
-    def toggleScreenBarFullScreen_(self, sender):
-        self.settings = self.settings.with_screen_bar_show_in_full_screen(
-            checkbox_is_on(sender)
-        )
-        save_settings(self.settings)
-        set_fullscreen = getattr(
-            self.virtual_status_device, "set_show_in_full_screen", None
-        )
-        if callable(set_fullscreen):
-            set_fullscreen(self.settings.screen_bar_show_in_full_screen)
-        self.refresh_(None)
-
-    @objc.IBAction
-    def toggleLinkScreenBarToHardware_(self, sender):
-        self.settings = self.settings.with_link_screen_bar_to_hardware(
-            checkbox_is_on(sender)
-        )
-        save_settings(self.settings)
-        self.refresh_(None)
-
-    @objc.IBAction
-    def toggleScreenBarGauges_(self, sender):
-        self.settings = self.settings.with_screen_bar_gauges_enabled(
-            checkbox_is_on(sender)
-        )
-        save_settings(self.settings)
-        self.refresh_(None)
-
-    @objc.IBAction
-    def toggleScreenBarWrapsMenuBar_(self, sender):
-        enabled = checkbox_is_on(sender)
-        self.settings = self.settings.with_virtual_status_device_wraps_menu_bar(enabled)
-        save_settings(self.settings)
-        self.reposition_virtual_status_device_now()
-        self.refresh_screen_bar_preview()
-        self.set_settings_message(
-            "Screen Bar now extends along the menu bar." if enabled else "Screen Bar back to notch width only."
-        )
-
     @objc.IBAction
     def setBracketStyle_(self, sender):
         item = sender.selectedItem()
@@ -10599,25 +7674,6 @@ class StatusBarController(NSObject):
         self.refresh_(None)
         self.set_settings_message(f"Bracket colors: {item.title()}.")
 
-    def reposition_virtual_status_device_now(self) -> None:
-        """Alcove compatibility and wraps-menu-bar only change the Screen
-        Bar's own geometry/drawing style -- they don't touch the LED
-        program, so sync_virtual_status_device (the normal place these get
-        read fresh) is never called again on its own here: with a physical
-        device connected, that only runs when a real LED write happens
-        (see schedule_screen_bar_sync), which -- especially now that agent
-        layout no longer thrashes -- can be a long time after the setting
-        was actually changed. Repositioning directly makes the toggle feel
-        instant instead of "eventually, whenever something else happens to
-        redraw it."
-        """
-        self.virtual_status_device.set_wraps_menu_bar(self.settings.virtual_status_device_wraps_menu_bar)
-        self.virtual_status_device.set_geometry_overrides(
-            self.settings.screen_bar_gap_width, self.settings.screen_bar_wing_length
-        )
-        self.virtual_status_device.reposition()
-
-
     @objc.IBAction
     def redrawSetupDemo_(self, _sender):
         if self.setup_window is None or not self.setup_window.isVisible():
@@ -10625,434 +7681,6 @@ class StatusBarController(NSObject):
         demo_view = self.setup_fields.get("demo_view")
         if demo_view is not None:
             demo_view.setNeedsDisplay_(True)
-
-    def complete_first_launch_setup(self, message: str) -> None:
-        try:
-            self.settings = self.settings.with_setup_screen_completed(True)
-            save_settings(self.settings)
-        except Exception as exc:
-            set_field_value(self.setup_fields.get("message"), f"Could not save setup: {exc}")
-            return
-
-        log_status_bar(f"setup complete: {message}")
-        set_field_value(self.setup_fields.get("message"), message)
-        if self.setup_window is not None:
-            self.setup_window.performClose_(None)
-        self.refresh_(None)
-
-    def refresh_remote_and_cloud_controls(self) -> None:
-        """Bring the Agents and Messages panes back in step with settings.
-
-        Every one of these controls can be changed from somewhere else --
-        the peer switch by a fetch that found nothing, a machine's mute by
-        the Messages pane, the cloud address by the server actually
-        binding a port -- so none of them may be left showing whatever
-        they were born with.
-        """
-        remote = self.settings.remote_peers
-        set_checkbox_state(
-            self.settings_buttons.get("remote_peers_enabled"), remote.enabled
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("remote_publish_enabled"), remote.publish_enabled
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("remote_messages_enabled"),
-            remote.include_messages,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("remote_interrupts_enabled"),
-            not remote.remote_interrupts_muted,
-        )
-        policy = remote.interrupt_policy()
-        for key, button in self.settings_buttons.items():
-            if type(key) is str and key.startswith("remote_machine:"):
-                set_checkbox_state(
-                    button, policy.allows_machine(key.split(":", 1)[1])
-                )
-        set_checkbox_state(
-            self.settings_buttons.get("cloud_ingest_enabled"),
-            self.settings.cloud_ingest_enabled,
-        )
-        set_field_value(
-            self.settings_fields.get("remote_peers_status"),
-            remote_peer_status_text(self),
-        )
-        set_field_value(
-            self.settings_fields.get("cloud_ingest_status"),
-            cloud_ingest_status_text(self),
-        )
-        # Panes are built once, lazily. Without these two the honest
-        # rows freeze at whatever was true the first time each pane was
-        # opened -- "Screen Recording is off" after the user has already
-        # granted it, "this display has no notch" after undocking, or a
-        # Calendar permission the owner just switched on in System
-        # Settings. refresh_alcove_follow_controls also carries the
-        # Screen Bar's menu-bar-glow row: same pane, same freeze.
-        refresh_alcove_follow_controls(self)
-        refresh_event_access_controls(self)
-        self.refresh_agent_animation_popups()
-
-    def refresh_agent_animation_popups(self) -> None:
-        """Re-select each provider's motion in the Agents pane.
-
-        The Studio writes the same `colors.provider_animation` entry from
-        its own row, so a choice made there has to show up here -- one
-        fact with two doors is fine, two doors disagreeing is not.
-        """
-        for row in colors_module.provider_color_rows(self.settings.colors):
-            popup = self.settings_fields.get(f"{row.provider}_agent_animation")
-            if popup is None:
-                continue
-            select_effect_popup_item(popup, PROVIDER_ANIMATION_OPTIONS, row.animation)
-
-    def refresh_settings_window(self) -> None:
-        if self.settings_window is None:
-            return
-
-        current_pane = getattr(self, "current_settings_pane", None)
-        now_probe = time.monotonic()
-        probes_fresh = (
-            now_probe - getattr(self, "_provider_probe_at", 0.0) < 20.0
-        )
-        if current_pane == "agents" and not probes_fresh:
-            self._provider_probe_at = now_probe
-            # Detector probes hit the filesystem per provider -- only
-            # worth it when the Agents pane is on screen, at most every
-            # 20s (install/uninstall actions reset the stamp).
-            for provider in HOOK_PROVIDERS:
-                config = provider_spec(provider).detector(None)
-                set_field_value(self.settings_fields.get(f"{provider}_hook_status"), hook_status_text(config))
-                installed = provider_hooks_installed(config)
-                install_button = self.settings_fields.get(f"{provider}_hook_install")
-                uninstall_button = self.settings_fields.get(f"{provider}_hook_uninstall")
-                if install_button is not None:
-                    install_button.setHidden_(installed)
-                if uninstall_button is not None:
-                    uninstall_button.setHidden_(not installed)
-        if current_pane == "history":
-            self.refresh_operator_history_projection()
-        if current_pane == "installed_agents":
-            self.refresh_installed_agents_settings_projection()
-        if current_pane == "capacity":
-            # Lazy by law (its test pins it): selecting the pane does no
-            # implicit provider work. It still re-renders from whatever
-            # the JR plane already holds, so the text stays live without
-            # a poll; polls happen on dropdown opens and Refresh.
-            self.refresh_capacity_settings_projection()
-        set_field_value(
-            self.settings_fields.get("settings_path"),
-            f"Settings: {default_settings_path()}",
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("screen_bar_wraps_menu_bar"),
-            self.settings.virtual_status_device_wraps_menu_bar,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("link_screen_bar_to_hardware"),
-            self.settings.link_screen_bar_to_hardware,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("screen_bar_gauges"),
-            self.settings.screen_bar_gauges_enabled,
-        )
-        # Stale-after-external-change batch (audit, 2026-08-26): these
-        # switches were set at build time and never re-synced.
-        set_checkbox_state(
-            self.settings_buttons.get("screen_bar_show_in_full_screen"),
-            self.settings.screen_bar_show_in_full_screen,
-        )
-        refresh_power_settings_controls(self)
-        set_checkbox_state(
-            self.settings_buttons.get("menu_bar_label"),
-            self.settings.menu_bar_label_enabled,
-        )
-        set_field_value(
-            self.settings_fields.get("escalation_webhook_field"),
-            self.settings.escalation_webhook_url,
-        )
-        for event_key in WEBHOOK_EVENT_KEYS:
-            set_checkbox_state(
-                self.settings_buttons.get(f"webhook_event:{event_key}"),
-                event_key in self.settings.webhook_events,
-            )
-        set_checkbox_state(
-            self.settings_buttons.get("screen_bar_follow_alcove"),
-            self.settings.screen_bar_follow_alcove,
-        )
-        set_checkbox_state(
-            self.settings_fields.get("profile_plan_limits_switch"),
-            self.settings.claude_plan_limits_enabled,
-        )
-        set_checkbox_state(
-            self.settings_fields.get("profile_codex_pct_switch"),
-            self.settings.codex_percent_enabled,
-        )
-        self.refresh_screen_bar_preview()
-        closed_lid_policy_popup = self.settings_fields.get("closed_lid_awake_policy_popup")
-        if closed_lid_policy_popup is not None:
-            select_closed_lid_awake_policy(closed_lid_policy_popup, self.settings.closed_lid_awake_policy)
-        set_field_value(
-            self.settings_fields.get("closed_lid_grace_field"),
-            f"{self.settings.closed_lid_grace_minutes:g}",
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("idle_dim_enabled"),
-            self.settings.idle_dim_enabled,
-        )
-        set_field_value(
-            self.settings_fields.get("idle_dim_minutes_field"),
-            f"{self.settings.idle_dim_after_minutes:g}",
-        )
-        set_field_value(
-            self.settings_fields.get("idle_dim_fraction_field"),
-            f"{round(self.settings.idle_dim_fraction * 100)}",
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("focus_sync_enabled"),
-            self.settings.focus_sync_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("completion_notification"),
-            self.settings.completion_notification_enabled,
-        )
-        self.refresh_notification_authorization_controls()
-        for device_id, controls in self.device_settings_controls.items():
-            self.refresh_device_settings_controls(device_id, controls)
-        set_checkbox_state(
-            self.settings_buttons.get("codex_transcripts"),
-            self.settings.codex_transcripts_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("claude_transcripts"),
-            self.settings.claude_transcripts_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("battery_leds"),
-            self.settings.led_display == LED_DISPLAY_BATTERY,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("battery_power_preview"),
-            self.settings.battery_show_on_power_change,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("battery_charging_idle"),
-            self.settings.battery_charging_idle_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("low_battery_alert"),
-            self.settings.low_battery_alert_enabled,
-        )
-        set_field_value(
-            self.settings_fields.get("low_battery_threshold_field"),
-            f"{self.settings.low_battery_threshold_percent:g}",
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("completion_sweep_enabled"),
-            self.settings.completion_sweep_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("calendar_alerts_enabled"),
-            self.settings.calendar_alerts_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("reminder_alerts_enabled"),
-            self.settings.reminder_alerts_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("quota_alerts_enabled"),
-            self.settings.quota_alerts_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("capacity_history_enabled"),
-            self.settings.capacity_history_enabled,
-        )
-        retention_popup = self.settings_fields.get("capacity_history_retention_popup")
-        if retention_popup is not None:
-            wanted = str(self.settings.capacity_history_retention_days)
-            for index in range(retention_popup.numberOfItems()):
-                item = retention_popup.itemAtIndex_(index)
-                if str(item.representedObject() or "") == wanted:
-                    retention_popup.selectItem_(item)
-                    break
-        set_checkbox_state(
-            self.settings_buttons.get("subagent_asks_alert"),
-            self.settings.subagent_asks_alert,
-        )
-        self.refresh_remote_and_cloud_controls()
-        # Signals cards: re-render each from saved state, and sync the
-        # escalation controls -- like every other control here, they must
-        # reflect changes made outside their own handlers.
-        if current_pane == "led_behavior":
-            for signal_key in signals_module.DEFAULT_SIGNAL_STYLES:
-                self.refresh_signal_card(signal_key)
-        bracket_popup = self.settings_fields.get("bracket_style_popup")
-        if bracket_popup is not None:
-            for index in range(bracket_popup.numberOfItems()):
-                item = bracket_popup.itemAtIndex_(index)
-                if str(item.representedObject() or "") == self.settings.screen_bar_bracket_style:
-                    bracket_popup.selectItem_(item)
-                    break
-        tier_popup = self.settings_fields.get("escalation_tier_popup")
-        if tier_popup is not None:
-            for index in range(tier_popup.numberOfItems()):
-                item = tier_popup.itemAtIndex_(index)
-                if str(item.representedObject() or "") == self.settings.escalation_tier:
-                    tier_popup.selectItem_(item)
-                    break
-        for field_key, value in (
-            ("escalation_ramp_field", self.settings.escalation_ramp_seconds),
-            ("escalation_menu_bar_field", self.settings.escalation_menu_bar_seconds),
-            ("escalation_final_field", self.settings.escalation_final_seconds),
-        ):
-            set_field_value(self.settings_fields.get(field_key), f"{value:g}")
-        set_field_value(
-            self.settings_fields.get("calendar_lead_field"),
-            f"{self.settings.calendar_lead_minutes:g}",
-        )
-        focus_now = self.settings_fields.get("focus_now_label")
-        if focus_now is not None:
-            focus_now.setStringValue_(self.active_focus_summary())
-        for identifier, fraction in self.settings.focus_dim_rules.items():
-            popup = self.settings_fields.get(f"focus_rule_popup:{identifier}")
-            if popup is not None:
-                select_focus_dim_choice(popup, fraction)
-        for provider in HOOK_PROVIDERS:
-            popup = self.settings_fields.get(f"{provider}_session_opener")
-            if popup is not None:
-                select_popup_action(
-                    popup,
-                    self.settings.session_open_action(provider)
-                    or default_provider_open_action(provider),
-                )
-        self._refresh_lid_thumb_selection()
-        closed = self.settings.lid_closed_animation
-        opened = self.settings.lid_open_animation
-        set_text_control_value(
-            self.settings_fields.get("closed_animation_program"),
-            closed.program,
-        )
-        set_text_control_value(
-            self.settings_fields.get("closed_animation_duration"),
-            f"{closed.duration_seconds:g}",
-        )
-        set_text_control_value(
-            self.settings_fields.get("open_animation_program"),
-            opened.program,
-        )
-        set_text_control_value(
-            self.settings_fields.get("open_animation_duration"),
-            f"{opened.duration_seconds:g}",
-        )
-
-    def refresh_device_settings_controls(self, device_id: str, controls: dict[str, object]) -> None:
-        """Keeps one device's Brightness/Auto-Brightness/Color Calibration
-        block (in the Settings window) in sync with whatever the menu bar
-        icon's own device submenu last set -- the same settings, two
-        places to change them, so either one changing must be reflected
-        in the other."""
-        brightness = self.settings.brightness_for_device(device_id)
-        slider = controls.get("brightness_slider")
-        if slider is not None:
-            slider.setDoubleValue_(float(normalize_brightness(brightness)))
-        set_field_value(controls.get("brightness_label"), f"{brightness_percent(brightness)}%")
-        self.set_brightness_preview_dots(controls.get("brightness_dots"), brightness)
-        if device_id == VIRTUAL_DEVICE_ID:
-            self.refresh_screen_bar_preview()
-        set_checkbox_state(
-            controls.get("auto_brightness_checkbox"),
-            self.settings.auto_brightness_enabled_for_device(device_id),
-        )
-        set_checkbox_state(
-            controls.get("auto_brightness_row_checkbox"),
-            self.settings.auto_brightness_enabled_for_device(device_id),
-        )
-        red, green, blue = self.settings.channel_gains_for_device(device_id)
-        auto_enabled = self.settings.auto_brightness_enabled_for_device(device_id)
-        set_field_value(
-            controls.get("calibration_label"),
-            calibration_summary_text(auto_enabled, red, green, blue),
-        )
-        for key, gain in (("red_slider", red), ("green_slider", green), ("blue_slider", blue)):
-            slider = controls.get(key)
-            if slider is not None:
-                slider.setDoubleValue_(gain * 100.0)
-        # The Display and Blend popups must reflect changes made from
-        # the menu-bar device submenu, like every other control here.
-        display_popup = controls.get("display_popup")
-        if display_popup is not None:
-            wanted = self.settings.display_for_device(device_id)
-            for index in range(display_popup.numberOfItems()):
-                item = display_popup.itemAtIndex_(index)
-                if str(item.representedObject() or "") == wanted:
-                    display_popup.selectItem_(item)
-                    break
-        blend_popup = controls.get("blend_popup")
-        if blend_popup is not None:
-            wanted = self.settings.device_blend_mode(device_id) or ""
-            for index in range(blend_popup.numberOfItems()):
-                item = blend_popup.itemAtIndex_(index)
-                if str(item.representedObject() or "") == wanted:
-                    blend_popup.selectItem_(item)
-                    break
-        pin_popup = controls.get("pin_popup")
-        if pin_popup is not None:
-            wanted_pin = self.settings.device_provider_pin(device_id) or ""
-            for index in range(pin_popup.numberOfItems()):
-                item = pin_popup.itemAtIndex_(index)
-                if str(item.representedObject() or "") == wanted_pin:
-                    pin_popup.selectItem_(item)
-                    break
-        policy_popup = controls.get("signal_policy_popup")
-        if policy_popup is not None:
-            wanted_policy = self.settings.device_signal_policy(device_id) or ""
-            for index in range(policy_popup.numberOfItems()):
-                item = policy_popup.itemAtIndex_(index)
-                if str(item.representedObject() or "") == wanted_policy:
-                    policy_popup.selectItem_(item)
-                    break
-
-    def set_brightness_preview_dots(self, dots, brightness) -> None:
-        """A plain white dot strip, one per LED, showing at a glance how
-        bright the device will actually be at this value -- the slider
-        alone is a control, not a preview of the effect it has."""
-        if not dots:
-            return
-        value = int(round(normalize_brightness(brightness)))
-        for dot in dots:
-            set_preview_dot_rgb(dot, value, value, value)
-
-    def refresh_screen_bar_preview(self) -> None:
-        """Keeps the Colors & Screen Bar pane's live miniature in sync
-        with brightness, Alcove Compatibility, and "extend glow along the
-        menu bar" -- a fixed, representative notch/wing geometry rather
-        than the real screen's own (Settings isn't necessarily open on
-        the Mac's built-in display, and a fixed size keeps the preview
-        from jumping around as the real window gets dragged between
-        screens)."""
-        preview = self.settings_fields.get("screen_bar_preview_view")
-        container = self.settings_fields.get("screen_bar_preview_container")
-        if preview is None or container is None:
-            return
-        preview.setPreviewWhiteBrightness_(self.settings.brightness_for_device(VIRTUAL_DEVICE_ID))
-        preview.setMinGlow_(float(self.settings.screen_bar_min_glow))
-        # The preview always shows the full wrap look -- Alcove handling
-        # is automatic on the real bar and needs no demonstration here.
-        preview.setCompactMode_(False)
-        wing_width = SCREEN_BAR_PREVIEW_WING_WIDTH if self.settings.virtual_status_device_wraps_menu_bar else 0.0
-        total_width = SCREEN_BAR_PREVIEW_NOTCH_WIDTH + 2.0 * wing_width
-        # container's own fixed width is known at construction time (see
-        # _build_colors_screen_bar_pane) -- reading it back via
-        # container.frame() instead is timing-dependent (this can run
-        # before the window's first real Auto Layout pass, when the
-        # frame is still its construction-time default) and previously
-        # centered the preview around a bogus width, clipping the left
-        # wing off entirely.
-        container_width = SCREEN_BAR_PREVIEW_NOTCH_WIDTH + 2.0 * SCREEN_BAR_PREVIEW_WING_WIDTH
-        preview.setFrame_(
-            (((container_width - total_width) / 2.0, 0.0), (total_width, SCREEN_BAR_PREVIEW_HEIGHT))
-        )
-        preview.setNotchWidth_(SCREEN_BAR_PREVIEW_NOTCH_WIDTH)
 
     def set_settings_message(self, message: str) -> None:
         label = self.settings_fields.get("message")
@@ -11098,84 +7726,6 @@ class StatusBarController(NSObject):
 
         NSAnimationContext.runAnimationGroup_completionHandler_(_animate, None)
 
-    def update_hooks(self, provider: str, *, install: bool) -> None:
-        """Installer runs on a worker thread: the Codex trust refresh
-        spawns `codex app-server` and can wait ~8s per round-trip --
-        running it inline beachballed the whole app for up to ~16s."""
-        if getattr(self, "hooks_update_in_flight", False):
-            return
-        self.hooks_update_in_flight = True
-        self.set_settings_message(
-            f"{'Installing' if install else 'Removing'} {provider.title()} hooks…"
-        )
-
-        def _work():
-            try:
-                result = (
-                    install_provider_hooks(provider)
-                    if install
-                    else uninstall_provider_hooks(provider)
-                )
-                payload = {"ok": True, "changed": bool(result.changed)}
-            except Exception as exc:
-                payload = {"ok": False, "error": str(exc)}
-            payload["provider"] = provider
-            payload["install"] = install
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "hooksUpdated:", payload, False
-            )
-
-        threading.Thread(target=_work, daemon=True).start()
-
-
-    def set_transcript_monitoring(self, provider: str, enabled: bool) -> None:
-        try:
-            self.settings = self.settings.with_transcript_provider(provider, enabled)
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save settings: {exc}")
-            self.settings = load_settings()
-            self.refresh_settings_window()
-            return
-
-        self.reload_monitor()
-        self.set_settings_message(
-            f"{provider.title()} transcript CLI fallback {'enabled' if enabled else 'disabled'}."
-        )
-        self.refresh_settings_window()
-        self.refresh_(None)
-
-    def set_battery_led_display(self, enabled: bool) -> None:
-        try:
-            display = LED_DISPLAY_BATTERY if enabled else LED_DISPLAY_AGENT
-            self.settings = self.settings.with_led_display(display)
-            # Rendering resolves display PER DEVICE, and every connected
-            # device is auto-remembered with a per-device entry that
-            # shadows the global -- without this loop the switch worked
-            # at most once, before the first device was remembered.
-            # Only devices in the agent/battery pair follow the toggle:
-            # a device the user deliberately set to Studio, Timer, or
-            # Quota Runway keeps its choice.
-            for device in self.settings.devices:
-                if device.device_id == VIRTUAL_DEVICE_ID:
-                    continue
-                if device.led_display not in (LED_DISPLAY_AGENT, LED_DISPLAY_BATTERY):
-                    continue
-                self.settings = self.settings.with_device_display(
-                    device.device_id, display
-                )
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save settings: {exc}")
-            self.settings = load_settings()
-            self.refresh_settings_window()
-            return
-
-        self.reset_led_controllers_for_display_change()
-        self.set_settings_message(f"LED display set to {self.settings.led_display}.")
-        self.refresh_settings_window()
-        self.refresh_(None)
-
     def _mutate_device_setting(
         self,
         device_id: str | None,
@@ -11189,7 +7739,7 @@ class StatusBarController(NSObject):
         (five near-identical ~35-line methods had already started to
         diverge): find the device for its display name/path, apply the
         mutator with rollback on failure, reset that device's LED
-        controllers, toast, refresh the pane, re-sync. ``mutate(device)
+        controllers, toast, re-sync. ``mutate(device)
         -> AgentMonitorSettings``; ``describe(device_label) -> str``
         runs AFTER the mutation so it may read the new settings.
         resync: "snapshot" replays the last snapshot; "refresh" runs a
@@ -11214,7 +7764,6 @@ class StatusBarController(NSObject):
             return
         self.reset_led_controllers_for_device(str(device_id))
         self.set_settings_message(describe(device.name if device else str(device_id)))
-        self.refresh_settings_window()
         if resync == "refresh":
             self.refresh_(None)
             return
@@ -11282,85 +7831,6 @@ class StatusBarController(NSObject):
             "brightness",
         )
 
-    def set_device_auto_brightness(self, device_id: str | None, enabled: bool) -> None:
-        self._mutate_device_setting(
-            device_id,
-            lambda device: self.settings.with_device_auto_brightness(
-                str(device_id),
-                enabled,
-                name=device.name if device else None,
-                path=str(device.root) if device else None,
-            ),
-            lambda name: f"{name}: auto-brightness {'on' if enabled else 'off'}.",
-            "auto-brightness",
-        )
-
-    def set_device_channel_gain(self, device_id: str | None, channel: str, value: float) -> None:
-        def describe(name: str) -> str:
-            red, green, blue = self.settings.channel_gains_for_device(str(device_id))
-            return (
-                f"{name}: calibration R{round(red * 100)}% "
-                f"G{round(green * 100)}% B{round(blue * 100)}%."
-            )
-
-        self._mutate_device_setting(
-            device_id,
-            lambda device: self.settings.with_device_channel_gain(
-                str(device_id),
-                channel,
-                value,
-                name=device.name if device else None,
-                path=str(device.root) if device else None,
-            ),
-            describe,
-            "color calibration",
-            resync="calibration",
-        )
-
-    def set_device_channel_gains_reset(self, device_id: str | None) -> None:
-        self._mutate_device_setting(
-            device_id,
-            lambda _device: self.settings.with_device_channel_gains_reset(str(device_id)),
-            lambda name: f"{name}: calibration reset.",
-            "color calibration",
-        )
-
-    def set_virtual_status_device(self, enabled: bool) -> None:
-        if not SCREEN_BAR_FEATURE_ENABLED:
-            try:
-                self.settings = self.settings.with_virtual_status_device(False)
-                save_settings(self.settings)
-            except Exception as exc:
-                self.set_settings_message(f"Could not disable Screen Bar: {exc}")
-                return
-            self.virtual_status_device.set_pointer_interaction_relevant(False)
-            self.virtual_status_device.hide()
-            self.set_settings_message("Screen Bar is disabled for now.")
-            self.refresh_(None)
-            return
-
-        try:
-            self.settings = self.settings.with_virtual_status_device(enabled)
-            if enabled:
-                self.settings = self.settings.with_remembered_device(
-                    device_id=VIRTUAL_DEVICE_ID,
-                    name=VIRTUAL_DEVICE_NAME,
-                    path=VIRTUAL_DEVICE_ID,
-                )
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save Screen Bar: {exc}")
-            return
-        if enabled:
-            self.virtual_status_device.set_pointer_interaction_relevant(
-                not self.status_menu_open
-            )
-            self.virtual_status_device.show()
-        else:
-            self.virtual_status_device.set_pointer_interaction_relevant(False)
-            self.virtual_status_device.hide()
-        self.refresh_(None)
-
     def set_closed_lid_awake_policy(self, policy: str | None) -> None:
         if policy not in CLOSED_LID_AWAKE_CHOICES:
             return
@@ -11376,78 +7846,7 @@ class StatusBarController(NSObject):
             f"Closed-lid awake: {CLOSED_LID_AWAKE_LABELS[self.settings.closed_lid_awake_policy]}."
         )
         self.sync_closed_lid_awake()
-        self.refresh_settings_window()
         self.refresh_(None)
-
-    def lid_animation_from_fields(self, kind: str) -> LedAnimationSetting | None:
-        program_field = self.settings_fields.get(f"{kind}_animation_program")
-        duration_field = self.settings_fields.get(f"{kind}_animation_duration")
-        current = self.settings.lid_animation(kind)
-        program = text_control_value(program_field) or current.program
-        duration_text = text_control_value(duration_field)
-        try:
-            duration = float(duration_text) if duration_text else current.duration_seconds
-        except ValueError:
-            self.set_settings_message(f"{LID_ANIMATION_LABELS[kind]} duration is not a number.")
-            return None
-
-        animation = LedAnimationSetting(
-            program=normalize_led_text(program),
-            duration_seconds=normalize_animation_duration(duration),
-        )
-        try:
-            validate_lid_animation(animation)
-        except DeviceWriteError as exc:
-            self.set_settings_message(f"{LID_ANIMATION_LABELS[kind]} animation invalid: {exc}")
-            return None
-        return animation
-
-    def save_lid_animations_from_fields(self) -> None:
-        closed = self.lid_animation_from_fields(LID_ANIMATION_CLOSED)
-        if closed is None:
-            return
-        opened = self.lid_animation_from_fields(LID_ANIMATION_OPEN)
-        if opened is None:
-            return
-        try:
-            self.settings = self.settings.with_lid_animation(
-                LID_ANIMATION_CLOSED,
-                program=closed.program,
-                duration_seconds=closed.duration_seconds,
-            )
-            self.settings = self.settings.with_lid_animation(
-                LID_ANIMATION_OPEN,
-                program=opened.program,
-                duration_seconds=opened.duration_seconds,
-            )
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save lid animations: {exc}")
-            self.settings = load_settings()
-            self.refresh_settings_window()
-            return
-
-        self.set_settings_message("Lid animations saved.")
-        self.refresh_settings_window()
-
-    def reset_lid_animation(self, kind: str) -> None:
-        animation = default_lid_animation(kind)
-        try:
-            self.settings = self.settings.with_lid_animation(
-                kind,
-                program=animation.program,
-                duration_seconds=animation.duration_seconds,
-            )
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not reset {LID_ANIMATION_LABELS[kind]}: {exc}")
-            self.settings = load_settings()
-            self.refresh_settings_window()
-            return
-
-        self.set_settings_message(f"{LID_ANIMATION_LABELS[kind]} reset.")
-        self.refresh_settings_window()
-
 
     def _answering_invocations(self) -> tuple[object, ...]:
         """Every distinct ANSWERING invocation the negotiated contracts declare.
@@ -11594,40 +7993,6 @@ class StatusBarController(NSObject):
                 self.set_settings_message(f"Could not save open preference: {exc}")
                 self.settings = load_settings()
 
-
-    def set_battery_power_preview(self, enabled: bool) -> None:
-        try:
-            self.settings = self.settings.with_battery_power_change_preview(enabled=enabled)
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save settings: {exc}")
-            self.settings = load_settings()
-            self.refresh_settings_window()
-            return
-
-        self.set_settings_message(
-            f"Battery power-change preview {'enabled' if enabled else 'disabled'}."
-        )
-        self.refresh_settings_window()
-        self.refresh_(None)
-
-    def set_battery_charging_idle(self, enabled: bool) -> None:
-        try:
-            self.settings = self.settings.with_battery_charging_idle(enabled)
-            save_settings(self.settings)
-        except Exception as exc:
-            self.set_settings_message(f"Could not save settings: {exc}")
-            self.settings = load_settings()
-            self.refresh_settings_window()
-            return
-
-        self.set_settings_message(
-            "Charging trickle while idle "
-            f"{'enabled' if enabled else 'disabled'}."
-        )
-        self.schedule_event_refresh()
-        self.refresh_settings_window()
-        self.refresh_(None)
 
     def read_battery_snapshot(self) -> BatterySnapshot | None:
         cached = getattr(self, "_battery_snapshot_cache", None)
@@ -12927,80 +9292,6 @@ class StatusBarController(NSObject):
         count = self.studio_led_count() if led_count is None else int(led_count)
         return problems_for_program(program, led_count=count)
 
-    def refresh_studio_problem_label(self) -> tuple[str, str]:
-        """Repaint the Studio's live validation line. Returns what it says."""
-        editor = getattr(self, "studio_editor", None)
-        label = getattr(self, "studio_problem_label", None)
-        if editor is None:
-            return ("ok", "")
-        severity, text = self.studio_problem_summary(str(editor.string()))
-        if label is not None:
-            set_text_control_value(label, text)
-            try:
-                label.setTextColor_(
-                    NSColor.systemRedColor()
-                    if severity == "error"
-                    else NSColor.systemOrangeColor()
-                    if severity == "warning"
-                    else NSColor.secondaryLabelColor()
-                )
-            except Exception:
-                pass
-        return (severity, text)
-
-    def textDidChange_(self, notification) -> None:
-        """NSTextView delegate: the Studio editor validating as you type.
-
-        Guarded on identity because the controller is the action target
-        for most of this window -- another text view acquiring this
-        delegate must not repaint the Studio's line with its own contents.
-        """
-        editor = getattr(self, "studio_editor", None)
-        if editor is None:
-            return
-        try:
-            changed = notification.object()
-        except Exception:
-            changed = None
-        if changed is not None and changed is not editor:
-            return
-        # Debounced: validating on EVERY keystroke put a parse (and its
-        # label repaint) between the user and the next character, on the
-        # same main thread the preview thumbnails are already painting
-        # at 12fps. A fifth of a second after the last keystroke is
-        # indistinguishable from instant and costs one parse per pause
-        # instead of one per character.
-        try:
-            NSObject.cancelPreviousPerformRequestsWithTarget_selector_object_(
-                self, "studioValidationDebounceFired:", None
-            )
-            self.performSelector_withObject_afterDelay_(
-                "studioValidationDebounceFired:", None, 0.2
-            )
-        except Exception:
-            self.refresh_studio_problem_label()
-
-    @objc.IBAction
-    def studioValidationDebounceFired_(self, _sender) -> None:
-        self.refresh_studio_problem_label()
-
-    def studio_problem_summary(self, program: str) -> tuple[str, str]:
-        """(severity, text) for the Studio's live validation line.
-
-        Severity is "error", "warning" or "ok" -- the pane colours the
-        label from it. "the wasm said no" was the entire feedback this
-        editor gave before; these are sentences that name the step and
-        the fix.
-        """
-        problems = self.studio_program_problems(program)
-        errors = errors_only(problems)
-        if errors:
-            return ("error", describe_problems(errors))
-        warnings = warnings_only(problems)
-        if warnings:
-            return ("warning", describe_problems(warnings))
-        return ("ok", "")
-
     def validate_studio_program(
         self,
         program: str,
@@ -13117,28 +9408,6 @@ class StatusBarController(NSObject):
         if callable(drain):
             drain()
 
-    def _installed_agents_pane_visible(self) -> bool:
-        window = getattr(self, "settings_window", None)
-        return bool(
-            window is not None
-            and not getattr(self, "_settings_window_closing", False)
-            and callable(getattr(window, "isVisible", None))
-            and window.isVisible()
-            and getattr(self, "current_settings_pane", None) == "installed_agents"
-        )
-
-    @objc.IBAction
-    def refreshInstalledAgents_(self, _sender) -> None:
-        if self.refresh_installed_agent_inventory():
-            fields = getattr(self, "settings_fields", None) or {}
-            status = fields.get("installed_agents_refresh_status")
-            if status is not None:
-                status.setStringValue_("Checking installed coding agents…")
-
-    @objc.IBAction
-    def refreshCapacitySources_(self, _sender) -> None:
-        self.maybe_refresh_usage_summary(reason="manual")
-
     def refresh_installed_agents_settings_projection(self) -> None:
         fields = getattr(self, "settings_fields", None) or {}
         status_fields = fields.get("installed_agent_status_fields") or {}
@@ -13207,11 +9476,6 @@ class StatusBarController(NSObject):
                 or getattr(self, "claude_plan_text", None)
                 or "Not observed yet"
             )
-
-    def reconcile_installed_agent_inventory(self) -> None:
-        """Refresh only while the future Installed Agents pane is visible."""
-        if self._installed_agents_pane_visible():
-            self.refresh_installed_agent_inventory()
 
     def refresh_installed_agent_inventory(self) -> bool:
         """Submit one latest-wins, generation-fenced host inventory request."""
@@ -13505,13 +9769,6 @@ class StatusBarController(NSObject):
             self._presentation_scheduler_inputs = None
             self.reconcile_presentation_timers(inputs)
 
-    def _mark_reminders_permission_failed(self) -> None:
-        was_active = self._runtime_worker_monotonic() < self.reminders_glow_until
-        self._reminders_permission_failed = True
-        self._reconcile_current_presentation_inputs()
-        if was_active:
-            self.refresh_(None)
-
     def _apply_calendar_observation_result(
         self,
         result: CalendarObservationResult,
@@ -13647,7 +9904,6 @@ class StatusBarController(NSObject):
         self._hardware_write_worker.cancel_generation(previous_generation)
         if not self.observe_connected_devices():
             return
-        self.rebuild_devices_pane()
         # First light: the strip just came alive (plugged in, or the app
         # launched to find it) -- one soft white cycle of the idle
         # breath, then identity takes over. This is darkness-to-light
@@ -15360,61 +11616,8 @@ class StatusBarController(NSObject):
     def poll_devices_once(self) -> None:
         if not self.observe_connected_devices():
             return
-        self.rebuild_devices_pane()
         if self.last_snapshot is not None:
             self.refresh_(None)
-
-    def rebuild_devices_pane(self) -> None:
-        """A device plugged in while Settings is open used to appear in
-        the menu-bar submenu but never in the Devices pane until app
-        restart -- the pane snapshots devices when the window is built."""
-        window = getattr(self, "settings_window", None)
-        panes = getattr(self, "settings_panes", None)
-        if window is None or panes is None:
-            return
-        # Under the seven-category navigation, settings_panes is keyed
-        # by CATEGORY; the devices PAGE lives in
-        # _settings_category_children. Looking only at panes["devices"]
-        # made this whole method a silent no-op there -- the exact
-        # regression its docstring describes came back (audit,
-        # 2026-08-26).
-        old_pane = panes.get("devices")
-        store, store_key = panes, "devices"
-        if old_pane is None:
-            for children in (
-                getattr(self, "_settings_category_children", None) or {}
-            ).values():
-                child = children.get("devices")
-                if child is not None:
-                    old_pane = child
-                    store, store_key = children, "devices"
-                    break
-        if old_pane is None:
-            return
-        container = old_pane.superview()
-        if container is None:
-            return
-        was_hidden = old_pane.isHidden()
-        new_pane, device_controls = _build_devices_pane(self)
-        new_pane.setHidden_(was_hidden)
-        container.addSubview_(new_pane)
-        NSLayoutConstraint.activateConstraints_(
-            [
-                new_pane.topAnchor().constraintEqualToAnchor_(container.topAnchor()),
-                new_pane.leadingAnchor().constraintEqualToAnchor_(
-                    container.leadingAnchor()
-                ),
-                new_pane.trailingAnchor().constraintEqualToAnchor_(
-                    container.trailingAnchor()
-                ),
-                new_pane.bottomAnchor().constraintEqualToAnchor_(
-                    container.bottomAnchor()
-                ),
-            ]
-        )
-        old_pane.removeFromSuperview()
-        store[store_key] = new_pane
-        self.device_settings_controls = device_controls
 
     def sync_keep_awake(self, mode: AgentMode) -> None:
         quota_holds = getattr(self, "_quota_power_holds", None)
@@ -16036,345 +12239,6 @@ def _canonical_operator_actions(state, target):
 _AppKitStatusBarController = StatusBarController
 
 
-# --- Settings window: sidebar + detail pane ---------------------------
-#
-# Rebuilt from a single hand-positioned scrolling column into a System-
-# Settings-style shell: a translucent sidebar of categories next to a
-# detail pane that shows only the one selected. Each pane is built from
-# native_ui's NSStackView-based cards/rows and scrolls independently, so
-# there's no shared "document height" formula left to keep in sync by
-# hand -- the recurring source of every layout bug this window has had.
-
-# Seven panes, each earning its slot: Agents = hooks + transcript
-# fallback + session openers (all "how JR-Bar talks to your agents"),
-# Power = closed-lid awake + battery (both power management). The old
-# nine-pane split left several panes holding two controls in an
-# otherwise empty window.
-# "header:" rows are unselectable section labels -- the sidebar had
-# grown to a 12-item flat list nobody could scan.
-SETTINGS_SIDEBAR_ITEMS: tuple[tuple[str, str], ...] = (
-    ("header:you", "YOU"),
-    ("profile", "Profile"),
-    ("history", "History"),
-    ("capacity", "Capacity"),
-    ("header:setup", "SET UP"),
-    ("devices", "Devices"),
-    ("agents", "Agents"),
-    ("installed_agents", "Installed Agents"),
-    ("header:looks", "LOOKS"),
-    ("color_studio", "Color Studio"),
-    ("colors_screen_bar", "Screen Bar"),
-    ("animations", "Animations"),
-    ("header:behavior", "BEHAVIOR"),
-    ("led_behavior", "Signals"),
-    ("notifications", "Messages"),
-    ("focus", "Focus"),
-    ("power", "Power"),
-    ("extras", "Extras"),
-    ("header:advanced", "ADVANCED"),
-    ("debug", "Debug"),
-)
-DEFAULT_SETTINGS_PANE = "profile"
-SIDEBAR_ICONS: dict[str, str] = {
-    "profile": "person.crop.circle",
-    "history": "clock.arrow.circlepath",
-    "capacity": "gauge.with.dots.needle.67percent",
-    "devices": "cpu",
-    "agents": "sparkles",
-    "installed_agents": "shippingbox",
-    "color_studio": "paintpalette",
-    "colors_screen_bar": "menubar.rectangle",
-    "animations": "film",
-    "led_behavior": "bell.badge",
-    "notifications": "envelope.badge",
-    "focus": "moon",
-    "power": "bolt",
-    "extras": "square.grid.2x2",
-    "debug": "wrench.and.screwdriver",
-}
-
-
-def _finite_graph_value(value, fallback: float) -> float:
-    """Coerce one plotted number, or fall back. Never raise inside a draw."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            return float(fallback)
-    number = float(value)
-    return number if math.isfinite(number) else float(fallback)
-
-
-class UsageGraphView(NSView):
-    """One calm shared-axis chart for the selected period and metric."""
-
-    # The complete brand palette, not a stale four-entry copy.
-    PROVIDER_COLORS: ClassVar[dict[str, str]] = {
-        "opencode": "#AF52DE",
-        "google": "#4285F4",
-        **colors_module.PROVIDER_BRAND_COLORS,
-    }
-
-    def initWithFrame_(self, frame):
-        self = objc.super(UsageGraphView, self).initWithFrame_(frame)
-        if self is None:
-            return None
-        self.model = {}
-        return self
-
-    def setModel_(self, model):
-        # Any mapping, not only a `dict`: this model crosses a
-        # `performSelectorOnMainThread:` boundary, and an `NSDictionary` proxy
-        # is not a `dict` subclass. Rejecting one silently drew "No activity in
-        # this range" over a year of real history.
-        try:
-            self.model = dict(model) if isinstance(model, Mapping) else {}
-        except (TypeError, ValueError):
-            self.model = {}
-        self.setNeedsDisplay_(True)
-
-    def isFlipped(self):
-        return False
-
-    @guard_draw
-    def drawRect_(self, _rect):
-        bounds = self.bounds().size
-        width, height = bounds.width, bounds.height
-        model = self.model
-        series = tuple(model.get("series") or ())
-        labels = tuple(model.get("labels") or ())
-        if width <= 0 or height <= 0:
-            return
-        left = 50.0
-        right = 10.0
-        bottom = 22.0
-        top = 18.0
-        plot_width = max(1.0, width - left - right)
-        plot_height = max(1.0, height - bottom - top)
-        metric = str(model.get("metric") or "tokens")
-        scale_max = max(1.0, _finite_graph_value(model.get("scale_max"), 1.0))
-        label_attrs = {
-            NSForegroundColorAttributeName: NSColor.secondaryLabelColor(),
-            NSFontAttributeName: NSFont.systemFontOfSize_(9.5),
-        }
-        for grid_index in range(4):
-            fraction = grid_index / 3.0
-            y = bottom + plot_height * fraction
-            NSColor.separatorColor().colorWithAlphaComponent_(0.22).setFill()
-            NSBezierPath.bezierPathWithRect_(((left, y), (plot_width, 0.5))).fill()
-            value = scale_max * fraction
-            label = NSString.stringWithString_(
-                _format_usage_axis_value(value, metric)
-            )
-            label_size = label.sizeWithAttributes_(label_attrs)
-            label.drawAtPoint_withAttributes_(
-                (left - label_size.width - 7.0, y - label_size.height / 2.0),
-                label_attrs,
-            )
-
-        if not series:
-            empty = NSString.stringWithString_(
-                str(model.get("empty_text") or "No activity in this range")
-            )
-            empty_size = empty.sizeWithAttributes_(label_attrs)
-            empty.drawAtPoint_withAttributes_(
-                (
-                    left + (plot_width - empty_size.width) / 2.0,
-                    bottom + (plot_height - empty_size.height) / 2.0,
-                ),
-                label_attrs,
-            )
-            return
-
-        count = max(
-            (len(tuple(provider_series.get("values") or ())) for provider_series in series),
-            default=0,
-        )
-        if count <= 0:
-            return
-        step = plot_width / max(1, count - 1)
-        for provider_series in series:
-            provider_id = str(provider_series.get("provider_id") or "")
-            values = tuple(provider_series.get("values") or ())
-            if not values:
-                continue
-            color = nscolor_from_hex(
-                self.PROVIDER_COLORS.get(provider_id, "#8B93A7")
-            )
-            line = NSBezierPath.bezierPath()
-            area = NSBezierPath.bezierPath()
-            # A negative value is a GAP -- a day before this series had
-            # any samples. The old path clamped gaps to 0 and the
-            # percent history backfilled a fabricated flat line, so a
-            # year view claimed months of data that never existed.
-            started = False
-            last_x = None
-            for index, raw_value in enumerate(values):
-                value = _finite_graph_value(raw_value, -1.0)
-                if value < 0.0:
-                    started = False
-                    continue
-                x = left + step * index
-                y = bottom + plot_height * min(1.0, value / scale_max)
-                if not started:
-                    line.moveToPoint_((x, y))
-                    area.moveToPoint_((x, bottom))
-                    area.lineToPoint_((x, y))
-                    started = True
-                else:
-                    line.lineToPoint_((x, y))
-                    area.lineToPoint_((x, y))
-                last_x = x
-            if last_x is None:
-                continue
-            area.lineToPoint_((last_x, bottom))
-            area.closePath()
-            color.colorWithAlphaComponent_(0.09).setFill()
-            area.fill()
-            color.colorWithAlphaComponent_(0.92).setStroke()
-            line.setLineWidth_(2.0)
-            line.stroke()
-
-        for index, label_text in enumerate(labels):
-            if not label_text or index >= count:
-                continue
-            label = NSString.stringWithString_(str(label_text))
-            size = label.sizeWithAttributes_(label_attrs)
-            x = left + step * index - size.width / 2.0
-            label.drawAtPoint_withAttributes_(
-                (min(max(left, x), width - right - size.width), 3.0),
-                label_attrs,
-            )
-
-
-def _format_usage_axis_value(value: float, metric: str) -> str:
-    if metric == "cost":
-        return f"${value:,.0f}" if value >= 1.0 else f"${value:.2f}"
-    if metric == "sessions":
-        return f"{value:,.0f}"
-    if metric == "percent":
-        return f"{value:,.0f}%"
-    return usage_stats.compact_token_count(round(value))
-
-
-def add_color_swatch(parent, hex_color: str, x: int, y: int, target, selector: str, represented: dict):
-    button = NSButton.alloc().initWithFrame_(((x, y), (COLOR_SWATCH_SIZE, COLOR_SWATCH_SIZE)))
-    button.setTitle_("")
-    button.setBordered_(False)
-    button.setTarget_(target)
-    button.setAction_(selector)
-    button.setRepresentedObject_(dict(represented))
-    try:
-        button.setWantsLayer_(True)
-        layer = button.layer()
-        layer.setBackgroundColor_(nscolor_from_hex(hex_color).CGColor())
-        layer.setCornerRadius_(COLOR_SWATCH_SIZE / 2.0)
-        layer.setBorderWidth_(0.0)
-    except Exception:
-        pass
-    parent.addSubview_(button)
-    return button
-
-
-def set_swatch_selected(button, selected: bool) -> None:
-    try:
-        button.setWantsLayer_(True)
-        layer = button.layer()
-        layer.setBorderWidth_(2.5 if selected else 0.0)
-        layer.setBorderColor_(NSColor.controlAccentColor().CGColor())
-    except Exception:
-        pass
-
-
-def nscolor_from_hex(hex_value: str) -> NSColor:
-    red, green, blue = colors_module.hex_to_rgb(colors_module.normalize_hex(hex_value, "#000000"))
-    return NSColor.colorWithCalibratedRed_green_blue_alpha_(red / 255.0, green / 255.0, blue / 255.0, 1.0)
-
-
-def hex_from_nscolor(nscolor) -> str:
-    try:
-        rgb = nscolor.colorUsingColorSpace_(NSColor.sRGBColorSpace())
-    except Exception:
-        rgb = nscolor
-    # colorUsingColorSpace_ returns None (no exception) for catalog and
-    # pattern colors -- fall back to the original rather than crashing
-    # the color-panel action mid-drag.
-    if rgb is None:
-        rgb = nscolor
-    return colors_module.rgb_to_hex(
-        (rgb.redComponent() * 255.0, rgb.greenComponent() * 255.0, rgb.blueComponent() * 255.0)
-    )
-
-
-def select_popup_item(popup, key: str, value) -> None:
-    """Select the popup row whose representedObject dict carries
-    payload[key] == value -- the one sync idiom behind every
-    settings-window popup refresh."""
-    for index in range(popup.numberOfItems()):
-        payload = popup.itemAtIndex_(index).representedObject()
-        if isinstance(payload, dict) and payload.get(key) == value:
-            popup.selectItemAtIndex_(index)
-            return
-
-
-# Motion names say what you see; the parenthetical glosses moved into
-# the descriptions where they belong. "Pulse"/"Roll" were DSL primitive
-# names leaking into the UI -- and the app already admitted the real
-# words in its own parentheses.
-ANIMATION_STYLE_DISPLAY_LABELS: dict[str, str] = {
-    "pulse": "Breathe",
-    "roll": "Chase",
-    "solid": "Steady",
-    "blink": "Blink",
-}
-
-ANIMATION_STYLE_DESCRIPTIONS: dict[str, str] = {
-    "pulse": "Fades up and down, softly.",
-    "roll": "A bright point runs along the strip and starts again.",
-    "solid": "Stays lit. Never moves.",
-    "blink": "Snaps on and off. No fading.",
-}
-
-
-def make_closed_lid_awake_policy_popup(target):
-    """A Settings-window popup for settings.closed_lid_awake_policy; the
-    choice takes effect immediately."""
-    popup = native_ui.make_popup_button(target, "setClosedLidAwakePolicyFromPopup:")
-    for policy in CLOSED_LID_AWAKE_CHOICES:
-        popup.addItemWithTitle_(CLOSED_LID_AWAKE_LABELS[policy])
-        popup.lastItem().setRepresentedObject_({"policy": policy})
-    return popup
-
-
-def select_closed_lid_awake_policy(popup, policy: str) -> None:
-    select_popup_item(popup, "policy", policy)
-
-
-def add_preview_dot(parent, x: int, y: int):
-    """A purely decorative colored circle. Deliberately a plain NSView, not
-    a disabled NSButton -- a disabled NSControl's cell dims/grays its own
-    drawing regardless of a custom layer background color, which made the
-    first version of this effectively invisible. A plain layer-backed NSView
-    has no control state to fight with."""
-    dot = NSView.alloc().initWithFrame_(((x, y), (COLOR_SWATCH_SIZE, COLOR_SWATCH_SIZE)))
-    dot.setWantsLayer_(True)
-    layer = dot.layer()
-    layer.setBackgroundColor_(NSColor.blackColor().CGColor())
-    layer.setCornerRadius_(COLOR_SWATCH_SIZE / 2.0)
-    layer.setBorderWidth_(1.0)
-    layer.setBorderColor_(NSColor.separatorColor().CGColor())
-    parent.addSubview_(dot)
-    return dot
-
-
-def set_preview_dot_color(dot, hex_color: str) -> None:
-    try:
-        dot.setWantsLayer_(True)
-        dot.layer().setBackgroundColor_(nscolor_from_hex(hex_color).CGColor())
-    except Exception:
-        pass
-
-
 def set_preview_dot_rgb(dot, red: int, green: int, blue: int) -> None:
     """Like set_preview_dot_color, but takes raw 0-255 ints -- the shape the
     WASM controller's step() returns, for the animated preview."""
@@ -16391,201 +12255,9 @@ def set_preview_dot_rgb(dot, red: int, green: int, blue: int) -> None:
         pass
 
 
-def colors_legend_text(statuses, *, is_live: bool, prefix: str | None = None) -> str:
-    explicit_prefix = prefix is not None
-    if prefix is None:
-        prefix = "" if is_live else "Demo: "
-    if not statuses:
-        # A caller-supplied prefix (a named scenario) already says everything
-        # there is to say about an empty roster -- appending the generic
-        # "Idle -- no active agents" on top just repeats itself.
-        if explicit_prefix and prefix:
-            return prefix.rstrip(": ")
-        return f"{prefix}Idle -- no active agents" if prefix else "Idle -- no active agents"
-    parts = []
-    for status in statuses:
-        name = status.display_name or status.provider
-        # Session-id fragments like "wtf (b5b4fbe4)" are debug detail --
-        # a color-preview legend needs the agent and its mode, not a hash.
-        name = re.sub(r"\s*\([0-9a-f]{6,}\)", "", str(name))
-        parts.append(f"{name} ({MODE_LABELS.get(status.mode, status.mode.value)})")
-    return prefix + " · ".join(parts)
-
-
-def make_provider_opener_popup(provider: str, target):
-    popup = native_ui.make_popup_button(target, "setProviderOpenPreference:")
-    for action in provider_open_actions(provider):
-        popup.addItemWithTitle_(provider_open_action_label(provider, action))
-        popup.lastItem().setRepresentedObject_(
-            {"provider": provider, "action": action}
-        )
-    return popup
-
-
-def provider_open_actions(provider: str) -> tuple[str, ...]:
-    if provider == "claude":
-        return (SESSION_OPEN_VSCODE, SESSION_OPEN_APP, SESSION_OPEN_TERMINAL)
-    if provider == "codex":
-        return (SESSION_OPEN_APP, SESSION_OPEN_TERMINAL)
-    return (SESSION_OPEN_TERMINAL,)
-
-
-def default_provider_open_action(provider: str) -> str:
-    if provider == "claude":
-        return SESSION_OPEN_VSCODE
-    if provider == "codex":
-        return SESSION_OPEN_APP
-    return SESSION_OPEN_TERMINAL
-
-
-def provider_open_action_label(provider: str, action: str) -> str:
-    if action == SESSION_OPEN_VSCODE:
-        return "VS Code"
-    if action == SESSION_OPEN_TERMINAL:
-        return "Terminal"
-    return {"codex": "Codex", "claude": "Claude"}.get(provider, "App")
-
-
-def select_popup_action(popup, action: str) -> None:
-    select_popup_item(popup, "action", action)
-
-
-def add_separator(parent, x: int, y: int, width: int):
-    separator = NSTextField.alloc().initWithFrame_(((x, y), (width, 1)))
-    separator.setStringValue_("")
-    separator.setBezeled_(False)
-    separator.setEditable_(False)
-    separator.setDrawsBackground_(True)
-    parent.addSubview_(separator)
-    return separator
-
-
 def set_field_value(field, value: str) -> None:
     if field is not None:
         field.setStringValue_(value)
-
-
-def set_text_control_value(control, value: str) -> None:
-    if control is None:
-        return
-    if hasattr(control, "setString_"):
-        control.setString_(value)
-    else:
-        control.setStringValue_(value)
-
-
-def text_control_value(control) -> str:
-    if control is None:
-        return ""
-    if hasattr(control, "string"):
-        return str(control.string())
-    return str(control.stringValue())
-
-
-def parse_percent_field(control) -> float | None:
-    """Parses an editable field's text as a 0-100 percent into a 0.0-1.0
-    fraction. Returns None (leave the setting unchanged) for blank/invalid
-    input rather than silently coercing it to 0%."""
-    text = text_control_value(control).strip().rstrip("%")
-    if not text:
-        return None
-    try:
-        value = float(text)
-    except ValueError:
-        return None
-    return max(0.0, min(100.0, value)) / 100.0
-
-
-def parse_seconds_field(control) -> float | None:
-    """Parses an editable field's text as seconds. Returns None (leave the
-    setting unchanged) for blank/invalid input; the actual clamp to
-    [MIN_CYCLE_SPEED_SECONDS, MAX_CYCLE_SPEED_SECONDS] happens in
-    ColorSettings.with_cycle_speed()."""
-    text = text_control_value(control).strip().rstrip("s")
-    if not text:
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
-def set_checkbox_state(button, enabled: bool) -> None:
-    if button is not None:
-        button.setState_(NSOnState if enabled else NSOffState)
-
-
-def checkbox_is_on(button) -> bool:
-    return button is not None and button.state() == NSOnState
-
-
-def open_terminal_setup_command(command: str, *, filename: str = "install-sleep-helper.command") -> Path:
-    if not filename or filename in {".", ".."} or Path(filename).name != filename:
-        raise ValueError("setup command filename must be a non-empty basename")
-    state_dir = default_state_dir()
-    script_path = state_dir / filename
-    script = "\n".join(
-        [
-            "#!/bin/zsh",
-            "clear",
-            f'echo "{PRODUCT_DISPLAY_NAME} Sleep Prevention Setup"',
-            'echo ""',
-            'echo "macOS may ask for your administrator password."',
-            'echo ""',
-            command,
-            "status=$?",
-            'echo ""',
-            'if [ "$status" -eq 0 ]; then',
-            '  echo "Done. You can close this window."',
-            "else",
-            '  echo "Setup failed. Leave this window open if you want to inspect it."',
-            "fi",
-            'echo ""',
-            'read -k 1 "?Press any key to close this window. "',
-            "",
-        ]
-    )
-    atomic_private_write(script_path, script, mode=0o700)
-    # Name the terminal explicitly. A bare `open` hands the .command file
-    # to whatever app owns that file type -- on any Mac where Ghostty,
-    # iTerm2 or a text editor claims it, the script is opened rather than
-    # RUN, while the Setup window cheerfully reports success. Silent
-    # no-op in the one flow that makes overnight agent runs work.
-    launcher = [str(trusted_system_tool("open"))]
-    terminal = _installed_terminal_application()
-    if terminal is not None:
-        launcher += ["-a", str(terminal)]
-    subprocess.Popen(
-        [*launcher, str(script_path)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return script_path
-
-
-# Terminals that can actually RUN a .command script, most standard first.
-# Terminal.app is last-resort-proof: it ships with macOS.
-_TERMINAL_APPLICATION_PATHS: tuple[str, ...] = (
-    "/System/Applications/Utilities/Terminal.app",
-    "/Applications/Utilities/Terminal.app",
-    "/Applications/iTerm.app",
-    "/Applications/Ghostty.app",
-    "/Applications/Warp.app",
-    "/Applications/kitty.app",
-    "/Applications/Alacritty.app",
-)
-
-
-def _installed_terminal_application() -> Path | None:
-    """The first real terminal present, or None to fall back to `open`."""
-    for candidate in _TERMINAL_APPLICATION_PATHS:
-        path = Path(candidate)
-        try:
-            if path.is_dir():
-                return path
-        except OSError:
-            continue
-    return None
 
 
 def validate_lid_animation(animation: LedAnimationSetting) -> None:
@@ -16675,18 +12347,6 @@ def restore_led_display(target, token_value) -> None:
         )
     else:
         target.refresh_(None)
-
-
-def provider_hooks_installed(config: ProviderConfig) -> bool:
-    return bool(config.exists and config.hook_events)
-
-
-def hook_status_text(config: ProviderConfig) -> str:
-    if provider_hooks_installed(config):
-        event_count = len(config.hook_events)
-        suffix = "event" if event_count == 1 else "events"
-        return f"Installed · {event_count} {suffix}"
-    return "Not installed"
 
 
 def device_id_for_root(root: Path) -> str:
@@ -16779,80 +12439,6 @@ def duplicate_device_suffix(device: StatusBarDevice) -> str:
         suffix = root_name[len(device.name) :].strip()
         return suffix
     return root_name
-
-
-def provider_icon_for_provider(provider: str):
-    provider = provider.lower()
-    if provider == "codex":
-        for path in ("/Applications/Codex.app", "/Applications/ChatGPT.app"):
-            image = app_icon(path)
-            if image is not None:
-                return image
-        return image_for_symbol("sparkles", "Codex")
-    if provider == "claude":
-        image = app_icon("/Applications/Claude.app")
-        if image is not None:
-            return image
-        return image_for_symbol("brain.head.profile", "Claude")
-    if provider == "grok":
-        image = app_icon("/Applications/Grok.app")
-        if image is not None:
-            return image
-        return grok_badge_icon()
-    return image_for_symbol("terminal", provider.title() or "Agent")
-
-
-_grok_badge_icon = None
-
-
-def grok_badge_icon():
-    global _grok_badge_icon
-    if _grok_badge_icon is not None:
-        return _grok_badge_icon
-
-    image = NSImage.alloc().initWithSize_((18, 18))
-    try:
-        image.lockFocus()
-        NSColor.colorWithCalibratedRed_green_blue_alpha_(0.05, 0.055, 0.065, 1.0).set()
-        badge = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-            ((1.0, 1.0), (16.0, 16.0)),
-            4.0,
-            4.0,
-        )
-        badge.fill()
-
-        attrs = {
-            NSFontAttributeName: NSFont.boldSystemFontOfSize_(12.0),
-            NSForegroundColorAttributeName: NSColor.whiteColor(),
-        }
-        NSString.stringWithString_("G").drawInRect_withAttributes_(
-            ((4.6, 1.8), (10.0, 14.0)),
-            attrs,
-        )
-    finally:
-        image.unlockFocus()
-    image.setSize_((18, 18))
-    _grok_badge_icon = image
-    return image
-
-
-_app_icon_cache: dict[str, object] = {}
-
-
-def app_icon(path: str):
-    # NSWorkspace icon lookups ran once per session row on EVERY menu
-    # rebuild (every hook event). Icons are static; cache positives
-    # forever, re-probe missing paths (the app may get installed later).
-    cached = _app_icon_cache.get(path)
-    if cached is not None:
-        return cached
-    if not Path(path).exists():
-        return None
-    image = NSWorkspace.sharedWorkspace().iconForFile_(path)
-    if image is not None:
-        image.setSize_((18, 18))
-        _app_icon_cache[path] = image
-    return image
 
 
 def unseen_completions(
@@ -17026,69 +12612,4 @@ def open_terminal_command(
     return plan
 
 
-# --- Extraction seam (backlog #14): the Settings window's construction
-# lives in settings_window.py with explicit dependencies and is re-exported
-# below so controller methods, tests, and callers keep addressing
-# status_bar.<name> during the compatibility migration.
 from .virtual_device import LED_COUNT  # noqa: E402 -- re-export; tests address status_bar.LED_COUNT
-
-from .settings_window import (  # noqa: E402, F401 -- re-export: tests and
-    # callers keep addressing status_bar.<name> after the #14 extraction
-    BRAND_SWATCHES,
-    CALIBRATION_TEST_PATCHES,
-    COLOR_ROW_HEIGHT,
-    COLOR_SWATCH_GAP,
-    COLOR_SWATCH_SIZE,
-    ESCALATION_TIER_LABELS,
-    FOCUS_DIM_CHOICES,
-    LID_ANIMATION_PRESETS,
-    MODE_COLOR_DISPLAY_LABELS,
-    OPERATOR_HISTORY_FIELD_MANIFEST,
-    SCREEN_BAR_AUTOMATIC_GAP_FALLBACK,
-    SCREEN_BAR_PREVIEW_NOTCH_WIDTH,
-    SCREEN_BAR_PREVIEW_WING_WIDTH,
-    SIGNAL_PREVIEW_SIZE,
-    SIGNAL_STYLE_CARDS,
-    SIGNAL_THUMB_SIZE,
-    SWATCH_BUTTON_SIZE,
-    _add_studio_card,
-    _apply_thumb_selection,
-    _build_agent_or_mode_color_row,
-    _build_agents_pane,
-    _build_color_studio_pane,
-    _build_colors_screen_bar_pane,
-    _build_debug_pane,
-    _build_devices_pane,
-    _build_extras_pane,
-    _build_focus_pane,
-    _build_history_pane,
-    _build_led_behavior_pane,
-    _build_lid_animations_pane,
-    _build_lid_preset_row,
-    _build_notifications_pane,
-    _build_power_pane,
-    _build_profile_pane,
-    _build_settings_pane,
-    _lid_preset_preview_program,
-    _mini_led_view,
-    _mode_animation_thumb_program,
-    _signal_preview_program,
-    _solid_swatch_image,
-    alcove_actions_for,
-    alcove_menu_alert_title,
-    build_calibration_popover_content,
-    build_settings_window,
-    calibration_summary_text,
-    cloud_ingest_status_text,
-    known_remote_machines,
-    make_agent_animation_popup,
-    make_focus_dim_popup,
-    make_signal_color_row,
-    make_signal_style_card,
-    refresh_alcove_follow_controls,
-    refresh_blend_and_speed_fields,
-    refresh_event_access_controls,
-    refresh_power_settings_controls,
-    remote_peer_status_text,
-    select_focus_dim_choice,
-)

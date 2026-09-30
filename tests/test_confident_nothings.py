@@ -6,21 +6,10 @@ empty result all came back as the SAME falsy value, so no surface could
 tell them apart and the user was shown a confident-looking nothing --
 a switch reading ON over a feature that had never once run.
 
-These pin the other instances of it:
+These pin the other instances of it that still have a live owner:
 
-* Auto-Brightness claims to be on while the screen-brightness technique
-  it depends on is unavailable, and the LED sync has silently been using
-  the manual value on every tick.
-* The Calendar and Reminders switches stay ON forever after macOS
-  refuses (or after a refusal a year ago that macOS will never re-ask),
-  and the only mention of it was a status line that is gone by the next
-  time anyone opens the window.
 * "Extend glow along the menu bar" does nothing at all on any display
   without a notch -- every external monitor, every non-notched Mac.
-* Cloud agents said "Enabled -- starts with the app." in the one case
-  where the bind had ALREADY failed minutes ago.
-* "No peers found yet." was printed when Tailscale was not installed,
-  which is not a "yet".
 * The Codex installer wrote a hook and reported success when the trust
   handshake never happened, leaving a hook Codex refuses to execute.
 * A doctor probe that raised before reading anything still rendered a
@@ -37,7 +26,6 @@ from unittest.mock import patch
 import pytest
 
 from jrbar import doctor as doctor_module
-from jrbar import settings_window
 from jrbar.doctor import (
     DiagnosticCheck,
     DiagnosticCode,
@@ -53,168 +41,6 @@ from jrbar.install import (
     resolve_codex_hook_trust,
 )
 from jrbar.virtual_device import ScreenBarWingState, screen_bar_wing_state
-
-# --- Auto-Brightness -----------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _isolated_probe_caches():
-    settings_window.reset_screen_brightness_cache()
-    settings_window.reset_event_access_cache()
-    yield
-    settings_window.reset_screen_brightness_cache()
-    settings_window.reset_event_access_cache()
-
-
-def test_auto_brightness_does_not_claim_to_work_without_a_reading__and_2_more() -> None:
-    # --- scenario: auto_brightness_does_not_claim_to_work_without_a_reading
-    """The checkbox was the only evidence, and it is not evidence.
-
-    display_brightness.py says in its own first paragraph that Apple can
-    remove this technique without notice; when that happens every
-    auto-brightness device keeps its MANUAL brightness on every tick and
-    nothing anywhere says so.
-    """
-    honest = settings_window.calibration_summary_text(
-        True, 1.0, 1.0, 1.0, brightness_readable=False
-    )
-    working = settings_window.calibration_summary_text(
-        True, 1.0, 1.0, 1.0, brightness_readable=True
-    )
-
-    assert honest != working
-    assert "won't report screen brightness" in honest
-    assert working == "Auto-Brightness on"
-
-    # --- scenario: auto_brightness_summary_resolves_the_reading_for_its_caller
-    """status_bar's refresh path calls this positionally and cannot be
-    edited from here, so the probe has to happen inside the function."""
-    with patch.object(
-        settings_window.display_brightness,
-        "current_screen_brightness_fraction",
-        side_effect=settings_window.display_brightness.DisplayBrightnessUnavailableError(
-            "gone"
-        ),
-    ):
-        text = settings_window.calibration_summary_text(True, 1.0, 1.0, 1.0)
-
-    assert "won't report screen brightness" in text
-
-    # --- scenario: a_switched_off_auto_brightness_says_nothing_about_the_reading
-    """An unavailable reading is only news while the switch is ON."""
-    with patch.object(
-        settings_window, "screen_brightness_readable", return_value=False
-    ):
-        text = settings_window.calibration_summary_text(False, 1.0, 1.0, 1.0)
-
-    assert text == "Auto-Brightness off"
-
-
-
-def test_calibration_percentages_survive_the_honest_prefix() -> None:
-    text = settings_window.calibration_summary_text(
-        True, 1.0, 0.5, 1.0, brightness_readable=False
-    )
-
-    assert text.endswith("R100% G50% B100%")
-
-
-# --- Calendar and Reminders permissions ----------------------------------
-
-
-def _controller_settings(**changes):
-    values = {"calendar_alerts_enabled": True, "reminder_alerts_enabled": True}
-    values.update(changes)
-    return SimpleNamespace(settings=SimpleNamespace(**values))
-
-
-def test_every_calendar_access_answer_reads_differently__and_2_more() -> None:
-    # --- scenario: every_calendar_access_answer_reads_differently
-    """Four EventKit answers, four sentences.
-
-    Before this row the switch said ON for all four, and a denial that
-    macOS will never re-ask looked exactly like a working feature with
-    no events today.
-    """
-    for status, expected in (
-        ("authorized", "Granted"),
-        ("denied", "Denied"),
-        ("not_determined", "has not been asked"),
-        ("unavailable", "unavailable on this Mac"),
-    ):
-        target = _controller_settings()
-        with patch.object(settings_window, "_event_access_status", return_value=status):
-            text = settings_window.calendar_access_status_text(target)
-
-        assert expected in text
-
-    # --- scenario: eventkit_missing_is_not_reported_as_a_denial
-    """calendar_watch RAISES for "EventKit cannot be used here".
-
-    Collapsing that into "denied" would send the owner to a Privacy pane
-    to switch on a row that will never appear.
-    """
-    watch = SimpleNamespace(
-        authorization_status=lambda: (_ for _ in ()).throw(RuntimeError("no EventKit"))
-    )
-
-    assert settings_window._event_access_status("probe", watch) == "unavailable"
-
-    # --- scenario: reminders_access_names_its_own_privacy_pane
-    target = _controller_settings()
-    with patch.object(settings_window, "_event_access_status", return_value="denied"):
-        text = settings_window.reminders_access_status_text(target)
-
-    assert "Reminders" in text
-    assert "Calendars" not in text
-
-
-
-def test_an_off_switch_does_not_report_a_permission_at_all__and_1_more() -> None:
-    # --- scenario: an_off_switch_does_not_report_a_permission_at_all
-    """And does not import EventKit to find that out.
-
-    `authorization_status` pulls the framework in on first use; a pane
-    read for a feature the owner turned off has no business doing that.
-    """
-    target = _controller_settings(calendar_alerts_enabled=False)
-    with patch.object(
-        settings_window,
-        "_event_access_status",
-        side_effect=AssertionError("probed a switched-off feature"),
-    ):
-        text = settings_window.calendar_access_status_text(target)
-
-    assert text == "Not used while this is off."
-
-    # --- scenario: the_event_access_rows_refresh_with_the_rest_of_the_window
-    """Panes build once. Granting access in System Settings stales them."""
-
-    class _Label:
-        def __init__(self) -> None:
-            self.value = "stale"
-
-        def setStringValue_(self, value: str) -> None:
-            self.value = value
-
-    calendar, reminders = _Label(), _Label()
-    target = SimpleNamespace(
-        settings=SimpleNamespace(
-            calendar_alerts_enabled=True, reminder_alerts_enabled=True
-        ),
-        settings_fields={
-            "calendar_access_status": calendar,
-            "reminders_access_status": reminders,
-        },
-    )
-
-    with patch.object(settings_window, "_event_access_status", return_value="denied"):
-        settings_window.refresh_event_access_controls(target)
-
-    assert "Denied" in calendar.value
-    assert "Denied" in reminders.value
-
-
 
 # --- Extend glow along the menu bar --------------------------------------
 
@@ -284,7 +110,7 @@ def test_a_display_with_no_notch_is_not_a_full_menu_bar__and_2_more() -> None:
 
 
 
-def test_a_manual_wing_length_is_not_a_measurement__and_2_more() -> None:
+def test_a_manual_wing_length_is_not_a_measurement__and_1_more() -> None:
     # --- scenario: a_manual_wing_length_is_not_a_measurement
     state = screen_bar_wing_state(
         _NotchlessScreen(), 200.0, wrap_menu_bar=True, wing_length=18.0
@@ -299,85 +125,12 @@ def test_a_manual_wing_length_is_not_a_measurement__and_2_more() -> None:
 
     assert state is ScreenBarWingState.NOT_EXTENDING
 
-    # --- scenario: every_wing_state_has_its_own_sentence
-    messages = {
-        settings_window.SCREEN_BAR_WING_MESSAGES[state] for state in ScreenBarWingState
-    }
-
-    assert len(messages) == len(ScreenBarWingState)
 
 
-
-# --- Cloud agents and peers ----------------------------------------------
-
-
-def test_a_failed_bind_is_not_reported_as_a_pending_start__and_1_more() -> None:
-    # --- scenario: a_failed_bind_is_not_reported_as_a_pending_start
-    """"Enabled -- starts with the app." was printed AFTER it had failed.
-
-    start_cloud_ingest_server sets cloud_ingest back to None and logs
-    when the bind raises; a port already in use is the ordinary way. The
-    row promised a server that had already not arrived.
-    """
-    target = SimpleNamespace(
-        settings=SimpleNamespace(cloud_ingest_enabled=True), cloud_ingest=None
-    )
-
-    text = settings_window.cloud_ingest_status_text(target)
-
-    assert "Nothing is listening" in text
-    assert "starts with the app" not in text
-
-    # --- scenario: a_listening_server_still_publishes_its_address
-    target = SimpleNamespace(
-        settings=SimpleNamespace(cloud_ingest_enabled=True),
-        cloud_ingest=SimpleNamespace(address=("127.0.0.1", 8123)),
-    )
-
-    assert (
-        settings_window.cloud_ingest_status_text(target)
-        == "http://127.0.0.1:8123/v1/agent-event"
-    )
+# --- The Codex installer's trust handshake -------------------------------
 
 
-
-def _peer_target(*, attempted: int = 0, health: tuple = ()):
-    return SimpleNamespace(
-        settings=SimpleNamespace(remote_peers=SimpleNamespace(enabled=True)),
-        _remote_refresh=SimpleNamespace(health=health, attempted=attempted),
-    )
-
-
-def test_a_missing_tailscale_is_named_instead_of_promised_peers__and_2_more() -> None:
-    # --- scenario: a_missing_tailscale_is_named_instead_of_promised_peers
-    """"No peers found yet." argued the opposite of the truth.
-
-    "yet" promises a peer is still coming. With no CLI to discover one
-    with, no peer is ever coming, and that is the one fact here the
-    owner can act on.
-    """
-    with patch.object(
-        settings_window.remote_peers, "tailscale_available", return_value=False
-    ):
-        text = settings_window.remote_peer_status_text(_peer_target())
-
-    assert "Tailscale is not installed" in text
-    assert "yet" not in text
-
-    # --- scenario: no_round_trip_yet_is_not_an_empty_answer
-    with patch.object(
-        settings_window.remote_peers, "tailscale_available", return_value=True
-    ):
-        unchecked = settings_window.remote_peer_status_text(_peer_target())
-        checked = settings_window.remote_peer_status_text(
-            _peer_target(attempted=3)
-        )
-
-    assert unchecked == "No peers checked yet."
-    assert checked == "No other Macs are running JR-Bar right now."
-    assert unchecked != checked
-
-    # --- scenario: no_codex_binary_is_not_the_same_as_nothing_to_trust
+def test_no_codex_binary_is_not_the_same_as_nothing_to_trust() -> None:
     """Both used to be an empty dict, and the installer returned on it.
 
     Codex refuses to run a hook whose hash it has not trusted, so this

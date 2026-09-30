@@ -39,7 +39,6 @@ else:
         apply_provider_usage_settings_snapshot,
         perform_provider_usage_action,
         profile_session_action,
-        toggle_provider_menu_visibility,
     )
     from .provider_usage_event_store import save_reset_delivery_state
     from .provider_usage_feedback_actions import (
@@ -65,15 +64,10 @@ else:
     )
     from .provider_usage_store import load_provider_usage_state, save_provider_usage_state
     from .provider_usage_sync_cache import refresh_cached_merged_sync
-    from .settings_category_runtime import (
-        refresh_native_usage_summary,
-        save_provider_instance_profile_setting,
-    )
     from .usage_event_hooks import (
         config_for_settings,
         detect_usage_hook_events,
         dispatch_usage_hooks,
-        hook_path_message,
     )
     from .usage_percent_history import record_state_observations
 
@@ -126,41 +120,6 @@ else:
                 ProviderUsageState((), None, None, False),
             )
 
-        def refresh_setup_window(self) -> None:
-            from .onboarding_runtime import refresh_setup_window
-
-            refresh_setup_window(self, _legacy)
-
-
-        def run_first_launch_setup(self) -> None:
-            from .onboarding_runtime import run_first_launch_setup
-
-            run_first_launch_setup(self, _legacy)
-
-        @_legacy.objc.IBAction
-        def toggleSleepDim_(self, sender) -> None:
-            from .onboarding_runtime import set_sleep_dim
-
-            set_sleep_dim(self, sender, _legacy)
-
-        @_legacy.objc.IBAction
-        def toggleIdleAutoOff_(self, sender) -> None:
-            from .onboarding_runtime import set_idle_auto_off
-
-            set_idle_auto_off(self, sender, _legacy)
-
-        @_legacy.objc.IBAction
-        def applySleepDimPercentage_(self, sender) -> None:
-            from .onboarding_runtime import set_sleep_dim_percentage
-
-            set_sleep_dim_percentage(self, sender, _legacy)
-
-        @_legacy.objc.IBAction
-        def applyIdleAutoOffTimeout_(self, sender) -> None:
-            from .onboarding_runtime import set_idle_auto_off_timeout
-
-            set_idle_auto_off_timeout(self, sender, _legacy)
-
         # --- Native provider usage --------------------------------------
 
         def _provider_usage_service(self) -> ProviderUsageService:
@@ -196,7 +155,6 @@ else:
                 providers=providers,
             )
             self._jrbar_provider_usage_state = current
-            refresh_native_usage_summary(self)
 
         def _provider_usage_log(self, message: str) -> None:
             _legacy.log_status_bar(message)
@@ -225,12 +183,6 @@ else:
                 )
             except Exception:
                 return
-
-        @_legacy.objc.IBAction
-        def applyUsageEventHook_(self, sender) -> None:
-            self.settings = self.settings.with_usage_event_hook_path(str(sender.stringValue() or ""))
-            _legacy.save_settings(self.settings)
-            self.set_settings_message(hook_path_message(self.settings.usage_event_hook_path))
 
         @_legacy.objc.IBAction
         def applyProviderUsageState_(self, payload) -> None:
@@ -357,7 +309,6 @@ else:
             controller = getattr(self, "_jrbar_provider_usage_window", None)
             if controller is not None:
                 controller.refresh(state)
-            refresh_native_usage_summary(self)
             # Fresh JR data must reach every surface that RENDERS it, or
             # "Refresh Capacity" fetches and the visible line never moves
             # until a pane switch (2026-08-27 audit). Both calls are pure
@@ -375,58 +326,6 @@ else:
             self._menu_signature = None
             if previous_state != state and getattr(self, "_runtime_started", False):
                 self.schedule_event_refresh()
-
-        @_legacy.objc.IBAction
-        def refreshProviderUsage_(self, _sender) -> None:
-            self._request_provider_usage(force=True)
-
-        @_legacy.objc.IBAction
-        def refreshNativeProviderUsage_(self, sender) -> None:
-            self.refreshProviderUsage_(sender)
-
-        @_legacy.objc.IBAction
-        def toggleUsageMenuElement_(self, sender) -> None:
-            from .provider_usage_settings import save_provider_usage_settings
-
-            flag = str(sender.identifier() or "")
-            loaded = load_provider_usage_settings()
-            try:
-                updated = loaded.settings.with_menu_flag(flag, bool(sender.state()))
-                save_provider_usage_settings(updated, loaded=loaded)
-            except Exception as exc:
-                _legacy.log_status_bar(f"usage menu display: {exc}")
-                # The checkbox flipped BEFORE the action fired; a failed
-                # save must flip it back or the pane lies forever.
-                sender.setState_(0 if bool(sender.state()) else 1)
-                return
-            self._menu_signature = None
-            apply_provider_usage_settings_snapshot(
-                self,
-                updated,
-                notify_service=True,
-            )
-
-        @_legacy.objc.IBAction
-        def toggleUsageMenuProvider_(self, sender) -> None:
-            try:
-                toggle_provider_menu_visibility(self, sender)
-            except Exception as exc:
-                _legacy.log_status_bar(f"usage menu providers: {exc}")
-                sender.setState_(0 if bool(sender.state()) else 1)
-
-        @_legacy.objc.IBAction
-        def toggleProviderResetSetting_(self, sender) -> None:
-            from .provider_reset_settings_action import toggle_provider_reset_setting
-
-            toggle_provider_reset_setting(self, sender, log=_legacy.log_status_bar)
-
-        @_legacy.objc.IBAction
-        def updateProviderInstanceProfile_(self, sender) -> None:
-            save_provider_instance_profile_setting(
-                self,
-                sender,
-                log=_legacy.log_status_bar,
-            )
 
         # --- Tightest limit beside the menu-bar icon (Codex Bar parity)
 

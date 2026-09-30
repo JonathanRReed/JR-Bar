@@ -143,7 +143,7 @@ def test_no_new_module_becomes_unreachable__and_2_more() -> None:
 
 
 
-def test_announcer_stack_modules_are_wired_to_production_owners__and_2_more() -> None:
+def test_announcer_stack_modules_are_wired_to_production_owners__and_1_more() -> None:
     # --- scenario: announcer_stack_modules_are_wired_to_production_owners
     assert "status_bar_legacy" in _module_importers("announcer_stack")
     assert "virtual_device" in _module_importers("announcer_stack")
@@ -156,9 +156,6 @@ def test_announcer_stack_modules_are_wired_to_production_owners__and_2_more() ->
     assert "answer_controller" in _module_importers("answer_in_place")
     assert "virtual_device" in _module_importers("answer_in_place")
     assert "virtual_device" in _module_importers("announcer_presenter")
-
-    # --- scenario: global_action_settings_pane_is_reachable_from_settings_window
-    assert "settings_window" in _module_importers("global_action_settings_pane")
 
 
 
