@@ -701,7 +701,7 @@ three layers):
   all Spaces, click-through, sized by the ports of
   `virtual_window_frame_for_screen` / `rounded_band_bounds` /
   `screen_bar_design.py`: the notch slot from `auxiliaryTopLeftArea` /
-  `auxiliaryTopRightArea`, 14 pt auto wings, a 6 pt band with 3 pt corners
+  `auxiliaryTopRightArea`, 14 pt auto wings, a 4 pt band with rounded ends
   1 pt below the notch (197 pt on this MacBook Pro). The eight LED samples
   become one horizontal `CAGradientLayer` through the Python's raised-cosine
   inter-LED blend (2 pt columns, 1/1024 quantised, coalesced runs), plus a
@@ -974,7 +974,9 @@ three layers):
   unless `quota_alerts_enabled` is false. Nothing is done for
   `peer_arrived` / `peer_departed` beyond the toast. Escalation stage 3 is
   a repeating chime (Hero, every 30 s); the `takeover` tier gets the same
-  chime, no full-screen takeover.
+  chime and sets `delivery.takeover` (`JRBarCore/EventPolicy.swift`): the notch
+  island grows into the ask card and holds it until the person answers, opens
+  or swipes it away.
 * Software Update: the app owns a `SparkleUpdater` (`SparkleUpdater.swift`)
   over the embedded framework: "Check for Updates…" in the app menu
   (`AppDelegate.checkForUpdates(_:)`, validated by
