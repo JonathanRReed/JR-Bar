@@ -110,14 +110,37 @@ def test_refresh_attaches_only_a_confirmed_provider_incident(tmp_path):
     assert lookups == [("codex", 1000.0)]
 
 
-def test_default_incident_lookup_starts_only_the_requested_provider(monkeypatch):
+def test_default_incident_lookup_starts_nothing_and_asks_no_status_page(monkeypatch):
     from jrbar.provider_usage_runtime import _default_incident_lookup
+
+    class Poller:
+        def start(self, **_kwargs):
+            raise AssertionError("the default lookup started a status feed")
+
+        def incident_for(self, *_args, **_kwargs):
+            raise AssertionError("the default lookup read a status feed")
+
+    monkeypatch.setattr(
+        "jrbar.status_feeds.shared_status_feed_poller", lambda: Poller()
+    )
+
+    assert _default_incident_lookup("codex", 1000.0) is None
+
+
+def test_status_feed_incident_lookup_starts_only_the_requested_provider(monkeypatch):
+    from types import SimpleNamespace
+
+    from jrbar.provider_usage_runtime import status_feed_incident_lookup
 
     starts: list[tuple[str, ...]] = []
 
     class Poller:
-        def start(self, *, provider_ids):
+        def start(self, *, provider_ids, enabled):
+            assert enabled() is True
             starts.append(provider_ids)
+
+        def stop(self):
+            raise AssertionError("a lookup that is allowed stopped the feeds")
 
         def incident_for(self, provider_id, *, now):
             assert provider_id == "codex"
@@ -127,8 +150,11 @@ def test_default_incident_lookup_starts_only_the_requested_provider(monkeypatch)
     monkeypatch.setattr(
         "jrbar.status_feeds.shared_status_feed_poller", lambda: Poller()
     )
+    lookup = status_feed_incident_lookup(
+        lambda: SimpleNamespace(provider_status_feeds_enabled=True)
+    )
 
-    assert _default_incident_lookup("codex", 1000.0) is None
+    assert lookup("codex", 1000.0) is None
     assert starts == [("codex",)]
 
 

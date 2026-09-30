@@ -104,8 +104,9 @@ def test_the_shared_status_feed_poller_is_inert_under_test(inert_status_feed_pol
 def test_a_default_provider_usage_service_starts_no_status_feed_thread(
     tmp_path, inert_status_feed_poller
 ) -> None:
-    # The default incident lookup starts the shared poller for the provider it
-    # refreshed. Under test that is the inert one: no thread, no request.
+    # Provider status pages are opt-in, so a service with no settings wired
+    # does not even ask the shared poller to start a feed for the provider it
+    # refreshed; and the shared poller is the inert one under test anyway.
     service = ProviderUsageService(
         settings_loader=default_provider_usage_settings,
         credentials=object(),
@@ -117,7 +118,7 @@ def test_a_default_provider_usage_service_starts_no_status_feed_thread(
     result = service.refresh_now(providers=("codex",)).by_provider("codex")
 
     assert result.incident is None
-    assert inert_status_feed_poller.started == [("codex",)]
+    assert inert_status_feed_poller.started == []
     assert not _status_feed_threads()
 
 

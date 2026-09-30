@@ -61,6 +61,7 @@ else:
         ProviderUsageApply,
         ProviderUsageService,
         ProviderUsageState,
+        status_feed_incident_lookup,
     )
     from .provider_usage_settings import (
         ProviderUsageSettings,
@@ -314,6 +315,11 @@ else:
                 # The CLIProxyAPI hub's accounts (off unless cliproxy_hub
                 # is enabled; loopback only, every 5 min at most).
                 extra_source=HubSource(settings_loader=lambda: self.settings),
+                # Provider status pages: off until Settings > Usage turns
+                # them on, and read live on every refresh.
+                incident_lookup=status_feed_incident_lookup(
+                    settings_loader=lambda: self.settings
+                ),
             )
             self._jrbar_provider_usage_service = service
             self._jrbar_provider_usage_state = service.snapshot()
