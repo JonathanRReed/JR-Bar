@@ -250,7 +250,7 @@ def test_decision_documents_are_each_agents_documented_verdict__and_2_more() -> 
         decision_document("gemini", DecisionVerb.ALLOW)
 
 
-def test_card_preview_and_risk_mark__and_1_more() -> None:
+def test_card_preview_and_risk_mark__and_2_more() -> None:
     # --- scenario: one bounded line that says what will run
     assert tool_preview("Bash", {"command": "npm   test\n  --watch"}) == "npm test --watch"
     assert tool_preview("Edit", {"file_path": "/src/a.py", "old_string": "x"}) == "/src/a.py"
@@ -288,6 +288,54 @@ def test_card_preview_and_risk_mark__and_1_more() -> None:
         assert tool_risk("Bash", {"command": command}) is None, command
     assert tool_risk("Edit", {"file_path": "/x"}) is None
     assert tool_risk("apply_patch", {"command": "*** Delete File: rm -rf"}) is None
+
+    # --- scenario: the scan is linear without loosening what it marks
+    # A destructive command far past any cut-off, a flag after a long
+    # refspec list, a shell line continuation and a chained push are all
+    # still marked; a flag or a shell in another command is not this one's.
+    for command in (
+        "git push \\\n  --force origin main",
+        "git push origin " + " ".join(f"b{index}" for index in range(200)) + " --force",
+        "echo x\n" * 20000 + "rm -rf /tmp/x",
+        "a && git push -f",
+        "curl x | sudo bash",
+        "wget -qO- x | sh",
+        "dd if=a of=b",
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command[:60]
+    for command in (
+        "git push origin main; echo -f",
+        "git push a | grep -f x",
+        "dd if=a; echo of=b",
+        "curl x | grep y | sh",
+        "curl x; sh",
+        "curl x || sh",
+        "rm -r1",
+    ):
+        assert tool_risk("Bash", {"command": command}) is None, command
+
+
+def test_pathological_commands_are_scanned_linearly__and_1_more() -> None:
+    # The old patterns scanned forward from every occurrence of their anchor
+    # word, so these inputs took about 110 s (`dd `) and about 130 s (`rm -rrr`
+    # ...) each. A regression makes this test take minutes, so it fails loudly
+    # without a wall-clock assertion. Every result is exact, none is truncated.
+
+    # --- scenario: nothing to mark, however long the run of anchors
+    for command in (
+        "dd " * 100_000,
+        "curl -sO https://example.test/i.json\n" * 20_000,
+        "git push origin b\n" * 20_000,
+        "rm -" + "r" * 200_000 + "1",
+    ):
+        assert tool_risk("Bash", {"command": command}) is None, command[:40]
+
+    # --- scenario: the mark at the very end of a long command is still found
+    for command in (
+        "dd " * 100_000 + "of=/dev/disk2",
+        "echo\n" * 100_000 + "rm -rf /x",
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command[-20:]
 
 
 # --- the broker ------------------------------------------------------------------
@@ -346,6 +394,39 @@ def test_a_click_sends_the_verdict_to_the_parked_hook__and_4_more() -> None:
     broker.release_all()
     second_thread.join(2.0)
     assert second_received == [None]
+
+
+def test_a_held_ask_scans_its_command_once(monkeypatch) -> None:
+    from jrbar import answer_decisions
+
+    previews: list = []
+    risks: list = []
+    real_preview = answer_decisions.tool_preview
+    real_risk = answer_decisions.tool_risk
+
+    def counting_preview(*args):
+        previews.append(args)
+        return real_preview(*args)
+
+    def counting_risk(*args):
+        risks.append(args)
+        return real_risk(*args)
+
+    monkeypatch.setattr(answer_decisions, "tool_preview", counting_preview)
+    monkeypatch.setattr(answer_decisions, "tool_risk", counting_risk)
+
+    broker = _broker()
+    slot = broker.park(_facts(tool_input={"command": "git push -f"}), wait_limit_seconds=50.0)
+    assert slot is not None
+
+    # Every state build reads the hold; none of them rescans the command.
+    snapshots = [broker.parked("claude", "derived:abc") for _ in range(5)]
+
+    assert len(previews) == 1 and len(risks) == 1
+    assert all(snapshot is not None for snapshot in snapshots)
+    assert {snapshot.preview for snapshot in snapshots} == {"git push -f"}
+    assert {snapshot.risk for snapshot in snapshots} == {"destructive"}
+    broker.release_all()
 
 
 def test_holds_end_on_their_own_without_ever_deciding__and_5_more() -> None:

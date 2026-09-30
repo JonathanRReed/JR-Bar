@@ -526,26 +526,72 @@ def tool_preview(tool_name: object, tool_input: object) -> str | None:
     return None
 
 
+#: Where a command word may start: the start of the text, whitespace, or a
+#: shell separator.
+_START: Final = r"(?:^|[\s;&|(])"
+
+#: Patterns that mean "this loses work" wherever they sit in the text. Each is
+#: a plain search with no open-ended scan forward, so the cost is linear in the
+#: length of the command.
 _DESTRUCTIVE: Final = tuple(
     re.compile(pattern)
     for pattern in (
-        r"(?:^|[\s;&|(])rm\s+(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)\b",
-        r"(?:^|[\s;&|(])sudo\s",
-        r"(?:^|[\s;&|(])git\s+push\b[^;&|]*\s(?:--force(?:-with-lease)?|-f)\b",
-        r"(?:^|[\s;&|(])git\s+reset\s+--hard\b",
-        r"(?:^|[\s;&|(])git\s+clean\s+-[A-Za-z]*f",
-        r"(?:^|[\s;&|(])git\s+(?:checkout|restore)\s+(?:--\s+)?\.(?:\s|$)",
-        r"(?:^|[\s;&|(])git\s+branch\s+-D\b",
-        r"(?:^|[\s;&|(])(?:chmod|chown)\s+-[A-Za-z]*R",
-        r"(?:^|[\s;&|(])(?:mkfs(?:\.\w+)?|diskutil\s+(?:erase\w*|partitionDisk))\b",
-        r"(?:^|[\s;&|(])dd\s+[^;&|]*\bof=",
-        r"\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b",
+        # One flag token holding an r or R (-rf, -fr, -R) or --recursive. The
+        # lookahead finds the r in one pass and the letters are then read once;
+        # `-[A-Za-z]*[rR][A-Za-z]*` retried every split of a long flag.
+        _START + r"rm\s+(?:-(?=[A-Za-z]*[rR])[A-Za-z]+|--recursive)\b",
+        _START + r"sudo\s",
+        _START + r"git\s+reset\s+--hard\b",
+        _START + r"git\s+clean\s+-[A-Za-z]*f",
+        _START + r"git\s+(?:checkout|restore)\s+(?:--\s+)?\.(?:\s|$)",
+        _START + r"git\s+branch\s+-D\b",
+        _START + r"(?:chmod|chown)\s+-[A-Za-z]*R",
+        _START + r"(?:mkfs(?:\.\w+)?|diskutil\s+(?:erase\w*|partitionDisk))\b",
         r"(?i)\bdrop\s+(?:table|database|schema)\b",
-        r"(?:^|[\s;&|(])(?:kubectl\s+delete|terraform\s+destroy)\b",
-        r"(?:^|[\s;&|(])(?:sudo\s+)?(?:shutdown|reboot|halt)(?=$|[\s;&|)])",
+        _START + r"(?:kubectl\s+delete|terraform\s+destroy)\b",
+        _START + r"(?:sudo\s+)?(?:shutdown|reboot|halt)(?=$|[\s;&|)])",
         r">\s*/dev/(?:disk|sd|rdisk)",
     )
 )
+
+#: A command that pushes, writes with dd, or fetches is only destructive for
+#: what comes later in the SAME simple command. Each is found once per segment
+#: (the text between `;`, `&` and `|`) by its anchor, then one search for the
+#: tail from where the anchor ended. Scanning forward from every anchor would
+#: be quadratic on a long run of them; the tail does not depend on which anchor
+#: matched, so if the first anchor's tail is missing every later one is too.
+_SEGMENT_SPLIT: Final = re.compile(r"([;&|])")
+_PUSH_ANCHOR: Final = re.compile(_START + r"git\s+push\b")
+_PUSH_TAIL: Final = re.compile(r"\s(?:--force(?:-with-lease)?|-f)\b")
+_DD_ANCHOR: Final = re.compile(_START + r"dd\s+")
+_DD_TAIL: Final = re.compile(r"\bof=")
+_FETCH: Final = re.compile(r"\b(?:curl|wget)\b")
+_SHELL_HEAD: Final = re.compile(r"\s*(?:sudo\s+)?(?:sh|bash|zsh)\b")
+
+
+def _anchored_tail(segment: str, anchor: re.Pattern[str], tail: re.Pattern[str]) -> bool:
+    found = anchor.search(segment)
+    return found is not None and tail.search(segment, found.end()) is not None
+
+
+def _segment_destructive(command: str) -> bool:
+    """The push, dd and pipe-to-shell shapes, read one simple command at a time."""
+    parts = _SEGMENT_SPLIT.split(command)
+    for index in range(0, len(parts), 2):
+        segment = parts[index]
+        if _anchored_tail(segment, _PUSH_ANCHOR, _PUSH_TAIL) or _anchored_tail(
+            segment, _DD_ANCHOR, _DD_TAIL
+        ):
+            return True
+        # `curl ... | sh`: the fetch ends in a pipe and the next command is a shell.
+        if (
+            index + 2 < len(parts)
+            and parts[index + 1] == "|"
+            and _FETCH.search(segment) is not None
+            and _SHELL_HEAD.match(parts[index + 2]) is not None
+        ):
+            return True
+    return False
 
 
 def tool_risk(tool_name: object, tool_input: object) -> str | None:
@@ -559,7 +605,9 @@ def tool_risk(tool_name: object, tool_input: object) -> str | None:
         command = " ".join(command)
     if tool_name == "apply_patch" or type(command) is not str:
         return None
-    return "destructive" if any(pattern.search(command) for pattern in _DESTRUCTIVE) else None
+    if any(pattern.search(command) for pattern in _DESTRUCTIVE) or _segment_destructive(command):
+        return "destructive"
+    return None
 
 
 # --- the broker --------------------------------------------------------------------
@@ -604,6 +652,8 @@ class _Slot:
         "facts",
         "hold_until_epoch",
         "host_pid",
+        "preview",
+        "risk",
         "state",
         "token",
         "verdict",
@@ -616,9 +666,16 @@ class _Slot:
         deadline: float,
         hold_until_epoch: float,
         host_pid: int | None = None,
+        preview: str | None = None,
+        risk: str | None = None,
     ) -> None:
         self.token = token
         self.facts = facts
+        #: The card's preview line and risk mark, worked out once when the
+        #: request parks: every state build reads the hold under the broker's
+        #: lock, and none of them should rescan the command.
+        self.preview = preview
+        self.risk = risk
         self.deadline = deadline
         self.hold_until_epoch = hold_until_epoch
         #: The hook's parent, the agent side of the request: its terminal
@@ -754,6 +811,9 @@ class DecisionBroker:
             return None
         if facts.provider in PROMPT_BEHIND_HOOK_PROVIDERS and self._watching(facts, host_pid):
             return None
+        # Once per held request, outside the lock the hook threads share.
+        preview = tool_preview(facts.tool_name, facts.tool_input)
+        risk = tool_risk(facts.tool_name, facts.tool_input)
         now = self._clock()
         with self._lock:
             self._expire_locked(now)
@@ -766,6 +826,8 @@ class DecisionBroker:
                 now + hold,
                 self._wall() + hold,
                 host_pid if type(host_pid) is int and host_pid > 1 else None,
+                preview,
+                risk,
             )
             self._slots[slot.token] = slot
             self._decided.pop((facts.provider, facts.work_id, facts.request_id), None)
@@ -1035,8 +1097,8 @@ class DecisionBroker:
             tool_name=facts.tool_name,
             hold_until_epoch=slot.hold_until_epoch,
             can_always_allow=bool(facts.always_rules),
-            preview=tool_preview(facts.tool_name, facts.tool_input),
-            risk=tool_risk(facts.tool_name, facts.tool_input),
+            preview=slot.preview,
+            risk=slot.risk,
             decided=decided,
             choices=facts.choices,
             work_id=facts.work_id,
