@@ -39,7 +39,10 @@ from .provider_usage_platform import (
     is_invented_antigravity_lane,
     provider_descriptors,
 )
-from .provider_usage_store import default_provider_usage_state_path
+from .provider_usage_store import (
+    PROVIDER_USAGE_STORE_SCHEMA_VERSION,
+    default_provider_usage_state_path,
+)
 from .providers import default_state_dir
 
 SERVE_DEFAULT_PORT = 8737
@@ -238,8 +241,17 @@ def _quota_summary(
     }
 
 
+#: The store versions the projection reads: the ones the store's own loader
+#: accepts. The few fields published here (provider, time, state, quota
+#: windows) mean the same in each, so a newer store never blanks the endpoint.
+_USAGE_SCHEMA_VERSIONS = frozenset({1, 2, PROVIDER_USAGE_STORE_SCHEMA_VERSION})
+
+
 def _public_usage(usage: object) -> dict[str, object] | None:
-    if not isinstance(usage, dict) or usage.get("schema_version") != 1:
+    if not isinstance(usage, dict):
+        return None
+    version = usage.get("schema_version")
+    if type(version) is not int or version not in _USAGE_SCHEMA_VERSIONS:
         return None
     snapshots = usage.get("snapshots")
     if not isinstance(snapshots, list):

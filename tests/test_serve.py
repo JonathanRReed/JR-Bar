@@ -45,7 +45,7 @@ PRIVATE_SENTINELS = (
 )
 
 
-def _write_private_state(home: Path) -> None:
+def _write_private_state(home: Path, *, usage_schema_version: int = 1) -> None:
     latest_path = default_state_dir(home) / "latest.json"
     latest_path.parent.mkdir(parents=True)
     latest_path.write_text(
@@ -83,7 +83,7 @@ def _write_private_state(home: Path) -> None:
     usage_path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": usage_schema_version,
                 "refreshed_at": 1000.0,
                 "next_refresh_at": 1060.0,
                 "snapshots": [
@@ -182,6 +182,33 @@ def test_document_rebuilds_an_exact_redacted_public_schema(tmp_path: Path) -> No
     assert all(sentinel not in encoded for sentinel in PRIVATE_SENTINELS)
 
 
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_every_store_version_the_loader_reads_is_served(tmp_path: Path, version: int) -> None:
+    """The saved usage file is written at the store's current version (3
+    today); the endpoint used to accept only 1, so its usage was always null."""
+    _write_private_state(tmp_path, usage_schema_version=version)
+
+    usage = build_serve_document(tmp_path)["usage"]
+
+    assert usage is not None
+    assert [item["provider_id"] for item in usage["providers"]] == ["claude"]
+    assert usage["providers"][0]["quota"]["remaining_percent"] == 25.5
+    assert all(
+        sentinel not in json.dumps(usage, sort_keys=True) for sentinel in PRIVATE_SENTINELS
+    )
+
+
+@pytest.mark.parametrize("version", [0, 4, 99, "3", 3.0, True, None])
+def test_an_unknown_or_mistyped_store_version_is_not_served(tmp_path: Path, version: object) -> None:
+    _write_private_state(tmp_path, usage_schema_version=1)
+    path = default_provider_usage_state_path(tmp_path)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["schema_version"] = version
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert build_serve_document(tmp_path)["usage"] is None
+
+
 def test_future_persisted_schemas_fail_closed(tmp_path: Path) -> None:
     latest_path = default_state_dir(tmp_path) / "latest.json"
     latest_path.parent.mkdir(parents=True)
@@ -200,7 +227,7 @@ def test_future_persisted_schemas_fail_closed(tmp_path: Path) -> None:
     usage_path.write_text(
         json.dumps(
             {
-                "schema_version": 2,
+                "schema_version": 99,
                 "snapshots": [{"account_label": "PRIVATE_ACCOUNT_LABEL"}],
             }
         ),

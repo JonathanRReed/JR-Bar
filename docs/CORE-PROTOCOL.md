@@ -297,8 +297,11 @@ Vocabulary:
   second `answer_ask` for that request is refused `stale_ask` instead of
   typing into a terminal that is busy running the approved tool; an answer
   the hook could not take is not `decided`, so the keystroke path stays
-  open. A hold that lapses, is let go or is answered republishes `state` at
-  once, not at the next refresh.
+  open. While `decided` is true the ask is `answerable: false` and
+  `replyable: false` on every surface, and still carries its `preview` and
+  `risk`, since they describe what the person approved. A hold that lapses,
+  is let go or is answered republishes `state` at once, not at the next
+  refresh.
   `preview` is one bounded
   line of what the agent wants to run (the command, the file, the URL,
   `server · tool` for MCP; token-shaped runs masked) and `risk` is
@@ -414,7 +417,9 @@ Vocabulary:
   parent), across the primary home and every extra home. A Claude reading
   whose scan cache does not yet cover the 30 days shows zero tokens and a
   null cost until it does, not a partial figure; a Codex reading counts only
-  the days its cache still covers, never more. `estimated_cost_usd` is null
+  the days its cache still covers, never more. A day the cache had to drop
+  to stay inside its size bound is not covered: on a very busy month the
+  Claude card can stay empty and the Codex card can count fewer than 30 days. `estimated_cost_usd` is null
   unless every counted record was priced.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
@@ -1339,7 +1344,8 @@ while the answer is still delivered.
   kind, request, opened_at, preview, risk, decisions, choices}]}`: what is
   waiting, the deck `slot` (1-13, the current bank's key; null when none)
   showing it, one bounded line of what it wants, and the `decisions` an
-  answer may carry -- `approve`/`deny` only while the ask is `answerable`,
+  answer may carry -- `approve`/`deny` only while the ask is `answerable` and
+  not yet `decided`,
   `always` only when the agent offered a rule to remember, `answer` only
   for a held question (`choices`); once the decide lane has `decided`, the
   hold is spent, and stays spent until the agent's own events close the
