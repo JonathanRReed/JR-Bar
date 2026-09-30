@@ -11,9 +11,10 @@ response-time or compatibility guarantee.
 The current release is `JR-Bar-<version>.pkg` from
 [GitHub releases](https://github.com/JonathanRReed/JR-Bar/releases), or
 the same package built from `main` with `make package`. It needs an Apple
-silicon Mac on macOS 26 or newer. Until a notarized release is published,
-a package built on one Mac will be refused by Gatekeeper on another; build
-it locally.
+silicon Mac on macOS 26 or newer. Published releases are signed,
+notarized and stapled. A package you build with `make package` is signed
+with whatever identity your keychain holds, so install your own build on the
+Mac that made it.
 
 Providers are listed in the [README](README.md#providers). A provider
 being listed means JR-Bar knows its hook shape and, where it exists, its

@@ -20,9 +20,9 @@ make fast
 
 It runs Ruff, real package imports, lightweight architecture and repository
 contracts, the tracked-file secret scan, literal provider and schema fixtures,
-430 selected contract, fixture, and semantic tests, compilation, dependency
-and version policy, and
-diff hygiene. It does not bootstrap or install tools, build or clean artifacts,
+the contract, fixture, and semantic test files that answer in seconds,
+compilation, dependency and version policy, and diff hygiene. It does not
+bootstrap or install tools, build or clean artifacts,
 run the complete suite, touch hardware, install the app, sign or notarize a
 candidate, launch Instruments, or publish anything. The platform-neutral
 rescue gate remains `make verify-portable`.
@@ -34,17 +34,3 @@ manifest, environment snapshot, checksums, and developer-facing Python
 distributions are future GitHub Release assets when publication is explicitly
 authorized. Do not commit `.pkg`, `.dmg`, `.zip`, wheel,
 source-distribution, or generated evidence files to the repository.
-
-## Historical size cleanup
-
-Removing a tracked artifact from the current tree does not remove its historical blobs. After the rescue branch is merged and backed up with a tag, repository history can be compacted separately:
-
-```sh
-git filter-repo \
-  --path work/build-live \
-  --path work/dist-live \
-  --path-glob 'work/rebuild-*' \
-  --invert-paths
-```
-
-History rewriting changes commit IDs and requires a coordinated force-push. It is deliberately separate from functional cleanup.

@@ -20,7 +20,7 @@ from jrbar.models import AgentMode, AgentStatus
 from jrbar.provider_facts import SourceKey, WorkIdentifier, WorkKey
 
 NOW = 1_800_000_000.0
-HOME = "/Users/jonathanreed"
+HOME = "/Users/me"
 
 
 def _status(agent_id: str, *, provider: str = "codex",

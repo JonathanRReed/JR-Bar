@@ -19,7 +19,7 @@ body:
     id: environment
     attributes:
       label: macOS and JR-Bar version
-      placeholder: macOS 15.x, JR-Bar 0.5.0
+      placeholder: macOS 26.x, JR-Bar 0.9.15
     validations:
       required: true
   - type: textarea

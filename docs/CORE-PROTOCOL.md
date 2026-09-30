@@ -65,7 +65,7 @@ hand-written examples.
 
 ### hello
 ```json
-{"t":"hello","v":1,"core_version":"0.8.0","pid":123,
+{"t":"hello","v":1,"core_version":"0.9.15","pid":123,
  "capabilities":["sessions","lights","usage","devices","power","effects","calibration","history","peers","ingest","deck","roster","event_replay"],
  "stream":"1234-abc123","cursor":"1234-abc123:ev-42"}
 ```
@@ -594,7 +594,7 @@ field is one the Control Center and the Rail decode.
 
 ```json
 "deck":{
- "device":{"serial":"D0CF130481EC","name":"Creator Micro 2","transport":"bluetooth","connected":true,"approved":true,
+ "device":{"serial":"A1B2C3D4E5F6","name":"Creator Micro 2","transport":"bluetooth","connected":true,"approved":true,
            "firmware":null,"layer":0,"profile":0,"conflict":null,
            "receipt":{"code":"ready","message":"Creator Micro 2 ready.","at":1788982862.4}},
  "slots":[{"index":0,"identity":"<sha256 of the work key>","session":"codex:session:…","label":"sidepulse-core","provider":"codex",
@@ -1650,7 +1650,7 @@ Stop, reinstall, start:
 
 ```sh
 osascript -e 'tell application "JR-Bar" to quit'   # the app stops its child (SIGTERM, 3 s grace)
-installer -pkg dist/JR-Bar-0.8.0.pkg -target CurrentUserHomeDirectory
+installer -pkg dist/JR-Bar-<version>.pkg -target CurrentUserHomeDirectory
 open ~/Applications/JR-Bar.app
 ~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core hooks doctor
 ```

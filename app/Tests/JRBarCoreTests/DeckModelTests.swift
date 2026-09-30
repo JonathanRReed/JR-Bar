@@ -93,12 +93,12 @@ struct DeckModelTests {
 
     @Test("the owner's daemon frame: pad off, nothing approved, nulls for transport / layer / receipt, seven banks, stock keymap with three layers")
     func realShape() throws {
-        guard case .state(let state) = try CoreFixtures.message("real_state.json") else {
+        guard case .state(let state) = try CoreFixtures.message("pad_off_state.json") else {
             Issue.record("not a state"); return
         }
         let deck = try #require(state.deck)
         let device = try #require(deck.device, "a remembered serial is a device even while the pad is off")
-        #expect(device.serial == "D0CF130481EC" && device.name == "Creator Micro 2")
+        #expect(device.serial == "A1B2C3D4E5F6" && device.name == "Creator Micro 2")
         #expect(device.transport == nil && device.firmware == nil && device.layer == nil && device.profile == nil)
         #expect(!device.connected && !device.approved && !device.hasConflict && !device.isUsable)
         #expect(device.receipt == nil)

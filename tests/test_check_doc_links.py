@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,3 +49,40 @@ def test_agent_worktrees_are_not_this_trees_docs(tmp_path: Path) -> None:
     (stale / "old.md").write_text("[gone](missing.md)\n")
     assert script.broken_links(tmp_path) == []
     assert [path.name for path in script.markdown_files(tmp_path)] == ["README.md"]
+
+
+def test_skipped_directories_are_never_listed(tmp_path: Path, monkeypatch) -> None:
+    """Build trees are skipped without being walked: ``app/.build`` alone is
+    gigabytes, and listing it took minutes before the skip was applied."""
+    script = _script()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text("# Guide\n")
+    (tmp_path / "README.md").write_text("[guide](docs/guide.md)\n")
+    skipped = sorted(script._SKIP_PARTS)
+    for name in skipped:
+        for base in (tmp_path, tmp_path / "app"):
+            deep = base / name / "deep" / "deeper"
+            deep.mkdir(parents=True)
+            (deep / "stale.md").write_text("[gone](missing.md)\n")
+
+    listed: list[Path] = []
+    real_scandir = os.scandir
+
+    def spy(path="."):
+        listed.append(Path(os.fsdecode(path)))
+        return real_scandir(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "scandir", spy)
+        found = script.markdown_files(tmp_path)
+        problems = script.broken_links(tmp_path)
+
+    assert [path.relative_to(tmp_path).as_posix() for path in found] == ["README.md", "docs/guide.md"]
+    assert problems == []
+    assert tmp_path in listed and tmp_path / "app" in listed
+    entered = [
+        path.relative_to(tmp_path).as_posix()
+        for path in listed
+        if set(script._SKIP_PARTS) & set(path.relative_to(tmp_path).parts)
+    ]
+    assert entered == []

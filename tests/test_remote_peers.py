@@ -463,7 +463,7 @@ def test_urgent_rows_survive_truncation__and_2_more() -> None:
 
     # --- scenario: published_document_carries_no_local_paths_or_launch_origin
     payload = json.loads(
-        document(statuses=(status(cwd="/Users/jonathanreed/secret-project", origin="iTerm"),))
+        document(statuses=(status(cwd="/Users/me/secret-project", origin="iTerm"),))
     )
     encoded = json.dumps(payload)
     assert "secret-project" not in encoded

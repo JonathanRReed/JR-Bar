@@ -3,6 +3,12 @@
 > **Historical.** These receipts describe the PyObjC/AppKit status bar that
 > 0.8 replaced with the Swift app over the frozen daemon. They are kept for
 > provenance; the live document is [`docs/LOCAL-VERIFICATION.md`](../LOCAL-VERIFICATION.md).
+>
+> The receipt files this page cites (the `.superpowers/sdd/` folders, their
+> render harnesses, PNGs and manifests) and `tests/test_dnd_native_receipts.py`
+> were removed from the working tree. `tests/test_clear_agents_native_receipts.py`
+> went earlier. The harnesses imported the retired `sidepulse` package, so they
+> could not run any more. All of it remains in git history.
 
 
 P3.39 has an isolated source-AppKit Clear Agents receipt at

@@ -119,10 +119,10 @@ using it in performance work.
 
 ## Current external gate
 
-On 2026-09-05, Xcode 27 Beta was located at
-`/Users/jonathanreed/Downloads/Xcode-beta.app`. Its Instruments tools work when
-commands set `DEVELOPER_DIR` to that app's `Contents/Developer` directory.
-The system-wide selection still points to Command Line Tools.
+On 2026-09-05, Xcode 27 Beta was installed as a standalone `Xcode-beta.app`.
+Its Instruments tools work when commands set `DEVELOPER_DIR` to that app's
+`Contents/Developer` directory. The system-wide selection still points to
+Command Line Tools.
 
 A 301.344-second Time Profiler diagnostic capture completed for the signed
 local candidate, PID 53091. It covered mixed live activity and Settings use,

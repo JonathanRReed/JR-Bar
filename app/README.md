@@ -1,13 +1,16 @@
 # JR-Bar (native Swift)
 
-The native macOS replacement for the SidePulse Python UI: a menu-bar agent
-app that renders the LED strip's animation as one glowing band under the
-MacBook notch, driven by the same `LEDS.LED` program the hardware plays, and
-a Raycast-style panel under the status item fed by the core daemon protocol
-(`docs/CORE-PROTOCOL.md`).
+The native macOS app: a menu-bar agent app that renders the LED strip's
+animation as one glowing band under the MacBook notch, driven by the same
+`LEDS.LED` program the hardware plays, and a Raycast-style panel under the
+status item fed by the core daemon protocol (`docs/CORE-PROTOCOL.md`).
 
-Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
-`packaging/` or `scripts/`.
+The Swift package, its tests and its dev scripts live under `app/`. A few of
+those scripts read outside it on purpose: `scripts/gen_leds_fixtures.py`
+imports the firmware reference from `src/jrbar/`, `scripts/mock-core.py`
+mirrors the daemon's protocol shapes from `src/jrbar/`, and
+`scripts/build-app.sh` reads the version from `../pyproject.toml` and the
+Sparkle key from `../packaging/`.
 
 ## Layout
 
@@ -34,7 +37,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 210 tests / 36 suites; the parity and keyframe tests fan out over 29 programs
+swift test                  # every suite; the parity and keyframe tests fan out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
@@ -168,7 +171,7 @@ Developer switches (environment variables read at launch):
 ## The LEDS engine (`JRBarLEDS`)
 
 The Python app never samples LED colours itself: its Screen Bar pipeline drives
-the firmware's own parser and renderer (`sidepulse/resources/sdled.wasm`)
+the firmware's own parser and renderer (`src/jrbar/resources/sdled.wasm`)
 through JavaScriptCore. So the Swift engine is a port of the *firmware*, and
 its rules were measured against that WASM rather than inferred from
 `LEDS_FORMAT.md`. The findings that differ from the document, all recorded in
@@ -428,10 +431,10 @@ The daemon adopted them on 2026-09-09 (`usage_history`, `list_effects`,
   `detail` when the idle step puts a window back.
 
 The Creator Micro 2 deck (proposed and adopted 2026-09-10, mirroring
-`deck_session_board.py`, `creator_micro_keymap.py`,
-`creator_micro_lighting.py` and `deck_control_center_window.py`; the
-daemon's shapes are in `docs/CORE-PROTOCOL.md`, and
-`Tests/JRBarCoreTests/Fixtures/real_state.json` is one of its frames with
+`deck_session_board.py`, `creator_micro_keymap.py` and
+`creator_micro_lighting.py`; the daemon's shapes are in
+`docs/CORE-PROTOCOL.md`, and
+`Tests/JRBarCoreTests/Fixtures/pad_off_state.json` is one of its frames with
 the pad off: `device` present but `connected` / `approved` false and
 `transport` / `layer` / `profile` / `firmware` / `receipt` null, thirteen
 remembered identities with null labels, seven banks, a stock keymap with
@@ -504,7 +507,7 @@ three layers):
 * `LSUIElement` accessory app; `NSStatusItem` with a template glyph (a bar
   tucked under a notch cap) tinted by `state.aggregate` when the core is
   live, else by the aggregate reduced from
-  `~/.local/state/sidepulse/agent-monitor/latest.json` (either the `agents`
+  `~/.local/state/jrbar/latest.json` (either the `agents`
   summary counts or the raw `works` list). Left click toggles the panel;
   right click or Option-click shows a utility menu (state, core status,
   lights source, Open Panel, History…, "Show Screen Bar" toggle (persisted),
@@ -691,7 +694,7 @@ three layers):
   With Reduce Motion on, everything collapses to short opacity fades and
   the marks hold still; the setting is read live.
 * `ProviderStyle`: id → display name, accent (the Python app's
-  `default_agent_color` values, captured from `sidepulse/colors.py`), and a
+  `default_agent_color` values, captured from `src/jrbar/colors.py`), and a
   glyph (SF Symbol, or a text glyph for π and K) for claude, codex, gemini,
   pi, grok, devin, opencode, openclaw, antigravity, cursor, hermes and kiro;
   plus `openai-api`, a usage source rather than an agent (so the Usage
@@ -727,10 +730,10 @@ three layers):
   clock so the band is phase-locked to the strip; a repeated program with
   the same anchor is not restarted, and a future or stale anchor falls back
   to "now". Otherwise the file feeds (all kqueue/notification driven, no
-  polling): `/Volumes/SidePulse/LEDS.LED` when the strip is mounted, else
-  `~/.local/state/sidepulse/agent-monitor/screen-bar.led` (may not exist
-  yet), else a built-in breath. The daemon's program wins the moment it is
-  live and the file program returns when the socket drops. Every program
+  polling): `JRBAR_PROGRAM_FILE` when set, else `/Volumes/SidePulse/LEDS.LED`
+  when the strip is mounted, else a built-in breath. The daemon's program
+  wins the moment it is live and the file program returns when the socket
+  drops. Every program
   goes through the presentation-safety compiler before it is shown; refused
   programs keep the previous one and are named in the menu's lights line.
 * Events: `completed`, `ask_opened` and friends play their named system

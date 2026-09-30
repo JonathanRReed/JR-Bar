@@ -122,7 +122,7 @@ Bluetooth LE was the observed transport for the successful keymap roundtrip.
 
 ## What the pad did on 2026-09-10, over Bluetooth
 
-The owner's pad (serial `D0CF130481EC`, product `0x8298`, firmware `v0.6.1`,
+The owner's pad (serial shown as the placeholder `A1B2C3D4E5F6`, product `0x8298`, firmware `v0.6.1`,
 battery 95%) enumerated with its vendor collection visible directly — usage
 page `0xFF00`, usage `1` — so the native `DeviceUsagePairs` fallback was not
 needed. Capability negotiation recorded **both** `v.oai.thstatus` and

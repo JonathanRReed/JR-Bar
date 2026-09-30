@@ -6,7 +6,7 @@ Reviewed on August 15, 2026 against the ten upstream commits added after merge b
 | --- | --- |
 | Custom terminal selection and terminal-window reuse | Already superseded by `status_bar_launch.py`, `navigation_policy.py`, and `session_actions.py`, including Terminal, iTerm2, and verified direct Ghostty execution. |
 | Missing ScriptingBridge dependency | Not applicable. This fork has no ScriptingBridge import. Adding the framework would add install weight without repairing reachable behavior. |
-| Isolated user installer | Ported as `scripts/install-user.sh` for CLI users while preserving the fork's sealed app-bundle, signed-package, and launch-agent paths. |
+| Isolated user installer | Ported as a Python-only user installer for CLI users, then removed. The app's own Command Line link and `make clean-install` replaced it, and the sealed app-bundle, signed-package, and launch-agent paths stayed as they were. |
 | Packaging and clean-install tests | Adopted through package-contract tests and `scripts/verify_clean_install.py`. |
 | Hook stability and compatibility | Adopted through fail-open current and legacy hook-module entrypoints. |
 | PR #31 display-sleep-safe keep-awake | Adapted as an explicit owner choice. JR-Bar defaults both ordinary and closed-lid `caffeinate` commands to no display assertion, adds `d` only when selected, and keeps battery and privileged closed-lid policy independent. |

@@ -1,6 +1,6 @@
-# JR Bar Community Code of Conduct
+# JR-Bar Community Code of Conduct
 
-JR Bar is a fork of SidePulse. This project welcomes contributions that make
+JR-Bar is a fork of SidePulse. This project welcomes contributions that make
 the macOS application, its providers, hardware integrations, documentation,
 and release process more useful and more trustworthy.
 
@@ -42,4 +42,4 @@ For a conduct concern that should not be public, contact the maintainer at
 security or privacy vulnerability; follow [SECURITY.md](SECURITY.md) instead.
 
 This document applies in the repository, its issue and review spaces, and
-project-related interactions where a participant is representing JR Bar.
+project-related interactions where a participant is representing JR-Bar.

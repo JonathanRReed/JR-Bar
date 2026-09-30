@@ -163,18 +163,8 @@ adding one is [docs/PROVIDER-ADAPTER-GUIDE.md](docs/PROVIDER-ADAPTER-GUIDE.md).
 
 Requirements: an Apple silicon Mac on macOS 26 or newer. JR-Bar is one
 signed app bundle carrying the daemon and the hook shim; nothing else is
-installed on the system.
-
-The signed 0.9.15 installer is on the
-[GitHub releases page](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15).
-To build from source instead:
-
-```sh
-git clone https://github.com/JonathanRReed/JR-Bar.git && cd JR-Bar
-make bootstrap        # creates the pinned development environment
-make package          # dist/JR-Bar-<version>.pkg
-make clean-install    # installs it into ~/Applications (no password) and opens it
-```
+installed on the system. The download and the build from source are under
+[Build and install](#build-and-install) above.
 
 `sudo installer -pkg dist/JR-Bar-<version>.pkg -target /` puts it in
 `/Applications` instead. On first launch the app starts its daemon, records

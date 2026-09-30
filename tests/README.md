@@ -1,8 +1,7 @@
 # Test suite layout and reduction notes
 
-The suite was reduced from ~10,400 collected tests to ~3,300 by
-consolidating redundant structure while keeping one meaningful test per
-real behavior. No application code was changed.
+Redundant test structure was consolidated once, keeping one meaningful
+test per real behavior. No application code was changed.
 
 ## What was consolidated and why
 
