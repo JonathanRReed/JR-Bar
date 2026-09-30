@@ -72,14 +72,6 @@ class MenuPublication:
     next_boundary_epoch: float | None
 
 
-class VisitEvidenceKind(str, Enum):
-    ROOT_OPEN = "root-open"
-    SHELF_REVEALED = "shelf-revealed"
-    ROW_FOCUSED = "row-focused"
-    ROW_ACTIVATED = "row-activated"
-    BROWSER_ROW_FOCUSED = "browser-row-focused"
-
-
 _PATCHABLE_FIELDS = frozenset(
     {
         "title",

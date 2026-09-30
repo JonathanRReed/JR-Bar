@@ -99,9 +99,6 @@ else:
                 self._production_performance_registry = registry
             return registry
 
-        def performance_snapshot(self) -> PerformanceSnapshot:
-            return self._performance().snapshot()
-
         def local_health_snapshot(
             self,
             *,

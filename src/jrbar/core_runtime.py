@@ -4151,7 +4151,7 @@ def _freeze_launch_heap() -> None:
 def build_headless_controller_class() -> type:
     """Subclass the composed production controller for headless service."""
     import objc
-    from AppKit import NSApplicationActivationPolicyAccessory, NSWorkspace
+    from AppKit import NSApplicationActivationPolicyAccessory
 
     from . import status_bar_legacy as legacy
 
@@ -4611,12 +4611,6 @@ def build_headless_controller_class() -> type:
                 self._core_publish_lights()
 
         # -- surfaces this controller never has --------------------------------
-
-        def update_status_menu(self, snapshot, state) -> None:
-            self._menu_rebuild_pending = None
-
-        def show_setup_window_if_needed(self) -> None:
-            return None
 
         def set_settings_message(self, message: str) -> None:
             if isinstance(message, str) and message:
@@ -6866,24 +6860,6 @@ def build_headless_controller_class() -> type:
             from .core_projection import strip_session_short_id
 
             return strip_session_short_id(status.display_name, status.session_id) or status.agent_id
-
-        def _core_frontmost_bundle_id(self) -> str | None:
-            try:
-                application = NSWorkspace.sharedWorkspace().frontmostApplication()
-                value = application.bundleIdentifier() if application is not None else None
-            except Exception:
-                return None
-            return value.strip() if isinstance(value, str) and value.strip() else None
-
-        def _core_session_bundle_ids(self, status) -> frozenset[str]:
-            extras = self._core_extras_for(status)
-            ids: set[str] = set()
-            if extras is not None:
-                for block in (extras.terminal, extras.origin):
-                    bundle = (block or {}).get("bundle_id")
-                    if isinstance(bundle, str) and bundle:
-                        ids.add(bundle)
-            return frozenset(ids)
 
         def _core_extras_for(self, status) -> SessionExtras | None:
             cached = self._core_extras.get(status.agent_id)

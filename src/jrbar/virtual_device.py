@@ -371,22 +371,6 @@ class NotchCaptureRequest:
     excluded_window_number: int = 0
 
 
-def _notch_capture_request(screen, *, rows: int, below_window_number: int = 0):
-    values = _screen_capture_values(screen)
-    if values is None:
-        return None
-    screen_id, display_id, frame_x, _frame_y, screen_width, _height, scale = values
-    return NotchCaptureRequest(
-        screen_id,
-        display_id,
-        frame_x,
-        screen_width,
-        scale,
-        int(rows),
-        int(below_window_number),
-    )
-
-
 def _legacy_notch_capture_image(request: NotchCaptureRequest):
     """Pre-macOS-15 WindowServer capture, called only on the probe worker."""
     rect = Quartz.CGRectMake(
@@ -434,18 +418,6 @@ def _capture_notch_runs(request: NotchCaptureRequest):
     else:
         image = _legacy_notch_capture_image(request)
     return _notch_runs_from_image(image, request)
-
-
-def _captured_notch_runs(screen, *, rows: int, below_window_number: int = 0):
-    """Compatibility wrapper; production calls this only from a worker."""
-    request = _notch_capture_request(
-        screen,
-        rows=rows,
-        below_window_number=below_window_number,
-    )
-    if request is None:
-        raise ValueError("unavailable screen geometry")
-    return _capture_notch_runs(request)
 
 
 class NotchSilhouetteProbe:
@@ -1674,33 +1646,12 @@ class VirtualLedView(NSView):
     def setProgram_(self, program):
         self.setProgram_startedAt_(program, None)
 
-    def setBatteryPercent_brightness_(self, percent, brightness):
-        self.current_program = None
-        self._presentation_colors = None
-        self.brightness = normalize_brightness(brightness)
-        scale = self.brightness / 255.0
-        filled = max(0.0, min(8.0, float(percent) * 8.0 / 100.0))
-        colors = []
-        for index in range(LED_COUNT):
-            amount = max(0.0, min(1.0, filled - index))
-            if percent <= 20:
-                rgb = (1.0, 0.15, 0.0)
-            elif percent <= 50:
-                rgb = (1.0, 0.55, 0.0)
-            else:
-                rgb = (0.0, 1.0, 0.4)
-            colors.append((*(channel * scale * amount for channel in rgb), amount))
-        self.fixed_colors = colors
-        self._target_sample = None
-        self.setNeedsDisplay_(True)
-
     def setPreviewWhiteBrightness_(self, brightness):
         """A plain white glow scaled by brightness alone, with no mode
         color and no animation -- used for the Settings window's live
         brightness/wing-extension preview, where the actual mode color
         would be a red herring (brightness applies the same regardless of
-        mode) and the battery-style red/orange/green coloring above would
-        misrepresent what's actually being previewed."""
+        mode)."""
         self.current_program = None
         self._presentation_colors = None
         self.brightness = normalize_brightness(brightness)
@@ -1708,17 +1659,6 @@ class VirtualLedView(NSView):
         self.fixed_colors = [(scale, scale, scale, scale)] * LED_COUNT
         self._target_sample = None
         self.setNeedsDisplay_(True)
-
-    def _ensure_wasm_controller(self) -> bool:
-        if self.wasm_controller is not None:
-            return True
-        try:
-            self.wasm_controller = SdLedWasmController(LED_COUNT)
-            self.wasm_error = None
-            return True
-        except LedWasmUnavailableError as exc:
-            self.wasm_error = str(exc)
-            return False
 
     def _colors_for_draw_cached(self):
         """The paint-path twin of _colors_for_draw: redraw_'s change
@@ -1987,16 +1927,6 @@ class VirtualLedView(NSView):
 
     def setMinGlow_(self, fraction):
         self.min_glow = max(0.0, min(1.0, float(fraction)))
-
-    def _riser_breath(self) -> float:
-        """Bookends breathe. Steady uprights read as 'two LEDs that are
-        always on' next to a moving underline; a slow six-second swell
-        makes them part of one living piece. Reduce Motion holds steady."""
-        preferences = getattr(self, "accessibility_display_preferences", None)
-        if preferences is not None and getattr(preferences, "reduce_motion", False):
-            return 1.0
-        phase = (time.monotonic() % 6.0) / 6.0
-        return 0.62 + 0.19 * (1.0 + math.cos(2.0 * math.pi * phase))
 
     def _bar_identity_color(self, colors):
         """ONE color representing the whole strip: the alpha-weighted
@@ -3649,36 +3579,6 @@ class VirtualStatusDevice(NSObject):
         output = Path(output_value).expanduser()
         write_json(output, profile)
         return output
-
-    def set_state(
-        self,
-        state: LedDisplayState,
-        brightness: float,
-        *,
-        started_at: float | None = None,
-    ):
-        if self.view is not None:
-            self.view.state = state
-            self.view.brightness = normalize_brightness(brightness)
-        self.set_program(
-            program_for_display_state(
-                state,
-                led_count=LED_COUNT,
-                brightness=normalize_brightness(brightness),
-            ),
-            started_at=started_at,
-        )
-
-    def set_battery(self, percent: int, brightness: float):
-        self.show()
-        self.view.setBatteryPercent_brightness_(percent, brightness)
-        self._stop_sampler()
-        self._sampler_command = None
-        self._program_identity = None
-        self._static_fallback_colors = tuple(tuple(color) for color in self.view.fixed_colors)
-        self._last_safe_colors = self._static_fallback_colors
-        self._animation_active = False
-        self._refresh_render_cadence(False, force=True)
 
     # --- Uncommitted preview ------------------------------------------
     #
