@@ -421,6 +421,8 @@ final class DockEnhanceController {
     /// as it was — `anchorPanel` holds still — so a retarget swaps the
     /// cards in one step.
     @ObservationIgnored private var pendingShow: PreviewLanding?
+    /// The open panel's live refresh: one read in flight at a time.
+    @ObservationIgnored private var liveRefresh = DockLiveRefreshGate()
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -1378,13 +1380,42 @@ final class DockEnhanceController {
     /// moves only when its size changed, and stills are fetched only for
     /// newcomers and windows just back from the Dock: a retitle is a
     /// re-list and nothing more.
-    private func refreshLiveWindows(force: Bool = false) {
-        guard let panel, panel.isVisible, let pid = preview.processIdentifier,
+    ///
+    /// The list is read on the preview lane, one read at a time: a burst
+    /// that arrives while one is out is folded into a single re-run when
+    /// it lands (`DockLiveRefreshGate`), so a terminal that spins its
+    /// title cannot queue a read behind a read. An app resting after a
+    /// hang is not asked at all.
+    func refreshLiveWindows(force: Bool = false) {
+        guard previewUp, pendingShow == nil, let pid = preview.processIdentifier,
               force || windowObserver.pid == pid, preview.folderURL == nil else { return }
+        guard !switcher.axSkips(pid, now: uptime()) else { return }
+        guard liveRefresh.request(force: force) else { return }
+        let generationAtRefresh = generation
+        let read = ax.read
+        let stamp = AppleDockReader.nextStamp()
+        ax.lane.run({ read(pid, stamp) }, then: { [weak self] reading in
+            self?.liveRefreshRead(reading, pid: pid, generation: generationAtRefresh)
+        })
+    }
+
+    /// A live refresh's list came back. The wait is noted whether or not
+    /// the preview is still the one that asked; the cards change only if
+    /// it is, and a burst that came in meanwhile reads once more.
+    private func liveRefreshRead(_ reading: DockPreviewAX.Reading, pid: pid_t, generation g: Int) {
+        let rerun = liveRefresh.finish()
+        noteAX(pid, unresponsive: reading.unresponsive)
+        guard generation == g else { return }
+        applyLiveWindows(DockPreviewRead(reading), pid: pid)
+        if let rerun { refreshLiveWindows(force: rerun.force) }
+    }
+
+    /// The landing half of a live refresh: merge the answer into the cards
+    /// as they stand now.
+    private func applyLiveWindows(_ reading: DockPreviewRead, pid: pid_t) {
         let old = preview.windows
         // An app that did not answer is no news: the old cards stay (an
         // empty list would close its own open preview).
-        let reading = readWindows(pid: pid)
         let merged = DockPreviewRead.refreshedCards(old: old, reading: reading) {
             self.narrowToDisplay($0)
         }

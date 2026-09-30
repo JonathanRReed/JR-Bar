@@ -350,3 +350,85 @@ struct DockPreviewAsyncTests {
         semaphore.wait(timeout: .now() + seconds) == .success
     }
 }
+
+// MARK: - The live refresh
+
+@MainActor
+@Suite("Dock preview live refresh, off the main thread")
+struct DockPreviewLiveRefreshTests {
+    /// A preview that has landed with two windows, the lane idle.
+    private func landed() -> Bench {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One"), card(2, "Two")])
+        bench.showAndLand("Alpha")
+        bench.ax.answer(pid: Bench.alphaPID, [])
+        return bench
+    }
+
+    @Test("bursts while a refresh reads cost exactly one extra read, never one each")
+    func burstsFoldIntoOneRerun() {
+        let bench = landed()
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One"), card(2, "Two")])
+        let before = bench.ax.reads.count
+        for _ in 0..<6 { bench.controller.refreshLiveWindows(force: true) }
+        #expect(bench.lane.waiting == 1, "one read in flight, the other five folded into a re-run")
+        bench.lane.runNext()
+        #expect(bench.lane.waiting == 1, "the re-run is queued when the first lands")
+        bench.lane.runNext()
+        #expect(bench.lane.waiting == 0)
+        #expect(bench.ax.reads.count - before == 2, "the read, and one more for the whole burst")
+    }
+
+    @Test("a refresh that hears nothing keeps the cards, and a burst that follows can read again")
+    func unresponsiveRefreshKeepsTheCards() {
+        let bench = landed()
+        bench.ax.hang(Bench.alphaPID)
+        bench.controller.refreshLiveWindows(force: true)
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.map(\.title) == ["One", "Two"], "no news is not an empty list")
+        #expect(bench.controller.previewUp, "a busy app does not close its own open preview")
+
+        bench.controller.refreshLiveWindows(force: true)
+        #expect(bench.lane.waiting == 0, "it rests now: the burst is skipped, not asked")
+    }
+
+    @Test("a genuinely empty answer still hides the preview: the last window closed elsewhere")
+    func emptyAnswerHides() {
+        let bench = landed()
+        bench.ax.answer(pid: Bench.alphaPID, [])
+        bench.controller.refreshLiveWindows(force: true)
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.isEmpty)
+        #expect(!bench.controller.previewUp)
+    }
+
+    @Test("an answer that changes the list lands on the cards, keeping survivors' ids")
+    func answerMergesIntoTheCards() {
+        let bench = landed()
+        bench.ax.answer(pid: Bench.alphaPID, [card(2, "Two, retitled"), card(3, "Three")])
+        bench.controller.refreshLiveWindows(force: true)
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.map(\.title) == ["Two, retitled", "Three"])
+        #expect(bench.controller.preview.windows.first?.id == 2)
+    }
+
+    @Test("a refresh in flight when the preview hides is dropped")
+    func staleRefreshIsDropped() {
+        let bench = landed()
+        bench.ax.answer(pid: Bench.alphaPID, [card(9, "Nine")])
+        bench.controller.refreshLiveWindows(force: true)
+        bench.controller.hidePreview()
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.map(\.title) == ["One", "Two"], "the stale list never landed")
+    }
+
+    @Test("no refresh runs while a retarget's list is still out")
+    func noRefreshDuringARetarget() {
+        let bench = landed()
+        bench.ax.answer(pid: Bench.betaPID, [card(11, "Beta one")])
+        bench.controller.showPreview(for: bench.tile("Beta"))
+        let before = bench.lane.waiting
+        bench.controller.refreshLiveWindows(force: true)
+        #expect(bench.lane.waiting == before, "Alpha's burst is not read against Beta's show")
+    }
+}
