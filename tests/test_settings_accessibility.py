@@ -352,19 +352,6 @@ class SettingsAccessibilityRepairTests(unittest.TestCase):
             self.assertTrue(action_row.isHidden())
             self.assertTrue(self.controller.settings_buttons["alcove_screen_recording_permission"].isHidden())
 
-    def test_announcer_roots_expose_their_distinct_accessible_native_roles(self) -> None:
-        from jrbar.announcer_stack_view import _CollapsedAnnouncerView, _ExpandedAnnouncerView
-
-        collapsed = _CollapsedAnnouncerView.alloc().initWithFrame_(((0.0, 0.0), (220.0, 22.0)))
-        expanded = _ExpandedAnnouncerView.alloc().initWithFrame_(((0.0, 0.0), (360.0, 176.0)))
-        self.assertTrue(collapsed.isAccessibilityElement())
-        self.assertEqual(collapsed.accessibilityRole(), "AXButton")
-        self.assertEqual(collapsed.accessibilityLabel(), "Screen Bar announcer")
-        self.assertFalse(collapsed.acceptsFirstResponder())
-        self.assertTrue(expanded.isAccessibilityElement())
-        self.assertEqual(expanded.accessibilityRole(), "AXGroup")
-        self.assertTrue(expanded.acceptsFirstResponder())
-
 
 if __name__ == "__main__":
     unittest.main()

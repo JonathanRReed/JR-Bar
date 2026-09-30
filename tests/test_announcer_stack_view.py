@@ -313,6 +313,24 @@ def test_collapsed_panel_is_passive_accessible_button_and_clicks_one_ask_open__a
     assert 320.0 <= panel.window.frame().size.width <= 460.0
 
 
+def test_announcer_roots_expose_their_distinct_accessible_native_roles() -> None:
+    """The two root views on their own, before any panel wraps them.
+
+    The collapsed root is a passive button the pointer clicks and the keyboard
+    skips; the expanded root is a group that takes focus so its keys work.
+    """
+    from jrbar.announcer_stack_view import _CollapsedAnnouncerView, _ExpandedAnnouncerView
+
+    collapsed = _CollapsedAnnouncerView.alloc().initWithFrame_(((0.0, 0.0), (220.0, 22.0)))
+    expanded = _ExpandedAnnouncerView.alloc().initWithFrame_(((0.0, 0.0), (360.0, 176.0)))
+    assert collapsed.isAccessibilityElement()
+    assert collapsed.accessibilityRole() == "AXButton"
+    assert collapsed.accessibilityLabel() == "Screen Bar announcer"
+    assert not collapsed.acceptsFirstResponder()
+    assert expanded.isAccessibilityElement()
+    assert expanded.accessibilityRole() == "AXGroup"
+    assert expanded.acceptsFirstResponder()
+
 
 def test_expanded_panel_renders_binary_answer_controls_without_changing_footer_controls__and_2_more() -> None:
     # --- scenario: expanded_panel_renders_binary_answer_controls_without_changing_footer_controls
