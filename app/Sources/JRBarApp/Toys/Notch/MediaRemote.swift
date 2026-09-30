@@ -88,6 +88,32 @@ final class MediaRemoteBridge: @unchecked Sendable {
     }
 }
 
+/// The restart pace for the Now Playing helper after it dies: a few tries
+/// spaced further apart, then it stops trying. Pure, so the pace can be
+/// pinned. The count only resets for a helper that stayed up: a first
+/// line alone proves nothing, since one that prints `null` and then
+/// crashes would otherwise be respawned every few seconds forever.
+struct AlcoveAdapterRetryPolicy: Equatable {
+    var delays: [TimeInterval] = [5, 30, 120]
+    /// How long after its first line a helper must live to count as
+    /// having worked, which gives the next failure a fresh budget.
+    var stableAfter: TimeInterval = 60
+    private(set) var attempts = 0
+
+    /// The wait before the next restart, or nil once the tries are used
+    /// up. `liveFor` is how long the helper lived after its first line
+    /// (nil if it never printed one).
+    mutating func nextDelay(liveFor: TimeInterval?) -> TimeInterval? {
+        if let liveFor, liveFor >= stableAfter { attempts = 0 }
+        guard attempts < delays.count else { return nil }
+        let delay = delays[attempts]
+        attempts += 1
+        return delay
+    }
+
+    mutating func reset() { attempts = 0 }
+}
+
 /// The island's Now Playing source, two readers under one switch:
 ///
 /// * `AlcoveMediaAdapter` — `/usr/bin/perl` (an entitled platform
@@ -140,8 +166,22 @@ class AlcoveMediaMonitor {
     var pollInterval: TimeInterval = 3
     /// The bridge path only runs reads while the adapter is dead —
     /// otherwise a gated empty read would overwrite the helper's truth.
-    private var adapterLive = false
+    private(set) var adapterLive = false
     private(set) var running = false
+    /// A test double's write to `adapterLive` — the real paths flip it
+    /// in `startAdapter` and `adapterDidFail`.
+    func markAdapterLive(_ value: Bool) { adapterLive = value }
+
+    /// How a dead helper is restarted: the tries left, the pending
+    /// restart, when this helper first spoke, and a run counter that
+    /// retires a restart armed before a `stop`. Reset by `stop`, so
+    /// every `start` begins with a fresh budget.
+    private(set) var retryPolicy = AlcoveAdapterRetryPolicy()
+    private var retryWork: DispatchWorkItem?
+    private var adapterFirstLineAt: Date?
+    private var runGeneration = 0
+    /// The clock the helper's life is measured on; a test moves it.
+    var now: () -> Date = { Date() }
 
     /// The toy's hook: the freshly reduced media (or nil when nothing
     /// plays / no path produced one).
@@ -182,23 +222,72 @@ class AlcoveMediaMonitor {
 
     /// Spawn the entitled reader; a dead path (no perl, no dylib, an
     /// early exit) flips `adapterLive` off and leaves the bridge's
-    /// refresh cycle in charge. Internal so a test double can stand
-    /// the adapter down without spawning perl.
+    /// refresh cycle in charge until the restart pace (see
+    /// `adapterDidFail`) brings the helper back. Internal so a test
+    /// double can stand the adapter down without spawning perl.
     func startAdapter() {
         let adapter = AlcoveMediaAdapter()
-        adapter.onChange = { [weak self] media in self?.noteMedia(media) }
-        adapter.onFailure = { [weak self] in
-            guard let self else { return }
-            self.adapterLive = false
-            self.adapter = nil
-            self.refresh()
-        }
+        adapterFirstLineAt = nil
+        adapter.onChange = { [weak self] media in self?.adapterDidReport(media) }
+        adapter.onFailure = { [weak self] in self?.adapterDidFail() }
         self.adapter = adapter
         adapterLive = true
         adapter.start()
         // The adapter reports its own death through onFailure — but a
         // `start` that silently couldn't run still needs the flag down.
         if !adapter.running { adapterLive = false }
+    }
+
+    /// A line from the helper. The first one marks when it began to
+    /// live, which the restart pace weighs against a later death.
+    func adapterDidReport(_ media: AlcoveMedia?) {
+        if adapterFirstLineAt == nil { adapterFirstLineAt = now() }
+        noteMedia(media)
+    }
+
+    /// The helper died (or never spoke): the in-process bridge takes the
+    /// reads now, and a restart is armed. Internal so a test drives it.
+    func adapterDidFail() {
+        adapterLive = false
+        adapter = nil
+        refresh()
+        scheduleAdapterRetry()
+    }
+
+    /// Bring the helper back after a wait, a few times: a slow first
+    /// launch at login or one crash must not leave Spotify, browsers and
+    /// everything but Music dark for the rest of the run. The tries are
+    /// bounded, so a helper that can never run (no perl, an entitlement
+    /// dropped) stops costing a spawn, and the give-up is logged once;
+    /// the next `start` has a fresh budget. A `stop` cancels the wait,
+    /// which keeps a parked island free of any child process.
+    private func scheduleAdapterRetry() {
+        guard running else { return }
+        let firstLineAt = adapterFirstLineAt
+        adapterFirstLineAt = nil
+        let liveFor = firstLineAt.map { now().timeIntervalSince($0) }
+        guard let delay = retryPolicy.nextDelay(liveFor: liveFor) else {
+            let tries = retryPolicy.delays.count
+            AlcoveMediaAdapter.log.error("Now Playing: gave up after \(tries, privacy: .public) restarts; in-process MediaRemote only until Media is toggled or the island is re-shown")
+            return
+        }
+        AlcoveMediaAdapter.log.info("Now Playing: restarting the helper in \(Int(delay), privacy: .public) s")
+        let generation = runGeneration
+        armAdapterRetry(after: delay) { [weak self] in
+            guard let self, self.running, self.adapter == nil,
+                  generation == self.runGeneration else { return }
+            self.startAdapter()
+        }
+    }
+
+    /// Run `work` after `delay`, replacing any restart still waiting.
+    /// A test double captures the delay and the closure and fires it by
+    /// hand.
+    func armAdapterRetry(after delay: TimeInterval, _ work: @escaping @MainActor () -> Void) {
+        retryWork?.cancel()
+        let item = DispatchWorkItem { MainActor.assumeIsolated { work() } }
+        retryWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
     private func noteMedia(_ media: AlcoveMedia?) {
@@ -227,6 +316,11 @@ class AlcoveMediaMonitor {
 
     func stop() {
         running = false
+        runGeneration &+= 1
+        retryWork?.cancel()
+        retryWork = nil
+        retryPolicy.reset()
+        adapterFirstLineAt = nil
         refreshWork?.cancel()
         refreshWork = nil
         adapter?.stop()
