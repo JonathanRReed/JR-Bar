@@ -63,8 +63,9 @@ enum AgentPaletteRows {
     /// safe to fire without reading — and ⌘↩ answers: Approve (with
     /// Deny on ⌘D, the panel's own chords), or for an ask that wants
     /// words, Reply…, which opens the palette's field for them. Either
-    /// appears only where the daemon says an answer can land: not for a
-    /// peer's row, not where `canAnswer` is false.
+    /// appears only where the desk would send it (`AskVerbs`): not for a
+    /// peer's row, not where the daemon says no answer can land, and not
+    /// for an ask JR-Bar already answered, whose row says so instead.
     ///
     /// Where the agent's hook holds the ask, Always Allow joins them —
     /// in the action panel only, never on a chord — and a held question
@@ -88,10 +89,11 @@ enum AgentPaletteRows {
             actions.append(snoozeFor(row: row, verbs: verbs))
             return askRow(row: row, ask: ask, now: now, actions: actions)
         }
-        let answerable = ask.canAnswer && !row.isRemote && !ask.wantsTextReply
+        let approves = !row.isRemote && AskVerbs.approves(ask)
+        let denies = !row.isRemote && AskVerbs.denies(ask, at: now)
         // A field is only worth opening where the words can land: the
         // panel's own reply row asks the same of the ask.
-        if ask.canAnswer, !row.isRemote, ask.wantsTextReply, ask.session?.isEmpty == false {
+        if !row.isRemote, AskVerbs.replies(ask), ask.session?.isEmpty == false {
             actions.append(PaletteAction(
                 id: "reply", title: "Reply…", symbol: "text.bubble", shortcut: approveChord,
                 input: PaletteInput(
@@ -103,28 +105,30 @@ enum AgentPaletteRows {
                         return nil
                     })))
         }
-        if answerable {
+        if approves {
             actions.append(PaletteAction(id: "approve", title: "Approve", symbol: "checkmark.circle",
                                          shortcut: approveChord) {
                 verbs.approve(ask)
                 return nil
             })
+        }
+        if denies {
             actions.append(PaletteAction(id: "deny", title: "Deny", symbol: "xmark.circle",
                                          shortcut: denyChord, isDestructive: true) {
                 verbs.deny(ask)
                 return nil
             })
-            if AskVerbs.alwaysAllows(ask) {
-                // Its own verb, never a chord and never Return: remembering
-                // a rule is a choice made by reading it in the action
-                // panel, so "allow fix" finds the row but Return still
-                // opens it.
-                actions.append(PaletteAction(id: "always", title: "Always Allow", symbol: "checkmark.seal",
-                                             promotable: false) {
-                    verbs.alwaysAllow(ask)
-                    return nil
-                })
-            }
+        }
+        if approves, AskVerbs.alwaysAllows(ask, at: now) {
+            // Its own verb, never a chord and never Return: remembering
+            // a rule is a choice made by reading it in the action
+            // panel, so "allow fix" finds the row but Return still
+            // opens it.
+            actions.append(PaletteAction(id: "always", title: "Always Allow", symbol: "checkmark.seal",
+                                         promotable: false) {
+                verbs.alwaysAllow(ask)
+                return nil
+            })
         }
         actions += pathActions(row: row, verbs: verbs)
         if !row.isRemote {
@@ -141,7 +145,12 @@ enum AgentPaletteRows {
     /// how long it has waited, and the destructive mark.
     @MainActor
     private static func askRow(row: SessionRow, ask: CoreAsk, now: Date, actions: [PaletteAction]) -> PaletteItem {
-        var tags = [PaletteTag(text: "Needs You", tone: .attention)]
+        // An ask JR-Bar already answered is not asking the person for
+        // anything: the tag says so (it stays in the Needs You section,
+        // which is the panel's own count and is not changed here).
+        let decided = !row.isRemote ? ask.decidedLine : nil
+        let first = decided == nil ? PaletteTag(text: "Needs You", tone: .attention) : PaletteTag(text: "Answered")
+        var tags = [first]
         if ask.isDestructive { tags.append(PaletteTag(text: "Destructive", tone: .alert)) }
         if let age = PanelStore.elapsed(since: ask.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since,
                                         now: now) {
@@ -150,6 +159,8 @@ enum AgentPaletteRows {
         let note: String?
         if row.isRemote {
             note = "Runs on \(row.remoteMachine ?? "another Mac") — answer it there"
+        } else if let decided {
+            note = decided
         } else if !ask.canAnswer, !AskVerbs.chooses(ask) {
             note = "Answer it in the session's own window"
         } else {

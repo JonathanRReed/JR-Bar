@@ -147,15 +147,7 @@ public enum LightExplainer {
             let colour = context.surface?.staticFallback.flatMap(dominantColourName)
             return (colour == nil || colour == "dim" ? "Idle breath" : derived, reason, nil)
         case .capacity:
-            // Only a window with a reading can be named as nearly spent. A
-            // window the provider stated no number for has nothing to put
-            // in the sentence, and must not be read as an empty one.
-            let measured = (context.state?.usage?.providers ?? []).compactMap { provider -> (provider: CoreProviderUsage, window: CoreUsageWindow, pct: Double)? in
-                guard let fullest = provider.windows.compactMap({ window in window.usedPct.map { (window, $0) } }).max(by: { $0.1 < $1.1 }) else { return nil }
-                return (provider, fullest.0, fullest.1)
-            }
-            guard let top = measured.max(by: { $0.pct < $1.pct }) else { return ("Amber ember", "A usage window is nearly spent", nil) }
-            return ("Amber ember", "\(SessionLabel.providerName(top.provider.id)) \(top.window.shortName) window at \(Int(top.pct.rounded()))%", nil)
+            return ("Amber ember", capacityReason(context), nil)
         case .quiet:
             return ("Dim ember", quietReason(context), nil)
         case .sleepDim:
@@ -198,6 +190,36 @@ public enum LightExplainer {
             }
             return (derived, unexplained ? "No reason given" : "Reason: \(humanised)", nil)
         }
+    }
+
+    /// The capacity light's reason, naming the window the daemon used: a
+    /// window that is bindable, measured, and not past its reset
+    /// (docs/CORE-PROTOCOL.md, the `constrained` bullet). Each provider's own
+    /// pick is the daemon's `constrained` window while it still stands; the
+    /// same rule run here stands in where the daemon named none, or named
+    /// one whose reset has since passed on the app's clock. Across providers
+    /// the fullest wins, as the runway light has it. A window whose reset has
+    /// passed describes a window that no longer exists, so it is never the
+    /// reason however full it last read, and when every measured window has
+    /// lapsed the line says so instead of naming one. A window nobody
+    /// measured has nothing to put in the sentence and is never read as an
+    /// empty one.
+    static func capacityReason(_ context: Context) -> String {
+        let now = context.now.timeIntervalSince1970
+        let providers = context.state?.usage?.providers ?? []
+        var top: CapacityWindow?
+        for provider in providers {
+            guard let candidate = provider.capacityWindow(at: now) else { continue }
+            if top.map({ candidate.outranks($0) }) ?? true { top = candidate }
+        }
+        if let top {
+            let name = SessionLabel.providerName(top.provider.id)
+            return "\(name) \(top.window.shortName) window at \(Int(top.pct.rounded()))%"
+        }
+        let measured = providers.contains { provider in
+            provider.windows.contains { window in window.bindable && window.usedPct != nil }
+        }
+        return measured ? "Every usage window has reset since its last reading" : "A usage window is nearly spent"
     }
 
     static func quietReason(_ context: Context) -> String {
@@ -557,6 +579,45 @@ extension LightExplainer.Context {
         if let id, let session = state?.session(withID: id), let text = LightExplainer.ago(session.updatedAt ?? session.since, now: now) { return text }
         if let seconds, let text = LightExplainer.elapsed(seconds: seconds) { return "\(text) ago" }
         return nil
+    }
+}
+
+/// A provider's window as the capacity light names it.
+struct CapacityWindow {
+    var provider: CoreProviderUsage
+    var window: CoreUsageWindow
+    var pct: Double
+
+    /// Whether this window leaves less headroom than `other`, with the
+    /// runway light's tie-break: the provider that sorts first, then its
+    /// account, then the window.
+    func outranks(_ other: CapacityWindow) -> Bool {
+        if pct != other.pct { return pct > other.pct }
+        if provider.id != other.provider.id { return provider.id < other.provider.id }
+        let mine = provider.instance ?? "default", theirs = other.provider.instance ?? "default"
+        if mine != theirs { return mine < theirs }
+        return window.id < other.window.id
+    }
+}
+
+extension CoreProviderUsage {
+    /// The window worth naming for this provider at `now` (epoch seconds):
+    /// the daemon's `constrained` pick while it is still a bindable,
+    /// measured window that has not reset, else the fullest such window.
+    /// nil when the provider has none.
+    func capacityWindow(at now: Double) -> CapacityWindow? {
+        let standing = windows.filter { window in
+            guard window.bindable, window.usedPct != nil else { return false }
+            return window.resetsAt.map { $0 > now } ?? true
+        }
+        if let pick = constrained,
+           let named = windows.first(where: { $0.id == pick.id }) ?? windows.first(where: { $0.name == pick.name }),
+           standing.contains(named), let pct = named.usedPct {
+            return CapacityWindow(provider: self, window: named, pct: pct)
+        }
+        let fullest = standing.max { ($0.usedPct ?? 0) < ($1.usedPct ?? 0) }
+        guard let fullest, let pct = fullest.usedPct else { return nil }
+        return CapacityWindow(provider: self, window: fullest, pct: pct)
     }
 }
 
