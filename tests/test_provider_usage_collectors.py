@@ -570,6 +570,10 @@ def test_devin_uses_a_manual_stored_token_when_browser_sources_are_enabled__and_
     # The number is still shown -- it is the newest thing known, just old.
     assert result.lanes[0].remaining_percent == 48.0
     assert "ago" in result.action_label
+    # The card's "read ... ago" names when the rollout was written, not when
+    # this poll ran: observed_at is the attempt, read_at is the reading.
+    assert result.observed_at == now
+    assert result.read_at == now - CODEX_READING_STALE_SECONDS - 60.0
 
     # --- scenario: a_fresh_codex_reading_is_not_flagged
     from jrbar.provider_usage_codex_claude import collect_codex
@@ -589,6 +593,26 @@ def test_devin_uses_a_manual_stored_token_when_browser_sources_are_enabled__and_
     )
     assert result.state.value == "ready"
     assert result.action_label is None
+    assert result.read_at is None
+
+    # --- scenario: a_codex_evidence_time_that_is_not_a_time_is_not_flagged
+    from jrbar.provider_usage_codex_claude import collect_codex
+
+    now = 1_000_000.0
+
+    def scan(_home, _observed_at):
+        return {
+            "windows": [
+                {"label": "primary", "window_minutes": 10080, "used_percent": 52.0}
+            ],
+            "windows_observed_at": float("nan"),
+        }
+
+    result = collect_codex(
+        preference("codex"), home=Path("/tmp"), observed_at=now, local_scanner=scan
+    )
+    assert result.state.value == "ready"
+    assert result.read_at is None
 
 
 

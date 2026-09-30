@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import sys
 import threading
 from collections.abc import Callable, Iterable
@@ -507,8 +508,10 @@ def _codex_reading_freshness(
     observed_at: float,
 ) -> ProviderUsageSnapshot:
     """Mark a Codex snapshot stale when its evidence has stopped moving."""
-    if not isinstance(evidence_observed_at, (int, float)) or isinstance(
-        evidence_observed_at, bool
+    if (
+        not isinstance(evidence_observed_at, (int, float))
+        or isinstance(evidence_observed_at, bool)
+        or not math.isfinite(float(evidence_observed_at))
     ):
         return snapshot
     age = float(observed_at) - float(evidence_observed_at)
@@ -521,6 +524,9 @@ def _codex_reading_freshness(
     # COMPLETES, so the instruction has to say so.
     return dataclasses.replace(
         snapshot,
+        # `observed_at` stays the poll; the numbers were read when the newest
+        # rollout was written, so the card can say how old they really are.
+        read_at=max(0.0, min(float(evidence_observed_at), float(observed_at))),
         state=ProviderSourceState.STALE,
         reason_code="local_reading_stale",
         action_label=(
