@@ -85,9 +85,9 @@ struct EventPolicyTests {
         // false, and docs/VISION.md has Fully Dark withhold every visual
         // interruption; it used to keep the banner.
         let axes = CoreFocus(mode: "dark", bannerAllowed: false, audibleAllowed: false)
-        let dark = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(quiet: axes), settings: Self.bannersOn)
-        #expect(dark.sound == nil)
-        #expect(dark.notification == nil)
+        let withheld = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(quiet: axes), settings: Self.bannersOn)
+        #expect(withheld.sound == nil)
+        #expect(withheld.notification == nil)
         // An older daemon that sends only the mode word reads the same.
         let wordOnly = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(focus: "dark"), settings: Self.bannersOn)
         #expect(wordOnly.sound == nil)
@@ -128,18 +128,18 @@ struct EventPolicyTests {
         // audible_allowed false, banners still allowed.
         let axes = CoreFocus(mode: "off", source: "call", bannerAllowed: true, audibleAllowed: false)
         let state = Self.state(quiet: axes, sessions: [Self.codex])
-        let completed = EventPolicy.delivery(for: Self.completedEvent, state: state, settings: Self.bannersOn)
-        #expect(completed.sound == nil)
-        #expect(completed.notification != nil)
-        let ask = EventPolicy.delivery(for: Self.askEvent, state: state, settings: Self.bannersOn)
-        #expect(ask.sound == nil)
-        #expect(ask.notification?.category == .ask)
-        let failed = EventPolicy.delivery(for: Self.failedEvent, state: state, settings: Self.bannersOn)
-        #expect(failed.sound == nil)
-        #expect(failed.notification != nil)
-        let chime = EventPolicy.delivery(for: Self.stage3Event, state: state, settings: Self.settings(["escalation_tier": .string("chime")]))
-        #expect(chime.chime == .stop)
-        #expect(chime.statusPulse == true)
+        let finish = EventPolicy.delivery(for: Self.completedEvent, state: state, settings: Self.bannersOn)
+        #expect(finish.sound == nil)
+        #expect(finish.notification != nil)
+        let question = EventPolicy.delivery(for: Self.askEvent, state: state, settings: Self.bannersOn)
+        #expect(question.sound == nil)
+        #expect(question.notification?.category == .ask)
+        let failure = EventPolicy.delivery(for: Self.failedEvent, state: state, settings: Self.bannersOn)
+        #expect(failure.sound == nil)
+        #expect(failure.notification != nil)
+        let ladder = EventPolicy.delivery(for: Self.stage3Event, state: state, settings: Self.settings(["escalation_tier": .string("chime")]))
+        #expect(ladder.chime == .stop)
+        #expect(ladder.statusPulse == true)
     }
 
     @Test("the axes decide, not the first contribution's mode word")

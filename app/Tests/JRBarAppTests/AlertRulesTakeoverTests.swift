@@ -14,7 +14,7 @@ import Testing
 struct AlertRulesTakeoverTests {
     private let session = "grok:session:takeover"
 
-    private func coordinator(rules: [String: AgentAlertRule]) -> (EventCoordinator, ToysStore) {
+    private func makeCoordinator(rules: [String: AgentAlertRule]) -> (EventCoordinator, ToysStore) {
         var toysState = ToysState()
         toysState.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
         let core = CoreModel()
@@ -26,13 +26,13 @@ struct AlertRulesTakeoverTests {
         let toys = ToysStore(core: core, settings: SettingsStore(core: core), state: toysState,
                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         toys.notch.islandVisible = true
-        let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
-        coordinator.toys = toys
-        coordinator.quietWhenPaneFrontmost = { false }
-        coordinator.deliveryRules = { [weak core] delivery, event in
+        let events = EventCoordinator(core: core, hudAnchor: { nil })
+        events.toys = toys
+        events.quietWhenPaneFrontmost = { false }
+        events.deliveryRules = { [weak core] delivery, event in
             AgentAlertRules.apply(delivery, to: event, state: core?.state, rules: rules)
         }
-        return (coordinator, toys)
+        return (events, toys)
     }
 
     @Test("a provider whose asks never interrupt does not grow the ask card at stage 3")
@@ -41,15 +41,15 @@ struct AlertRulesTakeoverTests {
 
         // The control: with no rule the same event does take the notch over,
         // so the assertions below are about the rule and not the fixture.
-        let (open, openToys) = coordinator(rules: [:])
-        open.handle(stage3)
-        #expect(openToys.notch.activeCapsule?.takeover == true)
+        let (ungated, ungatedToys) = makeCoordinator(rules: [:])
+        ungated.handle(stage3)
+        #expect(ungatedToys.notch.activeCapsule?.takeover == true)
 
-        let (quiet, quietToys) = coordinator(rules: ["grok": AgentAlertRule(asks: false)])
-        quiet.handle(stage3)
-        #expect(quietToys.notch.activeCapsule?.takeover != true)
+        let (silenced, silencedToys) = makeCoordinator(rules: ["grok": AgentAlertRule(asks: false)])
+        silenced.handle(stage3)
+        #expect(silencedToys.notch.activeCapsule?.takeover != true)
 
-        let (capped, cappedToys) = coordinator(rules: ["grok": AgentAlertRule(escalationCeiling: 2)])
+        let (capped, cappedToys) = makeCoordinator(rules: ["grok": AgentAlertRule(escalationCeiling: 2)])
         capped.handle(stage3)
         #expect(cappedToys.notch.activeCapsule?.takeover != true)
     }

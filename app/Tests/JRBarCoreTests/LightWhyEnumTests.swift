@@ -80,12 +80,12 @@ struct LightWhyEnumTests {
     func inThisStateAges() {
         var held = Self.main
         held.since = Self.now.timeIntervalSince1970 - 1500
-        let lights = Self.lights(why: "working", detail: Self.detail(seconds: 4))
-        let state = Self.state([held])
-        let first = LightExplainer.explain(lights: lights, state: state, settings: nil, now: Self.now)
+        let frame = Self.lights(why: "working", detail: Self.detail(seconds: 4))
+        let document = Self.state([held])
+        let first = LightExplainer.explain(lights: frame, state: document, settings: nil, now: Self.now)
         #expect(Self.inThisState(first) == "25 min", "not the frame's 4 s")
         // The same frame, ten minutes later: the row moves with the clock.
-        let later = LightExplainer.explain(lights: lights, state: state, settings: nil, now: Self.now.addingTimeInterval(600))
+        let later = LightExplainer.explain(lights: frame, state: document, settings: nil, now: Self.now.addingTimeInterval(600))
         #expect(Self.inThisState(later) == "35 min")
     }
 

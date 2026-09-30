@@ -47,11 +47,11 @@ struct WhyDetailRenderProofTests {
                 Text("Before: the frame's number, as of when it was built")
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
                 WhyDetailView(model: before)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(.background.secondary))
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
                 Text("After: counted from the session's since, on the app's clock")
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
                 WhyDetailView(model: after)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(.background.secondary))
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
             }
             .padding(16)
         }
