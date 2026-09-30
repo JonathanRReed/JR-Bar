@@ -62,8 +62,8 @@ class EscalationBannerQuietWorkerTests(unittest.TestCase):
     def test_the_fixture_is_a_live_request_that_waits_on_the_user(self) -> None:
         # If the canonical path stops producing a live, fresh, user-owned
         # request, the tests below would pass for the wrong reason.
-        from jrbar.provider_facts import NextActor, SourceFreshness
         from jrbar.operator_state import RequestPhase
+        from jrbar.provider_facts import NextActor, SourceFreshness
 
         main = _canonical_permission_request_snapshot(
             session_id="session:main", agent_id=None

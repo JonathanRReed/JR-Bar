@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from typing import ClassVar
 
 from jrbar.agent_browser import (
     AgentBrowserQuery,
@@ -673,7 +674,7 @@ def test_the_quiet_snapshot_keeps_every_row_and_only_swaps_the_aggregate() -> No
 class _RecordingLeds:
     """Stands in for ``AgentLedController``: records the mode, opens no device."""
 
-    modes: list[AgentMode] = []
+    modes: ClassVar[list[AgentMode]] = []
 
     def __init__(self, **_kwargs) -> None:
         pass

@@ -14,7 +14,6 @@ write stage is replaced by a recorder, and no device path is ever opened.
 from __future__ import annotations
 
 import unittest
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
