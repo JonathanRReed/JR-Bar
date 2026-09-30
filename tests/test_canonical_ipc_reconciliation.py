@@ -148,7 +148,7 @@ def test_restore_drops_works_whose_process_ran_in_a_verify_sandbox__and_1_more(t
         "work:ipc",
         pr.ProcessEntry(501, 1, 2.0, "codex"),
         state_dir=tmp_path,
-        cwd="/Users/jonathanreed/real-project",
+        cwd="/Users/me/real-project",
     )
     restored_real = LiveAgentMonitor(latest_state_path=state_path)
     assert len(restored_real.operator_state.works) == 1

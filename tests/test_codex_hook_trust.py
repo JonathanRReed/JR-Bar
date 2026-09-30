@@ -11,7 +11,9 @@ from jrbar.codex_hook_trust import (
 
 # Hashes Codex 0.153.4 itself wrote into a real config.toml for this exact
 # command (a pre-rename install; the literal is a fixture and must not be
-# modernised). The algorithm must reproduce them byte for byte.
+# modernised, home directory included: the digests cover the exact string,
+# so a synthetic path would need digests our own code wrote, which proves
+# nothing). The algorithm must reproduce them byte for byte.
 COMMAND = (
     "/Users/jonathanreed/Downloads/sidepulse-JR-Fork/.venv/bin/python "
     "/Users/jonathanreed/Downloads/sidepulse-JR-Fork/src/sidepulse/hook_entry.py "
@@ -67,7 +69,7 @@ type = "command"
 command = '''{COMMAND}'''
 timeout = 3
 """
-    path = Path("/Users/jonathanreed/.codex/config.toml")
+    path = Path("/Users/me/.codex/config.toml")
     hashes = trusted_hashes_for_config(config, path, is_ours=lambda c: "hook_entry.py" in c)
     assert hashes[hook_state_key(path, "SessionStart", 0, 0)] == KNOWN["SessionStart"]
     assert hashes[hook_state_key(path, "Stop", 0, 1)] == KNOWN["Stop"]
