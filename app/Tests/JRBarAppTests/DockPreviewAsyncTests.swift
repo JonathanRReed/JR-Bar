@@ -432,3 +432,181 @@ struct DockPreviewLiveRefreshTests {
         #expect(bench.lane.waiting == before, "Alpha's burst is not read against Beta's show")
     }
 }
+
+// MARK: - The card verbs
+
+/// Every card verb writes through the preview lane and lands its result
+/// by the card's id, on the generation it was pressed under.
+@MainActor
+@Suite("Dock preview verbs, off the main thread")
+struct DockPreviewVerbAsyncTests {
+    private static let liveTitle = "✳ Build the thing"
+
+    /// A live agent's session, hosted by Ghostty.
+    private func liveMarks() -> [DockAgentMark] {
+        DockAgentMark.marks(from: [
+            CoreSession(id: "claude:session:a", provider: "claude", label: "Build the thing", mode: "working",
+                        terminal: CoreTerminal(app: "Ghostty", bundleId: Bench.ghostty)),
+        ])
+    }
+
+    /// A landed preview of Alpha with cards 1 and 2, and its panel's
+    /// wiring (never shown) to press the verbs through.
+    private func landed(titles: [String] = ["One", "Two"]) -> (Bench, DockPreviewActions) {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, titles.enumerated().map { card($0.offset + 1, $0.element) })
+        bench.showAndLand("Alpha")
+        return (bench, bench.controller.ensurePanel().actions)
+    }
+
+    private func window(_ bench: Bench, _ id: Int) -> DockPreviewWindow {
+        bench.controller.preview.windows.first { $0.id == id }!
+    }
+
+    @Test("× writes off main and drops the card only once the close was made")
+    func closeLandsByID() {
+        let (bench, actions) = landed()
+        actions.onClose?(window(bench, 1))
+        #expect(bench.ax.closed.isEmpty, "the press returned before the AX write ran")
+        #expect(bench.controller.preview.windows.map(\.id) == [1, 2], "the card waits for the answer")
+        bench.lane.runNext()
+        #expect(bench.ax.closed == [1])
+        #expect(bench.controller.preview.windows.map(\.id) == [2])
+    }
+
+    @Test("a close the window refused keeps its card")
+    func refusedCloseKeepsTheCard() {
+        let (bench, actions) = landed()
+        bench.ax.failClose(of: 1)
+        actions.onClose?(window(bench, 1))
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.map(\.id) == [1, 2])
+    }
+
+    @Test("closing the last card hides the preview")
+    func closingTheLastCardHides() {
+        let (bench, actions) = landed(titles: ["Only"])
+        actions.onClose?(window(bench, 1))
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.isEmpty)
+        #expect(!bench.controller.previewUp)
+    }
+
+    @Test("a card that left the list before the answer drops the result")
+    func closeOfAGoneCardIsDropped() {
+        let (bench, actions) = landed()
+        actions.onClose?(window(bench, 1))
+        bench.controller.preview.windows.removeAll { $0.id == 1 }
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.map(\.id) == [2], "card 2 is not touched")
+        #expect(bench.controller.previewUp)
+    }
+
+    @Test("– sets the card's state from the write's answer, by id")
+    func minimizeLandsByID() {
+        let (bench, actions) = landed()
+        actions.onMinimize?(window(bench, 2))
+        #expect(bench.ax.minimized.isEmpty)
+        bench.lane.runNext()
+        #expect(bench.ax.minimized.map(\.id) == [2] && bench.ax.minimized.first?.to == true)
+        #expect(bench.controller.preview.windows.first { $0.id == 2 }?.minimized == true)
+        #expect(bench.controller.preview.windows.first { $0.id == 1 }?.minimized == false)
+    }
+
+    @Test("a refused minimize leaves the card as it was")
+    func refusedMinimizeIsNotShown() {
+        let (bench, actions) = landed()
+        bench.ax.refuseMinimize(of: 2)
+        actions.onMinimize?(window(bench, 2))
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows.first { $0.id == 2 }?.minimized == false)
+    }
+
+    @Test("fullscreen reads the window's state and writes the opposite, both off main")
+    func fullScreenFlips() {
+        let (bench, actions) = landed()
+        bench.ax.setFullScreenState(of: 1, false)
+        actions.onFullScreen?(window(bench, 1))
+        #expect(bench.ax.fullScreened.isEmpty)
+        bench.lane.runNext()
+        #expect(bench.ax.fullScreened.map(\.id) == [1] && bench.ax.fullScreened.first?.to == true)
+        #expect(bench.controller.preview.windows.first { $0.id == 1 }?.fullScreen == true)
+    }
+
+    @Test("a window that offers no fullscreen write is left alone")
+    func fullScreenUnsupported() {
+        let (bench, actions) = landed()
+        actions.onFullScreen?(window(bench, 1))
+        bench.lane.runNext()
+        #expect(bench.ax.fullScreened.isEmpty)
+        #expect(bench.controller.preview.windows.first { $0.id == 1 }?.fullScreen == nil)
+    }
+
+    @Test("a click raises off main and closes the panel at once; ⌥-click keeps it and walks the card")
+    func pickRaisesOffMain() {
+        let (bench, actions) = landed()
+        actions.onPick?(window(bench, 2))
+        #expect(bench.ax.raised.isEmpty, "the press returned before the AX raise ran")
+        #expect(!bench.controller.previewUp, "the panel goes at the press, as it did")
+        bench.lane.runNext()
+        #expect(bench.ax.raised == [2], "the raise still happens after the panel is gone")
+
+        let (keep, keepActions) = landed()
+        keepActions.onPickKeepOpen?(keep.controller.preview.windows[1])
+        #expect(keep.controller.previewUp)
+        #expect(keep.controller.preview.selectedWindowID == 2)
+        keep.lane.runNext()
+        #expect(keep.ax.raised == [2])
+    }
+
+    @Test("a live agent's × arms on the first press and closes on the second, once")
+    func liveAgentNeedsASecondPress() {
+        let bench = Bench(agents: liveMarks())
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "zsh"), card(2, Self.liveTitle), card(3, "vim")])
+        bench.showAndLand("Ghost")
+        #expect(bench.controller.preview.agents.keys.contains(2), "the agent's window is marked")
+        let actions = bench.controller.ensurePanel().actions
+        let live = window(bench, 2)
+        actions.onClose?(live)
+        #expect(bench.lane.waiting == 0, "the first press only arms: no writer call")
+        #expect(bench.controller.preview.armedWindowID == 2)
+        #expect(bench.ax.closed.isEmpty)
+
+        actions.onClose?(live)
+        #expect(bench.lane.waiting == 1, "the second press inside the guard's window goes through")
+        bench.lane.runNext()
+        #expect(bench.ax.closed == [2], "one close, sent once")
+        #expect(bench.controller.preview.windows.map(\.id) == [1, 3])
+    }
+
+    @Test("a verb's result is dropped when the preview hid before it landed")
+    func staleGenerationDropsTheResult() {
+        let verbs: [(String, (Bench, DockPreviewActions) -> Void)] = [
+            ("close", { bench, actions in actions.onClose?(bench.controller.preview.windows[0]) }),
+            ("minimize", { bench, actions in actions.onMinimize?(bench.controller.preview.windows[0]) }),
+            ("fullscreen", { bench, actions in actions.onFullScreen?(bench.controller.preview.windows[0]) }),
+        ]
+        for (name, press) in verbs {
+            let (bench, actions) = landed()
+            bench.ax.setFullScreenState(of: 1, false)
+            press(bench, actions)
+            #expect(bench.lane.waiting == 1, "\(name): one job")
+            bench.controller.hidePreview()
+            bench.lane.runNext()
+            #expect(bench.controller.preview.windows.map(\.id) == [1, 2], "\(name): the cards are untouched")
+            #expect(bench.controller.preview.windows.allSatisfy { !$0.minimized && $0.fullScreen == nil },
+                    "\(name): no flag landed")
+        }
+    }
+
+    @Test("a verb's result is dropped when the preview retargeted before it landed")
+    func retargetDropsTheResult() {
+        let (bench, actions) = landed()
+        bench.ax.answer(pid: Bench.betaPID, [card(11, "Beta one")])
+        actions.onMinimize?(window(bench, 1))
+        bench.controller.showPreview(for: bench.tile("Beta"))
+        bench.lane.runAll()
+        #expect(bench.controller.preview.appName == "Beta")
+        #expect(bench.controller.preview.windows.map(\.minimized) == [false], "Alpha's minimize never reached Beta's cards")
+    }
+}

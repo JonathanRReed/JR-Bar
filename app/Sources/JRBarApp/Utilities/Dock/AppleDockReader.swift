@@ -246,19 +246,12 @@ enum AppleDockReader {
     }
 
     /// Click a preview card: un-minimize if needed, raise the window,
-    /// make it main, and bring the app forward. A card backed by a
-    /// minimized-window Dock *tile* (its window never matched an AX
-    /// row) answers only `AXPress` — the system's own restore — so the
-    /// press goes out too; on a real window the action is unsupported.
-    static func raise(_ window: DockPreviewWindow, app: NSRunningApplication?) {
-        raiseWindow(window)
-        // Plain activate: `.activateAllWindows` brought every window of
-        // the app forward and buried the one that was picked.
-        app?.activate()
-    }
-
-    /// `raise`'s AX half — the writes alone, so a commit can run them on
-    /// `DockAXWorker` and activate from main after.
+    /// make it main. The writes alone, so a card's click and a ⌘⇥ commit
+    /// run them on a `DockAXWorker` lane and bring the app forward from
+    /// main after. A card backed by a minimized-window Dock *tile* (its
+    /// window never matched an AX row) answers only `AXPress` — the
+    /// system's own restore — so the press goes out too; on a real window
+    /// the action is unsupported.
     static func raiseWindow(_ window: DockPreviewWindow) {
         guard let element = window.element else { return }
         if window.minimized {
@@ -413,17 +406,9 @@ enum AppleDockReader {
     /// and never types into whatever window has focus. Only when the
     /// menu offers neither does the old path run: post ⌘N to the app.
     /// The menu walk is dozens of AX reads against an app that may be
-    /// busy — up to half a second each — so it runs on `DockAXWorker`;
-    /// the activation it follows stays here.
-    static func newWindow(app: NSRunningApplication?) {
-        guard let app else { return }
-        app.activate()
-        let pid = app.processIdentifier
-        DockAXWorker.run { pressNewWindow(pid: pid) }
-    }
-
-    /// `newWindow`'s AX half: press the menu's New-window item, else
-    /// post ⌘N to the app.
+    /// busy — up to half a second each — so the caller runs it on the
+    /// preview lane of `DockAXWorker`; the activation it follows stays on
+    /// main.
     static func pressNewWindow(pid: pid_t) {
         if let item = newWindowMenuItem(pid: pid),
            AXUIElementPerformAction(item, kAXPressAction as CFString) == .success {

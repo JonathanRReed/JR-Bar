@@ -1790,9 +1790,17 @@ final class DockEnhanceController {
     /// A window card's click — raise it and bring the app forward. With
     /// `keepOpen` (⌥-click) the panel stays and the raised card becomes
     /// the walked one, so the next ⌥-click, arrow or W carries on from it.
+    /// The raise's AX writes run on the preview lane — a hung app costs it
+    /// half a second, not main — and the app comes forward from main once
+    /// they have landed, whatever the panel did meanwhile.
     private func pick(_ window: DockPreviewWindow, keepOpen: Bool = false) {
-        let app = preview.processIdentifier.flatMap { NSRunningApplication(processIdentifier: $0) }
-        AppleDockReader.raise(window, app: app)
+        let pid = preview.processIdentifier
+        let raise = ax.raise
+        ax.lane.run({ raise(window) }, then: {
+            // Plain activate: `.activateAllWindows` brought every window
+            // of the app forward and buried the one that was picked.
+            pid.flatMap { NSRunningApplication(processIdentifier: $0) }?.activate()
+        })
         guard keepOpen else {
             tracker.reset()
             hidePreview()
@@ -1933,34 +1941,62 @@ final class DockEnhanceController {
         }
         preview.armedWindowID = nil
         preview.armedNote = nil
-        guard AppleDockReader.close(window) else { return }
-        preview.windows.removeAll { $0.id == window.id }
-        if preview.windows.isEmpty {
-            tracker.reset()
-            hidePreview()
-        } else {
-            reframe()
-        }
+        // The close button's press runs on the preview lane. The card
+        // leaves when the lane says it was made — by its id, and only if
+        // the preview is still the one that asked.
+        let generationAtPress = generation
+        let closeWindow = ax.close
+        ax.lane.run({ closeWindow(window) }, then: { [weak self] closed in
+            guard let self, closed, self.cardIndex(of: window.id, at: generationAtPress) != nil else { return }
+            self.preview.windows.removeAll { $0.id == window.id }
+            if self.preview.windows.isEmpty {
+                self.tracker.reset()
+                self.hidePreview()
+            } else {
+                self.reframe()
+            }
+        })
+    }
+
+    /// Where a card stands now, for a verb whose write finished on the
+    /// preview lane: nil when the preview has moved on since the press
+    /// (hidden, or retargeted to another tile) or the card has left the
+    /// list. A verb's result lands only where this answers.
+    private func cardIndex(of id: Int, at generationAtPress: Int) -> Int? {
+        guard generation == generationAtPress else { return nil }
+        return preview.windows.firstIndex { $0.id == id }
     }
 
     /// The card's –: minimize, or bring a minimized window back.
     private func toggleMinimized(_ window: DockPreviewWindow) {
         let target = !window.minimized
-        guard AppleDockReader.setMinimized(window, target),
-              let index = preview.windows.firstIndex(where: { $0.id == window.id }) else { return }
-        preview.windows[index].minimized = target
+        let generationAtPress = generation
+        let setMinimized = ax.setMinimized
+        ax.lane.run({ setMinimized(window, target) }, then: { [weak self] done in
+            guard let self, done,
+                  let index = self.cardIndex(of: window.id, at: generationAtPress) else { return }
+            self.preview.windows[index].minimized = target
+        })
     }
 
     /// The card's fullscreen verb — toggles the window's own
     /// `AXFullScreen` and keeps the panel up so several windows can
     /// be flipped in a row.
     private func toggleFullScreen(_ window: DockPreviewWindow) {
-        guard let element = window.element,
-              let current = AppleDockReader.fullScreenState(of: element) else { return }
-        guard AppleDockReader.setFullScreen(window, !current) else { return }
-        if let index = preview.windows.firstIndex(where: { $0.id == window.id }) {
-            preview.windows[index].fullScreen = !current
-        }
+        // The state read and the write are both the lane's: the answer is
+        // the state the window now has, nil where it offers none or
+        // refused.
+        let generationAtPress = generation
+        let current = ax.fullScreen
+        let setFullScreen = ax.setFullScreen
+        ax.lane.run({ () -> Bool? in
+            guard let now = current(window), setFullScreen(window, !now) else { return nil }
+            return !now
+        }, then: { [weak self] flipped in
+            guard let self, let flipped,
+                  let index = self.cardIndex(of: window.id, at: generationAtPress) else { return }
+            self.preview.windows[index].fullScreen = flipped
+        })
     }
 
     /// The context menu's tile: snap the window into a half or quarter
@@ -1976,8 +2012,13 @@ final class DockEnhanceController {
         let quartz = CGRect(x: visible.minX,
                             y: DockDisplays.primaryHeight() - visible.maxY,
                             width: visible.width, height: visible.height)
-        if window.minimized { _ = AppleDockReader.setMinimized(window, false) }
-        _ = AppleDockReader.setFrame(window, DockEnhanceMath.tileFrame(tile, in: quartz))
+        let frame = DockEnhanceMath.tileFrame(tile, in: quartz)
+        let setMinimized = ax.setMinimized
+        let setFrame = ax.setFrame
+        ax.lane.run({
+            if window.minimized { _ = setMinimized(window, false) }
+            _ = setFrame(window, frame)
+        }, then: {})
     }
 
     /// The context menu's Move To: the window keeps its size (clamped
@@ -1986,19 +2027,31 @@ final class DockEnhanceController {
         guard let display = DockDisplays.all().first(where: { $0.id == id }) else { return }
         let visible = DockEnhanceMath.appKitRect(display.screen.visibleFrame,
                                                  mainScreenHeight: DockDisplays.primaryHeight())
-        let current = window.frame ?? window.element.flatMap { AppleDockReader.frame(of: $0) }
-            ?? CGRect(origin: .zero, size: visible.size)
-        if window.minimized { _ = AppleDockReader.setMinimized(window, false) }
-        _ = AppleDockReader.setFrame(window, DockEnhanceMath.moveFrame(current, to: visible))
+        // The window's own frame may need one AX read; it and the writes
+        // are the lane's.
+        let frameOf = ax.frame
+        let setMinimized = ax.setMinimized
+        let setFrame = ax.setFrame
+        ax.lane.run({
+            let current = frameOf(window) ?? CGRect(origin: .zero, size: visible.size)
+            if window.minimized { _ = setMinimized(window, false) }
+            _ = setFrame(window, DockEnhanceMath.moveFrame(current, to: visible))
+        }, then: {})
     }
 
     /// The header's "New" — the app's New Window. The live list usually lands
     /// the new card by itself; a beat later the same refresh runs once
     /// more for apps that post no window-created notification.
     private func newWindow() {
-        let app = preview.processIdentifier
-            .flatMap { NSRunningApplication(processIdentifier: $0) }
-        AppleDockReader.newWindow(app: app)
+        // The app comes forward from here; the menu walk and the press are
+        // the preview lane's — up to half a second a menu item against a
+        // busy app, and never ahead of or behind a ⌘⇥ commit.
+        if let app = preview.processIdentifier.flatMap({ NSRunningApplication(processIdentifier: $0) }) {
+            app.activate()
+            let pid = app.processIdentifier
+            let press = ax.newWindow
+            ax.lane.run({ press(pid) }, then: {})
+        }
         let generationAtNew = generation
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(600))
