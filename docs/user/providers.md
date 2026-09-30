@@ -21,6 +21,20 @@ inactive flags and custom managed log paths.
 "Newer than verified" is a note, not an error. It means nobody has
 checked that version yet.
 
+## OpenCode
+
+OpenCode reports through a small plugin in `~/.config/opencode/plugins/`,
+installed from **Settings > Agents**. It forwards session state and asks and
+nothing else: no prompts, file paths or tool output. A permission prompt or a
+question shows as Needs You and clears when you answer it. A plugin installed
+by an earlier version keeps working and is still recognised, but it cannot
+show a question as an ask. The app updates it the next time it refreshes its
+hooks after an upgrade, or you can reinstall it from Settings > Agents.
+
+OpenCode sub-agents group under their session, and their asks follow the
+Sub-agent asks setting. With it off, a sub-agent's approval raises no card and
+its session keeps reading Working while the sub-agent waits.
+
 ## Usage cards
 
 ```sh

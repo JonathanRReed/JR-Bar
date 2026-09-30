@@ -516,6 +516,15 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
         "StopFailure": _STOP_FAILURE,
+        # A turn that ended unfinished (Ctrl+C, a declined prompt, the turn
+        # limit): the session stays open and idle, as after a Codex
+        # Interrupt. The report can arrive after the next prompt's
+        # UserPromptSubmit; a brief false idle then corrects itself at the
+        # next hook, so no per-turn id is tracked for it.
+        "StopCancelled": _INTERRUPT,
+        # The persisted normalized record's canonical spelling: a replay
+        # re-reads a StopCancelled as "Interrupt" and must still reduce it.
+        "Interrupt": _INTERRUPT,
         "SessionEnd": _SESSION_END,
     },
     "cursor": {
@@ -654,6 +663,9 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
     },
 }
 
+# An unmapped notification type is safe by default: it stays inert and never
+# degrades the source (provider_facts_for_record). Map a type only when it
+# waits on the owner, with dated evidence for that.
 _NOTIFICATION_KINDS: Final[dict[str, dict[str, NotificationKind]]] = {
     "claude": {
         "permission_prompt": NotificationKind.PERMISSION_REQUEST,
@@ -703,6 +715,14 @@ def _record_matches_provider_table(record: NormalizedProviderRecord) -> bool:
     ).values()
 
 _EVENT_ID_FIELDS: Final = ("event_id", "eventId", "hook_event_id", "hookEventId")
+#: Inert diagnostics that say nothing about the source's health. Claude sends
+#: a routine idle_prompt about a minute after every idle turn, and the reducer
+#: read its inert batch as the whole provider source going quiet: every live
+#: ask of every session went stale and the next hook event was dropped. Commit
+#: 50afc7b0 (2026-09-23) fixed that one type at a time; a notification with an
+#: unfamiliar name on a well-formed record now never opens a quarantine.
+#: ``unknown_provider_event`` stays a loss: it means misrouting or drift.
+_SOURCE_NEUTRAL_INERT_DIAGNOSTICS: Final = frozenset({"unknown_notification_kind"})
 #: Diagnostics that describe one record's limits, not the source's health.
 _RECORD_LEVEL_DIAGNOSTICS: Final = frozenset(
     {
@@ -1576,11 +1596,22 @@ def provider_facts_for_record(
 
     watermark = _watermark(record)
     if type(record) is InertProviderRecord:
+        # A notification type the adapter does not name carries no lifecycle
+        # and no request, so it says nothing about the source's ability to
+        # report: the batch keeps its diagnostic and stays healthy. Every
+        # other inert record is malformed or misrouted and reads as loss.
+        source_neutral = (
+            record.diagnostic.identifier.value in _SOURCE_NEUTRAL_INERT_DIAGNOSTICS
+        )
         return ProviderFactBatch(
             source_key=record.source_key,
             observation_authority=observation_authority,
-            source_health=SourceHealth.PARTIAL,
-            source_freshness=SourceFreshness.PARTIAL,
+            source_health=(
+                SourceHealth.HEALTHY if source_neutral else SourceHealth.PARTIAL
+            ),
+            source_freshness=(
+                SourceFreshness.FRESH if source_neutral else SourceFreshness.PARTIAL
+            ),
             observed_at_epoch=observed_at_epoch,
             watermark=watermark,
             work_facts=(),

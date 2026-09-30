@@ -1,0 +1,108 @@
+// jrbar-opencode-plugin-v1
+const JRBAR_HOOK_ARGS = Object.freeze(__HOOK_ARGS__);
+const JRBAR_MAX_ID_LENGTH = 128;
+const JRBAR_MAX_PAYLOAD_BYTES = 1024;
+
+function opaqueIdentifier(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= JRBAR_MAX_ID_LENGTH
+    && /^[A-Za-z0-9._:-]+$/.test(value)
+    && !/^(?:sk|token|secret|api[_-]?key)[._:-]/i.test(value)
+    ? value : undefined;
+}
+
+function boundedSequence(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1000000000
+    ? value
+    : undefined;
+}
+
+function boundedTimestamp(value) {
+  return typeof value === "string"
+    && value.length <= 64
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(value)
+    ? value
+    : undefined;
+}
+
+function eventName(event) {
+  return event && typeof event.type === "string" ? event.type : undefined;
+}
+
+function canonicalEvent(event) {
+  const name = eventName(event);
+  if (name === "session.status") {
+    return event.properties?.status?.type === "active" || event.properties?.status?.type === "busy" ? "UserPromptSubmit" : undefined;
+  }
+  return {
+    "session.created": "SessionStart",
+    "session.idle": "Stop",
+    "session.error": "StopFailure",
+    "permission.asked": "PermissionRequest",
+    "permission.replied": "PostToolUse",
+    "question.asked": "Notification",
+    "question.replied": "PostToolUse",
+    "question.rejected": "PostToolUse",
+    "tool.execute.before": "PreToolUse",
+    "tool.execute.after": "PostToolUse",
+    "session.compacting": "PreCompact",
+    "session.compact.before": "PreCompact",
+    "session.compacted": "PostCompact",
+    "session.compact.after": "PostCompact",
+  }[name];
+}
+
+function payloadFor(event) {
+  if (!event || typeof event !== "object") return undefined;
+  const hookEventName = canonicalEvent(event);
+  if (!hookEventName) return undefined;
+  const payload = { hook_event_name: hookEventName };
+  const properties = event.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
+  const sessionId = opaqueIdentifier(properties.sessionID ?? properties.sessionId);
+  const workId = opaqueIdentifier(properties.workID ?? properties.workId);
+  const requestId = opaqueIdentifier(properties.requestID ?? properties.requestId);
+  if ((properties.sessionID ?? properties.sessionId) !== undefined && !sessionId) return undefined;
+  if ((properties.workID ?? properties.workId) !== undefined && !workId) return undefined;
+  if ((properties.requestID ?? properties.requestId) !== undefined && !requestId) return undefined;
+  const sequence = boundedSequence(properties.sequence);
+  const timestamp = boundedTimestamp(properties.timestamp);
+  if (sessionId) payload.session_id = sessionId;
+  if (workId) payload.work_id = workId;
+  if (requestId) payload.request_id = requestId;
+  if (sequence !== undefined) payload.sequence = sequence;
+  if (timestamp) payload.timestamp = timestamp;
+  if (hookEventName === "Notification") payload.notification_kind = "input_required";
+  const encoded = JSON.stringify(payload);
+  return encoded.length <= JRBAR_MAX_PAYLOAD_BYTES ? encoded : undefined;
+}
+
+let ingressTail = Promise.resolve();
+
+async function forwardOne(encodedPayload) {
+  try {
+    const child = Bun.spawn(JRBAR_HOOK_ARGS, { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+    child.stdin.write(encodedPayload);
+    child.stdin.end();
+    await child.exited;
+  } catch {}
+}
+
+function forward(encodedPayload) {
+  const admitted = ingressTail.then(
+    () => forwardOne(encodedPayload),
+    () => forwardOne(encodedPayload),
+  );
+  ingressTail = admitted;
+  return admitted;
+}
+
+const JRBarPlugin = {
+  event: async ({ event }) => {
+    const payload = payloadFor(event);
+    if (payload) await forward(payload);
+  },
+};
+
+export default JRBarPlugin;

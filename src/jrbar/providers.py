@@ -100,6 +100,12 @@ GROK_EVENTS = (
     "SubagentStop",
     "Stop",
     "StopFailure",
+    # Runs INSTEAD of Stop when a turn ends without completing: Ctrl+C or a
+    # client stop, a declined permission prompt, the turn limit, or Grok
+    # giving up making progress (grok 1.0.41 hook guide). Observation only.
+    # Without it a cancelled turn left the row Working until the next
+    # prompt. A Grok build that does not know the name skips it.
+    "StopCancelled",
     "SessionEnd",
 )
 
@@ -301,7 +307,13 @@ ANTIGRAVITY_HOOK_NAME = "jrbar-status"
 LEGACY_ANTIGRAVITY_HOOK_NAME = "sidepulse-status"
 ANTIGRAVITY_ENVELOPE_KEY = "antigravity"
 
-OPENCODE_PLUGIN_MARKER = "jrbar-opencode-plugin-v1"
+# The plugin file is versioned so an older install keeps working until the
+# next hook refresh or a reinstall replaces it. Ownership is an exact
+# comparison against the text of the generation the file's marker names,
+# never marker plus arguments: an edited or forged file is still refused.
+# v1 is frozen below.
+OPENCODE_PLUGIN_MARKER = "jrbar-opencode-plugin-v2"
+_OPENCODE_PLUGIN_V1_MARKER = "jrbar-opencode-plugin-v1"
 LEGACY_OPENCODE_PLUGIN_MARKER = "sidepulse-opencode-plugin-v1"
 _OPENCODE_PLUGIN_MAX_SOURCE_BYTES = 32 * 1024
 OPENCLAW_HANDLER_MARKER = "jrbar-openclaw-handler-v2"
@@ -445,6 +457,206 @@ def opencode_plugin_source_for_arguments(hook_arguments: list[str] | tuple[str, 
 const JRBAR_HOOK_ARGS = Object.freeze({encoded_arguments});
 const JRBAR_MAX_ID_LENGTH = 128;
 const JRBAR_MAX_PAYLOAD_BYTES = 1024;
+const JRBAR_MAX_SESSION_LINKS = 512;
+const JRBAR_MAX_LINK_DEPTH = 8;
+
+function opaqueIdentifier(value) {{
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= JRBAR_MAX_ID_LENGTH
+    && /^[A-Za-z0-9._:-]+$/.test(value)
+    && !/^(?:sk|token|secret|api[_-]?key)[._:-]/i.test(value)
+    ? value : undefined;
+}}
+
+function boundedSequence(value) {{
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1000000000
+    ? value
+    : undefined;
+}}
+
+function boundedTimestamp(value) {{
+  return typeof value === "string"
+    && value.length <= 64
+    && /^\\d{{4}}-\\d{{2}}-\\d{{2}}T\\d{{2}}:\\d{{2}}:\\d{{2}}(?:\\.\\d{{1,9}})?Z$/.test(value)
+    ? value
+    : undefined;
+}}
+
+function eventName(event) {{
+  return event && typeof event.type === "string" ? event.type : undefined;
+}}
+
+function canonicalEvent(event) {{
+  const name = eventName(event);
+  if (name === "session.status") {{
+    return event.properties?.status?.type === "active" || event.properties?.status?.type === "busy" ? "UserPromptSubmit" : undefined;
+  }}
+  return {{
+    "session.created": "SessionStart",
+    "session.idle": "Stop",
+    "session.error": "StopFailure",
+    "permission.asked": "PermissionRequest",
+    "permission.replied": "PostToolUse",
+    "question.asked": "Notification",
+    "question.replied": "PostToolUse",
+    "question.rejected": "PostToolUse",
+    "tool.execute.before": "PreToolUse",
+    "tool.execute.after": "PostToolUse",
+    "session.compacting": "PreCompact",
+    "session.compact.before": "PreCompact",
+    "session.compacted": "PostCompact",
+    "session.compact.after": "PostCompact",
+  }}[name];
+}}
+
+// A Task subagent runs in a child session whose events carry the child's own
+// session id. The plugin remembers child -> parent from session.created and
+// session.updated, and stamps a child's events the way Claude stamps a worker:
+// agent_id the child, session_id the ROOT session, so the daemon groups the
+// child under its session and its asks follow the sub-agent rules. Only the
+// two ids are read from info, and each goes through opaqueIdentifier.
+const sessionParents = new Map();
+
+function rememberSessionLink(child, parent) {{
+  // Re-inserting moves the link to the newest end, so a child that keeps
+  // sending events is never the one evicted; an eviction would send that
+  // child's next events back to the daemon as a top-level session.
+  sessionParents.delete(child);
+  sessionParents.set(child, parent);
+  while (sessionParents.size > JRBAR_MAX_SESSION_LINKS) {{
+    sessionParents.delete(sessionParents.keys().next().value);
+  }}
+}}
+
+function recordSessionLink(event) {{
+  const name = eventName(event);
+  if (name !== "session.created" && name !== "session.updated" && name !== "session.deleted") return;
+  const properties = event.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return;
+  const info = properties.info;
+  if (!info || typeof info !== "object" || Array.isArray(info)) return;
+  const child = opaqueIdentifier(info.id ?? properties.sessionID ?? properties.sessionId);
+  if (!child) return;
+  if (name === "session.deleted") {{
+    sessionParents.delete(child);
+    return;
+  }}
+  const parent = opaqueIdentifier(info.parentID ?? info.parentId);
+  if (!parent || parent === child) return;
+  rememberSessionLink(child, parent);
+}}
+
+// The root session above a child, or undefined for a session with no known
+// parent, a cycle, or a chain deeper than the cap: those keep today's
+// behaviour and travel as a top-level session.
+function rootSessionFor(sessionId) {{
+  const seen = new Set([sessionId]);
+  let current = sessionId;
+  for (let depth = 0; depth <= JRBAR_MAX_LINK_DEPTH; depth += 1) {{
+    const parent = sessionParents.get(current);
+    if (parent === undefined) return current === sessionId ? undefined : current;
+    if (seen.has(parent)) return undefined;
+    seen.add(parent);
+    rememberSessionLink(current, parent);
+    current = parent;
+  }}
+  return undefined;
+}}
+
+// An ask names its request as properties.id; the replied and rejected events
+// that close it name the same request as properties.requestID.
+function isAsk(event) {{
+  const name = eventName(event);
+  return name === "permission.asked" || name === "question.asked";
+}}
+
+function payloadFor(event) {{
+  if (!event || typeof event !== "object") return undefined;
+  // Before the canonicalEvent gate: session.updated is never forwarded, and
+  // the map must be current before this event's own payload is built.
+  recordSessionLink(event);
+  const hookEventName = canonicalEvent(event);
+  if (!hookEventName) return undefined;
+  const payload = {{ hook_event_name: hookEventName }};
+  const properties = event.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
+  const ask = isAsk(event);
+  const sessionId = opaqueIdentifier(properties.sessionID ?? properties.sessionId);
+  const workId = opaqueIdentifier(properties.workID ?? properties.workId);
+  const rawRequestId = ask ? properties.id : (properties.requestID ?? properties.requestId);
+  const requestId = opaqueIdentifier(rawRequestId);
+  if ((properties.sessionID ?? properties.sessionId) !== undefined && !sessionId) return undefined;
+  if ((properties.workID ?? properties.workId) !== undefined && !workId) return undefined;
+  // A malformed id on an ask is forwarded without it: a dropped ask is worse
+  // than one the daemon reports honestly as keyless. A reply that names no
+  // valid request resolves nothing, so it is dropped.
+  if (!ask && rawRequestId !== undefined && !requestId) return undefined;
+  const sequence = boundedSequence(properties.sequence);
+  const timestamp = boundedTimestamp(properties.timestamp);
+  const rootId = sessionId ? rootSessionFor(sessionId) : undefined;
+  if (rootId) {{
+    payload.session_id = rootId;
+    payload.agent_id = sessionId;
+  }} else if (sessionId) {{
+    payload.session_id = sessionId;
+  }}
+  if (workId) payload.work_id = workId;
+  if (requestId) payload.request_id = requestId;
+  if (sequence !== undefined) payload.sequence = sequence;
+  if (timestamp) payload.timestamp = timestamp;
+  if (hookEventName === "Notification") payload.notification_type = "input_required";
+  const encoded = JSON.stringify(payload);
+  return encoded.length <= JRBAR_MAX_PAYLOAD_BYTES ? encoded : undefined;
+}}
+
+let ingressTail = Promise.resolve();
+
+async function forwardOne(encodedPayload) {{
+  try {{
+    const child = Bun.spawn(JRBAR_HOOK_ARGS, {{ stdin: "pipe", stdout: "ignore", stderr: "ignore" }});
+    child.stdin.write(encodedPayload);
+    child.stdin.end();
+    await child.exited;
+  }} catch {{}}
+}}
+
+function forward(encodedPayload) {{
+  const admitted = ingressTail.then(
+    () => forwardOne(encodedPayload),
+    () => forwardOne(encodedPayload),
+  );
+  ingressTail = admitted;
+  return admitted;
+}}
+
+const JRBarPlugin = {{
+  event: async ({{ event }}) => {{
+    const payload = payloadFor(event);
+    if (payload) await forward(payload);
+  }},
+}};
+
+export default JRBarPlugin;
+'''
+
+
+def _opencode_plugin_v1_source_for_arguments(hook_arguments: list[str] | tuple[str, ...]) -> str:
+    """The generation-1 OpenCode plugin exactly as it shipped, frozen.
+
+    Do not edit. A file carrying the v1 marker is ours only when it equals
+    this text for its own arguments, so this is the definition of what v1
+    was, and the pre-rename generator below derives from it. The current
+    template lives in ``opencode_plugin_source_for_arguments``.
+    """
+    arguments = _valid_opencode_hook_arguments(list(hook_arguments))
+    if arguments is None:
+        raise ValueError("invalid OpenCode hook arguments")
+    encoded_arguments = json.dumps(arguments, separators=(",", ":"))
+    return f'''// {_OPENCODE_PLUGIN_V1_MARKER}
+const JRBAR_HOOK_ARGS = Object.freeze({encoded_arguments});
+const JRBAR_MAX_ID_LENGTH = 128;
+const JRBAR_MAX_PAYLOAD_BYTES = 1024;
 
 function opaqueIdentifier(value) {{
   return typeof value === "string"
@@ -552,32 +764,45 @@ export default JRBarPlugin;
 '''
 
 
-def managed_opencode_plugin_log_path(text: str) -> Path | None:
-    marker = f"// {OPENCODE_PLUGIN_MARKER}\nconst JRBAR_HOOK_ARGS = Object.freeze("
-    legacy_marker = f"// {LEGACY_OPENCODE_PLUGIN_MARKER}\nconst SIDEPULSE_HOOK_ARGS = Object.freeze("
-    legacy = text.startswith(legacy_marker)
-    if legacy:
-        marker = legacy_marker
-    elif not text.startswith(marker):
-        return None
-    end = text.find(");\n", len(marker))
-    if end < 0:
-        return None
-    try:
-        arguments = json.loads(text[len(marker):end])
-    except json.JSONDecodeError:
-        return None
-    valid_arguments = _valid_opencode_hook_arguments(arguments)
-    if valid_arguments is None:
-        return None
-    expected = (
-        legacy_opencode_plugin_source_for_arguments(valid_arguments)
-        if legacy
-        else opencode_plugin_source_for_arguments(valid_arguments)
+def _opencode_plugin_generations() -> tuple[tuple[str, Callable[[tuple[str, ...]], str]], ...]:
+    """Each generation's opening (marker and arguments line) and its exact builder."""
+    return (
+        (
+            f"// {OPENCODE_PLUGIN_MARKER}\nconst JRBAR_HOOK_ARGS = Object.freeze(",
+            opencode_plugin_source_for_arguments,
+        ),
+        (
+            f"// {_OPENCODE_PLUGIN_V1_MARKER}\nconst JRBAR_HOOK_ARGS = Object.freeze(",
+            _opencode_plugin_v1_source_for_arguments,
+        ),
+        (
+            f"// {LEGACY_OPENCODE_PLUGIN_MARKER}\nconst SIDEPULSE_HOOK_ARGS = Object.freeze(",
+            legacy_opencode_plugin_source_for_arguments,
+        ),
     )
-    if text != expected:
-        return None
-    return Path(valid_arguments[-1])
+
+
+def managed_opencode_plugin_log_path(text: str) -> Path | None:
+    """The log path of an exact JR-Bar plugin of any generation, else None.
+
+    The marker line picks the generation, and the text must then equal that
+    generation's own output for the arguments it names.
+    """
+    for marker, build in _opencode_plugin_generations():
+        if not text.startswith(marker):
+            continue
+        end = text.find(");\n", len(marker))
+        if end < 0:
+            return None
+        try:
+            arguments = json.loads(text[len(marker):end])
+        except json.JSONDecodeError:
+            return None
+        valid_arguments = _valid_opencode_hook_arguments(arguments)
+        if valid_arguments is None or text != build(valid_arguments):
+            return None
+        return Path(valid_arguments[-1])
+    return None
 
 
 def _valid_openclaw_hook_arguments(arguments: object) -> tuple[str, ...] | None:
@@ -1909,6 +2134,17 @@ def parse_log_line(provider: str, line: str) -> HookEvent | None:
             event_name = "PermissionRequest"
 
     normalized_raw = normalize_event_payload(raw, event_name, logged_at)
+    if (
+        provider == "grok"
+        and event_name == "StopCancelled"
+        and _first_string(normalized_raw, "subagentType", "subagent_type")
+    ):
+        # Grok's guide: "A subagent's stop is not the session's". A worker's
+        # own turn limit or declined prompt also fires StopCancelled, always
+        # carrying its subagentType. Dropping it here (not marking it inert,
+        # which would read as the source going quiet) keeps a busy session
+        # from flipping to Idle.
+        return None
 
     session_id = _first_string(normalized_raw, "session_id", "sessionId")
     agent_id = _first_string(normalized_raw, "agent_id", "agentId")
@@ -2173,14 +2409,14 @@ def legacy_opencode_plugin_source_for_arguments(arguments) -> str:
     """The OpenCode plugin exactly as the pre-rename installer wrote it.
 
     The rename touched only the marker line, the ``SIDEPULSE_*`` constants
-    and the plugin object name, so the old source is the current template
+    and the plugin object name, so the old source is the frozen v1 template
     with those tokens restored. Detection compares a file that opens with
     the old marker against this, so a pre-rename install is still
     recognised as ours (and replaced) instead of being refused as foreign.
     """
     return (
-        opencode_plugin_source_for_arguments(arguments)
-        .replace(f"// {OPENCODE_PLUGIN_MARKER}\n", f"// {LEGACY_OPENCODE_PLUGIN_MARKER}\n", 1)
+        _opencode_plugin_v1_source_for_arguments(arguments)
+        .replace(f"// {_OPENCODE_PLUGIN_V1_MARKER}\n", f"// {LEGACY_OPENCODE_PLUGIN_MARKER}\n", 1)
         .replace("JRBAR_", "SIDEPULSE_")
         .replace("JRBarPlugin", "SidePulsePlugin")
     )

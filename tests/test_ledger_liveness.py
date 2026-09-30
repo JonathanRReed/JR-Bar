@@ -158,6 +158,8 @@ def test_the_exemption_is_symmetric_across_every_gateways_spelling() -> None:
         ("PreInvocation", "Stop"),
         ("SessionStart", "SessionEnd"),
         ("sessionStart", "sessionEnd"),
+        # Grok's turn that ends unfinished is a turn boundary too.
+        ("UserPromptSubmit", "StopCancelled"),
     )
     for start, end in pairs:
         assert start in ipc.LIFECYCLE_HOOK_EVENTS, start
