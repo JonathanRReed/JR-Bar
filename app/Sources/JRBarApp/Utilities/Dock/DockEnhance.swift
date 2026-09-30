@@ -45,6 +45,40 @@ struct DockTickPark: Equatable {
     }
 }
 
+/// One live refresh at a time. A burst of window notifications that lands
+/// while a read is out is folded into a single re-run for when it returns,
+/// so a terminal that spins its title cannot queue a read behind a read.
+struct DockLiveRefreshGate: Equatable {
+    /// What a burst that arrived mid-read asks for on the way back.
+    struct Rerun: Equatable {
+        /// Whether any of the folded asks was forced (a New window's
+        /// follow-up), which a re-run must honour.
+        var force: Bool
+    }
+
+    private(set) var inFlight = false
+    private var rerun: Rerun?
+
+    /// True when the caller may start a read now. False when one is
+    /// already out: the ask is kept as the re-run.
+    mutating func request(force: Bool) -> Bool {
+        guard inFlight else {
+            inFlight = true
+            return true
+        }
+        rerun = Rerun(force: force || (rerun?.force ?? false))
+        return false
+    }
+
+    /// The read came back. The re-run the bursts asked for meanwhile, if
+    /// any — the caller asks for it as a fresh request.
+    mutating func finish() -> Rerun? {
+        inFlight = false
+        defer { rerun = nil }
+        return rerun
+    }
+}
+
 /// Keep Dock AX reads live while the pointer moves, then reuse them while
 /// it rests. A stationary preview needs a timer for hover, not a full
 /// Dock tree walk on every timer fire.

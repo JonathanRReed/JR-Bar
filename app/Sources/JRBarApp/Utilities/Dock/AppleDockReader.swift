@@ -508,6 +508,11 @@ enum DockPreviewRead {
     /// The pid is resting after a recent hang: nothing was asked.
     case skipped
 
+    /// A read the preview lane brought back: an answer, or the timeout.
+    init(_ reading: (windows: [DockPreviewWindow], unresponsive: Bool)) {
+        self = reading.unresponsive ? .unresponsive : .windows(reading.windows)
+    }
+
     static func read(
         pid: pid_t, backoff: inout DockAXBackoff, now: TimeInterval,
         reader: (pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool)
@@ -537,5 +542,61 @@ enum DockPreviewRead {
     ) -> [DockPreviewWindow] {
         guard case .windows(let windows) = reading else { return old }
         return DockEnhanceMath.mergeWindows(old: old, new: narrow(windows))
+    }
+}
+
+// MARK: - A minimized tile's owner read
+
+/// What a minimized-window Dock tile's owner check reads, in one job the
+/// preview lane runs: the app that owns the parked window, and that app's
+/// window list, which the card then matches its row in. The reader and the
+/// resting set come in as arguments, so the whole thing is a pure function.
+///
+/// The tile carries only a title. One app claiming it is the owner; when
+/// several claim it each is asked once for its AX list, and the one whose
+/// list holds that window minimized owns it (`DockSwitcherList.minimizedOwnerPID`).
+/// A list read for the check is kept, so the owner's is never read twice.
+struct DockMinimizedRead: Sendable {
+    /// The one app the tile's window belongs to, nil when zero or several
+    /// could claim it.
+    var owner: pid_t?
+    /// The owner's AX windows: empty when it rests, hung, or has none.
+    var windows: [DockPreviewWindow] = []
+    /// Apps that answered, and apps that let the timeout lapse — the
+    /// controller notes each in the shared backoff when this lands.
+    var answered: Set<pid_t> = []
+    var unresponsive: Set<pid_t> = []
+
+    /// `resting` pids are not asked (the backoff already knows them) and
+    /// read as having no windows.
+    static func read(
+        title: String, rows: [SwitcherWindowRow], resting: Set<pid_t>,
+        reader: @escaping (pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool)
+    ) -> DockMinimizedRead {
+        final class Lists {
+            var byPID: [pid_t: [DockPreviewWindow]] = [:]
+            var answered = Set<pid_t>()
+            var unresponsive = Set<pid_t>()
+        }
+        let lists = Lists()
+        func list(_ pid: pid_t) -> [DockPreviewWindow] {
+            if let known = lists.byPID[pid] { return known }
+            var windows: [DockPreviewWindow] = []
+            if !resting.contains(pid) {
+                let reading = reader(pid)
+                if reading.unresponsive {
+                    lists.unresponsive.insert(pid)
+                } else {
+                    lists.answered.insert(pid)
+                    windows = reading.windows
+                }
+            }
+            lists.byPID[pid] = windows
+            return windows
+        }
+        let owner = DockSwitcherList.minimizedOwnerPID(title: title, rows: rows, axWindows: list)
+        let windows = owner.map(list) ?? []
+        return DockMinimizedRead(owner: owner, windows: windows,
+                                 answered: lists.answered, unresponsive: lists.unresponsive)
     }
 }
