@@ -2387,6 +2387,13 @@ def _scan_inventory_usage_with_index(
     # Newest first, so both bounds below drop the least useful history.
     cache_budget = USAGE_CACHE_MAX_BYTES
     new_files: dict[str, dict] = {}
+    # The newest record inside the retention window among every entry left
+    # out (by the file-count bound here, or the byte budget below). The cache
+    # is whole only after it: the entries it kept may reach back much
+    # further, and a reader must not sum them as if they were everything.
+    newest_left_out = 0.0
+    for left_out in cache_candidates[max(0, cache_max_files):]:
+        newest_left_out = max(newest_left_out, _newest_record_epoch(left_out[8], retention_epoch))
     for (
         key,
         mtime,
@@ -2428,6 +2435,7 @@ def _scan_inventory_usage_with_index(
             # which is exactly the CPU pin that paragraph was written about.
             # The first entry is still always admitted: an empty cache would
             # mean a cold scan on every single refresh.
+            newest_left_out = max(newest_left_out, _newest_record_epoch(records, retention_epoch))
             continue
         cache_budget -= cost
         new_files[key] = {
@@ -2470,6 +2478,8 @@ def _scan_inventory_usage_with_index(
         }
         if cache_source_key.provider_id == "codex":
             payload["codex_semantics_version"] = CODEX_CACHE_SEMANTICS_VERSION
+        if newest_left_out > 0.0:
+            payload["complete_since"] = math.nextafter(newest_left_out, math.inf)
         if payload != cache:
             try:
                 atomic_private_write(
@@ -2779,6 +2789,28 @@ def cache_entry_floor(entry: dict) -> float:
     return math.inf if math.isnan(floor) else floor
 
 
+def _newest_record_epoch(records: list[tuple], floor: float) -> float:
+    """The newest record timestamp at or after ``floor``; 0.0 when none."""
+    return max((record[3] for record in records if record[3] >= floor), default=0.0)
+
+
+def cache_complete_since(cache: dict) -> float:
+    """How far back a loaded cache is whole, past its entries' own floors.
+
+    A scan that could not fit every entry under the cache's size bounds
+    writes ``complete_since``: just after the newest record among the entries
+    it left out. Nothing at or before that moment can be trusted to be
+    complete, however far back the entries it did keep reach. 0.0 when nothing
+    was left out; unbounded (never trusted) when the value cannot be read.
+    """
+    if "complete_since" not in cache:
+        return 0.0
+    value = cache["complete_since"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return math.inf
+    return float(value) if math.isfinite(float(value)) else math.inf
+
+
 def cache_provider_records(
     cache: dict,
     provider_id: str,
@@ -2789,8 +2821,10 @@ def cache_provider_records(
     records, with the copies a fork or resume repeated and everything back to
     that window's floor. Callers total them through
     ``_totals_from_records`` and never sum them as they stand. The second
-    value is the newest floor any entry was trimmed to, the earliest moment
-    the whole cache can vouch for. ``None`` when the cache is not readable.
+    value is the earliest moment the whole cache can vouch for: the newest
+    floor any entry was trimmed to, or, when a scan had to leave entries out
+    for the cache's size bounds, just after the newest record it left out
+    (``cache_complete_since``). ``None`` when the cache is not readable.
     A file whose records cannot be decoded is skipped, as elsewhere.
     """
     files = cache.get("files")
@@ -2815,7 +2849,7 @@ def cache_provider_records(
         if decoded is not None:
             records.extend(decoded)
         floor = max(floor, cache_entry_floor(entry))
-    return records, floor
+    return records, max(floor, cache_complete_since(cache))
 
 
 def _merge_usage_totals(parts: tuple[UsageTotals, ...]) -> UsageTotals:

@@ -13,6 +13,7 @@ import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1425,6 +1426,27 @@ def test_claude_and_codex_sessions_are_left_to_their_transcripts(monkeypatch, tm
 
     assert model["series"] == ()
     assert model["partial_provider_ids"] == ()
+
+
+def test_a_sessions_rebuild_reads_each_hook_ledger_once(monkeypatch, tmp_path):
+    reads: list[str] = []
+    real_read_text = Path.read_text
+
+    def counting(self, *args, **kwargs):
+        if self.suffix == ".jsonl":
+            reads.append(self.name)
+        return real_read_text(self, *args, **kwargs)
+
+    _write_ledger(tmp_path, "devin", [(3, "a"), (1, "b"), (1, "c")])
+    monkeypatch.setattr(Path, "read_text", counting)
+
+    model, summary = _sessions_payload(monkeypatch, tmp_path, "devin")
+
+    # Both answers (the daily counts and where the ledger starts) come from
+    # one read, and the graph is what it was.
+    assert reads == ["devin.jsonl"]
+    assert model["series"][0]["values"][3:] == (1, 0, 2, 0)
+    assert "Devin 3 session-days" in summary
 
 
 def test_a_failing_first_event_lookup_leaves_counts_intact_and_adds_no_gaps(

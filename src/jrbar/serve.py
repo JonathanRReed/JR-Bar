@@ -26,6 +26,7 @@ import hmac
 import json
 import math
 import threading
+import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,7 +34,11 @@ from urllib.parse import parse_qs
 
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .provider_facts import NextActor, SourceFreshness, SourceHealth, WorkLifecycle
-from .provider_usage_platform import ProviderSourceState, provider_descriptors
+from .provider_usage_platform import (
+    ProviderSourceState,
+    is_invented_antigravity_lane,
+    provider_descriptors,
+)
 from .provider_usage_store import default_provider_usage_state_path
 from .providers import default_state_dir
 
@@ -174,13 +179,38 @@ def _public_agents(latest: object) -> dict[str, object] | None:
     }
 
 
-def _quota_summary(lanes: object, *, provider_id: str) -> dict[str, object]:
+#: The clock the quota summary judges a window's reset against. A name of its
+#: own so a test can hold it still.
+_wall_clock = time.time
+
+
+def _quota_summary(
+    lanes: object,
+    *,
+    provider_id: str,
+    now: float | None = None,
+) -> dict[str, object]:
+    """The provider's windows, as the endpoint publishes them.
+
+    ``remaining_percent`` is the tightest window and ``next_reset_at`` the
+    soonest reset, over windows still running. A window whose reset has
+    passed (at or before ``now``, the wall clock when left out) describes a
+    window that is over: it is neither the tightest nor the next, but it
+    still counts in ``window_count``. A window with no reset time never
+    lapses.
+    """
+    moment = float(_wall_clock() if now is None else now)
     remaining: list[float] = []
     resets: list[float] = []
     window_count = 0
     if isinstance(lanes, list):
         for lane in lanes[:_MAX_LANES]:
             if not isinstance(lane, dict) or lane.get("provider_id") != provider_id:
+                continue
+            if is_invented_antigravity_lane(
+                provider_id, lane.get("lane_id"), lane.get("source_id")
+            ):
+                # A saved lane no server ever measured is not a window.
                 continue
             raw_remaining = lane.get("remaining_percent")
             raw_reset = lane.get("reset_at")
@@ -194,11 +224,13 @@ def _quota_summary(lanes: object, *, provider_id: str) -> dict[str, object]:
                 reset_value = _timestamp(raw_reset)
                 if reset_value is None:
                     continue
+            window_count += 1
+            if reset_value is not None and reset_value <= moment:
+                continue
             if remaining_value is not None:
                 remaining.append(remaining_value)
             if reset_value is not None:
                 resets.append(reset_value)
-            window_count += 1
     return {
         "window_count": window_count,
         "remaining_percent": min(remaining) if remaining else None,

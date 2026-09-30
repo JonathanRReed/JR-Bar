@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -197,9 +198,13 @@ def _cached_claude_local_scan(
 #: The small token results already worked out, keyed on the cache files they
 #: were read from. A quota refresh runs every couple of minutes; without this
 #: each one would decode up to 8 MiB of cache and rebuild the same totals.
+#: A refusal (``None``: the cache does not reach back far enough yet) is
+#: remembered too, or every refresh would decode the whole cache just to find
+#: the floor too new, and that is the state after every default graph scan.
 _LOCAL_TOKENS_MEMO_LIMIT = 16
-_local_tokens_memo: dict[tuple, dict[str, object]] = {}
+_local_tokens_memo: dict[tuple, dict[str, object] | None] = {}
 _local_tokens_memo_lock = threading.Lock()
+_NOT_REMEMBERED: dict[str, object] = {}
 
 
 def _cache_stamp(path: Path) -> tuple[str, int, int, int] | None:
@@ -280,11 +285,31 @@ def _local_token_totals(
     }
 
 
+#: Log lines already written, so a fault that repeats on every quota refresh
+#: is said once.
+_noted_once: set[str] = set()
+_noted_once_lock = threading.Lock()
+
+
+def _note_once(key: str, message: str) -> None:
+    with _noted_once_lock:
+        if key in _noted_once:
+            return
+        _noted_once.add(key)
+    # stderr, never stdout: a command printing JSON shares this code.
+    print(f"usage: {message}", file=sys.stderr, flush=True)
+
+
 def _extra_cache_roots(
     provider_id: str,
     home: Path,
     extra_homes: Iterable[str] | None,
-) -> tuple[Path, ...]:
+) -> tuple[Path, ...] | None:
+    """The extra account homes to add, or ``None`` when they cannot be listed.
+
+    ``None`` is not "no extra homes": the caller decides what an unknown set
+    means (Claude publishes no total, Codex keeps its primary home).
+    """
     try:
         from .provider_homes import configured_extra_homes, extra_scan_roots
 
@@ -294,8 +319,21 @@ def _extra_cache_roots(
             else tuple(extra_homes)
         )
         return extra_scan_roots(provider_id, home=home, extras=configured)
-    except Exception:
-        return ()
+    except Exception as error:
+        cause = error.__class__.__name__
+        if provider_id == "codex":
+            _note_once(
+                provider_id,
+                f"codex extra homes could not be listed ({cause}); "
+                "the token card counts the primary home",
+            )
+        else:
+            _note_once(
+                provider_id,
+                f"{provider_id} extra homes could not be listed ({cause}); "
+                "the token card shows nothing rather than a total that may leave a home out",
+            )
+        return None
 
 
 def _cached_provider_local_scan(
@@ -344,6 +382,12 @@ def _cached_provider_local_scan(
     graph_cache = default_state_dir(home) / "usage-scan-cache.json"
     cold_cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
     extra_roots = _extra_cache_roots(provider_id, home, extra_homes)
+    if extra_roots is None:
+        if provider_id != "codex":
+            # Claude's total is every home or nothing: the primary home
+            # alone is the half total the card refuses to show.
+            return None
+        extra_roots = ()
     candidates = (
         (
             usage_stats.provider_cache_path(graph_cache, source_key),
@@ -401,8 +445,8 @@ def _cached_provider_local_scan(
                         windows = admitted
                         newest_window_marker = marker
         with _local_tokens_memo_lock:
-            totals = _local_tokens_memo.get(memo_key)
-        if totals is None:
+            totals = _local_tokens_memo.get(memo_key, _NOT_REMEMBERED)
+        if totals is _NOT_REMEMBERED:
             if cache is None:
                 cache = usage_stats._load_cache(cache_path, source_key)
             if not cache:
@@ -410,12 +454,12 @@ def _cached_provider_local_scan(
             totals = _local_token_totals(
                 provider_id, source_key, cache, extra_paths, window_start
             )
-            if totals is None:
-                continue
             with _local_tokens_memo_lock:
                 while len(_local_tokens_memo) >= _LOCAL_TOKENS_MEMO_LIMIT:
                     _local_tokens_memo.pop(next(iter(_local_tokens_memo)))
                 _local_tokens_memo[memo_key] = totals
+        if totals is None:
+            continue
         if (
             (provider_id != "codex" or not windows)
             and totals["input_tokens"] == 0

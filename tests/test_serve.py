@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from jrbar import serve
 from jrbar.product_identity import PRODUCT_DISPLAY_NAME
 from jrbar.provider_usage_store import default_provider_usage_state_path
 from jrbar.providers import default_state_dir
@@ -19,6 +20,14 @@ from jrbar.serve import (
     build_serve_document,
     create_serve_server,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clock_before_the_saved_windows_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The saved windows below reset at 1500 and 2000; hold the quota
+    summary's clock at 1200 so they are still running."""
+    monkeypatch.setattr(serve, "_wall_clock", lambda: 1200.0)
+
 
 PRIVATE_SENTINELS = (
     "PRIVATE_ACCOUNT_LABEL",

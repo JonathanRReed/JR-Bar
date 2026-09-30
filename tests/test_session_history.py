@@ -11,10 +11,13 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from jrbar.session_history import (
     TRANSCRIPT_SESSION_PROVIDERS,
     ledger_first_event_epochs,
     ledger_session_days,
+    shared_ledger_reads,
 )
 
 
@@ -194,3 +197,106 @@ def test_first_event_does_not_depend_on_any_window(tmp_path: Path) -> None:
     )
     assert days == {"devin": {"2026-09-10": 1}}
     assert ledger_first_event_epochs(tmp_path, provider_ids=("devin",)) == {"devin": first}
+
+
+# --- one read for both answers ------------------------------------------------
+
+
+@pytest.fixture
+def ledger_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The name of every hook ledger file read, in order."""
+    reads: list[str] = []
+    real_read_text = Path.read_text
+
+    def counting(self, *args, **kwargs):
+        if self.suffix == ".jsonl":
+            reads.append(self.name)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting)
+    return reads
+
+
+def _devin_ledger(root: Path) -> Path:
+    return _write_ledger(
+        root,
+        "devin",
+        [
+            _event("devin", "prompt_submit", _noon(2026, 9, 8), "w0"),
+            _event("devin", "session_start", _noon(2026, 9, 9), "w1"),
+            _event("devin", "session_start", _noon(2026, 9, 9) + 60, "w1"),
+            _event("devin", "session_start", _noon(2026, 9, 10), "w2"),
+            _event("devin", "session_start", _noon(2026, 9, 10) + 60),  # no work id
+            _event("grok", "session_start", _noon(2026, 9, 10), "foreign"),
+        ],
+    )
+
+
+def test_a_shared_read_parses_each_ledger_once_and_answers_the_same(
+    tmp_path: Path, ledger_reads: list[str]
+) -> None:
+    _devin_ledger(tmp_path)
+    days_alone = ledger_session_days(tmp_path, since_epoch=0.0, provider_ids=("devin",))
+    first_alone = ledger_first_event_epochs(tmp_path, provider_ids=("devin",))
+    assert ledger_reads == ["devin.jsonl", "devin.jsonl"], "outside a block each answer reads"
+    ledger_reads.clear()
+
+    with shared_ledger_reads():
+        days = ledger_session_days(tmp_path, since_epoch=0.0, provider_ids=("devin",))
+        first = ledger_first_event_epochs(tmp_path, provider_ids=("devin",))
+
+    assert ledger_reads == ["devin.jsonl"]
+    assert days == days_alone == {"devin": {"2026-09-09": 1, "2026-09-10": 2}}
+    assert first == first_alone == {"devin": _noon(2026, 9, 8)}
+
+
+def test_a_shared_read_reads_each_provider_ledger_once(
+    tmp_path: Path, ledger_reads: list[str]
+) -> None:
+    _devin_ledger(tmp_path)
+    _write_ledger(tmp_path, "grok", [_event("grok", "session_start", _noon(2026, 9, 10), "g1")])
+
+    with shared_ledger_reads():
+        ledger_session_days(tmp_path, since_epoch=0.0, provider_ids=("devin", "grok"))
+        ledger_first_event_epochs(tmp_path, provider_ids=("devin",))
+        ledger_first_event_epochs(tmp_path, provider_ids=("devin", "grok"))
+
+    assert sorted(ledger_reads) == ["devin.jsonl", "grok.jsonl"]
+
+
+def test_a_shared_read_keeps_nothing_after_it_ends(tmp_path: Path) -> None:
+    path = _devin_ledger(tmp_path)
+    with shared_ledger_reads():
+        before = ledger_first_event_epochs(tmp_path, provider_ids=("devin",))
+
+    earlier = _noon(2026, 9, 1)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_event("devin", "prompt_submit", earlier, "w-1")) + "\n")
+
+    assert before == {"devin": _noon(2026, 9, 8)}
+    # A later call, in or out of a block, reads the file as it now is.
+    assert ledger_first_event_epochs(tmp_path, provider_ids=("devin",)) == {"devin": earlier}
+    with shared_ledger_reads():
+        assert ledger_first_event_epochs(tmp_path, provider_ids=("devin",)) == {"devin": earlier}
+
+
+def test_a_shared_read_nested_in_another_joins_it(
+    tmp_path: Path, ledger_reads: list[str]
+) -> None:
+    _devin_ledger(tmp_path)
+
+    with shared_ledger_reads():
+        ledger_first_event_epochs(tmp_path, provider_ids=("devin",))
+        with shared_ledger_reads():
+            ledger_session_days(tmp_path, since_epoch=0.0, provider_ids=("devin",))
+        ledger_first_event_epochs(tmp_path, provider_ids=("devin",))
+
+    assert ledger_reads == ["devin.jsonl"]
+
+
+def test_a_shared_read_still_skips_an_unreadable_ledger(tmp_path: Path) -> None:
+    (tmp_path / "devin.jsonl").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+
+    with shared_ledger_reads():
+        assert ledger_session_days(tmp_path, since_epoch=0.0, provider_ids=("devin",)) == {}
+        assert ledger_first_event_epochs(tmp_path, provider_ids=("devin",)) == {}
