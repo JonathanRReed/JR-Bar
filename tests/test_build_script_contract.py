@@ -283,3 +283,18 @@ def test_package_builder_leaves_no_registered_jrbar_copy__and_1_more() -> None:
     assert register < pkg_branch.index('open -a "$APP"')
     # A refusal is said, never fatal.
     assert "jrbar:// links may open another copy" in pkg_branch
+
+
+def test_project_shell_scripts_have_valid_syntax() -> None:
+    scripts = sorted((ROOT / "scripts").glob("*.sh"))
+    scripts.extend(sorted((ROOT / "packaging").glob("*.sh")))
+
+    for path in scripts:
+        interpreter = "zsh" if path.read_text().splitlines()[0] == "#!/bin/zsh" else "bash"
+        result = subprocess.run(
+            [interpreter, "-n", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"{path}: {result.stderr}"
