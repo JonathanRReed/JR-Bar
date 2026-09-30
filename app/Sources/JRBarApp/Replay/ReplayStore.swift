@@ -40,7 +40,6 @@ final class ReplayStore {
     /// Live attention stays a separate, labeled fact — the replay list
     /// never substitutes for the needs-me count happening right now.
     var liveAttention: Int { core.state?.asks.count ?? 0 }
-    var isLive: Bool { core.isLive }
 
     func load() async {
         guard !loading else { return }

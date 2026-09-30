@@ -31,7 +31,6 @@ final class HistoryStore {
     var loadedAt: Date?
     var now = Date()
     var selectedID: String?
-    var onClose: (@MainActor () -> Void)?
     /// Reveals a session in the Overview (its inspector, timeline and
     /// usage); an event row's click-through.
     var onRevealSession: (@MainActor (String) -> Void)?
@@ -46,7 +45,6 @@ final class HistoryStore {
     private var windowOpen = false
 
     @ObservationIgnored private var clock: Timer?
-    @ObservationIgnored private var refreshWork: DispatchWorkItem?
     @ObservationIgnored private var lastEventID: String?
     /// Without an event, rows are refreshed this often (the daemon may
     /// record things that never raise an event).
