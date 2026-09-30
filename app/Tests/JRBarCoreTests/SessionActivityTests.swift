@@ -85,6 +85,97 @@ struct SessionActivityTests {
         #expect(SessionActivity.waiting.sortRank < SessionActivity.failed.sortRank)
         #expect(SessionActivity.failed.sortRank < SessionActivity.working.sortRank)
     }
+
+    // MARK: - A sub-agent's quiet prompt
+
+    /// A sub-agent's row as the daemon publishes it. With sub-agent asks
+    /// off (the default) the row still says `waiting_for_input` and
+    /// `next_actor: user`, but `ask` is null: nobody was given a question.
+    static func worker(lifecycle: String? = "active", mode: String? = nil, nextActor: String? = nil,
+                       parent: String? = "s-1", ask: CoreAsk? = nil) -> CoreSession {
+        CoreSession(id: "w-1", provider: "claude", kind: "worker", parent: parent,
+                    mode: mode, lifecycle: lifecycle, nextActor: nextActor, ask: ask)
+    }
+
+    static let question = CoreAsk(kind: "permission", summary: "Run the build?")
+
+    @Test("a worker that reads waiting with no ask on its row is working, not waiting on you")
+    func quietWorkerIsWorking() {
+        #expect(SessionActivity.reduce(Self.worker(mode: "waiting_for_input", nextActor: "user")) == .working)
+        #expect(SessionActivity.reduce(Self.worker(mode: "waiting_for_input")) == .working)
+        #expect(SessionActivity.reduce(Self.worker(mode: "needs_input")) == .working)
+        // `next_actor` alone used to be enough to read "waiting".
+        #expect(SessionActivity.reduce(Self.worker(mode: nil, nextActor: "user")) == .working)
+        #expect(SessionActivity.reduce(Self.worker(mode: "working", nextActor: "user")) == .working)
+        // Its word is the working word everywhere the row is drawn.
+        #expect(SessionActivity.reduce(Self.worker(mode: "waiting_for_input", nextActor: "user")).word == "Working")
+    }
+
+    @Test("a worker that names no parent is a main row, as the panel lists it, and reads as it always did")
+    func parentlessWorkerIsAMainRow() {
+        // `CoreState.mainSessions` lists a worker with no parent as its own
+        // row, so the shared reading leaves it alone rather than split the
+        // panel's rule in two.
+        #expect(SessionActivity.reduce(Self.worker(mode: "waiting_for_input", nextActor: "user", parent: nil)) == .waiting)
+        // One that names its parent is a child, whether or not the parent is listed.
+        #expect(SessionActivity.reduce(Self.worker(mode: "waiting_for_input", nextActor: "user", parent: "gone")) == .working)
+    }
+
+    @Test("the child-worker rule is the complement of the panel's main-row rule")
+    func childWorkerIsNotAMainRow() {
+        let shapes: [(kind: String, parent: String?)] = [
+            ("main", nil), ("main", "p"), ("worker", nil), ("worker", "p"), ("subagent", nil), ("subagent", "p"),
+        ]
+        for shape in shapes {
+            let session = CoreSession(id: "x", provider: "claude", kind: shape.kind, parent: shape.parent)
+            let listed = CoreState(sessions: [session]).mainSessions.count == 1
+            #expect(session.isChildWorker == !listed, "\(shape.kind) \(shape.parent ?? "-")")
+            #expect(session.isChildWorker == !AquariumModel.isMain(session), "\(shape.kind) \(shape.parent ?? "-")")
+        }
+    }
+
+    @Test("a worker with a published ask is waiting on you, as it is with sub-agent asks on")
+    func askedWorkerIsWaiting() {
+        #expect(SessionActivity.reduce(Self.worker(mode: "waiting_for_input", nextActor: "user", ask: Self.question)) == .waiting)
+        // The ask is the reason, whatever mode the row carries.
+        #expect(SessionActivity.reduce(Self.worker(mode: "working", ask: Self.question)) == .waiting)
+        #expect(SessionActivity.reduce(Self.worker(mode: nil, ask: Self.question)) == .waiting)
+    }
+
+    @Test("a main session is never quieted: no ask, or an ask, it reads as it always did")
+    func mainSessionUnchanged() {
+        #expect(SessionActivity.reduce(Self.session(lifecycle: "active", mode: "waiting_for_input")) == .waiting)
+        #expect(SessionActivity.reduce(Self.session(lifecycle: "active", mode: "working", nextActor: "user")) == .waiting)
+        let asked = CoreSession(id: "s-1", provider: "claude", mode: "waiting_for_input", lifecycle: "active",
+                                nextActor: "user", ask: Self.question)
+        #expect(SessionActivity.reduce(asked) == .waiting)
+    }
+
+    @Test("the quiet rule only turns waiting into working: every other word a worker has is untouched")
+    func quietRuleLeavesOtherWordsAlone() {
+        // The terminal words still win, with or without a question open.
+        #expect(SessionActivity.reduce(Self.worker(lifecycle: "failed", mode: "waiting_for_input", nextActor: "user")) == .failed)
+        #expect(SessionActivity.reduce(Self.worker(mode: "blocked_error", nextActor: "user")) == .failed)
+        #expect(SessionActivity.reduce(Self.worker(lifecycle: "completed", mode: "waiting_for_input", nextActor: "user")) == .done)
+        #expect(SessionActivity.reduce(Self.worker(lifecycle: "ended", mode: "waiting_for_input", nextActor: "user")) == .ended)
+        // A worker that is idle stays idle: nothing was invented for it.
+        #expect(SessionActivity.reduce(Self.worker(mode: "idle_ready")) == .idle)
+        #expect(SessionActivity.reduce(Self.worker(mode: "tool_running")) == .working)
+    }
+
+    @Test("everything that reads the session gives a quiet worker no place among those who need you")
+    func downstreamReadersAgree() {
+        let main = CoreSession(id: "s-1", provider: "claude", label: "app", mode: "working", lifecycle: "active")
+        let quiet = Self.worker(mode: "waiting_for_input", nextActor: "user")
+        let summary = NotchIsland.summarize([main, quiet])
+        #expect(summary.waiting == 0)
+        #expect(summary.working == 2)
+        #expect(BuddyFocus.pick(from: [quiet])?.phrase == .working)
+        // With sub-agent asks on the row carries the ask, and it counts.
+        let asked = Self.worker(mode: "waiting_for_input", nextActor: "user", ask: Self.question)
+        #expect(NotchIsland.summarize([main, asked]).waiting == 1)
+        #expect(BuddyFocus.pick(from: [asked])?.phrase == .waiting)
+    }
 }
 
 @Suite("The aggregate's words and tint")

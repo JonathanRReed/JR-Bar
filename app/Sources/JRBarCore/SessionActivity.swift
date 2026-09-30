@@ -44,8 +44,22 @@ public enum SessionActivity: String, Equatable, Sendable, CaseIterable {
         }
     }
 
+    /// A session's activity, in the words every surface shares.
+    ///
+    /// A sub-agent that reads "waiting" with no ask on its row is working:
+    /// the daemon publishes a worker's ask only while sub-agent asks are
+    /// on, and with them off (the default) the row still carries
+    /// `waiting_for_input` and `next_actor: user` but an empty `ask`.
+    /// Nobody was given a question, so no surface may say "Waiting on
+    /// you" for it. With the setting on, the worker carries its ask and
+    /// stays waiting. A main session is never quieted, and neither is a
+    /// worker that names no parent: the panel lists that one as a
+    /// main row (`CoreState.mainSessions`), so it reads as it always did.
     public static func reduce(_ session: CoreSession) -> SessionActivity {
-        reduce(lifecycle: session.lifecycle, mode: session.mode, hasAsk: session.ask != nil, nextActor: session.nextActor)
+        let activity = reduce(lifecycle: session.lifecycle, mode: session.mode,
+                              hasAsk: session.ask != nil, nextActor: session.nextActor)
+        guard activity == .waiting, session.ask == nil, session.isChildWorker else { return activity }
+        return .working
     }
 
     public static func reduce(lifecycle: String?, mode: String?, hasAsk: Bool, nextActor: String?) -> SessionActivity {
@@ -241,4 +255,13 @@ public enum AgentMonitorFeed {
         if hours < 24 { return "\(hours)h" }
         return "\(hours / 24)d"
     }
+}
+
+extension CoreSession {
+    /// A sub-agent the panel hangs under its parent: its `kind` is not
+    /// main and it names a parent. The other half of the panel's own
+    /// main-row rule (`CoreState.mainSessions`: `kind == "main"` or no
+    /// parent), so a worker that names no parent is a main row here as it
+    /// is in the panel. `AquariumModel.isMain` is its complement.
+    var isChildWorker: Bool { kind != "main" && parent != nil }
 }
