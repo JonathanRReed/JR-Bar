@@ -174,10 +174,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Named presets: a captured section map plus the cover appearance
     /// and control layout, applied wholesale through reconcile.
     public var profiles: [Profile]
-    /// The order the retired Arrange action drove the bar to — item ids
-    /// left→right. Still decoded so an older file round-trips; nothing
-    /// writes or reads it now.
-    public var arrangeOrder: [String]
     /// The global hotkeys. Empty means the shipping set
     /// (`MenuBarHotkeys.standard`) — the card materializes the list the
     /// first time a binding is toggled.
@@ -422,7 +418,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 coverMaterial: CoverMaterial = .blend, coverTint: String = "",
                 coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
                 coverRoundness: Double = 0, showCoverSeparator: Bool = false,
-                profiles: [Profile] = [], arrangeOrder: [String] = [],
+                profiles: [Profile] = [],
                 hotkeyBindings: [MenuBarHotkeyBinding] = [],
                 triggerRules: [MenuBarTriggerRule] = [],
                 concealedApps: [String: MenuBarItemSection] = [:],
@@ -455,7 +451,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.coverRoundness = Self.clampedRoundness(coverRoundness)
         self.showCoverSeparator = showCoverSeparator
         self.profiles = profiles
-        self.arrangeOrder = arrangeOrder
         self.hotkeyBindings = hotkeyBindings
         self.triggerRules = triggerRules
         self.concealedApps = concealedApps
@@ -508,14 +503,15 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, rehideMode, revealStyle, hideShownWhileRevealing, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
-        case profiles, arrangeOrder, hotkeyBindings, triggerRules
+        case profiles, hotkeyBindings, triggerRules
         case concealedApps, concealSeeded, concealUnnotarized, itemSpacing, itemSpacingManaged
         case hideUnderNotch, hideOnMenuOverlap, spacers, barUnderlay
         case agentStatusItem, combinedSystemItem, displayProfiles, showForUpdates
         case curation
         // Retired keys — e.g. `combinedStatusItem`, replaced by
-        // `combinedSystemItem` — are simply unlisted: decode ignores
-        // them, encode never writes them.
+        // `combinedSystemItem`, and the old Arrange action's
+        // `arrangeOrder` — are simply unlisted: decode ignores them,
+        // encode never writes them.
     }
 
     public init(from decoder: any Decoder) throws {
@@ -547,7 +543,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
             (try? c.decodeIfPresent(Double.self, forKey: .coverRoundness)) ?? 0)
         showCoverSeparator = (try? c.decodeIfPresent(Bool.self, forKey: .showCoverSeparator)) ?? false
         profiles = (try? c.decodeIfPresent([Profile].self, forKey: .profiles)) ?? []
-        arrangeOrder = (try? c.decodeIfPresent([String].self, forKey: .arrangeOrder)) ?? []
         hotkeyBindings = (try? c.decodeIfPresent([MenuBarHotkeyBinding].self,
                                                  forKey: .hotkeyBindings)) ?? []
         // Per-element lossy decode: a rule written by a build that knows
