@@ -158,6 +158,47 @@ class _Client:
         self.write_lock = threading.Lock()
         self.alive = True
         self._log = log or (lambda _line: None)
+        # A client is registered for live frames before its greeting is sent,
+        # so no event falls between the journal tail in ``hello`` and the
+        # live stream. Until the greeting is done the flusher holds live
+        # frames here (``deliver``), and ``finish_priming`` sends them after
+        # it, in order. ``None`` means the client is primed.
+        self._gate = threading.Lock()
+        self._held: list[bytes] | None = []
+
+    def deliver(self, frame: bytes) -> bool:
+        """The flusher's send. Never blocks on a client that is still being
+        greeted: its frames wait behind the greeting instead."""
+        if not self.alive:
+            return False
+        with self._gate:
+            if self._held is not None:
+                if len(self._held) >= MAX_QUEUED_FRAMES:
+                    # A greeting that stalls this long is not coming back;
+                    # dropping it loses nothing the reconnect cannot replay,
+                    # and buffering without bound would.
+                    self.alive = False
+                    return False
+                self._held.append(frame)
+                return True
+        return self.send(frame)
+
+    def finish_priming(self) -> None:
+        """Send what was held during the greeting, in order, then go live.
+
+        ``_held`` only becomes ``None`` under the gate after a drain finds
+        nothing new, so no live frame can overtake a held one.
+        """
+        while True:
+            with self._gate:
+                batch = self._held
+                if not batch:
+                    self._held = None
+                    return
+                self._held = []
+            for frame in batch:
+                if not self.send(frame):
+                    return
 
     def send(self, frame: bytes) -> bool:
         if not self.alive:
@@ -644,7 +685,7 @@ class CoreServer:
         with self._lock:
             clients = list(self._clients)
         self.stats["frames_out"] += 1
-        dead = [client for client in clients if not client.send(frame)]
+        dead = [client for client in clients if not client.deliver(frame)]
         if dead:
             self._drop_clients(dead)
 
@@ -717,31 +758,40 @@ class CoreServer:
 
     def _serve_client(self, client: _Client) -> None:
         try:
-            client.send(encode_frame(self.hello_document()))
-            for document in self._initial_documents():
-                if not client.alive:
-                    break
-                kind = document.get("t")
-                if not isinstance(kind, str):
-                    continue
-                frame = encode_frame(_envelope(kind, document))
-                if len(frame) > MAX_FRAME_BYTES:
-                    self._log(f"core skipped oversize initial {document.get('t')} frame")
-                    continue
-                client.send(frame)
-            for event in self.recent_reset_events():
-                if not client.alive:
-                    break
-                frame = encode_frame(event)
-                if len(frame) > MAX_FRAME_BYTES:
-                    self._log("core skipped oversize initial quota_reset frame")
-                    continue
-                client.send(frame)
+            try:
+                self._greet(client)
+            finally:
+                # Frames published while the greeting was being sent follow
+                # it, in order; a skipped frame or an early exit must never
+                # leave the client held forever.
+                client.finish_priming()
             self._read_commands(client)
         except Exception as exc:  # pragma: no cover - defensive
             self._log(f"core client {client.index} failed: {exc}")
         finally:
             self._drop_clients([client])
+
+    def _greet(self, client: _Client) -> None:
+        client.send(encode_frame(self.hello_document()))
+        for document in self._initial_documents():
+            if not client.alive:
+                break
+            kind = document.get("t")
+            if not isinstance(kind, str):
+                continue
+            frame = encode_frame(_envelope(kind, document))
+            if len(frame) > MAX_FRAME_BYTES:
+                self._log(f"core skipped oversize initial {document.get('t')} frame")
+                continue
+            client.send(frame)
+        for event in self.recent_reset_events():
+            if not client.alive:
+                break
+            frame = encode_frame(event)
+            if len(frame) > MAX_FRAME_BYTES:
+                self._log("core skipped oversize initial quota_reset frame")
+                continue
+            client.send(frame)
 
     def _read_commands(self, client: _Client) -> None:
         buffer = bytearray()

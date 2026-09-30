@@ -104,7 +104,12 @@ def test_initial_connection_recovers_only_recent_quota_resets(server: CoreServer
     server.publish_event({"kind": "quota_reset", "at": 990.0, "detail": "x" * MAX_FRAME_BYTES})
     monkeypatch.setattr("jrbar.core_server.time.time", lambda: 1000.0)
     frames = []
-    client = SimpleNamespace(alive=True, index=1, send=lambda frame: frames.append(json.loads(frame)))
+    client = SimpleNamespace(
+        alive=True,
+        index=1,
+        send=lambda frame: frames.append(json.loads(frame)),
+        finish_priming=lambda: None,
+    )
     monkeypatch.setattr(server, "_read_commands", lambda _: None)
     monkeypatch.setattr(server, "_drop_clients", lambda _: None)
     server._serve_client(client)
@@ -337,6 +342,192 @@ def test_a_client_that_stops_reading_is_dropped_without_wedging_fanout(
     assert read_errors == []
     staller.close()
     reader.close()
+
+
+def _greeting_server(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    snapshot_taken: threading.Event,
+    release: threading.Event,
+    block: dict[str, bool],
+) -> tuple[CoreServer, threading.Semaphore]:
+    """A started server whose initial snapshot can be held back, and whose
+    flusher reports each finished fan-out."""
+
+    def documents() -> list[dict]:
+        taken = [
+            {"t": "state", "generation": 1, "sessions": []},
+            {"t": "lights", "surfaces": {}},
+            {"t": "settings", "generation": 1, "document": {}},
+        ]
+        if block["on"]:
+            snapshot_taken.set()
+            release.wait(5.0)
+        return taken
+
+    server = _server(sock_dir, initial_documents=documents)
+    original = server._fan_out
+    fanned = threading.Semaphore(0)
+
+    def counted(frame: bytes) -> None:
+        original(frame)
+        fanned.release()
+
+    monkeypatch.setattr(server, "_fan_out", counted)
+    server.start()
+    return server, fanned
+
+
+def test_a_state_published_during_the_greeting_follows_the_snapshot(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_taken, release = threading.Event(), threading.Event()
+    server, fanned = _greeting_server(
+        sock_dir,
+        monkeypatch,
+        snapshot_taken=snapshot_taken,
+        release=release,
+        block={"on": True},
+    )
+    client = None
+    try:
+        client = _connect(server)
+        assert snapshot_taken.wait(3.0), "the greeting never took its snapshot"
+        server.publish_state({"t": "state", "generation": 2, "sessions": []})
+        assert fanned.acquire(timeout=3.0), "the flusher never fanned the newer state out"
+        release.set()
+
+        frames = _read_frames(client, 5)
+        assert [frame["t"] for frame in frames] == [
+            "hello", "state", "lights", "settings", "state",
+        ]
+        states = [frame["generation"] for frame in frames if frame["t"] == "state"]
+        assert states == [1, 2], "the older snapshot overtook the newer state"
+    finally:
+        release.set()
+        if client is not None:
+            client.close()
+        server.stop()
+
+
+def test_a_frame_published_before_hello_is_sent_waits_behind_hello(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, fanned = _greeting_server(
+        sock_dir,
+        monkeypatch,
+        snapshot_taken=threading.Event(),
+        release=threading.Event(),
+        block={"on": False},
+    )
+    in_hello, release = threading.Event(), threading.Event()
+    real_hello = server.hello_document
+
+    def held_hello() -> dict:
+        in_hello.set()
+        release.wait(5.0)
+        return real_hello()
+
+    monkeypatch.setattr(server, "hello_document", held_hello)
+    client = None
+    try:
+        client = _connect(server)
+        assert in_hello.wait(3.0), "the greeting never reached hello"
+        server.publish_event({"kind": "probe"})
+        assert fanned.acquire(timeout=3.0), "the flusher never fanned the probe out"
+        release.set()
+
+        frames = _read_frames(client, 5)
+        assert frames[0]["t"] == "hello"
+        assert [frame["t"] for frame in frames] == [
+            "hello", "state", "lights", "settings", "event",
+        ]
+        assert frames[-1]["kind"] == "probe"
+    finally:
+        release.set()
+        if client is not None:
+            client.close()
+        server.stop()
+
+
+def test_a_client_that_never_finishes_its_greeting_is_dropped_not_buffered_without_bound(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jrbar.core_server import MAX_QUEUED_FRAMES
+
+    snapshot_taken, release = threading.Event(), threading.Event()
+    block = {"on": False}
+    server, fanned = _greeting_server(
+        sock_dir,
+        monkeypatch,
+        snapshot_taken=snapshot_taken,
+        release=release,
+        block=block,
+    )
+    steady = stuck = None
+    try:
+        steady = _connect(server)
+        assert [frame["t"] for frame in _read_frames(steady, 4)] == [
+            "hello", "state", "lights", "settings",
+        ]
+        block["on"] = True
+        stuck = _connect(server)
+        assert snapshot_taken.wait(3.0), "the second greeting never took its snapshot"
+        assert server.client_count == 2
+
+        published = 0
+        batch = MAX_QUEUED_FRAMES // 4
+        # Batches, each waited out, so the flusher's own bounded queue never
+        # sheds what the held client is being counted against.
+        for _ in range(8):
+            for _ in range(batch):
+                server.publish_event({"kind": "tick"})
+            published += batch
+            for _ in range(batch):
+                assert fanned.acquire(timeout=3.0), "the flusher stalled behind a greeting"
+            if server.client_count == 1:
+                break
+        assert server.client_count == 1, "a greeting that never finished was buffered forever"
+
+        server.publish_event({"kind": "marker"})
+        published += 1
+        frames = _read_frames(steady, published, timeout=5.0)
+        assert frames[-1].get("kind") == "marker", (
+            "the healthy client stopped receiving while another was greeting"
+        )
+    finally:
+        release.set()
+        for peer in (steady, stuck):
+            if peer is not None:
+                peer.close()
+        server.stop()
+
+
+def test_client_holds_live_frames_until_priming_finishes_then_sends_in_order() -> None:
+    from types import SimpleNamespace
+
+    from jrbar.core_server import MAX_QUEUED_FRAMES, _Client
+
+    sent: list[bytes] = []
+    client = _Client(SimpleNamespace(sendall=sent.append), 1)
+
+    assert client.deliver(b"a") is True
+    assert client.deliver(b"b") is True
+    assert sent == [], "a live frame beat the greeting"
+    client.finish_priming()
+    assert sent == [b"a", b"b"]
+    assert client.deliver(b"c") is True
+    assert sent == [b"a", b"b", b"c"], "a primed client is sent to directly"
+
+    unprimed = _Client(SimpleNamespace(sendall=sent.append), 2)
+    for index in range(MAX_QUEUED_FRAMES):
+        assert unprimed.deliver(b"x") is True, index
+    assert unprimed.deliver(b"x") is False
+    assert unprimed.alive is False
 
 
 def _drain_without_waiting(reader: socket.socket) -> int:
