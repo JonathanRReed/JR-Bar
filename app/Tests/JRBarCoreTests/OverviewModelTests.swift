@@ -39,6 +39,8 @@ struct OverviewModelTests {
         let repo = base.appendingPathComponent("JR-Bar")
         let gitDir = repo.appendingPathComponent(".git/worktrees/agent-3")
         try Self.write("ref: refs/heads/wave1/agentsui\n", to: gitDir.appendingPathComponent("HEAD"))
+        // Git writes `commondir` into every linked worktree's own git dir.
+        try Self.write("../..\n", to: gitDir.appendingPathComponent("commondir"))
         try Self.write("ref: refs/heads/main\n", to: repo.appendingPathComponent(".git/HEAD"))
         let worktree = repo.appendingPathComponent(".claude/worktrees/agent-3")
         try Self.write("gitdir: \(gitDir.path)\n", to: worktree.appendingPathComponent(".git"))
@@ -47,6 +49,55 @@ struct OverviewModelTests {
         #expect(workspace.isLinkedWorktree)
         #expect(workspace.branch == "wave1/agentsui")
         #expect(workspace.repositoryName == "JR-Bar")
+        #expect(workspace.branchKey == "JR-Bar · wave1/agentsui")
+    }
+
+    @Test("a submodule keeps its own repository name and branch, not its superproject's")
+    func submoduleKeepsItsOwnName() throws {
+        let base = try Self.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let outer = base.appendingPathComponent("outer")
+        try Self.write("ref: refs/heads/main\n", to: outer.appendingPathComponent(".git/HEAD"))
+        try Self.write("ref: refs/heads/main\n", to: outer.appendingPathComponent(".git/modules/sub/HEAD"))
+        let sub = outer.appendingPathComponent("sub")
+        try Self.write("gitdir: ../.git/modules/sub\n", to: sub.appendingPathComponent(".git"))
+        let nested = sub.appendingPathComponent("Sources")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+
+        let workspace = try #require(GitWorkspace.resolve(cwd: nested.path))
+        #expect(workspace.repositoryName == "sub")
+        #expect(!workspace.isLinkedWorktree)
+        #expect(workspace.branchKey == "sub · main")
+        #expect(workspace.mainRoot == workspace.root)
+    }
+
+    @Test("a submodule in a folder named worktrees is still a submodule")
+    func submoduleInWorktreesFolder() throws {
+        let base = try Self.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let outer = base.appendingPathComponent("outer")
+        try Self.write("ref: refs/heads/main\n", to: outer.appendingPathComponent(".git/HEAD"))
+        try Self.write("ref: refs/heads/main\n", to: outer.appendingPathComponent(".git/modules/worktrees/x/HEAD"))
+        let sub = outer.appendingPathComponent("worktrees/x")
+        try Self.write("gitdir: ../../.git/modules/worktrees/x\n", to: sub.appendingPathComponent(".git"))
+
+        let workspace = try #require(GitWorkspace.resolve(cwd: sub.path))
+        #expect(!workspace.isLinkedWorktree)
+        #expect(workspace.repositoryName == "x")
+    }
+
+    @Test("a checkout whose git dir lives elsewhere is not a linked worktree")
+    func separateGitDirIsNotLinked() throws {
+        let base = try Self.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = base.appendingPathComponent("store/repo.git")
+        try Self.write("ref: refs/heads/main\n", to: store.appendingPathComponent("HEAD"))
+        let checkout = base.appendingPathComponent("work/repo")
+        try Self.write("gitdir: \(store.path)\n", to: checkout.appendingPathComponent(".git"))
+
+        let workspace = try #require(GitWorkspace.resolve(cwd: checkout.path))
+        #expect(!workspace.isLinkedWorktree)
+        #expect(workspace.repositoryName == "repo")
     }
 
     @Test("HEAD parses to a branch, a detached commit, or nothing")

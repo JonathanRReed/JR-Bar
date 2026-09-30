@@ -15,7 +15,8 @@ public struct GitWorkspace: Hashable, Sendable {
     public var branch: String?
     /// The first 7 characters of a detached HEAD's commit.
     public var detachedAt: String?
-    /// A linked worktree (`.git` is a `gitdir:` file), not the main one.
+    /// A linked worktree (its git dir holds git's `commondir` marker), not
+    /// the main checkout, a submodule or a clone with its git dir elsewhere.
     public var isLinkedWorktree: Bool
 
     public init(root: String, branch: String? = nil, detachedAt: String? = nil,
@@ -60,16 +61,18 @@ public struct GitWorkspace: Hashable, Sendable {
             var isDirectory: ObjCBool = false
             if fileManager.fileExists(atPath: dotGit.path, isDirectory: &isDirectory) {
                 if isDirectory.boolValue {
-                    return read(root: directory.path, gitDir: dotGit, linked: false)
+                    return read(root: directory.path, gitDir: dotGit)
                 }
-                // A linked worktree: `.git` is "gitdir: <path>".
+                // A linked worktree, a submodule or a clone whose git dir
+                // lives elsewhere: `.git` is "gitdir: <path>". `read`
+                // tells them apart by the git dir itself.
                 guard let text = try? String(contentsOf: dotGit, encoding: .utf8),
                       let line = text.split(separator: "\n").first,
                       line.hasPrefix("gitdir:") else { return nil }
                 let raw = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
                 let gitDir = raw.hasPrefix("/") ? URL(fileURLWithPath: raw)
                     : directory.appendingPathComponent(raw).standardizedFileURL
-                return read(root: directory.path, gitDir: gitDir, linked: true)
+                return read(root: directory.path, gitDir: gitDir)
             }
             let parent = directory.deletingLastPathComponent()
             if parent.path == directory.path { return nil }
@@ -78,22 +81,36 @@ public struct GitWorkspace: Hashable, Sendable {
         return nil
     }
 
-    private static func read(root: String, gitDir: URL, linked: Bool) -> GitWorkspace? {
+    private static func read(root: String, gitDir: URL) -> GitWorkspace? {
         guard let head = try? String(contentsOf: gitDir.appendingPathComponent("HEAD"), encoding: .utf8) else {
             return nil
         }
-        var workspace = GitWorkspace(root: root, isLinkedWorktree: linked)
+        var workspace = GitWorkspace(root: root)
         let parsed = parseHead(head)
         workspace.branch = parsed.branch
         workspace.detachedAt = parsed.detached
-        if linked {
-            // <main>/.git/worktrees/<name> → <main>
-            let common = gitDir.deletingLastPathComponent().deletingLastPathComponent()
-            if common.lastPathComponent == ".git" {
-                workspace.mainRoot = common.deletingLastPathComponent().path
-            }
+        // A linked worktree's git dir names the shared one in `commondir`
+        // (`../..` for <main>/.git/worktrees/<name>). A submodule's git dir
+        // (<super>/.git/modules/<name>) has the same shape but no such
+        // file, and neither has a git dir kept elsewhere, so those keep
+        // their own folder as the repository.
+        guard let common = commonDirectory(of: gitDir) else { return workspace }
+        workspace.isLinkedWorktree = true
+        if common.lastPathComponent == ".git" {
+            workspace.mainRoot = common.deletingLastPathComponent().path
         }
         return workspace
+    }
+
+    /// The shared git dir a linked worktree's `commondir` points at; nil
+    /// when the file is absent or empty.
+    private static func commonDirectory(of gitDir: URL) -> URL? {
+        let file = gitDir.appendingPathComponent("commondir")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        if raw.hasPrefix("/") { return URL(fileURLWithPath: raw).standardizedFileURL }
+        return gitDir.appendingPathComponent(raw).standardizedFileURL
     }
 
     /// `ref: refs/heads/main` → branch "main"; a bare hash → detached.
