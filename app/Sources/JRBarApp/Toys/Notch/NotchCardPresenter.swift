@@ -109,12 +109,6 @@ final class NotchCardPresenter {
         present()
     }
 
-    /// Drop the pin without dismissing; callers that want the card gone
-    /// use `hide`.
-    func unpin() {
-        setPinned(false)
-    }
-
     func hide() {
         setPinned(false)
         guard isShown else { return }
@@ -125,12 +119,6 @@ final class NotchCardPresenter {
     /// The anchor moved (a wing slot came or went, the island reframed):
     /// re-present under the new rect instead of hiding and re-arming.
     func geometryChanged() {
-        if isShown { present() }
-    }
-
-    /// Sessions, usage or focus moved on while the card is up — re-feed
-    /// the model and refit.
-    func refresh() {
         if isShown { present() }
     }
 
