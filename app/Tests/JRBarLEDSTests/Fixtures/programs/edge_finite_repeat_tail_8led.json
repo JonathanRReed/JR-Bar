@@ -2,7 +2,7 @@
  "name": "edge_finite_repeat_tail_8led",
  "led_count": 8,
  "program": "off\n#ff0000 200ms none\n#00ff00 200ms none\nrepeat 3\n#0000ff 500ms cosine\n#ffffff 1s pulse\noff 250ms",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

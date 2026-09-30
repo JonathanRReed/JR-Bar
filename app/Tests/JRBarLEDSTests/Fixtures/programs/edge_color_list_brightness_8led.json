@@ -2,7 +2,7 @@
  "name": "edge_color_list_brightness_8led",
  "led_count": 8,
  "program": "brightness 128\n# comment line\n// another\n; and another\n#ff0000 #00ff00 #0000ff #ffffff #000000 #808080 #ff00ff #00ffff #123456 #654321 500ms linear\n#00ff00 #0000ff 800ms cosine\nbrightness 200\noff 300ms ease-out\nrepeat 2\n#404040",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

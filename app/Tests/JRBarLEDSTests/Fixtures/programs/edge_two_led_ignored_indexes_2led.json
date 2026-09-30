@@ -2,7 +2,7 @@
  "name": "edge_two_led_ignored_indexes_2led",
  "led_count": 2,
  "program": "#ff0000\n0:#00ff00 100ms; 5:#0000ff 1000ms\n#ffffff 400ms linear\n0:#ff00ff 1400ms pulse 0ms; 1:#ff00ff 1400ms pulse 480ms\nrepeat",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

@@ -2,7 +2,7 @@
  "name": "edge_indexed_hold_and_stagger_8led",
  "led_count": 8,
  "program": "#202020\n0:#ff0000 150ms ease 0ms; 1:#ff8000 150ms ease 50ms; 2:#ffff00 150ms ease 100ms; 3:#00ff00 150ms ease 150ms\n4:#00ccff 150ms ease 0ms; 5:#004cff 150ms ease 50ms; 6:#8800ff 150ms ease 100ms; 7:#ff00cc 150ms ease 150ms\n3:#ffffff 80ms none\n0:#000000 400ms pulse; 0:#00ffff 900ms linear; 9:#ffffff 5s\nrepeat",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

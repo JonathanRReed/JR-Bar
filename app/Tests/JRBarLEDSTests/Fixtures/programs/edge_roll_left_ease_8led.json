@@ -2,7 +2,7 @@
  "name": "edge_roll_left_ease_8led",
  "led_count": 8,
  "program": "#ff0000 #00ff00 #0000ff #ffffff #000000 #808080 #ff00ff #00ffff\nroll-left 1.3s ease\nroll-right 900ms cosine\nroll 700ms none\nrepeat",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,

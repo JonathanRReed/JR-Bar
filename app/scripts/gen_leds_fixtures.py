@@ -1,32 +1,45 @@
 #!/usr/bin/env python3
 """Generate LEDS parity fixtures from the Python/firmware reference.
 
-Run with the repo venv so ``sidepulse`` is importable from ``src/``:
+Run from the repository root with the repo venv, so ``jrbar`` imports from
+``src/``:
 
-    /Users/jonathanreed/Downloads/JR-Bar/.venv/bin/python app/scripts/gen_leds_fixtures.py
+    .venv/bin/python app/scripts/gen_leds_fixtures.py
+    .venv/bin/python app/scripts/gen_leds_fixtures.py --compiler-only
+
+The second form rewrites only ``compiler.json`` and needs no firmware, so
+the sampler fixtures are not re-sampled and ``programs/`` does not churn.
+``tests/test_leds_fixtures_match_reference.py`` compares every stored file
+to the rows built here and fails when one is stale.
 
 What is called, and why
 -----------------------
 The Python app never samples LED colours itself. Its Screen Bar pipeline
 (``screen_bar_pipeline.ScreenBarSampler``) drives the firmware's own parser
-and renderer, ``sidepulse/resources/sdled.wasm``, through JavaScriptCore via
-``sidepulse._led_wasm_legacy.SdLedWasmController``:
+and renderer, ``jrbar/resources/sdled.wasm``, through JavaScriptCore via
+``jrbar._led_wasm_legacy.SdLedWasmController``:
 
     controller = SdLedWasmController(led_count)   # raw firmware engine
     controller.reset(0)
     controller.parse(program, 0)                  # anchor at t = 0 ms
     controller.step(t_ms) -> [(r, g, b), ...]     # 8-bit codes after brightness
 
-``sidepulse.led_wasm.SdLedWasmController`` (the safety facade) runs
+``jrbar.led_wasm.SdLedWasmController`` (the safety facade) runs
 ``presentation_compiler.compile_presentation_program`` first; that transform
 is recorded separately in ``compiler.json`` so the Swift port of the compiler
 can be checked as text, and the engine fixtures stay a pure firmware truth.
+
+Every fixture comes from a program embedded here or built by the daemon's own
+functions, never from a file on a mounted device, so regenerating is
+reproducible. The ``program_rows``, ``verdict_rows`` and ``compiler_rows``
+builders return rows and write nothing; ``main`` alone writes.
 
 Outputs (all under app/Tests/JRBarLEDSTests/Fixtures/):
 
 * ``programs/<name>.json``  -- one program, one LED count, samples at the
   required times (0, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.7 s) plus a denser
-  sweep so easing curves are actually exercised.
+  sweep so easing curves are actually exercised. ``programs/motions`` belongs
+  to ``scripts/export_motion_fixtures.py`` and is left alone.
 * ``parse_verdicts.json``   -- firmware parse results (ok / error name) for a
   list of edge-case programs at 8 and 2 LEDs.
 * ``compiler.json``         -- ``compile_presentation_program`` results.
@@ -34,6 +47,7 @@ Outputs (all under app/Tests/JRBarLEDSTests/Fixtures/):
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -42,14 +56,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from sidepulse._led_wasm_legacy import SdLedWasmController  # noqa: E402  (raw firmware engine)
-from sidepulse import _led_status_legacy as led_status  # noqa: E402
-from sidepulse.models import AgentMode  # noqa: E402
-from sidepulse.presentation_compiler import compile_presentation_program  # noqa: E402
+from jrbar import _led_status_legacy as led_status  # noqa: E402
+from jrbar._led_wasm_legacy import SdLedWasmController  # noqa: E402  (raw firmware engine)
+from jrbar.models import AgentMode  # noqa: E402
+from jrbar.presentation_compiler import compile_presentation_program  # noqa: E402
 
 FIXTURES = REPO / "app" / "Tests" / "JRBarLEDSTests" / "Fixtures"
 REQUIRED_TIMES_S = [0, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.7]
-DEVICE_FILE = Path("/Volumes/SidePulse/LEDS.LED")
+ENGINE = "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)"
 
 
 def sample(program: str, led_count: int, times_ms: list[int]) -> list[dict]:
@@ -78,15 +92,16 @@ def slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
-def main() -> None:
+def program_set() -> dict[str, tuple[str, int]]:
+    """Every fixture program as ``name -> (program, led_count)``.
+
+    Pure: nothing is read from a device, written, or sampled. The sampler
+    fixtures and the compiler fixtures are both built from this set.
+    """
     programs: dict[str, tuple[str, int]] = {}
 
-    if DEVICE_FILE.exists():
-        text = DEVICE_FILE.read_text()
-        if text.strip():
-            programs["device_leds_led_now"] = (text, 8)
-    # The device program at generation time, embedded so the fixture is stable
-    # even when the hardware is showing something else later.
+    # A device program, embedded so the fixture is stable whatever a
+    # mounted strip happens to be showing.
     programs["device_quota_ember"] = (
         "#000000 160ms cosine\n"
         "0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; "
@@ -189,24 +204,27 @@ def main() -> None:
         ),
     }
     programs.update(hand)
+    return programs
 
-    programs_dir = FIXTURES / "programs"
-    programs_dir.mkdir(parents=True, exist_ok=True)
-    for stale in programs_dir.glob("*.json"):
-        stale.unlink()
-    for name, (program, led_count) in programs.items():
-        times = times_for(program)
-        payload = {
-            "name": name,
-            "led_count": led_count,
-            "program": program,
-            "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
-            "samples": sample(program, led_count, times),
-        }
-        (programs_dir / f"{slug(name)}.json").write_text(json.dumps(payload, indent=1) + "\n")
-    print(f"wrote {len(programs)} program fixtures")
 
-    # Parse verdicts: what the firmware says about edge-case text.
+def program_rows() -> list[dict]:
+    """One row per program fixture, sampled through the firmware."""
+    rows = []
+    for name, (program, led_count) in program_set().items():
+        rows.append(
+            {
+                "name": name,
+                "led_count": led_count,
+                "program": program,
+                "engine": ENGINE,
+                "samples": sample(program, led_count, times_for(program)),
+            }
+        )
+    return rows
+
+
+def verdict_rows() -> list[dict]:
+    """Parse verdicts: what the firmware says about edge-case text."""
     verdict_programs = [
         "", "\n", "# c", "#c", "#", "// c", ";c", " ; c", "OFF", "Off", "REPEAT", "#ffffff\nRepeat",
         "BRIGHTNESS 10\n#ffffff", "#FFFFFF", "#fff", "#ffffff 500", "#ffffff 1.5S", "#ffffff .5s",
@@ -248,11 +266,14 @@ def main() -> None:
                     "column": result.column,
                 }
             )
-    (FIXTURES / "parse_verdicts.json").write_text(json.dumps(verdicts, indent=1) + "\n")
-    print(f"wrote {len(verdicts)} parse verdicts")
+    return verdicts
 
+
+def compiler_rows() -> list[dict]:
+    """``compile_presentation_program`` over every program fixture and a few
+    hand-written loops. Pure Python: no firmware is needed."""
     compiler_programs = [
-        (p, n) for (p, n) in programs.values()
+        (p, n) for (p, n) in program_set().values()
     ] + [
         ("#ff0000 50ms none\n#000000 50ms none\nrepeat", 8),
         ("#ffffff 80ms none\n#000000\nrepeat", 8),
@@ -280,8 +301,37 @@ def main() -> None:
                 "output": result.program,
             }
         )
-    (FIXTURES / "compiler.json").write_text(json.dumps(compiled, indent=1) + "\n")
-    print(f"wrote {len(compiled)} compiler fixtures")
+    return compiled
+
+
+def write_program_fixtures(rows: list[dict]) -> None:
+    programs_dir = FIXTURES / "programs"
+    programs_dir.mkdir(parents=True, exist_ok=True)
+    # Top level only: programs/motions is written by export_motion_fixtures.py.
+    for stale in programs_dir.glob("*.json"):
+        stale.unlink()
+    for row in rows:
+        (programs_dir / f"{slug(row['name'])}.json").write_text(json.dumps(row, indent=1) + "\n")
+    print(f"wrote {len(rows)} program fixtures")
+
+
+def write_json(name: str, rows: list[dict], label: str) -> None:
+    (FIXTURES / name).write_text(json.dumps(rows, indent=1) + "\n")
+    print(f"wrote {len(rows)} {label}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Regenerate the Swift LEDS parity fixtures.")
+    parser.add_argument(
+        "--compiler-only",
+        action="store_true",
+        help="rewrite only compiler.json: no firmware sampling, programs/ untouched",
+    )
+    options = parser.parse_args(argv)
+    if not options.compiler_only:
+        write_program_fixtures(program_rows())
+        write_json("parse_verdicts.json", verdict_rows(), "parse verdicts")
+    write_json("compiler.json", compiler_rows(), "compiler fixtures")
 
 
 if __name__ == "__main__":

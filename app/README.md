@@ -62,11 +62,18 @@ test` right after a plain `swift build` complains that the `TestingMacros`
 plugin was not found, that is the swiftbuild backend reusing a stale module
 graph: `rm -rf .build` and run `swift test` again.
 
-Regenerate fixtures after changing the reference programs:
+Regenerate fixtures after changing the reference programs, from the
+repository root:
 
 ```sh
-/Users/jonathanreed/Downloads/JR-Bar/.venv/bin/python app/scripts/gen_leds_fixtures.py
+.venv/bin/python app/scripts/gen_leds_fixtures.py
+.venv/bin/python app/scripts/gen_leds_fixtures.py --compiler-only
 ```
+
+The second form rewrites only `compiler.json`: it needs no firmware and leaves
+`programs/` alone. `tests/test_leds_fixtures_match_reference.py` compares every
+stored fixture to what the generator would write today, so a stale one fails
+the Python suite.
 
 `@State` is a macro on the macOS 26 SDK and the Command Line Tools ship no
 `SwiftUIMacros` plugin either, so the views use `@ViewState`, a typealias for
@@ -222,17 +229,18 @@ within the tolerance at the firmware's own sample times.
 
 ### Parity
 
-`scripts/gen_leds_fixtures.py` samples 29 programs through
-`sidepulse._led_wasm_legacy.SdLedWasmController` (raw firmware engine:
+`scripts/gen_leds_fixtures.py` samples 30 programs through
+`jrbar._led_wasm_legacy.SdLedWasmController` (raw firmware engine:
 `reset(0)`, `parse(program, 0)`, `step(t_ms)`) at the required times
 (0, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.7 s) plus a 37 ms sweep over the
-first four seconds. Programs: the device's current `LEDS.LED`, every
+first four seconds. Programs: one embedded device program, every
 `AgentMode` at 8 and 2 LEDs via `program_for_display_state`, the done
 celebration, failure, first light, and hand-written edge cases covering every
-syntax feature. The Swift sampler matches within one code per channel at every
-sample. The same script records 250 firmware parse verdicts (accept / error
-name) and 41 `compile_presentation_program` results, which the parser and
-compiler ports reproduce exactly.
+syntax feature. Nothing is read from a mounted device, so regenerating gives
+the same files on any Mac. The Swift sampler matches within one code per
+channel at every sample. The same script records 250 firmware parse verdicts
+(accept / error name) and 42 `compile_presentation_program` results, which the
+parser and compiler ports reproduce exactly.
 
 ## The core protocol (`JRBarCore`)
 

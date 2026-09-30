@@ -2,7 +2,7 @@
  "name": "done_celebration_2led",
  "led_count": 2,
  "program": "off 90ms cosine\n0:#00FF66 135ms pulse; 1:#00FF66 135ms pulse 45ms\noff 70ms cosine\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
- "engine": "sdled.wasm via sidepulse._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
+ "engine": "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)",
  "samples": [
   {
    "t_ms": 0,
