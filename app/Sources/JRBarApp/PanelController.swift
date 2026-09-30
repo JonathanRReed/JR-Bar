@@ -284,15 +284,15 @@ final class PanelController {
                 store.perform(verb)
                 return nil
             }
-            if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "d",
-               store.keyboardAsk != nil {
-                // ⌘D answers the selected ask card (the first, when none is
-                // selected) — registered once here, not once per ask row.
-                store.denySelectedAsk()
+            // A reply field being typed into keeps its own characters, and
+            // its ⌘↩ and ⌘D: they never answer some other card.
+            let typingInField = panel.firstResponder is NSTextView
+            if flags.contains(.command), !typingInField, event.charactersIgnoringModifiers?.lowercased() == "d",
+               store.denySelectedAsk(typingInField: typingInField) {
+                // ⌘D answers the selected ask card (the lone one, when none
+                // is selected) — registered once here, not once per ask row.
                 return nil
             }
-            // A reply field being typed into keeps its own characters.
-            let typingInField = panel.firstResponder is NSTextView
             switch event.keyCode {
             case 53:                                                // Esc
                 // A find query goes first; the next Esc closes.
@@ -310,7 +310,8 @@ final class PanelController {
             case 126: store.moveSelection(by: -1); return nil      // Up
             case 36, 76:                                            // Return / keypad Enter
                 if flags.contains(.command) {
-                    if store.keyboardAsk != nil { store.approveSelectedAsk(); return nil }
+                    if typingInField { return event }
+                    if store.approveSelectedAsk(typingInField: typingInField) { return nil }
                     return event
                 }
                 if flags.isEmpty { store.activateSelection(); return nil }

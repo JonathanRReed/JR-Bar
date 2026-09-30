@@ -1814,31 +1814,77 @@ final class PanelStore {
         }
     }
 
-    /// The ask ⌘↩ / ⌘D answer: the keyboard-selected card when it is an
-    /// ask, else the first one the daemon says can be answered from here.
-    /// With two or more asks open, the selected card is the target — the
-    /// shortcuts never answer a card the user is not looking at.
-    var selectedAsk: SessionRow? {
-        visibleAskRows.first { $0.id == selectedID }
+    /// The verdict a keyboard chord sends: ⌘↩ approves, ⌘D denies.
+    enum AskChord { case approve, deny }
+
+    /// Which ask a chord answers, if any.
+    enum AskChordTarget: Equatable {
+        /// Nothing to answer here: the key is left to whoever else wants it.
+        case none
+        /// More than one ask could take the verdict and none is selected.
+        case ambiguous
+        case ask(id: String)
     }
 
-    /// Only asks the list is showing: a query that filtered a card out
-    /// must not let ⌘↩ answer it unseen.
-    var keyboardAsk: SessionRow? {
-        if let selectedAsk { return selectedAsk }
+    /// The ask ⌘↩ / ⌘D answer. The selected card wins. With none selected,
+    /// a lone local ask that can take the verdict is the default, which
+    /// keeps the one-keystroke flow for a single ask. With several, the
+    /// person must move to one first: the shortcuts never answer a card
+    /// the person is not looking at. Typing in a reply field keeps its own
+    /// keys. `askRows` are only the asks the list is showing, so a query
+    /// that filtered a card out cannot let a chord answer it unseen.
+    nonisolated static func chordTarget(_ chord: AskChord, typingInField: Bool, selectedID: String?,
+                                        askRows: [SessionRow], now: Date = Date()) -> AskChordTarget {
+        if typingInField { return .none }
+        if let selectedID, askRows.contains(where: { $0.id == selectedID }) { return .ask(id: selectedID) }
+        var candidates: [String] = []
+        for row in askRows where !row.isRemote {
+            guard let ask = row.ask else { continue }
+            let takesVerdict: Bool
+            switch chord {
+            case .approve: takesVerdict = AskVerbs.approves(ask)
+            case .deny: takesVerdict = AskVerbs.denies(ask, at: now)
+            }
+            if takesVerdict { candidates.append(row.id) }
+        }
+        if candidates.count > 1 { return .ambiguous }
+        guard let only = candidates.first else { return .none }
+        return .ask(id: only)
+    }
+
+    /// ⌘↩ on the panel. True when the key was handled (an answer was sent,
+    /// or the person was told to pick a card), false to let it through.
+    @discardableResult
+    func approveSelectedAsk(typingInField: Bool = false) -> Bool {
+        answerFromKeyboard(.approve, typingInField: typingInField)
+    }
+
+    /// ⌘D on the panel, with the same contract.
+    @discardableResult
+    func denySelectedAsk(typingInField: Bool = false) -> Bool {
+        answerFromKeyboard(.deny, typingInField: typingInField)
+    }
+
+    private func answerFromKeyboard(_ chord: AskChord, typingInField: Bool) -> Bool {
         let askRows = visibleAskRows
-        return askRows.first { $0.ask?.canAnswer == true && !($0.isRemote) } ?? askRows.first
+        let target = Self.chordTarget(chord, typingInField: typingInField, selectedID: selectedID, askRows: askRows)
+        switch target {
+        case .none:
+            return false
+        case .ambiguous:
+            show(toast: Self.chordAmbiguousLine)
+            return true
+        case .ask(let id):
+            guard let ask = askRows.first(where: { $0.id == id })?.ask else { return false }
+            switch chord {
+            case .approve: approve(ask)
+            case .deny: deny(ask)
+            }
+            return true
+        }
     }
 
-    func approveSelectedAsk() {
-        guard let ask = keyboardAsk?.ask else { return }
-        approve(ask)
-    }
-
-    func denySelectedAsk() {
-        guard let ask = keyboardAsk?.ask else { return }
-        deny(ask)
-    }
+    static let chordAmbiguousLine = "More than one ask is open. Move to one with ↑ ↓ first."
 
     /// `snooze {session, seconds}` — the daemon resolves the session's
     /// family work key, so one snooze covers every session in the family.
