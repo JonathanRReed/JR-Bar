@@ -1,5 +1,9 @@
 # Ecosystem research — upstream, forks, and T3 Code
 
+> **Historical.** A 2026-08-18 survey of upstream forks and T3 Code, written
+> against the pre-0.8 SidePulse fork. Kept for provenance. The live upstream
+> process is [`docs/UPSTREAM-RESEARCH-CADENCE.md`](../../UPSTREAM-RESEARCH-CADENCE.md).
+
 Surveyed 2026-08-18. This file records what exists elsewhere, what was
 ported, what was deliberately skipped, and what is worth building next.
 

@@ -73,10 +73,10 @@ build reads them.
   [vision](VISION.md), [production task contract](archive/production-task-contract.md),
   [toy parity](TOY-PARITY.md), [upgrade ledger](archive/upgrade/STATUS.md)
 - Audits: [rescue report](archive/audits/RESCUE-REPORT.md)
-- Research: [ecosystem](ECOSYSTEM-RESEARCH.md),
-  [providers](PROVIDER-RESEARCH.md),
+- Research: [ecosystem](archive/research/ECOSYSTEM-RESEARCH.md),
+  [providers](archive/research/PROVIDER-RESEARCH.md),
   [upstream refresh 2026-08-30](UPSTREAM-REFRESH-2026-08-30.md),
-  [upstream sync](UPSTREAM-SYNC.md), [research/](research/)
+  [upstream sync](UPSTREAM-SYNC.md), [research](archive/research/)
 - [archive/](archive/): the dated plans and audits once they are done, the
   superseded plans and the pre-0.8 specs:
   - Plans: [product design 2026-09-19](archive/product-design-2026-09-19.md),

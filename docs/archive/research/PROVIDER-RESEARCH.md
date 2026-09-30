@@ -1,5 +1,10 @@
 # Provider implementation — how CodexBar and T3 do it, and the real policies
 
+> **Historical.** Provider research from 2026-08-14, written against the
+> pre-0.8 SidePulse fork. Kept for provenance. The live documents are
+> [`docs/NATIVE-PROVIDERS.md`](../../NATIVE-PROVIDERS.md) and the
+> [provider adapter guide](../../PROVIDER-ADAPTER-GUIDE.md).
+
 Researched 2026-08-14 against LIVE upstream repos (not just the local
 clones). Mark of honesty: anything the researchers could not verify from
 source is labelled unverified below.

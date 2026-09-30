@@ -1,5 +1,8 @@
 # SidePulse Next Improvements Research Ledger
 
+> **Historical.** A 2026-08-13 research ledger for the pre-0.8 SidePulse fork.
+> Kept for provenance. Open work is tracked in [`docs/ROADMAP.md`](../../ROADMAP.md).
+
 ## Decision Contract
 
 - Decision: choose the next high-value improvement tranches for SidePulse after Presentation Task 8 integration, prioritizing Screen Bar smoothness, semantic parity, operator clarity, and source-grounded safety.

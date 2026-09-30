@@ -1,5 +1,8 @@
 # Gemini CLI and Pi hook facts (researched 2026-09-09)
 
+> **Historical.** Hook facts gathered on 2026-09-09 for the Gemini and Pi
+> providers. What shipped is described in [`docs/NATIVE-PROVIDERS.md`](../../NATIVE-PROVIDERS.md).
+
 Inputs for the Gemini and Pi providers in Phase F.
 
 ## Gemini CLI 0.46.0 (`/opt/homebrew/bin/gemini`)
