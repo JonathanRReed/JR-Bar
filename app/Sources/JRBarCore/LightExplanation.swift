@@ -216,7 +216,9 @@ public enum LightExplainer {
             let name = SessionLabel.providerName(top.provider.id)
             return "\(name) \(top.window.shortName) window at \(Int(top.pct.rounded()))%"
         }
-        let measured = providers.contains { $0.windows.contains { $0.bindable && $0.usedPct != nil } }
+        let measured = providers.contains { provider in
+            provider.windows.contains { window in window.bindable && window.usedPct != nil }
+        }
         return measured ? "Every usage window has reset since its last reading" : "A usage window is nearly spent"
     }
 
