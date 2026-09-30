@@ -7652,19 +7652,6 @@ class StatusBarController(NSObject):
                 set_preview_dot_rgb(dot, *pixel)
 
     @objc.IBAction
-    def setBracketStyle_(self, sender):
-        item = sender.selectedItem()
-        style = str(item.representedObject() or "auto") if item is not None else "auto"
-        try:
-            self.settings = self.settings.with_screen_bar_bracket_style(style)
-        except ValueError:
-            return
-        save_settings(self.settings)
-        self.virtual_status_device.set_bracket_style(style)
-        self.refresh_(None)
-        self.set_settings_message(f"Bracket colors: {item.title()}.")
-
-    @objc.IBAction
     def redrawSetupDemo_(self, _sender):
         if self.setup_window is None or not self.setup_window.isVisible():
             return
