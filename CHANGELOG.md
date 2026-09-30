@@ -2,6 +2,116 @@
 
 All notable changes to JR-Bar are documented here.
 
+## Unreleased
+
+- A sub-agent's ask stays quiet while Sub-agent asks is off. Its permission
+  request or notification no longer pulses the Ask colour on the Screen Bar
+  and the SidePulse strip, and the courtesy signature and the Dot's ask
+  heartbeat stay quiet for it too. LED repaints after a lid animation, a
+  colour preview or a device setting, the day's needs-you tally, the
+  stage-three escalation banner, the desktop widget, and the older
+  `jrbar leds`, `status` and `watch` commands no longer treat a waiting
+  sub-agent as an ask. A main session's ask lights as before, and turning
+  the setting on restores the old behaviour.
+- While Sub-agent asks is off, JR-Bar no longer holds a sub-agent's
+  PermissionRequest. Codex's own prompt for a sub-agent appears at once
+  instead of after up to 45 seconds. When a main session and a sub-agent
+  make the same call, answers and releases now reach the right one.
+- The Stream Deck key and `jrbar serve` count main sessions only in "N work"
+  and "N wait". Sub-agents are a number of their own in `agents.workers`.
+- Overview, the menu-bar icon's offline fallback, Notch Buddy, the Aquarium
+  and Dock marks read a sub-agent's quiet prompt as working, not waiting on
+  you. With the setting on, a sub-agent that carries an ask still shows as
+  waiting. The setting's own words now say what it does.
+- OpenCode Task sub-agents group under their session, their approvals follow
+  the Sub-agent asks setting, and they no longer count toward keep-awake.
+  An OpenCode question or permission ask now names its request, so both
+  show as Needs You and clear when answered. An existing plugin keeps
+  working and is upgraded on the next hook refresh or reinstall.
+- Claude and Grok idle notifications no longer make a provider look quiet:
+  another session's approval card and Needs You state stay. Grok returns the
+  row to idle after Ctrl+C or a declined permission prompt.
+- An answer that was refused or timed out no longer locks out the next
+  Approve or Deny. An ask answered from JR-Bar stays marked answered until
+  the agent moves on, so a second click cannot type a key into a busy
+  terminal. The destructive-command check reads each command once, in linear
+  time, and now catches wrapped and path-qualified forms such as
+  `bash -c 'rm -rf x'`, `/bin/rm -rf`, `git push origin +main` and
+  `find -delete`.
+- Quiet modes hold what they promise: Mute, Fully Dark and a call's
+  no-sounds quiet now hold sounds and banners, and Fully Dark withholds the
+  banner. A provider capped below stage 3, or with asks off, no longer grows
+  the ask card out of the notch. Asks only and Pause admission by event kind
+  still wait for the protocol's outbound axis.
+- Banners return when notifications are switched on in System Settings,
+  without a relaunch. Cmd-Return and Cmd-D never answer a card you are not
+  on. A locked state folder no longer makes JR-Bar quit silently as "already
+  running". Hiding the Screen Bar while the daemon restarts now sticks, and
+  the Deep Work timer runs on the wall clock across sleep.
+- Reading Alcove's capsule through Accessibility no longer runs on the main
+  thread, so a slow Alcove costs a late update, not a stalled JR-Bar.
+- Usage: Antigravity shows no invented CLI lane or steps-based token count
+  when its server is closed; it says Open Antigravity and keeps the last real
+  reading, marked stale. The Codex card counts each turn once over the last
+  30 days. The Claude card shows tokens, models and cost from the scan cache
+  across every account home, and shows nothing, not a partial total, until
+  the cache covers 30 days. A quota window whose reset has passed no longer
+  drives the quota-runway light, the Screen Bar ember or the constrained
+  window. Usage > Sessions draws the days before a hook-only provider's first
+  retained event as gaps, not zeros. A signed-out Gemini card clears on the
+  next refresh once the Gemini CLI saves its sign-in.
+- Agent detection and hooks: a slow login shell right after login no longer
+  hides installed CLIs; Settings shows one it cannot place yet as unknown,
+  not as not installed. A hook that fires after its agent has already exited
+  is delivered instead of dropped, and an orphaned SessionEnd still shows the
+  session as Done. A pasted U+2028 in a prompt no longer sends a spooled
+  event to the rejected file. The install self-test leaves no fake session
+  behind, and opening Agents settings no longer logs a refused hook.
+- Uninstall: one agent config JR-Bar will not edit no longer stops
+  `jrbar agent-monitor uninstall all`. Every provider is tried and each
+  failure is named. The macOS uninstaller names a failed hook step, exits 1
+  and keeps JR-Bar.app and your data until it is fixed.
+- The daemon drops a client whose send stalls, and reconnects it, instead of
+  never dropping it. Frames published while the app is connecting now follow
+  the greeting in order. The state build no longer re-reads every effect
+  pack each refresh, and a blocking ask no longer makes every build
+  broadcast. "Has waited" in Why this light no longer drifts across sleep,
+  and "In this state" counts on the app clock.
+- Creator Micro keys bound to Agent Browser, Usage, Control Center and
+  "reveal current ask" open them while JR-Bar.app is connected. A settings
+  file holding NaN or Infinity is set aside as `settings.json.corrupt` and
+  defaults load. A failed Stream Deck slot save is retried. A cloud agent
+  with a fast clock no longer holds up local completions. With more than 512
+  T3 threads, the most recently active ones show.
+- Devices and LEDs: the Screen Bar's flash gate measures a program's real
+  flash rate like the daemon does, so a 5 Hz preview is slowed and saturated
+  red stays at 1 Hz. Effect Studio says when a loop was slowed for its flash
+  rate. The Dot no longer holds a pulse's peak between ripples, and a failed
+  serial read keeps the Dot's last LED count instead of guessing eight.
+  Tests can no longer write a mounted strip or Dot.
+- Menu bar, Dock, notch and Fold: a rule that quiets the agents keeps doing
+  so after the Mac sleeps past the 15-minute lease. Turning Accessibility on
+  after launch brings up option-Tab and command-Tab without a relaunch. Hover
+  previews skip an app that has not answered Accessibility for 10 seconds
+  instead of freezing the bar. The Now Playing helper restarts after 5, 30
+  and 120 seconds if it dies. A lyrics lookup that could not reach LRCLIB is
+  asked again after two minutes. A failing Fold capture start backs off.
+  The archive's storage footer and Empty Archive Trash follow imports,
+  trashing, restoring and emptying.
+- Codec and Overview: a session, repo or ask named `nan` or `inf` keeps its
+  row and History still loads. A submodule keeps its own repository name and
+  branch. Core log output with odd bytes or a last line without a newline is
+  kept.
+- Docs and tests: CORE-PROTOCOL.md names every command and state field the
+  daemon sends, and a contract test in `make fast` keeps commands from
+  drifting out of it. The state cadence is described as it runs. The README
+  and user pages now match the escalation defaults, the 4 pt Screen Bar band
+  and the hook install path. Test sandbox guards survive
+  `monkeypatch.undo()`, the suite refuses any non-loopback connect, and the
+  status-page poller runs inert under test. `make release` runs
+  `scripts/release.sh`, which also refuses a branch other than main, a missing
+  `gh`, and a local main that is not origin/main.
+
 ## 0.9.15
 
 - Transcript reconstruction streams lines across segments without a merged
