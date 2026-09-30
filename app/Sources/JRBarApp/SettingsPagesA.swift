@@ -873,10 +873,6 @@ extension SettingsStore {
     /// The one-line "Colour calibration" summary: gains and glow always,
     /// brightness when it is not the full drive -- the sheet edits all
     /// three, so a dimmed-by-calibration device is not "Uncalibrated".
-    static func calibrationSummary(document: SettingsDocument, prefix: String) -> String {
-        calibrationSummary(prefix: prefix) { document.double($0) }
-    }
-
     static func calibrationSummary(prefix: String, read: (SettingsPath) -> Double?) -> String {
         let r = read(SettingsPath("\(prefix).red_gain")) ?? 1
         let g = read(SettingsPath("\(prefix).green_gain")) ?? 1

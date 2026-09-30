@@ -559,8 +559,6 @@ final class SettingsStore {
         return documentMirrorsStale ? daemonDocument.contains(path) : mirrored
     }
 
-    func value(_ path: String) -> JSONValue? { value(at: SettingsPath(path)) }
-
     /// One path of the overlaid document, observed on that path alone.
     func value(at path: SettingsPath) -> JSONValue? {
         refreshDocument()
@@ -1110,21 +1108,6 @@ final class SettingsStore {
         return facts.hookDetections[provider]
     }
 
-    /// `health.sources[provider]`: whether the provider's hook feed is
-    /// still delivering (`fresh`) and how many seconds since the last
-    /// event it accepted (`heard_age_seconds`, nil when it never has).
-    /// The panel's quiet-feed marker reads the same decode through
-    /// `CoreState.sourceHealth(for:)`.
-    func sourceHealth(_ provider: String) -> (fresh: Bool, heardAgeSeconds: Double?)? {
-        core.state?.sourceHealth(for: provider)
-    }
-
-    /// `health.intake`: the intake report's verdict codes (`hook_state`,
-    /// `source_health`) and the `silence_seconds` bound behind them.
-    var intakeHealth: (hookState: String?, sourceHealth: String?, silenceSeconds: Double?)? {
-        core.state?.intakeHealth
-    }
-
     /// A result line the Agents page shows ON the provider's row — the
     /// reply's own words for 6 s, secondary on success, red on failure.
     struct HookNote: Equatable {
@@ -1669,7 +1652,6 @@ struct SettingsValues {
     let store: SettingsStore
 
     func value(at path: SettingsPath) -> JSONValue? { store.value(at: path) }
-    func contains(_ path: SettingsPath) -> Bool { value(at: path) != nil }
     func bool(_ path: SettingsPath) -> Bool? { value(at: path)?.boolValue }
     func double(_ path: SettingsPath) -> Double? { value(at: path)?.doubleValue }
     func int(_ path: SettingsPath) -> Int? { value(at: path)?.intValue }
