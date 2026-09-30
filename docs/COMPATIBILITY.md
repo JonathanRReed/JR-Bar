@@ -1,6 +1,6 @@
 # JR-Bar compatibility
 
-What JR-Bar 0.8 runs on, talks to, and how sure it is. A row says
+What JR-Bar 0.9 runs on, talks to, and how sure it is. A row says
 "verified" when the exact thing has been exercised on the owner's Mac from
 the shipped build; "reviewed" when source, fixtures and tests cover it
 but the real service, device or tier has not been exercised; "best
@@ -12,8 +12,8 @@ effort" when the code recognises the input and nothing more is claimed.
 | --- | --- |
 | macOS | 26 or newer (`LSMinimumSystemVersion 26.0`). Developed and verified on a MacBook Pro with a notch; the Screen Bar needs one, everything else does not. |
 | CPU | Apple silicon. `make package` builds for the Mac it runs on; no Intel package is published. |
-| Distribution | The PKG is Developer ID signed. Until the `jrbar-notary` profile exists it is not notarized, so Gatekeeper on another Mac refuses it; build locally. |
-| Python | The frozen daemon carries its own 3.12. A source checkout needs 3.12 for the pinned tooling; the package metadata still declares 3.10+ for the pure-Python parts. |
+| Distribution | Published releases are Developer ID signed, notarized and stapled. A local `make package` is for that Mac. |
+| Python | The frozen daemon carries its own 3.12. A source checkout needs 3.12 for the pinned tooling, and the package metadata declares `>=3.12`. |
 | Xcode | Not required. The Command Line Tools (Swift 6.2+) build the app and the shim. |
 
 ## Hardware
@@ -30,7 +30,7 @@ effort" when the code recognises the input and nothing more is claimed.
 | Provider | Hooks | Session truth | Usage | Claim |
 | --- | --- | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json` | hook + `~/.claude/sessions/<pid>.json` + process liveness | official endpoint (opt-in), transcripts | Verified |
-| Codex CLI and desktop | `~/.codex/config.toml` (trust hash computed locally) | hook + SessionEnd/interrupt + rollout tail + liveness | native | Reviewed; real turns pending the owner's quota reset (2026-09-14) |
+| Codex CLI and desktop | `~/.codex/config.toml` (trust hash computed locally) | hook + SessionEnd/interrupt + rollout tail + liveness | native | Reviewed; real turns are still to be exercised, see [ROADMAP.md](ROADMAP.md) |
 | Gemini CLI | `~/.gemini/settings.json` (`hooks`) | hook + `~/.gemini/tmp/*/chats` tail | derived tier | Verified on the derived tier; higher tiers reviewed |
 | Pi | `~/.pi/agent/extensions/jrbar.ts` | extension events + `~/.pi/agent/sessions` tail | none | Verified (pi 0.73.1 emits no ask events, so pi has no ask lane) |
 | Grok, Devin, OpenCode, OpenClaw, Antigravity | provider config or plugin | hook + liveness | native where the provider exposes it | Verified |
