@@ -159,6 +159,10 @@ def test_announcer_stack_modules_are_wired_to_production_owners__and_1_more() ->
 
 
 
+def test_the_headless_screen_bar_is_the_one_surface_the_controller_builds() -> None:
+    assert "status_bar_legacy" in _module_importers("headless_screen_bar")
+
+
 def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatch) -> None:
     # --- scenario: cmd_effects_dispatches_through_the_runtime_owner
     from jrbar import cli, effect_cli

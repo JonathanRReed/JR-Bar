@@ -297,6 +297,13 @@ from .keep_awake import battery_yields_hold, KEEPALIVE_FILE_NAME, KeepAwakeContr
 from .celebrations import reset_celebration_program
 from .hardware_write_policy import hardware_coalesce_key, hardware_write_policy
 from .hardware_write_contract import validate_hardware_write_metadata
+from .headless_screen_bar import (
+    LED_COUNT,
+    VIRTUAL_DEVICE_ID,
+    VIRTUAL_DEVICE_NAME,
+    HeadlessScreenBar,
+    monotonic_ms,
+)
 from .window_presentation import activate_app, present_window
 from .led_status import (
     FIRST_LIGHT_SECONDS,
@@ -308,6 +315,7 @@ from .led_status import (
     apply_channel_gain_to_program,
     apply_resting_glow_to_program,
     brightness_percent,
+    display_state_for_projection,
     failure_signal_program,
     led_count_for_target,
     notification_blink_program,
@@ -529,14 +537,6 @@ from .usage_view import (
     source_text_for_coverage,
 )
 from .usage_refresh_workers import UsageRefreshWorkerOwner
-from .virtual_device import (
-    VIRTUAL_DEVICE_ID,
-    VIRTUAL_DEVICE_NAME,
-    VirtualLedView,
-    VirtualStatusDevice,
-    monotonic_ms,
-    virtual_display_state_for_projection,
-)
 
 
 def _capacity_source_keys_by_provider():
@@ -1924,7 +1924,7 @@ class StatusBarController(NSObject):
         self.last_lid_error = None
         self.led_animation_until_monotonic = 0.0
         self.led_animation_token = 0
-        self.virtual_status_device = VirtualStatusDevice.alloc().init()
+        self.virtual_status_device = HeadlessScreenBar()
         # Backlog #20: every attribute handlers previously sprang
         # into existence via getattr now has ONE canonical default
         # here -- the getattr call sites keep working, but drift
@@ -2636,7 +2636,7 @@ class StatusBarController(NSObject):
         projection: AttentionProjection,
         active_signal: ActiveSignal | None,
     ) -> LedDisplayState:
-        return virtual_display_state_for_projection(projection, active_signal)
+        return display_state_for_projection(projection, active_signal)
 
     def resolve_presentation_glance(
         self,
@@ -12554,6 +12554,3 @@ def open_terminal_command(
     if plan.fallback_copy is not None:
         log_status_bar(plan.fallback_copy)
     return plan
-
-
-from .virtual_device import LED_COUNT  # noqa: E402 -- re-export; tests address status_bar.LED_COUNT

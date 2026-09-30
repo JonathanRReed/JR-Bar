@@ -47,6 +47,12 @@ from .alcove_window_probe import (
     select_alcove_window_values,
 )
 from .draw_guard import guard_draw
+from .headless_screen_bar import (  # noqa: F401 -- the identity names moved; tests still address them here
+    LED_COUNT,
+    VIRTUAL_DEVICE_ID,
+    VIRTUAL_DEVICE_NAME,
+    monotonic_ms,
+)
 from .alcove_observation import (
     ALCOVE_BUNDLE_ID,
     ALCOVE_STATUS_LOG_LINES,
@@ -112,9 +118,6 @@ from .screen_bar_pipeline import (
     presentation_time,
 )
 
-VIRTUAL_DEVICE_ID = "virtual:status-bar"
-VIRTUAL_DEVICE_NAME = "Screen Bar"
-LED_COUNT = 8
 WINDOW_WIDTH = 220.0
 FALLBACK_NOTCH_DEPTH = 32.0
 LED_BAND_HEIGHT = 5.0
@@ -347,17 +350,6 @@ SAMPLER_CLOSE_TIMEOUT_SECONDS = 0.25
 # this class can rely on already ticking.
 PREVIEW_HOLD_MAX_SECONDS = 20.0
 _OFF_COLORS = ((0.0, 0.0, 0.0, 0.0),) * LED_COUNT
-
-
-def monotonic_ms() -> int:
-    return int(time.monotonic() * 1000.0)
-
-
-def virtual_display_state_for_projection(projection, active_signal=None) -> LedDisplayState:
-    """Screen Bar state adapter for the shared attention projection."""
-    from .led_status import display_state_for_projection
-
-    return display_state_for_projection(projection, active_signal)
 
 
 @dataclass(frozen=True, slots=True)

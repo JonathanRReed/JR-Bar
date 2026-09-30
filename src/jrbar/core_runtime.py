@@ -4183,10 +4183,6 @@ def build_headless_controller_class() -> type:
             if self is None:
                 return None
             self.notification_client = HeadlessNotificationClient()
-            device = getattr(self, "virtual_status_device", None)
-            if device is not None:
-                device.headless = True
-                device._enabled = False
             self._core = None
             self._core_socket_path = None
             self._core_lock = threading.RLock()

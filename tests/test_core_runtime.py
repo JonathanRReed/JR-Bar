@@ -410,6 +410,8 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     controller_class = core_runtime.build_headless_controller_class()
     assert controller_class.headless is True
     controller = controller_class.alloc().init()
+    # What the daemon really builds, kept for the test that pins its type.
+    controller.screen_bar_as_built = controller.virtual_status_device
     controller.virtual_status_device = SimpleNamespace(
         show=MagicMock(name="show"),
         hide=MagicMock(name="hide"),
@@ -431,6 +433,17 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # No real threads exist in this harness — deliver deck input inline.
     controller._deck_deliver_inline = True
     return controller
+
+
+def test_the_daemons_screen_bar_is_the_headless_one_that_draws_nothing(headless) -> None:
+    from jrbar.headless_screen_bar import HeadlessScreenBar
+
+    built = headless.screen_bar_as_built
+
+    assert type(built) is HeadlessScreenBar
+    assert built.window is None
+    assert built.presentation_scheduler_inputs().screen_bar_enabled is False
+    assert built._live_program_call is None
 
 
 def test_headless_launch_skips_every_appkit_surface_and_serves__and_2_more(headless) -> None:

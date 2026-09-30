@@ -9053,22 +9053,9 @@ class DeviceBrightnessWatcherTests(unittest.TestCase):
         self.controller.refresh_(None)  # must not raise
 
 
-class ScreenBarSettingsTakeEffectImmediatelyTests(unittest.TestCase):
-    """Regression guard: toggling a Screen Bar geometry/drawing setting
-    (Alcove compatibility, wraps-menu-bar) must reposition the Screen Bar
-    right away. Before this fix, both settings were only ever re-read the
-    next time sync_virtual_status_device happened to run -- which, with a
-    physical device connected, only happens on a genuine LED write. Once
-    agent layout stopped thrashing (see the ordering-stability fix), that
-    could be a very long wait: the setting would visibly "not work" even
-    though it saved correctly."""
-
-    def setUp(self) -> None:
-        isolate_controller(self)
-        # The bug only manifests once the Screen Bar window already exists
-        # (reposition() is a no-op before that) -- matches the real
-        # scenario: the user already has it visible and flips a setting.
-        self.controller.virtual_status_device.show()
+class ColorSettingsPersistenceTests(unittest.TestCase):
+    """The colour settings survive a save and a load, and a corrupt colours
+    block falls back to the defaults without taking the other settings."""
 
     def test_settings_round_trip_persists_colors(self) -> None:
         settings = AgentMonitorSettings().with_colors(ColorSettings.defaults().with_agent_color("codex", "#123456"))
