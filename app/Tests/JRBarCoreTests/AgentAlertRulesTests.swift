@@ -167,8 +167,8 @@ struct AgentAlertRulesTests {
     func rulesStayInsideQuiet() {
         let event = CoreEvent(id: "c", kind: "completed", session: "codex:2", provider: "codex")
         let rules = ["codex": AgentAlertRule(completions: true)]
-        let open = AgentAlertRules.apply(EventDelivery(sound: "Glass"), to: event, state: Self.state, rules: rules)
-        #expect(open.notification?.title == "core finished", "the control: without quiet the rule banners")
+        let unmuted = AgentAlertRules.apply(EventDelivery(sound: "Glass"), to: event, state: Self.state, rules: rules)
+        #expect(unmuted.notification?.title == "core finished", "the control: without quiet the rule banners")
         let muted = AgentAlertRules.apply(EventDelivery(sound: "Glass"), to: event, state: Self.mutedState, rules: rules)
         #expect(muted.notification == nil)
         #expect(muted.sound == nil)
