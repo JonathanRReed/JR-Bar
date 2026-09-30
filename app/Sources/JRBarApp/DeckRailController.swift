@@ -30,8 +30,6 @@ final class DeckRailController {
         observe()
     }
 
-    var isShown: Bool { panel?.isVisible ?? false }
-
     /// The screen the rail lives on: the Creator Micro window's, else the
     /// one with the key window, else the main one. Resolved every time.
     private var screen: NSScreen? {

@@ -9,12 +9,11 @@ import SwiftUI
 
 /// The spacing scale and the few fixed sizes the Settings window uses.
 enum SettingsMetrics {
-    /// 4 · 8 · 12 · 16 · 24: the only gaps a Settings view should need.
+    /// 4 · 8 · 12 · 16: the only gaps a Settings view should need.
     static let xs: CGFloat = 4
     static let s: CGFloat = 8
     static let m: CGFloat = 12
     static let l: CGFloat = 16
-    static let xl: CGFloat = 24
     /// The air above and below one row inside a card body, where the
     /// form's own row padding does not reach.
     static let rowPadding: CGFloat = 5
