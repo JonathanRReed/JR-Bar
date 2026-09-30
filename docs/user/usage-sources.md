@@ -36,6 +36,36 @@ A Zen key with no Go subscription gets a 403, which the card shows as
 OpenCode's data folder follows XDG: `$XDG_DATA_HOME/opencode`, else
 `~/.local/share/opencode`.
 
+## Provider status pages
+
+When a provider is having an outage, its usage numbers can fail for a
+reason that has nothing to do with your setup. JR-Bar can check the
+providers' public status pages so the card says "incident" instead of
+looking like your fetch broke. This is a request that leaves your Mac, so
+it is **off until you turn it on**.
+
+Turn it on in Settings › Usage › Provider status pages, or:
+
+```sh
+jrbar set provider_status_feeds_enabled true
+```
+
+While it is on, JR-Bar asks these three addresses once every 10 minutes,
+and only for a provider it found on this Mac:
+
+- `status.anthropic.com` for Claude;
+- `status.openai.com` for Codex;
+- `status.cursor.com` for Cursor.
+
+Each request is a plain public read. It carries no key, prompt, account
+or path, only a fixed `JR-Bar/status-feed` user agent. The status page
+sees your network address, as any website does. An answer that cannot be
+read is treated as silence, never as an alarm.
+
+Turn the setting off and the next usage refresh stops the checks and
+clears any incident they showed. Nothing is asked again until you turn it
+back on.
+
 ## More than one account home
 
 Claude Code and Codex both let you move their data: `CLAUDE_CONFIG_DIR`

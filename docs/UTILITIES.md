@@ -437,9 +437,9 @@ likewise gone — same reason.
   bundle on the frontmost app plus the frontmost pid on the session's
   process ancestry (`AskingPane`); a pane the daemon cannot prove keeps
   its noise.
-- **Incident badges**: the daemon's status feeds already stamp a live
-  vendor incident on each usage snapshot; `CoreProviderUsage.incident`
-  carries it now. The Screen Bar's quota ear flips to the attention tone
+- **Incident badges**: while Settings › Usage › Provider status pages is
+  on (it is off until then), the daemon's status feeds stamp a live vendor
+  incident on each usage snapshot; `CoreProviderUsage.incident` carries it. The Screen Bar's quota ear flips to the attention tone
   and names it in the peek, the panel's usage row tags "incident", and
   the Usage Center header badges it — always with the feed's own text on
   hover, never presented as a quota verdict.
