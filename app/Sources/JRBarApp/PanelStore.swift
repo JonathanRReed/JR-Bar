@@ -1663,6 +1663,13 @@ final class PanelStore {
     /// otherwise the outcome's line is, and `landed` runs only when the
     /// daemon took the answer.
     private func send(_ ask: CoreAsk, _ verdict: AskVerdict, landed: (@MainActor () -> Void)? = nil) {
+        // An ask JR-Bar already answered takes no second verdict: the daemon
+        // would refuse it, so the panel does not send one, and says what is
+        // happening instead of pointing at the session's window.
+        if let line = ask.decidedLine {
+            show(toast: line)
+            return
+        }
         if let line = askDesk.refusal(ask, verdict) {
             show(toast: line)
             return

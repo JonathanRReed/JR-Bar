@@ -1202,8 +1202,10 @@ struct AskRow: View {
 
     /// The card's verbs: a reply field, a held question's options, or
     /// Deny · Always Allow · Approve — each only where the daemon says
-    /// it can land — else the honest way to the session's own window.
-    /// A held ask's verbs sit beside a ring draining with its hold.
+    /// it can land — else the honest way to the session's own window. An
+    /// ask JR-Bar already answered says it is waiting for the agent and
+    /// draws no verb. A held ask's verbs sit beside a ring draining with
+    /// its hold.
     private func verbs(now: Date) -> some View {
         HStack(spacing: 6) {
             Spacer()
@@ -1212,7 +1214,18 @@ struct AskRow: View {
                     .help(AskHold.help(ask, at: now) ?? "")
                     .accessibilityLabel(AskHold.help(ask, at: now) ?? "")
             }
-            if let ask = row.ask, ask.wantsTextReply, ask.canAnswer, ask.session != nil, !row.isRemote {
+            if let ask = row.ask, ask.session != nil, !row.isRemote, let line = ask.decidedLine {
+                // Answered from JR-Bar, and the agent's own events have not
+                // closed the request: the approved tool may still be
+                // running. The daemon takes the verbs away
+                // (`answerable: false`); the words say what is going on
+                // instead of sending the person to the session's window,
+                // and this comes first so no verb is drawn for it whatever
+                // else the ask says.
+                Text(line)
+                    .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
+                    .help("JR-Bar sent the answer through \(row.style.name)'s own permission hook; the agent has not moved on yet")
+            } else if let ask = row.ask, ask.wantsTextReply, ask.canAnswer, ask.session != nil, !row.isRemote {
                 // A reply-kind ask wants words, not a verdict: a field
                 // and Send; `reply_text` rides the same answer_ask. A
                 // daemon that cannot take text for it says so, and the
@@ -1291,6 +1304,7 @@ struct AskRow: View {
 
     private var accessibilityHint: String {
         guard let ask = row.ask, !row.isRemote else { return "Answer it in the session's own window" }
+        if let line = ask.decidedLine { return line }
         if AskVerbs.chooses(ask) { return "Pick one of its options, or deny with ⌘D" }
         return ask.canAnswer ? "Approve with ⌘Return, deny with ⌘D" : "Answer it in the session's own window"
     }
