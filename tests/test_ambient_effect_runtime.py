@@ -74,7 +74,6 @@ def _controller_type():
             )
             self._notification_action_bindings = {}
             self._persistence_writer = _Writer()
-            self.virtual_status_device = object()
             self.observed_event_batches = []
 
         def current_dnd_projection(self):
@@ -432,6 +431,36 @@ def test_runtime_projects_canonical_events_through_the_shared_ambient_seam(
     assert controller._dot_binary_heartbeat_plan.selected_semantic.value == "ask"
     assert controller._rainstick_idle_plan.disposition.value == "suppress"
     assert callable(controller._plan_finite_ambient_effect)
+
+
+def test_the_ember_and_the_rainstick_plan_the_apps_screen_bar_as_visible(monkeypatch) -> None:
+    from jrbar.headless_screen_bar import HeadlessScreenBar
+
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
+    state, work_key, _request_key, watermark = _canonical_state(
+        lifecycle=WorkLifecycle.ACTIVE,
+    )
+    active = (_operator_event(work_key, TransitionKind.BECAME_ACTIVE, watermark),)
+
+    # The daemon's Screen Bar object is a stub and its status item is None.
+    # A missing object would be the same answer: the surface is the app's.
+    for device in (HeadlessScreenBar(), None):
+        ember = controller_type()
+        ember.status_item = None
+        ember.virtual_status_device = device
+        ember.observe_operator_history_events(active, state)
+        assert ember._turn_length_ember_plan.visible is True
+
+        rainstick = controller_type()
+        rainstick.status_item = None
+        rainstick.virtual_status_device = device
+        rainstick.settings = _cue_settings(rainstick_idle_enabled=True)
+        rainstick.observe_operator_history_events((), empty_operator_state())
+        plan = rainstick._rainstick_idle_plan
+        assert plan.disposition.value == "move"
+        assert "surface_hidden" not in {reason.value for reason in plan.suppression_reasons}
 
 
 def test_turn_length_ember_does_not_mask_multiple_active_works(monkeypatch) -> None:
