@@ -126,6 +126,96 @@ struct DockAXReadCadence {
     }
 }
 
+// MARK: - A tile's app
+
+/// A running app as a hover reads it: the facts a card shows, copied off
+/// the `NSRunningApplication` so a test can stand one in without an app.
+struct DockTileApp {
+    var pid: pid_t
+    var name: String?
+    var bundleID: String?
+    var bundleURL: URL?
+    var icon: NSImage?
+    var isTerminated: Bool
+}
+
+extension DockTileApp {
+    @MainActor
+    init(_ app: NSRunningApplication) {
+        self.init(pid: app.processIdentifier, name: app.localizedName, bundleID: app.bundleIdentifier,
+                  bundleURL: app.bundleURL, icon: app.icon, isTerminated: app.isTerminated)
+    }
+}
+
+/// How a hover finds the running app behind a tile or a pid. Never an AX
+/// read — both are workspace lookups, which is why they stay on main.
+struct DockTileApps {
+    /// The app a tile stands for: by bundle id, else by the tile's title
+    /// among the regular apps.
+    var forTile: @MainActor (DockAXItem, String?) -> DockTileApp? = { item, bundleID in
+        let running = bundleID.flatMap {
+            NSRunningApplication.runningApplications(withBundleIdentifier: $0).first
+        } ?? NSWorkspace.shared.runningApplications.first {
+            $0.localizedName == item.title && $0.activationPolicy == .regular
+        }
+        return running.map { DockTileApp($0) }
+    }
+    /// A regular app by pid: the owner a minimized-window tile resolved to.
+    var forPID: @MainActor (pid_t) -> DockTileApp? = { pid in
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              app.activationPolicy == .regular else { return nil }
+        return DockTileApp(app)
+    }
+}
+
+/// What a Dock tile resolved to on main before any Accessibility read.
+private struct PreviewTile {
+    var bundleID: String?
+    /// The app is on the never-preview list.
+    var excluded = false
+    var app: DockTileApp?
+}
+
+/// What a tile needs read off main before its card can land.
+private enum PreviewPlan {
+    /// Nothing: a folder, an excluded or not-running app, a tile with no
+    /// title to find an owner by.
+    case none
+    /// An app tile: that pid's window list.
+    case windows(pid_t)
+    /// A minimized-window tile: the owner of the window with this title,
+    /// among these off-screen rows, and its window list.
+    case minimized(title: String, rows: [SwitcherWindowRow])
+}
+
+/// What the read brought back, as the fill takes it.
+private enum PreviewAnswer {
+    case none
+    case windows(DockPreviewRead)
+    case minimized(DockMinimizedRead, rows: [SwitcherWindowRow])
+
+    /// An app tile's cards: what it answered with, none for an app that
+    /// did not answer or is resting.
+    var windows: [DockPreviewWindow] {
+        guard case .windows(let read) = self else { return [] }
+        return read.answered ?? []
+    }
+}
+
+/// A show waiting on its read. Everything the landing needs stays here on
+/// main; only a pid and a stamp go to the lane.
+private struct PreviewLanding {
+    let item: DockAXItem
+    let tile: PreviewTile
+    /// The generation the show took. The landing is dropped unless it is
+    /// still the latest: a retarget or a hide in between bumps it.
+    let generation: Int
+    /// ⌥`: the walk starts on the app's next window once the list lands.
+    let keyboardOpened: Bool
+    /// A minimized tile's off-screen rows, which the owner check ran against.
+    var rows: [SwitcherWindowRow] = []
+}
+
 // MARK: - Controller
 
 /// Enhance mode: Apple's Dock stays; we watch the pointer over it
@@ -307,6 +397,30 @@ final class DockEnhanceController {
     /// on its tile, so the rest-and-grace rules don't close it — Esc,
     /// Return, a click away or resting on another tile do.
     @ObservationIgnored private var keyboardPinned = false
+
+    // MARK: Seams
+
+    /// The preview's Accessibility calls and the lane they run on. A hover
+    /// reaches AX no other way: every read and every card verb runs on the
+    /// preview lane, never on main. Tests replace it.
+    @ObservationIgnored var ax = DockPreviewAX()
+    /// System uptime — the clock the hung-app backoff rests by, the
+    /// switcher's own. Tests pass a fake.
+    @ObservationIgnored var uptime: @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    /// How a tile or a pid finds its running app. Tests pass fakes.
+    @ObservationIgnored var apps = DockTileApps()
+    /// The panel's show — placement, watchers, the live observer and the
+    /// side reads — once the cards have landed. nil runs `presentLanded`;
+    /// a test records the call instead, so nothing orders a window front.
+    @ObservationIgnored var presenter: (@MainActor (DockAXItem, Int) -> Void)?
+    /// A preview has landed and its panel is up: from a show's landing to
+    /// the next hide.
+    @ObservationIgnored private(set) var previewUp = false
+    /// The show whose window read is out on the preview lane. Nothing of
+    /// its tile is on the panel until that lands, and an older panel stays
+    /// as it was — `anchorPanel` holds still — so a retarget swaps the
+    /// cards in one step.
+    @ObservationIgnored private var pendingShow: PreviewLanding?
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -764,7 +878,7 @@ final class DockEnhanceController {
         case .hide:
             hidePreview()
         case .none:
-            if let hovered, hovered.hoverID == tracker.shown { anchorPanel(to: hovered) }
+            if let hovered, hovered.hoverID == tracker.shown, pendingShow == nil { anchorPanel(to: hovered) }
         }
     }
 
@@ -906,19 +1020,123 @@ final class DockEnhanceController {
 
     // MARK: Show / hide
 
-    private func showPreview(for item: DockAXItem) {
+    /// A tile earned a preview. The half that runs now is cheap and never
+    /// touches Accessibility: it bumps the generation, resolves the tile to
+    /// its app and asks the preview lane for the app's windows. The cards,
+    /// the panel and everything after them land in `land` once the list
+    /// comes back (`windowsRead`), or at once where there is nothing to
+    /// read. A hung app is asked for nothing while the backoff rests it.
+    /// `keyboardOpened` is ⌥`: no pointer rests on the tile, and the walk
+    /// starts on the app's next window when the list lands.
+    func showPreview(for item: DockAXItem, keyboardOpened: Bool = false) {
         generation += 1
         // A preview is at stake from here: the tick keeps its beat even
         // if the pointer never moves again.
         defer { wakeTick() }
-        liveStill.stop()
         let generationAtShow = generation
+        pendingShow = nil
+        if keyboardOpened { keyboardPinned = true }
+        let tile = resolveTile(for: item)
+        var landing = PreviewLanding(item: item, tile: tile, generation: generationAtShow,
+                                     keyboardOpened: keyboardOpened)
+        switch plan(for: item, tile: tile) {
+        case .none:
+            land(landing, answer: .none)
+        case .windows(let pid):
+            guard !switcher.axSkips(pid, now: uptime()) else {
+                land(landing, answer: .windows(.skipped))
+                return
+            }
+            pendingShow = landing
+            let read = ax.read
+            let stamp = AppleDockReader.nextStamp()
+            ax.lane.run({ read(pid, stamp) }, then: { [weak self] reading in
+                self?.windowsRead(reading, pid: pid, generation: generationAtShow)
+            })
+        case .minimized(let title, let rows):
+            let now = uptime()
+            let resting = Set(rows.map(\.pid).filter { self.switcher.axSkips($0, now: now) })
+            landing.rows = rows
+            pendingShow = landing
+            let read = ax.read
+            let stamp = AppleDockReader.nextStamp()
+            ax.lane.run({
+                DockMinimizedRead.read(title: title, rows: rows, resting: resting) { read($0, stamp) }
+            }, then: { [weak self] found in
+                self?.ownerRead(found, generation: generationAtShow)
+            })
+        }
+    }
+
+    /// A tile's app and whether it is excluded: workspace and bundle
+    /// lookups, no Accessibility.
+    private func resolveTile(for item: DockAXItem) -> PreviewTile {
+        guard item.kind == .app else { return PreviewTile() }
+        let bundleID = item.url.flatMap { Bundle(url: $0)?.bundleIdentifier }
+        if let bundleID, preferences.excludedBundleIDs.contains(bundleID) {
+            return PreviewTile(bundleID: bundleID, excluded: true)
+        }
+        return PreviewTile(bundleID: bundleID, app: apps.forTile(item, bundleID))
+    }
+
+    /// What the tile needs read before it can land. Only a running app that
+    /// is not excluded has windows to list, and only a titled
+    /// minimized-window tile has an owner to find.
+    private func plan(for item: DockAXItem, tile: PreviewTile) -> PreviewPlan {
+        switch item.kind {
+        case .folder:
+            return .none
+        case .minimizedWindow:
+            guard let title = item.title, !title.isEmpty else { return .none }
+            return .minimized(title: title, rows: DockSwitcherList.offScreenRows())
+        case .app:
+            guard !tile.excluded, let app = tile.app else { return .none }
+            return .windows(app.pid)
+        }
+    }
+
+    /// An app's window list came back from the preview lane. The wait the
+    /// lane paid is noted whether or not this show is still wanted; the
+    /// cards land only if it is.
+    private func windowsRead(_ reading: DockPreviewAX.Reading, pid: pid_t, generation g: Int) {
+        noteAX(pid, unresponsive: reading.unresponsive)
+        guard let landing = pendingShow, landing.generation == g, generation == g else { return }
+        pendingShow = nil
+        land(landing, answer: .windows(DockPreviewRead(reading)))
+    }
+
+    /// A minimized tile's owner check came back from the preview lane.
+    private func ownerRead(_ found: DockMinimizedRead, generation g: Int) {
+        for pid in found.answered { noteAX(pid, unresponsive: false) }
+        for pid in found.unresponsive { noteAX(pid, unresponsive: true) }
+        guard let landing = pendingShow, landing.generation == g, generation == g else { return }
+        pendingShow = nil
+        land(landing, answer: .minimized(found, rows: landing.rows))
+    }
+
+    /// Note whether `pid` answered AX in the backoff both surfaces share,
+    /// and say so once when it did not.
+    private func noteAX(_ pid: pid_t, unresponsive: Bool) {
+        switcher.noteAX(pid, unresponsive: unresponsive, now: uptime())
+        if unresponsive {
+            Self.log.notice("preview: pid \(pid, privacy: .public) didn't answer AX — skipped for \(DockAXBackoff.backoff, privacy: .public) s")
+        }
+    }
+
+    /// The show's second half, on main, once the cards are known: fill the
+    /// content, decide whether there is a panel at all, and present it. A
+    /// show that was superseded or hidden while its read was out lands
+    /// nothing.
+    private func land(_ landing: PreviewLanding, answer: PreviewAnswer) {
+        guard generation == landing.generation else { return }
+        let item = landing.item
+        liveStill.stop()
         if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
         mediaToken = nil
         preview.largeCards = preferences.largePreviews
         preview.metrics = preferences.metrics
         preview.hugWindows = preferences.cardsHugWindows
-        fill(preview, for: item)
+        fill(preview, for: item, tile: landing.tile, answer: answer)
 
         // Nothing to preview — no windows to raise — is no panel. A
         // running app with no windows earned a header-only chip on
@@ -937,7 +1155,22 @@ final class DockEnhanceController {
         }
         preview.compact = DockEnhanceMath.compactList(
             windowCount: preview.windows.count, limit: preferences.compactListLimit)
+        if let presenter {
+            presenter(item, landing.generation)
+        } else {
+            presentLanded(item, generationAtShow: landing.generation)
+        }
+        previewUp = true
+        // ⌥`: the walk starts on the list that has landed.
+        guard landing.keyboardOpened, keyboardPinned else { return }
+        preview.selectedWindowID = DockEnhanceMath.frontWalkStart(preview.windows)
+        mirrorPreviewChars()
+    }
 
+    /// The panel's show for cards that have landed: place it, start the
+    /// watchers and the live list, and begin the side reads (folder,
+    /// media, calendar, thumbnails).
+    private func presentLanded(_ item: DockAXItem, generationAtShow: Int) {
         // Hold an auto-hiding Dock out for the life of the panel —
         // without it the Dock slides away the moment the pointer steps
         // from an icon onto the cards.
@@ -1057,8 +1290,12 @@ final class DockEnhanceController {
         }
     }
 
-    private func hidePreview() {
+    func hidePreview() {
         generation += 1
+        // A show still waiting on its list is dropped with the rest; its
+        // answer finds the generation moved on.
+        pendingShow = nil
+        previewUp = false
         keyboardPinned = false
         liveStill.stop()
         anchor = nil
@@ -1329,7 +1566,8 @@ final class DockEnhanceController {
     /// What a hovered tile resolves to: a running app via the tile's
     /// `AXURL`/bundle id or a title match, else a bare "open me" card.
     /// A folder tile skips all of it and pops the directory's entries.
-    private func fill(_ content: DockPreviewContent, for item: DockAXItem) {
+    private func fill(_ content: DockPreviewContent, for item: DockAXItem,
+                      tile: PreviewTile, answer: PreviewAnswer) {
         defer { applyAgents(to: content) }
         let appURL = item.url
         content.folderURL = nil
@@ -1365,13 +1603,12 @@ final class DockEnhanceController {
             return
         }
         if item.kind == .minimizedWindow {
-            fillMinimizedWindow(content, for: item)
+            fillMinimizedWindow(content, for: item, answer: answer)
             return
         }
-        let bundleID = appURL.flatMap { Bundle(url: $0)?.bundleIdentifier }
         // An excluded app rests and earns nothing — DockDoor's app
         // filter. The tile reads as shown so the tick never retries.
-        if let bundleID, preferences.excludedBundleIDs.contains(bundleID) {
+        if tile.excluded {
             content.appName = item.title
                 ?? appURL?.deletingPathExtension().lastPathComponent ?? "Dock item"
             content.icon = nil
@@ -1382,31 +1619,23 @@ final class DockEnhanceController {
             content.windows = []
             return
         }
-        let running = bundleID.flatMap {
-            NSRunningApplication.runningApplications(withBundleIdentifier: $0).first
-        } ?? NSWorkspace.shared.runningApplications.first {
-            $0.localizedName == item.title && $0.activationPolicy == .regular
-        }
-        content.appName = running?.localizedName ?? item.title
+        let running = tile.app
+        content.appName = running?.name ?? item.title
             ?? appURL?.deletingPathExtension().lastPathComponent ?? "Dock item"
-        content.bundleID = running?.bundleIdentifier ?? bundleID
+        content.bundleID = running?.bundleID ?? tile.bundleID
         content.appURL = running?.bundleURL ?? appURL
-        content.processIdentifier = running?.processIdentifier
+        content.processIdentifier = running?.pid
         content.isRunning = running != nil && !(running?.isTerminated ?? true)
         content.icon = running?.icon
             ?? appURL.map { DockIconResolver.icon(appURL: $0, pointSize: 64, scale: 2) }
-        content.windows = running.map { listWindows(pid: $0.processIdentifier) } ?? []
+        content.windows = narrowToDisplay(answer.windows)
         content.selectedWindowID = nil
     }
 
-    /// One app's cards: its AX windows, narrowed to the Dock's display
-    /// when the card asks — DockDoor's per-monitor filter; the Dock is
-    /// on the pointer's screen, and so are the windows worth previewing
-    /// from it.
-    private func listWindows(pid: pid_t) -> [DockPreviewWindow] {
-        narrowToDisplay(answeredWindows(pid: pid))
-    }
-
+    /// An app's cards narrowed to the Dock's display when the card asks —
+    /// DockDoor's per-monitor filter; the Dock is on the pointer's screen,
+    /// and so are the windows worth previewing from it. Runs on main, on
+    /// the list the lane brought back.
     private func narrowToDisplay(_ windows: [DockPreviewWindow]) -> [DockPreviewWindow] {
         guard preferences.previewThisDisplay, let display = DockDisplays.pointerDisplayQuartz() else { return windows }
         return DockEnhanceMath.onDisplay(windows, display: display)
@@ -1470,7 +1699,8 @@ final class DockEnhanceController {
     /// that window: the AX row when it matches (the card's verbs then
     /// act on the real window), else the tile itself — its `AXPress`
     /// IS the system's restore.
-    private func fillMinimizedWindow(_ content: DockPreviewContent, for item: DockAXItem) {
+    private func fillMinimizedWindow(_ content: DockPreviewContent, for item: DockAXItem,
+                                     answer: PreviewAnswer) {
         let title = item.title ?? "Window"
         content.appName = title
         content.bundleID = nil
@@ -1487,32 +1717,30 @@ final class DockEnhanceController {
             content.windows = [card]
             return
         }
-        let offRows = DockSwitcherList.offScreenRows()
-        guard let pid = DockSwitcherList.minimizedOwnerPID(
-            title: itemTitle, rows: offRows, axWindows: { self.answeredWindows(pid: $0) }),
-              let app = NSRunningApplication(processIdentifier: pid),
-              app.activationPolicy == .regular else {
+        // The owner and its window list were found on the preview lane
+        // (`DockMinimizedRead`); what is left here is the match.
+        guard case .minimized(let found, let offRows) = answer,
+              let pid = found.owner, let app = apps.forPID(pid) else {
             content.windows = [card]
             return
         }
-        if let bundleID = app.bundleIdentifier,
+        if let bundleID = app.bundleID,
            preferences.excludedBundleIDs.contains(bundleID) {
             // An excluded app rests and earns nothing — same rule the
             // app tiles follow.
             content.windows = []
             return
         }
-        content.appName = app.localizedName ?? title
-        content.bundleID = app.bundleIdentifier
+        content.appName = app.name ?? title
+        content.bundleID = app.bundleID
         content.appURL = app.bundleURL
         content.processIdentifier = pid
         content.isRunning = true
         content.icon = app.icon
         let rows = offRows.filter { $0.pid == pid && $0.title == itemTitle }
-        let axWindows = answeredWindows(pid: pid)
         // A same-titled window parked on another Space shares the
         // off-screen list; only a minimized one can be this tile.
-        let matched = rows.compactMap { DockSwitcherList.match(row: $0, in: axWindows) }
+        let matched = rows.compactMap { DockSwitcherList.match(row: $0, in: found.windows) }
         let minimizedHits = matched.filter(\.minimized)
         let hits = minimizedHits.isEmpty ? matched : minimizedHits
         if hits.count == 1 {
@@ -1569,11 +1797,9 @@ final class DockEnhanceController {
         }
         tracker.reset()
         tracker.summon(item.hoverID, now: now)
-        keyboardPinned = true
-        showPreview(for: item)
-        guard keyboardPinned else { return }  // nothing to preview
-        preview.selectedWindowID = DockEnhanceMath.frontWalkStart(preview.windows)
-        mirrorPreviewChars()
+        // The walk starts once the app's list lands; a tile with nothing
+        // to preview lands no walk.
+        showPreview(for: item, keyboardOpened: true)
     }
 
     /// A key the switcher's tap ate for the floating preview — Esc
