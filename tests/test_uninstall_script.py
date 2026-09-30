@@ -179,7 +179,6 @@ class _RealFlow:
     helper_log: Path
     command_log: Path
     app: Path
-    home: Path
     fixed_paths: dict[str, Path]
     fixed_directories: dict[str, Path]
 
@@ -331,7 +330,6 @@ exit 0
         helper_log=helper_log,
         command_log=command_log,
         app=app,
-        home=home,
         fixed_paths=fixed_paths,
         fixed_directories=fixed_directories,
     )
@@ -429,7 +427,7 @@ def test_every_failed_hook_step_is_named(tmp_path: Path) -> None:
     assert "sdejectguard" not in flow.result.stderr
 
 
-def test_a_dry_run_reads_the_same_when_hook_steps_would_fail(tmp_path: Path) -> None:
+def test_a_dry_run_is_not_stopped_by_the_hook_guard(tmp_path: Path) -> None:
     """The guard changes nothing in a dry run: every step is still printed
     and the exit is 0, because a dry run runs no helper."""
     home = tmp_path / "home"
