@@ -80,6 +80,68 @@ struct AgentAlertRulesTests {
         #expect(quiet.statusPulse == false)
     }
 
+    static let takeoverDelivery = EventDelivery(statusPulse: true, chime: .start, takeover: true)
+    static let stage3 = CoreEvent(id: "s", kind: "escalation_stage", stage: 3)
+
+    @Test("a capped ceiling never takes the notch over")
+    func cappedCeilingNeverTakesOver() {
+        let one = AgentAlertRules.apply(Self.takeoverDelivery, to: Self.stage3, state: Self.state,
+                                        rules: ["grok": AgentAlertRule(escalationCeiling: 1)])
+        #expect(!one.takeover)
+        #expect(one.chime == .stop)
+        #expect(one.statusPulse == false)
+        let two = AgentAlertRules.apply(Self.takeoverDelivery, to: Self.stage3, state: Self.state,
+                                        rules: ["grok": AgentAlertRule(escalationCeiling: 2)])
+        #expect(!two.takeover)
+        #expect(two.chime == .stop)
+        #expect(two.statusPulse == true)
+    }
+
+    @Test("a ceiling of 3 keeps the finale Settings armed")
+    func ceilingThreeKeepsTakeover() {
+        let three = AgentAlertRules.apply(Self.takeoverDelivery, to: Self.stage3, state: Self.state,
+                                          rules: ["grok": AgentAlertRule(escalationCeiling: 3)])
+        #expect(three.takeover)
+        #expect(three.chime == .start)
+        #expect(three.statusPulse == true)
+    }
+
+    @Test("asks off never takes the notch over")
+    func quietAsksNeverTakeOver() {
+        let quiet = AgentAlertRules.apply(Self.takeoverDelivery, to: Self.stage3, state: Self.state,
+                                          rules: ["grok": AgentAlertRule(asks: false)])
+        #expect(!quiet.takeover)
+        #expect(quiet.chime == .stop)
+        #expect(quiet.statusPulse == false)
+    }
+
+    @Test("sounds off keeps the picture: takeover is not a sound")
+    func quietSoundsKeepTakeover() {
+        let quiet = AgentAlertRules.apply(Self.takeoverDelivery, to: Self.stage3, state: Self.state,
+                                          rules: ["grok": AgentAlertRule(sounds: false)])
+        #expect(quiet.takeover)
+        #expect(quiet.chime == .stop)
+        #expect(quiet.statusPulse == true)
+    }
+
+    @Test("another provider's takeover is untouched")
+    func otherProviderKeepsTakeover() {
+        let codexStage = CoreEvent(id: "s", kind: "escalation_stage", session: "codex:2", stage: 3)
+        let out = AgentAlertRules.apply(Self.takeoverDelivery, to: codexStage, state: Self.state,
+                                        rules: ["grok": AgentAlertRule(asks: false)])
+        #expect(out == Self.takeoverDelivery)
+    }
+
+    @Test("with no stage on the event the current stage decides the takeover")
+    func currentStageDecidesTakeover() {
+        let bare = CoreEvent(id: "s", kind: "escalation_stage")
+        let rules = ["grok": AgentAlertRule(escalationCeiling: 3)]
+        let below = AgentAlertRules.apply(Self.takeoverDelivery, to: bare, state: Self.state, rules: rules, currentStage: 2)
+        #expect(!below.takeover)
+        let at = AgentAlertRules.apply(Self.takeoverDelivery, to: bare, state: Self.state, rules: rules, currentStage: 3)
+        #expect(at.takeover)
+    }
+
     @Test("the ceiling starts at the light: a saved 'nothing' reads as the light it always was")
     func ceilingFloor() throws {
         #expect(AgentAlertRule(escalationCeiling: 0).escalationCeiling == 1)
@@ -93,6 +155,49 @@ struct AgentAlertRulesTests {
         let toast = EventDelivery(toast: "SidePulse connected")
         #expect(AgentAlertRules.apply(toast, to: CoreEvent(id: "d", kind: "device_connected", provider: "grok"),
                                       state: Self.state, rules: ["grok": AgentAlertRule(sounds: false)]) == toast)
+    }
+
+    static let mutedState = CoreState(
+        generation: 1,
+        aggregate: CoreAggregate(),
+        sessions: [CoreSession(id: "codex:2", provider: "codex", label: "core", mode: "working")],
+        focus: CoreFocus(mode: "mute", bannerAllowed: false, audibleAllowed: false))
+
+    @Test("a rule that always banners finishes cannot widen past quiet")
+    func rulesStayInsideQuiet() {
+        let event = CoreEvent(id: "c", kind: "completed", session: "codex:2", provider: "codex")
+        let rules = ["codex": AgentAlertRule(completions: true)]
+        let open = AgentAlertRules.apply(EventDelivery(sound: "Glass"), to: event, state: Self.state, rules: rules)
+        #expect(open.notification?.title == "core finished", "the control: without quiet the rule banners")
+        let muted = AgentAlertRules.apply(EventDelivery(sound: "Glass"), to: event, state: Self.mutedState, rules: rules)
+        #expect(muted.notification == nil)
+        #expect(muted.sound == nil)
+        // A pass through the policy first, as the coordinator does it.
+        let decided = EventPolicy.delivery(for: event, state: Self.mutedState, settings: nil)
+        let ruled = AgentAlertRules.apply(decided, to: event, state: Self.mutedState, rules: rules)
+        #expect(ruled.notification == nil)
+    }
+
+    @Test("a notify-when-done watch is the one banner quiet does not hold, and it adds no sound")
+    func watchBeatsQuiet() {
+        let event = CoreEvent(id: "c", kind: "completed", session: "codex:2", provider: "codex")
+        let rules = ["codex": AgentAlertRule(completions: true)]
+        let ruled = AgentAlertRules.apply(EventDelivery(sound: "Glass"), to: event, state: Self.mutedState, rules: rules)
+        let watched = AgentAlertRules.notifyWhenDone(ruled, event: event, state: Self.mutedState)
+        #expect(watched.notification?.title == "core finished")
+        #expect(watched.sound == nil)
+    }
+
+    @Test("a rule's escalation still lets quiet stop the chime it would have started")
+    func rulesKeepQuietChime() {
+        let loud = EventDelivery(statusPulse: true, chime: .start)
+        let codexStage = CoreEvent(id: "s", kind: "escalation_stage", session: "codex:2", stage: 3)
+        let out = AgentAlertRules.apply(loud, to: codexStage, state: Self.mutedState,
+                                        rules: ["codex": AgentAlertRule(escalationCeiling: 3)])
+        // Nothing in the rule starts a chime, so the delivery's own
+        // chime is all that is in play; quiet stops it.
+        #expect(out.chime == .stop)
+        #expect(out.statusPulse == true)
     }
 
     @Test("a notify-when-done watch banners the ending, whatever the switches decided")

@@ -88,6 +88,51 @@ public enum EventPolicy {
     /// the kind's own default so a typo in the daemon never silences an ask.
     public static let knownSounds: Set<String> = ["basso", "blow", "bottle", "frog", "funk", "glass", "hero", "morse", "ping", "pop", "purr", "sosumi", "submarine", "tink"]
 
+    /// Quiet modes the app holds sounds for by their word: what a daemon
+    /// that sends no effect axes still says, and the modes the app has
+    /// always kept silent (dim, pause) although the daemon's axes leave
+    /// their sounds allowed.
+    static let soundHoldingModes: Set<String> = ["mute", "dim", "dark", "pause"]
+    /// The modes whose banners are held by their word, when the daemon
+    /// sends no `banner_allowed`.
+    static let bannerHoldingModes: Set<String> = ["mute", "dark"]
+
+    /// Whether the focus holds every sound right now: the daemon's
+    /// `audible_allowed` says so (a call's quiet takes only the sounds and
+    /// leaves the mode at `off`), or the mode is one the app keeps silent.
+    public static func soundsHeld(by focus: CoreFocus?) -> Bool {
+        guard let focus else { return false }
+        if focus.audibleAllowed == false { return true }
+        return soundHoldingModes.contains((focus.mode ?? "").lowercased())
+    }
+
+    /// Whether the focus holds banners: the daemon's `banner_allowed` when
+    /// it sends one, else the mode word. The axis leads because the mode is
+    /// only the first contribution's (a schedule's Dim under a Mute Focus
+    /// reads "dim" with banners off).
+    public static func bannersHeld(by focus: CoreFocus?) -> Bool {
+        guard let focus else { return false }
+        if let allowed = focus.bannerAllowed { return !allowed }
+        return bannerHoldingModes.contains((focus.mode ?? "").lowercased())
+    }
+
+    /// `delivery` with quiet's hold applied: sounds cleared (and a starting
+    /// chime turned into a stop) while the focus holds sounds, the banner
+    /// cleared while it holds banners. It never touches a withdrawal, the
+    /// status pulse, a stop, the takeover or a toast: the light and the
+    /// panel keep telling the truth, and a banner taken back stays taken
+    /// back. Pure, so it runs both where the policy decides and again after
+    /// a provider rule may have widened the delivery.
+    public static func holdingQuiet(_ delivery: EventDelivery, focus: CoreFocus?) -> EventDelivery {
+        var out = delivery
+        if soundsHeld(by: focus) {
+            out.sound = nil
+            if out.chime == .start { out.chime = .stop }
+        }
+        if bannersHeld(by: focus) { out.notification = nil }
+        return out
+    }
+
     /// `askingFrontmost` is the Agent utility's smart suppression: the
     /// ask's own terminal pane is already in front, so the user can see
     /// it — the banner still lands for the record but the sound burst,
@@ -96,9 +141,15 @@ public enum EventPolicy {
     /// every rung fires as before.
     public static func delivery(for event: CoreEvent, state: CoreState?, settings: SettingsDocument?,
                                 askingFrontmost: Bool = false) -> EventDelivery {
-        let focus = (state?.focus?.mode ?? "normal").lowercased()
-        let soundsSuppressed = ["dim", "dark", "pause"].contains(focus)
-        let chimeSuppressed = focus == "pause"
+        let decided = decision(for: event, state: state, settings: settings, askingFrontmost: askingFrontmost)
+        return holdingQuiet(decided, focus: state?.focus)
+    }
+
+    private static func decision(for event: CoreEvent, state: CoreState?, settings: SettingsDocument?,
+                                 askingFrontmost: Bool) -> EventDelivery {
+        let focusMode = (state?.focus?.mode ?? "normal").lowercased()
+        let soundsSuppressed = soundsHeld(by: state?.focus)
+        let chimeSuppressed = focusMode == "pause"
         let notify = event.notify ?? true
         let tierCeiling = escalationCeiling(settings?.string("escalation_tier"))
         let session = event.session.flatMap { state?.session(withID: $0) }
@@ -106,8 +157,10 @@ public enum EventPolicy {
         let providerName = provider.map(LightExplainer.providerName) ?? "An agent"
         let label = event.label.flatMap { $0.isEmpty ? nil : $0 } ?? session?.shortLabel ?? providerName
 
+        // Quiet's hold on sounds and banners is `holdingQuiet`, applied on
+        // the way out; only the chime needs to know about it here.
         func sound(_ fallback: String) -> String? {
-            guard notify, !soundsSuppressed else { return nil }
+            guard notify else { return nil }
             if let named = event.sound?.lowercased(), knownSounds.contains(named) { return named.prefix(1).uppercased() + named.dropFirst() }
             return fallback
         }

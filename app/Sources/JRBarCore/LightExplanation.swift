@@ -102,7 +102,7 @@ public enum LightExplainer {
         let context = Context(state: state, settings: settings, surface: surface, now: now)
         let (motion, reason, session) = line(kind: kind, raw: rawWhy, context: context)
         return LightExplanation(why: why, kind: kind, motion: motion, reason: reason, session: session,
-                                details: details(lights: lights, context: context))
+                                details: details(lights: lights, context: context, kind: kind))
     }
 
     public static func normalise(_ why: String) -> String {
@@ -306,7 +306,7 @@ public enum LightExplainer {
 
     // MARK: Details
 
-    static func details(lights: CoreLights, context: Context) -> [LightExplanation.Detail] {
+    static func details(lights: CoreLights, context: Context, kind: LightWhy) -> [LightExplanation.Detail] {
         var result: [LightExplanation.Detail] = []
         for (key, label) in [("hardware", "Hardware"), ("screen_bar", "Screen Bar"), ("dot", "Dot")] {
             guard let surface = lights.surfaces[key] else { continue }
@@ -338,7 +338,9 @@ public enum LightExplainer {
             result.append(.init(label: "Pro + Dot link", value: "written as one unit"))
         }
         if let detail = context.detail {
-            if let seconds = detail.secondsInState, let text = elapsed(seconds: seconds) { result.append(.init(label: "In this state", value: text)) }
+            if let seconds = context.secondsInState(kind: kind), let text = elapsed(seconds: seconds) {
+                result.append(.init(label: "In this state", value: text))
+            }
             if !detail.dimming.isEmpty {
                 let factor = detail.brightnessFactor.map { " · \(percent($0))" } ?? ""
                 result.append(.init(label: "Dimming", value: detail.dimming.map { dimmingWord($0, lights: lights) }.joined(separator: ", ") + factor))
@@ -439,6 +441,31 @@ extension LightExplainer.Context {
     }
 
     var mains: [CoreSession] { state?.mainSessions ?? [] }
+
+    /// How long the light has been in this state, counted on the app's
+    /// clock. The daemon's `seconds_in_state` is as of the frame's build,
+    /// and a frame that differs only in it is never sent, so a light that
+    /// holds steady would keep printing an old number. The moments it was
+    /// counted from are in the state document, which does refresh: the
+    /// ask's opening for a waiting or escalating light, else the session's
+    /// `since`, the way the daemon picks them. With no session to count
+    /// from, or a moment that makes no sensible duration, the daemon's own
+    /// number stands.
+    func secondsInState(kind: LightWhy) -> Double? {
+        let frozen = detail?.secondsInState
+        guard let id = detail?.session, let session = state?.session(withID: id),
+              let anchor = stateAnchor(of: session, kind: kind) else { return frozen }
+        let aged = now.timeIntervalSince1970 - anchor
+        return LightExplainer.elapsed(seconds: aged) == nil ? frozen : aged
+    }
+
+    /// The moment the session's state began: its ask's opening while a
+    /// light waits on it, else the session's own `since`.
+    private func stateAnchor(of session: CoreSession, kind: LightWhy) -> Double? {
+        guard kind == .waiting || kind == .escalation else { return session.since }
+        let pinned = state?.asks.filter { $0.session == session.id }.compactMap(\.openedAt).min()
+        return session.ask?.openedAt ?? pinned ?? session.since
+    }
 
     func who(_ session: CoreSession) -> Subject {
         Subject(name: "\(session.providerName) \(session.displayLabel)", id: session.id)

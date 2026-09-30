@@ -215,6 +215,80 @@ struct CodecTests {
         #expect(lights.hardware == nil)
     }
 
+    @Test("strings named like non-finite numbers stay strings")
+    func nonFiniteWordsStayStrings() throws {
+        let frame = #"{"t":"reply","v":1,"id":"c-9","ok":true,"result":{"a":"nan","b":"inf","c":"-inf","d":3,"e":2.5,"f":"12","g":true,"h":null}}"#
+        guard case .reply(let reply) = try CoreCodec.decode(frame: Data(frame.utf8)) else {
+            Issue.record("not a reply"); return
+        }
+        let result = try #require(reply.result)
+        #expect(result["a"] == .string("nan"))
+        #expect(result["b"] == .string("inf"))
+        #expect(result["c"] == .string("-inf"))
+        #expect(result["d"] == .number(3))
+        #expect(result["e"] == .number(2.5))
+        #expect(result["f"] == .string("12"), "a numeric-looking string stays a string")
+        #expect(result["g"] == .bool(true))
+        #expect(result["h"] == .null)
+    }
+
+    @Test("rows named nan, inf and -inf survive a state frame")
+    func rowsNamedLikeNumbersSurvive() throws {
+        let frame = """
+            {"t":"state","v":1,"generation":9,"now":1788982892.0,
+             "sessions":[
+               {"id":"claude:session:nan-1","provider":"claude","kind":"main","label":"nan"},
+               {"id":"codex:session:inf-1","provider":"codex","kind":"main","label":"inf"},
+               {"id":"grok:session:neg-1","provider":"grok","kind":"main","label":"-inf"},
+               42],
+             "asks":[{"session":"claude:session:nan-1","summary":"inf"},
+                     {"session":"codex:session:inf-1","summary":"-inf","preview":"nan"},
+                     42]}
+            """
+        guard case .state(let state) = try CoreCodec.decode(frame: Data(frame.utf8)) else {
+            Issue.record("not a state"); return
+        }
+        #expect(state.sessions.map(\.label) == ["nan", "inf", "-inf"], "every named row is kept, the malformed one is not")
+        #expect(state.sessions.map(\.id) == ["claude:session:nan-1", "codex:session:inf-1", "grok:session:neg-1"])
+        #expect(state.asks.map(\.summary) == ["inf", "-inf"])
+        #expect(state.asks.last?.preview == "nan")
+    }
+
+    @Test("history and event rows with those words decode")
+    func historyAndEventRowsDecode() throws {
+        let rowText = #"{"at":1788982000,"kind":"asked","label":"nan","detail":"inf"}"#
+        let row = try JSONDecoder().decode(JSONValue.self, from: Data(rowText.utf8))
+        let history = try ReplyDecoding.decode(CoreHistoryRow.self, from: row)
+        #expect(history.label == "nan")
+        #expect(history.detail == "inf")
+
+        // `replayEvents` and `deliverReplayedEvents` take the same round
+        // trip, through the codec's own decoder.
+        let eventFrame = #"{"t":"event","v":1,"id":"ev-1","kind":"ask_opened","label":"-inf","detail":"nan"}"#
+        guard case .event(let event) = try CoreCodec.decode(frame: Data(eventFrame.utf8)) else {
+            Issue.record("not an event"); return
+        }
+        #expect(event.label == "-inf")
+        #expect(event.detail == "nan")
+        let replayed = try CoreCodec.decode(frame: Data(#"{"t":"reply","v":1,"id":"c-1","ok":true,"result":{"events":[{"id":"ev-2","kind":"failed","detail":"-inf"}]}}"#.utf8))
+        guard case .reply(let reply) = replayed, let payload = reply.result?["events"]?.arrayValue?.first else {
+            Issue.record("no replayed event"); return
+        }
+        let roundTripped = try ReplyDecoding.decode(CoreEvent.self, from: payload)
+        #expect(roundTripped.detail == "-inf")
+    }
+
+    @Test("outbound non-finite numbers still refuse")
+    func outboundNonFiniteRefused() {
+        // A command argument is the one place a non-finite number could
+        // leave the app. It fails loudly at send instead of going out as a
+        // null a daemon might read as "reset".
+        #expect(throws: EncodingError.self) { try CoreCodec.encode(value: .number(.nan)) }
+        #expect(throws: EncodingError.self) { try CoreCodec.encode(value: .number(.infinity)) }
+        let command = CoreCommand(id: "c1", name: "set_brightness", args: ["value": .number(.nan)])
+        #expect(throws: EncodingError.self) { try CoreCodec.encode(command: command) }
+    }
+
     @Test("unknown types and future versions are not errors")
     func unknown() throws {
         guard case .unknown(let type, let version) = try CoreFixtures.message("unknown_type.json") else {
@@ -338,6 +412,30 @@ struct CodecTests {
         let tail = splitter.feed(Data("\"x\",\"v\":1}\n".utf8))
         #expect(tail.count == 1)
         #expect(String(decoding: tail[0], as: UTF8.self) == #"{"t":"x","v":1}"#)
+    }
+
+    @Test("the splitter keeps a multi-byte character split across chunks")
+    func splitterKeepsSplitCharacters() throws {
+        var splitter = NDJSONSplitter()
+        // An em dash is E2 80 94; the read ended after its second byte.
+        #expect(splitter.feed(Data([0x61, 0xE2, 0x80])).isEmpty)
+        let frames = splitter.feed(Data([0x94, 0x62, 0x0A]))
+        #expect(frames.count == 1)
+        #expect(String(decoding: try #require(frames.first), as: UTF8.self) == "a\u{2014}b")
+
+        // The unterminated tail is handed back once, then it is gone.
+        #expect(splitter.feed(Data("tail".utf8)).isEmpty)
+        let tail = splitter.finish()
+        #expect(String(decoding: try #require(tail), as: UTF8.self) == "tail")
+        let again = splitter.finish()
+        #expect(again == nil)
+
+        // A trailing carriage return is not part of the last line.
+        #expect(splitter.feed(Data("x\r".utf8)).isEmpty)
+        let last = splitter.finish()
+        #expect(String(decoding: try #require(last), as: UTF8.self) == "x")
+        let none = splitter.finish()
+        #expect(none == nil, "nothing buffered: no tail")
     }
 
     @Test("backoff follows 0.5, 1, 2, cap 5")

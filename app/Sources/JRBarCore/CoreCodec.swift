@@ -158,5 +158,14 @@ public struct NDJSONSplitter: Sendable {
         return frames
     }
 
+    /// The bytes after the last newline, for a stream that has ended: a
+    /// trailing carriage return trimmed, nil when nothing is buffered. The
+    /// buffer is cleared, so a second call returns nil.
+    public mutating func finish() -> Data? {
+        let tail = buffer.last == 0x0D ? buffer.dropLast() : buffer[...]
+        buffer.removeAll()
+        return tail.isEmpty ? nil : Data(tail)
+    }
+
     public mutating func reset() { buffer.removeAll() }
 }

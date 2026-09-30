@@ -59,7 +59,9 @@ struct LightWhyEnumTests {
 
     @Test("working with why_detail reads from the detail, once, with no UUID")
     func workingDetail() throws {
-        let explanation = try #require(Self.explain("working", [Self.main, Self.worker, Self.codexDone], detail: Self.detail()))
+        // The frame's own 4 s and the session's 100 s differ, so "1 min"
+        // shows which one the row reads.
+        let explanation = try #require(Self.explain("working", [Self.main, Self.worker, Self.codexDone], detail: Self.detail(seconds: 4)))
         #expect(explanation.kind == .working)
         #expect(explanation.motion == "Breathing orange")
         #expect(explanation.reason == "Claude jr-bar-67 is working")
@@ -67,6 +69,85 @@ struct LightWhyEnumTests {
         #expect(!explanation.headline.contains("Claude Claude"))
         #expect(!explanation.headline.contains("f6d1"))
         #expect(explanation.details.contains { $0.label == "In this state" && $0.value == "1 min" })
+    }
+
+    /// The "In this state" row of one explanation, or nil when it has none.
+    static func inThisState(_ explanation: LightExplanation?) -> String? {
+        explanation?.details.first { $0.label == "In this state" }?.value
+    }
+
+    @Test("In this state ages from the session's since on the app clock")
+    func inThisStateAges() {
+        var held = Self.main
+        held.since = Self.now.timeIntervalSince1970 - 1500
+        let frame = Self.lights(why: "working", detail: Self.detail(seconds: 4))
+        let document = Self.state([held])
+        let first = LightExplainer.explain(lights: frame, state: document, settings: nil, now: Self.now)
+        #expect(Self.inThisState(first) == "25 min", "not the frame's 4 s")
+        // The same frame, ten minutes later: the row moves with the clock.
+        let later = LightExplainer.explain(lights: frame, state: document, settings: nil, now: Self.now.addingTimeInterval(600))
+        #expect(Self.inThisState(later) == "35 min")
+    }
+
+    @Test("a waiting or escalating light ages from the ask's opening, whichever list holds the ask")
+    func inThisStateWaits() {
+        let opened = Self.now.timeIntervalSince1970 - 300
+        var asking = Self.codexDone
+        asking.mode = "waiting"; asking.lifecycle = "active"
+        asking.since = Self.now.timeIntervalSince1970 - 10
+        let detail = Self.detail(session: asking.id, label: "Codex 01a08b62", provider: "codex", seconds: 0)
+        let pinned = CoreAsk(session: asking.id, kind: "permission", openedAt: opened, summary: "Run: rm -rf build")
+
+        // In state.asks; the session's own `since` is much newer.
+        let inList = Self.explain("waiting", [asking], detail: detail, asks: [pinned])
+        #expect(Self.inThisState(inList) == "5 min")
+        // Embedded in the session.
+        var embedded = asking
+        embedded.ask = pinned
+        let inSession = Self.explain("waiting", [embedded], detail: detail)
+        #expect(Self.inThisState(inSession) == "5 min")
+        // The escalation reads the same anchor.
+        let escalating = Self.explain("escalation", [embedded], detail: detail)
+        #expect(Self.inThisState(escalating) == "5 min")
+        // No ask anywhere: the session's own since.
+        let bare = Self.explain("waiting", [asking], detail: detail)
+        #expect(Self.inThisState(bare) == "10 s")
+    }
+
+    @Test("a completed or failed light counts from the session's since, as the daemon does")
+    func inThisStateEnds() {
+        // codexDone: since 200 s ago, updated 30 s ago. The reason line says
+        // "30 s ago"; the row counts the state itself.
+        let detail = Self.detail(session: Self.codexDone.id, label: "Codex 01a08b62", provider: "codex", seconds: 1)
+        let done = Self.explain("completed", [Self.codexDone], detail: detail)
+        #expect(Self.inThisState(done) == "3 min")
+        var failed = Self.main
+        failed.lifecycle = "failed"
+        let failure = Self.explain("failed", [failed], detail: Self.detail(seconds: 1))
+        #expect(Self.inThisState(failure) == "1 min")
+    }
+
+    @Test("with nothing to age from, the row keeps the daemon's number, and never a nonsense one")
+    func inThisStateFallbacks() {
+        // Idle names no session: the frame's number is all there is.
+        let idle = Self.explain("idle", [], detail: Self.detail(session: nil, label: nil, provider: nil, seconds: 30))
+        #expect(Self.inThisState(idle) == "30 s")
+        // A session the state no longer lists.
+        let ghost = Self.explain("working", [Self.main], detail: Self.detail(session: "claude:session:gone", seconds: 75))
+        #expect(Self.inThisState(ghost) == "1 min")
+        // A since in the future, or an epoch's worth of garbage, is not aged.
+        var future = Self.main
+        future.since = Self.now.timeIntervalSince1970 + 50
+        #expect(Self.inThisState(Self.explain("working", [future], detail: Self.detail(seconds: 30))) == "30 s")
+        var garbage = Self.main
+        garbage.since = 5
+        #expect(Self.inThisState(Self.explain("working", [garbage], detail: Self.detail(seconds: 30))) == "30 s")
+        #expect(Self.inThisState(Self.explain("working", [garbage], detail: Self.detail(seconds: nil))) == nil,
+                "never a number like 20704 d")
+        // A session with no since at all.
+        var unstamped = Self.main
+        unstamped.since = nil
+        #expect(Self.inThisState(Self.explain("working", [unstamped], detail: Self.detail(seconds: 30))) == "30 s")
     }
 
     @Test("the old provider-plus-UUID label never shows a UUID or a doubled provider")
