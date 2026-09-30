@@ -1,5 +1,8 @@
 # Integrations
 
+JR-Bar integrates with T3 Code and Alcove only. Provider accounting is
+native. CodexBar is a reference, never required at runtime.
+
 Neighbours JR-Bar reads from without ever writing to them. Providers (the
 agents whose hooks JR-Bar installs) are a different thing:
 [NATIVE-PROVIDERS.md](NATIVE-PROVIDERS.md). Compatibility windows for
