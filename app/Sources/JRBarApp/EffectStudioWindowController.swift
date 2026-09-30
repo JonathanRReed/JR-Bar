@@ -32,8 +32,6 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         store.covered = !window.occlusionState.contains(.visible)
     }
 
-    var isVisible: Bool { window?.isVisible ?? false }
-
     /// The studio's SwiftUI graph lives only while the window is open
     /// (`WindowContentLifecycle`); the selection lives in the store.
     /// Internal for the lifecycle test.

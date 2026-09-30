@@ -29,12 +29,6 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
         WindowFront.bring(window)
     }
 
-    func toggle() {
-        if let window, window.isVisible, window.isKeyWindow { window.performClose(nil) } else { show() }
-    }
-
-    var isVisible: Bool { window?.isVisible ?? false }
-
     /// The Usage Center's SwiftUI graph lives only while the window is
     /// open (`WindowContentLifecycle`); the range, metric and focus live
     /// in the store. Internal for the lifecycle test.

@@ -24,12 +24,6 @@ final class ControlCenterWindowController: NSObject, NSWindowDelegate {
         WindowFront.bring(window)
     }
 
-    func toggle() {
-        if let window, window.isVisible, window.isKeyWindow { window.performClose(nil) } else { show() }
-    }
-
-    var isVisible: Bool { window?.isVisible ?? false }
-
     /// The pad's SwiftUI graph lives only while the window is open
     /// (`WindowContentLifecycle`): a closed window no longer re-renders
     /// the grid on every deck state. Internal for the lifecycle test.
