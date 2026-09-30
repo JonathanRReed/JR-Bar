@@ -15284,6 +15284,21 @@ class StatusBarController(NSObject):
 
             return factory
 
+        def quota_runway_factory(brightness, led_count):
+            # One read for the whole frame: the state depends on the clock (a
+            # window can lapse between two reads), so the fraction and the
+            # colour must come from the same answer, and a lapse to None
+            # renders nothing rather than raising.
+            runway = self.quota_runway_state()
+            if runway is None:
+                return None
+            return quota_runway_program(
+                runway[0],
+                led_count=led_count,
+                brightness=brightness,
+                color=runway[1],
+            )
+
         return {
             LED_DISPLAY_DND_DARK: (
                 lambda _brightness, _led_count: "off",
@@ -15387,16 +15402,7 @@ class StatusBarController(NSObject):
                 lambda device, _snapshot: f"{device.name} Studio program",
             ),
             LED_DISPLAY_QUOTA_RUNWAY: (
-                lambda brightness, led_count: (
-                    quota_runway_program(
-                        self.quota_runway_state()[0],
-                        led_count=led_count,
-                        brightness=brightness,
-                        color=self.quota_runway_state()[1],
-                    )
-                    if self.quota_runway_state() is not None
-                    else None
-                ),
+                quota_runway_factory,
                 LedDisplayState.WORKING,
                 lambda device, _snapshot: f"{device.name} Quota runway",
             ),
