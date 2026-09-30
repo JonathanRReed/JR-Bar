@@ -668,3 +668,96 @@ def test_codex_cached_scan_keeps_the_primary_home_when_extra_homes_cannot_be_lis
     lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
     assert len(lines) == 1, lines
     assert "codex" in lines[0]
+
+
+# --- Codex: one floor for every home ----------------------------------------
+
+
+def _codex_source_key():
+    return next(
+        row.source_key
+        for row in usage_stats.negotiated_provider_sources()
+        if row.source_key.provider_id == "codex"
+        and row.source_key.capability_id == "transcript_usage"
+    )
+
+
+def _codex_cache_floor_at(cache_path: Path) -> float:
+    source_key = _codex_source_key()
+    loaded = usage_stats._load_cache(cache_path, source_key)
+    reading = usage_stats.cache_provider_records(loaded, "codex")
+    assert reading is not None, "the fixture must leave a readable cache"
+    return reading[1]
+
+
+@pytest.mark.parametrize("narrower_home", ["primary", "extra"])
+def test_cached_codex_scan_counts_from_the_newest_floor_across_homes(
+    tmp_path: Path, narrower_home: str
+) -> None:
+    near = OBSERVED - 5 * DAY
+    far = OBSERVED - 20 * DAY
+    primary_root = _codex_rollouts(
+        tmp_path,
+        {
+            "primary-near.jsonl": [
+                _meta("primary-near", timestamp=_at(near - 60)),
+                _tokens(30, 30, _at(near)),
+            ],
+            "primary-far.jsonl": [
+                _meta("primary-far", timestamp=_at(far - 60)),
+                _tokens(200, 200, _at(far)),
+            ],
+        },
+    )
+    extra_home = tmp_path / "second-codex"
+    for name, session, total, moment in (
+        ("extra-near.jsonl", "extra-near", 70, near),
+        ("extra-far.jsonl", "extra-far", 500, far),
+    ):
+        rollout = extra_home / "sessions" / name
+        _write(rollout, [_meta(session, timestamp=_at(moment - 60)), _tokens(total, total, _at(moment))])
+        os.utime(rollout, (OBSERVED - DAY, OBSERVED - DAY))
+    [extra_root] = provider_homes.extra_scan_roots(
+        "codex", env={}, home=tmp_path, extras=[str(extra_home)]
+    )
+    # Both homes scanned for the default 7-day graph: each cache reaches back
+    # about ten days and neither holds the 20-day-old turns.
+    provider_homes.scan_usage_all_homes(
+        _state_cache(tmp_path),
+        since_epoch=OBSERVED - 7 * DAY,
+        provider_ids=("codex",),
+        env={},
+        home=tmp_path,
+        extras={"codex": [str(extra_home)]},
+    )
+    # Then ONE home is scanned for 30 days and now holds its 20-day-old turn.
+    if narrower_home == "extra":
+        _scan_codex(tmp_path, primary_root, since_epoch=OBSERVED - 30 * DAY)
+    else:
+        usage_stats.scan_usage(
+            tmp_path / ".jrbar-no-such-home",
+            provider_homes._home_cache_path(_state_cache(tmp_path), extra_root),
+            codex_root=extra_root,
+            since_epoch=OBSERVED - 30 * DAY,
+            provider_ids=("codex",),
+        )
+    source_key = _codex_source_key()
+    primary_floor = _codex_cache_floor_at(
+        usage_stats.provider_cache_path(_state_cache(tmp_path), source_key)
+    )
+    extra_floor = _codex_cache_floor_at(
+        usage_stats.provider_cache_path(
+            provider_homes._home_cache_path(_state_cache(tmp_path), extra_root), source_key
+        )
+    )
+    wide, narrow = sorted((primary_floor, extra_floor))
+    assert wide < OBSERVED - 30 * DAY < far < narrow < near, "the homes must disagree about 30 days"
+
+    card = subject._cached_provider_local_scan(
+        "codex", tmp_path, OBSERVED, extra_homes=(str(extra_home),)
+    )
+
+    # Only the newest floor is vouched for by every home: the wide home's
+    # 20-day-old turn is not counted, or one home would be counted for more
+    # days than the other.
+    assert _card_tokens(card) == 30 + 70
