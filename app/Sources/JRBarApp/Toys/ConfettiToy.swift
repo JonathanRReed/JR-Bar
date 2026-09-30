@@ -213,14 +213,6 @@ final class ConfettiToy: Toy {
         roomChanged()
     }
 
-    /// The original trigger's lane test, kept for the tests: true for
-    /// `quota_reset` on a weekly lane only — five-hour and session lanes
-    /// stay quiet. The trigger policy owns the same check now.
-    nonisolated static func isWeeklyReset(_ event: CoreEvent) -> Bool {
-        guard event.kind == "quota_reset", let lane = event.lane else { return false }
-        return ConfettiTriggerPolicy.isWeeklyLane(lane)
-    }
-
     /// A decision becomes a burst: record its key, resolve the
     /// provider's colour the way the panel does (the fact's provider,
     /// else the event's session's), and fire — `fire` still checks the
