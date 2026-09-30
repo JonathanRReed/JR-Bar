@@ -686,11 +686,14 @@ def test_login_shell_path_dirs_parse_fallback_timeout_and_opt_out(
     from types import SimpleNamespace
 
     import jrbar.installed_agent_inventory as inventory
+    from jrbar import login_shell_path
+
+    monkeypatch.delenv("JRBAR_NO_SHELL_PATH", raising=False)
 
     def good_runner(argv, **kwargs):
         assert argv[1:] == ["-lic", 'printf %s "$PATH"']
         assert argv[0]
-        assert kwargs["timeout"] == 3
+        assert kwargs["timeout"] == login_shell_path.LOGIN_SHELL_PATH_TIMEOUT_SECONDS
         assert kwargs["stdin"] is subprocess.DEVNULL
         assert set(kwargs["env"]) <= {"HOME", "USER", "SHELL", "TERM"}
         return SimpleNamespace(returncode=0, stdout="/probe/a:/probe/b\n")
@@ -714,9 +717,13 @@ def test_login_shell_path_dirs_parse_fallback_timeout_and_opt_out(
     ) == ()
 
     def timeout_runner(argv, **kw):
-        raise subprocess.TimeoutExpired(cmd=argv, timeout=3)
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kw["timeout"])
 
     assert inventory.login_shell_path_dirs(runner=timeout_runner) == ()
+    # A shell that answered with nothing is a failure, not an empty PATH.
+    assert inventory.login_shell_path_dirs(
+        runner=lambda argv, **kw: SimpleNamespace(returncode=0, stdout="")
+    ) == ()
 
     # The opt-out must not spawn anything.
     monkeypatch.setenv("JRBAR_NO_SHELL_PATH", "1")
@@ -745,3 +752,218 @@ def test_path_dirs_unions_process_path_with_the_shell_answer(
         Path("/shared/bin"),
         Path("/shell/bin"),
     )
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _probe(monkeypatch: pytest.MonkeyPatch, runner, clock=None, threads=None):
+    """A probe whose thread spawner runs the work inline, or files it in
+    ``threads`` for the test to run by hand."""
+    from jrbar.login_shell_path import LoginShellPathProbe
+
+    monkeypatch.delenv("JRBAR_NO_SHELL_PATH", raising=False)
+
+    def start(target) -> None:
+        if threads is None:
+            target()
+        else:
+            threads.append(target)
+
+    return LoginShellPathProbe(runner=runner, clock=clock or _Clock(), start=start)
+
+
+def test_login_shell_probe_retries_after_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cold login shell that runs out its ceiling is not the answer for
+    the daemon's whole life: the failure schedules a retry, and the first
+    good PATH is kept."""
+    import subprocess
+    from types import SimpleNamespace
+
+    calls: list[int] = []
+    outcomes = [
+        subprocess.TimeoutExpired(cmd="zsh", timeout=10),
+        SimpleNamespace(returncode=0, stdout=""),
+        SimpleNamespace(returncode=0, stdout="/probe/a:/probe/b\n"),
+    ]
+
+    def runner(argv, **kwargs):
+        calls.append(1)
+        outcome = outcomes[len(calls) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    clock = _Clock()
+    done: list[str] = []
+    probe = _probe(monkeypatch, runner, clock)
+
+    assert probe.ensure_started(lambda: done.append("done")) is True
+    assert len(calls) == 1
+    assert probe.snapshot() == ()
+    assert probe.resolved() is False
+    assert done == []
+
+    # Inside the first backoff nothing runs again.
+    clock.now += 14.0
+    assert probe.ensure_started(lambda: done.append("done")) is False
+    assert len(calls) == 1
+
+    # After it, the retry runs. An empty PATH from a shell that exited 0 is
+    # a failure too, and waits the longer second backoff.
+    clock.now += 2.0
+    assert probe.ensure_started(lambda: done.append("done")) is True
+    assert len(calls) == 2
+    assert probe.snapshot() == ()
+    assert probe.resolved() is False
+    clock.now += 59.0
+    assert probe.ensure_started(lambda: done.append("done")) is False
+    clock.now += 2.0
+    assert probe.ensure_started(lambda: done.append("done")) is True
+    assert len(calls) == 3
+
+    assert probe.snapshot() == (Path("/probe/a"), Path("/probe/b"))
+    assert probe.resolved() is True
+    assert done == ["done"]
+    # Once answered it never asks again, however much later.
+    clock.now += 10_000.0
+    assert probe.ensure_started(lambda: done.append("done")) is False
+    assert len(calls) == 3 and done == ["done"]
+
+
+def test_login_shell_probe_backoff_caps_at_five_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jrbar.login_shell_path import LOGIN_SHELL_RETRY_SECONDS
+
+    assert LOGIN_SHELL_RETRY_SECONDS[-1] == 300.0
+    calls: list[int] = []
+
+    def failing(argv, **kwargs):
+        calls.append(1)
+        raise OSError("no shell")
+
+    clock = _Clock()
+    probe = _probe(monkeypatch, failing, clock)
+    # 15 s after the first failure, 60 s after the second, then every 5 min.
+    for wait in (15.0, 60.0, 300.0, 300.0, 300.0):
+        assert probe.ensure_started() is True
+        clock.now += wait - 1.0
+        assert probe.ensure_started() is False
+        clock.now += 2.0
+    assert len(calls) == 5
+
+
+def test_login_shell_probe_never_blocks_the_caller(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    calls: list[int] = []
+
+    def runner(argv, **kwargs):
+        calls.append(1)
+        return SimpleNamespace(returncode=0, stdout="/probe/late\n")
+
+    threads: list = []
+    done: list[str] = []
+    probe = _probe(monkeypatch, runner, threads=threads)
+
+    assert probe.ensure_started(lambda: done.append("done")) is True
+    # It handed the work to a thread and came back: nothing has run, and a
+    # second ask while that thread is out does not start another.
+    assert calls == [] and len(threads) == 1
+    assert probe.snapshot() == ()
+    assert probe.ensure_started(lambda: done.append("done")) is False
+    assert len(threads) == 1
+
+    threads[0]()
+    assert calls == [1]
+    assert probe.snapshot() == (Path("/probe/late"),)
+    assert done == ["done"]
+
+
+def test_a_spawner_that_fails_leaves_the_probe_startable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from jrbar.login_shell_path import LoginShellPathProbe
+
+    monkeypatch.delenv("JRBAR_NO_SHELL_PATH", raising=False)
+    refuse = {"on": True}
+    ran: list[int] = []
+
+    def start(target) -> None:
+        if refuse["on"]:
+            raise RuntimeError("can't start new thread")
+        target()
+
+    probe = LoginShellPathProbe(
+        runner=lambda argv, **kw: ran.append(1) or SimpleNamespace(returncode=0, stdout="/probe/x"),
+        clock=_Clock(),
+        start=start,
+    )
+    assert probe.ensure_started() is False
+    refuse["on"] = False
+    assert probe.ensure_started() is True
+    assert ran == [1] and probe.snapshot() == (Path("/probe/x"),)
+
+
+def test_path_dirs_never_runs_the_login_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The inventory scan reads the process PATH and the probe's last
+    answer; it can never spawn a shell, on the run loop or on the OS-poll
+    worker."""
+    import jrbar.installed_agent_inventory as inventory
+    from jrbar import login_shell_path
+
+    monkeypatch.delenv("JRBAR_NO_SHELL_PATH", raising=False)
+    monkeypatch.setenv("PATH", "/proc/bin")
+
+    def forbidden(argv, **kwargs):
+        raise AssertionError("a scan ran the login shell")
+
+    threads: list = []
+    probe = _probe(monkeypatch, forbidden, threads=threads)
+    previous = login_shell_path.set_default_login_shell_probe(probe)
+    try:
+        assert inventory._path_dirs(None) == (Path("/proc/bin"),)
+        result = inventory.collect_installed_agent_inventory(inventory.default_inventory_roots())
+        assert result.candidate_count > 0
+    finally:
+        login_shell_path.set_default_login_shell_probe(previous)
+    assert threads == []
+
+
+def test_the_probe_is_off_for_the_opt_out_and_for_the_test_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from jrbar.login_shell_path import LoginShellPathProbe
+
+    ran: list[int] = []
+
+    def runner(argv, **kwargs):
+        ran.append(1)
+        return SimpleNamespace(returncode=0, stdout="/probe/a")
+
+    # The opt-out counts as resolved: there is nothing left to wait for.
+    monkeypatch.setenv("JRBAR_NO_SHELL_PATH", "1")
+    opted_out = LoginShellPathProbe(runner=runner, clock=_Clock(), start=lambda target: target())
+    assert opted_out.resolved() is True
+    assert opted_out.ensure_started() is False
+    assert opted_out.snapshot() == ()
+    assert ran == []
+
+    # The suite's sandbox never runs a real login shell either: without an
+    # injected runner the probe is off (and so resolved), and starts nothing.
+    monkeypatch.delenv("JRBAR_NO_SHELL_PATH")
+    started: list = []
+    real = LoginShellPathProbe(clock=_Clock(), start=started.append)
+    assert real.resolved() is True
+    assert real.ensure_started() is False
+    assert started == []
+
+    # An injected runner is the test's own, and may run.
+    injected = LoginShellPathProbe(runner=runner, clock=_Clock(), start=lambda target: target())
+    assert injected.resolved() is False
+    assert injected.ensure_started() is True
+    assert ran == [1] and injected.resolved() is True

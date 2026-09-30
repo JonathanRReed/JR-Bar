@@ -313,6 +313,34 @@ def test_the_deck_reads_the_snapshot_the_state_was_built_from(headless) -> None:
     assert controller._core_deck_statuses() == tuple(live)
 
 
+def test_a_reveal_press_logs_the_receipt_and_never_the_session_title(headless, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    import dataclasses
+
+    from jrbar import deck_control_center, status_bar_legacy
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    title = "Synthetic Title Alpha"
+    session = dataclasses.replace(_status("session-a"), display_name=title)
+    _board_with(controller, [session])
+    slot = next(slot["index"] for slot in controller._core_build_state()["deck"]["slots"] if slot["session"])
+    monkeypatch.setattr(
+        deck_control_center,
+        "reveal_deck_session",
+        lambda target, identity, revision: DeckActionReceipt("navigation_requested", True),
+    )
+    lines: list[str] = []
+    monkeypatch.setattr(status_bar_legacy, "log_status_bar", lines.append)
+
+    reply = controller._core_dispatch("deck_press", {"index": slot})
+
+    assert reply["action"] == "reveal_session"
+    assert f"deck: key {slot + 1} reveals: navigation_requested" in lines
+    # The log is diagnostics for the owner and for a bug report; a session's
+    # title is a project name and does not belong in it.
+    assert not any(title in line or "Alpha" in line for line in lines)
+
+
 def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
     from jrbar import deck_control_center
     from jrbar.deck_actions import DeckAction

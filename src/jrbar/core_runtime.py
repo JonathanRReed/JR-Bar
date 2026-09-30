@@ -65,7 +65,9 @@ from .hook_pending import (
     PendingHookDrainer,
     orphaned_drain_files,
     pending_hook_files,
+    pending_line_count,
 )
+from .login_shell_path import default_login_shell_probe
 from .state_paths import default_state_dir
 
 CORE_VERSION: Final = __version__
@@ -118,6 +120,10 @@ DECK_INTEGRATION_TTL_SECONDS: Final = 2.0
 # this often: the scan is a few dozen lstats, but ``state`` rebuilds on
 # every refresh and "is the CLI still installed" does not move that fast.
 DETECTED_AGENTS_TTL_SECONDS: Final = 60.0
+# While the login-shell PATH probe has not answered, the scan is repeated
+# this soon: a CLI that lives only in a login-shell directory is unknown,
+# and the answer is due any moment (login_shell_path).
+DETECTED_AGENTS_PENDING_TTL_SECONDS: Final = 2.0
 # Display kinds a live claim arms for a bounded window only. The lights
 # document reads the kind the last sync recorded; when the write path
 # misses, that record survives the claim by hours -- a dead quota blink
@@ -178,6 +184,32 @@ def mono_to_epoch(value: object) -> float | None:
     if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return time.time() + (float(value) - time.monotonic())
+
+
+def anchored_since(
+    memo: tuple[float, float] | None,
+    blocked_since: object,
+    *,
+    wall: Callable[[], float] = time.time,
+    mono: Callable[[], float] = time.monotonic,
+) -> tuple[tuple[float, float] | None, float | None]:
+    """The wall-clock epoch an escalation episode began, fixed once.
+
+    ``blocked_since`` is a ``time.monotonic()`` stamp, and that clock stands
+    still while the Mac sleeps. Converting it afresh on every state build
+    (``mono_to_epoch``) slides the epoch forward by the length of each nap,
+    so the light says the ask waited less than the ask's own ``opened_at``
+    shows. The epoch is worked out when the stamp first appears and kept
+    with it in ``memo``; a different stamp (a new oldest ask, Resume
+    Escalation) is a new episode and anchors again. Returns the memo to
+    keep and the epoch, both ``None`` when nothing is blocking."""
+    if blocked_since is None or isinstance(blocked_since, bool) or not isinstance(blocked_since, (int, float)):
+        return None, None
+    value = float(blocked_since)
+    if memo is not None and memo[0] == value:
+        return memo, memo[1]
+    epoch = wall() - (mono() - value)
+    return (value, epoch), epoch
 
 
 def split_path(path: str) -> list[str | int]:
@@ -264,6 +296,12 @@ def plan_extra_lookups(
 # the server's byte-level dedupe can never fire while these fields tick.
 # A missed field degrades to the old publish-everything behaviour, never
 # to wrong data.
+# The other side of the same coin: a volatile field is only as fresh as the
+# last broadcast that went out, and a quiet rebuild sends nothing. A client
+# that prints one verbatim shows a stale number, so it works the value out
+# from a stamp in a document it holds (the app ages a light's wait from the
+# state document's session times and reads ``seconds_in_state`` only as a
+# fallback).
 _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
     "state": (
         ("now",),
@@ -290,6 +328,8 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
     "lights": (
         ("now",),
+        # A duration that grows every second, not a stamp: a client that
+        # prints it as received shows the value of the last broadcast.
         ("surfaces", "*", "why_detail", "seconds_in_state"),
         ("linked_skew_at",),
         ("linked_skew_ms",),
@@ -1700,13 +1740,49 @@ def _effects_cache(self):
 
 
 def _effect_packs(self) -> tuple:
-    from .effect_pack_store import EffectPackStore
+    """The installed effect packs.
 
+    ``EffectPackStore.list`` decodes, validates and re-exports every pack,
+    which a state build paid on every refresh, so the list is cached on a
+    store fingerprint (``EffectPackStore.fingerprint``, one stat pass): an
+    unchanged store is not read again, and a pack the ``jrbar effects`` CLI
+    installs, updates or removes while the daemon runs is seen at the next
+    build. The store still fails closed: one pack that is not canonical
+    makes every pack unavailable, and that verdict is cached under the
+    fingerprint too, so it is logged once per change to the files and not
+    once per build. A store that cannot even be stamped (a link, a foreign
+    entry) and an error that may pass (an ``OSError``) are logged and never
+    cached.
+    """
+    from .effect_pack_store import EffectPackStore, EffectPackStoreError
+
+    store = EffectPackStore()
     try:
-        return tuple(EffectPackStore().list())
+        key = (str(store.root), store.fingerprint())
     except Exception as exc:
         self._core_log(f"core: effect packs unavailable: {exc.__class__.__name__}")
         return ()
+    cached = getattr(self, "_core_effect_packs_cache", None)
+    if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == key:
+        return cached[1]
+    keep = True
+    try:
+        packs = tuple(store.list())
+    except EffectPackStoreError as exc:
+        self._core_log(f"core: effect packs unavailable: {exc.__class__.__name__}")
+        packs = ()
+    except Exception as exc:
+        self._core_log(f"core: effect packs unavailable: {exc.__class__.__name__}")
+        return ()
+    try:
+        # Kept only if nothing moved while it was read: a change in that
+        # window would otherwise be served under the stamp taken before it.
+        keep = (str(store.root), store.fingerprint()) == key
+    except Exception:
+        keep = False
+    if keep:
+        self._core_effect_packs_cache = (key, packs)
+    return packs
 
 
 def _effect_catalog(self) -> dict[str, Any]:
@@ -2052,6 +2128,9 @@ def _cmd_clear_assignment(self, args):
 def _reload_effect_registry(self) -> None:
     from . import core_effects
 
+    # The daemon changed the store itself: drop the kept list rather than
+    # trust that the fingerprint moved (timestamps have a granularity).
+    self._core_effect_packs_cache = None
     cache = _effects_cache(self)
     cache.replace(cache.snapshot(), registry=core_effects.registry_with_packs(_effect_packs(self)))
 
@@ -4261,6 +4340,11 @@ def build_headless_controller_class() -> type:
             self.load_operator_local_state()
             self.trim_oversized_state_logs()
             legacy.log_status_bar("core: launching headless")
+            # The login shell's PATH is asked for on a thread of its own, so
+            # a cold shell right after a login never holds up the first
+            # state build. Until it answers, a CLI outside the literal
+            # install locations is unknown, not "not installed".
+            default_login_shell_probe().ensure_started(on_done=self._core_login_path_ready)
             # The backlog the shim spooled while the daemon was down drains
             # once here, before the ingress socket opens. A fresh replay is
             # stamped when it is drained (hook_ingress._replay_arguments),
@@ -5995,7 +6079,9 @@ def build_headless_controller_class() -> type:
                         "activated": (extras.terminal or {}).get("app") if extras is not None else None,
                     }
                 )
-                legacy.log_status_bar(f"deck: key {index + 1} reveals {self._core_label(status)}")
+                # The receipt, never the session's title: a title is a project
+                # name, and this line goes into the log a bug report carries.
+                legacy.log_status_bar(f"deck: key {index + 1} reveals: {receipt.code}")
                 self._core_publish_state()
                 return result
 
@@ -6628,6 +6714,25 @@ def build_headless_controller_class() -> type:
             document.update({key: value for key, value in fields.items() if value is not None})
             server.publish_event(document)
 
+        def _core_escalation_since(
+            self,
+            *,
+            wall: Callable[[], float] = time.time,
+            mono: Callable[[], float] = time.monotonic,
+        ) -> float | None:
+            """``state.escalation.since``: when the oldest blocking ask's
+            escalation episode began, as a wall-clock epoch fixed for the
+            episode (``anchored_since``), so it neither drifts across a
+            sleep nor changes between two builds of an unchanged state."""
+            memo, since = anchored_since(
+                getattr(self, "_core_escalation_anchor", None),
+                getattr(self, "ask_blocked_since", None),
+                wall=wall,
+                mono=mono,
+            )
+            self._core_escalation_anchor = memo
+            return since
+
         def _core_request_app(self, kind: str, **fields: Any) -> bool:
             """Ask the connected app for one of its own commands on behalf of
             a deck key: ``open_window {window}`` or ``reveal_ask``. The app
@@ -6636,8 +6741,14 @@ def build_headless_controller_class() -> type:
             so rather than claiming a window opened."""
             server = getattr(self, "_core", None)
             try:
-                connected = server is not None and server.client_count() > 0
+                # client_count is a property on CoreServer, not a method.
+                connected = server is not None and server.client_count > 0
             except Exception:
+                # A deck press must never crash the input worker, but a
+                # probe that fails has to show in the log.
+                legacy.log_status_bar(
+                    f"core: app request probe failed: {traceback.format_exc(limit=4)}"
+                )
                 connected = False
             if not connected:
                 return False
@@ -7089,6 +7200,13 @@ def build_headless_controller_class() -> type:
                 return frozenset()
             return state.acknowledged_keys
 
+        def _core_login_path_ready(self) -> None:
+            """The login-shell probe has its first answer, on the probe's own
+            thread: forget the detection made without it and rebuild the
+            state, so Settings and Setup stop saying "unknown"."""
+            self._core_detected_agents_cache = None
+            self._core_publish_state_soon()
+
         def _core_detected_agents(self) -> dict[str, bool]:
             """``{hook provider: the agent's CLI or app is on this Mac}``.
 
@@ -7098,15 +7216,24 @@ def build_headless_controller_class() -> type:
             installed", so they never count. Cached for a minute: the scan
             is a few dozen lstats, but ``state`` rebuilds on every refresh
             and the answer does not move that fast.
+
+            Never waits on the login shell. Until its probe has answered
+            (``login_shell_path``) a provider whose only detector is a PATH
+            marker and that the literal locations did not find is left out
+            of the answer, so the app shows "unknown" rather than "not
+            installed" and ``install_hooks`` does not refuse it. That
+            partial answer is cached for seconds, not a minute.
             """
             now = time.monotonic()
             cached = getattr(self, "_core_detected_agents_cache", None)
             if (
                 isinstance(cached, tuple)
-                and len(cached) == 2
-                and now - float(cached[0]) < DETECTED_AGENTS_TTL_SECONDS
+                and len(cached) == 3
+                and now - float(cached[0]) < float(cached[2])
             ):
                 return dict(cached[1])
+            probe = default_login_shell_probe()
+            unresolved = False
             try:
                 from .installed_agent_inventory import (
                     collect_installed_agent_inventory,
@@ -7114,11 +7241,13 @@ def build_headless_controller_class() -> type:
                 )
                 from .installed_agents import (
                     InstalledSurfaceKind,
+                    SurfaceDetectorKind,
                     SurfacePresence,
                     installed_surface_registrations,
                 )
                 from .providers import HOOK_PROVIDERS
 
+                unresolved = not probe.resolved()
                 result = collect_installed_agent_inventory(default_inventory_roots())
                 present = {
                     observation.key
@@ -7126,6 +7255,7 @@ def build_headless_controller_class() -> type:
                     if observation.presence is not SurfacePresence.ABSENT
                 }
                 detected: dict[str, bool] = {}
+                path_only: set[str] = set()
                 for registration in installed_surface_registrations():
                     if registration.kind is InstalledSurfaceKind.LOCAL_HARNESS:
                         continue
@@ -7137,16 +7267,29 @@ def build_headless_controller_class() -> type:
                         provider = registration.surface_id.split("-", 1)[0]
                     if provider not in HOOK_PROVIDERS:
                         continue
+                    if registration.detector_kind is SurfaceDetectorKind.PATH_MARKER:
+                        path_only.add(provider)
                     if registration.key in present:
                         detected[provider] = True
                     else:
                         detected.setdefault(provider, False)
+                if unresolved:
+                    probe.ensure_started(on_done=self._core_login_path_ready)
+                    for provider in path_only:
+                        if detected.get(provider) is False:
+                            del detected[provider]
             except Exception:
                 self._core_log(
                     f"core: agent detection failed: {traceback.format_exc(limit=3)}"
                 )
-                detected = dict(cached[1]) if isinstance(cached, tuple) and len(cached) == 2 else {}
-            self._core_detected_agents_cache = (now, detected)
+                detected = dict(cached[1]) if isinstance(cached, tuple) and len(cached) == 3 else {}
+            ttl = DETECTED_AGENTS_PENDING_TTL_SECONDS if unresolved else DETECTED_AGENTS_TTL_SECONDS
+            self._core_detected_agents_cache = (now, detected, ttl)
+            if unresolved and probe.resolved():
+                # The answer landed while this scan ran, and its
+                # ``_core_login_path_ready`` may already have cleared the
+                # cache before this store: drop the partial answer again.
+                self._core_detected_agents_cache = None
             return dict(detected)
 
         def _core_catalog_generation(self) -> int | None:
@@ -7284,7 +7427,7 @@ def build_headless_controller_class() -> type:
                 dnd_projection=self.current_dnd_projection(),
                 escalation=EscalationFacts(
                     stage=int(self.current_escalation_stage()),
-                    since=mono_to_epoch(getattr(self, "ask_blocked_since", None)),
+                    since=self._core_escalation_since(),
                 ),
                 intake_report=intake,
                 settings_generation=self._core_settings_generation,
@@ -7864,8 +8007,7 @@ def build_headless_controller_class() -> type:
             backlog = 0
             for path in pending:
                 try:
-                    backlog += sum(1 for line in path.read_text(
-                        encoding="utf-8", errors="replace").splitlines() if line.strip())
+                    backlog += pending_line_count(path)
                 except OSError:
                     backlog = -1
                     break
@@ -8090,6 +8232,7 @@ __all__ = [
     "CORE_VERSION",
     "CoreCommandBox",
     "HeadlessNotificationClient",
+    "anchored_since",
     "build_headless_controller_class",
     "command_names",
     "deck_probe",

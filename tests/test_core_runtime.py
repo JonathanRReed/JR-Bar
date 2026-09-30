@@ -3,7 +3,9 @@ through the core server, and answers commands on the main thread."""
 
 from __future__ import annotations
 
+import json
 import os
+import stat
 import sys
 import threading
 import time
@@ -95,6 +97,81 @@ def test_device_transitions_key_on_the_device_name__and_1_more() -> None:
     assert mono_to_epoch(None) is None
     assert mono_to_epoch(True) is None
 
+
+
+def test_escalation_since_is_fixed_for_the_episode_and_does_not_move_across_sleep__and_3_more(headless) -> None:
+    # --- scenario: a_stopped_monotonic_clock_does_not_move_since
+    """The monotonic clock stops while the Mac sleeps and the wall clock
+    does not, so re-converting the stamp on every build slid ``since``
+    forward by the length of the nap. The epoch is fixed once."""
+    controller = headless
+    controller.ask_blocked_since = 100.0
+    first = controller._core_escalation_since(wall=lambda: 1_000_000.0, mono=lambda: 160.0)
+    assert first == 1_000_000.0 - 60.0
+    eight_hours = 8 * 3600.0
+    later = controller._core_escalation_since(wall=lambda: 1_000_000.0 + eight_hours, mono=lambda: 160.0)
+    assert later == first
+    # Awake time passing moves nothing either: the stamp is the episode's.
+    assert controller._core_escalation_since(wall=lambda: 1_000_000.0 + eight_hours + 5.0, mono=lambda: 165.0) == first
+
+    # --- scenario: a_new_monotonic_stamp_is_a_new_episode
+    controller.ask_blocked_since = 150.0  # Resume Escalation, or a new oldest ask
+    restarted = controller._core_escalation_since(wall=lambda: 2_000_000.0, mono=lambda: 170.0)
+    assert restarted == 2_000_000.0 - 20.0
+    assert controller._core_escalation_since(wall=lambda: 2_000_500.0, mono=lambda: 170.0) == restarted
+
+    # --- scenario: assigning_the_same_stamp_again_does_not_re_anchor
+    controller.ask_blocked_since = 150.0
+    assert controller._core_escalation_since(wall=lambda: 9_000_000.0, mono=lambda: 999.0) == restarted
+
+    # --- scenario: no_ask_blocking_clears_the_anchor
+    controller.ask_blocked_since = None
+    assert controller._core_escalation_since(wall=lambda: 1.0, mono=lambda: 1.0) is None
+    assert controller._core_escalation_anchor is None
+    controller.ask_blocked_since = 150.0
+    assert controller._core_escalation_since(wall=lambda: 3_000_000.0, mono=lambda: 160.0) == 3_000_000.0 - 10.0
+
+
+def test_a_blocking_ask_does_not_churn_the_state_document(headless) -> None:
+    """``since`` used to jitter by microseconds on every build, so the
+    significance check never saw two equal state documents while an ask
+    blocked, and every build broadcast."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_intake_report = lambda: None
+    controller.last_snapshot = _visibility_snapshot(time.time())
+    controller.ask_blocked_since = time.monotonic() - 30.0
+    server = controller._core
+    server.published.clear()
+
+    first = controller._core_build_state()
+    second = controller._core_build_state()
+    assert first["escalation"]["since"] is not None
+    assert first["escalation"]["since"] == second["escalation"]["since"]
+
+    controller._core_publish_state()
+    controller._core_publish_state()
+    controller._core_publish_state()
+    assert [kind for kind, _ in server.published] == ["state"]
+
+
+def test_since_holds_across_builds_while_an_ask_blocks(headless) -> None:
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_intake_report = lambda: None
+    controller.last_snapshot = _visibility_snapshot(time.time())
+    controller.ask_blocked_since = time.monotonic() - 400.0
+    assert controller.current_escalation_stage() > 0
+
+    one = controller._core_build_state()
+    two = controller._core_build_state()
+
+    assert one["escalation"]["stage"] == two["escalation"]["stage"] != "none"
+    assert one["escalation"]["since"] is not None
+    assert one["escalation"]["since"] == two["escalation"]["since"]
+    assert two["now"] >= one["now"]
+    # The episode began about 400 s before the build, on the wall clock.
+    assert one["now"] - one["escalation"]["since"] == pytest.approx(400.0, abs=5.0)
 
 
 def test_settings_round_trip_validates_through_the_real_loader(tmp_path: Path) -> None:
@@ -680,6 +757,182 @@ def test_state_builds_feed_the_usage_sample_buffer(headless, tmp_path: Path) -> 
     assert buffer.path.exists()
 
 
+def test_the_pending_lines_check_counts_records_not_line_separators(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from jrbar import hook_pending
+
+    spool_dir = tmp_path / "spool"
+    spool_dir.mkdir()
+    monkeypatch.setattr(hook_pending, "default_state_dir", lambda *_: spool_dir)
+    rows = [
+        {"provider": "claude", "payload": '{"prompt":"a\u2028b"}'},
+        {"provider": "claude", "payload": '{"hook_event_name":"Stop"}'},
+    ]
+    (spool_dir / "claude.pending.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8"
+    )
+    headless.applicationDidFinishLaunching_(None)
+
+    doctor = headless._core_dispatch("doctor", {})
+
+    check = next(check for check in doctor["checks"] if check["name"] == "pending hook lines")
+    assert check["detail"] == "1 files, 2 lines"
+
+
+class _PendingLoginProbe:
+    """A login-shell probe the test resolves by hand: it has no runner, no
+    thread and no shell, so nothing here can spawn one."""
+
+    def __init__(self) -> None:
+        self.is_resolved = False
+        self.directories: tuple[Path, ...] = ()
+        self.started: list = []
+
+    def resolved(self) -> bool:
+        return self.is_resolved
+
+    def snapshot(self) -> tuple[Path, ...]:
+        return self.directories
+
+    def ensure_started(self, on_done=None) -> bool:
+        self.started.append(on_done)
+        return True
+
+
+def _detection_sandbox(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, probe: _PendingLoginProbe) -> Path:
+    """Inventory roots under a temporary home, an empty process PATH, and
+    the given probe as the daemon's shared one. Returns a directory holding
+    a ``codex`` executable, which only the login shell's PATH would name."""
+    from jrbar import installed_agent_inventory, login_shell_path
+
+    home = tmp_path / "detect-home"
+    home.mkdir(mode=0o700)
+    roots = (installed_agent_inventory.InventoryRoot("home", home, frozenset({os.getuid()})),)
+    monkeypatch.setattr(installed_agent_inventory, "default_inventory_roots", lambda: roots)
+    empty = tmp_path / "empty-bin"
+    empty.mkdir(mode=0o700)
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setattr(login_shell_path, "_default_probe", probe)
+    shell_bin = tmp_path / "shell-bin"
+    shell_bin.mkdir(mode=0o700)
+    codex = shell_bin / "codex"
+    codex.touch()
+    codex.chmod(0o700)
+    return shell_bin
+
+
+def test_detection_never_waits_on_the_login_shell_and_never_says_not_installed__and_2_more(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # --- scenario: a_pending_probe_leaves_path_only_providers_unknown
+    probe = _PendingLoginProbe()
+    shell_bin = _detection_sandbox(monkeypatch, tmp_path, probe)
+    controller = headless
+
+    detected = controller._core_detected_agents()
+
+    # The scan came back with the probe still out. A CLI only a login-shell
+    # directory could name is missing from the answer, not False; a provider
+    # whose detectors are not a PATH lookup has an honest answer already.
+    assert "codex" not in detected and "claude" not in detected and "kiro" not in detected
+    assert detected["cursor"] is False and detected["openclaw"] is False
+    assert len(probe.started) == 1
+    assert controller._core_detected_agents_cache[2] == core_runtime.DETECTED_AGENTS_PENDING_TTL_SECONDS
+    # Asking again while it is pending asks the probe again (it applies its
+    # own backoff) and still says nothing false.
+    controller._core_detected_agents_cache = None
+    assert "codex" not in controller._core_detected_agents()
+    assert len(probe.started) == 2
+    # The state document leaves the key out too: the app reads that as unknown.
+    published_detected = controller._core_build_state()["health"]["detected"]
+    assert "codex" not in published_detected and published_detected["cursor"] is False
+
+    # --- scenario: the_answer_clears_the_cache_and_republishes
+    probe.is_resolved = True
+    probe.directories = (shell_bin,)
+    published: list[str] = []
+    controller._core_publish_state_soon = lambda: published.append("state")
+    assert controller._core_detected_agents_cache is not None
+    probe.started[0]()
+    assert controller._core_detected_agents_cache is None
+    assert published == ["state"]
+
+    # --- scenario: once_resolved_an_absent_cli_is_honestly_not_installed
+    detected = controller._core_detected_agents()
+    assert detected["codex"] is True
+    assert detected["claude"] is False and detected["kiro"] is False
+    assert controller._core_detected_agents_cache[2] == core_runtime.DETECTED_AGENTS_TTL_SECONDS
+    assert len(probe.started) == 2
+
+
+def test_launch_starts_the_login_shell_probe_before_the_first_state_build(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    order: list[str] = []
+    probe = _PendingLoginProbe()
+    _detection_sandbox(monkeypatch, tmp_path, probe)
+    real_start = probe.ensure_started
+    probe.ensure_started = lambda on_done=None: (order.append("probe"), real_start(on_done))[1]
+    headless.refresh_.side_effect = lambda *_args: order.append("refresh")
+
+    headless.applicationDidFinishLaunching_(None)
+
+    assert order[:2] == ["probe", "refresh"]
+    assert probe.started and callable(probe.started[0])
+
+
+def test_an_answer_that_lands_during_a_scan_does_not_leave_a_partial_cache(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from jrbar import installed_agent_inventory
+
+    probe = _PendingLoginProbe()
+    _detection_sandbox(monkeypatch, tmp_path, probe)
+    real_collect = installed_agent_inventory.collect_installed_agent_inventory
+
+    def collect_then_answer(roots, path_dirs=None):
+        result = real_collect(roots, path_dirs)
+        # The probe's thread finishes, and runs its callback, mid-scan.
+        probe.is_resolved = True
+        headless._core_login_path_ready()
+        return result
+
+    monkeypatch.setattr(installed_agent_inventory, "collect_installed_agent_inventory", collect_then_answer)
+    headless._core_publish_state_soon = lambda: None
+
+    headless._core_detected_agents()
+
+    assert headless._core_detected_agents_cache is None
+
+
+def test_install_hooks_refuses_only_a_cli_known_to_be_missing(
+    headless, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jrbar import install
+
+    installed: list[str] = []
+
+    def install_provider_hooks(provider, *, state_dir):
+        installed.append(provider)
+        return SimpleNamespace(changed=True, to_dict=lambda: {"provider": provider})
+
+    monkeypatch.setattr(install, "install_provider_hooks", install_provider_hooks)
+    controller = headless
+    controller.performSelectorOnMainThread_withObject_waitUntilDone_ = lambda *_args: None
+
+    # The probe has not answered: the CLI is unknown, so the install goes ahead.
+    controller._core_detected_agents = lambda: {"cursor": False}
+    reply = controller._core_dispatch("install_hooks", {"providers": ["codex"]})
+    assert installed == ["codex"]
+    assert reply["results"]["codex"]["ok"] is True
+    assert reply["results"]["codex"]["detected"] is None
+
+    # An explicit False (looked everywhere, found nothing) still refuses.
+    controller._core_detected_agents = lambda: {"codex": False}
+    reply = controller._core_dispatch("install_hooks", {"providers": ["codex"]})
+    assert installed == ["codex"]
+    assert reply["results"]["codex"] == {"ok": False, "detected": False, "error": "no CLI found on PATH"}
+
+
 def test_doctor_and_history_answer_without_a_snapshot__and_1_more(headless) -> None:
     # --- scenario: doctor_and_history_answer_without_a_snapshot
     controller = headless
@@ -702,6 +955,277 @@ def test_doctor_and_history_answer_without_a_snapshot__and_1_more(headless) -> N
     assert controller._core is None
     assert not _FakeDrainer.instances[0].started
 
+
+
+def _effect_pack_payload(pack_id: str = "calm-pack", name: str = "Calm Pack", effects: int = 1) -> dict:
+    return {
+        "id": pack_id,
+        "name": name,
+        "version": 2,
+        "effects": [
+            {
+                "id": f"soft-pulse-{number}",
+                "label": f"Soft Pulse {number}",
+                "description": "A quiet work pulse.",
+                "meaning": "quiet working",
+                "surfaces": ["screen_bar", "settings_preview"],
+            }
+            for number in range(effects)
+        ],
+        "safety": {"data_only": True, "network": False},
+        "accessibility": {"reduced_motion": True, "high_contrast": True},
+    }
+
+
+class _PackReads:
+    """Counts how often the daemon really reads the pack store."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from jrbar import effect_pack_store
+
+        self.count = 0
+        real_list = effect_pack_store.EffectPackStore.list
+        reads = self
+
+        def counting_list(store):
+            reads.count += 1
+            return real_list(store)
+
+        monkeypatch.setattr(effect_pack_store.EffectPackStore, "list", counting_list)
+
+
+def _effects_daemon(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The headless daemon over a temporary pack store and assignment file.
+    Returns the controller and the store's root."""
+    from jrbar import core_effects, effect_assignment_store, effect_pack_store
+    from jrbar.effect_assignment_store import EffectAssignmentCache
+    from jrbar.effect_registry import EFFECT_REGISTRY
+
+    root = tmp_path / "packs"
+    monkeypatch.setattr(effect_assignment_store, "default_effect_assignment_path", lambda home=None: tmp_path / "assignments.json")
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: root)
+    monkeypatch.setattr(core_effects, "default_state_dir", lambda *_: tmp_path)
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.setattr(type(controller), "_effect_assignment_cache", EffectAssignmentCache(registry=EFFECT_REGISTRY), raising=False)
+    return controller, root
+
+
+def test_the_state_build_reads_an_unchanged_pack_store_once__and_5_more(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # --- scenario: an_unchanged_store_is_read_once
+    """``list()`` decodes, validates and re-exports every pack; the state
+    build asked for it on every refresh. The list is kept on a fingerprint
+    of the store, so an unchanged store costs a stat pass."""
+    from jrbar.effect_pack_store import EffectPackStore
+
+    controller, root = _effects_daemon(headless, monkeypatch, tmp_path)
+    store = EffectPackStore(root)
+    assert store.install(_effect_pack_payload("calm-pack")).accepted
+    reads = _PackReads(monkeypatch)
+
+    first = controller._core_build_state()
+    second = controller._core_build_state()
+    assert reads.count == 1
+    assert first["catalog_generation"] == second["catalog_generation"]
+    # Studio's own requests between the builds add no read either.
+    controller._core_dispatch("list_effects", {})
+    controller._core_dispatch("render_effect", {"effect_id": "blink", "parameters": {"cadence": "double"}, "led_count": 2})
+    controller._core_build_state()
+    assert reads.count == 1
+
+    # --- scenario: a_pack_installed_out_of_process_is_seen
+    # The ``jrbar effects`` CLI installs while the daemon runs.
+    before = controller._core_build_state()["catalog_generation"]
+    assert store.install(_effect_pack_payload("second-pack", "Second Pack")).accepted
+    after_install = controller._core_build_state()["catalog_generation"]
+    assert after_install != before
+    assert reads.count == 2
+    assert controller._core_build_state()["catalog_generation"] == after_install
+    assert reads.count == 2
+
+    # A new modification time alone is a change.
+    leaf = root / "second-pack.json"
+    info = leaf.stat()
+    os.utime(leaf, ns=(info.st_atime_ns, info.st_mtime_ns + 7_000_000_000))
+    controller._core_build_state()
+    assert reads.count == 3
+    controller._core_build_state()
+    assert reads.count == 3
+
+    # A replace with the very same bytes (a new file) is a change too.
+    payload = leaf.read_bytes()
+    replacement = root / "second-pack.json.new"
+    replacement.write_bytes(payload)
+    replacement.chmod(0o600)
+    os.replace(replacement, leaf)
+    controller._core_build_state()
+    assert reads.count == 4
+    controller._core_build_state()
+    assert reads.count == 4
+
+    # An update with different content moves the generation.
+    assert store.update(_effect_pack_payload("second-pack", "Second Pack", effects=2)).accepted
+    assert controller._core_build_state()["catalog_generation"] not in (after_install, before)
+    assert reads.count == 5
+
+    # --- scenario: a_loosened_pack_is_read_again_and_tightened
+    leaf.chmod(0o666)
+    controller._core_build_state()
+    assert reads.count == 6
+    assert stat.S_IMODE(leaf.stat().st_mode) == 0o600
+    # The read tightened the mode back to what the kept entry was stamped
+    # with, so that entry serves again and nothing is read a third time.
+    controller._core_build_state()
+    controller._core_build_state()
+    assert reads.count == 6
+
+    # --- scenario: the_cache_is_keyed_on_the_store_root
+    from jrbar import effect_pack_store
+
+    other = tmp_path / "other-packs"
+    assert EffectPackStore(other).install(_effect_pack_payload("elsewhere-pack", "Elsewhere")).accepted
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: other)
+    listed = {pack["id"] for pack in controller._core_dispatch("list_effects", {})["packs"]}
+    assert listed == {"elsewhere-pack"}
+
+    # --- scenario: a_change_between_the_stamp_and_the_read_is_not_kept
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: root)
+    controller._core_effect_packs_cache = None
+    real_list = effect_pack_store.EffectPackStore.list
+    raced = {"done": False}
+
+    def racing_list(store):
+        if not raced["done"]:
+            raced["done"] = True
+            assert EffectPackStore(root).install(_effect_pack_payload("raced-pack", "Raced")).accepted
+        return real_list(store)  # the counting wrapper
+
+    monkeypatch.setattr(effect_pack_store.EffectPackStore, "list", racing_list)
+    reads.count = 0
+    core_runtime._effect_packs(controller)
+    assert reads.count == 1
+    # The store moved under that read, so nothing was kept under the old
+    # stamp: the next ask reads again, and sees the pack that arrived.
+    packs = core_runtime._effect_packs(controller)
+    assert reads.count == 2
+    assert "raced-pack" in {pack.pack_id for pack in packs}
+    core_runtime._effect_packs(controller)
+    assert reads.count == 2
+
+
+def test_the_daemons_own_import_and_remove_show_on_the_next_reply_without_a_stamp_change(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The daemon drops its kept list itself when it changes the store, so
+    its replies never depend on timestamp granularity."""
+    from jrbar import effect_pack_store
+
+    controller, root = _effects_daemon(headless, monkeypatch, tmp_path)
+    source = tmp_path / "incoming" / "calm-pack.json"
+    source.parent.mkdir()
+    from jrbar.effect_packs import export_pack, validate_pack
+
+    source.write_bytes(export_pack(validate_pack(_effect_pack_payload("calm-pack"))))
+    assert controller._core_dispatch("list_effects", {})["packs"] == []
+    # From here the store's stamp can no longer tell anything changed.
+    frozen = effect_pack_store.EffectPackStore.fingerprint
+    stamp = frozen(effect_pack_store.EffectPackStore(root))
+    monkeypatch.setattr(effect_pack_store.EffectPackStore, "fingerprint", lambda store: stamp)
+
+    imported = controller._core_dispatch("import_effect_pack", {"path": str(source)})
+    assert [pack["id"] for pack in imported["packs"]] == ["calm-pack"]
+    assert [pack["id"] for pack in controller._core_dispatch("list_effects", {})["packs"]] == ["calm-pack"]
+
+    removed = controller._core_dispatch("remove_effect_pack", {"pack_id": "calm-pack"})
+    assert removed["packs"] == []
+    assert controller._core_dispatch("list_effects", {})["packs"] == []
+
+
+def test_a_store_that_fails_closed_hides_every_pack_and_says_so_once_per_change(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pack that is not canonical makes the whole store unavailable, as it
+    always has (a partial catalog would disagree with the assignment
+    cache's registry). What changes is the noise: one log line for the
+    state of the files, not one per build."""
+    from jrbar import core_effects
+    from jrbar.effect_pack_store import EffectPackStore
+    from jrbar.effect_registry import EFFECT_REGISTRY
+
+    controller, root = _effects_daemon(headless, monkeypatch, tmp_path)
+    store = EffectPackStore(root)
+    assert store.install(_effect_pack_payload("calm-pack")).accepted
+    assert store.install(_effect_pack_payload("second-pack", "Second Pack")).accepted
+    bad = root / "second-pack.json"
+    bad.write_bytes(bad.read_bytes() + b"\n")
+    lines: list[str] = []
+    controller._core_log = lines.append
+    reads = _PackReads(monkeypatch)
+
+    first = controller._core_build_state()
+    second = controller._core_build_state()
+
+    assert core_runtime._effect_packs(controller) == ()
+    empty_generation = core_effects.catalog_generation(EFFECT_REGISTRY, (), revision=0)
+    assert first["catalog_generation"] == second["catalog_generation"]
+    assert first["catalog_generation"] == controller._core_catalog_generation()
+    assert controller._core_dispatch("list_effects", {})["packs"] == []
+    assert [line for line in lines if "effect packs unavailable" in line] == ["core: effect packs unavailable: EffectPackStoreError"]
+    assert reads.count == 1
+    assert empty_generation > 0
+
+    # The file changes, so the verdict is reached again, and logged again.
+    info = bad.stat()
+    os.utime(bad, ns=(info.st_atime_ns, info.st_mtime_ns + 9_000_000_000))
+    controller._core_build_state()
+    controller._core_build_state()
+    assert len([line for line in lines if "effect packs unavailable" in line]) == 2
+    assert reads.count == 2
+
+    # Repaired, the packs are back.
+    bad.unlink()
+    assert store.install(_effect_pack_payload("second-pack", "Second Pack")).accepted
+    assert {pack.pack_id for pack in core_runtime._effect_packs(controller)} == {"calm-pack", "second-pack"}
+
+
+def test_an_unsafe_store_is_never_kept_and_transient_errors_are_not_cached(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from jrbar import effect_pack_store
+
+    controller, root = _effects_daemon(headless, monkeypatch, tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text("outside", encoding="utf-8")
+    root.mkdir()
+    (root / "calm-pack.json").symlink_to(outside)
+    lines: list[str] = []
+    controller._core_log = lines.append
+
+    assert core_runtime._effect_packs(controller) == ()
+    assert core_runtime._effect_packs(controller) == ()
+    assert controller._core_effect_packs_cache is None
+    assert len([line for line in lines if "effect packs unavailable" in line]) == 2
+
+    (root / "calm-pack.json").unlink()
+    assert effect_pack_store.EffectPackStore(root).install(_effect_pack_payload("calm-pack")).accepted
+
+    # An error that is not the store failing closed (a transient OSError)
+    # is not remembered.
+    attempts = {"count": 0}
+    real_list = effect_pack_store.EffectPackStore.list
+
+    def flaky_list(store):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise OSError("temporarily unavailable")
+        return real_list(store)
+
+    monkeypatch.setattr(effect_pack_store.EffectPackStore, "list", flaky_list)
+    assert core_runtime._effect_packs(controller) == ()
+    assert [pack.pack_id for pack in core_runtime._effect_packs(controller)] == ["calm-pack"]
+    assert attempts["count"] == 2
 
 
 def test_effect_commands_read_and_write_the_real_stores__and_2_more(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

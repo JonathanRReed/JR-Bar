@@ -102,6 +102,19 @@ class EffectHistoryProjection:
 class _StoredLeaf:
     path: Path
     size: int
+    # What one lstat says about the file, for ``EffectPackStore.fingerprint``.
+    mtime_ns: int = 0
+    mode: int = 0
+    nlink: int = 0
+    ino: int = 0
+
+    @property
+    def stamp(self) -> tuple[str, int, int, int, int, int]:
+        return (self.path.name, self.size, self.mtime_ns, self.mode, self.nlink, self.ino)
+
+
+#: The fingerprint of a store whose directory does not exist yet.
+_ABSENT_FINGERPRINT: Final = ("absent",)
 
 
 def default_effect_pack_store_path(home: Path | None = None) -> Path:
@@ -274,7 +287,16 @@ class EffectPackStore:
                 or info.st_size > MAX_PACK_BYTES
             ):
                 raise EffectPackStoreError("effect pack store contains an unsafe entry")
-            leaves.append(_StoredLeaf(path=path, size=info.st_size))
+            leaves.append(
+                _StoredLeaf(
+                    path=path,
+                    size=info.st_size,
+                    mtime_ns=info.st_mtime_ns,
+                    mode=stat.S_IMODE(info.st_mode),
+                    nlink=info.st_nlink,
+                    ino=info.st_ino,
+                )
+            )
         self._require_store_bounds(tuple(leaves))
         return tuple(leaves)
 
@@ -670,6 +692,33 @@ class EffectPackStore:
             digest=next_digest,
             previous_digest=previous_digest,
         )
+
+    def fingerprint(self) -> tuple[object, ...]:
+        """A cheap stamp of what the store holds right now.
+
+        It is the lstat pass ``list()`` begins with (about 0.2 ms) and reads
+        no pack, so a caller that keeps ``list()``'s answer can tell whether
+        it is still current: the stamp moves when a pack is installed,
+        updated, removed or renamed, when a file's modification time or mode
+        changes (a loosened mode is repaired by the next read, so it must be
+        seen), and when the directory's own entries change. A store that
+        does not exist yet has one fixed stamp. A store ``list()`` would
+        refuse (a link, a foreign entry, a bound exceeded) raises the same
+        ``EffectPackStoreError`` here, so an unsafe store never yields a
+        stamp a caller could cache.
+
+        Change time is left out on purpose: every private read re-chmods the
+        pack and its directory, which moves it without changing anything.
+        """
+        leaves = self._entries()
+        try:
+            info = self.root.lstat()
+        except FileNotFoundError:
+            return _ABSENT_FINGERPRINT
+        except OSError as error:
+            raise EffectPackStoreError("effect pack store is unavailable") from error
+        root_stamp = (stat.S_IMODE(info.st_mode), info.st_mtime_ns, info.st_ino)
+        return (root_stamp, tuple(leaf.stamp for leaf in leaves))
 
     def list(self) -> tuple[EffectPack, ...]:
         """Return installed packs in deterministic identifier order."""

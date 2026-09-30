@@ -497,3 +497,121 @@ def test_a_drain_applies_one_refresh_hint_per_source_after_the_pass(tmp_path, mo
     assert applied[-1].event_token == EventToken("f" * 32)
     with pytest.raises(ValueError):
         DeferredRefreshHints(None)  # type: ignore[arg-type]
+
+
+# Named, so the source holds no raw line separators.
+LS = "\N{LINE SEPARATOR}"
+PS = "\N{PARAGRAPH SEPARATOR}"
+NEL = "\N{NEXT LINE}"
+_SEPARATORS = f"{LS} {PS} {NEL}"
+
+
+def _shim_shaped(payload: str, **extra) -> str:
+    """One spool line as the shim writes it: bytes at or above 0x80 raw."""
+    row = {"provider": "claude", "ppid": 4242, "ppid_start": 1788982000.5, "payload": payload}
+    row.update(extra)
+    return json.dumps(row, ensure_ascii=False)
+
+
+def test_spool_lines_split_on_newline_only() -> None:
+    from jrbar.hook_pending import spool_lines
+
+    assert spool_lines("a\nb\n") == ["a", "b"]
+    # A torn last line, with no newline yet, is still a line.
+    assert spool_lines("a\nb") == ["a", "b"]
+    assert spool_lines("") == []
+    assert spool_lines("\n") == [""]
+    # The characters str.splitlines would cut on are data inside a record.
+    assert spool_lines(f"a b c{NEL}d\n") == [f"a b c{NEL}d"]
+    assert spool_lines(f"x{LS}y{PS}z\n") == [f"x{LS}y{PS}z"]
+
+
+def test_a_payload_with_unicode_line_separators_replays_as_one_event(tmp_path: Path) -> None:
+    from jrbar import hook_pending
+
+    payload = json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": f"a{_SEPARATORS}d"}, ensure_ascii=False)
+    assert hook_pending.spool_pending_hook("claude", payload, state_dir=tmp_path)
+    second = json.dumps({"hook_event_name": "PostToolUse", "tool_output": f"x{LS}y"}, ensure_ascii=False)
+    spool = tmp_path / f"claude{PENDING_SUFFIX}"
+    with open(spool, "a", encoding="utf-8") as handle:
+        handle.write(_shim_shaped(second) + "\n")
+    # The separators really are raw in the file, the way the shim leaves them.
+    assert LS in spool.read_text(encoding="utf-8")
+    assert len(spool.read_text(encoding="utf-8").splitlines()) > 2
+
+    submitted: list[HookIngressRequest] = []
+    count = drain_pending_hooks(
+        submitted.append,
+        state_dir=tmp_path,
+        log_path_for=lambda provider: str(tmp_path / f"{provider}.jsonl"),
+    )
+
+    assert count == 2
+    assert [request.payload_text for request in submitted] == [payload, second]
+    assert not (tmp_path / f"claude{hook_pending.REJECTED_SUFFIX}").exists()
+    assert pending_hook_files(tmp_path) == []
+
+
+def test_a_separator_bearing_line_survives_a_requeue(tmp_path: Path) -> None:
+    from jrbar import hook_pending
+
+    payload = json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": f"a{LS}b"}, ensure_ascii=False)
+    assert hook_pending.spool_pending_hook("claude", payload, state_dir=tmp_path)
+
+    def log_path_for(provider: str) -> str:
+        return str(tmp_path / f"{provider}.jsonl")
+
+    def refuse(_request: HookIngressRequest) -> None:
+        raise RuntimeError("ingress full")
+
+    assert drain_pending_hooks(refuse, state_dir=tmp_path, log_path_for=log_path_for) == 0
+    (requeued,) = pending_hook_files(tmp_path)
+    text = requeued.read_text(encoding="utf-8")
+    assert text.count("\n") == 1
+    (only,) = hook_pending.spool_lines(text)
+    assert LS in only
+    assert not (tmp_path / f"claude{hook_pending.REJECTED_SUFFIX}").exists()
+
+    submitted: list[HookIngressRequest] = []
+    assert drain_pending_hooks(submitted.append, state_dir=tmp_path, log_path_for=log_path_for) == 1
+    assert submitted[0].payload_text == payload
+    assert not (tmp_path / f"claude{hook_pending.REJECTED_SUFFIX}").exists()
+    assert pending_hook_files(tmp_path) == []
+
+
+def test_a_separator_inside_a_capped_file_still_counts_whole_records(tmp_path: Path) -> None:
+    """The cap's remainder must not gain a blank line from the file's
+    trailing newline, nor lose a record to a separator."""
+    from jrbar import hook_pending
+
+    total = hook_pending.MAX_PENDING_LINES_PER_DRAIN + 7
+    body = "".join(
+        _shim_shaped(json.dumps({"hook_event_name": "Stop", "n": f"a{LS}{n}"}, ensure_ascii=False)) + "\n"
+        for n in range(total)
+    )
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    pending.write_text(body, encoding="utf-8")
+
+    count = drain_pending_hooks(
+        lambda _request: None,
+        state_dir=tmp_path,
+        log_path_for=lambda provider: str(tmp_path / f"{provider}.jsonl"),
+    )
+
+    assert count == hook_pending.MAX_PENDING_LINES_PER_DRAIN
+    (rest,) = pending_hook_files(tmp_path)
+    assert len(hook_pending.spool_lines(rest.read_text(encoding="utf-8"))) == 7
+    assert not (tmp_path / f"claude{hook_pending.REJECTED_SUFFIX}").exists()
+
+
+def test_pending_line_count_counts_records_not_separators(tmp_path: Path) -> None:
+    from jrbar.hook_pending import pending_line_count
+
+    spool = tmp_path / f"claude{PENDING_SUFFIX}"
+    spool.write_text(
+        _shim_shaped(f"a{_SEPARATORS}d") + "\n\n" + _shim_shaped("plain") + "\n",
+        encoding="utf-8",
+    )
+    assert pending_line_count(spool) == 2
+    with pytest.raises(OSError):
+        pending_line_count(tmp_path / "missing.pending.jsonl")

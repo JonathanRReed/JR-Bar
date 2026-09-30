@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jrbar.hook_doctor import classify_command, registered_commands, render_hook_doctor
+from jrbar.hook_doctor import classify_command, hook_doctor_report, registered_commands, render_hook_doctor
+from jrbar.state_paths import default_state_dir
 
 
 def test_classify_every_command_shape() -> None:
@@ -122,3 +123,24 @@ def test_hook_shim_path_finds_the_bundled_shim_when_frozen(tmp_path: Path, monke
     monkeypatch.setattr(install.sys, "executable", str(core))
     assert install.hook_shim_path() == shim.resolve()
     assert install.hook_command_arguments("hermes", tmp_path / "hermes.jsonl")[0] == str(shim.resolve())
+
+
+def test_pending_lines_count_records_when_a_payload_carries_a_line_separator(tmp_path: Path) -> None:
+    """A pasted U+2028 is data inside one spooled record; the count is of
+    records, so the doctor does not over-report a file the drain replays."""
+    state_dir = default_state_dir(tmp_path)
+    state_dir.mkdir(parents=True)
+    records = [
+        {"provider": "claude", "ppid": 4242, "ppid_start": 1788982000.5, "payload": '{"prompt":"a\u2028b \u2029 c\u0085d"}'},
+        {"provider": "claude", "ppid": 4242, "ppid_start": 1788982000.5, "payload": '{"hook_event_name":"Stop"}'},
+    ]
+    (state_dir / "claude.pending.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in records), encoding="utf-8"
+    )
+    assert "\u2028" in (state_dir / "claude.pending.jsonl").read_text(encoding="utf-8")
+
+    report = hook_doctor_report(home=tmp_path, compatibility=lambda names, directory: {})
+
+    assert report["pending"] == [{"file": "claude.pending.jsonl", "lines": 2}]
+    claude = next(entry for entry in report["providers"] if entry["provider"] == "claude")
+    assert claude["pending_lines"] == 2

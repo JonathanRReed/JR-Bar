@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import stat
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -24,6 +23,11 @@ from .installed_agents import (
     SurfaceDetectorKind,
     installed_surface_registrations,
     reduce_installed_surface_evidence,
+)
+from .login_shell_path import (
+    default_login_shell_probe,
+    probe_login_shell_path,
+    shell_probe_opted_out,
 )
 from .runtime_scheduler import RuntimeWorkCommand, RuntimeWorkerDomain
 
@@ -370,65 +374,28 @@ def _candidate_is_present_in_any_location(
     )
 
 
-#: Only these variables cross into the login shell's environment — the
-#: probe must not inherit a launchd session's leftovers or leak ours.
-_LOGIN_SHELL_PATH_ENV_KEYS: Final = ("HOME", "USER", "SHELL", "TERM")
-_login_shell_path_dirs_cache: tuple[Path, ...] | None = None
-
-
 def login_shell_path_dirs(
     *,
     runner: Callable[..., object] | None = None,
 ) -> tuple[Path, ...]:
     """The PATH directories the user's LOGIN shell would see.
 
-    Under Finder/launchd the process PATH is the minimal default, so the
-    scan asks the login shell once — ``$SHELL -lic 'printf %s "$PATH"'`` —
-    with a bare environment, no stdin, and a 3 s ceiling. Any failure is
-    ``()``; the caller still has the process PATH. ``JRBAR_NO_SHELL_PATH=1``
-    opts the probe out entirely. The result is cached for the process: PATH
-    does not change under a running app, and a shell spawn per scan would
-    be the expensive part. Tests inject ``runner`` (a ``subprocess.run``
-    stand-in) which bypasses the cache.
+    Under Finder/launchd the process PATH is the minimal default, and the
+    login shell (``login_shell_path``) is where the person's CLI directories
+    are added. Asking it can take seconds right after a login, so this call
+    never asks: it answers with the last good answer the daemon's probe
+    thread fetched, or ``()`` while there is none, and the caller still has
+    the process PATH. ``JRBAR_NO_SHELL_PATH=1`` opts the probe out entirely.
+
+    Tests inject ``runner`` (a ``subprocess.run`` stand-in): it runs the
+    probe once on the calling thread, answers ``()`` on every failure and
+    never touches the shared probe.
     """
     if runner is not None:
-        return _probe_login_shell_path(runner)
-    global _login_shell_path_dirs_cache
-    if _login_shell_path_dirs_cache is None:
-        _login_shell_path_dirs_cache = _probe_login_shell_path(subprocess.run)
-    return _login_shell_path_dirs_cache
-
-
-def _probe_login_shell_path(runner: Callable[..., object]) -> tuple[Path, ...]:
-    if os.environ.get("JRBAR_NO_SHELL_PATH") == "1":
-        return ()
-    env = {
-        key: os.environ[key]
-        for key in _LOGIN_SHELL_PATH_ENV_KEYS
-        if key in os.environ
-    }
-    try:
-        completed = runner(
-            [os.environ.get("SHELL") or "/bin/zsh", "-lic", 'printf %s "$PATH"'],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            env=env,
-            timeout=3,
-            text=True,
-        )
-    except Exception:
-        return ()
-    if getattr(completed, "returncode", 1) != 0:
-        return ()
-    output = getattr(completed, "stdout", "")
-    if type(output) is not str:
-        return ()
-    # A login-interactive shell can decorate stdout around the payload;
-    # the PATH print is the last thing it emits.
-    lines = output.splitlines()
-    path_text = lines[-1].strip() if lines else ""
-    return tuple(Path(entry) for entry in path_text.split(os.pathsep) if entry)
+        if shell_probe_opted_out():
+            return ()
+        return probe_login_shell_path(runner) or ()
+    return default_login_shell_probe().snapshot()
 
 
 def _path_dirs(path_dirs: tuple[Path, ...] | None) -> tuple[Path, ...]:

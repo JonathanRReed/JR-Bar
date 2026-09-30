@@ -3283,7 +3283,8 @@ class World:
             if action == "reveal_session":
                 s = self.sessions.get(sid) or {"label": "session", "terminal": {}}
                 result["activated"] = s.get("terminal", {}).get("app")
-                self.push_log("info", f"deck: key {index + 1} reveals {s['label']}")
+                # The daemon logs the receipt, never the session's title.
+                self.push_log("info", f"deck: key {index + 1} reveals: navigation_requested")
             elif action in ("next_bank", "previous_bank"):
                 with self.lock:
                     count = self.deck_bank_count()

@@ -135,6 +135,7 @@ class Server:
     def stop(self, *, timeout_seconds=2.0):
         return None
 
+    @property
     def client_count(self):
         return 1
 
