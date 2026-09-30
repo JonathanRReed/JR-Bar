@@ -96,11 +96,9 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
         for name in (_call_name(node) for node in ast.walk(compose))
         if name is not None
     ]
-    assert "install_settings_navigation" in call_names
     assert "install_screen_bar_runtime" in call_names
-    assert call_names.index("install_settings_navigation") < call_names.index(
-        "install_screen_bar_runtime"
-    )
+    # The Settings window is gone, and so is its install step.
+    assert "install_settings_navigation" not in call_names
 
     receipt_keywords: set[str] = set()
     for node in ast.walk(compose):
@@ -126,7 +124,6 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
 
         assert "install_screen_bar_runtime()" not in source, f"{path.name} still starts Screen Bar at import time"
         assert "_install(dict(globals()))" not in source, f"{path.name} still performs namespace injection at import time"
-        assert "install_settings_navigation(_legacy, _settings_window)" not in source, f"{path.name} still installs settings navigation at import time"
 
         top_level_calls = {_call_name(call) for call in _top_level_calls(tree)}
         assert "DeviceIdentityCache" not in top_level_calls, f"{path.name} still creates the device identity cache at import time"
@@ -211,7 +208,6 @@ assert receipt.final_controller is provider.JRProviderUsageStatusBarController
 assert receipt.steps == (
     "production-controller",
     "status-bar-facade",
-    "settings-navigation",
     "screen-bar-runtime",
     "ambient-effects-runtime",
     "provider-usage-controller",

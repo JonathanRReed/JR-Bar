@@ -6,7 +6,9 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -69,6 +71,54 @@ def test_every_protocol_command_is_registered__and_2_more() -> None:
     assert screen_bar_anchor(200.0, 100.0, linked=False) == 200.0
     assert screen_bar_anchor(200.0, None, linked=True) == 200.0
     assert screen_bar_anchor(None, None, linked=True) is None
+
+
+def test_the_headless_controller_has_no_way_to_open_a_window() -> None:
+    """The daemon composes the controller in a fresh interpreter: the class it
+    serves with must not carry the retired Settings window's entry points."""
+    script = """
+import json
+
+from jrbar import core_runtime
+from jrbar.application_composition import compose_status_bar_application
+
+compose_status_bar_application()
+controller_class = core_runtime.build_headless_controller_class()
+retired = [
+    name
+    for name in (
+        "show_settings_window",
+        "ensure_settings_pane",
+        "ensure_all_settings_panes",
+        "select_settings_pane",
+        "show_colors_window",
+        "openColorsWindow_",
+    )
+    if hasattr(controller_class, name)
+]
+assert retired == [], retired
+print(json.dumps({"ok": True}))
+"""
+    with tempfile.TemporaryDirectory() as tempdir:
+        env = os.environ.copy()
+        env["SIDEPULSE_TESTING"] = "1"
+        env["HOME"] = tempdir
+        env["PYTHONPATH"] = str(Path(core_runtime.__file__).resolve().parents[1])
+        # A `python -c` child under PYTEST_CURRENT_TEST is the provider
+        # module's import probe, which swaps the real controller for
+        # stand-ins; this child needs the real composition.
+        env.pop("PYTEST_CURRENT_TEST", None)
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    assert completed.returncode == 0, completed.stderr
+    assert '"ok": true' in completed.stdout
 
 
 

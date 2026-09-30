@@ -33,12 +33,7 @@ FRAMEWORK_CALLBACKS = frozenset(
         "applicationDidBecomeActive_",
         "drawRect_",
         "menuDidClose_",
-        "numberOfRowsInTableView_",
         "popoverDidClose_",
-        "tableViewSelectionDidChange_",
-        "tableView_isGroupRow_",
-        "tableView_shouldSelectRow_",
-        "tableView_viewForTableColumn_row_",
         "textDidChange_",
         "textDidEndEditing_",
     }

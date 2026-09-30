@@ -12,7 +12,6 @@ SETTINGS_WINDOW_MODULE = ROOT / "src" / "jrbar" / "settings_window.py"
 ONBOARDING_MODULE = ROOT / "src" / "jrbar" / "onboarding_runtime.py"
 RESET_ACTION_MODULE = ROOT / "src" / "jrbar" / "provider_reset_settings_action.py"
 STATUS_PROJECTION_MODULE = ROOT / "src" / "jrbar" / "provider_usage_status_projection.py"
-SETTINGS_REFRESH_MODULE = ROOT / "src" / "jrbar" / "settings_destination_refresh.py"
 FEEDBACK_ACTIONS_MODULE = ROOT / "src" / "jrbar" / "provider_usage_feedback_actions.py"
 
 
@@ -100,63 +99,6 @@ def test_provider_usage_runs_through_background_service_and_main_thread_apply__a
     assert refresh.lineno < dispatch.lineno
     assert "load_provider_usage_settings" not in apply_calls
     assert "load_provider_usage_settings" not in menu_settings_calls
-
-
-def test_usage_summary_and_checkbox_repaint_do_not_reload_settings__and_2_more() -> None:
-    # --- scenario: usage_summary_and_checkbox_repaint_do_not_reload_settings
-    summary_calls = _calls(
-        _function(SETTINGS_CATEGORY_MODULE, "refresh_native_usage_summary")
-    )
-    checkbox_calls = _calls(
-        _function(SETTINGS_CATEGORY_MODULE, "_sync_usage_menu_checkboxes")
-    )
-
-    assert "_sync_usage_menu_checkboxes" in summary_calls
-    assert "load_provider_usage_settings" not in summary_calls
-    assert "load_provider_usage_settings" not in checkbox_calls
-
-    # --- scenario: settings_navigation_uses_cached_page_refreshes_only
-    forbidden = {
-        "reconcile_device_runtime",
-        "refresh_settings_window",
-        "load_provider_usage_settings",
-    }
-    for name in (
-        "tableViewSelectionDidChange_",
-        "selectSettingsCategoryPage_",
-        "select_settings_pane",
-        "show_settings_window",
-    ):
-        calls = set(_calls(_method(name)))
-        assert not (calls & forbidden), (name, calls & forbidden)
-
-    assert "_refresh_settings_destination" in _calls(
-        _method("tableViewSelectionDidChange_")
-    )
-    assert "_refresh_settings_destination" in _calls(
-        _method("selectSettingsCategoryPage_")
-    )
-    show_source = ast.unparse(_method("show_settings_window"))
-    assert "_BaseStatusBarController.show_settings_window" not in show_source
-    assert "build_settings_window" in show_source
-
-    # --- scenario: settings_destination_refresh_policy_is_extracted_and_narrow
-    controller_calls = set(_calls(_method("_refresh_settings_destination")))
-    helper_calls = set(
-        _calls(_function(SETTINGS_REFRESH_MODULE, "refresh_settings_destination"))
-    )
-
-    assert "refresh_settings_destination" in controller_calls
-    assert "refresh_native_usage_summary" in helper_calls
-    assert "refresh_installed_agents_settings_projection" in helper_calls
-    assert "reconcile_installed_agent_inventory" in helper_calls
-    assert "refresh_capacity_settings_projection" in helper_calls
-    assert "refresh_colors_window" in helper_calls
-    assert not helper_calls & {
-        "load_provider_usage_settings",
-        "reconcile_device_runtime",
-        "refresh_settings_window",
-    }
 
 
 def test_provider_feedback_dispatch_is_extracted_behind_controller_methods__and_2_more() -> None:

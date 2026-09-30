@@ -6,7 +6,6 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from .product_identity import PRODUCT_DISPLAY_NAME
 from .provider_usage_status_bar_probe import (
     PROBE_IMPORT_MODE as _PROBE_IMPORT_MODE,
 )
@@ -15,11 +14,9 @@ from .provider_usage_status_bar_probe import (
 )
 
 if _PROBE_IMPORT_MODE:
-    _settings_navigation = None
     _legacy = _ProbeLegacyShim()
     _BaseStatusBarController = object
 else:
-    from . import settings_navigation as _settings_navigation
     from . import status_bar as _host
     from .provider_credential_store import ProviderCredentialStore
     from .provider_feature_settings import (
@@ -69,14 +66,9 @@ else:
     from .provider_usage_store import load_provider_usage_state, save_provider_usage_state
     from .provider_usage_sync_cache import refresh_cached_merged_sync
     from .settings_category_runtime import (
-        ensure_category,
         refresh_native_usage_summary,
-        requested_page_for_category,
         save_provider_instance_profile_setting,
-        select_page,
-        show_category,
     )
-    from .settings_destination_refresh import refresh_settings_destination
     from .usage_event_hooks import (
         config_for_settings,
         detect_usage_hook_events,
@@ -89,14 +81,6 @@ else:
     from .deck_status_bar import install_deck_status_bar
 
     _BaseStatusBarController = install_deck_status_bar(_host.JRStatusBarController)
-
-
-def _settings_category_at_row(row: int):
-    if _PROBE_IMPORT_MODE or _settings_navigation is None:
-        return None
-    if 0 <= row < len(_settings_navigation.SETTINGS_CATEGORIES):
-        return _settings_navigation.SETTINGS_CATEGORIES[row]
-    return None
 
 
 def _publish_reset_wire_events(controller, reset_events) -> None:
@@ -141,126 +125,6 @@ else:
                 "_jrbar_provider_usage_state",
                 ProviderUsageState((), None, None, False),
             )
-
-        # --- Seven-category Settings navigation -------------------------
-
-        def numberOfRowsInTableView_(self, _table_view) -> int:
-            return len(_settings_navigation.SETTINGS_CATEGORIES)
-
-        def tableView_viewForTableColumn_row_(self, _table_view, _column, row):
-            category = _settings_category_at_row(int(row))
-            if category is None:
-                return None
-            return _legacy.native_ui.sidebar_cell_view(category.label, category.icon)
-
-        def tableView_shouldSelectRow_(self, _table_view, row) -> bool:
-            return _settings_category_at_row(int(row)) is not None
-
-        def tableView_isGroupRow_(self, _table_view, _row) -> bool:
-            return False
-
-        def ensure_settings_pane(self, key: str) -> None:
-            try:
-                category = _settings_navigation.category_for_key(key)
-            except KeyError:
-                return
-            requested = key if category.contains(key) else None
-            ensure_category(self, category.key, requested)
-
-        def ensure_all_settings_panes(self) -> None:
-            previous = getattr(self, "current_settings_pane", None)
-            for category in _settings_navigation.SETTINGS_CATEGORIES:
-                ensure_category(self, category.key, category.default_page)
-                for page in category.pages:
-                    select_page(self, category.key, page.key)
-            if previous:
-                try:
-                    category = _settings_navigation.category_for_key(previous)
-                except KeyError:
-                    category = _settings_navigation.SETTINGS_CATEGORIES[0]
-                show_category(self, category.key, previous)
-            self.refresh_settings_window()
-
-        def _refresh_settings_destination(self, page_key: str) -> None:
-            refresh_settings_destination(self, page_key)
-
-        def tableViewSelectionDidChange_(self, notification):
-            table = notification.object()
-            category = _settings_category_at_row(int(table.selectedRow()))
-            if category is None:
-                return
-            requested = requested_page_for_category(self, category)
-            self._settings_active_category = category.key
-            show_category(self, category.key, requested)
-            if self.settings_window is not None:
-                self.settings_window.setTitle_(f"{PRODUCT_DISPLAY_NAME} Settings: {category.label}")
-            self._refresh_settings_destination(self.current_settings_pane)
-
-        @_legacy.objc.IBAction
-        def selectSettingsCategoryPage_(self, sender) -> None:
-            try:
-                category = _settings_navigation.SETTINGS_CATEGORIES[int(sender.tag())]
-                page = category.pages[int(sender.selectedSegment())]
-            except (AttributeError, IndexError, TypeError, ValueError):
-                return
-            show_category(self, category.key, page.key)
-            self._settings_active_category = category.key
-            if self.settings_window is not None:
-                self.settings_window.setTitle_(f"{PRODUCT_DISPLAY_NAME} Settings: {category.label}")
-            self._refresh_settings_destination(page.key)
-
-        def select_settings_pane(self, pane_key: str) -> None:
-            try:
-                category = _settings_navigation.category_for_key(pane_key)
-            except KeyError:
-                return
-            requested = pane_key if category.contains(pane_key) else category.default_page
-            self._pending_settings_page = requested
-            if self.settings_sidebar_table is None:
-                self.current_settings_pane = requested
-                return
-            row = _settings_navigation.SETTINGS_CATEGORIES.index(category)
-            already_selected = int(self.settings_sidebar_table.selectedRow()) == row
-            self.settings_sidebar_table.selectRowIndexes_byExtendingSelection_(
-                _legacy.NSIndexSet.indexSetWithIndex_(row),
-                False,
-            )
-            if already_selected:
-                show_category(self, category.key, requested)
-                self._settings_active_category = category.key
-                if self.settings_window is not None:
-                    self.settings_window.setTitle_(f"{PRODUCT_DISPLAY_NAME} Settings: {category.label}")
-                self._refresh_settings_destination(requested)
-
-        def show_settings_window(self) -> None:
-            desired = getattr(self, "current_settings_pane", None) or "profile"
-            try:
-                category = _settings_navigation.category_for_key(desired)
-            except KeyError:
-                category = _settings_navigation.SETTINGS_CATEGORIES[0]
-                desired = category.default_page
-            requested_page = desired if category.contains(desired) else category.default_page
-            self._pending_settings_page = requested_page
-            self.current_settings_pane = category.key
-            self._settings_window_closing = False
-            if self.settings_window is None:
-                self.settings_window = _legacy.build_settings_window(self)
-                if self.settings_sidebar_table is not None:
-                    row = _settings_navigation.SETTINGS_CATEGORIES.index(category)
-                    self.settings_sidebar_table.selectRowIndexes_byExtendingSelection_(
-                        _legacy.NSIndexSet.indexSetWithIndex_(row),
-                        False,
-                    )
-            # The table-selection callback consumes `_pending_settings_page`.
-            # Keep the local value so opening Settings directly to Screen Bar,
-            # Capacity, or another child cannot snap back to the category's
-            # first page after the callback returns.
-            show_category(self, category.key, requested_page)
-            self._pending_settings_page = None
-            self._settings_active_category = category.key
-            self._refresh_settings_destination(requested_page)
-            _legacy.present_window(self.settings_window)
-            _legacy.activate_app()
 
         def refresh_setup_window(self) -> None:
             from .onboarding_runtime import refresh_setup_window

@@ -30,13 +30,11 @@ These pin the other instances of it:
 from __future__ import annotations
 
 import tempfile
-import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from test_jrbar import isolate_controller
 
 from jrbar import doctor as doctor_module
 from jrbar import settings_window
@@ -517,116 +515,3 @@ def test_a_trusted_install_carries_no_warning__and_2_more() -> None:
     assert finding.code is DiagnosticCode.UNAVAILABLE
     assert (finding.count, finding.limit) == (0, 0)
     assert "private path modes: unavailable [0/0]" in render_diagnostic_result(result)
-
-
-
-class SweepSettingsSurfaceTests(unittest.TestCase):
-    """Every fix above has to reach the real pane, not just its function."""
-
-    def setUp(self) -> None:
-        isolate_controller(self)
-        settings_window.reset_event_access_cache()
-        settings_window.reset_screen_brightness_cache()
-        self.addCleanup(settings_window.reset_event_access_cache)
-        self.addCleanup(settings_window.reset_screen_brightness_cache)
-
-    def test_the_extras_pane_names_a_denied_calendar_permission(self) -> None:
-        self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(
-            True
-        )
-        with patch.object(
-            settings_window, "_event_access_status", return_value="denied"
-        ):
-            self.controller.show_settings_window()
-            self.controller.ensure_settings_pane("extras")
-
-        label = self.controller.settings_fields["calendar_access_status"]
-        self.assertIn("Denied", label.stringValue())
-        self.assertIn("Calendars", label.stringValue())
-        # The switch itself is still ON. That gap is why the row exists.
-        self.assertTrue(self.controller.settings.calendar_alerts_enabled)
-
-    def test_the_extras_pane_names_a_denied_reminders_permission(self) -> None:
-        self.controller.settings = self.controller.settings.with_reminder_alerts_enabled(
-            True
-        )
-        with patch.object(
-            settings_window, "_event_access_status", return_value="denied"
-        ):
-            self.controller.show_settings_window()
-            self.controller.ensure_settings_pane("extras")
-
-        label = self.controller.settings_fields["reminders_access_status"]
-        self.assertIn("Reminders", label.stringValue())
-
-    def test_the_screen_bar_pane_says_a_notchless_display_cannot_wrap(self) -> None:
-        self.controller.settings = (
-            self.controller.settings.with_virtual_status_device_wraps_menu_bar(True)
-        )
-        with patch.object(
-            settings_window,
-            "screen_bar_wing_state",
-            return_value=ScreenBarWingState.NO_SAFE_AREA,
-        ):
-            self.controller.show_settings_window()
-            self.controller.ensure_settings_pane("colors_screen_bar")
-
-        label = self.controller.settings_fields["screen_bar_wing_status"]
-        self.assertIn("no notch", label.stringValue())
-        self.assertTrue(
-            self.controller.settings.virtual_status_device_wraps_menu_bar,
-            "the switch reads ON over a feature that cannot run here",
-        )
-
-    def test_the_bar_size_slider_falls_back_to_the_real_automatic_size(self) -> None:
-        """The slider parked at a literal that stands for nothing.
-
-        With the screen unreadable it showed 232.0 -- a number that
-        appears nowhere in the geometry module -- so "Use Automatic Size"
-        and the position the slider claimed WAS automatic were 12pt
-        apart, on a control whose whole job is to show a measurement.
-        """
-        from jrbar.screen_bar_design import WINDOW_WIDTH
-
-        with patch.object(
-            settings_window,
-            "slot_width_for_screen",
-            side_effect=RuntimeError("no screen"),
-        ):
-            self.controller.show_settings_window()
-            self.controller.ensure_settings_pane("colors_screen_bar")
-
-        slider = self.controller.settings_fields["screen_bar_gap_slider"]
-        self.assertIsNone(self.controller.settings.screen_bar_gap_width)
-        self.assertEqual(slider.doubleValue(), WINDOW_WIDTH)
-
-    def test_use_automatic_size_keeps_the_design_width_when_screen_is_unreadable(
-        self,
-    ) -> None:
-        from jrbar.screen_bar_design import WINDOW_WIDTH
-
-        self.controller.show_settings_window()
-        self.controller.ensure_settings_pane("colors_screen_bar")
-        slider = self.controller.settings_fields["screen_bar_gap_slider"]
-        slider.setDoubleValue_(400.0)
-
-        with patch.object(
-            self.status_bar,
-            "slot_width_for_screen",
-            side_effect=RuntimeError("no screen"),
-        ):
-            self.controller.resetScreenBarGeometry_(None)
-
-        self.assertIsNone(self.controller.settings.screen_bar_gap_width)
-        self.assertEqual(slider.doubleValue(), WINDOW_WIDTH)
-
-    def test_the_wing_row_refreshes_with_the_rest_of_the_window(self) -> None:
-        """Panes build once. Docking the Mac is exactly when this stales."""
-        self.controller.show_settings_window()
-        self.controller.ensure_settings_pane("colors_screen_bar")
-        label = self.controller.settings_fields["screen_bar_wing_status"]
-        label.setStringValue_("stale")
-
-        settings_window.refresh_alcove_follow_controls(self.controller)
-
-        self.assertNotEqual(label.stringValue(), "stale")

@@ -911,21 +911,6 @@ else:
                     outcome=outcome,
                 )
 
-        def ensure_settings_pane(self, key: str) -> None:
-            started = time.perf_counter()
-            outcome = "ok"
-            try:
-                return _LegacyStatusBarController.ensure_settings_pane(self, key)
-            except BaseException:
-                outcome = "error"
-                raise
-            finally:
-                self._performance().record(
-                    "settings_pane_build",
-                    (time.perf_counter() - started) * 1000.0,
-                    outcome=outcome,
-                )
-
         def refresh_settings_window(self) -> None:
             started = time.perf_counter()
             outcome = "ok"

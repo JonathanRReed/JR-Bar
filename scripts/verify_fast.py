@@ -97,7 +97,6 @@ FOCUSED_TESTS: Final = (
     # window's tests.
     "tests/test_colors_model.py",
     "tests/test_announcer_stack_view.py",
-    "tests/test_settings_accessibility.py",
 )
 
 
