@@ -581,8 +581,6 @@ final class DockEnhanceController {
     /// Whether the pointer watch is armed — the subscription or the
     /// poll — the tests read it.
     var isTicking: Bool { timer != nil || moveToken != nil }
-    /// Whether the tick's own timer is armed right now.
-    var tickTimerArmed: Bool { timer != nil }
 
     /// The Dock-icon gestures the card asks for: a middle-click monitor
     /// under the Middle Click trigger, a scroll monitor with scroll

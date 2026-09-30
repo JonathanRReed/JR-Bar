@@ -630,14 +630,6 @@ final class NotchToy: Toy {
     /// the sentence a link says.
     var toggleGlassShelf: @MainActor () -> String? = { "JR-Bar is still starting." }
 
-    /// The grown card's target frame, published for the HUD's toast
-    /// anchor — a pill hung under the band while the card is open
-    /// would land on its face. Same write/read discipline as
-    /// `NotchCardPresenter.publishedSurface`: main actor only. The
-    /// island morphs in place, so the target frame — not the
-    /// mid-spring one — is the honest answer.
-    nonisolated(unsafe) static var publishedExpandedRect: NSRect?
-
     /// The island's screen reserving no menu-bar strip — a fullscreen
     /// app owns its space (the legacy `space_hides_menu_bar` read). A
     /// closure so tests can answer without a screen.
@@ -1221,9 +1213,6 @@ final class NotchToy: Toy {
             animated = false
         }
         desiredFrame = frame
-        if runtimeEnabled {
-            Self.publishedExpandedRect = face == .expanded ? frame : nil
-        }
         island?.applyFrame(frame, animated: animated)
     }
 
@@ -1418,7 +1407,6 @@ final class NotchToy: Toy {
         capsuleQueue.clear()
         desiredFrame = nil
         islandVisible = false
-        Self.publishedExpandedRect = nil
         publishSurface()
         island?.orderOut(nil)
         syncMediaMonitor()

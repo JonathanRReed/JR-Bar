@@ -284,23 +284,6 @@ public final class CoreModel {
         return try ReplyDecoding.decode(CoreRoster.self, from: result)
     }
 
-    /// `audit_export`: the redacted audit bundle — projected roster rows,
-    /// activity rows, the named gaps, and pricing coverage. `format` is
-    /// `"json"` or `"markdown"`; the markdown reply also carries `text`.
-    /// The document is returned for preview; the app writes the bytes the
-    /// user previews to the destination they pick.
-    public func exportAudit(scope: String = "all", since: Double? = nil,
-                            format: String = "json") async throws -> (document: JSONValue, text: String?) {
-        var args: [String: JSONValue] = ["scope": .string(scope), "format": .string(format)]
-        if let since { args["since"] = .number(since) }
-        let reply = try await send("audit_export", args: args)
-        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "audit_export failed") }
-        guard let result = reply.result else {
-            throw CoreReplyError(code: "bad_reply", message: "audit_export: missing result")
-        }
-        return (result["document"] ?? .object([:]), result["text"]?.stringValue)
-    }
-
     /// `session_timeline`: the session's provider transcript as bounded
     /// items — messages, tool_use/tool_result pairs, turn ends — newest
     /// page first. `before` pages older items; ended sessions keep
@@ -426,8 +409,6 @@ public final class CoreModel {
     }
 
     public func installHooks(providers: [String]) { post("install_hooks", args: ["providers": .array(providers.map(JSONValue.string))]) }
-
-    public func uninstallHooks(providers: [String]) { post("uninstall_hooks", args: ["providers": .array(providers.map(JSONValue.string))]) }
 
     /// `install_hooks` awaited: the reply's `results` maps each provider to
     /// its outcome so the row can show "Installed" or the error string.
@@ -781,27 +762,6 @@ public final class CoreModel {
     @discardableResult
     public func deckPress(index: Int) async throws -> CoreReply {
         try await send("deck_press", args: ["index": .number(Double(index))])
-    }
-
-    /// `deck_answer {index, decision, answers?, request?}`: an explicit answer
-    /// from a session key 0..12 — the Rail's Deny, Always allow (its own
-    /// button) or a picked choice — through `answer_ask`, never a reveal in
-    /// its place. `decision` is `approve`, `deny`, `always` or `answer`
-    /// (with `answers: {<question>: <label>}`); `request` pins the ask.
-    @discardableResult
-    public func deckAnswer(index: Int, decision: String, answers: [String: JSONValue]? = nil,
-                           request: String? = nil) async throws -> CoreReply {
-        try await send("deck_answer", args: Self.deckAnswerArgs(index: index, decision: decision,
-                                                                answers: answers, request: request))
-    }
-
-    /// The `deck_answer` args `deckAnswer` sends.
-    public nonisolated static func deckAnswerArgs(index: Int, decision: String, answers: [String: JSONValue]? = nil,
-                                                  request: String? = nil) -> [String: JSONValue] {
-        var args: [String: JSONValue] = ["index": .number(Double(index)), "decision": .string(decision)]
-        if let answers { args["answers"] = .object(answers) }
-        if let request { args["request"] = .string(request) }
-        return args
     }
 
     /// `deck_pin {index}`: toggles the pin on the identity at that key. Pins

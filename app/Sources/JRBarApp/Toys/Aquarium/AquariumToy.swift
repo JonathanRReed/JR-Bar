@@ -849,12 +849,6 @@ final class AquariumToy: Toy {
         refreshFish()
     }
 
-    /// What the inspector's picker shows for `provider`: the stored pick
-    /// or the table default.
-    func species(for provider: String) -> FishSpecies {
-        (store?.state.aquarium ?? AquariumSettings()).species(for: provider)
-    }
-
     /// The picker's raw selection for `provider`: the stored override,
     /// or nil when the provider swims as its table species.
     func speciesOverride(for provider: String) -> FishSpecies? {

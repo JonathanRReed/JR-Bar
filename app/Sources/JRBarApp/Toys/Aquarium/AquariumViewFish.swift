@@ -530,9 +530,6 @@ extension AquariumView {
     /// A failed fish's colour: slate, drained of its provider's.
     static let sinkingNS = NSColor(srgbRed: 0.58, green: 0.62, blue: 0.68, alpha: 1)
 
-    /// The water colour fish & kelp wash toward with depth.
-    static let waterNS = NSColor(srgbRed: 0.05, green: 0.18, blue: 0.33, alpha: 1)
-
     /// W13's overlay markers — a small glyph floating just above the
     /// fish, one per plan (`FishOverlayArt` draws each distinct shape).
     /// Reduce Motion holds the buoy's pulse and the pearl's gleam still.

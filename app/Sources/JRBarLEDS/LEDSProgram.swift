@@ -156,10 +156,6 @@ public struct LEDSProgram: Hashable, Sendable {
         return level
     }
 
-    public var repeatIndex: Int? {
-        steps.firstIndex { if case .repeat = $0 { return true } else { return false } }
-    }
-
     /// `nil` when there is no repeat; `.some(nil)` when it loops forever.
     public var repeatCount: Int?? {
         for step in steps {

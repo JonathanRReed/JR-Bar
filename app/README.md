@@ -212,9 +212,9 @@ Colour note: the sampler's floats are the firmware codes over 255. The strip
 PWMs those linearly; the Python Screen Bar paints them straight into an sRGB
 context ("identity transfer", see `_led_status_legacy.py`). The app does the
 same, in the sRGB colour space rather than the Python's DeviceRGB, so the hex
-codes mean what a colour picker says they mean. `RGB.linear` (and
-`LEDSTransfer` both ways) is the exact IEC 61966-2-1 curve for anyone who
-needs light.
+codes mean what a colour picker says they mean. `LEDSTransfer.srgbToLinear`
+and `linearToSRGB` are the exact IEC 61966-2-1 curve for anyone who needs
+light.
 
 ### Keyframes
 

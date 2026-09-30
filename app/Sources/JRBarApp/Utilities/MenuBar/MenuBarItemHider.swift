@@ -47,8 +47,8 @@ struct MenuBarSpacerCaps: Equatable, Sendable {
 
 /// Where the learned fit edge is kept between launches — keyed by the
 /// screen it was learned on, so a display swap never applies one
-/// bar's lesson to another. The default is `UserDefaults`; tests keep
-/// theirs in memory.
+/// bar's lesson to another. The store is `UserDefaults`; tests swap in an
+/// in-memory one (`MenuBarMemoryFitEdgeStore`, in the test target).
 @MainActor
 protocol MenuBarFitEdgeStore: AnyObject {
     func load(key: String) -> CGFloat?
@@ -65,13 +65,6 @@ final class MenuBarDefaultsFitEdgeStore: MenuBarFitEdgeStore {
         if let edge { UserDefaults.standard.set(edge, forKey: name) }
         else { UserDefaults.standard.removeObject(forKey: name) }
     }
-}
-
-@MainActor
-final class MenuBarMemoryFitEdgeStore: MenuBarFitEdgeStore {
-    private(set) var edges: [String: CGFloat] = [:]
-    func load(key: String) -> CGFloat? { edges[key] }
-    func save(_ edge: CGFloat?, key: String) { edges[key] = edge }
 }
 
 /// What `reconcile` decided: every item's section, the spacer length

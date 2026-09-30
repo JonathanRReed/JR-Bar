@@ -16,8 +16,8 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
     public var menuBar: MenuBarSettings
     /// The Dock utility.
     public var dock: DockSettings
-    /// The Agent Overview utility — the organizer half of the agent
-    /// roster's management seat (docs/UTILITIES.md).
+    /// The Agent Overview utility's card: per-provider alert rules and
+    /// "quiet while you watch" (docs/UTILITIES.md).
     public var agents: AgentOrganizerSettings
     public var dataHoarderEnabled: Bool
     /// The hoarder's capture dials — which sources stream in, whether full
@@ -174,10 +174,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Named presets: a captured section map plus the cover appearance
     /// and control layout, applied wholesale through reconcile.
     public var profiles: [Profile]
-    /// The order the retired Arrange action drove the bar to — item ids
-    /// left→right. Still decoded so an older file round-trips; nothing
-    /// writes or reads it now.
-    public var arrangeOrder: [String]
     /// The global hotkeys. Empty means the shipping set
     /// (`MenuBarHotkeys.standard`) — the card materializes the list the
     /// first time a binding is toggled.
@@ -422,7 +418,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 coverMaterial: CoverMaterial = .blend, coverTint: String = "",
                 coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
                 coverRoundness: Double = 0, showCoverSeparator: Bool = false,
-                profiles: [Profile] = [], arrangeOrder: [String] = [],
+                profiles: [Profile] = [],
                 hotkeyBindings: [MenuBarHotkeyBinding] = [],
                 triggerRules: [MenuBarTriggerRule] = [],
                 concealedApps: [String: MenuBarItemSection] = [:],
@@ -455,7 +451,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.coverRoundness = Self.clampedRoundness(coverRoundness)
         self.showCoverSeparator = showCoverSeparator
         self.profiles = profiles
-        self.arrangeOrder = arrangeOrder
         self.hotkeyBindings = hotkeyBindings
         self.triggerRules = triggerRules
         self.concealedApps = concealedApps
@@ -508,14 +503,15 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, rehideMode, revealStyle, hideShownWhileRevealing, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
-        case profiles, arrangeOrder, hotkeyBindings, triggerRules
+        case profiles, hotkeyBindings, triggerRules
         case concealedApps, concealSeeded, concealUnnotarized, itemSpacing, itemSpacingManaged
         case hideUnderNotch, hideOnMenuOverlap, spacers, barUnderlay
         case agentStatusItem, combinedSystemItem, displayProfiles, showForUpdates
         case curation
         // Retired keys — e.g. `combinedStatusItem`, replaced by
-        // `combinedSystemItem` — are simply unlisted: decode ignores
-        // them, encode never writes them.
+        // `combinedSystemItem`, and the old Arrange action's
+        // `arrangeOrder` — are simply unlisted: decode ignores them,
+        // encode never writes them.
     }
 
     public init(from decoder: any Decoder) throws {
@@ -547,7 +543,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
             (try? c.decodeIfPresent(Double.self, forKey: .coverRoundness)) ?? 0)
         showCoverSeparator = (try? c.decodeIfPresent(Bool.self, forKey: .showCoverSeparator)) ?? false
         profiles = (try? c.decodeIfPresent([Profile].self, forKey: .profiles)) ?? []
-        arrangeOrder = (try? c.decodeIfPresent([String].self, forKey: .arrangeOrder)) ?? []
         hotkeyBindings = (try? c.decodeIfPresent([MenuBarHotkeyBinding].self,
                                                  forKey: .hotkeyBindings)) ?? []
         // Per-element lossy decode: a rule written by a build that knows
@@ -580,237 +575,46 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
 
 // MARK: - Agent Overview
 
-/// How the Agent Overview card groups its session rows. Stored as the
-/// raw string so a newer build's modes keep their data; an unknown
-/// value decodes to the default.
-public enum AgentGrouping: String, Codable, CaseIterable, Sendable {
-    /// One section per state, in the panel's precedence order —
-    /// waiting, failed, working, done, ended, idle.
-    case state
-    /// One section per provider; sections order by the best rank they
-    /// contain, so a provider with a waiting row leads one that's done.
-    case provider
-    /// No sections — one list in precedence order.
-    case flat
-    /// One section per repository the sessions work in — several agents
-    /// in worktrees of one repo read as one project; ordered like
-    /// `provider`, by the best rank inside.
-    case project
-}
-
-/// One section of the Agent Overview card's list: a grouping key (the
-/// activity's raw value, the provider id, or `"all"` for the flat cut),
-/// the title the section header shows, and the sessions inside —
-/// already filtered and ordered.
-public struct AgentSessionGroup: Equatable, Sendable {
-    public var key: String
-    public var title: String
-    public var sessions: [CoreSession]
-
-    public init(key: String, title: String, sessions: [CoreSession]) {
-        self.key = key
-        self.title = title
-        self.sessions = sessions
-    }
-}
-
-/// The Agent Overview utility's persisted state (docs/UTILITIES.md):
-/// whether the card is on, how the roster is grouped, and which rows
-/// it lists. The list itself is never persisted — `CoreModel`'s
-/// `state.sessions` is the roster; this is the organizer half.
+/// The Agent Overview utility's persisted state (docs/UTILITIES.md): the
+/// card's own switches. The card keeps no roster — `CoreModel`'s
+/// `state.sessions` is the list, shown in the panel and the Overview
+/// window — so this holds only whether the card is on, whether an ask
+/// stays quiet while its pane is in front, and how loud each provider's
+/// agents may be.
 ///
 /// `enabled` defaults on: the utility owns no surface of its own (it
-/// draws inside the card only), so "on" means the card lists the live
-/// roster and "off" parks it — a display toggle, not a feature gate.
+/// draws inside the card only), so "off" parks the card — a display
+/// toggle, not a feature gate.
+///
+/// A file from an older build may still carry the keys of a list
+/// organizer this card once had (grouping, which rows to show, a row
+/// cap). Nothing reads them: they are ignored on decode and gone on the
+/// next save.
 public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
-    public var grouping: AgentGrouping
-    /// Peer-mirrored sessions (`remote:` rows) — informational only;
-    /// nothing local can open or answer them.
-    public var showRemote: Bool
-    /// Sessions that went away without a completion word.
-    public var showEnded: Bool
-    /// Sessions with nothing to report. Off by default — an idle row
-    /// earns no space on a management list.
-    public var showIdle: Bool
-    /// The trailing "12m" column.
-    public var showElapsed: Bool
     /// When the ask's own terminal pane is already frontmost the
     /// escalation ladder stays quiet — no pulse, no chime, no sound
     /// burst — because the user is already looking at it. The banner
     /// still lands for the record.
     public var quietWhenPaneFrontmost: Bool
-    /// The most rows the card lists; the rest collapse into a "+N more"
-    /// line. A card is not the roster — the Overview window is.
-    public var rowLimit: Int
-
-    public static let rowLimitRange: ClosedRange<Int> = 3...20
-    public static let defaultRowLimit = 8
     /// Provider id → how loud its agents may be (`AgentAlertRule`); a
     /// provider with no entry follows the global notification settings.
     public var alertRules: [String: AgentAlertRule] = [:]
 
-    public init(enabled: Bool = true, grouping: AgentGrouping = .state,
-                showRemote: Bool = true, showEnded: Bool = true, showIdle: Bool = false,
-                showElapsed: Bool = true, quietWhenPaneFrontmost: Bool = true,
-                rowLimit: Int = AgentOrganizerSettings.defaultRowLimit) {
+    public init(enabled: Bool = true, quietWhenPaneFrontmost: Bool = true) {
         self.enabled = enabled
-        self.grouping = grouping
-        self.showRemote = showRemote
-        self.showEnded = showEnded
-        self.showIdle = showIdle
-        self.showElapsed = showElapsed
         self.quietWhenPaneFrontmost = quietWhenPaneFrontmost
-        self.rowLimit = Self.clampedRowLimit(rowLimit)
-    }
-
-    static func clampedRowLimit(_ value: Int) -> Int {
-        min(rowLimitRange.upperBound, max(rowLimitRange.lowerBound, value))
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, grouping, showRemote, showEnded, showIdle, showElapsed, quietWhenPaneFrontmost, rowLimit
-        case alertRules
+        case enabled, quietWhenPaneFrontmost, alertRules
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
-        grouping = (try? c.decodeIfPresent(AgentGrouping.self, forKey: .grouping)) ?? .state
-        showRemote = (try? c.decodeIfPresent(Bool.self, forKey: .showRemote)) ?? true
-        showEnded = (try? c.decodeIfPresent(Bool.self, forKey: .showEnded)) ?? true
-        showIdle = (try? c.decodeIfPresent(Bool.self, forKey: .showIdle)) ?? false
-        showElapsed = (try? c.decodeIfPresent(Bool.self, forKey: .showElapsed)) ?? true
         quietWhenPaneFrontmost = (try? c.decodeIfPresent(Bool.self, forKey: .quietWhenPaneFrontmost)) ?? true
-        rowLimit = Self.clampedRowLimit(
-            (try? c.decodeIfPresent(Int.self, forKey: .rowLimit)) ?? Self.defaultRowLimit)
         alertRules = (try? c.decodeIfPresent([String: AgentAlertRule].self, forKey: .alertRules)) ?? [:]
-    }
-}
-
-extension AgentOrganizerSettings {
-    /// `state.asks` pins a session the way its own `ask` field does —
-    /// the dictionary the panel builds so a pinned row counts as
-    /// waiting even when `session.ask` is empty.
-    public static func pinnedAsks(_ asks: [CoreAsk]) -> [String: CoreAsk] {
-        Dictionary(asks.compactMap { ask in ask.session.map { ($0, ask) } },
-                   uniquingKeysWith: { first, _ in first })
-    }
-
-    /// A session's activity with the `state.asks` pin counted: a row
-    /// the daemon still holds a question for is waiting on you even
-    /// when the session document's own `ask` is empty.
-    public static func activity(of session: CoreSession, pinnedAsk: CoreAsk?) -> SessionActivity {
-        SessionActivity.reduce(lifecycle: session.lifecycle, mode: session.mode,
-                               hasAsk: session.ask != nil || pinnedAsk != nil,
-                               nextActor: session.nextActor)
-    }
-
-    /// The list's precedence — the panel's: an open ask ranks above
-    /// everything, then the activity's sort rank.
-    static func rank(of session: CoreSession, pinnedAsk: CoreAsk?) -> Int {
-        (session.ask ?? pinnedAsk) != nil ? 0 : activity(of: session, pinnedAsk: pinnedAsk).sortRank
-    }
-
-    /// The "what's shown" toggles as one predicate.
-    public func includes(_ session: CoreSession, pinnedAsk: CoreAsk? = nil) -> Bool {
-        if session.isRemote && !showRemote { return false }
-        switch Self.activity(of: session, pinnedAsk: pinnedAsk) {
-        case .ended: return showEnded
-        case .idle: return showIdle
-        default: return true
-        }
-    }
-
-    /// The filtered, ordered list — the exact sessions the card
-    /// enumerates, in the panel's precedence: asks first (longest-
-    /// unanswered leading), then waiting, failed, working, done, ended,
-    /// idle; most recent inside a rank.
-    public func filtered(_ sessions: [CoreSession], asks: [CoreAsk]) -> [CoreSession] {
-        let pinned = Self.pinnedAsks(asks)
-        let kept = sessions.filter { includes($0, pinnedAsk: pinned[$0.id]) }
-        func askAge(_ session: CoreSession) -> Double {
-            (session.ask ?? pinned[session.id])?.openedAt
-                ?? session.since ?? .greatestFiniteMagnitude
-        }
-        return kept.sorted { a, b in
-            let ra = Self.rank(of: a, pinnedAsk: pinned[a.id])
-            let rb = Self.rank(of: b, pinnedAsk: pinned[b.id])
-            if ra != rb { return ra < rb }
-            if ra == 0 { return askAge(a) < askAge(b) }
-            return (a.since ?? 0) > (b.since ?? 0)
-        }
-    }
-
-    /// The filtered list cut into the sections `grouping` asks for.
-    /// Group order follows the precedence of what's inside, so a
-    /// provider whose top row is waiting leads one whose top row is
-    /// done; inside a group the list order stands.
-    public func grouped(_ sessions: [CoreSession], asks: [CoreAsk],
-                        project: (CoreSession) -> String? = { AgentProject.name(of: $0.cwd) }) -> [AgentSessionGroup] {
-        let pinned = Self.pinnedAsks(asks)
-        let rows = filtered(sessions, asks: asks)
-        guard !rows.isEmpty else { return [] }
-        switch grouping {
-        case .flat:
-            return [AgentSessionGroup(key: "all", title: "", sessions: rows)]
-        case .state:
-            var byActivity: [SessionActivity: [CoreSession]] = [:]
-            for session in rows {
-                byActivity[Self.activity(of: session, pinnedAsk: pinned[session.id]), default: []]
-                    .append(session)
-            }
-            return SessionActivity.allCases
-                .sorted { $0.sortRank < $1.sortRank }
-                .compactMap { activity in
-                    guard let members = byActivity[activity], !members.isEmpty else { return nil }
-                    return AgentSessionGroup(key: activity.rawValue, title: activity.word, sessions: members)
-                }
-        case .project:
-            var byProject: [String: [CoreSession]] = [:]
-            for session in rows {
-                byProject[project(session) ?? "", default: []].append(session)
-            }
-            return byProject.map { name, members in
-                AgentSessionGroup(key: "project:\(name)", title: name.isEmpty ? "No folder" : name, sessions: members)
-            }
-            .sorted { a, b in
-                let ra = a.sessions.map { Self.rank(of: $0, pinnedAsk: pinned[$0.id]) }.min() ?? .max
-                let rb = b.sessions.map { Self.rank(of: $0, pinnedAsk: pinned[$0.id]) }.min() ?? .max
-                if ra != rb { return ra < rb }
-                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
-            }
-        case .provider:
-            var byProvider: [String: [CoreSession]] = [:]
-            for session in rows {
-                byProvider[session.provider.lowercased(), default: []].append(session)
-            }
-            return byProvider.map { provider, members in
-                AgentSessionGroup(key: provider, title: SessionLabel.providerName(provider),
-                                  sessions: members)
-            }
-            .sorted { a, b in
-                let ra = a.sessions.map { Self.rank(of: $0, pinnedAsk: pinned[$0.id]) }.min() ?? .max
-                let rb = b.sessions.map { Self.rank(of: $0, pinnedAsk: pinned[$0.id]) }.min() ?? .max
-                if ra != rb { return ra < rb }
-                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
-            }
-        }
-    }
-
-    /// Counts by state over the filtered set, in precedence order —
-    /// the card's "1 waiting on you · 2 working" line and the list
-    /// below it read the same rows, so the two can never disagree.
-    public func counts(of sessions: [CoreSession], asks: [CoreAsk]) -> [(activity: SessionActivity, count: Int)] {
-        let pinned = Self.pinnedAsks(asks)
-        var tally: [SessionActivity: Int] = [:]
-        for session in sessions where includes(session, pinnedAsk: pinned[session.id]) {
-            tally[Self.activity(of: session, pinnedAsk: pinned[session.id]), default: 0] += 1
-        }
-        return SessionActivity.allCases
-            .filter { (tally[$0] ?? 0) > 0 }
-            .sorted { $0.sortRank < $1.sortRank }
-            .map { ($0, tally[$0] ?? 0) }
     }
 }
 

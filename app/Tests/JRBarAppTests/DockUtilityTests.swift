@@ -33,8 +33,8 @@ struct DockUtilityTests {
 
     @Test("an awaited session raise with no running host answers notFound without reading a window")
     func awaitedRaise() async {
-        // The overload `UtilitiesStore.raiseSessionWindow(_:) async`
-        // awaits: a terminal nobody runs leaves the worker nothing to list.
+        // `UtilitiesStore.raiseSessionWindow(_:)` awaits this: a terminal
+        // nobody runs leaves the worker nothing to list.
         let utility = DockUtility()
         utility.sessions = {
             [CoreSession(id: "claude:session:a", provider: "claude", label: "Ship the dock", mode: "working",

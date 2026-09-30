@@ -487,8 +487,8 @@ struct DockUtilityControls: View {
                 set: { utility.enhance.preferences.coverDockLabel = $0 })
     }
 
-    // Nested settings structs get their own bindings — `bind` only
-    // reaches top-level key paths cleanly through the write path.
+    // The Enhance preferences are a nested settings struct, so each
+    // control binds straight to it.
     private var previewDelay: Binding<Double> {
         Binding(get: { utility.enhance.preferences.previewDelay },
                 set: { utility.enhance.preferences.previewDelay = $0 })

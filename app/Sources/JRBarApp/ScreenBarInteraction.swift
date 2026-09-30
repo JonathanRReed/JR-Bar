@@ -1,6 +1,5 @@
 import AppKit
 import JRBarCore
-import OSLog
 
 /// What the card currently names: the top-priority session, or the
 /// aggregate when there is none.
@@ -43,7 +42,6 @@ struct ScreenBarFocus: Equatable {
 /// arms it (a release there is never an outside-click either).
 @MainActor
 final class ScreenBarInteraction {
-    nonisolated static let log = Logger(subsystem: "devin.jrbar", category: "wings")
     /// Diagnostics channel that bypasses os_log capture quirks — appends
     /// one line to /tmp/jrbar-wings.log per call, but only when the
     /// JRBAR_WING_DEBUG env var is set so a shipping build stays silent.

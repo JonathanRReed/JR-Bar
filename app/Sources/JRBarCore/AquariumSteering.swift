@@ -532,12 +532,4 @@ public enum AquariumSteering {
         body.x = min(bounds.maxX, max(bounds.minX, body.x))
         body.y = min(bounds.maxY, max(bounds.minY, body.y))
     }
-
-    /// The drawn angle for a heading: how far the body rotates about
-    /// its centre, positive pitching the nose down. Works under the
-    /// view's facing-flip: `asin(sin)` is the pitch both facings share.
-    @available(*, deprecated, message: "Use SwimBody.pitch, the eased and clamped drawn pitch.")
-    public static func pitch(forHeading heading: Double) -> Double {
-        asin(sin(heading))
-    }
 }

@@ -223,7 +223,6 @@ struct Pass: Sendable {
 }
 
 struct Timeline: Sendable {
-    let ledCount: Int
     let hasRepeat: Bool
     /// nil = forever (only meaningful when `hasRepeat`).
     let repeatCount: Int?
@@ -233,7 +232,6 @@ struct Timeline: Sendable {
     let loopSpan: Int
 
     init(program: LEDSProgram, ledCount: Int, initial: [RGB8]) {
-        self.ledCount = ledCount
         var loopLines: [CompiledLine] = []
         var tailLines: [CompiledLine] = []
         var repeatCount: Int? = nil

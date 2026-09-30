@@ -215,11 +215,6 @@ enum PaletteRanking {
         return best
     }
 
-    /// The row's score alone — `match` without the verb.
-    static func score(_ item: PaletteItem, query: String) -> Int? {
-        match(item, query: query)?.score
-    }
-
     /// `item` with `verbID` moved to the front of its verbs, so Return
     /// does what was typed ("hide 1p" hides) and the verb that was
     /// first moves to ⌘Return. A menu-only row (`opensActions`) runs a

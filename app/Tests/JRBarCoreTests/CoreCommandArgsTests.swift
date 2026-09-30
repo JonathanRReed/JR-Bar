@@ -18,16 +18,18 @@ struct CoreCommandArgsTests {
                 "a negative length lifts it rather than meaning anything else")
     }
 
-    @Test("a deck key's explicit answer names its verb, and a choice its picks")
-    func deckAnswer() {
-        #expect(CoreModel.deckAnswerArgs(index: 2, decision: "deny") == [
-            "index": .number(2), "decision": .string("deny"),
+    @Test("an ask's explicit answer names its verb, and a choice its picks")
+    func answerAsk() {
+        #expect(CoreModel.answerAskArgs(session: "claude:agent:w1", decision: "deny") == [
+            "session": .string("claude:agent:w1"), "decision": .string("deny"),
+            "only_if_frontmost": .bool(false),
         ])
-        let picked = CoreModel.deckAnswerArgs(index: 0, decision: "answer",
-                                              answers: ["Which branch?": .string("main")],
-                                              request: "request:v1:{}")
+        let picked = CoreModel.answerAskArgs(session: "claude:agent:w1", decision: "answer",
+                                             answers: ["Which branch?": .string("main")],
+                                             request: "request:v1:{}")
         #expect(picked == [
-            "index": .number(0), "decision": .string("answer"),
+            "session": .string("claude:agent:w1"), "decision": .string("answer"),
+            "only_if_frontmost": .bool(false),
             "answers": .object(["Which branch?": .string("main")]),
             "request": .string("request:v1:{}"),
         ])

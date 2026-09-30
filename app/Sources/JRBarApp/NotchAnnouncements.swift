@@ -2,7 +2,6 @@ import AppKit
 import AVFoundation
 import IOBluetooth
 import JRBarCore
-import OSLog
 
 /// The system announcements Alcove surfaces in the island: a Focus
 /// mode turning on or off, a Bluetooth device joining or leaving, Caps
@@ -13,8 +12,6 @@ import OSLog
 /// only when the island can't).
 @MainActor
 final class NotchAnnouncements {
-    static let log = Logger(subsystem: "devin.jrbar", category: "announce")
-
     /// The notch settings' vote — consulted per announcement so a
     /// mid-flight change never strands a watcher.
     var isAllowed: () -> Bool = { true }

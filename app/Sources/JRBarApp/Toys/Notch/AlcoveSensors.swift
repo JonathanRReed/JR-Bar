@@ -309,13 +309,6 @@ final class NotchSensorMonitor {
         }
     }
 
-    /// The card's privacy line as of now — nil while nothing is live.
-    nonisolated static func privacyLineNow() -> String? {
-        let state = read()
-        guard state.anyInUse else { return nil }
-        return state.privacyLine(microphoneApps: state.microphoneInUse ? microphoneClientNames() : [])
-    }
-
     /// Every camera CoreMediaIO lists — empty on a machine with none, or
     /// a read the system refuses.
     nonisolated static func cameraDevices() -> [CMIOObjectID] {

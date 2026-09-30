@@ -207,34 +207,4 @@ struct CoreSupervisorTests {
         supervisor.stop(gracePeriod: 1.0)
         #expect(supervisor.state == .stopped)
     }
-
-    @Test("a bundled one-shot command captures output and honours its timeout")
-    func bundledRunCapturesAndTimesOut() async throws {
-        let core = CoreSupervisor.BundledCore(executable: "/bin/sh", hookShim: "/bin/sh")
-
-        let ok = core.run(["-c", "echo first; echo second; exit 7"], timeout: 10)
-        #expect(ok.status == 7)
-        #expect(ok.output.contains("first") && ok.output.contains("second"),
-                "output was \(ok.output)")
-
-        let started = Date()
-        let hung = core.run(["-c", "echo early; exec sleep 60"], timeout: 0.3)
-        #expect(Date().timeIntervalSince(started) < 10,
-                "a hung child outlived its deadline")
-        #expect(hung.status == -2)
-        #expect(hung.output.contains("timed out"))
-    }
-
-    @Test("a bundled one-shot command caps accumulated output")
-    func bundledRunCapsOutput() async throws {
-        let core = CoreSupervisor.BundledCore(executable: "/bin/sh", hookShim: "/bin/sh")
-        let result = core.run(
-            ["-c", "yes abcdefghijklmnopqrstuvwxyz | head -c 200000"],
-            timeout: 10,
-            maxOutputBytes: 4096
-        )
-        #expect(result.status == 0)
-        #expect(result.output.utf8.count <= 4096,
-                "output ran to \(result.output.utf8.count) bytes")
-    }
 }

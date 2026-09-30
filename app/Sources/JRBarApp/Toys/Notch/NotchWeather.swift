@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import OSLog
 
 /// The notch card's weather: a keyless pipeline — the place is the
 /// setting's own "City" text geocoded by Open-Meteo, then Open-Meteo's
@@ -78,7 +77,6 @@ final class NotchWeather {
     /// one moved, so a settings doc churn is not a fetch storm.
     private var lastInputs: (on: Bool, city: String, ip: Bool)?
 
-    static let log = Logger(subsystem: "devin.jrbar", category: "weather")
     /// Conditions shift slower than the card opens — half an hour.
     static let interval: TimeInterval = 30 * 60
     /// The rain lookahead: eight fifteen-minute slots.

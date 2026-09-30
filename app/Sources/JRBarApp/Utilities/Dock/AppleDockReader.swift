@@ -159,11 +159,6 @@ enum AppleDockReader {
         }
     }
 
-    /// The application tile under `point` (AX coordinates), or nil.
-    static func item(list: AXUIElement, at point: CGPoint) -> DockAXItem? {
-        items(list: list).first { $0.frame.contains(point) }
-    }
-
     static func frame(of element: AXUIElement) -> CGRect? { axFrame(element) }
 
     /// Repeated AX references are one window; matching titles and frames

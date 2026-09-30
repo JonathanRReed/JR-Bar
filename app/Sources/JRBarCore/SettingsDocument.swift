@@ -30,9 +30,6 @@ public struct SettingsPath: Hashable, Sendable, CustomStringConvertible, Express
             }
         }.joined(separator: ".")
     }
-
-    public func appending(_ key: String) -> SettingsPath { SettingsPath(segments: segments + [.key(key)]) }
-    public func appending(index: Int) -> SettingsPath { SettingsPath(segments: segments + [.index(index)]) }
 }
 
 /// The daemon's settings document with typed, path-addressed reads and a
@@ -103,10 +100,6 @@ public struct SettingsDocument: Hashable, Sendable {
             let id = object["id"]?.stringValue ?? "device-\(index)"
             return (index, id, object)
         }
-    }
-
-    public func deviceIndex(id: String) -> Int? {
-        deviceEntries.first { $0.id == id }?.index
     }
 
     // MARK: Provider colours
@@ -314,19 +307,6 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
 
     public static func keys(on page: Page) -> [SettingsKey] { all.filter { $0.page == page } }
 
-    /// Resolves the catalogue path against a document: a plain path must
-    /// exist; a `devices[]` path must exist in every device entry (and
-    /// there must be at least one).
-    public func isProvided(in document: SettingsDocument) -> Bool {
-        if path.hasPrefix("devices[].") {
-            let leaf = String(path.dropFirst("devices[].".count))
-            let entries = document.deviceEntries
-            guard !entries.isEmpty else { return false }
-            return entries.allSatisfy { $0.entry[leaf] != nil }
-        }
-        return document.contains(SettingsPath(path))
-    }
-
     /// The concrete paths this page resets: catalogue paths, with
     /// `devices[]` expanded to every device in the document.
     public static func resetPaths(on page: Page, in document: SettingsDocument) -> [String] {
@@ -357,19 +337,6 @@ extension SettingsKey {
         SettingsKey(.lighting, "rainstick_night_enabled", .bool),
         SettingsKey(.lighting, "milestone_odometer_steps", .numberList),
         SettingsKey(.devices, "devices[].blend_mode", .nullableString),
-    ]
-
-    /// The person's own light documents: saved calibration profiles, the
-    /// Focus → profile rules, the hand-written Studio program and the
-    /// shelf of named programs (`[[name, program]]`). The pages read and
-    /// write them, but they are work rather than preferences, so they
-    /// stay out of `all` — a page's "Reset to defaults" must never wipe a
-    /// saved profile or a program.
-    public static let lightsDocuments: [SettingsKey] = [
-        SettingsKey(.devices, "calibration_profiles", .object),
-        SettingsKey(.notifications, "focus_profile_rules", .object),
-        SettingsKey(.lighting, "studio_program", .string),
-        SettingsKey(.lighting, "studio_library", .object),
     ]
 
     /// `_settings_legacy.CALIBRATION_PROFILE_SLOTS`: the only names the

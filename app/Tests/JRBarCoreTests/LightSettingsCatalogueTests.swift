@@ -2,6 +2,15 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
+/// The person's own light documents: saved calibration profiles, the
+/// Focus → profile rules, the hand-written Studio program and the shelf of
+/// named programs. The pages read and write them, but they are work rather
+/// than preferences, so they stay out of the catalogue: a page's "Reset to
+/// defaults" must never wipe a saved profile or a program.
+private let personalLightDocumentPaths = [
+    "calibration_profiles", "focus_profile_rules", "studio_program", "studio_library",
+]
+
 /// The light settings brought over from the legacy window: the catalogue
 /// entries, the personal documents a page reset must not wipe, and the
 /// milestone ladder's normalisation.
@@ -22,10 +31,10 @@ struct LightSettingsCatalogueTests {
             "focus_profile_rules": [:],
             "studio_program": "#FF00FF",
         ])
-        for key in SettingsKey.lightsDocuments {
-            #expect(!SettingsKey.all.contains(key), "\(key.path) is work, not a preference")
+        for path in personalLightDocumentPaths {
+            #expect(!SettingsKey.all.contains { $0.path == path }, "\(path) is work, not a preference")
             for page in SettingsKey.Page.allCases {
-                #expect(!SettingsKey.resetPaths(on: page, in: document).contains(key.path))
+                #expect(!SettingsKey.resetPaths(on: page, in: document).contains(path))
             }
         }
         // The per-device blend is a preference: a Devices reset reaches it.
@@ -59,7 +68,7 @@ struct LightDocumentsMockTests {
         defer { model.stop() }
         #expect(await MockCoreIntegrationTests.wait { model.settings != nil })
         let document = SettingsDocument(try #require(model.settings).document)
-        let missing = SettingsKey.lightsDocuments.filter { !$0.isProvided(in: document) }.map(\.path)
+        let missing = personalLightDocumentPaths.filter { !document.contains(SettingsPath($0)) }
         #expect(missing.isEmpty, "missing from the mock document: \(missing)")
         mock.waitUntilExit()
     }

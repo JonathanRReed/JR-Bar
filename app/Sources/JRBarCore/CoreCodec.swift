@@ -166,6 +166,4 @@ public struct NDJSONSplitter: Sendable {
         buffer.removeAll()
         return tail.isEmpty ? nil : Data(tail)
     }
-
-    public mutating func reset() { buffer.removeAll() }
 }

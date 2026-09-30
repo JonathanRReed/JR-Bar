@@ -18,19 +18,6 @@ enum DockIconResolver {
     /// change on app update, not mid-session; a stale hour is fine.
     private static let cache = NSCache<NSString, NSImage>()
 
-    /// A file or folder's icon — the workspace read, rasterized and
-    /// cached like an app icon so folder-stack cells and tray tiles
-    /// are sharp too. Deliberately not `bundleIcon`-first: documents
-    /// have no bundle to interrogate.
-    static func icon(fileURL: URL, pointSize: CGFloat, scale: CGFloat) -> NSImage {
-        let key = "file|\(fileURL.path)|\(Int(pointSize))|\(Int(scale))" as NSString
-        if let cached = cache.object(forKey: key) { return cached }
-        let image = rasterized(NSWorkspace.shared.icon(forFile: fileURL.path),
-                               pointSize: pointSize, scale: scale)
-        cache.setObject(image, forKey: key)
-        return image
-    }
-
     /// An app's icon by file URL — the same chain the item path uses,
     /// for callers (the Enhance preview) that hold a URL, not a tile.
     static func icon(appURL: URL, pointSize: CGFloat, scale: CGFloat) -> NSImage {

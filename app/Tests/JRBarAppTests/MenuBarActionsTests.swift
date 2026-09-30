@@ -827,7 +827,6 @@ struct MenuBarActionsTests {
     /// A source that only exists so the facade wires `onEvent`.
     private final class FakeSource: MenuBarTriggerSource {
         var onEvent: (@MainActor (MenuBarTriggerEvent) -> Void)?
-        func start() {}
         func stop() {}
     }
 

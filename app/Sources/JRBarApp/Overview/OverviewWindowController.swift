@@ -116,10 +116,6 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    func toggle() {
-        if let window, window.isVisible, window.isKeyWindow { window.performClose(nil) } else { show() }
-    }
-
     /// The Overview's SwiftUI graph lives only while the window is open
     /// (`WindowContentLifecycle`); the preset, search and selection live
     /// in the store. Internal for the lifecycle test.

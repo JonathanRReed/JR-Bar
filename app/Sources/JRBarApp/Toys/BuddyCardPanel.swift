@@ -18,14 +18,6 @@ enum BuddyStage: Int, CaseIterable, Comparable {
         crumbs >= elderAt ? .elder : (crumbs >= grownAt ? .grown : .hatchling)
     }
 
-    var word: String {
-        switch self {
-        case .hatchling: return "Hatchling"
-        case .grown: return "Grown"
-        case .elder: return "Elder"
-        }
-    }
-
     /// "Hatchling · 12 crumbs to grown", "Grown · 188 crumbs to elder",
     /// "Elder".
     static func line(crumbs: Int) -> String {

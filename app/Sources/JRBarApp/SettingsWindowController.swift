@@ -47,8 +47,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         !visible || !occlusion.contains(.visible)
     }
 
-    var isVisible: Bool { window?.isVisible ?? false }
-
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: Self.defaultSize),

@@ -53,7 +53,6 @@ struct SettingsDocumentTests {
         // Device entries skip the junk and keep indexes honest.
         let devices = document.deviceEntries
         #expect(devices.map(\.index) == [0, 2])
-        #expect(document.deviceIndex(id: "sidepulse:dot:2") == 2)
         // The catalogue reports provision per key rather than throwing.
         #expect(SettingsKey(.general, "tips_enabled", .bool).isProvided(in: document))
         #expect(!SettingsKey(.general, "idle_dim_enabled", .bool).isProvided(in: document))

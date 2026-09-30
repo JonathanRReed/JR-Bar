@@ -497,13 +497,6 @@ public struct CoreRoster: Codable, Hashable, Sendable {
     /// history is `list_history`'s job — the document says so.
     public var coverage: JSONValue?
 
-    public init(sessions: [CoreRosterEntry] = [], counts: CoreRosterCounts = CoreRosterCounts(),
-                coverage: JSONValue? = nil) {
-        self.sessions = sessions
-        self.counts = counts
-        self.coverage = coverage
-    }
-
     enum CodingKeys: String, CodingKey { case sessions, counts, coverage }
 
     public init(from decoder: Decoder) throws {
@@ -736,12 +729,6 @@ public struct CoreRunSpan: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case firstAt = "first_at", lastAt = "last_at", durationS = "duration_s"
-    }
-
-    public init(firstAt: Double? = nil, lastAt: Double? = nil, durationS: Double? = nil) {
-        self.firstAt = firstAt
-        self.lastAt = lastAt
-        self.durationS = durationS
     }
 }
 
@@ -1424,16 +1411,6 @@ public struct CorePowerRelease: Codable, Hashable, Sendable {
     /// When the daemon's sleep landed, on a `slept` release.
     public var sleptAt: Double?
 
-    public init(kind: String? = nil, reason: String? = nil, at: Double? = nil, duration: Double? = nil,
-                finished: Int? = nil, sleptAt: Double? = nil) {
-        self.kind = kind
-        self.reason = reason
-        self.at = at
-        self.duration = duration
-        self.finished = finished
-        self.sleptAt = sleptAt
-    }
-
     enum CodingKeys: String, CodingKey {
         case kind, reason, at, duration, finished
         case sleptAt = "slept_at"
@@ -1855,8 +1832,8 @@ public struct CoreState: Codable, Hashable, Sendable {
     /// `health.sources[provider]` decoded: whether the provider's hook
     /// feed is still delivering (`fresh`) and how many seconds since the
     /// last event it accepted, nil when it never has. `health` stays a
-    /// reserved JSONValue subtree — this and `intakeHealth` are the parts
-    /// of it consumers need typed.
+    /// reserved JSONValue subtree — this is the part of it consumers need
+    /// typed.
     ///
     /// The age comes from `heard_at` when the daemon sends it: the moment
     /// itself stays put between frames, so the age is measured against
@@ -1871,16 +1848,6 @@ public struct CoreState: Codable, Hashable, Sendable {
             return (fresh, max(0, reference - heardAt))
         }
         return (fresh, source["heard_age_seconds"]?.doubleValue)
-    }
-
-    /// `health.intake`: the intake report's verdict codes (`hook_state`,
-    /// `source_health`) and the `silence_seconds` bound it judges
-    /// quiet by; nil from a daemon that reports no intake at all.
-    public var intakeHealth: (hookState: String?, sourceHealth: String?, silenceSeconds: Double?)? {
-        guard let intake = health?["intake"], !intake.isNull else { return nil }
-        return (intake["hook_state"]?.stringValue,
-                intake["source_health"]?.stringValue,
-                intake["silence_seconds"]?.doubleValue)
     }
 }
 
@@ -2126,12 +2093,6 @@ public struct CoreDeviceReceipt: Codable, Hashable, Sendable {
     public var foreignWriteAt: Double?
     public var foreignWrites: Int
     public var paused: Bool
-
-    public init(foreignWriteAt: Double? = nil, foreignWrites: Int = 0, paused: Bool = false) {
-        self.foreignWriteAt = foreignWriteAt
-        self.foreignWrites = foreignWrites
-        self.paused = paused
-    }
 
     enum CodingKeys: String, CodingKey {
         case foreignWriteAt = "foreign_write_at"
@@ -2455,19 +2416,6 @@ public enum CoreMessage: Hashable, Sendable {
     /// A type this build does not know (or a protocol version it does not
     /// speak). Kept so callers can count or log it; never an error.
     case unknown(type: String, version: Int?)
-
-    public var typeName: String {
-        switch self {
-        case .hello: return "hello"
-        case .state: return "state"
-        case .lights: return "lights"
-        case .event: return "event"
-        case .settings: return "settings"
-        case .reply: return "reply"
-        case .log: return "log"
-        case .unknown(let type, _): return type
-        }
-    }
 }
 
 // MARK: - Provider management (W06: `list_providers`, `provider_consent`)
@@ -2482,17 +2430,6 @@ public struct ProviderConsentRow: Codable, Hashable, Sendable {
     public var backgroundRepair: Bool
     public var grantedAt: Double
     public var sourceInstanceID: String
-
-    public init(browser: String, profile: String, domains: [String], fields: [String],
-                backgroundRepair: Bool = false, grantedAt: Double = 0, sourceInstanceID: String = "default") {
-        self.browser = browser
-        self.profile = profile
-        self.domains = domains
-        self.fields = fields
-        self.backgroundRepair = backgroundRepair
-        self.grantedAt = grantedAt
-        self.sourceInstanceID = sourceInstanceID
-    }
 
     enum CodingKeys: String, CodingKey {
         case browser, profile, domains, fields

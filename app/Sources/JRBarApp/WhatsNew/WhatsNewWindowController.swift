@@ -27,8 +27,6 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
     /// from here, never from the plate after the attach.
     private(set) var cardSize = NSSize(width: WhatsNewView.width, height: 560)
 
-    var isVisible: Bool { window?.isVisible ?? false }
-
     /// Opened by hand — a menu, a link, the palette: in front and key,
     /// like any window (`WindowFront`).
     func show() {

@@ -198,7 +198,6 @@ final class FoldCapture {
     /// The built-in display's Quartz frame (points, top-left origin) —
     /// the space `CGWindowListCopyWindowInfo` reports bounds in.
     private var displayFrameQuartz = CGRect.zero
-    private var displayID: CGDirectDisplayID = 0
     private var lastCardRects: [CGRect] = []
 
     init(dual: Bool = true) {
@@ -254,7 +253,6 @@ final class FoldCapture {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         guard let ownApp = content.applications.first(where: { $0.processID == ownPID })
         else { throw FoldCaptureError.ownAppMissing }
-        displayID = display.displayID
         displayFrameQuartz = CGDisplayBounds(display.displayID)
 
         let config = SCStreamConfiguration()

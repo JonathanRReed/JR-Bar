@@ -310,8 +310,13 @@ cannot be honestly "implemented" without the live provider runs.
   ownership beyond `process_registry`, per-workspace concurrency
   policy, and the single registry the UI reads.
 
-## W18 slice — widget snapshot publisher — LANDED
+## W18 slice — widget snapshot publisher — REMOVED
 
+- Removed 2026-09-30: nothing ever read `widget-snapshot.json` and the
+  WidgetKit extension never shipped. Restore the publisher and the
+  decoder with `git show 2d1b9d7c:src/jrbar/widget_snapshot.py` and
+  `git show 2d1b9d7c:app/Sources/JRBarCore/WidgetSnapshot.swift` when an
+  extension target exists.
 - `src/jrbar/widget_snapshot.py` (new): projects the `state` document
   into a redacted widget shape — counts (`sessions/working/waiting/
   stale/shown`) plus per-entry `{provider, mode, waiting, stale}` tiles,

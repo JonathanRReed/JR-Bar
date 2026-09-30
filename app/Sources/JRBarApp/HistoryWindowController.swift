@@ -66,10 +66,6 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    func toggle() {
-        if let window, window.isVisible, window.isKeyWindow { window.performClose(nil) } else { show() }
-    }
-
     /// History's SwiftUI graph lives only while the window is open
     /// (`WindowContentLifecycle`); the tab, filter and selection live in
     /// the store. Internal for the lifecycle test.

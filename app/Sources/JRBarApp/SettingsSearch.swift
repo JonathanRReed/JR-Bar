@@ -256,10 +256,6 @@ enum SettingsSearch {
     /// somewhere in it (a word start, or anywhere for three letters or
     /// more); the title counts most, then the group and page, then the
     /// subtitle and keywords. nil when some word matches nothing.
-    nonisolated static func score(_ entry: SettingsSearchEntry, query: [String]) -> Int? {
-        score(Indexed(entry), query: query)
-    }
-
     nonisolated static func score(_ entry: Indexed, query: [String]) -> Int? {
         guard !query.isEmpty else { return nil }
         var total = 0

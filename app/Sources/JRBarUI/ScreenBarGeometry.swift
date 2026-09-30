@@ -391,14 +391,6 @@ public enum ScreenBarGeometry {
         return max(0, min(wingAutoLength, room))
     }
 
-    /// The same, measured off `screen`.
-    public static func wingWidth(of screen: NSScreen, notchWidth: CGFloat, manual wingLength: CGFloat? = nil) -> CGFloat {
-        if let wingLength, wingLength > 0 { return wingLength }
-        guard let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea else { return 0 }
-        return wingWidth(auxiliaryLeft: left.width, auxiliaryRight: right.width,
-                         hardwareSlot: right.origin.x - left.maxX, notchWidth: notchWidth)
-    }
-
     /// How far past the notch's edge a content wing may claim on one side,
     /// measured off that side's menu-bar area — the same bookkeeping
     /// `wingWidth` does for the glow, but sized for a status chip instead

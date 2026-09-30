@@ -9,7 +9,6 @@ import SwiftUI
 @MainActor
 protocol BuddyMouseHost: NSView {
     func passDown(_ event: NSEvent)
-    func passDragged(_ event: NSEvent)
     func passUp(_ event: NSEvent)
 }
 
@@ -63,7 +62,6 @@ final class BuddyHostingView<Content: View>: NSHostingView<Content>, BuddyMouseH
     }
 
     func passDown(_ event: NSEvent) { super.mouseDown(with: event) }
-    func passDragged(_ event: NSEvent) { super.mouseDragged(with: event) }
     func passUp(_ event: NSEvent) { super.mouseUp(with: event) }
 }
 
