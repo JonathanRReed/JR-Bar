@@ -93,7 +93,7 @@ struct DeckModelTests {
 
     @Test("the owner's daemon frame: pad off, nothing approved, nulls for transport / layer / receipt, seven banks, stock keymap with three layers")
     func realShape() throws {
-        guard case .state(let state) = try CoreFixtures.message("real_state.json") else {
+        guard case .state(let state) = try CoreFixtures.message("pad_off_state.json") else {
             Issue.record("not a state"); return
         }
         let deck = try #require(state.deck)

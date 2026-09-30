@@ -147,7 +147,7 @@ struct UsageHistoryVerdictTests {
 struct UsageProviderHintTests {
     @Test("action and reason decode from the daemon's state and are optional")
     func actionReason() throws {
-        guard case .state(let state) = try CoreFixtures.message("real_state.json") else { Issue.record("not a state"); return }
+        guard case .state(let state) = try CoreFixtures.message("pad_off_state.json") else { Issue.record("not a state"); return }
         let providers = try #require(state.usage?.providers)
         let claude = try #require(providers.first { $0.id == "claude" })
         #expect(claude.state == "stale" && claude.action == "Reconnect Claude" && claude.reason == "authentication_required")

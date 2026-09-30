@@ -153,7 +153,7 @@ struct AutoDimTests {
         // The real frames, with the schedule switched on and the light dimmed by it.
         guard case .lights(var lights) = try CoreFixtures.message("real_lights.json"),
               case .settings(let settings) = try CoreFixtures.message("real_settings.json"),
-              case .state(let state) = try CoreFixtures.message("real_state.json") else {
+              case .state(let state) = try CoreFixtures.message("pad_off_state.json") else {
             Issue.record("fixtures"); return
         }
         var document = SettingsDocument(settings.document)

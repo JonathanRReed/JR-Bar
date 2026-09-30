@@ -257,7 +257,7 @@ enum DockPreviewSamples {
     static func mark(_ id: String, provider: String, name: String, label: String,
                      activity: SessionActivity, fact: String? = nil, ask: CoreAsk? = nil) -> DockAgentMark {
         DockAgentMark(sessionID: id, provider: provider, providerName: name, label: label,
-                      cwd: "/Users/jonathanreed/Downloads/JR-Bar", cwdTail: "Downloads/JR-Bar",
+                      cwd: "/Users/me/Downloads/JR-Bar", cwdTail: "Downloads/JR-Bar",
                       activity: activity, fact: fact, ask: ask,
                       hosts: ["com.mitchellh.ghostty"], tty: nil)
     }

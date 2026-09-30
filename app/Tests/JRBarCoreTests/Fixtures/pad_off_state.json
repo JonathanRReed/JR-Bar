@@ -375,7 +375,7 @@
  "sessions": [
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "PreToolUse",
    "id": "claude:agent:ae7b7f236de6a25ed",
    "kind": "worker",
@@ -401,7 +401,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "UserPromptSubmit",
    "id": "claude:agent:a38364bc4ee50c79c",
    "kind": "worker",
@@ -427,7 +427,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "Stop",
    "id": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
    "kind": "main",
@@ -453,7 +453,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "UserPromptSubmit",
    "id": "claude:agent:a86bd4c9785918576",
    "kind": "worker",
@@ -479,7 +479,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "Stop",
    "id": "claude:agent:ae729888d93d00f34",
    "kind": "worker",
@@ -505,7 +505,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "SubagentStop",
    "id": "claude:agent:a547b9e6958443f24",
    "kind": "worker",
@@ -531,7 +531,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "SubagentStop",
    "id": "claude:agent:add5c3d2aa3d0f255",
    "kind": "worker",
@@ -557,7 +557,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "SubagentStop",
    "id": "claude:agent:acdf7b058890d5dde",
    "kind": "worker",
@@ -583,7 +583,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "Stop",
    "id": "claude:agent:a16a72039def57d7b",
    "kind": "worker",
@@ -609,7 +609,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "Stop",
    "id": "claude:agent:a764be9bccedce76b",
    "kind": "worker",
@@ -635,7 +635,7 @@
   },
   {
    "ask": null,
-   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/pi-work",
+   "cwd": "/Users/me/scratch/pi-work",
    "event": "SessionEnd",
    "id": "pi:session:01a08b8f-b494-7260-80fa-b5d440465624",
    "kind": "main",
@@ -658,7 +658,7 @@
   },
   {
    "ask": null,
-   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/pi-work",
+   "cwd": "/Users/me/scratch/pi-work",
    "event": "SessionEnd",
    "id": "pi:session:01a08b8f-4378-7429-b901-509b6139f913",
    "kind": "main",
@@ -681,7 +681,7 @@
   },
   {
    "ask": null,
-   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/pi-work",
+   "cwd": "/Users/me/scratch/pi-work",
    "event": "SessionEnd",
    "id": "pi:session:01a08b8d-d193-75b8-96b6-5ae7b2b79f3e",
    "kind": "main",
@@ -704,7 +704,7 @@
   },
   {
    "ask": null,
-   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/gemini-work",
+   "cwd": "/Users/me/scratch/gemini-work",
    "event": "SessionEnd",
    "id": "gemini:session:6c26a25f-43f9-436a-939a-7deaad64f473",
    "kind": "main",
@@ -727,7 +727,7 @@
   },
   {
    "ask": null,
-   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/pi-work",
+   "cwd": "/Users/me/scratch/pi-work",
    "event": "SessionEnd",
    "id": "pi:session:01a08b87-f9ab-7004-a801-173bdd2db01c",
    "kind": "main",
@@ -800,7 +800,7 @@
    "event": "SessionEnd",
    "id": "codex:session:01a08279-ead9-7123-8973-1a38610edd9a",
    "kind": "main",
-   "label": "Build personal game library site",
+   "label": "Build a small docs site",
    "lifecycle": "completed",
    "message": null,
    "mode": "completed",
@@ -819,7 +819,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "SubagentStop",
    "id": "claude:agent:a85562a0fb2dfeff1",
    "kind": "worker",
@@ -845,7 +845,7 @@
   },
   {
    "ask": null,
-   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "cwd": "/Users/me/Downloads/JR-Bar",
    "event": "SubagentStop",
    "id": "claude:agent:a80df2f40632d3c0c",
    "kind": "worker",
@@ -902,7 +902,7 @@
    {
     "account": {
      "fidelity": "official",
-     "label": "d3a51c1c-2b9a-4371-b335-3928397be5cd",
+     "label": "00000000-0000-4000-8000-000000000001",
      "plan": null
     },
     "action": null,
@@ -997,7 +997,7 @@
    {
     "account": {
      "fidelity": "official",
-     "label": "your-organization-7535461b",
+     "label": "example-org",
      "plan": null
     },
     "action": null,

@@ -434,7 +434,7 @@ The Creator Micro 2 deck (proposed and adopted 2026-09-10, mirroring
 `deck_session_board.py`, `creator_micro_keymap.py` and
 `creator_micro_lighting.py`; the daemon's shapes are in
 `docs/CORE-PROTOCOL.md`, and
-`Tests/JRBarCoreTests/Fixtures/real_state.json` is one of its frames with
+`Tests/JRBarCoreTests/Fixtures/pad_off_state.json` is one of its frames with
 the pad off: `device` present but `connected` / `approved` false and
 `transport` / `layer` / `profile` / `firmware` / `receipt` null, thirteen
 remembered identities with null labels, seven banks, a stock keymap with
