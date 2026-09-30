@@ -77,7 +77,8 @@ public enum AgentAlertRules {
     /// A session the user asked to hear about finished (or failed, or went
     /// away): make sure a banner says so, whatever the global completion
     /// switch or the provider's rule decided — the watch is the explicit
-    /// ask. Other kinds pass through.
+    /// ask, so it is the one banner quiet does not hold. It adds no sound.
+    /// Other kinds pass through.
     public static func notifyWhenDone(_ delivery: EventDelivery, event: CoreEvent, state: CoreState?) -> EventDelivery {
         guard doneKinds.contains(event.kind), delivery.notification == nil else { return delivery }
         let session = event.session.flatMap { state?.session(withID: $0) }
@@ -172,6 +173,11 @@ public enum AgentAlertRules {
             return delivery
         }
         if !rule.sounds { out.sound = nil }
-        return out
+        // A rule can widen (a completion banner the global switch left
+        // off), but never past quiet: Mute, Dark and a call's no-sounds
+        // hold still have the last word. The one thing that goes past them
+        // is `notifyWhenDone`, applied after this: a watch is the explicit
+        // ask for that one banner.
+        return EventPolicy.holdingQuiet(out, focus: state?.focus)
     }
 }

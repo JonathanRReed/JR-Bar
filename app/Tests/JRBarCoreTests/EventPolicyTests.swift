@@ -10,6 +10,17 @@ struct EventPolicyTests {
     static func state(focus: String? = nil, sessions: [CoreSession] = [], asks: [CoreAsk] = [], stage: String? = nil) -> CoreState {
         CoreState(sessions: sessions, asks: asks, focus: focus.map { CoreFocus(mode: $0) }, escalation: stage.map { CoreEscalation(stage: $0) })
     }
+    /// The daemon's whole focus document, with its effect axes.
+    static func state(quiet focus: CoreFocus?, sessions: [CoreSession] = [], asks: [CoreAsk] = []) -> CoreState {
+        CoreState(sessions: sessions, asks: asks, focus: focus)
+    }
+
+    static let bannersOn = settings(["completion_notification_enabled": .bool(true), "quota_alerts_enabled": .bool(true)])
+    static let completedEvent = CoreEvent(id: "q1", kind: "completed", session: "codex:1", sound: "glass", notify: true)
+    static let askEvent = CoreEvent(id: "q2", kind: "ask_opened", session: "codex:1", sound: "funk", notify: true)
+    static let failedEvent = CoreEvent(id: "q3", kind: "failed", session: "codex:1", sound: "basso", notify: true)
+    static let quotaEvent = CoreEvent(id: "q4", kind: "quota_crossed", notify: true, provider: "claude", detail: "crossed 90%")
+    static let stage3Event = CoreEvent(id: "q5", kind: "escalation_stage", session: "codex:1", notify: true, stage: 3)
 
     @Test("a completion plays Glass and banners only when the setting allows")
     func completed() {
@@ -53,14 +64,12 @@ struct EventPolicyTests {
         #expect(allowed.notification != nil)
     }
 
-    @Test("quiet modes keep the banner and drop the sound; pause also stops the chime")
+    @Test("dim keeps the banner and drops the sound; pause also stops the chime")
     func quiet() {
         let completed = CoreEvent(id: "6", kind: "completed", session: "codex:1", sound: "glass", notify: true)
-        for mode in ["dim", "dark"] {
-            let delivery = EventPolicy.delivery(for: completed, state: Self.state(focus: mode), settings: Self.settings(["completion_notification_enabled": .bool(true)]))
-            #expect(delivery.sound == nil, Comment(rawValue: mode))
-            #expect(delivery.notification != nil, Comment(rawValue: mode))
-        }
+        let dim = EventPolicy.delivery(for: completed, state: Self.state(focus: "dim"), settings: Self.settings(["completion_notification_enabled": .bool(true)]))
+        #expect(dim.sound == nil)
+        #expect(dim.notification != nil)
         let stage3 = CoreEvent(id: "7", kind: "escalation_stage", session: "codex:1", notify: true, stage: 3)
         let loud = EventPolicy.delivery(for: stage3, state: Self.state(), settings: Self.settings(["escalation_tier": .string("chime")]))
         #expect(loud.chime == .start)
@@ -68,6 +77,126 @@ struct EventPolicyTests {
         let paused = EventPolicy.delivery(for: stage3, state: Self.state(focus: "pause"), settings: Self.settings(["escalation_tier": .string("chime")]))
         #expect(paused.chime == .stop)
         #expect(paused.statusPulse == true, "the icon still pulses; only sound is held")
+    }
+
+    @Test("fully dark holds the banner as well as the sound")
+    func dark() {
+        // The daemon's Dark says banner_allowed false and audible_allowed
+        // false, and docs/VISION.md has Fully Dark withhold every visual
+        // interruption; it used to keep the banner.
+        let axes = CoreFocus(mode: "dark", bannerAllowed: false, audibleAllowed: false)
+        let dark = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(quiet: axes), settings: Self.bannersOn)
+        #expect(dark.sound == nil)
+        #expect(dark.notification == nil)
+        // An older daemon that sends only the mode word reads the same.
+        let wordOnly = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(focus: "dark"), settings: Self.bannersOn)
+        #expect(wordOnly.sound == nil)
+        #expect(wordOnly.notification == nil)
+    }
+
+    @Test("mute holds every banner and sound, and leaves the escalation's picture standing")
+    func mute() {
+        let axes = CoreFocus(mode: "mute", bannerAllowed: false, audibleAllowed: false)
+        let muted = Self.state(quiet: axes, sessions: [Self.codex])
+        for event in [Self.completedEvent, Self.askEvent, Self.failedEvent, Self.quotaEvent] {
+            let delivery = EventPolicy.delivery(for: event, state: muted, settings: Self.bannersOn)
+            #expect(delivery.sound == nil, Comment(rawValue: event.kind))
+            #expect(delivery.notification == nil, Comment(rawValue: event.kind))
+        }
+        // The light and the panel still show the ask; the pulse is a
+        // display fact, so only the chime goes quiet.
+        let takeover = Self.settings(["escalation_tier": .string("takeover")])
+        let stage = EventPolicy.delivery(for: Self.stage3Event, state: muted, settings: takeover)
+        #expect(stage.statusPulse == true)
+        #expect(stage.chime == .stop)
+        #expect(stage.takeover, "a picture, not a sound")
+        // An answered ask still takes its banner back.
+        let resolved = EventPolicy.delivery(for: CoreEvent(id: "q6", kind: "ask_resolved", session: "codex:1"),
+                                            state: Self.state(quiet: axes), settings: Self.bannersOn)
+        #expect(resolved.withdrawNotification == "ask:codex:1")
+        #expect(resolved.statusPulse == false)
+        #expect(resolved.chime == .stop)
+        // An older daemon that sends only the mode word reads the same.
+        let wordOnly = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(focus: "mute"), settings: Self.bannersOn)
+        #expect(wordOnly.sound == nil)
+        #expect(wordOnly.notification == nil)
+    }
+
+    @Test("a call's quiet holds the sounds, on the axis, though the mode reads off")
+    func callQuiet() {
+        // A call's default quiet takes only the sounds: mode "off",
+        // audible_allowed false, banners still allowed.
+        let axes = CoreFocus(mode: "off", source: "call", bannerAllowed: true, audibleAllowed: false)
+        let state = Self.state(quiet: axes, sessions: [Self.codex])
+        let completed = EventPolicy.delivery(for: Self.completedEvent, state: state, settings: Self.bannersOn)
+        #expect(completed.sound == nil)
+        #expect(completed.notification != nil)
+        let ask = EventPolicy.delivery(for: Self.askEvent, state: state, settings: Self.bannersOn)
+        #expect(ask.sound == nil)
+        #expect(ask.notification?.category == .ask)
+        let failed = EventPolicy.delivery(for: Self.failedEvent, state: state, settings: Self.bannersOn)
+        #expect(failed.sound == nil)
+        #expect(failed.notification != nil)
+        let chime = EventPolicy.delivery(for: Self.stage3Event, state: state, settings: Self.settings(["escalation_tier": .string("chime")]))
+        #expect(chime.chime == .stop)
+        #expect(chime.statusPulse == true)
+    }
+
+    @Test("the axes decide, not the first contribution's mode word")
+    func composedQuiet() {
+        // A schedule's Dim under a Mute Focus reports mode "dim", with both
+        // axes false: the banner goes, though a dim alone keeps it.
+        let axes = CoreFocus(mode: "dim", source: "schedule", bannerAllowed: false, audibleAllowed: false)
+        let delivery = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(quiet: axes), settings: Self.bannersOn)
+        #expect(delivery.sound == nil)
+        #expect(delivery.notification == nil)
+    }
+
+    @Test("holding quiet clears sounds and banners and touches nothing else")
+    func holdingQuiet() {
+        let banner = EventDelivery.Notification(identifier: "ask:codex:1", title: "needs you", body: "?", category: .ask)
+        let loud = EventDelivery(sound: "Funk", soundRepeats: 3, notification: banner, toast: "Dock connected",
+                                 withdrawNotification: "ask:codex:0", statusPulse: true, chime: .start, takeover: true)
+        let muted = CoreFocus(mode: "mute", bannerAllowed: false, audibleAllowed: false)
+        let held = EventPolicy.holdingQuiet(loud, focus: muted)
+        #expect(held.sound == nil)
+        #expect(held.notification == nil)
+        #expect(held.chime == .stop, "a starting chime is a sound")
+        #expect(held.toast == "Dock connected")
+        #expect(held.withdrawNotification == "ask:codex:0")
+        #expect(held.statusPulse == true)
+        #expect(held.takeover)
+
+        // Sounds alone, on the axis: the banner stays.
+        let call = CoreFocus(mode: "off", source: "call", bannerAllowed: true, audibleAllowed: false)
+        let soundsOnly = EventPolicy.holdingQuiet(loud, focus: call)
+        #expect(soundsOnly.sound == nil)
+        #expect(soundsOnly.notification == banner)
+
+        // Banners alone, on the axis: the sound stays.
+        let silentBanners = CoreFocus(mode: "off", bannerAllowed: false, audibleAllowed: true)
+        let bannersOnly = EventPolicy.holdingQuiet(loud, focus: silentBanners)
+        #expect(bannersOnly.sound == "Funk")
+        #expect(bannersOnly.notification == nil)
+        #expect(bannersOnly.chime == .start)
+
+        // No focus, or an open one: the delivery comes back as it was.
+        #expect(EventPolicy.holdingQuiet(loud, focus: nil) == loud)
+        #expect(EventPolicy.holdingQuiet(loud, focus: CoreFocus(mode: "off")) == loud)
+        // A stop and an unchanged chime are not sounds.
+        let stopping = EventDelivery(statusPulse: false, chime: .stop)
+        #expect(EventPolicy.holdingQuiet(stopping, focus: muted) == stopping)
+    }
+
+    @Test("an absent or open focus changes nothing")
+    func openFocus() {
+        let baseline = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(), settings: Self.bannersOn)
+        #expect(baseline.sound == "Glass")
+        #expect(baseline.notification != nil)
+        for focus in [CoreFocus(mode: "off"), CoreFocus(mode: nil), CoreFocus(mode: "off", bannerAllowed: true, audibleAllowed: true)] {
+            let delivery = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(quiet: focus), settings: Self.bannersOn)
+            #expect(delivery == baseline, Comment(rawValue: String(describing: focus.mode)))
+        }
     }
 
     @Test("the escalation tier caps the stage")
@@ -111,7 +240,7 @@ struct EventPolicyTests {
         #expect(!EventPolicy.delivery(for: stage3, state: Self.state(), settings: takeover,
                                       askingFrontmost: true).takeover)
         #expect(!EventPolicy.delivery(for: stage3, state: Self.state(focus: "pause"), settings: takeover).takeover)
-        // Dim and dark silence sounds, not pictures.
+        // Dim silences sounds, not pictures; takeover is a picture.
         let dim = EventPolicy.delivery(for: stage3, state: Self.state(focus: "dim"), settings: takeover)
         #expect(dim.takeover)
         #expect(dim.chime == .stop)
