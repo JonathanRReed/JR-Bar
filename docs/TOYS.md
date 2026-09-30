@@ -1052,6 +1052,12 @@ older releases where reads were never gated, and Music's own
 `com.apple.Music.playerInfo` payload fills in wherever it posts.
 Transport commands go through `MRMediaRemoteSendCommand`, which was
 never gated, and down the helper's stdin for good measure.
+**Lyrics** (opt-in, from LRCLIB): a track's synced lyrics are looked up
+once and remembered, and a song LRCLIB truly has none for is remembered
+as having none. A lookup that could not be answered (offline, a timeout,
+a 429 or a 5xx, or a page that is not LRCLIB's) is not remembered as no
+lyrics: the next play, pause or seek after a two-minute cool-down asks
+again.
 **Swipes**: a horizontal two-finger swipe on the capsule is
 next/previous while media shows; a downward swipe dismisses the capsule
 or folds the card — read off the hosting view's scroll phases,

@@ -135,6 +135,197 @@ struct NotchLyricsTests {
         #expect(LyricsRecordingProtocol.hosts(for: media.title).first == "lrclib.net")
     }
 
+    // MARK: A failed lookup is not "no lyrics"
+
+    /// Polls `condition` on the main actor until it holds or the deadline
+    /// passes. The lookup runs on a task of its own; nothing here sleeps
+    /// for a fixed time.
+    private func wait(upTo seconds: TimeInterval = 60, until condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !condition(), Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @Test("a lookup that could not reach LRCLIB is not remembered as no lyrics")
+    func failedLookupIsNotCached() async throws {
+        let title = "Offline \(UUID().uuidString)"
+        LyricsScriptedProtocol.script(title, get: .failure, search: .failure)
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let media = AlcoveMedia(title: title, artist: "Nobody", playing: true)
+        let query = try #require(LyricsQuery(media: media))
+        let store = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url)
+        store.enabled = { true }
+        store.note(media: media)
+        await wait { LyricsScriptedProtocol.requests(for: title) >= 2 && store.inFlight.isEmpty }
+        #expect(LyricsScriptedProtocol.requests(for: title) == 2, "both endpoints were asked")
+        #expect(store.inFlight.isEmpty)
+        #expect(store.lyrics == nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path), "nothing was written to disk")
+        let onDisk = LyricsDiskCache(url: url).lookup(query.cacheKey)
+        #expect(onDisk == nil, "a week-long miss was never stored")
+    }
+
+    private static func reply(_ code: Int, _ body: String) -> LyricsScriptedProtocol.Reply {
+        .status(code, Data(body.utf8))
+    }
+
+    private static let syncedRecord = #"{"duration":200,"syncedLyrics":"[00:01.00] la"}"#
+
+    @Test("a lookup reads each answer honestly: words, a real none, or no answer")
+    func lookupClassifiesAnswers() async {
+        typealias Case = (name: String, get: LyricsScriptedProtocol.Reply,
+                          search: LyricsScriptedProtocol.Reply, expected: String)
+        let cases: [Case] = [
+            ("transport error on both", .failure, .failure, "unavailable"),
+            ("500 on both", Self.reply(500, ""), Self.reply(500, ""), "unavailable"),
+            ("429 on both", Self.reply(429, ""), Self.reply(429, ""), "unavailable"),
+            ("a captive portal's page", Self.reply(200, "<html>Sign in</html>"),
+             Self.reply(200, "<html>Sign in</html>"), "unavailable"),
+            ("404 then an empty search", Self.reply(404, ""), Self.reply(200, "[]"), "absent"),
+            ("404 then only unsynced records", Self.reply(404, ""),
+             Self.reply(200, #"[{"duration":200,"syncedLyrics":null}]"#), "absent"),
+            ("404 then a synced record outside the window", Self.reply(404, ""),
+             Self.reply(200, #"[{"duration":230,"syncedLyrics":"[00:01.00] far"}]"#), "absent"),
+            ("get failed then an empty search", Self.reply(500, ""), Self.reply(200, "[]"), "unavailable"),
+            ("get answered none, search failed", Self.reply(404, ""), Self.reply(503, ""), "unavailable"),
+            ("synced lyrics from get", Self.reply(200, Self.syncedRecord), .failure, "la"),
+            ("404 then one synced candidate", Self.reply(404, ""),
+             Self.reply(200, #"[{"duration":198,"syncedLyrics":"[00:01.00] near"}]"#), "near"),
+            ("an instrumental record", Self.reply(200, #"{"duration":200,"syncedLyrics":null}"#),
+             Self.reply(200, "[]"), "absent"),
+        ]
+        for entry in cases {
+            let title = "Lookup \(UUID().uuidString)"
+            LyricsScriptedProtocol.script(title, get: entry.get, search: entry.search)
+            let query = LyricsQuery(title: title, artist: "Nobody", duration: 200)
+            let outcome = await LyricsStore.lookup(query, session: LyricsScriptedProtocol.session())
+            let seen: String
+            switch outcome {
+            case .found(let lyrics): seen = lyrics.lines.first?.text ?? "found"
+            case .absent: seen = "absent"
+            case .unavailable: seen = "unavailable"
+            }
+            #expect(seen == entry.expected, Comment(rawValue: entry.name))
+        }
+    }
+
+    /// A store over a temporary disk file and a clock the test moves.
+    private final class LyricsClock {
+        var date = Date(timeIntervalSince1970: 1_000_000)
+        func advance(_ seconds: TimeInterval) { date = date.addingTimeInterval(seconds) }
+    }
+
+    @Test("a failed track asks again after the cool-down, and not before")
+    func failedTrackCoolsDown() async {
+        let first = "Cool \(UUID().uuidString)"
+        let second = "Down \(UUID().uuidString)"
+        LyricsScriptedProtocol.script(first, get: .failure, search: .failure)
+        LyricsScriptedProtocol.script(second, get: .failure, search: .failure)
+        let clock = LyricsClock()
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url,
+                                now: { clock.date })
+        store.enabled = { true }
+        let trackA = AlcoveMedia(title: first, artist: "Nobody", playing: true)
+        let trackB = AlcoveMedia(title: second, artist: "Nobody", playing: true)
+
+        store.note(media: trackA)
+        await wait { store.inFlight.isEmpty }
+        #expect(LyricsScriptedProtocol.requests(for: first) == 2)
+        clock.advance(1)
+        store.note(media: trackB)
+        await wait { store.inFlight.isEmpty }
+        #expect(LyricsScriptedProtocol.requests(for: second) == 2)
+
+        // Skipping back to A inside its cool-down asks nothing.
+        clock.advance(30)
+        store.note(media: trackA)
+        #expect(store.inFlight.isEmpty, "inside the cool-down no lookup starts")
+        #expect(LyricsScriptedProtocol.requests(for: first) == 2)
+
+        // Past it, nothing was memoized: B and then A ask again.
+        clock.advance(LyricsStore.retryCooldown + 1)
+        store.note(media: trackB)
+        await wait { store.inFlight.isEmpty }
+        store.note(media: trackA)
+        await wait { store.inFlight.isEmpty }
+        #expect(LyricsScriptedProtocol.requests(for: second) == 4)
+        #expect(LyricsScriptedProtocol.requests(for: first) == 4)
+    }
+
+    @Test("the same track asks again on the next push once its cool-down has passed")
+    func sameTrackRetries() async {
+        let title = "Same \(UUID().uuidString)"
+        LyricsScriptedProtocol.script(title, get: .failure, search: .failure)
+        let clock = LyricsClock()
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url,
+                                now: { clock.date })
+        store.enabled = { true }
+        let playing = AlcoveMedia(title: title, artist: "Nobody", playing: true)
+        let paused = AlcoveMedia(title: title, artist: "Nobody", playing: false)
+        store.note(media: playing)
+        await wait { store.inFlight.isEmpty }
+        #expect(LyricsScriptedProtocol.requests(for: title) == 2)
+
+        clock.advance(10)
+        store.note(media: paused)
+        #expect(store.inFlight.isEmpty, "a push inside the cool-down asks nothing")
+
+        LyricsScriptedProtocol.script(title, get: Self.reply(200, Self.syncedRecord), search: .failure)
+        clock.advance(LyricsStore.retryCooldown)
+        store.note(media: playing)
+        await wait { store.inFlight.isEmpty }
+        #expect(LyricsScriptedProtocol.requests(for: title, path: "/api/get") == 2)
+        #expect(store.lyrics?.lines.first?.text == "la", "the retry's answer publishes")
+        store.note(media: paused)
+        #expect(store.inFlight.isEmpty, "answered: a later push asks nothing more")
+    }
+
+    @Test("a genuine miss is still remembered, in memory and across a relaunch")
+    func genuineMissIsRemembered() async throws {
+        let title = "None \(UUID().uuidString)"
+        LyricsScriptedProtocol.script(title, get: Self.reply(404, ""), search: Self.reply(200, "[]"))
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let media = AlcoveMedia(title: title, artist: "Nobody", playing: true)
+        let query = try #require(LyricsQuery(media: media))
+        let store = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url)
+        store.enabled = { true }
+        store.note(media: media)
+        await wait { store.inFlight.isEmpty }
+        #expect(LyricsScriptedProtocol.requests(for: title) == 2)
+        #expect(LyricsDiskCache(url: url).lookup(query.cacheKey) == .some(nil))
+
+        let relaunched = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url)
+        relaunched.enabled = { true }
+        relaunched.note(media: media)
+        #expect(relaunched.inFlight.isEmpty, "the disk knew: no request")
+        #expect(LyricsScriptedProtocol.requests(for: title) == 2)
+        #expect(relaunched.lyrics == nil)
+    }
+
+    @Test("a hit is shown and stored")
+    func hitIsStored() async throws {
+        let title = "Hit \(UUID().uuidString)"
+        LyricsScriptedProtocol.script(title, get: Self.reply(200, Self.syncedRecord), search: .failure)
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let media = AlcoveMedia(title: title, artist: "Nobody", playing: true)
+        let query = try #require(LyricsQuery(media: media))
+        let store = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url)
+        store.enabled = { true }
+        store.note(media: media)
+        await wait { store.inFlight.isEmpty }
+        #expect(store.lyrics?.lines.first?.text == "la")
+        let stored = LyricsDiskCache(url: url).lookup(query.cacheKey)
+        #expect(stored??.lines.first?.text == "la")
+    }
+
     @Test("the card's offer shows only with the switch on and no yes; a click or the switch is the yes")
     func consentWiring() {
         var toys = ToysState()
@@ -195,6 +386,72 @@ private final class LyricsRecordingProtocol: URLProtocol {
         Self.seen.append((track, url?.host ?? ""))
         Self.lock.unlock()
         client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
+}
+
+/// Answers each LRCLIB endpoint with a scripted status and body, keyed by
+/// the track title (a fresh UUID per test, so parallel runs never share
+/// state), and counts the requests per title and path.
+private final class LyricsScriptedProtocol: URLProtocol {
+    enum Reply {
+        case failure
+        case status(Int, Data)
+    }
+
+    struct Script {
+        var get: Reply
+        var search: Reply
+    }
+
+    nonisolated(unsafe) private static var scripts: [String: Script] = [:]
+    nonisolated(unsafe) private static var counts: [String: [String: Int]] = [:]
+    private static let lock = NSLock()
+
+    static func script(_ title: String, get: Reply, search: Reply) {
+        lock.lock(); defer { lock.unlock() }
+        scripts[title] = Script(get: get, search: search)
+    }
+
+    static func session() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [LyricsScriptedProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    /// Requests seen for a title: every path, or one (`/api/get`).
+    static func requests(for title: String, path: String? = nil) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        let byPath = counts[title] ?? [:]
+        if let path { return byPath[path] ?? 0 }
+        return byPath.values.reduce(0, +)
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let url = request.url
+        let path = url?.path ?? ""
+        let title = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+            .queryItems?.first { $0.name == "track_name" }?.value ?? ""
+        Self.lock.lock()
+        Self.counts[title, default: [:]][path, default: 0] += 1
+        let script = Self.scripts[title]
+        Self.lock.unlock()
+        let reply = path == "/api/search" ? script?.search : script?.get
+        switch reply ?? .failure {
+        case .failure:
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+        case .status(let code, let body):
+            if let url, let response = HTTPURLResponse(url: url, statusCode: code,
+                                                       httpVersion: "HTTP/1.1", headerFields: nil) {
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: body)
+            }
+            client?.urlProtocolDidFinishLoading(self)
+        }
     }
 
     override func stopLoading() {}

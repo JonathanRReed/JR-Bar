@@ -11,13 +11,33 @@ import JRBarCore
 /// * A track with no artist/title never reaches the network, and until
 ///   the Lyrics switch is on and agreed to no track does. Both are off
 ///   out of the box: nothing leaves the Mac without opt-in.
-/// * A miss is cached too — a song with no lyrics doesn't re-fetch
-///   every time it comes on — and both hits and misses persist across
-///   launches (`LyricsDiskCache`), so the regular rotation asks once.
+/// * A genuine miss is cached too — a song with no lyrics doesn't
+///   re-fetch every time it comes on — and both hits and misses persist
+///   across launches (`LyricsDiskCache`), so the regular rotation asks
+///   once. A lookup that could not be answered (offline, a timeout, a
+///   429 or a 5xx) is not a miss: nothing is remembered, and it asks
+///   again after a short cool-down.
 /// * Instrumental tracks (`instrumental: true`) land as a cached nil
 ///   the same way: silence, not a spinner.
 /// * Only title/artist/album/duration leave the machine — the same
 ///   fields the player itself broadcasts.
+/// What one lookup came to: the words, a real "LRCLIB has none", or no
+/// answer at all. Only the first two are remembered.
+enum LyricsLookup: Equatable, Sendable {
+    case found(SyncedLyrics)
+    case absent
+    case unavailable
+}
+
+/// One request's answer before it is read as lyrics: a body, LRCLIB's
+/// own 404, or anything that says nothing about the track (an error, a
+/// timeout, any other status).
+enum LyricsResponse {
+    case body(Data)
+    case notFound
+    case failed
+}
+
 @MainActor
 @Observable
 final class LyricsStore {
@@ -41,7 +61,15 @@ final class LyricsStore {
     /// its way to LRCLIB.
     private(set) var inFlight: Set<String> = []
 
+    /// Keys whose lookup could not be answered, and when each may ask
+    /// again. In memory only, never on disk, and pruned with the cache's
+    /// cap: it bounds a skip loop from track A to B and back, not a
+    /// cached answer.
+    @ObservationIgnored private var retryAfter: [String: Date] = [:]
+    static let retryCooldown: TimeInterval = 120
+
     private let session: URLSession
+    private let now: () -> Date
     /// Lookups that outlive the launch — hits and misses both, so the
     /// regular rotation never re-asks LRCLIB. nil keeps memory only.
     private let disk: LyricsDiskCache?
@@ -56,8 +84,10 @@ final class LyricsStore {
     /// The chip's click — records the yes; the caller re-notes the track.
     var consent: () -> Void = {}
 
-    init(session: URLSession = .shared, diskURL: URL? = nil) {
+    init(session: URLSession = .shared, diskURL: URL? = nil,
+         now: @escaping () -> Date = { Date() }) {
         self.session = session
+        self.now = now
         disk = diskURL.map(LyricsDiskCache.init(url:))
     }
 
@@ -71,7 +101,7 @@ final class LyricsStore {
             return
         }
         let key = query.cacheKey
-        guard key != currentKey else { return }
+        guard key != currentKey || retryDue(key) else { return }
         currentKey = key
         if let hit = cache[key] {
             lyrics = hit
@@ -83,7 +113,17 @@ final class LyricsStore {
             return
         }
         lyrics = nil
+        // A lookup that could not be answered waits out its cool-down.
+        guard (retryAfter[key] ?? .distantPast) <= now() else { return }
         fetch(query, key: key)
+    }
+
+    /// The playing track's lookup went unanswered and its cool-down has
+    /// passed: the next media push (a play, a pause, a seek) asks again,
+    /// with no timer to do it.
+    private func retryDue(_ key: String) -> Bool {
+        guard let due = retryAfter[key], due <= now() else { return false }
+        return !inFlight.contains(key) && cache[key] == nil
     }
 
     private func remember(_ found: SyncedLyrics?, for key: String) {
@@ -106,30 +146,60 @@ final class LyricsStore {
 
     /// One ask per key, guarded against stale landing: whatever comes
     /// back caches under its key but publishes only if that key is
-    /// still the playing track.
+    /// still the playing track. A lookup with no answer caches nothing.
     private func fetch(_ query: LyricsQuery, key: String) {
         guard inFlight.insert(key).inserted else { return }
         Task {
-            let found = await Self.lookup(query, session: session)
+            let outcome = await Self.lookup(query, session: session)
             inFlight.remove(key)
-            remember(found, for: key)
-            disk?.store(found, for: key)
-            if currentKey == key { lyrics = found }
+            switch outcome {
+            case .found(let found):
+                settle(found, for: key)
+            case .absent:
+                settle(nil, for: key)
+            case .unavailable:
+                coolDown(key)
+            }
         }
+    }
+
+    /// A real answer: remembered in memory and on disk, published if it
+    /// is still the playing track's.
+    private func settle(_ found: SyncedLyrics?, for key: String) {
+        retryAfter[key] = nil
+        remember(found, for: key)
+        disk?.store(found, for: key)
+        if currentKey == key { lyrics = found }
+    }
+
+    /// No answer: nothing is remembered, and the key may ask again once
+    /// the cool-down has passed.
+    private func coolDown(_ key: String) {
+        retryAfter[key] = now().addingTimeInterval(Self.retryCooldown)
+        guard retryAfter.count > Self.cacheCap else { return }
+        let newest = retryAfter.sorted { $0.value > $1.value }.prefix(Self.cacheCap)
+        retryAfter = Dictionary(uniqueKeysWithValues: newest.map { ($0.key, $0.value) })
     }
 
     /// The network half: `/api/get` with the best fields first — it's
     /// the exact-match endpoint; a miss falls to `/api/search` whose
     /// nearest-duration candidate still must carry synced lyrics.
-    /// Returns nil for any failure — no lyrics is a quiet answer.
+    /// Found wins. "None" is `.absent` only when both endpoints
+    /// answered that there are none; if either could not be asked or
+    /// gave nothing readable, the lookup is `.unavailable` — never a
+    /// remembered "no lyrics".
     static func lookup(_ query: LyricsQuery,
-                       session: URLSession) async -> SyncedLyrics? {
-        if let hit = await get(query, session: session) { return hit }
-        return await search(query, session: session)
+                       session: URLSession) async -> LyricsLookup {
+        let exact = await get(query, session: session)
+        if case .found = exact { return exact }
+        let nearest = await search(query, session: session)
+        if case .found = nearest { return nearest }
+        let bothAnswered = exact == .absent && nearest == .absent
+        return bothAnswered ? .absent : .unavailable
     }
 
     private static func get(_ query: LyricsQuery,
-                            session: URLSession) async -> SyncedLyrics? {
+                            session: URLSession) async -> LyricsLookup {
         var items = [
             URLQueryItem(name: "track_name", value: query.title),
             URLQueryItem(name: "artist_name", value: query.artist),
@@ -140,35 +210,54 @@ final class LyricsStore {
         if let duration = query.duration {
             items.append(URLQueryItem(name: "duration", value: String(duration)))
         }
-        guard let url = url(path: "/api/get", items: items),
-              let data = await data(for: url, session: session),
-              !data.isEmpty,
-              let record = try? JSONDecoder().decode(LRCLIBRecord.self, from: data)
-        else { return nil }
-        return record.synced
+        guard let url = url(path: "/api/get", items: items) else { return .unavailable }
+        switch await data(for: url, session: session) {
+        case .failed:
+            return .unavailable
+        case .notFound:
+            return .absent
+        case .body(let data):
+            // A 200 that is not a record (a captive portal's page, an
+            // empty body) says nothing about the track.
+            guard let record = try? JSONDecoder().decode(LRCLIBRecord.self, from: data)
+            else { return .unavailable }
+            guard let synced = record.synced else { return .absent }
+            return .found(synced)
+        }
     }
 
     private static func search(_ query: LyricsQuery,
-                               session: URLSession) async -> SyncedLyrics? {
+                               session: URLSession) async -> LyricsLookup {
         let items = [
             URLQueryItem(name: "track_name", value: query.title),
             URLQueryItem(name: "artist_name", value: query.artist),
         ]
-        guard let url = url(path: "/api/search", items: items),
-              let data = await data(for: url, session: session),
-              let records = try? JSONDecoder().decode([LRCLIBRecord].self, from: data)
-        else { return nil }
-        // The best synced candidate: nearest duration to what plays,
-        // within a sloppy-mastering window; un-durated queries take
-        // the first synced hit.
-        let synced = records.filter { $0.synced != nil }
-        guard !synced.isEmpty else { return nil }
-        guard let target = query.duration else { return synced[0].synced }
-        return synced
-            .filter { $0.durationSeconds.map { abs($0 - target) <= 6 } ?? false }
-            .min { abs(($0.durationSeconds ?? 0) - target)
-                 < abs(($1.durationSeconds ?? 0) - target) }?
-            .synced
+        guard let url = url(path: "/api/search", items: items) else { return .unavailable }
+        switch await data(for: url, session: session) {
+        case .failed:
+            return .unavailable
+        case .notFound:
+            return .absent
+        case .body(let data):
+            guard let records = try? JSONDecoder().decode([LRCLIBRecord].self, from: data)
+            else { return .unavailable }
+            // The best synced candidate: nearest duration to what plays,
+            // within a sloppy-mastering window; un-durated queries take
+            // the first synced hit.
+            let synced = records.filter { $0.synced != nil }
+            guard !synced.isEmpty else { return .absent }
+            let best: SyncedLyrics?
+            if let target = query.duration {
+                let inWindow = synced.filter { $0.durationSeconds.map { abs($0 - target) <= 6 } ?? false }
+                let nearest = inWindow.min { abs(($0.durationSeconds ?? 0) - target)
+                                            < abs(($1.durationSeconds ?? 0) - target) }
+                best = nearest?.synced
+            } else {
+                best = synced[0].synced
+            }
+            guard let best else { return .absent }
+            return .found(best)
+        }
     }
 
     private static func url(path: String, items: [URLQueryItem]) -> URL? {
@@ -181,17 +270,18 @@ final class LyricsStore {
     }
 
     private static func data(for url: URL,
-                             session: URLSession) async -> Data? {
+                             session: URLSession) async -> LyricsResponse {
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
         request.setValue("JR-Bar/\(version) (https://github.com/jonathanreed/jr-bar)",
                          forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await session.data(for: request),
-              let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode)
-        else { return nil }
-        return data
+              let http = response as? HTTPURLResponse
+        else { return .failed }
+        if http.statusCode == 404 { return .notFound }
+        guard (200..<300).contains(http.statusCode) else { return .failed }
+        return .body(data)
     }
 }
 
