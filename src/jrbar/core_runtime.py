@@ -6032,7 +6032,9 @@ def build_headless_controller_class() -> type:
                         "activated": (extras.terminal or {}).get("app") if extras is not None else None,
                     }
                 )
-                legacy.log_status_bar(f"deck: key {index + 1} reveals {self._core_label(status)}")
+                # The receipt, never the session's title: a title is a project
+                # name, and this line goes into the log a bug report carries.
+                legacy.log_status_bar(f"deck: key {index + 1} reveals: {receipt.code}")
                 self._core_publish_state()
                 return result
 
