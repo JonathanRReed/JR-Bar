@@ -20,7 +20,7 @@ body:
     id: version
     attributes:
       label: JR-Bar version or commit
-      placeholder: 0.5.0 or abbreviated commit
+      placeholder: 0.9.15 or abbreviated commit
     validations:
       required: true
   - type: textarea
