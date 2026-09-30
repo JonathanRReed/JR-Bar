@@ -415,45 +415,49 @@ def _build_payload(
             TRANSCRIPT_SESSION_PROVIDERS,
             ledger_first_event_epochs,
             ledger_session_days,
+            shared_ledger_reads,
         )
 
-        try:
-            # default_state_dir() IS the ledger directory; a doubled
-            # path once looked one level too deep and
-            # silently emptied the Sessions graph for every hook-ledger
-            # provider (2026-08-27 readiness audit).
-            extra_sessions = ledger_session_days(
-                default_state_dir(),
-                since_epoch=period_start.timestamp(),
-                provider_ids=provider_ids,
+        # Both answers below read the same hook ledgers (each up to 8 MiB):
+        # read and parse each once for the pair.
+        with shared_ledger_reads():
+            try:
+                # default_state_dir() IS the ledger directory; a doubled
+                # path once looked one level too deep and
+                # silently emptied the Sessions graph for every hook-ledger
+                # provider (2026-08-27 readiness audit).
+                extra_sessions = ledger_session_days(
+                    default_state_dir(),
+                    since_epoch=period_start.timestamp(),
+                    provider_ids=provider_ids,
+                )
+            except Exception:
+                extra_sessions = {}
+            # A provider counted only from its hook log is known only from where
+            # that log now begins: it is trimmed to its newest events. Days
+            # before that are unknown, not zero, so the graph draws them as gaps.
+            # Providers with their own history (transcripts, local session files,
+            # OpenCode, T3 Code, Antigravity) are not judged by their hook log.
+            ledger_only = tuple(
+                provider
+                for provider in provider_ids
+                if provider not in TRANSCRIPT_SESSION_PROVIDERS
+                and provider not in LOCAL_HISTORY_PROVIDERS
+                and provider not in {"opencode", "t3code", "antigravity"}
             )
-        except Exception:
-            extra_sessions = {}
-        # A provider counted only from its hook log is known only from where
-        # that log now begins: it is trimmed to its newest events. Days
-        # before that are unknown, not zero, so the graph draws them as gaps.
-        # Providers with their own history (transcripts, local session files,
-        # OpenCode, T3 Code, Antigravity) are not judged by their hook log.
-        ledger_only = tuple(
-            provider
-            for provider in provider_ids
-            if provider not in TRANSCRIPT_SESSION_PROVIDERS
-            and provider not in LOCAL_HISTORY_PROVIDERS
-            and provider not in {"opencode", "t3code", "antigravity"}
-        )
-        try:
-            # Its own try: a failure here must never cost the counts above.
-            first_events = ledger_first_event_epochs(
-                default_state_dir(),
-                provider_ids=ledger_only,
-            )
-            ledger_first_day = {
-                provider: datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
-                for provider, epoch in first_events.items()
-                if epoch > period_start.timestamp()
-            }
-        except Exception:
-            ledger_first_day = None
+            try:
+                # Its own try: a failure here must never cost the counts above.
+                first_events = ledger_first_event_epochs(
+                    default_state_dir(),
+                    provider_ids=ledger_only,
+                )
+                ledger_first_day = {
+                    provider: datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
+                    for provider, epoch in first_events.items()
+                    if epoch > period_start.timestamp()
+                }
+            except Exception:
+                ledger_first_day = None
         if "antigravity" in provider_ids:
             activity_days: dict[str, set[str]] = {}
             for record in _scan_antigravity_records(Path.home() / ".gemini", period_start.timestamp()):

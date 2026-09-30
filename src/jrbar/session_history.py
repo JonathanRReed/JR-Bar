@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
@@ -33,7 +35,41 @@ TRANSCRIPT_SESSION_PROVIDERS = frozenset({"claude", "codex"})
 _MAX_LEDGER_BYTES = 8 * 1024 * 1024
 
 
-def _ledger_events(root: Path, provider_id: str) -> Iterator[dict]:
+#: What the two questions below need from one ledger event: its name, its own
+#: timestamp (None when unusable) and the id that makes a replay count once
+#: (None when the event names none). Keeping only this, not the whole event,
+#: is what makes a ledger cheap to hold for one rebuild.
+_LedgerRow = tuple[object, float | None, str | None]
+
+#: The rows of each ledger read so far inside ``shared_ledger_reads``, or None
+#: outside one.
+_shared_rows: ContextVar[dict[tuple[str, str], list[_LedgerRow]] | None] = ContextVar(
+    "jrbar_shared_ledger_rows", default=None
+)
+
+
+@contextmanager
+def shared_ledger_reads() -> Iterator[None]:
+    """Read and parse each hook ledger once for everything asked inside.
+
+    A Sessions rebuild asks for the daily counts and for where each ledger
+    starts. Each answer used to read and parse the same ledger (up to 8 MiB)
+    on its own. Inside this block the first ask reads it and the second reuses
+    those rows, so both answers also come from one moment of the file. The
+    rows are dropped when the block ends: nothing is kept between rebuilds,
+    and outside a block every call reads the file as it always did.
+    """
+    if _shared_rows.get() is not None:
+        yield
+        return
+    token = _shared_rows.set({})
+    try:
+        yield
+    finally:
+        _shared_rows.reset(token)
+
+
+def _read_ledger_rows(root: Path, provider_id: str) -> Iterator[_LedgerRow]:
     """The readable events one provider's ledger holds, oldest first.
 
     A missing, oversized or unreadable ledger yields nothing. A torn line, a
@@ -56,7 +92,21 @@ def _ledger_events(root: Path, provider_id: str) -> Iterator[dict]:
         except ValueError:
             continue
         if isinstance(event, dict) and event.get("provider_id") == provider_id:
-            yield event
+            work = event.get("provider_work_id") or event.get("event_token")
+            yield event.get("event_name"), _event_epoch(event), (str(work) if work else None)
+
+
+def _ledger_rows(root: Path, provider_id: str) -> Iterator[_LedgerRow]:
+    shared = _shared_rows.get()
+    if shared is None:
+        yield from _read_ledger_rows(root, provider_id)
+        return
+    key = (str(root), provider_id)
+    rows = shared.get(key)
+    if rows is None:
+        rows = list(_read_ledger_rows(root, provider_id))
+        shared[key] = rows
+    yield from rows
 
 
 def _event_epoch(event: dict) -> float | None:
@@ -85,21 +135,16 @@ def ledger_session_days(
         if provider_id in TRANSCRIPT_SESSION_PROVIDERS:
             continue
         seen: dict[str, set[str]] = {}
-        for event in _ledger_events(root, provider_id):
-            if event.get("event_name") != "session_start":
+        for name, occurred, work in _ledger_rows(root, provider_id):
+            if name != "session_start":
                 continue
-            occurred = _event_epoch(event)
             if occurred is None or occurred < since_epoch:
                 continue
             try:
                 day = datetime.fromtimestamp(occurred).strftime("%Y-%m-%d")
             except (OverflowError, OSError, ValueError):
                 continue
-            work_id = str(
-                event.get("provider_work_id")
-                or event.get("event_token")
-                or f"line:{len(seen.get(day, ()))}"
-            )
+            work_id = work or f"line:{len(seen.get(day, ()))}"
             seen.setdefault(day, set()).add(work_id)
         counts = {day: len(ids) for day, ids in seen.items() if ids}
         if counts:
@@ -127,8 +172,7 @@ def ledger_first_event_epochs(
         if provider_id in TRANSCRIPT_SESSION_PROVIDERS:
             continue
         earliest: float | None = None
-        for event in _ledger_events(root, provider_id):
-            epoch = _event_epoch(event)
+        for _name, epoch, _work in _ledger_rows(root, provider_id):
             if epoch is not None and (earliest is None or epoch < earliest):
                 earliest = epoch
         if earliest is not None:
@@ -140,4 +184,5 @@ __all__ = [
     "TRANSCRIPT_SESSION_PROVIDERS",
     "ledger_first_event_epochs",
     "ledger_session_days",
+    "shared_ledger_reads",
 ]
