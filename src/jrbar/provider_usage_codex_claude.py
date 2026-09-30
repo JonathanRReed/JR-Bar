@@ -197,9 +197,13 @@ def _cached_claude_local_scan(
 #: The small token results already worked out, keyed on the cache files they
 #: were read from. A quota refresh runs every couple of minutes; without this
 #: each one would decode up to 8 MiB of cache and rebuild the same totals.
+#: A refusal (``None``: the cache does not reach back far enough yet) is
+#: remembered too, or every refresh would decode the whole cache just to find
+#: the floor too new, and that is the state after every default graph scan.
 _LOCAL_TOKENS_MEMO_LIMIT = 16
-_local_tokens_memo: dict[tuple, dict[str, object]] = {}
+_local_tokens_memo: dict[tuple, dict[str, object] | None] = {}
 _local_tokens_memo_lock = threading.Lock()
+_NOT_REMEMBERED: dict[str, object] = {}
 
 
 def _cache_stamp(path: Path) -> tuple[str, int, int, int] | None:
@@ -401,8 +405,8 @@ def _cached_provider_local_scan(
                         windows = admitted
                         newest_window_marker = marker
         with _local_tokens_memo_lock:
-            totals = _local_tokens_memo.get(memo_key)
-        if totals is None:
+            totals = _local_tokens_memo.get(memo_key, _NOT_REMEMBERED)
+        if totals is _NOT_REMEMBERED:
             if cache is None:
                 cache = usage_stats._load_cache(cache_path, source_key)
             if not cache:
@@ -410,12 +414,12 @@ def _cached_provider_local_scan(
             totals = _local_token_totals(
                 provider_id, source_key, cache, extra_paths, window_start
             )
-            if totals is None:
-                continue
             with _local_tokens_memo_lock:
                 while len(_local_tokens_memo) >= _LOCAL_TOKENS_MEMO_LIMIT:
                     _local_tokens_memo.pop(next(iter(_local_tokens_memo)))
                 _local_tokens_memo[memo_key] = totals
+        if totals is None:
+            continue
         if (
             (provider_id != "codex" or not windows)
             and totals["input_tokens"] == 0

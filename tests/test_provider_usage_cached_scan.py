@@ -555,3 +555,52 @@ def test_cached_codex_scan_adds_an_extra_home_but_keeps_the_primary_quota(
 
     assert _card_tokens(alone) == 100
     assert _card_tokens(both) == 170
+
+
+def test_claude_cached_scan_remembers_a_refusal_while_the_cache_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "session.jsonl",
+        [
+            _claude_line("s1", "recent", OBSERVED - 2 * DAY),
+            _claude_line("s1", "older", OBSERVED - 20 * DAY),
+        ],
+    )
+    # The state after any default 7-day graph scan: the cache reaches back
+    # about ten days, so the 30-day card refuses.
+    _scan_claude(tmp_path, graph_days=7)
+    loads: list[Path] = []
+    decodes: list[int] = []
+    real_load = usage_stats._load_cache
+    real_decode = usage_stats._decode_records
+
+    def counting_load(cache_path, source_key=None):
+        if cache_path.exists():  # a cache file that was never written costs one lstat
+            loads.append(cache_path)
+        return real_load(cache_path, source_key)
+
+    def counting_decode(*args, **kwargs):
+        decodes.append(1)
+        return real_decode(*args, **kwargs)
+
+    monkeypatch.setattr(usage_stats, "_load_cache", counting_load)
+    monkeypatch.setattr(usage_stats, "_decode_records", counting_decode)
+
+    assert _claude_card(tmp_path) is None
+    loaded_once, decoded_once = len(loads), len(decodes)
+    assert loaded_once >= 1 and decoded_once >= 1, "the first refusal does the work"
+
+    # Every later quota refresh answers from what it already worked out.
+    assert _claude_card(tmp_path) is None
+    assert _claude_card(tmp_path) is None
+    assert len(loads) == loaded_once, "a remembered refusal reloaded the cache"
+    assert len(decodes) == decoded_once, "a remembered refusal decoded the cache again"
+
+    # A wider scan rewrites the cache: the refusal must not outlive it.
+    _scan_claude(tmp_path, graph_days=30)
+    document = _claude_card(tmp_path)
+
+    assert document is not None
+    assert document["input_tokens"] == 20
