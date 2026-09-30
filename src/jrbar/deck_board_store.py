@@ -8,7 +8,6 @@ import time
 from .integration_settings import default_integration_settings_path
 from .private_io import atomic_private_write, read_private_text
 
-
 #: A failed write is retried on a later submit, no sooner than this, doubling
 #: with each failure in a row up to the cap.
 WRITE_RETRY_SECONDS = 5.0
