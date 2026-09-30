@@ -4014,8 +4014,8 @@ def _cmd_deck_check_input(self, args):
 def _deck_bindings_update(value, previous) -> tuple:
     """The ``bindings`` argument: a full replacement list of auxiliary
     (13..19) and analog-sector (20..23) mappings, {"index": int,
-    "action": kind | null}. Matrix-key bindings are managed by the
-    Devices pane and survive."""
+    "action": kind | null}. Matrix-key bindings already in
+    deck-controls.json (keys 0-12) are kept."""
     from .deck_actions import DeckAction
 
     if type(value) is not list or len(value) > 11:
