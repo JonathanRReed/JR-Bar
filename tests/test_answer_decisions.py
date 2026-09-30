@@ -12,7 +12,7 @@ import pytest
 
 from jrbar.answer_decisions import (
     ASK_PREVIEW_TTL_SECONDS,
-    DECIDED_TOMBSTONE_SECONDS,
+    DECIDED_TOMBSTONE_CAP_SECONDS,
     DENY_MESSAGE,
     MAX_ASK_PREVIEWS,
     AskPreviews,
@@ -250,7 +250,7 @@ def test_decision_documents_are_each_agents_documented_verdict__and_2_more() -> 
         decision_document("gemini", DecisionVerb.ALLOW)
 
 
-def test_card_preview_and_risk_mark__and_1_more() -> None:
+def test_card_preview_and_risk_mark__and_2_more() -> None:
     # --- scenario: one bounded line that says what will run
     assert tool_preview("Bash", {"command": "npm   test\n  --watch"}) == "npm test --watch"
     assert tool_preview("Edit", {"file_path": "/src/a.py", "old_string": "x"}) == "/src/a.py"
@@ -289,6 +289,126 @@ def test_card_preview_and_risk_mark__and_1_more() -> None:
     assert tool_risk("Edit", {"file_path": "/x"}) is None
     assert tool_risk("apply_patch", {"command": "*** Delete File: rm -rf"}) is None
 
+    # --- scenario: the scan is linear without loosening what it marks
+    # A destructive command far past any cut-off, a flag after a long
+    # refspec list, a shell line continuation and a chained push are all
+    # still marked; a flag or a shell in another command is not this one's.
+    for command in (
+        "git push \\\n  --force origin main",
+        "git push origin " + " ".join(f"b{index}" for index in range(200)) + " --force",
+        "echo x\n" * 20000 + "rm -rf /tmp/x",
+        "a && git push -f",
+        "curl x | sudo bash",
+        "wget -qO- x | sh",
+        "dd if=a of=b",
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command[:60]
+    for command in (
+        "git push origin main; echo -f",
+        "git push a | grep -f x",
+        "dd if=a; echo of=b",
+        "curl x | grep y | sh",
+        "curl x; sh",
+        "curl x || sh",
+        "rm -r1",
+    ):
+        assert tool_risk("Bash", {"command": command}) is None, command
+
+
+def test_risk_mark_sees_wrapped_and_path_qualified_commands__and_3_more() -> None:
+    # --- scenario: a quote, a backtick or $( before the command is still a command
+    for command in (
+        "bash -c 'rm -rf build'",
+        'ssh host "rm -rf /srv/x"',
+        'bash -lc "rm -rf ~/proj/build"',
+        "echo `rm -rf x`",
+        "echo $(rm -rf x)",
+        "sh -c 'dd if=a of=b'",
+        'bash -c "git push -f"',
+        'bash -c "find . -delete"',
+        'bash -c "curl x | sh"',
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command
+
+    # --- scenario: an absolute, home or dot path to the command counts, a folder that merely ends in its name does not
+    for command in (
+        "/bin/rm -rf x",
+        "\\rm -rf x",
+        "~/bin/rm -rf x",
+        "./rm -rf x",
+        "/usr/bin/sudo launchctl list",
+        "/usr/bin/git push -f",
+        "/usr/bin/find . -delete",
+        "sudo /bin/rm -rf x",
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command
+    assert tool_risk("shell", {"command": ["/bin/rm", "-rf", "x"]}) == "destructive"
+    for command in ("cat docs/sudo -x", "mv a b/rm -r x", "git log -- src/rm -r", "cd repo/ && git status"):
+        assert tool_risk("Bash", {"command": command}) is None, command
+
+    # --- scenario: flags split across words, a +refspec, a deletion and find -delete
+    for command in (
+        "rm -f -r build",
+        "rm --force --recursive build",
+        "rm -i --no-preserve-root -rf /",
+        "rm -f -R x",
+        "git push origin +main",
+        "git push origin main +feature",
+        "git push -fu origin x",
+        "git push --delete origin x",
+        "git push origin :old-branch",
+        "find . -delete",
+        "find . -name '*.log' -delete",
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command
+
+    # --- scenario: the plain forms stay unmarked
+    for command in (
+        "git push origin main",
+        "git push -u origin main",
+        "git push origin feature/a+b",
+        "git push origin HEAD:main",
+        "rm file.txt",
+        "rm -f file",
+        "rm --force file",
+        "rm -- -rf",
+        "rmdir empty",
+        "find . -name x -print",
+        "find . -deleted",
+        "git status",
+        "ls -rf",
+        "echo reboot-notes",
+    ):
+        assert tool_risk("Bash", {"command": command}) is None, command
+
+    # A mark is advice and never a block, so it favours recall: a command that is
+    # only quoted text still reads as one. These are known false positives.
+    for command in ("echo rm -rf", "grep 'rm -rf' notes.txt", "dd if=a of=b"):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command
+
+
+def test_pathological_commands_are_scanned_linearly__and_1_more() -> None:
+    # The old patterns scanned forward from every occurrence of their anchor
+    # word, so these inputs took about 110 s (`dd `) and about 130 s (`rm -rrr`
+    # ...) each. A regression makes this test take minutes, so it fails loudly
+    # without a wall-clock assertion. Every result is exact, none is truncated.
+
+    # --- scenario: nothing to mark, however long the run of anchors
+    for command in (
+        "dd " * 100_000,
+        "curl -sO https://example.test/i.json\n" * 20_000,
+        "git push origin b\n" * 20_000,
+        "rm -" + "r" * 200_000 + "1",
+    ):
+        assert tool_risk("Bash", {"command": command}) is None, command[:40]
+
+    # --- scenario: the mark at the very end of a long command is still found
+    for command in (
+        "dd " * 100_000 + "of=/dev/disk2",
+        "echo\n" * 100_000 + "rm -rf /x",
+    ):
+        assert tool_risk("Bash", {"command": command}) == "destructive", command[-20:]
+
 
 # --- the broker ------------------------------------------------------------------
 
@@ -307,15 +427,20 @@ def test_a_click_sends_the_verdict_to_the_parked_hook__and_4_more() -> None:
     assert received == [decision_document("claude", DecisionVerb.ALLOW)]
     assert broker.parked_count() == 0
 
-    # --- scenario: a second answer meets the tombstone, which then clears
+    # --- scenario: a second answer meets the tombstone, which outlasts a long-running tool and clears at the cap
     clock = _Clock()
     broker = _broker(clock)
     _slot, _received, thread = _park_and_serve(broker, _facts())
+    answered_at = clock.now
     assert broker.decide("claude", "derived:abc", DecisionVerb.DENY) is DecisionResult.SENT
     thread.join(2.0)
     assert broker.parked("claude", "derived:abc").decided is True
     assert broker.decide("claude", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.ALREADY_DECIDED
-    clock.now += DECIDED_TOMBSTONE_SECONDS + 1
+    for elapsed in (60.0, 600.0, DECIDED_TOMBSTONE_CAP_SECONDS - 1):
+        clock.now = answered_at + elapsed
+        assert broker.parked("claude", "derived:abc").decided is True
+        assert broker.decide("claude", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.ALREADY_DECIDED
+    clock.now = answered_at + DECIDED_TOMBSTONE_CAP_SECONDS + 1
     assert broker.parked("claude", "derived:abc") is None
     assert broker.decide("claude", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.NOT_PARKED
 
@@ -329,11 +454,13 @@ def test_a_click_sends_the_verdict_to_the_parked_hook__and_4_more() -> None:
     thread.join(2.0)
     assert received == [None]
 
-    # --- scenario: a hook that could not write the line is not 'sent'
+    # --- scenario: a hook that could not write the line is not 'sent', and the ask is not 'decided'
     broker = _broker()
     _slot, _received, thread = _park_and_serve(broker, _facts(), deliver=False)
     assert broker.decide("claude", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.NOT_DELIVERED
     thread.join(2.0)
+    assert broker.parked("claude", "derived:abc") is None
+    assert broker.decide("claude", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.NOT_PARKED
 
     # --- scenario: two identical calls answer oldest first
     broker = _broker()
@@ -346,6 +473,39 @@ def test_a_click_sends_the_verdict_to_the_parked_hook__and_4_more() -> None:
     broker.release_all()
     second_thread.join(2.0)
     assert second_received == [None]
+
+
+def test_a_held_ask_scans_its_command_once(monkeypatch) -> None:
+    from jrbar import answer_decisions
+
+    previews: list = []
+    risks: list = []
+    real_preview = answer_decisions.tool_preview
+    real_risk = answer_decisions.tool_risk
+
+    def counting_preview(*args):
+        previews.append(args)
+        return real_preview(*args)
+
+    def counting_risk(*args):
+        risks.append(args)
+        return real_risk(*args)
+
+    monkeypatch.setattr(answer_decisions, "tool_preview", counting_preview)
+    monkeypatch.setattr(answer_decisions, "tool_risk", counting_risk)
+
+    broker = _broker()
+    slot = broker.park(_facts(tool_input={"command": "git push -f"}), wait_limit_seconds=50.0)
+    assert slot is not None
+
+    # Every state build reads the hold; none of them rescans the command.
+    snapshots = [broker.parked("claude", "derived:abc") for _ in range(5)]
+
+    assert len(previews) == 1 and len(risks) == 1
+    assert all(snapshot is not None for snapshot in snapshots)
+    assert {snapshot.preview for snapshot in snapshots} == {"git push -f"}
+    assert {snapshot.risk for snapshot in snapshots} == {"destructive"}
+    broker.release_all()
 
 
 def test_holds_end_on_their_own_without_ever_deciding__and_5_more() -> None:
@@ -405,7 +565,7 @@ def test_holds_end_on_their_own_without_ever_deciding__and_5_more() -> None:
     assert broker.release_all() == 1
 
 
-def test_a_hold_that_ends_asks_the_daemon_to_republish__and_2_more() -> None:
+def test_a_hold_that_ends_asks_the_daemon_to_republish__and_3_more() -> None:
     """The state projection reads the broker only when state is rebuilt, and
     nothing else changes when a hold ends: cards kept offering Always allow
     and choices a click then failed on. Every end of a hold calls on_change,
@@ -432,6 +592,14 @@ def test_a_hold_that_ends_asks_the_daemon_to_republish__and_2_more() -> None:
     thread.join(2.0)
     assert received and received[0] is not None
     assert len(seen) == 1 and seen[0].decided
+
+    # --- scenario: an answer the hook could not take asks again once its tombstone is gone
+    seen.clear()
+    broker = _broker(on_change=on_change)
+    _slot, _received, thread = _park_and_serve(broker, _facts(), deliver=False)
+    assert broker.decide("claude", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.NOT_DELIVERED
+    thread.join(2.0)
+    assert len(seen) == 2 and seen[0].decided and seen[1] is None
 
     # --- scenario: a released hold asks too, and a failing handler changes nothing
     seen.clear()
@@ -717,6 +885,147 @@ def test_a_sub_agents_events_never_release_the_mains_hold__and_2_more() -> None:
     assert main_received == [None]
 
 
+def _event(text: str, name: str, **extra) -> str:
+    payload = json.loads(text)
+    payload.update({"hook_event_name": name, **extra})
+    return json.dumps(payload)
+
+
+def _decided_broker(text: str, *, clock: _Clock | None = None, **kwargs):
+    """A broker whose request from ``text`` has just been answered (sent)."""
+    broker = _broker(clock, **kwargs)
+    facts = permission_facts("claude", text)
+    _slot, _received, thread = _park_and_serve(broker, facts)
+    assert broker.decide("claude", facts.request_id, DecisionVerb.ALLOW, work_id=facts.work_id) is DecisionResult.SENT
+    thread.join(2.0)
+    assert broker.parked("claude", facts.request_id, facts.work_id).decided is True
+    return broker, facts
+
+
+def test_a_decided_request_is_remembered_until_the_agents_own_events_close_it__and_6_more() -> None:
+    text = _claude_payload()
+
+    # --- scenario: the tool's PostToolUse ends it, however long the tool ran
+    clock = _Clock()
+    broker, facts = _decided_broker(text, clock=clock)
+    clock.now += 60.0
+    assert broker.parked("claude", facts.request_id).decided is True
+    ran = _event(text, "PostToolUse", tool_response={"stdout": "ok"})
+    assert broker.observe("claude", ran) == 0
+    assert broker.parked("claude", facts.request_id) is None
+    assert broker.decide("claude", facts.request_id, DecisionVerb.ALLOW) is DecisionResult.NOT_PARKED
+    failed, facts = _decided_broker(text)
+    assert failed.observe("claude", _event(text, "PostToolUseFailure", error="boom")) == 0
+    assert failed.parked("claude", facts.request_id) is None
+
+    # --- scenario: another call's PostToolUse, another provider's Stop and another session's Stop leave it be
+    broker, facts = _decided_broker(text)
+    other = json.loads(text)
+    other.update({"hook_event_name": "PostToolUse", "tool_input": {"command": "ls"}})
+    assert broker.observe("claude", json.dumps(other)) == 0
+    assert broker.observe("codex", json.dumps({"hook_event_name": "Stop", "session_id": "claude-session-1"})) == 0
+    assert broker.observe("claude", json.dumps({"hook_event_name": "Stop", "session_id": "someone-else"})) == 0
+    assert broker.parked("claude", facts.request_id).decided is True
+
+    # --- scenario: the turn ending or moving on ends it, whichever event says so
+    for event in ("Stop", "StopFailure", "SessionEnd", "UserPromptSubmit", "Interrupt"):
+        broker, facts = _decided_broker(text)
+        assert broker.observe("claude", json.dumps({"hook_event_name": event, "session_id": "claude-session-1"})) == 0
+        assert broker.parked("claude", facts.request_id) is None, event
+
+    # --- scenario: a fresh PermissionRequest for the same request ends it, whether or not it is parked
+    broker, facts = _decided_broker(text, capacity=1)
+    _blocker, _received, blocker_thread = _park_and_serve(broker, _facts(request_id="derived:other"))
+    assert broker.park(facts, wait_limit_seconds=50.0) is None  # full: it will not be held
+    assert broker.observe("claude", text) == 0
+    assert broker.parked("claude", facts.request_id) is None
+    broker.release_all()
+    blocker_thread.join(2.0)
+    broker, facts = _decided_broker(text)
+    assert broker.park(facts, wait_limit_seconds=1.0) is None  # too short a wait to hold
+    assert broker.observe("claude", text) == 0
+    assert broker.parked("claude", facts.request_id) is None
+
+    # --- scenario: a sub-agent's events end only its own tombstone, and a main's end the whole session's
+    worker_text = _claude_payload(agent_id=WORKER_WORK)
+    broker, main = _decided_broker(text)
+    worker = permission_facts("claude", worker_text)
+    _slot, _received, worker_thread = _park_and_serve(broker, worker)
+    assert broker.decide("claude", worker.request_id, DecisionVerb.DENY, work_id=WORKER_WORK) is DecisionResult.SENT
+    worker_thread.join(2.0)
+    assert main.request_id == worker.request_id
+    ended = {"hook_event_name": "Stop", "session_id": "claude-session-1"}
+    assert broker.observe("claude", json.dumps({**ended, "agent_id": WORKER_WORK})) == 0
+    assert broker.parked("claude", main.request_id, MAIN_WORK).decided is True
+    assert broker.parked("claude", main.request_id, WORKER_WORK) is None
+    worker_ran = _event(worker_text, "PostToolUse", tool_response={"stdout": "ok"})
+    _slot, _received, worker_thread = _park_and_serve(broker, worker)
+    assert broker.decide("claude", worker.request_id, DecisionVerb.DENY, work_id=WORKER_WORK) is DecisionResult.SENT
+    worker_thread.join(2.0)
+    assert broker.observe("claude", worker_ran) == 0
+    assert broker.parked("claude", main.request_id, MAIN_WORK).decided is True
+    assert broker.parked("claude", main.request_id, WORKER_WORK) is None
+    assert broker.observe("claude", json.dumps(ended)) == 0
+    assert broker.parked("claude", main.request_id, MAIN_WORK) is None
+
+    # --- scenario: a click while the verdict is still being written already meets the tombstone
+    broker = _broker()
+    slot = broker.park(_facts(), wait_limit_seconds=50.0)
+    decided_at_hook = threading.Event()
+    line_written = threading.Event()
+
+    def serve() -> None:
+        verdict = broker.wait(slot)
+        decided_at_hook.set()
+        line_written.wait(2.0)
+        broker.delivered(slot, verdict is not None)
+
+    results: list = []
+    server = threading.Thread(target=serve, daemon=True)
+    clicker = threading.Thread(
+        target=lambda: results.append(broker.decide("claude", "derived:abc", DecisionVerb.ALLOW)), daemon=True
+    )
+    server.start()
+    clicker.start()
+    assert decided_at_hook.wait(2.0)
+    assert broker.decide("claude", "derived:abc", DecisionVerb.DENY) is DecisionResult.ALREADY_DECIDED
+    assert broker.parked("claude", "derived:abc").decided is True
+    line_written.set()
+    clicker.join(2.0)
+    server.join(2.0)
+    assert results == [DecisionResult.SENT]
+
+    # --- scenario: with nothing parked and nothing decided for the provider, nothing is parsed
+    from jrbar import answer_decisions
+
+    parsed: list = []
+
+    def refuse_to_parse(*args, **kwargs):
+        parsed.append(args)
+        raise AssertionError("an event for a provider with no hold was parsed")
+
+    broker, facts = _decided_broker(text)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(answer_decisions, "json", SimpleNamespace(loads=refuse_to_parse))
+        assert _broker().observe("claude", _event(text, "PostToolUse")) == 0
+        assert broker.observe("codex", _event(text, "PostToolUse")) == 0
+    assert parsed == []
+    # ... and a lapsed tombstone is dropped before it is worth parsing for.
+    clock = _Clock()
+    broker, facts = _decided_broker(text, clock=clock)
+    clock.now += DECIDED_TOMBSTONE_CAP_SECONDS + 1
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(answer_decisions, "json", SimpleNamespace(loads=refuse_to_parse))
+        assert broker.observe("claude", _event(text, "PostToolUse")) == 0
+    assert parsed == []
+
+
+def test_the_decided_cap_is_the_time_canonical_state_keeps_a_request_live() -> None:
+    from jrbar.operator_state import REQUEST_LIVE_GRACE_SECONDS
+
+    assert DECIDED_TOMBSTONE_CAP_SECONDS == REQUEST_LIVE_GRACE_SECONDS == 3600.0
+
+
 # --- answer_ask through the lane -----------------------------------------------
 
 
@@ -845,6 +1154,61 @@ def test_answer_ask_reaches_the_work_the_card_names_when_two_hold_the_same_call(
     call(controller, status, {"session": status.agent_id, "decision": "approve"}, broker)
     worker_thread.join(2.0)
     assert _behavior(worker_received) == "allow"
+
+
+def test_a_second_answer_is_refused_until_the_agent_moves_on__and_3_more() -> None:
+    journal = _Journal()
+    text = _claude_payload()
+    facts = permission_facts("claude", text)
+
+    def call(controller, status, decision, broker):
+        args = {"session": status.agent_id, "decision": decision}
+        return answer_through_decision_lane(
+            controller, status, args, journal_for=lambda _c: journal, on_main=lambda fn: fn(), broker=broker
+        )
+
+    def first_approve(clock: _Clock, *, deliver: bool = True):
+        broker = _broker(clock)
+        controller, status, _request, _refreshed = _controller(request_id=facts.request_id)
+        _slot, received, thread = _park_and_serve(broker, facts, deliver=deliver)
+        if deliver:
+            assert call(controller, status, "approve", broker)["answered"] is True
+        else:
+            with pytest.raises(CommandError):
+                call(controller, status, "approve", broker)
+        thread.join(2.0)
+        return broker, controller, status, received
+
+    # --- scenario: a busy terminal is never typed into: a second approve or deny is a stale ask
+    clock = _Clock()
+    broker, controller, status, received = first_approve(clock)
+    assert received == [decision_document("claude", DecisionVerb.ALLOW)]
+    begun = len(journal.begun)
+    clock.now += 30.0
+    for decision in ("approve", "deny"):
+        with pytest.raises(CommandError) as error:
+            call(controller, status, decision, broker)
+        assert error.value.code == "stale_ask"
+    assert len(journal.begun) == begun
+
+    # --- scenario: the agent's own PostToolUse gives the keystroke path back
+    assert broker.observe("claude", _event(text, "PostToolUse", tool_response={"stdout": "ok"})) == 0
+    assert call(controller, status, "approve", broker) is None
+
+    # --- scenario: so does the cap
+    clock = _Clock()
+    broker, controller, status, _received = first_approve(clock)
+    clock.now += DECIDED_TOMBSTONE_CAP_SECONDS - 1
+    with pytest.raises(CommandError):
+        call(controller, status, "approve", broker)
+    clock.now += 2
+    assert call(controller, status, "approve", broker) is None
+
+    # --- scenario: an answer the hook could not take leaves the keystroke path open
+    clock = _Clock()
+    broker, controller, status, _received = first_approve(clock, deliver=False)
+    assert journal.settled[-1]["error"]["code"] == "stale_ask"
+    assert call(controller, status, "approve", broker) is None
 
 
 # --- previews for every PermissionRequest ----------------------------------------

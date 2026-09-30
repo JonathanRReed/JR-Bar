@@ -567,3 +567,84 @@ def test_bounded_close_reports_a_running_handler_without_mutating_late_state__an
     assert runtime.close(timeout_seconds=1.0) is True
     assert runtime.snapshot(identity, 1) is None
 
+
+
+class _RunningFuture(_ManualFuture):
+    """A job the executor has already started: cancel() cannot stop it."""
+
+    def cancel(self) -> bool:
+        return False
+
+
+class _RunningJobExecutor(_ManualExecutor):
+    def submit(self, operation):
+        future = _RunningFuture(operation)
+        self.futures.append(future)
+        return future
+
+
+def test_has_active_work_tracks_the_handler_until_it_really_ends__and_2_more() -> None:
+    # --- scenario: has_active_work_is_true_from_submit_until_the_handler_returns
+    harness = _harness()
+    _reconcile(harness)
+
+    assert harness.runtime.has_active_work() is False
+    assert _submit(harness) is True
+    assert harness.runtime.has_active_work() is True
+
+    harness.executor.futures[0].run()
+    harness.drain_main()
+
+    assert harness.runtime.has_active_work() is False
+
+    # --- scenario: a_timed_out_job_that_cannot_be_cancelled_is_still_active_work
+    registry = AnswerHandlerRegistry()
+    registry.register(_invocation(), lambda *_args, **_kwargs: None)
+    executor = _RunningJobExecutor()
+    timers = _ManualTimerFactory()
+    main_callbacks: list[object] = []
+    runtime = AnswerRuntime(
+        registry=registry,
+        executor=executor,
+        timer_factory=timers,
+        dispatch_main=main_callbacks.append,
+    )
+    identity = AnnouncerAlertIdentity("request:running")
+    runtime.reconcile(identity, 3)
+    assert runtime.submit(
+        _invocation(),
+        request_identity=identity,
+        generation=3,
+        request_kind=RequestKind.PERMISSION,
+        action=AnswerActionKind.APPROVE,
+        reply_text=None,
+    )
+
+    timers.timers[0].fire()
+    while main_callbacks:
+        main_callbacks.pop(0)()
+
+    assert runtime.snapshot(identity, 3).state is AnswerAttemptState.TIMED_OUT
+    assert runtime.has_active_work() is True
+
+    executor.futures[0].run()
+    while main_callbacks:
+        main_callbacks.pop(0)()
+
+    assert runtime.has_active_work() is False
+    assert runtime.snapshot(identity, 3).state is AnswerAttemptState.TIMED_OUT
+
+    # --- scenario: a_queued_job_cancelled_at_timeout_is_no_longer_active_work
+    harness = _harness()
+    _reconcile(harness)
+    assert _submit(harness) is True
+    assert harness.runtime.has_active_work() is True
+
+    harness.timer_factory.timers[0].fire()
+    harness.drain_main()
+
+    assert harness.executor.futures[0].cancelled is True
+    assert harness.runtime.snapshot(
+        AnnouncerAlertIdentity("request:0"), 4
+    ).state is AnswerAttemptState.TIMED_OUT
+    assert harness.runtime.has_active_work() is False

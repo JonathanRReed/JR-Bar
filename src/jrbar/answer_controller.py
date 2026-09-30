@@ -20,6 +20,8 @@ from .announcer_stack import (
 )
 from .answer_in_place import (
     AnswerActionKind,
+    AnswerAttempt,
+    AnswerAttemptState,
     AnswerCapability,
     AnswerControlPlan,
     answer_capability_for_request,
@@ -31,6 +33,14 @@ from .models import AgentStatus
 from .operator_state import CanonicalOperatorState, CanonicalRequestTruth
 from .provider_contracts import NegotiatedProviderContract
 from .provider_facts import RequestKey, WorkKey
+
+_VERDICT_ACTIONS = frozenset(
+    {
+        AnswerActionKind.APPROVE,
+        AnswerActionKind.DENY,
+        AnswerActionKind.REPLY,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,12 +409,36 @@ class AnswerController:
         )
         return AnswerStackUpdate(next_state, self._presentation(plan), route)
 
+    def _settled_attempt_yields(
+        self,
+        action: AnswerActionKind,
+        attempt: AnswerAttempt,
+    ) -> bool:
+        """Whether a fresh verdict may take over a send that already ended.
+
+        A refused or timed-out send has nothing left to wait for, so a person
+        who fixed the cause and presses Approve again is starting a new
+        attempt. That holds only while nothing of ours is still running: a
+        timed-out job the executor already started keeps going, and a second
+        send would queue behind it and could type twice. SENDING and SENT are
+        never settled here, so an answer in flight or already delivered stays
+        refused.
+        """
+        return (
+            action in _VERDICT_ACTIONS
+            and attempt.state
+            in {AnswerAttemptState.FAILED, AnswerAttemptState.TIMED_OUT}
+            and not self.runtime.has_active_work()
+        )
+
     def _dispatch_answer(
         self,
         action: AnswerActionKind,
         request_identity: AnnouncerAlertIdentity,
         reply_text: str | None,
         request: CanonicalRequestTruth,
+        *,
+        supersede_settled: bool = False,
     ) -> bool:
         capability = self._capability_for_request(request)
         if not capability.supported or capability.invocation is None:
@@ -416,6 +450,16 @@ class AnswerController:
                 attempt_key.generation,
                 draft_text=reply_text or "",
             )
+            if supersede_settled and self._settled_attempt_yields(action, attempt):
+                # A projection only: the stored attempt keeps its failure text
+                # until submit() accepts the new verdict, so a command that is
+                # invalid anyway (a reply to a permission ask) erases nothing.
+                attempt = replace(
+                    attempt,
+                    state=AnswerAttemptState.IDLE,
+                    last_error=None,
+                    draft_text=reply_text or attempt.draft_text,
+                )
             controls = project_answer_controls(
                 request.request_kind,
                 capability,
@@ -539,11 +583,15 @@ class AnswerController:
                 return False
             self._open_route(route)
             return True
+        # A browser command is an explicit press from a person (a click, a key,
+        # a Stream Deck button), so it may start a new attempt over one whose
+        # send was refused or timed out. Nothing here retries by itself.
         return self._dispatch_answer(
             command.action,
             command.request_identity,
             command.reply_text,
             request,
+            supersede_settled=True,
         )
 
     def _emit_current(self) -> None:

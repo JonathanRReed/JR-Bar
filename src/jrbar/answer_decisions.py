@@ -75,9 +75,13 @@ MIN_DECISION_HOLD_SECONDS: Final = 2.0
 #: Parked requests at once. Each one holds a socket and a thread; a burst
 #: past this just falls through to the agents' own prompts.
 MAX_PARKED_DECISIONS: Final = 16
-#: How long an answered request stays answerable-looking and refuses a
-#: second answer, while the provider's own events catch the state up.
-DECIDED_TOMBSTONE_SECONDS: Final = 15.0
+#: The most an answered request is remembered as answered. It is forgotten
+#: much sooner in practice, when the agent's own events close the request
+#: (``DecisionBroker.observe``): the tool's PostToolUse, a fresh
+#: PermissionRequest for it, or the turn ending or moving on. This is only the
+#: upper bound, equal to ``operator_state.REQUEST_LIVE_GRACE_SECONDS``, after
+#: which canonical state stops treating a live request as live anyway.
+DECIDED_TOMBSTONE_CAP_SECONDS: Final = 3600.0
 #: How long ``decide`` waits for the parked connection to write the line.
 DELIVERY_WAIT_SECONDS: Final = 2.0
 
@@ -142,7 +146,7 @@ class DecisionResult(str, Enum):
     NOT_DELIVERED = "not_delivered"
     #: Nothing is parked for that request.
     NOT_PARKED = "not_parked"
-    #: Somebody answered it a moment ago.
+    #: Its verdict was already sent, and the agent has not moved on yet.
     ALREADY_DECIDED = "already_decided"
     #: That verb cannot be sent for this request: Always without rules, a
     #: bare allow on a question, answers that pick nothing offered.
@@ -526,26 +530,99 @@ def tool_preview(tool_name: object, tool_input: object) -> str | None:
     return None
 
 
+# What the card marks "destructive". It is advice for the person deciding and
+# never a block, so the patterns favour recall over precision, and a few false
+# positives are the accepted price:
+#
+# * A command word counts after a quote, a backtick or `$(` as well as after
+#   whitespace and shell separators. That is the only way to see through
+#   `bash -c 'rm -rf build'` or `ssh host "rm -rf x"` without a shell parser,
+#   and it means `grep "rm -rf" notes` and `echo rm -rf` are marked too.
+# * It also counts after `\` (`\rm`, which skips an alias) and after an
+#   absolute, home or dot path (`/bin/rm`, `~/bin/git`, `./rm`). A path that
+#   only ends in the word (`docs/sudo`, `b/rm`) is not the command.
+# * `dd if=a of=b` is marked whatever `of=` points at; a judgement call.
+#
+# Every pattern reads the command in one pass with no open-ended scan forward
+# from each anchor, so a long or hostile command costs time proportional to
+# its length and nothing is cut off before it is read.
+_PATH_TOKEN: Final = r"[^\s;&|()`'\"]"
+_START: Final = (
+    r"(?:^|[\s;&|(`'\"]|\$\()"
+    r"(?:\\|/(?:" + _PATH_TOKEN + r"*/)?|[~.]" + _PATH_TOKEN + r"*/)?"
+)
+
+#: Patterns that mean "this loses work" wherever they sit in the text. Each is
+#: a plain search with no open-ended scan forward, so the cost is linear in the
+#: length of the command.
 _DESTRUCTIVE: Final = tuple(
     re.compile(pattern)
     for pattern in (
-        r"(?:^|[\s;&|(])rm\s+(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)\b",
-        r"(?:^|[\s;&|(])sudo\s",
-        r"(?:^|[\s;&|(])git\s+push\b[^;&|]*\s(?:--force(?:-with-lease)?|-f)\b",
-        r"(?:^|[\s;&|(])git\s+reset\s+--hard\b",
-        r"(?:^|[\s;&|(])git\s+clean\s+-[A-Za-z]*f",
-        r"(?:^|[\s;&|(])git\s+(?:checkout|restore)\s+(?:--\s+)?\.(?:\s|$)",
-        r"(?:^|[\s;&|(])git\s+branch\s+-D\b",
-        r"(?:^|[\s;&|(])(?:chmod|chown)\s+-[A-Za-z]*R",
-        r"(?:^|[\s;&|(])(?:mkfs(?:\.\w+)?|diskutil\s+(?:erase\w*|partitionDisk))\b",
-        r"(?:^|[\s;&|(])dd\s+[^;&|]*\bof=",
-        r"\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b",
+        # Any flags, then one holding an r or R (-rf, -fr, -R) or --recursive:
+        # `rm -f -r` and `rm --force --recursive` count. The lookahead finds
+        # the r in one pass and the letters are then read once;
+        # `-[A-Za-z]*[rR][A-Za-z]*` retried every split of a long flag.
+        _START + r"rm\s+(?:-{1,2}[A-Za-z][\w-]*\s+)*(?:-(?=[A-Za-z]*[rR])[A-Za-z]+|--recursive)\b",
+        _START + r"sudo\s",
+        _START + r"git\s+reset\s+--hard\b",
+        _START + r"git\s+clean\s+-[A-Za-z]*f",
+        _START + r"git\s+(?:checkout|restore)\s+(?:--\s+)?\.(?:\s|$)",
+        _START + r"git\s+branch\s+-D\b",
+        _START + r"(?:chmod|chown)\s+-[A-Za-z]*R",
+        _START + r"(?:mkfs(?:\.\w+)?|diskutil\s+(?:erase\w*|partitionDisk))\b",
         r"(?i)\bdrop\s+(?:table|database|schema)\b",
-        r"(?:^|[\s;&|(])(?:kubectl\s+delete|terraform\s+destroy)\b",
-        r"(?:^|[\s;&|(])(?:sudo\s+)?(?:shutdown|reboot|halt)(?=$|[\s;&|)])",
+        _START + r"(?:kubectl\s+delete|terraform\s+destroy)\b",
+        _START + r"(?:sudo\s+)?(?:shutdown|reboot|halt)(?=$|[\s;&|)])",
         r">\s*/dev/(?:disk|sd|rdisk)",
     )
 )
+
+#: A command that pushes, writes with dd, finds or fetches is only destructive
+#: for what comes later in the SAME simple command. Each is found once per segment
+#: (the text between `;`, `&` and `|`) by its anchor, then one search for the
+#: tail from where the anchor ended. Scanning forward from every anchor would
+#: be quadratic on a long run of them; the tail does not depend on which anchor
+#: matched, so if the first anchor's tail is missing every later one is too.
+_SEGMENT_SPLIT: Final = re.compile(r"([;&|])")
+_PUSH_ANCHOR: Final = re.compile(_START + r"git\s+push\b")
+#: A forced push (--force, --force-with-lease, -f alone or among short flags,
+#: `+ref`) and a remote deletion (--delete, -d, `:ref`) both lose remote work.
+_PUSH_TAIL: Final = re.compile(
+    r"\s(?:(?:--force(?:-with-lease)?|--delete|-(?=[A-Za-z]*[fd])[A-Za-z]+)\b|\+\S|:\S)"
+)
+_DD_ANCHOR: Final = re.compile(_START + r"dd\s+")
+_DD_TAIL: Final = re.compile(r"\bof=")
+_FIND_ANCHOR: Final = re.compile(_START + r"find\b")
+_FIND_TAIL: Final = re.compile(r"\s-delete\b")
+_FETCH: Final = re.compile(r"\b(?:curl|wget)\b")
+_SHELL_HEAD: Final = re.compile(r"\s*(?:sudo\s+)?(?:sh|bash|zsh)\b")
+
+
+def _anchored_tail(segment: str, anchor: re.Pattern[str], tail: re.Pattern[str]) -> bool:
+    found = anchor.search(segment)
+    return found is not None and tail.search(segment, found.end()) is not None
+
+
+def _segment_destructive(command: str) -> bool:
+    """The push, dd, find and pipe-to-shell shapes, one simple command at a time."""
+    parts = _SEGMENT_SPLIT.split(command)
+    for index in range(0, len(parts), 2):
+        segment = parts[index]
+        if (
+            _anchored_tail(segment, _PUSH_ANCHOR, _PUSH_TAIL)
+            or _anchored_tail(segment, _DD_ANCHOR, _DD_TAIL)
+            or _anchored_tail(segment, _FIND_ANCHOR, _FIND_TAIL)
+        ):
+            return True
+        # `curl ... | sh`: the fetch ends in a pipe and the next command is a shell.
+        if (
+            index + 2 < len(parts)
+            and parts[index + 1] == "|"
+            and _FETCH.search(segment) is not None
+            and _SHELL_HEAD.match(parts[index + 2]) is not None
+        ):
+            return True
+    return False
 
 
 def tool_risk(tool_name: object, tool_input: object) -> str | None:
@@ -559,7 +636,9 @@ def tool_risk(tool_name: object, tool_input: object) -> str | None:
         command = " ".join(command)
     if tool_name == "apply_patch" or type(command) is not str:
         return None
-    return "destructive" if any(pattern.search(command) for pattern in _DESTRUCTIVE) else None
+    if any(pattern.search(command) for pattern in _DESTRUCTIVE) or _segment_destructive(command):
+        return "destructive"
+    return None
 
 
 # --- the broker --------------------------------------------------------------------
@@ -577,7 +656,8 @@ class ParkedDecision:
     can_always_allow: bool
     preview: str | None
     risk: str | None
-    #: True for a request answered moments ago (the tombstone).
+    #: True for a request whose verdict the hook took, until the agent's own
+    #: events close the request (the tombstone).
     decided: bool = False
     #: A held question's questions and options (``answer``); ``()`` for a
     #: yes/no request.
@@ -604,6 +684,8 @@ class _Slot:
         "facts",
         "hold_until_epoch",
         "host_pid",
+        "preview",
+        "risk",
         "state",
         "token",
         "verdict",
@@ -616,9 +698,16 @@ class _Slot:
         deadline: float,
         hold_until_epoch: float,
         host_pid: int | None = None,
+        preview: str | None = None,
+        risk: str | None = None,
     ) -> None:
         self.token = token
         self.facts = facts
+        #: The card's preview line and risk mark, worked out once when the
+        #: request parks: every state build reads the hold under the broker's
+        #: lock, and none of them should rescan the command.
+        self.preview = preview
+        self.risk = risk
         self.deadline = deadline
         self.hold_until_epoch = hold_until_epoch
         #: The hook's parent, the agent side of the request: its terminal
@@ -721,8 +810,11 @@ class DecisionBroker:
         self._lock = threading.Lock()
         self._token = 0
         self._slots: dict[int, _Slot] = {}
-        #: (provider, work id, request id) -> when the tombstone lapses.
-        self._decided: dict[tuple[str, str, str], float] = {}
+        #: (provider, work id, request id) -> (the cap, the session), for a
+        #: verdict the hook took. Kept until the agent's own events close the
+        #: request (``observe``) or the cap; the session says whose turn ending
+        #: closes it.
+        self._decided: dict[tuple[str, str, str], tuple[float, str]] = {}
         self._on_change = on_change
 
     def set_on_change(self, on_change: Callable[[], object] | None) -> None:
@@ -754,6 +846,9 @@ class DecisionBroker:
             return None
         if facts.provider in PROMPT_BEHIND_HOOK_PROVIDERS and self._watching(facts, host_pid):
             return None
+        # Once per held request, outside the lock the hook threads share.
+        preview = tool_preview(facts.tool_name, facts.tool_input)
+        risk = tool_risk(facts.tool_name, facts.tool_input)
         now = self._clock()
         with self._lock:
             self._expire_locked(now)
@@ -766,6 +861,8 @@ class DecisionBroker:
                 now + hold,
                 self._wall() + hold,
                 host_pid if type(host_pid) is int and host_pid > 1 else None,
+                preview,
+                risk,
             )
             self._slots[slot.token] = slot
             self._decided.pop((facts.provider, facts.work_id, facts.request_id), None)
@@ -820,13 +917,16 @@ class DecisionBroker:
             verdict = slot.verdict if slot.state == "decided" else None
         # Every lapse, release and decision ends here; the handler runs
         # outside the lock, since it may build the state that reads it.
+        self._notify_change()
+        return verdict
+
+    def _notify_change(self) -> None:
         on_change = self._on_change
         if on_change is not None:
             try:
                 on_change()
             except Exception:
                 pass
-        return verdict
 
     def delivered(self, slot: _Slot, ok: bool) -> None:
         """The parked connection's report: the verdict line was written."""
@@ -894,11 +994,21 @@ class DecisionBroker:
             slot.verdict = verdict
             slot.state = "decided"
             self._slots.pop(slot.token, None)
-            self._decided[(provider, slot.facts.work_id, request_id)] = now + DECIDED_TOMBSTONE_SECONDS
+            # Written before delivery is known, under the lock, so a second
+            # click during the delivery wait already meets ALREADY_DECIDED.
+            key = (provider, slot.facts.work_id, request_id)
+            tombstone = (now + DECIDED_TOMBSTONE_CAP_SECONDS, slot.facts.session_id)
+            self._decided[key] = tombstone
             slot.event.set()
-        if not slot.delivered_event.wait(DELIVERY_WAIT_SECONDS):
-            return DecisionResult.NOT_DELIVERED
-        return DecisionResult.SENT if slot.delivered else DecisionResult.NOT_DELIVERED
+        if slot.delivered_event.wait(DELIVERY_WAIT_SECONDS) and slot.delivered:
+            return DecisionResult.SENT
+        # The hook had already gone, so nothing was decided: the agent's own
+        # prompt is showing, and the keystroke path is the way to answer it.
+        with self._lock:
+            if self._decided.get(key) is tombstone:
+                del self._decided[key]
+        self._notify_change()
+        return DecisionResult.NOT_DELIVERED
 
     def release(
         self,
@@ -941,13 +1051,26 @@ class DecisionBroker:
             return len(slots)
 
     def observe(self, provider: object, payload_text: object) -> int:
-        """Release what a later hook event proves is no longer on screen:
-        the tool ran (its ``PostToolUse``), or the turn ended or moved on.
-        Parses nothing while nothing is parked for that provider."""
+        """Release what a later hook event proves is no longer on screen --
+        the tool ran (its ``PostToolUse``), or the turn ended or moved on --
+        and forget an answered request the same events close. Returns the
+        number of holds released. Parses nothing while nothing is parked or
+        answered for that provider.
+
+        An answered request stays answered for as long as the tool it
+        approved may be running, so a second click cannot type into a busy
+        terminal. What closes it: the tool's PostToolUse or PostToolUseFailure,
+        a fresh PermissionRequest for the same request (a new ask, whether or
+        not it is held), or the turn ending or moving on (Stop, StopFailure,
+        SessionEnd, UserPromptSubmit, Interrupt)."""
         if type(provider) is not str or type(payload_text) is not str:
             return 0
         with self._lock:
-            if not any(slot.facts.provider == provider for slot in self._slots.values()):
+            self._expire_locked(self._clock())
+            if not (
+                any(slot.facts.provider == provider for slot in self._slots.values())
+                or any(key[0] == provider for key in self._decided)
+            ):
                 return 0
         try:
             payload = json.loads(payload_text)
@@ -965,9 +1088,11 @@ class DecisionBroker:
             # is the session's, and ends everything held under it.
             agent_id = payload.get("agent_id") or payload.get("agentId")
             if type(agent_id) is str and agent_id and agent_id != session_id:
+                self._forget_decided(provider, session_id=session_id, work_id=agent_id)
                 return self.release(provider, session_id=session_id, work_id=agent_id)
+            self._forget_decided(provider, session_id=session_id)
             return self.release(provider, session_id=session_id)
-        if event in _TOOL_RAN_EVENTS:
+        if event in _TOOL_RAN_EVENTS or event == "PermissionRequest":
             from .provider_adapters import hook_request_identity
 
             routed = _request_identity(provider, payload_text)
@@ -980,8 +1105,32 @@ class DecisionBroker:
             record = routed[1]
             ran_session = record.session_id if type(record.session_id) is str else session_id
             work_id = record.agent_id if type(record.agent_id) is str and record.agent_id else ran_session
+            self._forget_decided(provider, request_id=request_id, work_id=work_id)
+            if event == "PermissionRequest":
+                # A new ask: it is the ingress's to hold, not this event's to release.
+                return 0
             return self.release(provider, request_id=request_id, work_id=work_id)
         return 0
+
+    def _forget_decided(
+        self,
+        provider: str,
+        *,
+        request_id: str | None = None,
+        session_id: str | None = None,
+        work_id: str | None = None,
+    ) -> None:
+        """Drop the answered-request memory that matches every given field."""
+        with self._lock:
+            for key, (_until, decided_session) in list(self._decided.items()):
+                decided_provider, decided_work, decided_request = key
+                if (
+                    decided_provider == provider
+                    and (request_id is None or decided_request == request_id)
+                    and (session_id is None or decided_session == session_id)
+                    and (work_id is None or decided_work == work_id)
+                ):
+                    del self._decided[key]
 
     # -- reading (the projection side) --
 
@@ -1007,7 +1156,7 @@ class DecisionBroker:
             if decided_work is not None:
                 return ParkedDecision(
                     provider=provider,
-                    session_id="",
+                    session_id=self._decided[(provider, decided_work, request_id)][1],
                     request_id=request_id,
                     tool_name="",
                     hold_until_epoch=self._wall(),
@@ -1035,8 +1184,8 @@ class DecisionBroker:
             tool_name=facts.tool_name,
             hold_until_epoch=slot.hold_until_epoch,
             can_always_allow=bool(facts.always_rules),
-            preview=tool_preview(facts.tool_name, facts.tool_input),
-            risk=tool_risk(facts.tool_name, facts.tool_input),
+            preview=slot.preview,
+            risk=slot.risk,
             decided=decided,
             choices=facts.choices,
             work_id=facts.work_id,
@@ -1068,7 +1217,7 @@ class DecisionBroker:
         request_id: str,
         work_id: str | None,
     ) -> str | None:
-        """The work of a request answered moments ago, if one matches."""
+        """The work of an answered request the agent has not closed yet, if one matches."""
         if work_id is not None:
             return work_id if (provider, work_id, request_id) in self._decided else None
         for decided_provider, decided_work, decided_request in self._decided:
@@ -1088,7 +1237,7 @@ class DecisionBroker:
                 slot.state = "expired"
                 self._slots.pop(slot.token, None)
                 slot.event.set()
-        for key, until in list(self._decided.items()):
+        for key, (until, _session) in list(self._decided.items()):
             if until <= now:
                 del self._decided[key]
 
@@ -1415,7 +1564,7 @@ __all__ = [
     "ALWAYS_ALLOW_PROVIDERS",
     "CHOICE_PROVIDERS",
     "CHOICE_TOOLS",
-    "DECIDED_TOMBSTONE_SECONDS",
+    "DECIDED_TOMBSTONE_CAP_SECONDS",
     "DECIDE_PROVIDERS",
     "DECISION_HOLD_SECONDS",
     "DENY_MESSAGE",
