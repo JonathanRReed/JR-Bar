@@ -847,28 +847,69 @@ final class OverviewStore {
 
     /// What the ask-action buttons may claim on this row. `remote` and
     /// `canAnswer == false` disable with a named reason — the UI shows
-    /// the reason as a tooltip, never silently greying out (T07/T08).
+    /// the reason as a tooltip, never silently greying out (T07/T08). An
+    /// ask JR-Bar already answered is neither: it draws no verb, and the
+    /// words are the ones every other surface says for it.
     enum AskAction: Equatable {
         case actionable           // approve/deny (and reply if wantsTextReply)
         case noAsk                // nothing to answer
         case remote               // a peer's ask — answer it there
+        case decided              // answered from here; the agent is being waited for
         case notAnswerable        // the daemon says this ask can't be typed
     }
 
+    /// A peer's row first, then an answered ask (whatever else the daemon
+    /// still says about it, an older one may call it answerable), then the
+    /// daemon's verdict on whether the answer can land.
     func askAction(for entry: CoreRosterEntry) -> AskAction {
         guard let ask = entry.session.ask else { return .noAsk }
         if entry.session.remote { return .remote }
+        if ask.isDecided { return .decided }
         if !ask.canAnswer { return .notAnswerable }
         return .actionable
     }
 
-    /// The disable reason a button's tooltip shows; nil when enabled.
+    /// The disable reason a button's tooltip shows; nil when enabled. For
+    /// an answered ask it is the decided line, which is also what a click
+    /// on a stale button is refused with.
     func askDisabledReason(for entry: CoreRosterEntry) -> String? {
         switch askAction(for: entry) {
         case .actionable: return nil
         case .noAsk: return "No open ask on this session"
         case .remote: return "A remote session — answer it on \(entry.session.origin?.label ?? "the machine it runs on")"
+        case .decided: return entry.session.ask?.decidedLine
         case .notAnswerable: return "The monitor reports this ask cannot be answered from here"
+        }
+    }
+
+    /// Which answer verbs the inspector draws for the row's ask, read off
+    /// `askAction` and `AskVerbs` so it agrees with what the desk would
+    /// send. A verb that cannot be sent still draws, disabled, with its
+    /// reason; an answered ask draws none and carries its line instead.
+    struct AskVerbPlan: Equatable {
+        var approve = false
+        var alwaysAllow = false
+        var deny = false
+        var reply = false
+        /// Drawn disabled: this is the tooltip and the line beneath.
+        var disabledReason: String?
+        /// Answered from here: no verb, and these are the words.
+        var decidedLine: String?
+    }
+
+    func askVerbPlan(for entry: CoreRosterEntry) -> AskVerbPlan {
+        guard let ask = entry.session.ask else { return AskVerbPlan() }
+        switch askAction(for: entry) {
+        case .noAsk:
+            return AskVerbPlan()
+        case .decided:
+            return AskVerbPlan(decidedLine: ask.decidedLine)
+        case .remote, .notAnswerable:
+            return AskVerbPlan(approve: true, alwaysAllow: AskVerbs.alwaysAllows(ask), deny: true,
+                               disabledReason: askDisabledReason(for: entry))
+        case .actionable:
+            return AskVerbPlan(approve: AskVerbs.approves(ask), alwaysAllow: AskVerbs.alwaysAllows(ask),
+                               deny: AskVerbs.denies(ask), reply: canReply(entry))
         }
     }
 

@@ -297,23 +297,33 @@ struct OverviewSessionInspector: View {
 
     // MARK: The ask
 
+    /// The section's heading: "Waiting on you" while the ask is open, and
+    /// for one JR-Bar already answered the decided line the panel and the
+    /// notch say, so the loud heading never sits above a card with no verb.
+    static func askHeading(_ ask: CoreAsk) -> String {
+        ask.decidedLine ?? "Waiting on you"
+    }
+
     /// The "Waiting on you" section: the ask's summary and age, then the
     /// explicit actions — Approve / Deny / Reply…. Every button sends
     /// with the ask's `request` pinned, so the daemon itself refuses a
     /// stale card (`stale_request`) or an ask that moved on; Approve and
     /// Deny go through the shared desk and are drawn only where it would
     /// send them. Nothing here ever auto-answers; disabled buttons carry
-    /// the reason as a tooltip rather than silently greying.
+    /// the reason as a tooltip rather than silently greying. An ask
+    /// already answered draws no verb at all.
     @ViewBuilder
     private func waitingSection(ask: CoreAsk) -> some View {
+        let answered = ask.isDecided
+        let tint = answered ? Color.secondary : SessionActivity.waiting.tint
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "hand.raised.fill")
+                Image(systemName: answered ? "checkmark.circle" : "hand.raised.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(SessionActivity.waiting.tint)
-                Text("Waiting on you")
+                    .foregroundStyle(tint)
+                Text(Self.askHeading(ask))
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(SessionActivity.waiting.tint)
+                    .foregroundStyle(tint)
                 Spacer(minLength: 4)
                 OverviewWaitingText(entry: entry, store: store)
             }
@@ -347,45 +357,50 @@ struct OverviewSessionInspector: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .windowWell(padding: 12, tint: SessionActivity.waiting.tint)
+        .windowWell(padding: 12, tint: answered ? nil : SessionActivity.waiting.tint)
     }
 
+    /// The verbs the plan draws (`OverviewStore.askVerbPlan`): none for an
+    /// ask JR-Bar already answered, where the heading above has said so.
     @ViewBuilder
     private func answerButtons(ask: CoreAsk) -> some View {
-        let reason = store.askDisabledReason(for: entry)
-        HStack(spacing: 8) {
-            if reason != nil || AskVerbs.approves(ask) {
-                Button("Approve") {
-                    Task { await store.answerAsk(entry: entry, approve: true) }
+        let plan = store.askVerbPlan(for: entry)
+        let reason = plan.disabledReason
+        if plan.decidedLine == nil {
+            HStack(spacing: 8) {
+                if plan.approve {
+                    Button("Approve") {
+                        Task { await store.answerAsk(entry: entry, approve: true) }
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
                 }
-                .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
-            }
-            if AskVerbs.alwaysAllows(ask) {
-                // Its own button: the agent remembers the rule.
-                Button("Always Allow") {
-                    Task { await store.alwaysAllow(entry: entry) }
-                }
-                .buttonStyle(.bordered).controlSize(.small)
-                .help("Approve, and let the agent remember the rule it offered")
-            }
-            if reason != nil || AskVerbs.denies(ask) {
-                Button("Deny") {
-                    Task { await store.answerAsk(entry: entry, approve: false) }
-                }
-                .buttonStyle(.bordered).controlSize(.small).tint(.red)
-            }
-            if store.canReply(entry) {
-                Button("Reply…") { reply(entry) }
+                if plan.alwaysAllow {
+                    // Its own button: the agent remembers the rule.
+                    Button("Always Allow") {
+                        Task { await store.alwaysAllow(entry: entry) }
+                    }
                     .buttonStyle(.bordered).controlSize(.small)
+                    .help("Approve, and let the agent remember the rule it offered")
+                }
+                if plan.deny {
+                    Button("Deny") {
+                        Task { await store.answerAsk(entry: entry, approve: false) }
+                    }
+                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
+                }
+                if plan.reply {
+                    Button("Reply…") { reply(entry) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
             }
-        }
-        .disabled(reason != nil || store.askDesk.isPending(entry.id))
-        .help(reason ?? (ask.isHeldForDecision
-            ? "Answered through the agent's own permission hook — the monitor's verdict is shown on the status line"
-            : "Send the answer to the session's terminal — the monitor's verdict is shown on the status line"))
-        if let reason {
-            Label(reason, systemImage: "info.circle")
-                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+            .disabled(reason != nil || store.askDesk.isPending(entry.id))
+            .help(reason ?? (ask.isHeldForDecision
+                ? "Answered through the agent's own permission hook — the monitor's verdict is shown on the status line"
+                : "Send the answer to the session's terminal — the monitor's verdict is shown on the status line"))
+            if let reason {
+                Label(reason, systemImage: "info.circle")
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+            }
         }
     }
 
