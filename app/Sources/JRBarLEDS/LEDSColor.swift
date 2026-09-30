@@ -14,8 +14,6 @@ public struct RGB8: Hashable, Sendable, Codable {
 
     public static let black = RGB8(r: 0, g: 0, b: 0)
 
-    public var isLit: Bool { r != 0 || g != 0 || b != 0 }
-
     /// Canonical `#RRGGBB` spelling (uppercase, the way the Python renderer emits it).
     public var hex: String { String(format: "#%02X%02X%02X", r, g, b) }
 
@@ -39,8 +37,8 @@ public struct RGB8: Hashable, Sendable, Codable {
 /// those codes linearly, so on the hardware they are linear light; the Python
 /// Screen Bar paints the same numbers straight into an sRGB drawing context
 /// (its "identity transfer" reconciliation, see `_led_status_legacy.py`). Use
-/// `linear` when a consumer genuinely needs the IEC 61966-2-1 decode, for
-/// example to blend in linear light.
+/// `LEDSTransfer.srgbToLinear` when a consumer genuinely needs the
+/// IEC 61966-2-1 decode, for example to blend in linear light.
 public struct RGB: Hashable, Sendable {
     public var r: Double
     public var g: Double
@@ -56,11 +54,6 @@ public struct RGB: Hashable, Sendable {
 
     /// The brightest channel; the Python pipeline carries this as alpha ("how lit is this LED").
     public var maxChannel: Double { max(r, max(g, b)) }
-
-    /// Decoded through the exact sRGB piecewise curve (port of `srgb_to_linear`).
-    public var linear: RGB {
-        RGB(r: LEDSTransfer.srgbToLinear(r), g: LEDSTransfer.srgbToLinear(g), b: LEDSTransfer.srgbToLinear(b))
-    }
 
     /// Nearest 8-bit codes.
     public var codes: RGB8 {
