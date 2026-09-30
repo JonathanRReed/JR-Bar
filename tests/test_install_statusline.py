@@ -211,3 +211,39 @@ def test_uninstalling_claudes_hooks_also_puts_back_its_status_line(
     else:
         assert is_ours(line)
         assert flips == []
+
+
+def test_jrbar_main_uninstall_all_still_restores_statusline_and_propagates_failure(
+    monkeypatch,
+) -> None:
+    """One provider that could not be cleaned makes the legacy call return 1.
+    The status line is still put back, and the command still exits 1."""
+    from jrbar import claude_statusline_source, cli_entry
+
+    restores: list[bool] = []
+    monkeypatch.setattr(cli_entry, "_legacy_jrbar_main", lambda args: 1)
+    monkeypatch.setattr(
+        claude_statusline_source,
+        "uninstall_with_claude_hooks",
+        lambda **kwargs: restores.append(kwargs["dry_run"]) or 0,
+    )
+
+    assert cli_entry.jrbar_main(["agent-monitor", "uninstall", "all"]) == 1
+    assert restores == [False], "the status line restore ran"
+
+
+def test_jrbar_main_uninstall_all_exits_1_when_only_the_statusline_restore_fails(
+    monkeypatch,
+) -> None:
+    from jrbar import claude_statusline_source, cli_entry
+
+    restores: list[bool] = []
+    monkeypatch.setattr(cli_entry, "_legacy_jrbar_main", lambda args: 0)
+    monkeypatch.setattr(
+        claude_statusline_source,
+        "uninstall_with_claude_hooks",
+        lambda **kwargs: restores.append(kwargs["dry_run"]) or 1,
+    )
+
+    assert cli_entry.jrbar_main(["agent-monitor", "uninstall", "all", "--dry-run"]) == 1
+    assert restores == [True]
