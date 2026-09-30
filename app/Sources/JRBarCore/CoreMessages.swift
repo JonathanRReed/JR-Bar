@@ -497,13 +497,6 @@ public struct CoreRoster: Codable, Hashable, Sendable {
     /// history is `list_history`'s job — the document says so.
     public var coverage: JSONValue?
 
-    public init(sessions: [CoreRosterEntry] = [], counts: CoreRosterCounts = CoreRosterCounts(),
-                coverage: JSONValue? = nil) {
-        self.sessions = sessions
-        self.counts = counts
-        self.coverage = coverage
-    }
-
     enum CodingKeys: String, CodingKey { case sessions, counts, coverage }
 
     public init(from decoder: Decoder) throws {
@@ -736,12 +729,6 @@ public struct CoreRunSpan: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case firstAt = "first_at", lastAt = "last_at", durationS = "duration_s"
-    }
-
-    public init(firstAt: Double? = nil, lastAt: Double? = nil, durationS: Double? = nil) {
-        self.firstAt = firstAt
-        self.lastAt = lastAt
-        self.durationS = durationS
     }
 }
 
@@ -1423,16 +1410,6 @@ public struct CorePowerRelease: Codable, Hashable, Sendable {
     public var finished: Int?
     /// When the daemon's sleep landed, on a `slept` release.
     public var sleptAt: Double?
-
-    public init(kind: String? = nil, reason: String? = nil, at: Double? = nil, duration: Double? = nil,
-                finished: Int? = nil, sleptAt: Double? = nil) {
-        self.kind = kind
-        self.reason = reason
-        self.at = at
-        self.duration = duration
-        self.finished = finished
-        self.sleptAt = sleptAt
-    }
 
     enum CodingKeys: String, CodingKey {
         case kind, reason, at, duration, finished
@@ -2117,12 +2094,6 @@ public struct CoreDeviceReceipt: Codable, Hashable, Sendable {
     public var foreignWrites: Int
     public var paused: Bool
 
-    public init(foreignWriteAt: Double? = nil, foreignWrites: Int = 0, paused: Bool = false) {
-        self.foreignWriteAt = foreignWriteAt
-        self.foreignWrites = foreignWrites
-        self.paused = paused
-    }
-
     enum CodingKeys: String, CodingKey {
         case foreignWriteAt = "foreign_write_at"
         case foreignWrites = "foreign_writes"
@@ -2459,17 +2430,6 @@ public struct ProviderConsentRow: Codable, Hashable, Sendable {
     public var backgroundRepair: Bool
     public var grantedAt: Double
     public var sourceInstanceID: String
-
-    public init(browser: String, profile: String, domains: [String], fields: [String],
-                backgroundRepair: Bool = false, grantedAt: Double = 0, sourceInstanceID: String = "default") {
-        self.browser = browser
-        self.profile = profile
-        self.domains = domains
-        self.fields = fields
-        self.backgroundRepair = backgroundRepair
-        self.grantedAt = grantedAt
-        self.sourceInstanceID = sourceInstanceID
-    }
 
     enum CodingKeys: String, CodingKey {
         case browser, profile, domains, fields

@@ -605,16 +605,6 @@ public struct DeckKeymapPlan: Hashable, Sendable {
     public var preview: String
     public var controls: [(index: Int, label: String)]
 
-    public init(profile: Int, layer: Int, includeAuxiliary: Bool, changes: [String], preview: String,
-                controls: [(index: Int, label: String)] = []) {
-        self.profile = profile
-        self.layer = layer
-        self.includeAuxiliary = includeAuxiliary
-        self.changes = changes
-        self.preview = preview
-        self.controls = controls
-    }
-
     public init?(_ value: JSONValue?) {
         guard let value, let preview = value["preview"]?.stringValue else { return nil }
         profile = value["profile"]?.intValue ?? 0

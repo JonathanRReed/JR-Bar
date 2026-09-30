@@ -202,15 +202,6 @@ public struct BlinkCadence: Codable, Hashable, Sendable, Identifiable {
     public var pulses: Int
     public var restMs: Int
 
-    public init(id: String, label: String, onMs: Int, offMs: Int, pulses: Int = 1, restMs: Int = 0) {
-        self.id = id
-        self.label = label
-        self.onMs = onMs
-        self.offMs = offMs
-        self.pulses = pulses
-        self.restMs = restMs
-    }
-
     enum CodingKeys: String, CodingKey {
         case id, label, pulses
         case onMs = "on_ms"
@@ -404,13 +395,6 @@ public struct EffectPackLicense: Codable, Hashable, Sendable {
     public var sourceURL: String?
     public var attributionURL: String?
 
-    public init(spdxID: String, label: String, sourceURL: String? = nil, attributionURL: String? = nil) {
-        self.spdxID = spdxID
-        self.label = label
-        self.sourceURL = sourceURL
-        self.attributionURL = attributionURL
-    }
-
     enum CodingKeys: String, CodingKey {
         case label
         case spdxID = "spdx_id"
@@ -436,15 +420,6 @@ public struct EffectPack: Codable, Hashable, Sendable, Identifiable {
     public var effectIDs: [String]
     public var license: EffectPackLicense?
     public var path: String?
-
-    public init(id: String, name: String, version: Int = 2, effectIDs: [String] = [], license: EffectPackLicense? = nil, path: String? = nil) {
-        self.id = id
-        self.name = name
-        self.version = version
-        self.effectIDs = effectIDs
-        self.license = license
-        self.path = path
-    }
 
     enum CodingKeys: String, CodingKey {
         case id, name, version, license, path
@@ -720,13 +695,6 @@ public struct ScenePackSummary: Codable, Hashable, Sendable, Identifiable {
     public var name: String?
     public var scenes: [String]
     public var installed: Bool
-
-    public init(id: String, name: String? = nil, scenes: [String] = [], installed: Bool = false) {
-        self.id = id
-        self.name = name
-        self.scenes = scenes
-        self.installed = installed
-    }
 
     /// What the row should show — the pack's human name before its slug.
     public var displayName: String { name ?? id }
