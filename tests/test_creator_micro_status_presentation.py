@@ -3,60 +3,38 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from jrbar.deck_status_bar import install_deck_status_bar
-from jrbar.settings_window import _build_devices_pane
 
 
 class _BaseController:
-    def set_settings_message(self, message) -> None:
-        self.messages.append(message)
+    pass
 
 
 Controller = install_deck_status_bar(_BaseController)
 
 
-def _controller():
+def test_the_controller_keeps_the_latest_creator_micro_output_receipt() -> None:
     controller = Controller()
-    controller._runtime_started = False
-    controller._device_discovery_cache = None
-    controller.messages = []
-    return controller
 
-
-def test_creator_micro_receipt_updates_cached_hidden_devices_status__and_1_more() -> None:
-    # --- scenario: creator_micro_receipt_updates_cached_hidden_devices_status
-    controller = _controller()
-    controller.current_settings_pane = "profile"
-    controller._creator_micro_output_receipt = SimpleNamespace(reason="timeout")
-    _build_devices_pane(controller)
-    status = controller._creator_micro_output_status_label
-    assert status.stringValue() == "Status: timeout"
+    controller.applyCreatorMicroOutputReceipt_(SimpleNamespace(reason="device_conflict"))
+    assert controller._creator_micro_output_receipt.reason == "device_conflict"
 
     controller.applyCreatorMicroOutputReceipt_(SimpleNamespace(reason="ready"))
-
-    assert status.stringValue() == "Status: ready"
-    assert controller.messages == []
-
-    # --- scenario: receipt_before_devices_pane_builds_latest_status_and_ownership_help
-    controller = _controller()
-    controller.applyCreatorMicroOutputReceipt_(SimpleNamespace(reason="device_conflict"))
-
-    pane, _controls = _build_devices_pane(controller)
-
-    assert controller._creator_micro_output_status_label.stringValue() == (
-        "Status: device conflict"
-    )
-    text = "\n".join(
-        str(view.stringValue())
-        for view in _all_views(pane)
-        if hasattr(view, "stringValue")
-    )
-    assert "Close Work Louder Input" in text
-    assert "remove the device connection in Codex Micro" in text
-    assert "before enabling JR-Bar" in text
+    assert controller._creator_micro_output_receipt.reason == "ready"
 
 
+def test_the_deck_host_answers_the_selectors_the_daemon_dispatches_and_no_window_action() -> None:
+    selectors = {
+        name for name in vars(Controller) if name.endswith("_") and not name.startswith("_")
+    }
 
-def _all_views(root):
-    yield root
-    for child in root.subviews():
-        yield from _all_views(child)
+    assert {
+        "applyCreatorMicroOutputReceipt_",
+        "applyCreatorMicroSettings_",
+        "applyCreatorMicroSetupResult_",
+        "applyDeckAutomationResult_",
+        "applyDeckInput_",
+        "applyDeckLayer_",
+        "applyDeckSettingsResult_",
+        "beginCreatorMicroSetupApply_",
+        "reconfigureDeckRuntime_",
+    } == selectors

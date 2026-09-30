@@ -5932,9 +5932,6 @@ def build_headless_controller_class() -> type:
             if not getattr(self, "_runtime_termination_started", False):
                 self._deck_action_receipt = receipt
 
-        def applyDeckControlsLoaded_(self, payload) -> None:
-            self._core_publish_state()
-
         def applyDeckLayer_(self, payload) -> None:
             from .deck_controller import apply_deck_layer
 

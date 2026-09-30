@@ -67,12 +67,6 @@ def _same_setup(target: object, generation: object) -> bool:
     )
 
 
-def _set_pending(target: object, pending: bool) -> None:
-    pane = getattr(target, "deck_settings_pane", None)
-    if pane is not None:
-        pane.set_setup_pending(pending)
-
-
 def _dispatch(target: object, result: SetupResult) -> None:
     if not _same_setup(target, result.generation):
         return
@@ -118,7 +112,6 @@ def _start_operation(
     target._creator_micro_setup_generation = generation
     target._deck_runtime_generation = generation
     target._creator_micro_setup_busy = True
-    _set_pending(target, True)
 
     lock = getattr(target, "_deck_runtime_restart_lock", None)
     if lock is None:
@@ -268,29 +261,22 @@ def apply_creator_micro_setup_result(
     ):
         return
     target._creator_micro_setup_busy = False
-    _set_pending(target, False)
     if getattr(target, "_deck_runtime_generation", None) is not result.generation:
         return
 
-    pane = getattr(target, "deck_settings_pane", None)
     code = result.code
-    from .core_deck import SETUP_RECEIPT_MESSAGES as messages
     if code != "inspection_ready":
         if getattr(result, "runtime_was_stopped", False) or getattr(
             target, "_creator_micro_setup_runtime_needs_restart", False
         ):
             target._creator_micro_setup_runtime_needs_restart = False
             target.reconfigureDeckRuntime_(None)
-        if pane is not None:
-            pane.set_status(messages.get(code, f"Creator Micro 2: {code.replace('_', ' ')}."))
         return
 
     preview = result.preview
     if type(preview) is not SetupPreview:
         if getattr(result, "runtime_was_stopped", False):
             target.reconfigureDeckRuntime_(None)
-        if pane is not None:
-            pane.set_status("Creator Micro 2 inspection did not return a valid preview.")
         return
     if alert_factory is None:
         choices = keymap_layers(preview.plan.original_json)
@@ -328,11 +314,9 @@ def apply_creator_micro_setup_result(
                                 "layer_index": preview.plan.observed_layer + 1},
                                profile_index=profile, layer_index=layer, include_auxiliary=bool(auxiliary.state()))
             preview = SetupPreview(preview.approved_serial, plan)
-        except (ValueError, IndexError) as exc:
+        except (ValueError, IndexError):
             if result.runtime_was_stopped:
                 target.reconfigureDeckRuntime_(None)
-            if pane is not None:
-                pane.set_status(str(exc))
             return
     alert = alert_factory() if alert_factory is not None else NSAlert.alloc().init()
     alert.setMessageText_("Review Creator Micro 2 key changes")
@@ -346,8 +330,6 @@ def apply_creator_micro_setup_result(
     else:
         if getattr(result, "runtime_was_stopped", False):
             target.reconfigureDeckRuntime_(None)
-        if pane is not None:
-            pane.set_status("No keymap was written.")
 
 
 __all__ = [

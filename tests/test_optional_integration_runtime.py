@@ -48,7 +48,6 @@ def test_default_off_runtime_does_not_construct_or_read_optional_sources__and_2_
     target = SimpleNamespace(
         _creator_micro_output_enabled="current",
         _deck_control_settings="current",
-        deck_settings_pane=object(),
         performSelectorOnMainThread_withObject_waitUntilDone_=lambda *args: ui_calls.append(args),
     )
 

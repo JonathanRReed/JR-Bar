@@ -179,10 +179,6 @@ def test_superseded_or_terminating_work_does_not_dispatch_success__and_1_more(tm
 def test_stale_deck_generation_callback_only_clears_busy_state():
     calls = []
     target = _target(calls)
-    target.deck_settings_pane = SimpleNamespace(
-        set_setup_pending=lambda value: calls.append(("pending", value)),
-        set_status=lambda value: calls.append(("status", value)),
-    )
     target.reconfigureDeckRuntime_ = lambda sender: calls.append("restart")
     target.beginCreatorMicroSetupApply_ = lambda preview: calls.append("apply")
     generation = object()
@@ -200,7 +196,7 @@ def test_stale_deck_generation_callback_only_clears_busy_state():
     apply_creator_micro_setup_result(target, result)
 
     assert target._creator_micro_setup_busy is False
-    assert calls == [("pending", False)]
+    assert calls == []
 
 
 def test_apply_consent_check_observes_settings_revocation_before_flash(tmp_path):
@@ -259,7 +255,6 @@ def test_preview_text_names_exact_changes_and_apply_dispatches_bound_preview__an
     calls = []
     target = _target(calls)
     target.reconfigureDeckRuntime_ = lambda sender: calls.append("restart")
-    target.deck_settings_pane = SimpleNamespace(set_setup_pending=lambda value: calls.append(("pending", value)), set_status=lambda value: calls.append(("status", value)))
     preview = SetupPreview("bound-device", _plan())
     result = SimpleNamespace(generation=object(), code="inspection_ready", preview=preview, operation="inspect", runtime_was_stopped=True)
     target._creator_micro_setup_generation = result.generation
@@ -285,7 +280,6 @@ def test_preview_text_names_exact_changes_and_apply_dispatches_bound_preview__an
     # --- scenario: cancelled_preview_does_not_start_apply
     calls = []
     target = _target(calls)
-    target.deck_settings_pane = SimpleNamespace(set_setup_pending=lambda value: None, set_status=lambda value: None)
     result = SimpleNamespace(generation=object(), code="inspection_ready", preview=SetupPreview("device", _plan()), operation="inspect")
     target._creator_micro_setup_generation = result.generation
     target._deck_runtime_generation = result.generation
