@@ -296,6 +296,12 @@ def plan_extra_lookups(
 # the server's byte-level dedupe can never fire while these fields tick.
 # A missed field degrades to the old publish-everything behaviour, never
 # to wrong data.
+# The other side of the same coin: a volatile field is only as fresh as the
+# last broadcast that went out, and a quiet rebuild sends nothing. A client
+# that prints one verbatim shows a stale number, so it works the value out
+# from a stamp in a document it holds (the app ages a light's wait from the
+# state document's session times and reads ``seconds_in_state`` only as a
+# fallback).
 _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
     "state": (
         ("now",),
@@ -322,6 +328,8 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
     "lights": (
         ("now",),
+        # A duration that grows every second, not a stamp: a client that
+        # prints it as received shows the value of the last broadcast.
         ("surfaces", "*", "why_detail", "seconds_in_state"),
         ("linked_skew_at",),
         ("linked_skew_ms",),
