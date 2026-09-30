@@ -183,11 +183,13 @@ def public_asks(state: Mapping[str, Any]) -> list[dict[str, Any]]:
     it (1-based, the current bank; null when it has none), its kind and
     ``request`` identity, one bounded line of what it wants, and the
     ``decisions`` an answer may carry: ``approve``/``deny`` only while it is
-    ``answerable``, ``always`` only when the agent offered a rule to
-    remember, ``answer`` only for a held question with ``choices``. An ask
-    the decide lane has already ``decided`` (the seconds while the agent's
-    events catch up) is held no longer, so it offers neither -- the app's
-    own ``canAlwaysAllow`` and ``canChoose`` read it the same way.
+    ``answerable`` and not yet ``decided``, ``always`` only when the agent
+    offered a rule to remember, ``answer`` only for a held question with
+    ``choices``. An ask the decide lane has already ``decided`` was
+    answered from JR-Bar and stays that way until the agent's own events
+    close the request (however long the approved tool runs), so it offers
+    no verb at all: a second answer would only be refused as stale. The
+    app's own ``canAlwaysAllow`` and ``canChoose`` read it the same way.
     """
     sessions = {
         row.get("id"): row
@@ -208,14 +210,15 @@ def public_asks(state: Mapping[str, Any]) -> list[dict[str, Any]]:
         session = ask["session"]
         row = sessions.get(session, {})
         decision = ask.get("decision") if isinstance(ask.get("decision"), dict) else None
-        held = decision is not None and decision.get("decided") is not True
+        decided = decision is not None and decision.get("decided") is True
+        held = decision is not None and not decided
         choices = [
             choice
             for choice in (decision or {}).get("choices") or ()
             if held and isinstance(choice, dict)
         ]
         verbs: list[str] = []
-        if ask.get("answerable") is True:
+        if ask.get("answerable") is True and not decided:
             verbs += ["approve", "deny"]
         if held and decision.get("always") is True:
             verbs.append("always")

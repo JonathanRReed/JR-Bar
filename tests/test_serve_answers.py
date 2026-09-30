@@ -7,12 +7,19 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from jrbar.answer_decisions import AskPreviews, DecisionBroker, DecisionResult, DecisionVerb, permission_facts
 from jrbar.cli_control import ControlError
+from jrbar.core_projection import ask_document
 from jrbar.core_server import CommandError
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import RequestIdentifier, RequestKey, RequestKind, WorkIdentifier, WorkKey
+from jrbar.providers import negotiated_provider_sources
 from jrbar.serve import create_serve_server
 from jrbar.serve_answers import (
     ANSWER_SOCKET_TIMEOUT_SECONDS,
@@ -136,22 +143,104 @@ def test_asks_say_which_answers_each_one_takes() -> None:
     assert public_asks({}) == []
 
 
-def test_an_ask_already_decided_offers_no_always_and_no_choice() -> None:
+def test_an_ask_already_decided_offers_no_verb_at_all() -> None:
     # From the answer until the agent's own events close the request (however
-    # long the approved tool runs, an hour at most) the hold is spent: the ask
-    # is not answerable, and a key must not draw an Approve, Deny, Always
-    # allow or choice the answer path would only refuse as stale.
+    # long the approved tool runs, an hour at most) the hold is spent, and a
+    # key must not draw an Approve, Deny, Always allow or choice the answer
+    # path would only refuse as stale. ``answerable`` is left exactly as the
+    # ask had it: the decided flag alone takes the verbs away.
     decided = {
         **STATE,
         "asks": [
-            {**ask, "answerable": False, "decision": {**ask["decision"], "decided": True}}
+            {**ask, "decision": {**ask["decision"], "decided": True}}
             for ask in STATE["asks"]
             if "decision" in ask
         ],
     }
+    assert decided["asks"][0]["answerable"] is True
     first, second = public_asks(decided)
     assert first["decisions"] == [] and first["choices"] == []
     assert second["decisions"] == [] and second["choices"] == []
+    # What the card says it wants to run is not a verb: it stays.
+    assert first["preview"] == "rm -rf build" and first["risk"] == "destructive"
+
+    # A held ask that is not decided still offers what it did.
+    held = {**STATE, "asks": [{**decided["asks"][0], "decision": {"always": True, "decided": False, "choices": []}}]}
+    assert public_asks(held)[0]["decisions"] == ["approve", "deny", "always"]
+
+
+def test_an_ask_the_projection_says_is_decided_offers_no_verb_to_a_key() -> None:
+    # The document the daemon really publishes for an ask it has answered
+    # from JR-Bar, read the way /asks.json and the deck plugin read it.
+    text = json.dumps(
+        {
+            "hook_event_name": "PermissionRequest",
+            "session_id": "codex-session-1",
+            "turn_id": "turn-7",
+            "cwd": "/work/project",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -rf build"},
+        }
+    )
+    facts = permission_facts("codex", text)
+    assert facts is not None
+    source = next(
+        source
+        for source in negotiated_provider_sources()
+        if source.source_key.provider_id == "codex" and source.source_key.capability_id == "live_agent_events"
+    )
+    work_key = WorkKey(source.source_key, WorkIdentifier(facts.work_id))
+    request = SimpleNamespace(
+        key=RequestKey(work_key, RequestIdentifier(facts.request_id)),
+        request_kind=RequestKind.PERMISSION,
+        opened_at_epoch=10.0,
+        phase=SimpleNamespace(value="live_waiting"),
+    )
+    status = AgentStatus(
+        provider="codex",
+        agent_id="codex:session:codex-session-1",
+        display_name="sidepulse-core",
+        mode=AgentMode.WAITING_FOR_INPUT,
+        updated_at=datetime.fromtimestamp(1_788_982_890.0, tz=timezone.utc),
+        event_name="PermissionRequest",
+        session_id="codex-session-1",
+        tool_name="Bash",
+        message="Run: rm -rf build",
+        work_key=work_key,
+    )
+    broker = DecisionBroker(wall_clock=lambda: 1_788_982_890.0, watching=lambda _facts, _pid: False)
+    previews = AskPreviews()
+    assert previews.note("codex", text)
+
+    def published() -> dict:
+        ask = ask_document(
+            status,
+            SimpleNamespace(requests=(request,), works=()),
+            with_session=True,
+            answer_contracts={source.source_key: source.contract},
+            has_answer_handler=lambda _invocation: True,
+            host_bundle_ids=frozenset({"com.apple.Terminal"}),
+            decision_lane=broker,
+            ask_previews=previews,
+        )
+        state = {"sessions": [{"id": status.agent_id, "provider": "codex", "label": "sidepulse-core"}], "asks": [ask]}
+        return public_asks(state)[0]
+
+    # Nothing holds it: a key may approve or deny it, as before.
+    assert published()["decisions"] == ["approve", "deny"]
+
+    # Held for a verdict: the same.
+    slot = broker.park(facts, wait_limit_seconds=50.0)
+    assert slot is not None
+    assert published()["decisions"] == ["approve", "deny"]
+
+    # Answered: the hook took the verdict, the tool may be running, and the
+    # key draws nothing to press -- while it still names what was approved.
+    broker.delivered(slot, True)
+    assert broker.decide(facts.provider, facts.request_id, DecisionVerb.ALLOW, work_id=facts.work_id) is DecisionResult.SENT
+    decided = published()
+    assert decided["decisions"] == [] and decided["choices"] == []
+    assert decided["preview"] == "rm -rf build" and decided["risk"] == "destructive"
 
 
 class _Controller:
