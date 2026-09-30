@@ -51,11 +51,19 @@ enum AskVerdict: Equatable, Sendable {
 /// (Always allow, a question's options, a question's Deny) end at its
 /// `hold_until` (`CoreAsk.isHeld(at:)`): after that the agent's own
 /// prompt carries on and the hook can no longer take them.
+///
+/// An ask JR-Bar already answered (`CoreAsk.isDecided`) takes none of
+/// them, whatever else the daemon says about it: a newer app talking to
+/// an older daemon that still calls it answerable must not draw a verb
+/// on the notch, the Dock or the Rail. Always allow and the choices
+/// already end with the hold (`isHeldForDecision` is false once decided);
+/// the rest check it here, so every surface shares the one rule.
 enum AskVerbs {
     /// Approve where the daemon can deliver a yes. Never on a question:
-    /// a bare allow answers nothing there — its options do.
+    /// a bare allow answers nothing there — its options do. Never on an
+    /// ask already answered.
     static func approves(_ ask: CoreAsk) -> Bool {
-        ask.canAnswer && !ask.wantsTextReply && !ask.canChoose
+        !ask.isDecided && ask.canAnswer && !ask.wantsTextReply && !ask.canChoose
     }
 
     /// Deny wherever Approve is, and on a held question too: the hook
@@ -63,7 +71,8 @@ enum AskVerbs {
     static func denies(_ ask: CoreAsk) -> Bool { denies(ask, at: Date()) }
 
     static func denies(_ ask: CoreAsk, at now: Date) -> Bool {
-        (ask.canAnswer && !ask.wantsTextReply) || chooses(ask, at: now)
+        guard !ask.isDecided else { return false }
+        return (ask.canAnswer && !ask.wantsTextReply) || chooses(ask, at: now)
     }
 
     /// Always allow, only while the hook holds an ask that offers it.
@@ -79,13 +88,15 @@ enum AskVerbs {
     static func chooses(_ ask: CoreAsk, at now: Date) -> Bool { ask.canChoose && ask.isHeld(at: now) }
 
     /// A typed reply, where the ask wants words and the daemon can take
-    /// them.
-    static func replies(_ ask: CoreAsk) -> Bool { ask.canAnswer && ask.wantsTextReply }
+    /// them. Not once the ask has been answered.
+    static func replies(_ ask: CoreAsk) -> Bool { !ask.isDecided && ask.canAnswer && ask.wantsTextReply }
 
     /// Whether `verdict` may be sent for `ask` at all — the desk's gate,
     /// the same one the buttons are drawn behind. A pick must name every
     /// question with labels the agent offered; a reply must say something.
+    /// An ask already answered allows no verdict at all.
     static func allows(_ verdict: AskVerdict, on ask: CoreAsk) -> Bool {
+        guard !ask.isDecided else { return false }
         switch verdict {
         case .approve: return approves(ask)
         case .deny: return denies(ask)
@@ -101,8 +112,11 @@ enum AskVerbs {
     /// Why `allows` said no, in the words of the button that was clicked:
     /// a held question wants one of its options, an Always allow needs a
     /// rule the agent offered, a reply needs words. Anything else is the
-    /// session's own window.
+    /// session's own window — except for an ask already answered, where
+    /// nothing is being asked and the line says the agent is being waited
+    /// for (`CoreAsk.decidedLine`), as the panel does.
     static func refusal(_ verdict: AskVerdict, on ask: CoreAsk) -> String {
+        if let line = ask.decidedLine { return line }
         switch verdict {
         case .approve, .always:
             if chooses(ask) { return "Pick one of its options" }

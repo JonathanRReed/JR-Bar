@@ -496,6 +496,18 @@ struct RailLabelView: View {
     /// The pill takes clicks only while it has verbs to offer.
     var isInteractive: Bool { desk != nil && DeckStore.pillAnswers(ask) }
 
+    /// Where the verbs would be: the words for an ask JR-Bar already
+    /// answered, the same ones the panel and the notch say. nil for every
+    /// other ask, and for a peer's, which is the peer's to describe.
+    var decidedLine: String? { Self.decidedLine(ask) }
+
+    nonisolated static func decidedLine(_ ask: CoreAsk?) -> String? {
+        guard let ask, let session = ask.session, !session.isEmpty, !CoreSession.isRemoteID(session) else {
+            return nil
+        }
+        return ask.decidedLine
+    }
+
     var body: some View {
         HStack(alignment: isInteractive ? .top : .center, spacing: 8) {
             if let provider, !provider.isEmpty {
@@ -531,6 +543,14 @@ struct RailLabelView: View {
                     RailAskVerbs(ask: ask, desk: desk)
                         .frame(minWidth: 220, alignment: .trailing)
                         .padding(.top, 5)
+                } else if let line = decidedLine {
+                    // Answered from JR-Bar and the agent has not moved on:
+                    // no verb, just where the verbs were.
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.top, 2)
                 }
             }
             Text(number)

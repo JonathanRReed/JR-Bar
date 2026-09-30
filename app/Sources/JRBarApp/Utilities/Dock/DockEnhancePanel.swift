@@ -1528,6 +1528,35 @@ private struct DockPreviewCompactRow: View {
     }
 }
 
+/// What the Dock's ask row puts where the verbs go, read off the ask
+/// and the desk alone so it can be checked without drawing anything.
+enum DockAskVerbSet: Equatable {
+    /// The desk's last line, a sent answer or its refusal.
+    case note(String)
+    /// JR-Bar already answered this ask: the row says so in the panel's
+    /// words and draws no verb, not even a disabled one.
+    case decided(line: String)
+    /// A held question: Deny and its options.
+    case choices
+    /// Deny, Always Allow where offered, Approve; disabled when the ask
+    /// cannot be answered from outside.
+    case verdicts(answerable: Bool)
+    /// No ask or no desk: nothing to draw.
+    case none
+
+    /// The desk's line about the last answer comes first; then, whatever
+    /// else the ask says, the decided line for an answered one; then a
+    /// held question's options; then the verdicts. With no desk there is
+    /// nothing to answer through, so nothing is drawn.
+    static func resolve(ask: CoreAsk?, hasDesk: Bool, note: String?) -> DockAskVerbSet {
+        if let note { return .note(note) }
+        if let line = ask?.decidedLine { return .decided(line: line) }
+        guard let ask, hasDesk else { return .none }
+        if AskVerbs.chooses(ask) { return .choices }
+        return .verdicts(answerable: ask.canAnswer && !ask.wantsTextReply)
+    }
+}
+
 /// A waiting agent this app hosts, answerable from the Dock: the
 /// provider's tile, the session and what it asks — what it would run,
 /// and the red mark when that is destructive — then Deny / Approve.
@@ -1538,7 +1567,9 @@ private struct DockPreviewCompactRow: View {
 /// line under the ask is the desk's. Where the daemon says the ask can't
 /// be answered from outside, the buttons disable and say where it can
 /// be; once answered, the row shows the daemon's verdict instead of
-/// guessing success. With no desk published the row draws no verbs.
+/// guessing success. An ask JR-Bar already answered draws no verb at all,
+/// not even a disabled one: the row says the agent is being waited for.
+/// With no desk published the row draws no verbs.
 private struct DockAskRow: View {
     let mark: DockAgentMark
     let actions: DockPreviewActions
@@ -1605,32 +1636,43 @@ private struct DockAskRow: View {
 
     @ViewBuilder
     private func verbs(desk: AskAnswerDesk?, busy: Bool) -> some View {
-        if let line = desk?.note(for: mark.sessionID)?.text {
+        let plan = DockAskVerbSet.resolve(ask: ask, hasDesk: desk != nil,
+                                          note: desk?.note(for: mark.sessionID)?.text)
+        switch plan {
+        case .note(let line), .decided(let line):
+            // The desk's line about the last answer, or the words for an
+            // ask JR-Bar already answered: a line where the verbs were,
+            // never a disabled button pointing at another window.
             Text(line)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-        } else if let ask, let desk, AskVerbs.chooses(ask) {
-            Button("Deny") { answer(ask, .deny, on: desk) }
-                .buttonStyle(DockCapsuleButtonStyle())
-                .disabled(busy)
-            DockAskChoices(ask: ask, desk: desk, accent: mark.accent, busy: busy)
-        } else if let ask, let desk {
-            let answerable = ask.canAnswer && !ask.wantsTextReply
-            Button("Deny") { answer(ask, .deny, on: desk) }
-                .buttonStyle(DockCapsuleButtonStyle())
-                .disabled(!answerable || busy)
-            if answerable, AskVerbs.alwaysAllows(ask) {
-                Button("Always Allow") { answer(ask, .always, on: desk) }
+        case .choices:
+            if let ask, let desk {
+                Button("Deny") { answer(ask, .deny, on: desk) }
                     .buttonStyle(DockCapsuleButtonStyle())
                     .disabled(busy)
-                    .help("Approve, and let \(mark.providerName) remember the rule it offered")
+                DockAskChoices(ask: ask, desk: desk, accent: mark.accent, busy: busy)
             }
-            Button("Approve") { answer(ask, .approve, on: desk) }
-                .buttonStyle(DockCapsuleButtonStyle(prominent: true, tint: mark.accent))
-                .disabled(!answerable || busy)
-                .help(answerable ? "Approve — \(mark.providerName) carries on"
-                                 : "Answer this one in the session's window")
+        case .verdicts(let answerable):
+            if let ask, let desk {
+                Button("Deny") { answer(ask, .deny, on: desk) }
+                    .buttonStyle(DockCapsuleButtonStyle())
+                    .disabled(!answerable || busy)
+                if answerable, AskVerbs.alwaysAllows(ask) {
+                    Button("Always Allow") { answer(ask, .always, on: desk) }
+                        .buttonStyle(DockCapsuleButtonStyle())
+                        .disabled(busy)
+                        .help("Approve, and let \(mark.providerName) remember the rule it offered")
+                }
+                Button("Approve") { answer(ask, .approve, on: desk) }
+                    .buttonStyle(DockCapsuleButtonStyle(prominent: true, tint: mark.accent))
+                    .disabled(!answerable || busy)
+                    .help(answerable ? "Approve — \(mark.providerName) carries on"
+                                     : "Answer this one in the session's window")
+            }
+        case .none:
+            EmptyView()
         }
     }
 
