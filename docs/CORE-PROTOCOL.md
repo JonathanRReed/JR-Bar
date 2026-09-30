@@ -1065,7 +1065,11 @@ today keeps working exactly as configured:
 - `focus_signal_policy`: which signals a Focus may pass through.
 - `focus_profile_rules`: Focus id → calibration profile slot applied
   when that Focus activates.
-- `global_action_shortcuts`: persisted chords for the global actions.
+- `global_action_shortcuts`: the chord the retired daemon hotkey registry
+  held for `reveal_current_ask`. The app reads it once to adopt it (see
+  `AppShortcutCatalog.legacyRevealAskChord`). Nothing in the daemon
+  registers or writes it, and a settings save keeps the entries that are
+  already there.
 - `studio_program`: the hand-written Studio LED program, kept verbatim.
 - `studio_library`: the named Studio programs shelf.
 - `notification_policy_version`: which notification-policy migration

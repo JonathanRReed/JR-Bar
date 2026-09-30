@@ -103,7 +103,7 @@ are copied forward once by `migration.py` on first launch and recorded in
 
 ## The Python daemon by responsibility
 
-`src/jrbar` is large (340 modules) because the 0.8 daemon is the old
+`src/jrbar` is large (337 modules) because the 0.8 daemon is the old
 application minus its windows. The map below is by job; a module not
 listed is a helper of the row it sits next to alphabetically.
 
