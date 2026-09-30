@@ -106,7 +106,8 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | Forecast: one sample per window when the percentage moves or five minutes pass, least-squares over the last 90 minutes, `pace` and `exhausts_at`; the app extrapolates locally until the daemon has enough spread | Implemented | On |
 | Tokens and cost by day or hour from local transcripts (7d–365d), cache savings, list-price disclosure | Implemented (the daemon reports no price table yet, so the cost lines read as approximate) | On |
 | Quota alerts: threshold effects, pace notifications, reset sunrise sweep and banner | Implemented | Off |
-| Reset countdown on the quota ear (drain arc inside the ring + words in the peek and island card) and provider incident badges from the status feeds (ear tone, panel row, Usage Center header) | Implemented | On |
+| Reset countdown on the quota ear (drain arc inside the ring + words in the peek and island card) | Implemented | On |
+| Provider incident badges from the public status pages of Anthropic, OpenAI and Cursor (ear tone, panel row, Usage Center header): one request per found provider every 10 minutes | Implemented | Off (Settings › Usage › Provider status pages; nothing is contacted until you turn it on) |
 | Quota Runway device display | Implemented | Selectable per device |
 | Capacity history and operator history behind retention consent | Implemented | Off |
 | Devin browser-session import: exact CLI consent, Usage Center import and revoke, token in Keychain | Implemented | Off |

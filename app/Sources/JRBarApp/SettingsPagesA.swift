@@ -589,6 +589,11 @@ struct UsagePage: View {
             }
         }
 
+        SettingGroup("Incidents") {
+            SettingToggle(store, "Provider status pages", subtitle: ProviderStatusPagesCopy.subtitle,
+                          path: "provider_status_feeds_enabled")
+        }
+
         UsageExtrasSections(store: store)
 
         SettingGroup("History") {
@@ -599,6 +604,13 @@ struct UsagePage: View {
                 .disabled(!(store.values.bool("capacity_history_enabled") ?? false))
         }
     }
+}
+
+/// The words under the Usage page's "Provider status pages" switch, shared
+/// with the Settings search index so the two can never disagree. The hosts
+/// are named because turning this on is what lets JR-Bar contact them.
+enum ProviderStatusPagesCopy {
+    nonisolated static let subtitle = "Checks status.anthropic.com, status.openai.com and status.cursor.com every 10 minutes for incidents. Off by default; nothing is contacted until you turn it on."
 }
 
 /// `quota_alert_thresholds`: a nudge and a warning, as two steppers.

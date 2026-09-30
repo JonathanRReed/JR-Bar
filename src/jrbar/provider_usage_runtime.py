@@ -57,14 +57,48 @@ IncidentLookup = Callable[[str, float], str | None]
 
 
 def _default_incident_lookup(provider_id: str, observed_at: float) -> str | None:
-    from .status_feeds import shared_status_feed_poller
+    """A service with no settings wired asks no status page.
 
-    poller = shared_status_feed_poller()
-    poller.start(provider_ids=(provider_id,))
-    incident = poller.incident_for(provider_id, now=observed_at)
-    if incident is None:
-        return None
-    return f"{incident.vendor}: {incident.description}"
+    The provider status pages are a request that leaves the Mac, so they are
+    off unless a caller hands the service `status_feed_incident_lookup` over
+    the person's settings. The `usage refresh` command, which has no daemon
+    behind it, never contacts them.
+    """
+    del provider_id, observed_at
+    return None
+
+
+def status_feed_incident_lookup(settings_loader: Callable[[], object]) -> IncidentLookup:
+    """The incident lookup that reads provider status pages, while the person allows it.
+
+    `settings_loader` returns the live settings on every call. While
+    `provider_status_feeds_enabled` is exactly True, the lookup starts a feed
+    for the provider it is asked about and answers from what that feed last
+    saw. While it is anything else, or the settings cannot be read, it starts
+    nothing, stops any feed still running and answers "no incident". A feed
+    also checks the setting before each of its own requests.
+    """
+
+    def enabled() -> bool:
+        try:
+            return getattr(settings_loader(), "provider_status_feeds_enabled", False) is True
+        except Exception:
+            return False
+
+    def lookup(provider_id: str, observed_at: float) -> str | None:
+        from .status_feeds import shared_status_feed_poller
+
+        poller = shared_status_feed_poller()
+        if not enabled():
+            poller.stop()
+            return None
+        poller.start(provider_ids=(provider_id,), enabled=enabled)
+        incident = poller.incident_for(provider_id, now=observed_at)
+        if incident is None:
+            return None
+        return f"{incident.vendor}: {incident.description}"
+
+    return lookup
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,6 +637,10 @@ class ProviderUsageService:
         }
         snapshots: list[ProviderUsageSnapshot] = []
         refreshed_provider_ids: set[str] = set()
+        #: Providers with at least one source found on this Mac. Only these
+        #: are asked about an incident: a status page is never contacted for
+        #: a provider that is not installed.
+        found_provider_ids: set[str] = set()
         collector_incidents: dict[tuple[str, str], str] = {}
         for preference in collection_settings.providers:
             if generation is not None:
@@ -708,6 +746,11 @@ class ProviderUsageService:
                     action="Retry",
                     source_instance_id=preference.source_instance_id,
                 )
+            if candidate.state is not ProviderSourceState.SOURCE_NOT_FOUND:
+                # A source that is there but failing (signed out, rate
+                # limited, erroring) is exactly when "the provider is down"
+                # is worth saying, so only a missing source is skipped.
+                found_provider_ids.add(provider_id)
             if candidate.incident:
                 collector_incidents[identity] = candidate.incident
             if candidate.state in _TERMINAL_FAILURE_STATES:
@@ -792,6 +835,11 @@ class ProviderUsageService:
                 snapshots.append(candidate)
         incident_decisions: dict[str, str | None] = {}
         for provider_id in sorted(refreshed_provider_ids):
+            if provider_id not in found_provider_ids:
+                # No lookup, but the provider still takes part below so its
+                # collector's own note stands as it always did.
+                incident_decisions[provider_id] = None
+                continue
             try:
                 incident_decisions[provider_id] = self._incident_lookup(
                     provider_id, observed_at
@@ -1172,4 +1220,5 @@ __all__ = [
     "ProviderUsageState",
     "RefreshPublicationOutcome",
     "RefreshPublicationReceipt",
+    "status_feed_incident_lookup",
 ]

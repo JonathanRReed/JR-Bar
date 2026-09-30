@@ -24,6 +24,10 @@ from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_ope
 from .product_identity import PRODUCT_DISPLAY_NAME
 
 POLL_SECONDS = 600.0
+#: How long `stop` waits for a feed thread that is mid-request. The thread
+#: is a daemon and drops what it reads once stopped, so a slow request never
+#: holds the caller for its own 10 s timeout.
+STOP_JOIN_SECONDS = 2.0
 FETCH_TIMEOUT_SECONDS = 10.0
 FETCH_MAX_BYTES = 65_536
 FRESHNESS_SECONDS = POLL_SECONDS * 2.0
@@ -160,8 +164,19 @@ def incident_row_title(incident: ProviderIncident) -> str:
     return f"⚠ {incident.vendor}: {incident.description} — status page…"
 
 
+@dataclass(frozen=True, slots=True)
+class _FeedWorker:
+    thread: threading.Thread
+    stop: threading.Event
+
+
 class StatusFeedPoller:
-    """Slow background poll of every feed; readers only touch a dict."""
+    """Slow background poll of every feed; readers only touch a dict.
+
+    A feed runs from `start` until `stop` (or until the `enabled` gate it was
+    started with closes). Nothing here starts itself: the caller decides
+    whether the person has allowed the requests at all.
+    """
 
     def __init__(
         self,
@@ -170,32 +185,77 @@ class StatusFeedPoller:
         fetch_json: Callable[..., object] = _fetch_status_json,
         clock: Callable[[], float] = time.time,
         freshness_seconds: float = FRESHNESS_SECONDS,
+        poll_seconds: float = POLL_SECONDS,
     ) -> None:
         self._feeds = dict(STATUS_FEEDS if feeds is None else feeds)
         self._fetch_json = fetch_json
         self._clock = clock
         self._freshness_seconds = float(freshness_seconds)
+        self._poll_seconds = float(poll_seconds)
         self._observations: dict[str, _FeedObservation] = {}
         self._lock = threading.Lock()
-        self._started_provider_ids: set[str] = set()
+        self._workers: dict[str, _FeedWorker] = {}
 
-    def start(self, *, provider_ids: tuple[str, ...] | None = None) -> None:
+    def start(
+        self,
+        *,
+        provider_ids: tuple[str, ...] | None = None,
+        enabled: Callable[[], bool] | None = None,
+    ) -> None:
+        """Start a feed thread per provider that has none yet.
+
+        `enabled`, when given, is asked before every request: a feed whose
+        gate answers False ends instead of asking the vendor again.
+        """
         selected = tuple(self._feeds) if provider_ids is None else provider_ids
-        to_start: list[str] = []
+        to_start: list[threading.Thread] = []
         with self._lock:
             for provider_id in selected:
-                if (
-                    provider_id in self._feeds
-                    and provider_id not in self._started_provider_ids
-                ):
-                    self._started_provider_ids.add(provider_id)
-                    to_start.append(provider_id)
-        for provider_id in to_start:
-            threading.Thread(
-                target=lambda selected_id=provider_id: self._loop(selected_id),
-                name=f"{STATUS_FEED_THREAD_NAME}-{provider_id}",
-                daemon=True,
-            ).start()
+                if provider_id in self._feeds and provider_id not in self._workers:
+                    stop = threading.Event()
+                    thread = threading.Thread(
+                        target=lambda selected_id=provider_id, selected_stop=stop: (
+                            self._loop(selected_id, selected_stop, enabled)
+                        ),
+                        name=f"{STATUS_FEED_THREAD_NAME}-{provider_id}",
+                        daemon=True,
+                    )
+                    self._workers[provider_id] = _FeedWorker(thread, stop)
+                    to_start.append(thread)
+        for thread in to_start:
+            thread.start()
+
+    def stop(
+        self,
+        *,
+        provider_ids: tuple[str, ...] | None = None,
+        timeout: float = STOP_JOIN_SECONDS,
+    ) -> tuple[str, ...]:
+        """End the feed threads and forget what they last saw.
+
+        Each thread wakes from its wait at once and makes no further
+        request. The join is bounded by `timeout` in total; a request still
+        out when it runs out is dropped when it lands. Returns the providers
+        that were running, and a stopped feed can be started again.
+        """
+        with self._lock:
+            selected = tuple(
+                provider_id
+                for provider_id in (
+                    tuple(self._workers) if provider_ids is None else provider_ids
+                )
+                if provider_id in self._workers
+            )
+            workers = [self._workers.pop(provider_id) for provider_id in selected]
+            for provider_id, worker in zip(selected, workers, strict=True):
+                worker.stop.set()
+                self._observations.pop(provider_id, None)
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        for worker in workers:
+            # A thread not yet running finds its stop set and ends at once.
+            if worker.thread is not threading.current_thread() and worker.thread.is_alive():
+                worker.thread.join(max(0.0, deadline - time.monotonic()))
+        return selected
 
     def current(self) -> dict[str, ProviderIncident]:
         with self._lock:
@@ -226,7 +286,12 @@ class StatusFeedPoller:
             observation = self._observations.get(provider_id)
         return None if observation is None else observation.incident
 
-    def poll_once(self, *, provider_ids: tuple[str, ...] | None = None) -> None:
+    def poll_once(
+        self,
+        *,
+        provider_ids: tuple[str, ...] | None = None,
+        cancelled: threading.Event | None = None,
+    ) -> None:
         selected = set(self._feeds) if provider_ids is None else set(provider_ids)
         for provider_id, (vendor, endpoint, page_url) in self._feeds.items():
             if provider_id not in selected:
@@ -263,12 +328,31 @@ class StatusFeedPoller:
                     )
                 observation = _FeedObservation(state, observed_at, incident)
             with self._lock:
-                self._observations[provider_id] = observation
+                # A feed stopped while its request was out keeps nothing.
+                if cancelled is None or not cancelled.is_set():
+                    self._observations[provider_id] = observation
 
-    def _loop(self, provider_id: str) -> None:
-        while True:
-            self.poll_once(provider_ids=(provider_id,))
-            time.sleep(POLL_SECONDS)
+    def _loop(
+        self,
+        provider_id: str,
+        stop: threading.Event,
+        enabled: Callable[[], bool] | None,
+    ) -> None:
+        while not stop.is_set():
+            if enabled is not None and not enabled():
+                self._retire(provider_id, stop)
+                return
+            self.poll_once(provider_ids=(provider_id,), cancelled=stop)
+            if stop.wait(self._poll_seconds):
+                return
+
+    def _retire(self, provider_id: str, stop: threading.Event) -> None:
+        """A feed whose gate closed takes itself off the books."""
+        with self._lock:
+            worker = self._workers.get(provider_id)
+            if worker is not None and worker.stop is stop:
+                del self._workers[provider_id]
+                self._observations.pop(provider_id, None)
 
 
 _shared_poller: StatusFeedPoller | None = None

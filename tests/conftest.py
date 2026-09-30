@@ -365,11 +365,11 @@ def _make_inert_status_feed_poller():
             super().__init__(fetch_json=refuse_fetch)
             self.started: list[tuple[str, ...]] = []
 
-        def start(self, *, provider_ids=None):
+        def start(self, *, provider_ids=None, enabled=None):
             selected = tuple(self._feeds) if provider_ids is None else tuple(provider_ids)
             self.started.append(selected)
 
-        def poll_once(self, *, provider_ids=None):
+        def poll_once(self, *, provider_ids=None, cancelled=None):
             return None
 
     return InertStatusFeedPoller()

@@ -1036,6 +1036,13 @@ never costs the rest of the file):
   the rule and hooks on, an empty one removes the rule, and a path with no
   `legacy` rule left adds it back. A rule the runner refuses stays in the
   document; `usage_hooks_status` says why.
+- `provider_status_feeds_enabled` (default false): the provider status
+  pages (`status.anthropic.com`, `status.openai.com`, `status.cursor.com`)
+  are asked, every 10 minutes and only for a provider whose source was
+  found, while this is exactly `true`. Off, no request is made, a running
+  feed is stopped on the next usage refresh, and no `incident` string is
+  stamped from a feed. Read live on every refresh; a non-boolean value
+  loads as `false`.
 - `claude_statusline_source` (default false) lets Claude Code's statusLine
   readings stand in for OAuth; `statusline_text_enabled` (default true)
   keeps `statusline.txt` written while the source is on.

@@ -191,6 +191,9 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             // Usage hooks' master switch; the rules are the person's own
             // work and stay out of a page reset (lane oss).
             SettingsKey(.usage, "usage_hooks.enabled", .bool),
+            // The provider status pages (status.anthropic.com and two more):
+            // a request that leaves the Mac, so off until turned on.
+            SettingsKey(.usage, "provider_status_feeds_enabled", .bool),
             // Devices & Screen Bar
             SettingsKey(.devices, "devices[].led_display", .string),
             SettingsKey(.devices, "devices[].brightness", .number),
