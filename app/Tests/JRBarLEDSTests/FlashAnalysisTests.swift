@@ -14,11 +14,10 @@ import Testing
         for fixture in fixtures {
             let program = try LEDSProgram.parse(fixture.program, ledCount: fixture.led_count)
             let measured = LEDSFlashAnalysis.analyse(program.steps, ledCount: fixture.led_count)
-            let matches = abs(measured.hertz - fixture.hertz) <= 1e-9
-                && measured.flashes == fixture.flashes
-                && measured.spanMs == fixture.span_ms
-                && abs(measured.peakArea - fixture.peak_area) <= 1e-12
-            if !matches {
+            let hertzMatches = abs(measured.hertz - fixture.hertz) <= 1e-9
+            let areaMatches = abs(measured.peakArea - fixture.peak_area) <= 1e-12
+            let countsMatch = measured.flashes == fixture.flashes && measured.spanMs == fixture.span_ms
+            if !(hertzMatches && areaMatches && countsMatch) {
                 failures.append("\(fixture.program.debugDescription) (\(fixture.led_count) LED)\n   swift: hertz=\(measured.hertz) flashes=\(measured.flashes) span=\(measured.spanMs) area=\(measured.peakArea)\n   python: hertz=\(fixture.hertz) flashes=\(fixture.flashes) span=\(fixture.span_ms) area=\(fixture.peak_area)")
             }
         }

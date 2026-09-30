@@ -76,9 +76,11 @@ public enum LEDSFlashAnalysis {
             // moment the delay is up and holds for the rest of the line.
             return 1.0
         case .some(.pulse):
-            return (1.0 - cos(2.0 * Double.pi * position)) / 2.0
+            let angle = 2.0 * Double.pi * position
+            return (1.0 - cos(angle)) / 2.0
         case .some(.cosine):
-            return (1.0 - cos(Double.pi * position)) / 2.0
+            let angle = Double.pi * position
+            return (1.0 - cos(angle)) / 2.0
         case .some(.linear):
             return position
         default:
@@ -301,7 +303,8 @@ public enum LEDSFlashAnalysis {
             let low = min(means[first], means[second])
             let high = max(means[first], means[second])
             let total = low + high
-            let swing = total > 1e-9 ? (high - low) / total : 0.0
+            var swing = 0.0
+            if total > 1e-9 { swing = (high - low) / total }
             if swing < contrast { continue }
             // The area rule is about the field moving together: a travelling
             // wave brightens one LED while it dims the one behind it, which is
@@ -322,7 +325,11 @@ public enum LEDSFlashAnalysis {
         }
         let seconds = Double(spanMs) / 1000.0
         let flashes = reversals / 2
-        let hertz = seconds > 0 ? (Double(reversals) / 2.0) / seconds : 0.0
+        var hertz = 0.0
+        if seconds > 0 {
+            let flashPairs = Double(reversals) / 2.0
+            hertz = flashPairs / seconds
+        }
         return Result(hertz: hertz, flashes: flashes, spanMs: spanMs, peakArea: peakArea)
     }
 }
