@@ -31,16 +31,34 @@ _LIVE_MODES: frozenset[str] = frozenset(
 )
 
 
+def _is_main(row: Mapping[str, Any]) -> bool:
+    """Whether a ``state.sessions`` row is a main session.
+
+    The same reading ``core_projection.aggregate_counts`` uses, so a widget
+    and the menu bar count the same rows: a row with no ``kind`` is a main,
+    and a worker (``kind: "worker"``) is never a session on its own.
+    """
+    return str(row.get("kind") or "main") == "main"
+
+
+def _is_asking(row: Mapping[str, Any]) -> bool:
+    """Whether a person is being asked something on this row.
+
+    The daemon puts a mapping in ``ask`` while a live ask is open and
+    ``None`` otherwise; that is the only fact the row carries about waiting
+    on someone (``mode`` and ``next_actor`` also say so for a quiet worker).
+    """
+    return isinstance(row.get("ask"), Mapping)
+
+
 def _entry(session: Mapping[str, Any]) -> dict[str, Any] | None:
     provider = session.get("provider")
     if not isinstance(provider, str) or not provider:
         return None
-    axes = session.get("axes")
-    axes_map = axes if isinstance(axes, Mapping) else {}
     return {
         "provider": provider,
         "mode": session.get("mode") if isinstance(session.get("mode"), str) else "unknown",
-        "waiting": axes_map.get("attention") == "waiting",
+        "waiting": _is_asking(session),
         "stale": bool(session.get("stale")),
     }
 
@@ -49,17 +67,23 @@ def widget_snapshot(state: Mapping[str, Any], *, now: float) -> dict[str, Any]:
     """Project a ``state`` document into the widget's redacted shape.
 
     ``sessions`` rows carry the transcript-era fields; only the three the
-    widget needs survive.  Counts come from the same rows the panel lists,
-    so a widget and the menu bar can never disagree about "3 working".
+    widget needs survive.  Counts come from the same main-session rows the
+    panel lists and ``state.aggregate`` counts, so a widget and the menu bar
+    can never disagree about "3 working".  A sub-agent's row is left out
+    whether or not sub-agent asks are on: a worker has no tile and never
+    adds to a count.  ``waiting`` is the number of rows with an open ask.
     """
     sessions = state.get("sessions")
-    rows = [s for s in sessions if isinstance(s, Mapping)] if isinstance(sessions, list) else []
+    rows = (
+        [s for s in sessions if isinstance(s, Mapping) and _is_main(s)]
+        if isinstance(sessions, list)
+        else []
+    )
     entries: list[dict[str, Any]] = []
     working = waiting = stale = 0
     for row in rows:
         mode = row.get("mode")
-        axes = row.get("axes")
-        is_waiting = isinstance(axes, Mapping) and axes.get("attention") == "waiting"
+        is_waiting = _is_asking(row)
         if isinstance(mode, str) and mode in _LIVE_MODES and not is_waiting:
             working += 1
         if is_waiting:
