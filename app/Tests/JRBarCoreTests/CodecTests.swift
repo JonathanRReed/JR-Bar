@@ -414,6 +414,30 @@ struct CodecTests {
         #expect(String(decoding: tail[0], as: UTF8.self) == #"{"t":"x","v":1}"#)
     }
 
+    @Test("the splitter keeps a multi-byte character split across chunks")
+    func splitterKeepsSplitCharacters() throws {
+        var splitter = NDJSONSplitter()
+        // An em dash is E2 80 94; the read ended after its second byte.
+        #expect(splitter.feed(Data([0x61, 0xE2, 0x80])).isEmpty)
+        let frames = splitter.feed(Data([0x94, 0x62, 0x0A]))
+        #expect(frames.count == 1)
+        #expect(String(decoding: try #require(frames.first), as: UTF8.self) == "a\u{2014}b")
+
+        // The unterminated tail is handed back once, then it is gone.
+        #expect(splitter.feed(Data("tail".utf8)).isEmpty)
+        let tail = splitter.finish()
+        #expect(String(decoding: try #require(tail), as: UTF8.self) == "tail")
+        let again = splitter.finish()
+        #expect(again == nil)
+
+        // A trailing carriage return is not part of the last line.
+        #expect(splitter.feed(Data("x\r".utf8)).isEmpty)
+        let last = splitter.finish()
+        #expect(String(decoding: try #require(last), as: UTF8.self) == "x")
+        let none = splitter.finish()
+        #expect(none == nil, "nothing buffered: no tail")
+    }
+
     @Test("backoff follows 0.5, 1, 2, cap 5")
     func backoff() {
         #expect(CoreBackoff.delay(afterFailures: 1) == 0.5)

@@ -104,6 +104,54 @@ struct CoreSupervisorTests {
         missing.stop(gracePeriod: 0)
     }
 
+    /// Runs one shell script to its end and returns the log once the
+    /// supervisor has given up (or stopped restarting).
+    private func output(of script: String, maxFailures: Int = 1) async -> Log {
+        let log = Log()
+        let supervisor = CoreSupervisor(executable: "/bin/sh", arguments: ["-c", script],
+                                        maxFailures: maxFailures, failureWindow: 60, backoffScale: 0.02)
+        supervisor.onOutput = { stream, line in log.add("\(stream): \(line)") }
+        supervisor.start()
+        defer { supervisor.stop(gracePeriod: 0.2) }
+        _ = await Self.wait(timeout: 5) { supervisor.state == .crashed(failures: maxFailures) }
+        return log
+    }
+
+    @Test("output with an invalid byte in it keeps the line, with a replacement character")
+    func invalidByteIsKept() async {
+        let log = await output(of: "printf 'good\\n'; printf 'ok \\377 bad\\n'; exit 0")
+        let lines = log.lines
+        #expect(lines.contains("stdout: good"), "\(lines)")
+        let odd = lines.first { $0.hasPrefix("stdout: ok ") }
+        #expect(odd?.contains("\u{FFFD}") == true, "\(lines)")
+        #expect(odd?.hasSuffix(" bad") == true, "\(lines)")
+    }
+
+    @Test("a non-ASCII character arrives whole")
+    func emDashArrives() async {
+        let log = await output(of: "printf '\\342\\200\\224 dash\\n'; exit 0")
+        #expect(log.lines.contains("stdout: \u{2014} dash"), "\(log.lines)")
+    }
+
+    @Test("CRLF line endings split into lines without the carriage return")
+    func crlfSplits() async {
+        let log = await output(of: "printf 'one\\r\\ntwo\\n'; exit 0")
+        let lines = log.lines.filter { $0.hasPrefix("stdout: ") }
+        #expect(lines == ["stdout: one", "stdout: two"], "\(log.lines)")
+    }
+
+    @Test("a last line without a newline is kept at exit and never glued to the next child's output")
+    func tailFlushedAtExit() async throws {
+        let log = await output(of: "printf partial; exit 1", maxFailures: 2)
+        let lines = log.lines
+        #expect(lines.filter { $0 == "stdout: partial" }.count == 2, "\(lines)")
+        #expect(!lines.contains("stdout: partialpartial"), "\(lines)")
+        // The last line comes before the exit notice that follows it.
+        let partialAt = try #require(lines.firstIndex(of: "stdout: partial"))
+        let noticeAt = try #require(lines.firstIndex { $0.hasPrefix("supervisor: core exited") })
+        #expect(partialAt < noticeAt, "\(lines)")
+    }
+
     /// A settable flag polled from async tests (semaphore waits are
     /// unavailable in async contexts on this toolchain).
     final class Flag: @unchecked Sendable {

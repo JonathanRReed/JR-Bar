@@ -47,8 +47,11 @@ public final class CoreSupervisor: @unchecked Sendable {
     private var restartTimer: DispatchWorkItem?
     private var stopping = false
     private var generation = 0
-    private var stdoutRemainder = ""
-    private var stderrRemainder = ""
+    /// What each stream has printed since its last newline, as raw bytes: a
+    /// read can end inside a multi-byte character, so a line is only
+    /// decoded once it is whole. Guarded by `lock`.
+    private var stdoutSplitter = NDJSONSplitter()
+    private var stderrSplitter = NDJSONSplitter()
     private let queue = DispatchQueue(label: "jrbar.core.supervisor")
     /// Test seam: replaces `Process.run()` so a test can hold a spawn in
     /// flight and race `stop()` against it.
@@ -183,6 +186,9 @@ public final class CoreSupervisor: @unchecked Sendable {
             stderr.fileHandleForReading.readabilityHandler = nil
             self?.consume(stdout.fileHandleForReading.readDataToEndOfFile(), stream: "stdout")
             self?.consume(stderr.fileHandleForReading.readDataToEndOfFile(), stream: "stderr")
+            // A last line with no newline is still a line: say it before
+            // the exit notice, and do not let it lead the next child's.
+            self?.flushOutput()
             self?.childExited(finished, generation: myGeneration)
         }
         // run() and the `self.process` assignment happen inside ONE
@@ -282,17 +288,23 @@ public final class CoreSupervisor: @unchecked Sendable {
     // MARK: Output
 
     private func consume(_ data: Data, stream: String) {
-        guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+        guard !data.isEmpty else { return }
         lock.lock()
-        var buffer = (stream == "stdout" ? stdoutRemainder : stderrRemainder) + text
-        var lines: [String] = []
-        while let newline = buffer.firstIndex(of: "\n") {
-            lines.append(String(buffer[..<newline]))
-            buffer = String(buffer[buffer.index(after: newline)...])
-        }
-        if stream == "stdout" { stdoutRemainder = buffer } else { stderrRemainder = buffer }
+        let frames = stream == "stdout" ? stdoutSplitter.feed(data) : stderrSplitter.feed(data)
         lock.unlock()
-        for line in lines where !line.isEmpty { onOutput?(stream, line) }
+        // Bytes that are not valid UTF-8 read as U+FFFD; nothing is dropped.
+        for frame in frames { onOutput?(stream, String(decoding: frame, as: UTF8.self)) }
+    }
+
+    /// Emits what each stream printed after its last newline, when the child
+    /// that printed it is gone.
+    private func flushOutput() {
+        lock.lock()
+        let tails = [("stdout", stdoutSplitter.finish()), ("stderr", stderrSplitter.finish())]
+        lock.unlock()
+        for (stream, tail) in tails {
+            if let tail { onOutput?(stream, String(decoding: tail, as: UTF8.self)) }
+        }
     }
 }
 
