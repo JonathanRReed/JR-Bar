@@ -965,6 +965,13 @@ struct NotchCardView: View {
                                     busy: pending) {
                         Task { await desk.answer(ask, .approve) }
                     }
+                } else if row.activity == .waiting, let decidedLine = ask?.decidedLine {
+                    // Already answered from here: nothing is waiting on the
+                    // person, so no loud "Waiting on you" beside a card
+                    // that draws no verb.
+                    Text(decidedLine)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(style.subColor)
                 } else {
                     Text(row.activity.word)
                         .font(.system(size: 11, weight: .medium))

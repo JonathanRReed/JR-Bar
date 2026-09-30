@@ -59,7 +59,7 @@ struct DockRailDecidedAskTests {
         #expect(pill.decidedLine == Fixture.words)
         #expect(pill.decidedLine == answered.decidedLine)
         let stale = Fixture.olderDaemonDecidedAsk()
-        #expect(RailLabelView.decidedLine(stale) == Fixture.words, "whatever the older daemon says of it")
+        #expect(RailLabelView.decidedLineText(stale) == Fixture.words, "whatever the older daemon says of it")
         #expect(log.answers.isEmpty)
     }
 
@@ -68,20 +68,20 @@ struct DockRailDecidedAskTests {
         let desk = Fixture.loggingDesk(Fixture.SentLog())
         let open = Fixture.openAsk()
         #expect(DeckStore.pillAnswers(open))
-        #expect(RailLabelView.decidedLine(open) == nil)
+        #expect(RailLabelView.decidedLineText(open) == nil)
         let pill = RailLabelView(title: "Key 1", subtitle: "Needs you", provider: "claude", number: "1",
                                  ask: open, desk: desk)
         #expect(pill.isInteractive)
         #expect(pill.decidedLine == nil)
         #expect(DeckStore.pillAnswers(Fixture.heldQuestion()))
-        #expect(RailLabelView.decidedLine(Fixture.heldQuestion()) == nil)
+        #expect(RailLabelView.decidedLineText(Fixture.heldQuestion()) == nil)
         var peer = Fixture.decidedAsk()
         peer.session = "remote:studio:claude:s1"
         #expect(!DeckStore.pillAnswers(peer))
-        #expect(RailLabelView.decidedLine(peer) == nil, "a peer's ask is the peer's to describe")
-        #expect(RailLabelView.decidedLine(nil) == nil)
+        #expect(RailLabelView.decidedLineText(peer) == nil, "a peer's ask is the peer's to describe")
+        #expect(RailLabelView.decidedLineText(nil) == nil)
         var unnamed = Fixture.decidedAsk()
         unnamed.session = nil
-        #expect(RailLabelView.decidedLine(unnamed) == nil)
+        #expect(RailLabelView.decidedLineText(unnamed) == nil)
     }
 }

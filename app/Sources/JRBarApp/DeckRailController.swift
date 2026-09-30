@@ -499,9 +499,9 @@ struct RailLabelView: View {
     /// Where the verbs would be: the words for an ask JR-Bar already
     /// answered, the same ones the panel and the notch say. nil for every
     /// other ask, and for a peer's, which is the peer's to describe.
-    var decidedLine: String? { Self.decidedLine(ask) }
+    var decidedLine: String? { Self.decidedLineText(ask) }
 
-    nonisolated static func decidedLine(_ ask: CoreAsk?) -> String? {
+    nonisolated static func decidedLineText(_ ask: CoreAsk?) -> String? {
         guard let ask, let session = ask.session, !session.isEmpty, !CoreSession.isRemoteID(session) else {
             return nil
         }
