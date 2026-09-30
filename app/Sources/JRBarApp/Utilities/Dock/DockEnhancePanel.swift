@@ -1636,9 +1636,9 @@ private struct DockAskRow: View {
 
     @ViewBuilder
     private func verbs(desk: AskAnswerDesk?, busy: Bool) -> some View {
-        let set = DockAskVerbSet.resolve(ask: ask, hasDesk: desk != nil,
-                                         note: desk?.note(for: mark.sessionID)?.text)
-        switch set {
+        let plan = DockAskVerbSet.resolve(ask: ask, hasDesk: desk != nil,
+                                          note: desk?.note(for: mark.sessionID)?.text)
+        switch plan {
         case .note(let line), .decided(let line):
             // The desk's line about the last answer, or the words for an
             // ask JR-Bar already answered: a line where the verbs were,
