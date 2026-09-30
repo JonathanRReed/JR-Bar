@@ -20,13 +20,13 @@ struct OverviewDecidedAskTests {
                         schema: 1, visibility: "live")
     }
 
-    private func store(desk: AskAnswerDesk? = nil) -> OverviewStore {
+    private func makeStore(desk: AskAnswerDesk? = nil) -> OverviewStore {
         OverviewStore(core: CoreModel(), desk: desk)
     }
 
     @Test("a decided ask is neither actionable nor 'cannot be answered': it says it was answered")
     func decidedAskSaysSo() {
-        let store = store()
+        let store = makeStore()
         for ask in [Fixture.decidedAsk(), Fixture.olderDaemonDecidedAsk()] {
             let row = entry(ask)
             #expect(store.askAction(for: row) == .decided)
@@ -37,7 +37,7 @@ struct OverviewDecidedAskTests {
 
     @Test("a decided reply ask from an older daemon offers no Reply either")
     func decidedReplyAsk() {
-        let store = store()
+        let store = makeStore()
         let row = entry(Fixture.decidedAsk(answerable: true, replyable: true))
         #expect(store.askAction(for: row) == .decided)
         #expect(!store.canReply(row))
@@ -45,7 +45,7 @@ struct OverviewDecidedAskTests {
 
     @Test("the inspector's plan for a decided ask draws no verb at all, and carries the decided line")
     func decidedPlanDrawsNothing() {
-        let store = store()
+        let store = makeStore()
         for ask in [Fixture.decidedAsk(), Fixture.olderDaemonDecidedAsk(),
                     Fixture.decidedAsk(answerable: true, replyable: true),
                     Fixture.decidedAsk(answerable: true, replyable: nil, choices: [Fixture.pick])] {
@@ -57,7 +57,7 @@ struct OverviewDecidedAskTests {
 
     @Test("an undecided answerable ask is unchanged: Approve, Deny and Always where offered")
     func undecidedIsUnchanged() {
-        let store = store()
+        let store = makeStore()
         let offered = entry(Fixture.openAsk())
         #expect(store.askAction(for: offered) == .actionable)
         #expect(store.askDisabledReason(for: offered) == nil)
@@ -72,7 +72,7 @@ struct OverviewDecidedAskTests {
 
     @Test("an ask that cannot be answered from here keeps its words and its disabled verbs")
     func notAnswerableKeepsItsWords() {
-        let store = store()
+        let store = makeStore()
         let sealed = entry(CoreAsk(session: Fixture.session, summary: "Edit a file", answerable: false))
         let reason = "The monitor reports this ask cannot be answered from here"
         #expect(store.askAction(for: sealed) == .notAnswerable)
@@ -88,7 +88,7 @@ struct OverviewDecidedAskTests {
 
     @Test("a peer's ask keeps the peer's words, whatever its decision says")
     func peerAskIsThePeersToDescribe() {
-        let store = store()
+        let store = makeStore()
         let peer = entry(Fixture.decidedAsk(), remote: true)
         #expect(store.askAction(for: peer) == .remote)
         #expect(store.askVerbPlan(for: peer).decidedLine == nil)
@@ -96,7 +96,7 @@ struct OverviewDecidedAskTests {
 
     @Test("a held question with choices is unchanged: its options stay and Deny declines it")
     func heldQuestionIsUnchanged() {
-        let store = store()
+        let store = makeStore()
         let question = Fixture.heldQuestion()
         let row = entry(question)
         #expect(AskVerbs.chooses(question), "the inspector and the menu route it to its options first")
@@ -115,7 +115,7 @@ struct OverviewDecidedAskTests {
     @Test("Approve on a decided ask sends nothing and the status line says it was answered")
     func answerOnADecidedAskIsRefused() async {
         let log = Fixture.SentLog()
-        let store = store(desk: Fixture.loggingDesk(log))
+        let store = makeStore(desk: Fixture.loggingDesk(log))
         for ask in [Fixture.decidedAsk(), Fixture.olderDaemonDecidedAsk()] {
             store.actionStatus = nil
             await store.answerAsk(entry: entry(ask), approve: true)

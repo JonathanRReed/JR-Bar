@@ -13,7 +13,7 @@ import JRBarCore
 struct RailDecidedSubtitleTests {
     private typealias Fixture = DecidedAskFixture
 
-    private func store(holding ask: CoreAsk) -> DeckStore {
+    private func makeStore(holding ask: CoreAsk) -> DeckStore {
         let core = CoreModel()
         core.apply(.state(Fixture.state(holding: ask)))
         return DeckStore(core: core)
@@ -24,7 +24,7 @@ struct RailDecidedSubtitleTests {
     @Test("a decided ask's key reads Answered, from the daemon or from an older one")
     func decidedKeyReadsAnswered() {
         for ask in [Fixture.decidedAsk(), Fixture.olderDaemonDecidedAsk()] {
-            let store = store(holding: ask)
+            let store = makeStore(holding: ask)
             #expect(store.ask(for: asking)?.isDecided == true)
             #expect(store.railSubtitle(for: asking) == "Answered")
         }
@@ -32,12 +32,12 @@ struct RailDecidedSubtitleTests {
 
     @Test("an open ask, a held question and every other key read as they always did")
     func otherKeysAreUnchanged() {
-        let open = store(holding: Fixture.openAsk())
+        let open = makeStore(holding: Fixture.openAsk())
         #expect(open.railSubtitle(for: asking) == "Needs you")
         #expect(asking.subtitle == "Needs you")
-        let question = store(holding: Fixture.heldQuestion())
+        let question = makeStore(holding: Fixture.heldQuestion())
         #expect(question.railSubtitle(for: asking) == "Needs you")
-        let decided = store(holding: Fixture.decidedAsk())
+        let decided = makeStore(holding: Fixture.decidedAsk())
         let working = DeckSlot(index: 1, identity: "key-1", session: Fixture.session, state: .active)
         #expect(decided.railSubtitle(for: working) == "Working", "only the asking key has an ask to answer")
         #expect(decided.railSubtitle(for: DeckSlot(index: 2)) == "No session assigned")
@@ -47,7 +47,7 @@ struct RailDecidedSubtitleTests {
 
     @Test("a key with no live ask left says Needs you until the state catches up")
     func noLiveAskKeepsTheStateWord() {
-        let store = store(holding: Fixture.decidedAsk())
+        let store = makeStore(holding: Fixture.decidedAsk())
         let gone = DeckSlot(index: 4, identity: "key-4", session: "claude:session:gone", state: .inputRequired)
         #expect(store.ask(for: gone) == nil)
         #expect(store.railSubtitle(for: gone) == "Needs you")
@@ -68,7 +68,7 @@ struct RailDecidedSubtitleTests {
     @Test("the pill carries the Answered subtitle above the decided line, and the key's state is unchanged")
     func pillAndStateAgree() {
         let ask = Fixture.decidedAsk()
-        let store = store(holding: ask)
+        let store = makeStore(holding: ask)
         let subtitle = store.railSubtitle(for: asking)
         let pill = RailLabelView(title: "release cleanup", subtitle: subtitle, provider: "claude", number: "1",
                                  ask: store.ask(for: asking), desk: Fixture.loggingDesk(Fixture.SentLog()))
