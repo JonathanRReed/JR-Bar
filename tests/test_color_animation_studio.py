@@ -155,6 +155,14 @@ def test_palette_swatches_never_claim_to_be_brand_colours__and_2_more() -> None:
     grey = provider_color_row("claude", colors.with_agent_color("claude", "#8E8E93"))
     assert grey.current_name == "Gray"
 
+    # A provider wearing the app's own ask signal is named for the signal,
+    # never for a provider, and recolouring it leaves its animation alone.
+    # #FF3A00 is led_status.ASK_AMBER; BRAND_SEED_COLORS once claimed it as
+    # Codex's brand, which named the row after the wrong thing.
+    signal = provider_color_row("claude", colors.with_agent_color("claude", "#FF3A00"))
+    assert signal.current_name == "Ask"
+    assert signal.animation == PROVIDER_ANIMATION_AUTO
+
 
 
 def test_a_hand_picked_colour_stays_a_named_selected_swatch__and_2_more() -> None:
