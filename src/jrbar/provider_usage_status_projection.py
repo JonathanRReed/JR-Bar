@@ -5,13 +5,20 @@ from __future__ import annotations
 import time
 
 
-def screen_bar_quota_ember_level(controller) -> float:
+def screen_bar_quota_ember_level(controller, *, wall_clock=time.time) -> float:
+    """How far the tightest live lane has sunk below its provider's threshold.
+
+    A lane whose window has already reset is skipped: it describes a window
+    that is over, so its old percent must not glow (or send the exhausted
+    signal) for the window running now.
+    """
     try:
         from .provider_usage_platform import ProviderSourceState, most_constrained_lane
 
         settings = controller._usage_menu_settings()
         if settings is None:
             return 0.0
+        now = float(wall_clock())
         hidden = settings.hidden_menu_providers()
         hidden_instances = settings.hidden_menu_instances()
         thresholds = {preference.identity: preference.threshold_remaining for preference in settings.providers}
@@ -21,7 +28,7 @@ def screen_bar_quota_ember_level(controller) -> float:
                 continue
             if snapshot.state not in {ProviderSourceState.READY, ProviderSourceState.STALE}:
                 continue
-            lane = most_constrained_lane(snapshot)
+            lane = most_constrained_lane(snapshot, now=now)
             if lane is None or lane.remaining_percent is None:
                 continue
             threshold = thresholds.get(snapshot.identity, 20.0)

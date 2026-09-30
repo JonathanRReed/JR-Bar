@@ -421,11 +421,26 @@ def select_authoritative_snapshot(
     return candidates[0]
 
 
-def most_constrained_lane(snapshot: ProviderUsageSnapshot) -> UsageLane | None:
+def most_constrained_lane(
+    snapshot: ProviderUsageSnapshot,
+    *,
+    now: float | None = None,
+) -> UsageLane | None:
+    """The bindable, measured lane with the least headroom.
+
+    With ``now``, a lane whose reset has passed (``reset_at <= now``) is not
+    eligible: it describes a window that is over, so however full it last
+    read it is no constraint on the window running now. A lane with no reset
+    time is never lapsed. Without ``now`` every measured lane competes, which
+    is what the reset watch and the menu rows want: they need the lapsed lane
+    to time the next read and to say "reset passed".
+    """
     eligible = tuple(
         lane
         for lane in snapshot.lanes
-        if lane.bindable and lane.remaining_percent is not None
+        if lane.bindable
+        and lane.remaining_percent is not None
+        and (now is None or lane.reset_at is None or lane.reset_at > now)
     )
     return min(eligible, key=lambda lane: lane.remaining_percent) if eligible else None
 

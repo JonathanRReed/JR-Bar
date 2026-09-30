@@ -1276,12 +1276,21 @@ def usage_document(
         # one with the least headroom -- among windows the provider's own
         # catalog knows (``bindable``) and actually measured. Named on the
         # wire with its reason so the app can say why (S6.4); None when
-        # nothing applicable was measured.
+        # nothing applicable was measured. A window whose reset has passed
+        # describes a window that is over, so it cannot win however full it
+        # last read (it stays in `windows`, unchanged); a window with no
+        # reset time never lapses.
         constrained = None
         candidates = [
             window
             for window in windows
-            if window["bindable"] and window["used_pct"] is not None
+            if window["bindable"]
+            and window["used_pct"] is not None
+            and (
+                now is None
+                or window["resets_at"] is None
+                or window["resets_at"] > now
+            )
         ]
         if candidates:
             pick = max(candidates, key=lambda window: window["used_pct"])

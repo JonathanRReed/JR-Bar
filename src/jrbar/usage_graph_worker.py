@@ -48,7 +48,7 @@ _MODEL_REUSE_SECONDS = 60.0
 #: unchanged, so a cached reply is identical to a fresh scan, not an
 #: approximation of one.
 _USAGE_DOC_CACHE_NAME = "usage-graph-doc-cache.json"
-_USAGE_DOC_CACHE_VERSION = 1
+_USAGE_DOC_CACHE_VERSION = 2
 _USAGE_DOC_CACHE_MAX_BYTES = 8 * 1024 * 1024
 _USAGE_DOC_CACHE_SLOTS = 12
 
@@ -408,9 +408,14 @@ def _build_payload(
     records = [record for record in totals.records if record[0] in provider_ids]
 
     extra_sessions: dict[str, dict[str, int]] | None = None
+    ledger_first_day: dict[str, str] | None = None
     if mode == "sessions":
         # Hook ledgers can supply daily session counts without token records.
-        from .session_history import ledger_session_days
+        from .session_history import (
+            TRANSCRIPT_SESSION_PROVIDERS,
+            ledger_first_event_epochs,
+            ledger_session_days,
+        )
 
         try:
             # default_state_dir() IS the ledger directory; a doubled
@@ -424,6 +429,31 @@ def _build_payload(
             )
         except Exception:
             extra_sessions = {}
+        # A provider counted only from its hook log is known only from where
+        # that log now begins: it is trimmed to its newest events. Days
+        # before that are unknown, not zero, so the graph draws them as gaps.
+        # Providers with their own history (transcripts, local session files,
+        # OpenCode, T3 Code, Antigravity) are not judged by their hook log.
+        ledger_only = tuple(
+            provider
+            for provider in provider_ids
+            if provider not in TRANSCRIPT_SESSION_PROVIDERS
+            and provider not in LOCAL_HISTORY_PROVIDERS
+            and provider not in {"opencode", "t3code", "antigravity"}
+        )
+        try:
+            # Its own try: a failure here must never cost the counts above.
+            first_events = ledger_first_event_epochs(
+                default_state_dir(),
+                provider_ids=ledger_only,
+            )
+            ledger_first_day = {
+                provider: datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
+                for provider, epoch in first_events.items()
+                if epoch > period_start.timestamp()
+            }
+        except Exception:
+            ledger_first_day = None
         if "antigravity" in provider_ids:
             activity_days: dict[str, set[str]] = {}
             for record in _scan_antigravity_records(Path.home() / ".gemini", period_start.timestamp()):
@@ -449,6 +479,7 @@ def _build_payload(
             metric=mode,
             provider_ids=provider_ids,
             extra_sessions=extra_sessions,
+            ledger_first_day=ledger_first_day,
         )
     heatmap = model["heatmap"]
     if mode == "cost":
@@ -470,7 +501,7 @@ def _build_payload(
     if mode == "sessions":
         parts = [
             f"{labels.get(series['provider_id'], series['provider_id'])} "
-            f"{int(sum(series['values']))} session-days"
+            f"{int(sum(value for value in series['values'] if value > 0))} session-days"
             for series in model["series"]
         ]
         detail = " · ".join(parts) or "No recorded sessions"

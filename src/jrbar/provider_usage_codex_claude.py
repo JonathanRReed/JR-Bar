@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
 
@@ -53,6 +54,11 @@ def _credential(credentials, provider_id: str, account: str) -> str | None:
     return value
 
 
+#: The period the Usage Center's token figures cover. Both card paths (the
+#: deduped scan and the cache reader) use it, so they cannot drift apart.
+LOCAL_TOKEN_WINDOW_SECONDS = 30 * 24 * 60 * 60
+
+
 def _default_provider_local_scan(
     provider_id: str,
     home: Path,
@@ -91,7 +97,7 @@ def _default_provider_local_scan(
         else primary_claude_projects(home=home)
     )
     cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
-    since = max(0.0, observed_at - 30 * 24 * 60 * 60)
+    since = max(0.0, observed_at - LOCAL_TOKEN_WINDOW_SECONDS)
     try:
         result, totals = usage_stats._scan_provider_usage_with_totals(
             source,
@@ -177,24 +183,147 @@ def _cached_codex_local_scan(home: Path, observed_at: float) -> dict[str, object
     return _cached_provider_local_scan("codex", home, observed_at)
 
 
-def _cached_claude_local_scan(home: Path, observed_at: float) -> dict[str, object] | None:
-    return _cached_provider_local_scan("claude", home, observed_at)
+def _cached_claude_local_scan(
+    home: Path,
+    observed_at: float,
+    *,
+    extra_homes: Iterable[str] | None = None,
+) -> dict[str, object] | None:
+    return _cached_provider_local_scan(
+        "claude", home, observed_at, extra_homes=extra_homes
+    )
+
+
+#: The small token results already worked out, keyed on the cache files they
+#: were read from. A quota refresh runs every couple of minutes; without this
+#: each one would decode up to 8 MiB of cache and rebuild the same totals.
+_LOCAL_TOKENS_MEMO_LIMIT = 16
+_local_tokens_memo: dict[tuple, dict[str, object]] = {}
+_local_tokens_memo_lock = threading.Lock()
+
+
+def _cache_stamp(path: Path) -> tuple[str, int, int, int] | None:
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    return (str(path), info.st_mtime_ns, info.st_size, info.st_ino)
+
+
+def _local_token_totals(
+    provider_id: str,
+    source_key,
+    primary_cache: dict,
+    extra_paths: tuple[Path, ...],
+    window_start: float,
+) -> dict[str, object] | None:
+    """The last 30 days of one provider, once each, across every home's cache.
+
+    Claude needs the whole window: a cache that was last written for a
+    narrower one (the default graph range keeps about ten days) would read as
+    complete and undercount, so that answers nothing until a wider scan
+    refills it. Codex counts the days its cache still covers and no more,
+    because its quota evidence lives in the same cache and must not be lost.
+    """
+    from . import usage_stats
+
+    clamp = provider_id == "codex"
+    primary = usage_stats.cache_provider_records(primary_cache, provider_id)
+    if primary is None:
+        return None
+    homes = [primary]
+    for path in extra_paths:
+        cache = usage_stats._load_cache(path, source_key)
+        extra = usage_stats.cache_provider_records(cache, provider_id) if cache else None
+        if extra is None:
+            if not clamp:
+                # A home no scan has covered yet: half a total is worse than none.
+                return None
+            continue
+        homes.append(extra)
+    start = window_start
+    floor = max(home_floor for _records, home_floor in homes)
+    if floor > start:
+        if not clamp:
+            return None
+        start = floor
+    input_tokens = 0
+    cached_input_tokens = 0
+    output_tokens = 0
+    model_ids: set[str] = set()
+    priced_records = 0
+    total_records = 0
+    cost = 0.0
+    savings = 0.0
+    for records, _floor in homes:
+        totals = usage_stats._totals_from_records(records, start)
+        input_tokens += sum(record[4] for record in totals.records)
+        cached_input_tokens += sum(record[5] for record in totals.records)
+        output_tokens += sum(record[7] for record in totals.records)
+        model_ids.update(
+            record[2] for record in totals.records if isinstance(record[2], str)
+        )
+        priced_records += totals.pricing_coverage.priced_records
+        total_records += totals.pricing_coverage.total_records
+        cost += totals.estimated_cost_usd
+        savings += totals.estimated_cache_savings_usd
+    # A dollar figure is published only when every counted record was priced;
+    # otherwise it would be a silent floor.
+    fully_priced = total_records > 0 and priced_records == total_records
+    return {
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_input_tokens,
+        "output_tokens": output_tokens,
+        "model_count": len(model_ids),
+        "estimated_cost_usd": cost if fully_priced else None,
+        "cache_savings_usd": savings if fully_priced else None,
+    }
+
+
+def _extra_cache_roots(
+    provider_id: str,
+    home: Path,
+    extra_homes: Iterable[str] | None,
+) -> tuple[Path, ...]:
+    try:
+        from .provider_homes import configured_extra_homes, extra_scan_roots
+
+        configured = (
+            configured_extra_homes().get(provider_id, ())
+            if extra_homes is None
+            else tuple(extra_homes)
+        )
+        return extra_scan_roots(provider_id, home=home, extras=configured)
+    except Exception:
+        return ()
 
 
 def _cached_provider_local_scan(
     provider_id: str,
     home: Path,
     observed_at: float,
+    *,
+    extra_homes: Iterable[str] | None = None,
 ) -> dict[str, object] | None:
     """Read one provider's bounded usage cache without a transcript walk.
 
     The current quota UI needs the newest percentage quickly. Walking the full
     transcript tree on every refresh can take tens of seconds on large local
     histories, which stalls publication of a newer live rate-limit reading.
+
+    The cache is written for other callers' windows: it holds raw per-file
+    records, back to the widest graph range that last ran plus a few days,
+    with copies a fork or resume repeated. The floor it recorded is the truth
+    about how far back it reaches, so a card never sums the raw entries. It
+    counts the last 30 days once each, across the primary home and every
+    extra home, and never more than the cache covers.
+
+    ``extra_homes`` names the extra account homes to add; left out, it is the
+    saved ``provider_extra_homes`` setting.
     """
-    del observed_at
     try:
         from . import usage_stats
+        from .provider_homes import _home_cache_path
         from .providers import negotiated_provider_sources
         from .state_paths import default_state_dir
     except ImportError:
@@ -211,85 +340,91 @@ def _cached_provider_local_scan(
     )
     if source is None:
         return None
-    cache_candidates = (
-        usage_stats._secondary_provider_cache_path(
-            default_state_dir(home) / "usage-scan-cache.json",
-            source.source_key,
+    source_key = source.source_key
+    graph_cache = default_state_dir(home) / "usage-scan-cache.json"
+    cold_cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
+    extra_roots = _extra_cache_roots(provider_id, home, extra_homes)
+    candidates = (
+        (
+            usage_stats.provider_cache_path(graph_cache, source_key),
+            tuple(
+                usage_stats.provider_cache_path(_home_cache_path(graph_cache, root), source_key)
+                for root in extra_roots
+            ),
         ),
-        Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json",
+        (
+            cold_cache,
+            tuple(_home_cache_path(cold_cache, root) for root in extra_roots),
+        ),
     )
-    for cache_path in cache_candidates:
+    window_start = max(0.0, observed_at - LOCAL_TOKEN_WINDOW_SECONDS)
+    for cache_path, extra_paths in candidates:
         if not isinstance(cache_path, Path):
             continue
-        cache = usage_stats._load_cache(cache_path, source.source_key)
-        files = cache.get("files")
-        sessions = cache.get("sessions")
-        models = cache.get("models")
-        dedupes = cache.get("dedupes")
-        if not (
-            isinstance(files, dict)
-            and isinstance(sessions, list)
-            and isinstance(models, list)
-            and isinstance(dedupes, list)
-        ):
-            continue
-        input_tokens = 0
-        cached_input_tokens = 0
-        output_tokens = 0
-        model_ids: set[str] = set()
+        extra_paths = tuple(path for path in extra_paths if isinstance(path, Path))
+        stamps = tuple(_cache_stamp(path) for path in (cache_path, *extra_paths))
+        memo_key = (provider_id, stamps, int(window_start // 3600.0))
+        cache: dict | None = None
         windows: tuple[dict[str, object], ...] = ()
         newest_window_marker: tuple[float, str] | None = None
-        for key, entry in tuple(files.items())[: usage_stats.USAGE_CACHE_MAX_FILES]:
-            if not isinstance(key, str) or not isinstance(entry, dict):
-                continue
-            records = usage_stats._decode_records(
-                entry,
-                sessions,
-                models,
-                dedupes,
-                expected_provider=provider_id,
-            )
-            if records is not None:
-                input_tokens += sum(record[4] for record in records)
-                cached_input_tokens += sum(record[5] for record in records)
-                output_tokens += sum(record[7] for record in records)
-                model_ids.update(
-                    record[2] for record in records if isinstance(record[2], str)
-                )
-            raw_mtime = entry.get("mtime")
-            raw_windows = entry.get("rate_limit_windows")
-            if (
-                isinstance(raw_mtime, (int, float))
-                and not isinstance(raw_mtime, bool)
-                and isinstance(raw_windows, list)
+        if provider_id == "codex":
+            # The quota evidence rides in the same cache, so it is read on
+            # every refresh, remembered totals or not.
+            cache = usage_stats._load_cache(cache_path, source_key)
+            files = cache.get("files")
+            if not (
+                isinstance(files, dict)
+                and isinstance(cache.get("sessions"), list)
+                and isinstance(cache.get("models"), list)
+                and isinstance(cache.get("dedupes"), list)
             ):
-                admitted = tuple(
-                    dict(window)
-                    for window in raw_windows[:64]
-                    if isinstance(window, dict)
-                )
-                marker = (float(raw_mtime), key)
-                if admitted and (
-                    newest_window_marker is None or marker > newest_window_marker
+                continue
+            for key, entry in tuple(files.items())[: usage_stats.USAGE_CACHE_MAX_FILES]:
+                if not isinstance(key, str) or not isinstance(entry, dict):
+                    continue
+                raw_mtime = entry.get("mtime")
+                raw_windows = entry.get("rate_limit_windows")
+                if (
+                    isinstance(raw_mtime, (int, float))
+                    and not isinstance(raw_mtime, bool)
+                    and isinstance(raw_windows, list)
                 ):
-                    windows = admitted
-                    newest_window_marker = marker
+                    admitted = tuple(
+                        dict(window)
+                        for window in raw_windows[:64]
+                        if isinstance(window, dict)
+                    )
+                    marker = (float(raw_mtime), key)
+                    if admitted and (
+                        newest_window_marker is None or marker > newest_window_marker
+                    ):
+                        windows = admitted
+                        newest_window_marker = marker
+        with _local_tokens_memo_lock:
+            totals = _local_tokens_memo.get(memo_key)
+        if totals is None:
+            if cache is None:
+                cache = usage_stats._load_cache(cache_path, source_key)
+            if not cache:
+                continue
+            totals = _local_token_totals(
+                provider_id, source_key, cache, extra_paths, window_start
+            )
+            if totals is None:
+                continue
+            with _local_tokens_memo_lock:
+                while len(_local_tokens_memo) >= _LOCAL_TOKENS_MEMO_LIMIT:
+                    _local_tokens_memo.pop(next(iter(_local_tokens_memo)))
+                _local_tokens_memo[memo_key] = totals
         if (
             (provider_id != "codex" or not windows)
-            and input_tokens == 0
-            and cached_input_tokens == 0
-            and output_tokens == 0
-            and not model_ids
+            and totals["input_tokens"] == 0
+            and totals["cached_input_tokens"] == 0
+            and totals["output_tokens"] == 0
+            and totals["model_count"] == 0
         ):
             continue
-        document: dict[str, object] = {
-            "input_tokens": input_tokens,
-            "cached_input_tokens": cached_input_tokens,
-            "output_tokens": output_tokens,
-            "model_count": len(model_ids),
-            "estimated_cost_usd": None,
-            "cache_savings_usd": None,
-        }
+        document: dict[str, object] = dict(totals)
         if provider_id == "codex":
             document["windows"] = [dict(window) for window in windows]
             if newest_window_marker is not None:

@@ -277,29 +277,42 @@ def test_claude_default_quota_refresh_never_falls_back_to_a_cold_scan(
     assert result.lanes[0].remaining_percent == 5
 
 
-def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(tmp_path: Path) -> None:
+def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(
+    tmp_path: Path, monkeypatch
+) -> None:
     # --- scenario: claude_cached_local_scan_reuses_bounded_aggregate
     import jrbar.provider_usage_codex_claude as subject
+    from jrbar import usage_stats
+    from jrbar.state_paths import default_state_dir
+    from tests.test_provider_usage_cached_scan import (
+        DAY,
+        OBSERVED,
+        _claude_projects,
+        _claude_transcript,
+        _claude_usage_line,
+    )
 
-    cache = {
-        "files": {
-            "transcript.jsonl": {
-                "records": [[0, 0, 1, 900.0, 100, 25, 0, 50, 0]],
-                "mtime": 900.0,
-            }
-        },
-        "sessions": ["session-1"],
-        "models": ["claude", "claude-sonnet"],
-        "dedupes": ["event-1"],
-    }
-    with patch("jrbar.usage_stats._load_cache", return_value=cache) as load:
-        result = subject._cached_claude_local_scan(tmp_path, 1000)
+    # A real cache, written by the scan the graph runs. A model with no price
+    # keeps the dollar figure honest: the tokens show and the cost does not.
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "session.jsonl",
+        [_claude_usage_line("m1", OBSERVED - 2 * DAY, model="no-such-model-x", cache_read=25)],
+    )
+    usage_stats.scan_usage(
+        _claude_projects(tmp_path),
+        default_state_dir(tmp_path) / "usage-scan-cache.json",
+        since_epoch=OBSERVED - 30 * DAY,
+    )
+    subject._local_tokens_memo.clear()
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
-    assert load.called
+    result = subject._cached_claude_local_scan(tmp_path, OBSERVED, extra_homes=())
+
     assert result == {
-        "input_tokens": 100,
+        "input_tokens": 10,
         "cached_input_tokens": 25,
-        "output_tokens": 50,
+        "output_tokens": 5,
         "model_count": 1,
         "estimated_cost_usd": None,
         "cache_savings_usd": None,

@@ -164,3 +164,41 @@ def test_last_known_good_is_retained_as_stale_when_sources_fail__and_2_more() ->
     )
     assert provider_status_line(result) == "Cursor · permission required"
 
+
+
+def test_most_constrained_lane_skips_lapsed_lanes_only_when_given_a_clock() -> None:
+    lapsed = _lane(lane_id="five_hour", remaining=3, reset=900.0)
+    live = _lane(lane_id="weekly", remaining=60, reset=5000.0)
+    snapshot = _snapshot(lanes=(lapsed, live))
+
+    # No clock: the lapsed lane still answers, as it always did (the reset
+    # watch needs it to time the next read).
+    assert most_constrained_lane(snapshot) is lapsed
+    # With a clock, a window that is already over is not a constraint.
+    assert most_constrained_lane(snapshot, now=1000.0) is live
+    # The boundary is strict: a lane resetting exactly now is over.
+    assert most_constrained_lane(snapshot, now=900.0) is live
+    assert most_constrained_lane(snapshot, now=899.0) is lapsed
+
+
+def test_most_constrained_lane_is_none_when_every_lane_has_lapsed() -> None:
+    first = _lane(lane_id="five_hour", remaining=3, reset=900.0)
+    second = _lane(lane_id="weekly", remaining=60, reset=950.0)
+
+    assert most_constrained_lane(_snapshot(lanes=(first, second)), now=1000.0) is None
+
+
+def test_most_constrained_lane_treats_a_missing_reset_as_never_lapsed() -> None:
+    open_ended = _lane(lane_id="credits", remaining=30, reset=None)  # type: ignore[arg-type]
+    lapsed = _lane(lane_id="five_hour", remaining=3, reset=900.0)
+
+    picked = most_constrained_lane(_snapshot(lanes=(open_ended, lapsed)), now=10**9)
+
+    assert picked is open_ended
+
+
+def test_most_constrained_lane_with_a_clock_still_ignores_detail_only_lanes() -> None:
+    known = _lane(lane_id="weekly", remaining=25, bindable=True, reset=5000.0)
+    detail = _lane(lane_id="fable", remaining=5, bindable=False, reset=5000.0)
+
+    assert most_constrained_lane(_snapshot(lanes=(known, detail)), now=1000.0) is known

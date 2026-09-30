@@ -399,11 +399,28 @@ class ProviderUsageService:
     def _can_retain(snapshot: ProviderUsageSnapshot) -> bool:
         return snapshot.provider_id != "claude" or snapshot.account_discriminator is not None
 
+    @staticmethod
+    def _is_invented_antigravity_reading(snapshot: ProviderUsageSnapshot) -> bool:
+        """The READY "Antigravity CLI 100% left" lane older builds made up.
+
+        Nothing ever measured it: it came from the Gemini CLI's sign-in file,
+        not from Antigravity's quota server, and it was saved to disk. Real
+        Antigravity lanes come from ``antigravity-app``.
+        """
+        return snapshot.provider_id == "antigravity" and any(
+            lane.lane_id == "cli" and lane.source_id == "antigravity-oauth"
+            for lane in snapshot.lanes
+        )
+
     def _identity_checked_restored_state(
         self,
         state: ProviderUsageState,
     ) -> ProviderUsageState:
-        """Withhold saved Claude quota until its account scope is proved."""
+        """Withhold saved Claude quota until its account scope is proved.
+
+        Also drops a saved Antigravity reading no server ever measured, so
+        it is not served back as a stale "last known good".
+        """
         try:
             from .claude_quota import account_facts_from_claude_config
 
@@ -415,11 +432,14 @@ class ProviderUsageService:
         kept = tuple(
             snapshot
             for snapshot in state.snapshots
-            if snapshot.provider_id != "claude"
-            or (
-                snapshot.source_instance_id == "default"
-                and current_claude_account is not None
-                and snapshot.account_discriminator == current_claude_account
+            if not self._is_invented_antigravity_reading(snapshot)
+            and (
+                snapshot.provider_id != "claude"
+                or (
+                    snapshot.source_instance_id == "default"
+                    and current_claude_account is not None
+                    and snapshot.account_discriminator == current_claude_account
+                )
             )
         )
         if len(kept) == len(state.snapshots):

@@ -161,7 +161,7 @@ def test_no_percent_anywhere_returns_none__and_2_more() -> None:
         settings=SimpleNamespace(colors=Colors()),
         _usage_menu_settings=lambda: Menu(),
     )
-    state = quota_runway_state_for_controller(controller)
+    state = quota_runway_state_for_controller(controller, wall_clock=lambda: NOW)
     assert state is not None
     assert state.provider_id == "claude"
     assert state[0] == 0.25
@@ -216,7 +216,7 @@ def test_controller_seam_uses_exact_instance_profile_identity__and_1_more() -> N
         ),
     )
 
-    state = quota_runway_state_for_controller(controller)
+    state = quota_runway_state_for_controller(controller, wall_clock=lambda: NOW)
 
     assert state is not None
     assert state.source_instance_id == "work"
@@ -252,10 +252,114 @@ def test_controller_seam_uses_exact_instance_profile_identity__and_1_more() -> N
         ),
     )
 
-    state = quota_runway_state_for_controller(controller)
+    state = quota_runway_state_for_controller(controller, wall_clock=lambda: NOW)
 
     assert state is not None
     assert state.source_instance_id == "personal"
     assert state.provider_label == "Claude"
     assert state.color == "#D97757"
 
+
+
+# --- a lapsed window is no reading ------------------------------------------
+
+
+def _controller_for(*snapshots):
+    class Colors:
+        @staticmethod
+        def agent_color(_provider_id):
+            return "#D97757"
+
+    return SimpleNamespace(
+        provider_usage_state=SimpleNamespace(snapshots=tuple(snapshots)),
+        settings=SimpleNamespace(colors=Colors()),
+        _usage_menu_settings=lambda: None,
+    )
+
+
+def _stale_claude_with_a_lapsed_five_hour():
+    return _snapshot(
+        "claude",
+        (
+            _lane("claude", "five_hour", 3.0, reset_at=NOW - 10_800.0),
+            _lane("claude", "weekly", 60.0, reset_at=NOW + 86_400.0),
+        ),
+        state=ProviderSourceState.STALE,
+    )
+
+
+def test_a_lapsed_lane_stops_driving_the_runway__and_2_more() -> None:
+    # --- scenario: a_lapsed_lane_stops_driving_the_runway
+    snapshot = _stale_claude_with_a_lapsed_five_hour()
+
+    lane = tightest_runway_lane((snapshot,), now=NOW)
+
+    assert lane is not None
+    assert lane.lane_id == "weekly"
+    state = quota_runway_state_for_controller(
+        _controller_for(snapshot), wall_clock=lambda: NOW
+    )
+    assert state is not None
+    assert state.fraction_left == 0.6
+    assert state.lane_label == "Weekly"
+
+    # --- scenario: only_a_lapsed_lane_leaves_the_runway_dark
+    only_lapsed = _snapshot(
+        "claude",
+        (_lane("claude", "five_hour", 3.0, reset_at=NOW - 10_800.0),),
+        state=ProviderSourceState.STALE,
+    )
+    assert tightest_runway_lane((only_lapsed,), now=NOW) is None
+    assert (
+        quota_runway_state_for_controller(
+            _controller_for(only_lapsed), wall_clock=lambda: NOW
+        )
+        is None
+    )
+
+    # --- scenario: omitting_the_clock_keeps_the_old_selection
+    lane = tightest_runway_lane((snapshot,))
+    assert lane is not None
+    assert lane.lane_id == "five_hour"
+
+
+def test_the_runway_lapse_boundary_is_strict_and_a_missing_reset_never_lapses() -> None:
+    at_reset = _snapshot("claude", (_lane("claude", "five_hour", 3.0, reset_at=NOW),))
+    just_after = _snapshot(
+        "claude", (_lane("claude", "five_hour", 3.0, reset_at=NOW + 1.0),)
+    )
+    open_ended = _snapshot("claude", (_lane("claude", "credits", 3.0, reset_at=None),))
+
+    assert tightest_runway_lane((at_reset,), now=NOW) is None
+    assert tightest_runway_lane((just_after,), now=NOW) is not None
+    assert tightest_runway_lane((open_ended,), now=NOW) is not None
+
+
+def test_a_stale_lane_that_has_not_reset_still_beats_a_ready_one() -> None:
+    # A stale reading is a ceiling while its window is still open: the
+    # percent left only falls inside a window. Only a lapse drops it.
+    stale = _snapshot(
+        "claude",
+        (_lane("claude", "five_hour", 3.0, reset_at=NOW + 600.0),),
+        state=ProviderSourceState.STALE,
+    )
+    ready = _snapshot("codex", (_lane("codex", "weekly", 80.0),))
+
+    lane = tightest_runway_lane((stale, ready), now=NOW)
+
+    assert lane is not None
+    assert (lane.provider_id, lane.lane_id) == ("claude", "five_hour")
+
+
+def test_the_runway_seam_is_deterministic_for_one_injected_clock() -> None:
+    controller = _controller_for(_stale_claude_with_a_lapsed_five_hour())
+
+    first = quota_runway_state_for_controller(controller, wall_clock=lambda: NOW)
+    second = quota_runway_state_for_controller(controller, wall_clock=lambda: NOW)
+
+    assert first == second
+    # And it follows the clock: the same reading a day later has lapsed too.
+    later = quota_runway_state_for_controller(
+        controller, wall_clock=lambda: NOW + 90_000.0
+    )
+    assert later is None

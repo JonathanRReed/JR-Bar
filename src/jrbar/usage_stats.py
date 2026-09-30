@@ -1151,7 +1151,7 @@ def cached_codex_rate_limits(cache_path: Path) -> dict | None:
     )
     if source is None:
         return None
-    provider_cache = _secondary_provider_cache_path(cache_path, source.source_key)
+    provider_cache = provider_cache_path(cache_path, source.source_key)
     cache = _load_cache(provider_cache, source.source_key)
     files = cache.get("files")
     if not isinstance(files, dict):
@@ -2479,6 +2479,41 @@ def _scan_inventory_usage_with_index(
             except OSError:
                 pass
 
+    totals = _totals_from_records(all_records, since_epoch)
+    totals.source_coverage = {provider_id: coverage.finalize() for provider_id, coverage in coverage_states.items()}
+    if rate_candidates:
+        newest = max(rate_candidates, key=lambda item: item[0])
+        totals.codex_rate_limit_evidence = newest[1]
+        totals.codex_rate_limit_observed_at = newest[0] / 1_000_000_000.0
+    codex_source = next(
+        (source for source in inventory.sources if source.provider_id == "codex"),
+        None,
+    )
+    # Rebind, never clear-then-repopulate: the UI thread reads this global
+    # between scans, and the gap after clear() showed it an empty table.
+    latest: dict[str, tuple[dict, ...]] = {}
+    if codex_source is not None and codex_source.root_key is not None:
+        latest[codex_source.root_key] = totals.codex_rate_limit_evidence
+    global _LATEST_CODEX_RATE_LIMITS
+    _LATEST_CODEX_RATE_LIMITS = latest
+    return totals
+
+
+def _canonical_window_records(
+    records: list[tuple],
+    since_epoch: float,
+) -> list[tuple]:
+    """The one record stream a window's totals are summed from.
+
+    Three steps, in this order: (a) resolve Codex fork and copy lineage over
+    ALL the records given, so an ancestor outside the window still names the
+    copy of its event; (b) drop records before ``since_epoch``; (c) keep only
+    the first record for each dedupe key. The window comes before the dedupe
+    so an old copy cannot suppress a current record.
+
+    The scan and every cached reader sum this stream, so a card and the graph
+    cannot disagree about what one window holds.
+    """
     # Forked rollouts contain an exact copy of their ancestor's token events.
     # Resolve those copies only through the admitted lineage graph. This keeps
     # sibling branches independent even when they happen to reach the same
@@ -2486,7 +2521,7 @@ def _scan_inventory_usage_with_index(
     codex_parents: dict[str, str] = {}
     codex_roots: dict[str, str] = {}
     codex_own_events: dict[tuple[str, str], str] = {}
-    for record in all_records:
+    for record in records:
         if record[0] != "codex":
             continue
         identity = _codex_event_identity(record[8])
@@ -2501,7 +2536,7 @@ def _scan_inventory_usage_with_index(
             codex_own_events.setdefault((session_id, event_id), record[8])
 
     normalized_records: list[tuple] = []
-    for record in all_records:
+    for record in records:
         if record[0] != "codex":
             normalized_records.append(record)
             continue
@@ -2531,26 +2566,34 @@ def _scan_inventory_usage_with_index(
             unresolved_owner = parent_id or root_id or session_id
             canonical = f"codex-unresolved:{unresolved_owner}:{event_id}"
         normalized_records.append((*record[:8], canonical))
-    all_records = normalized_records
 
-    totals = UsageTotals()
-    totals.source_coverage = {provider_id: coverage.finalize() for provider_id, coverage in coverage_states.items()}
+    window: list[tuple] = []
     seen: set[str] = set()
+    for record in normalized_records:
+        if record[3] < since_epoch:
+            continue
+        dedupe = record[8]
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+        window.append(record)
+    return window
+
+
+def _totals_from_records(records: list[tuple], since_epoch: float) -> UsageTotals:
+    """Sum one window's canonical records: tokens, sessions and estimated cost.
+
+    The scan and the cache readers both come through here, so a token figure
+    and its dollar estimate cannot be computed two different ways. Coverage
+    and rate-limit evidence are the caller's to fill in.
+    """
+    totals = UsageTotals()
     priced_records = 0
     total_pricing_records = 0
     priced_token_count = 0
     total_pricing_token_count = 0
-    for record in all_records:
+    for record in _canonical_window_records(records, since_epoch):
         provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
-        if epoch < since_epoch:
-            continue
-        # Global first-seen dedupe across ALL files -- resumed/forked
-        # sessions copy records forward and content blocks repeat usage. Apply
-        # the requested window first so an old copy cannot suppress a current
-        # one, and expose exactly the same canonical stream downstream.
-        if dedupe in seen:
-            continue
-        seen.add(dedupe)
         totals.records.append(record)
         totals.sessions.add(session)
         if provider == "codex":
@@ -2584,21 +2627,6 @@ def _scan_inventory_usage_with_index(
         priced_token_count=priced_token_count,
         total_token_count=total_pricing_token_count,
     )
-    if rate_candidates:
-        newest = max(rate_candidates, key=lambda item: item[0])
-        totals.codex_rate_limit_evidence = newest[1]
-        totals.codex_rate_limit_observed_at = newest[0] / 1_000_000_000.0
-    codex_source = next(
-        (source for source in inventory.sources if source.provider_id == "codex"),
-        None,
-    )
-    # Rebind, never clear-then-repopulate: the UI thread reads this global
-    # between scans, and the gap after clear() showed it an empty table.
-    latest: dict[str, tuple[dict, ...]] = {}
-    if codex_source is not None and codex_source.root_key is not None:
-        latest[codex_source.root_key] = totals.codex_rate_limit_evidence
-    global _LATEST_CODEX_RATE_LIMITS
-    _LATEST_CODEX_RATE_LIMITS = latest
     return totals
 
 
@@ -2722,6 +2750,74 @@ def _secondary_provider_cache_path(
     return cache_path.with_name(f"{cache_path.name}.{suffix}")
 
 
+def provider_cache_path(
+    cache_path: Path | None,
+    source_key: SourceKey,
+) -> Path | None:
+    """The file ``scan_usage`` keeps one provider's scan cache in.
+
+    Claude keeps the bare ``cache_path`` (renaming it would send every warm
+    Claude cache back to a cold scan); every other provider gets a name with
+    its source key appended. The scan and every reader of that cache ask
+    here, so the writer and a reader can never look at different files.
+    """
+    if source_key.provider_id == "claude":
+        return cache_path
+    return _secondary_provider_cache_path(cache_path, source_key)
+
+
+def cache_entry_floor(entry: dict) -> float:
+    """How far back one cache entry reaches: the floor it was trimmed to.
+
+    A missing floor counts as 0.0 (nothing was trimmed). One that cannot be
+    read counts as unbounded, so it is never trusted to cover a window.
+    """
+    try:
+        floor = float(entry.get("since", 0.0))
+    except (TypeError, ValueError):
+        return math.inf
+    return math.inf if math.isnan(floor) else floor
+
+
+def cache_provider_records(
+    cache: dict,
+    provider_id: str,
+) -> tuple[list[tuple], float] | None:
+    """Every record a loaded scan cache holds, and how far back it reaches.
+
+    The cache is written for whichever window last scanned: raw per-file
+    records, with the copies a fork or resume repeated and everything back to
+    that window's floor. Callers total them through
+    ``_totals_from_records`` and never sum them as they stand. The second
+    value is the newest floor any entry was trimmed to, the earliest moment
+    the whole cache can vouch for. ``None`` when the cache is not readable.
+    A file whose records cannot be decoded is skipped, as elsewhere.
+    """
+    files = cache.get("files")
+    sessions = cache.get("sessions")
+    models = cache.get("models")
+    dedupes = cache.get("dedupes")
+    if not (
+        isinstance(files, dict)
+        and isinstance(sessions, list)
+        and isinstance(models, list)
+        and isinstance(dedupes, list)
+    ):
+        return None
+    records: list[tuple] = []
+    floor = 0.0
+    for key, entry in tuple(files.items())[:USAGE_CACHE_MAX_FILES]:
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        decoded = _decode_records(
+            entry, sessions, models, dedupes, expected_provider=provider_id
+        )
+        if decoded is not None:
+            records.extend(decoded)
+        floor = max(floor, cache_entry_floor(entry))
+    return records, floor
+
+
 def _merge_usage_totals(parts: tuple[UsageTotals, ...]) -> UsageTotals:
     merged = UsageTotals()
     for part in parts:
@@ -2800,11 +2896,7 @@ def scan_usage(
         source_inventory = by_provider.get(provider_id)
         if source is None or source_inventory is None:
             continue
-        provider_cache = (
-            cache_path
-            if provider_id == "claude"
-            else _secondary_provider_cache_path(cache_path, source.source_key)
-        )
+        provider_cache = provider_cache_path(cache_path, source.source_key)
         _result, totals = _scan_provider_usage_with_totals(
             source,
             provider_root,
@@ -2985,12 +3077,19 @@ def usage_graph_model(
     provider_ids: tuple[str, ...],
     now: datetime | None = None,
     extra_sessions: dict[str, dict[str, int]] | None = None,
+    ledger_first_day: dict[str, str] | None = None,
 ) -> dict:
     """Build one shared-axis, range-consistent graph projection.
 
     Only providers with an admitted local usage record are returned. The
     selected metric is common to every series, so unlike the old dual-axis
     chart, line height always means the same thing.
+
+    ``ledger_first_day`` maps a provider whose sessions come only from its
+    hook ledger to the ISO day that ledger now begins. The ledger is trimmed
+    to its newest events, so an empty day before that one is unknown, not
+    zero: in the ``sessions`` metric it becomes a gap day (``-1.0``), which
+    the client draws as a break in the line.
     """
     if metric not in {"tokens", "cost", "sessions"}:
         raise ValueError("usage metric is tokens, cost, or sessions")
@@ -3019,6 +3118,12 @@ def usage_graph_model(
     series = []
     for provider_id in provider_ids:
         values = tuple(bucket["providers"].get(provider_id, {}).get(metric, 0) for bucket in buckets.values())
+        first_day = (ledger_first_day or {}).get(provider_id) if metric == "sessions" else None
+        if first_day is not None:
+            values = tuple(
+                -1.0 if day < first_day and not value else value
+                for day, value in zip(buckets, values, strict=True)
+            )
         if any(float(value) > 0.0 for value in values):
             series.append({"provider_id": provider_id, "values": values})
     maximum = max(

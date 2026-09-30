@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -1338,3 +1338,118 @@ def test_refresh_warms_the_document_cache_for_identical_settings(
         {"provider_id": "claude", "values": [100, 0]}
     ]
     assert document["summary"] == "Last 7 days: Claude 100 · 2 sessions"
+
+
+# --- Sessions: days before a hook ledger starts are gaps, not zeros ---------
+
+
+def _stub_scans(monkeypatch):
+    stats = usage_graph_worker.usage_stats
+    monkeypatch.setattr(stats, "scan_usage", lambda *_args, **_kwargs: stats.UsageTotals())
+    monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
+    monkeypatch.setattr(usage_graph_worker, "_scan_antigravity_records", lambda *_args: [])
+    monkeypatch.setattr(
+        "jrbar.local_token_history.scan_local_records", lambda *_args, **_kwargs: []
+    )
+
+
+def _write_ledger(state_dir, provider_id, offsets_and_work):
+    """A synthetic ledger: (days ago, work id) for each session_start."""
+    now = datetime.now()
+    rows = []
+    for days_ago, work_id in offsets_and_work:
+        moment = (now - timedelta(days=days_ago)).replace(hour=12, minute=0, second=0)
+        rows.append(
+            {
+                "provider_id": provider_id,
+                "event_name": "session_start",
+                "provider_work_id": work_id,
+                "occurred_at_epoch": moment.timestamp(),
+            }
+        )
+    (state_dir / f"{provider_id}.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+
+def _sessions_payload(monkeypatch, tmp_path, ledger_provider, providers=None):
+    _stub_scans(monkeypatch)
+    monkeypatch.setattr(usage_graph_worker, "default_state_dir", lambda: tmp_path)
+    return usage_graph_worker._build_payload(
+        make_target(
+            mode="sessions", providers=providers or (ledger_provider,)
+        ).settings
+    )
+
+
+def test_sessions_before_a_ledger_starts_are_gap_days(monkeypatch, tmp_path):
+    _write_ledger(tmp_path, "devin", [(3, "a"), (1, "b"), (1, "c")])
+
+    model, summary = _sessions_payload(monkeypatch, tmp_path, "devin")
+
+    values = model["series"][0]["values"]
+    assert values[:3] == (-1.0, -1.0, -1.0)
+    assert values[3:] == (1, 0, 2, 0)
+    # The figure counts session-days that were counted, never the gaps.
+    assert "Devin 3 session-days" in summary
+    assert model["partial_provider_ids"] == ()
+
+
+def test_a_ledger_that_reaches_back_past_the_window_makes_no_gaps(monkeypatch, tmp_path):
+    _write_ledger(tmp_path, "devin", [(40, "old"), (2, "a")])
+
+    model, summary = _sessions_payload(monkeypatch, tmp_path, "devin")
+
+    assert all(value >= 0 for value in model["series"][0]["values"])
+    assert "Devin 1 session-days" in summary
+
+
+def test_providers_with_their_own_history_get_no_ledger_gaps(monkeypatch, tmp_path):
+    # Grok reads its own session files, so where its hook log starts says
+    # nothing about what its history covers.
+    _write_ledger(tmp_path, "grok", [(1, "a")])
+
+    model, _summary = _sessions_payload(monkeypatch, tmp_path, "grok")
+
+    assert all(value >= 0 for value in model["series"][0]["values"])
+    assert model["partial_provider_ids"] == ()
+
+
+def test_claude_and_codex_sessions_are_left_to_their_transcripts(monkeypatch, tmp_path):
+    _write_ledger(tmp_path, "claude", [(1, "a")])
+    _write_ledger(tmp_path, "codex", [(1, "b")])
+
+    model, _summary = _sessions_payload(
+        monkeypatch, tmp_path, "claude", providers=("claude", "codex")
+    )
+
+    assert model["series"] == ()
+    assert model["partial_provider_ids"] == ()
+
+
+def test_a_failing_first_event_lookup_leaves_counts_intact_and_adds_no_gaps(
+    monkeypatch, tmp_path
+):
+    from jrbar import session_history
+
+    _write_ledger(tmp_path, "devin", [(1, "a")])
+
+    def broken(*_args, **_kwargs):
+        raise OSError("state dir unreadable")
+
+    monkeypatch.setattr(session_history, "ledger_first_event_epochs", broken)
+
+    model, summary = _sessions_payload(monkeypatch, tmp_path, "devin")
+
+    assert model["series"][0]["values"] == (0, 0, 0, 0, 0, 1, 0)
+    assert "Devin 1 session-days" in summary
+
+
+def test_the_document_cache_is_keyed_to_the_gap_days_semantics():
+    # Documents cached before gap days existed are zero-filled; the version
+    # is part of the cache key, so they are rebuilt rather than served.
+    assert usage_graph_worker._USAGE_DOC_CACHE_VERSION == 2
+    snapshot = usage_graph_worker._settings_snapshot(
+        make_target(mode="sessions", providers=("devin",)).settings
+    )
+    assert usage_graph_worker._usage_doc_cache_meta(snapshot, None)["v"] == 2

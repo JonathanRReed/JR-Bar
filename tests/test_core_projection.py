@@ -1615,3 +1615,70 @@ def test_a_source_names_the_moment_it_was_last_heard() -> None:
     assert sources["claude"]["heard_at"] == pytest.approx(NOW - 1.4)
     assert sources["claude"]["heard_age_seconds"] == 1.4
     assert sources["pi"]["heard_at"] is None
+
+
+def _usage_state_with(*lanes: SimpleNamespace) -> SimpleNamespace:
+    return SimpleNamespace(
+        refreshed_at=NOW, next_refresh_at=None, refreshing=False,
+        snapshots=(
+            SimpleNamespace(
+                provider_id="claude", source_instance_id="default", account_label=None,
+                state=SimpleNamespace(value="stale"), reason_code=None, action_label=None,
+                observed_at=NOW - 20000.0, input_tokens=0, cached_input_tokens=0,
+                output_tokens=0, estimated_cost_usd=None, credits_remaining=None,
+                lanes=tuple(lanes),
+            ),
+        ),
+    )
+
+
+def _measured_lane(lane_id: str, label: str, remaining: float, reset_at: float | None):
+    return SimpleNamespace(
+        lane_id=lane_id, label=label, remaining_percent=remaining, reset_at=reset_at,
+        scope="account", model=None, bindable=True,
+    )
+
+
+def test_constrained_skips_a_window_whose_reset_has_passed__and_2_more() -> None:
+    # --- scenario: constrained_skips_a_window_whose_reset_has_passed
+    lapsed = _measured_lane("five_hour", "5h", 3.0, NOW - 10800.0)
+    live = _measured_lane("seven_day", "7d", 60.0, NOW + 86400.0)
+
+    provider = usage_document(_usage_state_with(lapsed, live), usage_samples=None, now=NOW)[
+        "providers"
+    ][0]
+
+    assert provider["constrained"] == {
+        "id": "seven_day", "name": "7d", "used_pct": 40.0,
+        "resets_at": NOW + 86400.0, "reason": "only_measured", "candidates": 1,
+    }
+    # The lapsed window stays in `windows`, exactly as it was read.
+    assert [window["id"] for window in provider["windows"]] == ["five_hour", "seven_day"]
+    assert provider["windows"][0]["used_pct"] == 97.0
+    assert provider["windows"][0]["resets_at"] == NOW - 10800.0
+    json.dumps(provider)
+
+    # --- scenario: constrained_is_null_when_every_window_has_lapsed
+    only_lapsed = usage_document(
+        _usage_state_with(lapsed), usage_samples=None, now=NOW
+    )["providers"][0]
+    assert only_lapsed["constrained"] is None
+    assert only_lapsed["windows"][0]["used_pct"] == 97.0
+
+    # --- scenario: without_a_clock_the_old_pick_is_unchanged
+    untimed = usage_document(_usage_state_with(lapsed, live))["providers"][0]
+    assert untimed["constrained"]["id"] == "five_hour"
+    assert untimed["constrained"]["candidates"] == 2
+
+
+def test_constrained_lapse_boundary_is_strict_and_no_reset_never_lapses() -> None:
+    at_reset = _measured_lane("five_hour", "5h", 3.0, NOW)
+    open_ended = _measured_lane("credits", "Credits", 50.0, None)
+    after = _measured_lane("seven_day", "7d", 80.0, NOW + 1.0)
+
+    provider = usage_document(
+        _usage_state_with(at_reset, open_ended, after), usage_samples=None, now=NOW
+    )["providers"][0]
+
+    assert provider["constrained"]["id"] == "credits"
+    assert provider["constrained"]["candidates"] == 2

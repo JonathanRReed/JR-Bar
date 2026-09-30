@@ -8,7 +8,9 @@ the menu meters, the Usage Center bars, and the Screen Bar quota ember
 already trust. This module selects the single WORST ``remaining_percent``
 lane over the visible providers -- runway is "how much is left before the
 nearest wall", so unlike the ember it does not wait for a lane to sink
-below its provider's threshold.
+below its provider's threshold. A lane whose window has already reset
+describes a window that is over, so it is skipped (the same rule the Usage
+Center's ``constrained`` window and the quota ember follow).
 
 Pure selection lives in :func:`tightest_runway_lane`; the one
 controller-shaped seam is :func:`quota_runway_state_for_controller`,
@@ -17,6 +19,7 @@ which the provider-usage facade wires in as a thin override.
 
 from __future__ import annotations
 
+import time
 from typing import NamedTuple
 
 from .provider_feature_settings import ProviderInstancePolicyProjection
@@ -60,6 +63,7 @@ def _tightest_runway_selection(
     *,
     hidden_providers: frozenset[str] = frozenset(),
     hidden_instances: frozenset[tuple[str, str]] = frozenset(),
+    now: float | None = None,
 ) -> _RunwayLaneSelection | None:
     worst_key = None
     worst_selection = None
@@ -73,7 +77,7 @@ def _tightest_runway_selection(
             continue
         if snapshot.state not in _RUNWAY_STATES:
             continue
-        lane = most_constrained_lane(snapshot)
+        lane = most_constrained_lane(snapshot, now=now)
         if lane is None or lane.remaining_percent is None:
             continue
         key = (
@@ -96,6 +100,7 @@ def tightest_runway_lane(
     *,
     hidden_providers: frozenset[str] = frozenset(),
     hidden_instances: frozenset[tuple[str, str]] = frozenset(),
+    now: float | None = None,
 ) -> UsageLane | None:
     """The worst remaining_percent lane across visible, gated providers.
 
@@ -103,11 +108,16 @@ def tightest_runway_lane(
     non-READY/STALE sources are skipped, detail-only lanes never bind)
     but takes the worst lane OVERALL rather than only lanes below their
     threshold. Returns None when no visible lane carries a percent.
+
+    With ``now``, a lane whose window has already reset is skipped: its
+    percent describes a window that is over, so it must not light the
+    runway. A stale lane whose window is still open keeps competing.
     """
     selection = _tightest_runway_selection(
         snapshots,
         hidden_providers=hidden_providers,
         hidden_instances=hidden_instances,
+        now=now,
     )
     return None if selection is None else selection.lane
 
@@ -137,12 +147,18 @@ def runway_state_for_lane(
     )
 
 
-def quota_runway_state_for_controller(controller) -> QuotaRunwayState | None:
+def quota_runway_state_for_controller(
+    controller,
+    *,
+    wall_clock=time.time,
+) -> QuotaRunwayState | None:
     """The facade seam: JR usage state in, renderer-shaped tuple out.
 
     Best-effort on the controller reads -- a settings or colors failure
-    must degrade to defaults, never take the LED sync down.
+    must degrade to defaults, never take the LED sync down. The clock is
+    read once, so one call judges every lane against the same moment.
     """
+    now = float(wall_clock())
     settings = None
     try:
         settings = controller._usage_menu_settings()
@@ -166,6 +182,7 @@ def quota_runway_state_for_controller(controller) -> QuotaRunwayState | None:
         getattr(controller.provider_usage_state, "snapshots", ()),
         hidden_providers=hidden,
         hidden_instances=hidden_instances,
+        now=now,
     )
     if selection is None:
         return None
