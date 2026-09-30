@@ -91,11 +91,9 @@ FOCUSED_TESTS: Final = (
     "tests/test_why_light_context.py",
     "tests/test_why_light_projection.py",
     "tests/test_why_panel.py",
-    # The colour model, its motion and the preview lease, and the announcer's
-    # root views: live code that used to share test files with the retired
-    # Settings window.
+    # The colour model and its motion: live code that used to share test
+    # files with the retired Settings window.
     "tests/test_colors_model.py",
-    "tests/test_announcer_stack_view.py",
 )
 
 

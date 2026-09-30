@@ -31,14 +31,12 @@ def compose_status_bar_application() -> ApplicationCompositionReceipt:
     from . import status_bar as public_status_bar
     from . import status_bar_legacy as legacy
     from .ambient_effect_runtime import install_ambient_effect_runtime
-    from .screen_bar_runtime import install_screen_bar_runtime
 
     if _receipt is not None and legacy.StatusBarController is _receipt.final_controller:
         return _receipt
 
     production_controller = production.install_status_bar_production()
     controller = public_status_bar.install_status_bar_facade()
-    install_screen_bar_runtime()
     install_ambient_effect_runtime(controller)
     final_controller = provider_host.install_provider_usage_status_bar()
 
@@ -51,7 +49,6 @@ def compose_status_bar_application() -> ApplicationCompositionReceipt:
         steps=(
             "production-controller",
             "status-bar-facade",
-            "screen-bar-runtime",
             "ambient-effects-runtime",
             "provider-usage-controller",
         ),

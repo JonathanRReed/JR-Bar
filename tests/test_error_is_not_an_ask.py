@@ -248,20 +248,7 @@ def test_the_creator_micro_keys_tell_broken_from_waiting__and_2_more() -> None:
 
 
 
-def test_the_on_screen_virtual_device_no_longer_paints_a_failure_as_working__and_2_more() -> None:
-    # --- scenario: the_on_screen_virtual_device_no_longer_paints_a_failure_as_working
-    from jrbar.virtual_device import virtual_led_colors
-
-    lit = virtual_led_colors(LedDisplayState.FAILED, 0.0)
-    working = virtual_led_colors(LedDisplayState.WORKING, 0.0)
-    ask = virtual_led_colors(LedDisplayState.ASK, 0.8)
-    assert lit != working
-    assert lit != ask
-    # Red-dominant, and a hard blink: fully off for half its cycle.
-    red, green, blue, _alpha = lit[0]
-    assert red > green and red > blue
-    assert virtual_led_colors(LedDisplayState.FAILED, 0.75)[0][3] == 0.0
-
+def test_the_failure_signal_cue_plays_in_the_error_colour__and_1_more() -> None:
     # --- scenario: the_failure_signal_cue_plays_in_the_error_colour
     """``program_for_projection``'s active-signal branch -- the finite
     double blink a failure announces itself with."""

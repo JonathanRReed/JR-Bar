@@ -96,9 +96,10 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
         for name in (_call_name(node) for node in ast.walk(compose))
         if name is not None
     ]
-    assert "install_screen_bar_runtime" in call_names
-    # The Settings window is gone, and so is its install step.
+    # The Settings window and the Python Screen Bar's drawing installer are
+    # gone, and so are their install steps.
     assert "install_settings_navigation" not in call_names
+    assert "install_screen_bar_runtime" not in call_names
 
     receipt_keywords: set[str] = set()
     for node in ast.walk(compose):
@@ -122,7 +123,6 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
         source = path.read_text(encoding="utf-8")
         tree = _tree(path)
 
-        assert "install_screen_bar_runtime()" not in source, f"{path.name} still starts Screen Bar at import time"
         assert "_install(dict(globals()))" not in source, f"{path.name} still performs namespace injection at import time"
 
         top_level_calls = {_call_name(call) for call in _top_level_calls(tree)}
@@ -135,36 +135,16 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
         )
 
 
-def test_the_provider_host_and_the_screen_bar_installer_keep_their_shape__and_1_more() -> None:
-    # --- scenario: the_provider_host_is_one_controller_class_the_composition_installs
+def test_the_provider_host_is_one_controller_class_the_composition_installs() -> None:
     source = PROVIDER_USAGE_STATUS_BAR.read_text(encoding="utf-8")
     composition = APPLICATION_COMPOSITION.read_text(encoding="utf-8")
 
-    assert "install_screen_bar_runtime()" in composition
     assert "install_provider_usage_status_bar()" in composition
-    assert "install_screen_bar_runtime()" not in source
     classes = {
         node.name for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef)
     }
     assert classes == {"JRProviderUsageStatusBarController"}
     assert "openProviderUsageCenter_" in source
-
-    # --- scenario: the_screen_bar_installer_does_not_rebind_objective_c_classes
-    screen_bar_source = (SRC / "screen_bar_runtime.py").read_text(encoding="utf-8")
-    screen_bar_tree = ast.parse(screen_bar_source)
-
-    assert "VirtualLedView._draw_compact_accent = _draw_compact_accent" in screen_bar_source
-    assert "VirtualLedView._draw_wings_only = _draw_wings_only" in screen_bar_source
-    assert not any(
-        isinstance(node, ast.ClassDef) for node in ast.walk(screen_bar_tree)
-    )
-    assert "StatusBarController" not in screen_bar_source
-    assert "objc.super" not in screen_bar_source
-    assert "rounded_band_bounds" in screen_bar_source
-    assert '== "bracket"' in screen_bar_source
-    assert "def _min_glow" in screen_bar_source
-    assert "finally:" in screen_bar_source
-    assert "outline_alpha" in screen_bar_source
 
 
 
@@ -208,7 +188,6 @@ assert receipt.final_controller is provider.JRProviderUsageStatusBarController
 assert receipt.steps == (
     "production-controller",
     "status-bar-facade",
-    "screen-bar-runtime",
     "ambient-effects-runtime",
     "provider-usage-controller",
 )

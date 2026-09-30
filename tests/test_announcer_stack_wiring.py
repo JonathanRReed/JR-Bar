@@ -63,7 +63,6 @@ from jrbar.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-from jrbar.virtual_device import VirtualStatusDevice
 
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
 
@@ -232,7 +231,6 @@ def controller(monkeypatch: pytest.MonkeyPatch, tmp_path):
         screen_bar_gauges_enabled=False,
     )
     target.virtual_status_device = SimpleNamespace(
-        can_present_announcer=MagicMock(return_value=True),
         set_wraps_menu_bar=MagicMock(),
         set_geometry_overrides=MagicMock(),
         set_bracket_style=MagicMock(),
@@ -289,37 +287,6 @@ def test_fully_dark_hides_announcer_and_pointer_without_erasing_stack_truth(
     )
     controller.virtual_status_device.set_standing_gauges.assert_called_with(0.0, False)
     assert controller._announcer_stack_state.ordered_identities
-
-
-@pytest.mark.parametrize(
-    ("changed", "expected"),
-    (
-        ({}, True),
-        ({"_enabled": False}, False),
-        ({"window": SimpleNamespace(isVisible=lambda: False)}, False),
-        ({"_display_asleep": True}, False),
-        ({"_fullscreen_hidden": True}, False),
-        ({"_alcove_relevant": True}, False),
-        ({"_compact_active": True}, False),
-        ({"_terminating": True}, False),
-    ),
-)
-def test_virtual_device_reports_exact_announcer_presentation_truth(
-    changed,
-    expected,
-) -> None:
-    device = VirtualStatusDevice.alloc().init()
-    device.window = SimpleNamespace(isVisible=lambda: True)
-    device._enabled = True
-    device._display_asleep = False
-    device._fullscreen_hidden = False
-    device._alcove_relevant = False
-    device._compact_active = False
-    device._terminating = False
-    for name, value in changed.items():
-        setattr(device, name, value)
-
-    assert device.can_present_announcer() is expected
 
 
 def test_controller_uses_only_current_snapshot_truth_and_projection_none_is_empty__and_1_more(controller,) -> None:

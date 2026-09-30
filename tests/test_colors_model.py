@@ -1,4 +1,4 @@
-"""The colour and animation model: swatches, names, motion and the preview lease.
+"""The colour and animation model: swatches, names and motion.
 
 The bug this suite exists for was reported as "we have a thing somewhere in
 the menu that lets us choose brand colors for all of the providers we have
@@ -9,10 +9,9 @@ Claude/OpenAI/Codex/Gemini brand colours -- which they were not, because the
 strip being drawn was CURATED_PALETTE (system red/blue/green/purple).
 
 So the interesting half is a MODEL: which swatches, what they are named, what
-order they come in, which ones are brands, how a provider's animation
-replaces a state's rhythm, and how a held preview owns the Screen Bar and
-gives it back. ``jrbar.colors`` and the Screen Bar's preview lease are live
-code, so this file tests them exhaustively without building a single view.
+order they come in, which ones are brands, and how a provider's animation
+replaces a state's rhythm. ``jrbar.colors`` is live code, so this file tests
+it exhaustively without building a single view.
 """
 
 from __future__ import annotations
@@ -562,93 +561,3 @@ def test_a_provider_preview_puts_that_provider_alone_on_the_strip__and_1_more() 
     # --- scenario: a_preview_with_nothing_running_still_shows_something
     program = studio_preview_program(ColorSettings.defaults(), statuses=())
     assert program.strip()
-
-
-
-# --- The Screen Bar hands the surface back --------------------------------
-
-
-class _RecordingDevice:
-    """A VirtualStatusDevice with its one AppKit-touching method replaced."""
-
-    def __init__(self):
-        from jrbar.virtual_device import VirtualStatusDevice
-
-        self.device = VirtualStatusDevice.alloc().init()
-        self.applied: list[tuple[str, dict]] = []
-        self.device._apply_program = self._apply
-
-    def _apply(self, program, **kwargs):
-        self.applied.append((str(program), dict(kwargs)))
-
-    @property
-    def shown(self) -> str | None:
-        return self.applied[-1][0] if self.applied else None
-
-
-def test_a_held_preview_owns_the_screen_bar_and_hides_live_updates__and_2_more() -> None:
-    # --- scenario: a_held_preview_owns_the_screen_bar_and_hides_live_updates
-    recorder = _RecordingDevice()
-    device = recorder.device
-
-    device.set_program("live-1")
-    assert recorder.shown == "live-1"
-
-    device.hold_preview_program("candidate")
-    assert device.preview_is_held()
-    assert recorder.shown == "candidate"
-
-    device.set_program("live-2")
-    assert recorder.shown == "candidate", "a live update repainted over the preview"
-
-    # --- scenario: releasing_a_preview_reverts_to_the_CURRENT_live_program
-    """Not the frame from before the hover: the world moved on underneath."""
-    recorder = _RecordingDevice()
-    device = recorder.device
-
-    device.set_program("live-1")
-    device.hold_preview_program("candidate")
-    device.set_program("live-2")
-
-    assert device.release_preview_program() is True
-    assert recorder.shown == "live-2"
-    assert device.preview_is_held() is False
-
-    # --- scenario: releasing_with_no_live_update_restores_what_was_there_before
-    recorder = _RecordingDevice()
-    device = recorder.device
-
-    device.set_program("live-1")
-    device.hold_preview_program("candidate")
-    assert device.release_preview_program() is True
-    assert recorder.shown == "live-1"
-
-
-
-def test_releasing_when_nothing_is_held_says_so_and_paints_nothing() -> None:
-    recorder = _RecordingDevice()
-    recorder.device.set_program("live-1")
-    assert recorder.device.release_preview_program() is False
-    assert len(recorder.applied) == 1
-
-
-def test_a_hold_nobody_released_expires_instead_of_owning_the_bar_forever(
-    monkeypatch,
-) -> None:
-    """The backstop for a preview whose exit event never arrived -- the
-    window closed under the pointer, the pane was torn down mid-hover."""
-    from jrbar import virtual_device
-
-    clock = [1000.0]
-    monkeypatch.setattr(virtual_device.time, "monotonic", lambda: clock[0])
-    recorder = _RecordingDevice()
-    device = recorder.device
-
-    device.set_program("live-1")
-    device.hold_preview_program("candidate")
-    clock[0] += virtual_device.PREVIEW_HOLD_MAX_SECONDS + 1.0
-
-    device.set_program("live-2")
-
-    assert device.preview_is_held() is False
-    assert recorder.shown == "live-2"

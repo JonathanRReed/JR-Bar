@@ -227,49 +227,7 @@ def test_geometry_key_is_color_free_but_invalidates_geometry_inputs__and_2_more(
         assert GlowPaintKey.from_output(**values) != base
 
 
-def test_glow_composition_reuses_geometry_across_paint_changes__and_1_more() -> None:
-    # --- scenario: glow_composition_reuses_geometry_across_paint_changes
-    from jrbar.virtual_device import _glow_runs
-
-    geometry_cache: BoundedRenderCache[object] = BoundedRenderCache(max_entries=4)
-    paint_cache: BoundedRenderCache[object] = BoundedRenderCache(max_entries=8)
-    common = {
-        "brightness": 255,
-        "led_width": 10.0,
-        "notch_width": 80.0,
-        "x_start": 0.0,
-        "x_end": 80.0,
-        "wing_offset": 0.0,
-        "wing_taper_floor": 1.0,
-    }
-
-    red = _glow_runs(
-        geometry_cache,
-        paint_cache,
-        colors=((1.0, 0.0, 0.0, 1.0),) * 8,
-        **common,
-    )
-    blue = _glow_runs(
-        geometry_cache,
-        paint_cache,
-        colors=((0.0, 0.0, 1.0, 1.0),) * 8,
-        **common,
-    )
-    repeated_blue = _glow_runs(
-        geometry_cache,
-        paint_cache,
-        colors=((0.0, 0.0, 1.0, 1.0),) * 8,
-        **common,
-    )
-
-    assert red != blue
-    assert blue is repeated_blue
-    assert geometry_cache.metrics.misses == 1
-    assert geometry_cache.metrics.hits == 2
-    assert paint_cache.metrics.misses == 2
-    assert paint_cache.metrics.hits == 1
-
-    # --- scenario: runtime_environment_reads_public_power_state_with_fallbacks
+def test_runtime_environment_reads_public_power_state_with_fallbacks() -> None:
     class ProcessInfo:
         @staticmethod
         def isLowPowerModeEnabled() -> bool:
