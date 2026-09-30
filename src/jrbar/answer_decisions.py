@@ -36,6 +36,13 @@ own, with one of the offered labels per question -- sends the agent's own
 input back with its documented ``answers`` field filled in. A bare approve
 never answers a question; it keeps the keystroke path it always had.
 
+A sub-agent's request (its payload names an agent other than the session)
+is held only while the Sub-agent asks setting is on. With it off no card is
+shown for it, so a hold could never be answered: the ingress gives the hook
+the ordinary empty reply at once and the agent's own prompt appears. A hold
+is keyed by the work as well as the request id, because a main session and a
+sub-agent that make the same call in one turn share an id.
+
 Claude Code shows its own prompt while the hook runs and takes whichever
 answer comes first, so a hold costs nothing there. Codex asks its hooks
 before it shows the prompt, so a hold delays the prompt; a Codex request
