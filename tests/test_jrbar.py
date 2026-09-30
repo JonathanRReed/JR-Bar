@@ -19630,6 +19630,60 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         self.assertIsNone(before_opened_at)
         self.assertIsNotNone(self.controller.menu_last_opened_at)
 
+    def test_local_acknowledge_and_resume_update_content_free_history(self) -> None:
+        """A local acknowledge and a resume from the deck path write content-free
+        history rows and reel phrases, leave the request phase alone, and keep
+        the acknowledgement out of the stored local triage state."""
+        self.controller.operator_history_store.path = (
+            Path(self._tmp.name) / "operator-history.json"
+        )
+        snapshot = self._canonical_snapshot(1)
+        state = snapshot.operator_state
+        request = state.requests[0]
+        original_phase = request.phase
+        self.controller.current_operator_state = state
+        self.controller.last_snapshot = snapshot
+        self.controller.operator_triage_saver = lambda _state: None
+        self.controller.settings = dataclass_replace(
+            self.controller.settings,
+            operator_history_retention_days=7,
+        )
+        self.controller.operator_history_store.retention_days = 7
+        work_key = state.works[0].key
+
+        acknowledge = AgentBrowserActionPayload(
+            work_key,
+            state.generation,
+            OperatorActionKind.ACKNOWLEDGE,
+        )
+        self.assertTrue(self.controller.performAgentBrowserPayload_(acknowledge))
+        self.assertTrue(self.controller._persistence_writer.wait_idle(timeout_seconds=2.0))
+        self.assertTrue(self.controller.operator_history_store.state.rows)
+        self.assertEqual(
+            self.controller.operator_history_store.state.rows[0].acknowledged,
+            1,
+        )
+
+        resume = AgentBrowserActionPayload(
+            work_key,
+            state.generation,
+            OperatorActionKind.RESUME_ESCALATION,
+        )
+        self.assertTrue(self.controller.performAgentBrowserPayload_(resume))
+        self.assertTrue(self.controller._persistence_writer.wait_idle(timeout_seconds=2.0))
+        self.assertGreaterEqual(
+            self.controller.operator_history_store.state.rows[0].sample_count,
+            2,
+        )
+        self.assertEqual(self.controller.current_operator_state.requests[0].phase, original_phase)
+        self.assertEqual(self.controller.local_triage_state.acknowledgements, ())
+        self.assertEqual(
+            self.controller.operator_history_reel[-2:],
+            (
+                "Request acknowledged locally",
+                "Request escalation resumed",
+            ),
+        )
 
     def test_action_generation_fencing(self) -> None:
         """Actions revalidate generation and keep a failed save visible; the
