@@ -36,11 +36,10 @@ final class PanelHotkey {
     var onPress: (@MainActor () -> Void)?
 
     /// The key could not be registered — another app owns it, or
-    /// another JR-Bar shortcut does (`conflictOwner` names which). The
-    /// Settings toggle reads this to say so instead of pretending the
-    /// key works.
+    /// another JR-Bar shortcut does. The Settings toggle reads this
+    /// (`registrationFailed`) to say so instead of pretending the key
+    /// works.
     private(set) var registrationFailed = false
-    private(set) var conflictOwner: String?
 
     init(id: String, title: String, defaultChord: HotkeyChord, center: HotkeyCenter = .shared) {
         self.id = id
@@ -71,7 +70,6 @@ final class PanelHotkey {
 
     private func register() {
         registrationFailed = false
-        conflictOwner = nil
         guard let chord else {
             // Cleared on Settings › Shortcuts: switched on, but no key.
             center.unregister(id)
@@ -85,16 +83,14 @@ final class PanelHotkey {
             break
         case .refused:
             registrationFailed = true
-        case .conflict(let holder):
+        case .conflict:
             registrationFailed = true
-            conflictOwner = holder.title
         }
     }
 
     func unregister() {
         center.unregister(id)
         registrationFailed = false
-        conflictOwner = nil
     }
 
     // Unregistering is the whole point of teardown: the registry would

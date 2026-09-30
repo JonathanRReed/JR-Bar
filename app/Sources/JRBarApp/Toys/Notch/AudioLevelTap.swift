@@ -61,10 +61,7 @@ final class AudioLevelTap {
             .map(\.processIdentifier)
     }
 
-    // Gating facts, pushed by `sync` — the state table's inputs.
-    private var mediaRowVisible = false
-    private var playing = false
-    private var settingEnabled = false
+    /// The now-playing app `sync` last named; `nil` mixes everything.
     private var clientBundleID: String?
 
     private var engine: (any AudioTapEngine)?
@@ -76,9 +73,6 @@ final class AudioLevelTap {
     /// now-playing app changes underneath a running pipeline.
     func sync(visible: Bool, playing: Bool, enabled: Bool,
               clientBundleID: String? = nil) {
-        mediaRowVisible = visible
-        self.playing = playing
-        settingEnabled = enabled
         self.clientBundleID = clientBundleID
 
         guard NotchAudioLevels.shouldRun(mediaRowVisible: visible,
