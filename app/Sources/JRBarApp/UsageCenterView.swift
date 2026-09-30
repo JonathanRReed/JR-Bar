@@ -355,12 +355,13 @@ struct ProviderUsageCard: View {
     }
 
     /// The provider's own counters as one caption under the rings: tokens
-    /// counted at the snapshot's `observed_at`, the daemon's cost estimate
+    /// counted when the reading was taken, the daemon's cost estimate
     /// ("est." — the disclosure's own word, an estimate and never an
     /// invoice), a credit balance when the provider banks in credits, and
     /// how old the reading is. Every part rides `fidelity`/`state`: a
     /// stale card keeps its "Stale" badge and this line still names the
-    /// reading's age rather than posing as current.
+    /// reading's own age (`read_at`, not the failed poll's time) rather
+    /// than posing as current.
     private var readingsLine: String? {
         guard !provider.isSignedOut else { return nil }
         var parts: [String] = []
@@ -378,11 +379,21 @@ struct ProviderUsageCard: View {
         if let resets = UsageSourceNotes.resetCreditsText(provider.resetCredits) {
             parts.append(resets)
         }
-        if let observedAt = provider.observedAt,
-           let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: observedAt), now: store.now) {
-            parts.append("read \(age) ago")
+        if let age = Self.readingAgeText(provider, now: store.now) {
+            parts.append(age)
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// "read 5h 00m ago", counted from when the numbers were read: the
+    /// daemon's `read_at`, which stays put through failed polls, and its
+    /// `observed_at` only from a daemon that does not send one. Nil when
+    /// neither is known.
+    nonisolated static func readingAgeText(_ provider: CoreProviderUsage, now: Date) -> String? {
+        guard let readingAt = provider.readingAt,
+              let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: readingAt), now: now)
+        else { return nil }
+        return "read \(age) ago"
     }
 
     /// What stands in for the rings when the daemon reports no window: the
