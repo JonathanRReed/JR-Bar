@@ -103,7 +103,7 @@ DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
 # changes.
 CLAUDE_PLAN_LIMITS_CONSENT_VERSION = 1
 CALIBRATION_PROFILE_SLOTS = ("Day", "Night", "Travel")
-BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity")
+BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity", "bracket")
 SCREEN_BAR_NOTCH_PROFILE_CHOICES = (
     "auto",
     "macbook_air_13",

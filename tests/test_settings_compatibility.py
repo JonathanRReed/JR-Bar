@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -353,3 +355,31 @@ def test_untracked_save_refuses_unreadable_existing_file(tmp_path: Path) -> None
         save_settings(AgentMonitorSettings(), target)
 
     assert target.read_text(encoding="utf-8") == '{"x": NaN}'
+
+
+def test_a_saved_bracket_style_survives_a_load_in_a_fresh_interpreter() -> None:
+    # The Screen Bar draws the "bracket" style, and a settings file may carry
+    # it. The choice belongs to the settings model itself: nothing installed
+    # at boot widens it, so it is checked in an interpreter that imports only
+    # the settings module.
+    script = """
+from jrbar.settings import AgentMonitorSettings, settings_from_mapping
+
+for style in ("auto", "spatial", "identity", "bracket"):
+    loaded = settings_from_mapping({"screen_bar_bracket_style": style})
+    assert loaded.screen_bar_bracket_style == style, (style, loaded.screen_bar_bracket_style)
+    chosen = AgentMonitorSettings().with_screen_bar_bracket_style(style)
+    assert chosen.screen_bar_bracket_style == style
+assert settings_from_mapping(
+    {"screen_bar_bracket_style": "plaid"}
+).screen_bar_bracket_style == "auto"
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr

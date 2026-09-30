@@ -1072,7 +1072,7 @@ today keeps working exactly as configured:
   has already run.
 - `screen_bar_gauges_enabled`: the Screen Bar's wing-tip micro-gauges.
 - `screen_bar_bracket_style`: how the Alcove bracket colours itself
-  (`auto`/`spatial`/`identity`).
+  (`auto`/`spatial`/`identity`/`bracket`).
 - `virtual_status_device_wraps_menu_bar`: extends the Screen Bar's glow
   past the notch toward the menu bar's edges -- the app reads it, no
   control yet.
