@@ -880,7 +880,7 @@ def _publish_capsule(device) -> None:
     )
 
 
-def test_a_granted_permission_still_follows_the_capsule__and_2_more(monkeypatch) -> None:
+def test_a_granted_permission_still_follows_the_capsule__and_1_more(monkeypatch) -> None:
     # --- scenario: a_granted_permission_still_follows_the_capsule
     """Requirement 5: do not regress the working path.
 
@@ -949,8 +949,9 @@ def test_a_granted_permission_still_follows_the_capsule__and_2_more(monkeypatch)
     assert device.view.silhouettes[-1] == (600.0, 272.0, 32.0, _CONTOUR)
     assert device.window.levels[-1] >= module.ABOVE_ALCOVE_WINDOW_LEVEL
 
-    # --- scenario: doctor_reports_the_permission_as_its_own_code
-    monkeypatch.undo()
+
+
+def test_doctor_reports_the_permission_as_its_own_code(monkeypatch) -> None:
     from jrbar import doctor
 
     note_alcove_status(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED)

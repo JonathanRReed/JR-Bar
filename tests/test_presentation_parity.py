@@ -609,8 +609,7 @@ def test_physical_success_and_failure_keep_virtual_semantics_but_only_success_an
 
 
 
-def test_accessibility_preferences_repaint_each_changed_dimension_without_recreating_renderer__and_1_more() -> None:
-    # --- scenario: accessibility_preferences_repaint_each_changed_dimension_without_recreating_renderer
+def test_accessibility_preferences_repaint_each_changed_dimension_without_recreating_renderer() -> None:
     device = VirtualStatusDevice.alloc().init()
     window = SimpleNamespace(isVisible=lambda: True)
     view = MagicMock()
@@ -651,7 +650,9 @@ def test_accessibility_preferences_repaint_each_changed_dimension_without_recrea
     )
     assert view.setNeedsDisplay_.call_count == 4
 
-    # --- scenario: physical_accessibility_snapshot_is_frozen_validated_and_semantically_neutral
+
+
+def test_physical_accessibility_snapshot_is_frozen_validated_and_semantically_neutral() -> None:
     baseline = _request()
     preferences = AccessibilityDisplayPreferences(
         reduce_motion=True,
