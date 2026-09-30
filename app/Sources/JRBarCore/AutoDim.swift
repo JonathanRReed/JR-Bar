@@ -71,11 +71,6 @@ public struct AutoDimSettings: Hashable, Sendable {
     public static let ambientLuxFloorPath: SettingsPath = "auto_dim.ambient.lux_floor"
     public static let ambientLuxCeilingPath: SettingsPath = "auto_dim.ambient.lux_ceiling"
 
-    public static let allPaths: [SettingsPath] = [
-        modePath, scheduleStartPath, scheduleEndPath, scheduleFractionPath, displayMinFractionPath,
-        ambientMinFractionPath, ambientLuxFloorPath, ambientLuxCeilingPath,
-    ]
-
     // MARK: Document
 
     /// Reads the document; a missing or malformed field is its default, an
@@ -94,24 +89,6 @@ public struct AutoDimSettings: Hashable, Sendable {
         if ceiling <= floor { floor = d.ambientLuxFloor; ceiling = d.ambientLuxCeiling }
         ambientLuxFloor = floor
         ambientLuxCeiling = ceiling
-    }
-
-    /// `AutoDimSettings.to_dict()`: the whole document under `auto_dim`.
-    public var document: JSONValue {
-        .object([
-            "mode": .string(mode.rawValue),
-            "schedule": .object([
-                "start_minutes": .number(Double(scheduleStartMinutes)),
-                "end_minutes": .number(Double(scheduleEndMinutes)),
-                "fraction": .number(scheduleFraction),
-            ]),
-            "display": .object(["min_fraction": .number(displayMinFraction)]),
-            "ambient": .object([
-                "min_fraction": .number(ambientMinFraction),
-                "lux_floor": .number(ambientLuxFloor),
-                "lux_ceiling": .number(ambientLuxCeiling),
-            ]),
-        ])
     }
 
     /// The document is present at all (the daemon serves the key).
