@@ -1035,7 +1035,7 @@ never costs the rest of the file):
 ```
 
 Legacy-only settings: the daemon still loads, normalises and re-emits
-each of these, but only the deprecated Python settings window ever
+each of these, but only the retired Python settings window ever
 wrote them -- the app has no control for any of them, so a value there
 today keeps working exactly as configured:
 

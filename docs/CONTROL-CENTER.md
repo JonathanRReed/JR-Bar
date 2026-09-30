@@ -123,15 +123,13 @@ and uses the same bounded dispatcher as physical input, and Input check pauses
 it too. Actions expire rather than replay after a delayed UI, a reconnect, a
 remapping, a bank change or a termination. Queue overload is counted.
 
-**Import mappings…** reads one explicitly chosen JSON file, previews its
-actions, and imports with actions disabled. **Export mappings…** writes the
-data-only host mappings. Neither is a general firmware file editor, and none is
+Import and export of the data-only host mappings went with the retired Python
+Settings window; the app has no file editor for mappings, and none is
 implemented here.
 
 ## Recovery and uninstall
 
-Use **Export original keymap…** to keep your own copy before experimenting. The
-first original stays in a private device-identity-scoped backup beside the
+The first original stays in a private device-identity-scoped backup beside the
 integration settings, and a separate `.recovery.json` records interrupted
 operations. Do not delete either while a recovery is pending.
 

@@ -165,8 +165,6 @@ The runtime owner composes routing, finite planning, admission and power policy,
 
 `src/jrbar/effect_studio.py` provides pure UI projections and explicit preview plans. It bounds search text, synthetic scenarios, timeline duration, assignment targets, source age, effect expiration, and physical preview duration. `plan_preview()` requires a registered effect and a typed preview session. Physical preview is at most 30 seconds and returns `CONSENT_REQUIRED` unless exact consent is supplied, with release triggers for close, sleep, app termination, and error.
 
-`src/jrbar/settings_preview_policy.py` keeps settings previews honest. `reduce_motion_active(target)` reads the native accessibility preference. `signal_preview_program()` returns a static color under Reduce Motion, while `mode_animation_thumb_program()` uses a static mode color. Settings accessibility tests require native roles, labels, help text, keyboard semantics, and static preview programs when Reduce Motion is enabled. High contrast and color-vision modes must preserve meaning without relying on color alone.
-
 ## Safe extension workflow
 
 1. State the semantic meaning, safety level, energy cost, supported surfaces, and static fallback before writing animation code.

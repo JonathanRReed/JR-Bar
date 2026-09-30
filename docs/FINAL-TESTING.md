@@ -106,8 +106,9 @@ These need the owner, the hardware and the accounts.
 Session state, stable slots, explicit banks, the compact rail on each edge,
 saved across a restart. External displays, scaling, Dock placement, full-screen
 Spaces, keyboard navigation, VoiceOver, reduced motion, increased contrast.
-Before remapping a Creator Micro, close Input and every other device writer and
-use **Export original keymap...**; apply only the previewed configuration;
+Before remapping a Creator Micro, close Input and every other device writer
+(JR-Bar keeps the first original keymap in a private backup); apply only the
+previewed configuration;
 storage is not activation, so reconnect if the firmware asks. Keep **Input
 check: pause device actions** on while exercising every key, encoder and
 joystick input. Test restore and interrupted-transfer recovery on a scratch

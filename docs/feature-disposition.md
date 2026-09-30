@@ -14,7 +14,7 @@ The status authority for what ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
 | Escalation for real asks only | 5 | Shipped; Approve / Deny in the panel and banners | `attention.py`, `EventPolicy`, `NotificationBridge` |
 | Screen Bar as one band, phase-locked to the strip | 5 | Shipped; the mirror is deliberate (the owner does not want a segmented announcer) | `ScreenBarController`, `ScreenBarBlend` |
 | Pro + Dot linked mode | 5 | Shipped (`devices_linked`, `linked_dot_scale`) | `device_writer.py`, `core_projection.py` |
-| Colour calibration | 5 | Shipped; the Devices page's Calibrate… sheet previews live | `calibration_flow.py`, `SettingsPagesA` |
+| Colour calibration | 5 | Shipped; the Devices page's Calibrate… sheet previews live | `SettingsPagesA` |
 | Usage forecast (CodexBar-style pace) | 5 | Shipped; daemon samples with an app-side fallback | `core_usage_samples.py`, `UsageForecast` |
 | Effect Studio with data-only packs | 5 | Shipped, merged into the app | `effect_*.py`, `EffectStudioView` |
 | Auto-dim (schedule / display / ambient) | 4 | Shipped; replaces night warmth | `auto_dim.py`, `AutoDim` |
@@ -48,10 +48,10 @@ The status authority for what ships is [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
 
 | Feature | Score | Disposition |
 | --- | ---: | --- |
-| Studio (hand-written LEDS programs, `INIT.LED` burn) | 3 | Daemon only; needs a Swift surface or a decision to fold it into Effect Studio |
+| Studio (hand-written LEDS programs, `INIT.LED` burn) | 3 | Daemon only; needs a Swift surface or a decision to fold it into Effect Studio. The Python Studio pane and its step composer (`studio_builder.py`) are last in commit `50ea7f57` |
 | Browser-session import for provider auth | 2 | Daemon only; no Swift consent flow yet |
 | Price table served by the daemon | 3 | The Usage Center reads "no price table" until it exists |
-| Dial and Joystick mapping editor | 3 | Settings › Devices shows the mappings but cannot edit them |
+| Dial and Joystick mapping editor | 3 | Settings › Devices shows the mappings but cannot edit them. The Python editor (`deck_settings_pane.py`, with mapping import and export) is last in commit `50ea7f57` |
 | Screen Bar notch-silhouette measurement and standing gauges | 2 | Python had them; the Swift band uses the notch's auxiliary areas |
 | Linux headless daemon | 2 | The daemon boundary makes it possible; no demand yet |
 | Windows | 0 | No |
