@@ -83,7 +83,6 @@ if [ "$PORTABLE" -eq 1 ]; then
         tests/test_build_script_contract.py \
         tests/test_repository_hygiene.py \
         tests/test_workflow_contract.py \
-        tests/test_install_user.py \
         tests/test_settings_schema_coverage.py \
         tests/test_settings_compatibility.py \
         tests/test_settings_concurrency.py \

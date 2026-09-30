@@ -1,4 +1,4 @@
-.PHONY: bootstrap fast fast-fix final-test format lint test test-serial test-portable swift-test package package-python clean-install install-pkg verify verify-portable release release-check install-user clean
+.PHONY: bootstrap fast fast-fix final-test format lint test test-serial test-portable swift-test package package-python clean-install install-pkg verify verify-portable release release-check clean
 
 # The packaged app: build/macos-pkg/app/JR-Bar.app plus dist/JR-Bar-<version>.pkg,
 # dist/JR-Bar-<version>.zip and, with the Sparkle key in the keychain,
@@ -80,9 +80,6 @@ release:
 # signing and the check for an existing GitHub release wait for publish time.
 release-check:
 	./scripts/release.sh --dry-run
-
-install-user:
-	./scripts/install-user.sh
 
 clean:
 	rm -rf build dist .pytest_cache .ruff_cache .coverage htmlcov
