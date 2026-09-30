@@ -11,6 +11,7 @@ across every harness at once.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -49,13 +50,24 @@ def test_hook_command_uses_the_compiled_shim_when_one_is_named(
     assert hook_command_arguments("codex", Path("/tmp/codex.jsonl"))[1:3] == ["-m", "jrbar.hook_client"]
 
 
-def test_registered_command_actually_runs__and_2_more() -> None:
+def _private_home_env(tmp_path: Path) -> dict[str, str]:
+    """The environment a probe run gets in a test: a home and a state dir
+    under tmp_path, so the Python client cannot reach a daemon that happens
+    to be running on the Mac the suite is on."""
+    return {
+        **os.environ,
+        "HOME": str(tmp_path / "home"),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+    }
+
+
+def test_registered_command_actually_runs__and_2_more(tmp_path: Path) -> None:
     # --- scenario: registered_command_actually_runs
     """The gate that was missing: prove it before writing it anywhere."""
     arguments = hook_command_arguments(
         "claude", Path("/tmp/sidepulse-verify-probe.jsonl"), python_executable=sys.executable
     )
-    assert verify_hook_command(arguments) is None
+    assert verify_hook_command(arguments, env=_private_home_env(tmp_path)) is None
 
     # --- scenario: verification_catches_a_broken_command
     broken = [sys.executable, "/nonexistent/hook_entry.py", "--provider", "claude"]
@@ -145,3 +157,19 @@ def test_dry_run_registration_skips_the_probe(tmp_path: Path) -> None:
         )
 
     assert result.dry_run is True
+
+
+def _script(path: Path, body: str) -> Path:
+    path.write_text(f"#!/bin/sh\n{body}\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_verify_hook_command_passes_env(tmp_path: Path) -> None:
+    """The probe's environment is the caller's to give: a command that needs
+    a variable only runs when it is handed one."""
+    needs_env = _script(tmp_path / "needs-env", '[ "$PROBE_ENV" = ok ] || exit 3')
+
+    assert verify_hook_command([str(needs_env)], env={**os.environ, "PROBE_ENV": "ok"}) is None
+    failure = verify_hook_command([str(needs_env)])
+    assert failure is not None and "exited 3" in failure

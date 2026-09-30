@@ -14,6 +14,7 @@ import threading
 import time
 import tomllib
 import uuid
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1536,13 +1537,19 @@ def decide_hook_command(
     return f"{command} --decide" if decides(arguments) else command
 
 
-def verify_hook_command(arguments: list[str]) -> str | None:
+def verify_hook_command(
+    arguments: list[str],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
     """Run a candidate hook command once and return an error, or None.
 
     Registration used to write a path nobody had ever executed. This is
     the missing gate: a hook is only worth writing into a user's agent
     config if it actually runs, because the failure mode is not a
     degraded feature -- it is every prompt in every session blocked.
+
+    ``env`` is the probe's environment; ``None`` inherits the caller's.
     """
     import subprocess
 
@@ -1558,6 +1565,7 @@ def verify_hook_command(arguments: list[str]) -> str | None:
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
     except FileNotFoundError:
         return f"interpreter not found: {arguments[0]}"
