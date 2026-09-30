@@ -108,13 +108,22 @@ class _Broker(DecisionBroker):
         super().__init__(watching=lambda _facts, _pid: False)
         self.parked_event = threading.Event()
         self.last_request_id: str | None = None
+        self._parks = 0
+        self._parks_changed = threading.Condition()
 
     def park(self, facts, **kwargs):
         slot = super().park(facts, **kwargs)
         if slot is not None:
             self.last_request_id = facts.request_id
             self.parked_event.set()
+            with self._parks_changed:
+                self._parks += 1
+                self._parks_changed.notify_all()
         return slot
+
+    def wait_for_parks(self, count: int) -> bool:
+        with self._parks_changed:
+            return self._parks_changed.wait_for(lambda: self._parks >= count, timeout=5.0)
 
     def next_parked(self) -> str:
         assert self.parked_event.wait(5.0), "nothing was parked"
@@ -281,6 +290,40 @@ def test_a_sub_agents_request_is_held_when_worker_asks_are_on(shim: Path, sock_d
             assert json.loads(stdout) == decision_document("claude", DecisionVerb.DENY)
         finally:
             assert service.close(timeout_seconds=2.0)
+
+
+def test_a_main_and_a_sub_agent_making_the_same_call_are_answered_apart(shim: Path, sock_dir: Path) -> None:
+    broker = _broker()
+    service = _service(sock_dir, broker, _Seen(), subagent_asks_alert=lambda: True)
+    try:
+        # Same session, same tool, same input: one derived request id.
+        main = _spawn(shim, sock_dir, "claude", PERMISSION, "--decide")
+        assert broker.wait_for_parks(1)
+        worker = _spawn(shim, sock_dir, "claude", WORKER_PERMISSION, "--decide")
+        assert broker.wait_for_parks(2)
+        assert broker.parked_count() == 2
+        request_id = broker.last_request_id
+        assert request_id is not None
+
+        # The sub-agent's card denies the sub-agent's hold and leaves the main's.
+        assert (
+            broker.decide("claude", request_id, DecisionVerb.DENY, work_id="decide-worker")
+            is DecisionResult.SENT
+        )
+        stdout, _ = worker.communicate(timeout=5)
+        assert json.loads(stdout) == decision_document("claude", DecisionVerb.DENY)
+        assert main.poll() is None
+        assert broker.parked_count() == 1
+
+        # The main session's card then allows the main's own hold.
+        assert (
+            broker.decide("claude", request_id, DecisionVerb.ALLOW, work_id="decide-session")
+            is DecisionResult.SENT
+        )
+        stdout, _ = main.communicate(timeout=5)
+        assert json.loads(stdout) == decision_document("claude", DecisionVerb.ALLOW)
+    finally:
+        assert service.close(timeout_seconds=2.0)
 
 
 def test_the_worker_ask_reader_is_a_callable_or_nothing(sock_dir: Path) -> None:
