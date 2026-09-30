@@ -71,8 +71,15 @@ that wrote the cache.
   missing. It fills again after the next 30-day scan: a restart, the Usage
   window's 30-day range, or a graph set to 30 days or more. While you use
   the 7-day graph the card and the graph can take turns.
-- **Codex counts the days the cache still holds.** After a shorter scan the
-  Codex card adds up about ten days, not thirty, and the card does not say
+- **A very busy month can blank it too.** The cache is capped at 8 MiB.
+  When 30 days of entries do not fit, a scan leaves out the oldest, largest
+  ones and writes down how far back the cache is still whole. The Claude
+  card then shows nothing, because a total with those days missing would
+  read as complete. The usage graph is not affected: it reads the full scan,
+  not this cache.
+- **Codex counts the days the cache still holds.** After a shorter scan, or
+  a busy month that did not fit, the Codex card adds up only the days that
+  are whole (about ten after a 7-day graph scan) and the card does not say
   so. Its quota reading is kept either way, because that lives in the same
   cache.
 - **Claude adds every home or none.** If a home you listed under
