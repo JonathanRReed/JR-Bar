@@ -104,8 +104,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // reads as doubled bands and ghost surfaces. This runs after the
         // env-var early exits so `JRBAR_LOGIN_ITEM` still answers from a
         // direct exec while the app is up.
-        guard let lock = SingleInstanceLock.acquire() else {
-            print("JR-Bar is already running — this instance yields.")
+        // Only proven contention yields. A lock that cannot be taken here at
+        // all (an unwritable state directory, no `flock`) is said and the
+        // app runs on, so it never quits silently as "already running".
+        let instanceLog = Logger(subsystem: "devin.jrbar", category: "instance")
+        var lockNotice: String?
+        guard let lock = SingleInstanceLock.acquire(onUnavailable: { code in
+            let notice = "single-instance lock unavailable (errno \(code): \(String(cString: strerror(code)))) - continuing without it"
+            instanceLog.error("\(notice, privacy: .public)")
+            NSLog("JR-Bar: %@", notice)
+            lockNotice = notice
+        }) else {
+            let line = "JR-Bar is already running — this instance yields."
+            instanceLog.notice("\(line, privacy: .public)")
+            print(line)
             NSApp.terminate(nil)
             return
         }
@@ -120,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         terminationSignal = source
 
         let core = CoreModel()
+        if let lockNotice { core.appendLocalLog(level: "supervisor", lockNotice) }
         let store = PanelStore(core: core, screenBarShown: appState.showScreenBar)
         // The daemon first. It takes seconds to be ready, and every
         // surface below is built in the meantime rather than before it
