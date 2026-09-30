@@ -30,6 +30,7 @@ from .ask_heartbeat_sync import (
     AskHeartbeatPresentation,
     plan_ask_heartbeat_sync,
 )
+from .attention import quiet_worker_request_keys
 from .clear_agents import CompletionPresentationKey
 from .completion_meniscus import (
     CompletionMeniscusGeometry,
@@ -119,6 +120,7 @@ from .operator_state import (
 )
 from .private_io import atomic_private_write, read_private_text
 from .provider_facts import (
+    RequestKey,
     SourceFreshness,
     SourceHealth,
     WorkKey,
@@ -1519,7 +1521,10 @@ def _observe_ask_heartbeat(
     controller: object,
     state: CanonicalOperatorState,
     preferences: AccessibilityDisplayPreferences,
+    quiet_requests: frozenset[RequestKey],
 ) -> None:
+    # A sub-agent's ask stays out of the heartbeat while sub-agent asks are
+    # off, the same as it stays off the panel, the banner and the sound.
     presentations = tuple(
         AskHeartbeatPresentation(
             request_identity=announcer_alert_identity(request.key),
@@ -1529,6 +1534,7 @@ def _observe_ask_heartbeat(
         if request.phase is RequestPhase.LIVE_UNACKNOWLEDGED
         and request.opened_at_epoch is not None
         and request.source_freshness is SourceFreshness.FRESH
+        and request.key not in quiet_requests
     )
     setattr(
         controller,
@@ -1553,9 +1559,14 @@ def _observe_courtesy_signature(
     event: CanonicalOperatorEvent,
     *,
     reduce_motion: bool,
+    quiet_requests: frozenset[RequestKey],
 ) -> None:
     semantic = _COURTESY_BY_TRANSITION.get(event.kind)
     if semantic is None:
+        return
+    if event.kind is TransitionKind.REQUEST_OPENED and (
+        event.subject_key in quiet_requests
+    ):
         return
     setattr(
         controller,
@@ -1567,14 +1578,25 @@ def _observe_courtesy_signature(
 def _active_semantics(
     state: CanonicalOperatorState,
     events: tuple[CanonicalOperatorEvent, ...],
+    *,
+    quiet_requests: frozenset[RequestKey],
+    workers_quiet: bool,
 ) -> tuple[SemanticEventKind, ...]:
     semantics: set[SemanticEventKind] = set()
     if any(
         request.phase is RequestPhase.LIVE_UNACKNOWLEDGED
+        and request.key not in quiet_requests
         for request in state.requests
     ):
         semantics.add(SemanticEventKind.ASK)
     for work in state.works:
+        if (
+            workers_quiet
+            and work.parent_key is not None
+            and work.lifecycle is WorkLifecycle.WAITING
+        ):
+            # A waiting sub-agent is not a reason for the Dot to ask.
+            continue
         semantic = {
             WorkLifecycle.ACTIVE: SemanticEventKind.WORK,
             WorkLifecycle.WAITING: SemanticEventKind.ASK,
@@ -1605,8 +1627,16 @@ def _observe_dot_and_rainstick(
     state: CanonicalOperatorState,
     events: tuple[CanonicalOperatorEvent, ...],
     preferences: AccessibilityDisplayPreferences,
+    *,
+    quiet_requests: frozenset[RequestKey],
+    workers_quiet: bool,
 ) -> None:
-    semantics = _active_semantics(state, events)
+    semantics = _active_semantics(
+        state,
+        events,
+        quiet_requests=quiet_requests,
+        workers_quiet=workers_quiet,
+    )
     root_count = sum(work.parent_key is None for work in state.works)
     settings = getattr(controller, "settings", None)
     policy_value = getattr(
@@ -1751,6 +1781,18 @@ def _observe_operator_events(
     preferences = _accessibility_preferences(controller)
     previous_health = dict(getattr(controller, "_ambient_source_health", {}))
     fleet = _fleet_plan(controller, state)
+    workers_alert = bool(
+        getattr(
+            getattr(controller, "settings", None),
+            "subagent_asks_alert",
+            False,
+        )
+    )
+    workers_quiet = not workers_alert
+    quiet_requests = quiet_worker_request_keys(
+        state,
+        subagent_asks_alert=workers_alert,
+    )
     for event in canonical_events:
         if event.kind is TransitionKind.COMPLETED:
             _completion_firefly(
@@ -1783,13 +1825,16 @@ def _observe_operator_events(
             controller,
             event,
             reduce_motion=preferences.reduce_motion,
+            quiet_requests=quiet_requests,
         )
-    _observe_ask_heartbeat(controller, state, preferences)
+    _observe_ask_heartbeat(controller, state, preferences, quiet_requests)
     _observe_dot_and_rainstick(
         controller,
         state,
         canonical_events,
         preferences,
+        quiet_requests=quiet_requests,
+        workers_quiet=workers_quiet,
     )
     _observe_remote_fleet(
         controller,

@@ -24,6 +24,12 @@ The reply is the redacted document `src/jrbar/serve.py` builds:
 `agents.lifecycle_counts` (`active`, `waiting`, `completed`, `failed`),
 quota summaries, timestamps. Loopback only, read only.
 
+The counts are of main sessions, the same ones the panel lists. `N work`
+and `N wait` leave sub-agents out, whatever the **Sub-agent asks** setting
+says, so a waiting sub-agent does not turn the key's wait count up. Sub-agents
+are a number of their own in `agents.workers`, with `work_count` and
+`lifecycle_counts`. The key does not show them, and a script can.
+
 ## Sideload
 
 1. Turn on **Serve status** in Settings and copy the token.

@@ -2374,6 +2374,7 @@ for (const event of [
                 aggregate=SimpleNamespace(mode=AgentMode.WORKING),
             ),
             last_battery_snapshot=object(),
+            resync_display_mode=lambda snapshot: snapshot.aggregate.mode,
             reset_led_controllers_for_display_change=lambda: calls.append(("reset", None)),
             active_led_display_kind=lambda snapshot: "agent",
             sync_leds=lambda mode, snapshot, display: calls.append(("sync", (mode, snapshot, display))),
@@ -11691,6 +11692,92 @@ class SubagentAskAggregateTests(unittest.TestCase):
         sub_only = self._snapshot(self._status("claude:agent:w1", AgentMode.BLOCKED_ERROR))
         self.controller.settings = self.controller.settings.with_subagent_asks_alert(True)
         self.assertEqual(self.controller.display_aggregate_mode(sub_only), AgentMode.BLOCKED_ERROR)
+
+    def _worker_ask_snapshot(self, *, with_main: bool):
+        statuses = [self._status("claude:agent:w1", AgentMode.WAITING_FOR_INPUT)]
+        if with_main:
+            statuses.append(
+                self._status(
+                    "claude:session:s1", AgentMode.WORKING, event="PostToolUse"
+                )
+            )
+        snapshot = self._snapshot(*statuses)
+        snapshot.collected_at = datetime.now(timezone.utc)
+        return snapshot
+
+    def _repaint_modes(self, snapshot, push) -> list:
+        """The modes an LED repaint hands to sync_leds for this snapshot."""
+        modes: list = []
+        self.controller.last_snapshot = snapshot
+        # A refresh publishes the snapshot and its projection together.
+        self.controller.update_attention_projection(snapshot)
+        self.controller.last_battery_snapshot = None
+        self.controller.sync_leds = lambda mode, *args, **kwargs: modes.append(mode)
+        push()
+        return modes
+
+    def test_led_repaints_after_a_flourish_never_paint_a_workers_ask(self) -> None:
+        from jrbar import status_bar
+
+        for with_main in (True, False):
+            snapshot = self._worker_ask_snapshot(with_main=with_main)
+            # The raw aggregate is the leak: one waiting worker reads as Ask.
+            self.assertEqual(snapshot.aggregate.mode, AgentMode.WAITING_FOR_INPUT)
+            token = self.controller.led_animation_token
+            modes = self._repaint_modes(
+                snapshot,
+                lambda: status_bar.restore_led_display(self.controller, str(token)),
+            )
+            self.assertEqual(len(modes), 1)
+            self.assertNotEqual(modes[0], AgentMode.WAITING_FOR_INPUT)
+            if with_main:
+                self.assertEqual(modes[0], AgentMode.WORKING)
+
+    def test_color_preview_and_device_resync_never_paint_a_workers_ask(self) -> None:
+        snapshot = self._worker_ask_snapshot(with_main=True)
+
+        preview = self._repaint_modes(
+            snapshot, self.controller.push_colors_preview_to_device
+        )
+        self.assertEqual(preview, [AgentMode.WORKING])
+
+        device = self._repaint_modes(
+            snapshot,
+            lambda: self.controller._mutate_device_setting(
+                "device:test",
+                lambda _device: self.controller.settings,
+                lambda label: f"{label} changed.",
+                "test setting",
+            ),
+        )
+        self.assertEqual(device, [AgentMode.WORKING])
+
+        # With nothing else running the worker is the only thing to show. Off,
+        # it stays quiet; on, the resync rings for it like the refresh does.
+        alone = self._worker_ask_snapshot(with_main=False)
+        quiet = self._repaint_modes(
+            alone, self.controller.push_colors_preview_to_device
+        )
+        self.assertNotEqual(quiet, [AgentMode.WAITING_FOR_INPUT])
+        self.controller.settings = self.controller.settings.with_subagent_asks_alert(True)
+        enabled = self._repaint_modes(
+            alone, self.controller.push_colors_preview_to_device
+        )
+        self.assertEqual(enabled, [AgentMode.WAITING_FOR_INPUT])
+
+    def test_a_main_ask_still_rings_after_a_flourish(self) -> None:
+        from jrbar import status_bar
+
+        snapshot = self._snapshot(
+            self._status("claude:session:s1", AgentMode.WAITING_FOR_INPUT)
+        )
+        snapshot.collected_at = datetime.now(timezone.utc)
+        token = self.controller.led_animation_token
+        modes = self._repaint_modes(
+            snapshot,
+            lambda: status_bar.restore_led_display(self.controller, str(token)),
+        )
+        self.assertEqual(modes, [AgentMode.WAITING_FOR_INPUT])
 
 
 class UsageGraphRangeTests(unittest.TestCase):

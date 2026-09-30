@@ -150,6 +150,7 @@ def test_document_rebuilds_an_exact_redacted_public_schema(tmp_path: Path) -> No
             "source_health_counts": {"healthy": 1, "partial": 1},
             "source_freshness_counts": {"fresh": 1, "stale": 1},
             "timing_uncertain_count": 1,
+            "workers": {"work_count": 0, "lifecycle_counts": {}},
         },
         "usage": {
             "refreshed_at": 1000.0,
@@ -205,6 +206,116 @@ def test_future_persisted_schemas_fail_closed(tmp_path: Path) -> None:
         sentinel not in json.dumps(document, sort_keys=True)
         for sentinel in PRIVATE_SENTINELS
     )
+
+
+_PARENT_KEY = {
+    "version": {"major": 1, "minor": 0},
+    "provider_id": "claude",
+    "adapter_id": "hooks",
+    "source_instance_id": "global",
+    "capability_id": "live_agent_events",
+    "work_id": "PRIVATE_WORK_ID",
+}
+
+
+def _work(lifecycle: str, next_actor: str, **extra) -> dict:
+    return {
+        "lifecycle": lifecycle,
+        "source_health": "healthy",
+        "source_freshness": "fresh",
+        "next_actor": next_actor,
+        "safe_label": "PRIVATE_SESSION_LABEL",
+        "timing_uncertain": False,
+        **extra,
+    }
+
+
+def _serve_agents(home: Path, works: list[dict]) -> dict:
+    latest_path = default_state_dir(home) / "latest.json"
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_path.write_text(
+        json.dumps({"version": 2, "generation": 3, "works": works}),
+        encoding="utf-8",
+    )
+    document = build_serve_document(home)
+    assert all(
+        sentinel not in json.dumps(document, sort_keys=True)
+        for sentinel in PRIVATE_SENTINELS
+    )
+    return document["agents"]
+
+
+def test_the_counts_are_main_sessions_and_a_blocked_worker_is_its_own_number(
+    tmp_path: Path,
+) -> None:
+    agents = _serve_agents(
+        tmp_path,
+        [
+            _work("active", "provider", parent_key=None),
+            *(
+                _work("waiting", "user", parent_key=_PARENT_KEY)
+                for _ in range(3)
+            ),
+        ],
+    )
+
+    # The Stream Deck key reads these two: one working, none waiting.
+    assert agents["work_count"] == 1
+    assert agents["lifecycle_counts"] == {"active": 1}
+    assert agents["next_actor_counts"] == {"provider": 1}
+    assert agents["source_health_counts"] == {"healthy": 1}
+    assert agents["source_freshness_counts"] == {"fresh": 1}
+    # The waiting sub-agents stay visible, as numbers and nothing more.
+    assert agents["workers"] == {"work_count": 3, "lifecycle_counts": {"waiting": 3}}
+
+
+def test_a_waiting_main_still_counts_as_waiting(tmp_path: Path) -> None:
+    agents = _serve_agents(
+        tmp_path,
+        [
+            _work("waiting", "user", parent_key=None),
+            _work("active", "provider", parent_key=_PARENT_KEY),
+        ],
+    )
+
+    assert agents["lifecycle_counts"] == {"waiting": 1}
+    assert agents["next_actor_counts"] == {"user": 1}
+    assert agents["workers"] == {"work_count": 1, "lifecycle_counts": {"active": 1}}
+
+
+def test_a_work_without_a_parent_key_is_a_main_session(tmp_path: Path) -> None:
+    # Older persisted files carry no parent_key at all.
+    agents = _serve_agents(
+        tmp_path,
+        [
+            _work("active", "provider"),
+            _work("waiting", "user", parent_key=None),
+        ],
+    )
+
+    assert agents["work_count"] == 2
+    assert agents["lifecycle_counts"] == {"active": 1, "waiting": 1}
+    assert agents["workers"] == {"work_count": 0, "lifecycle_counts": {}}
+
+
+def test_a_malformed_parent_key_is_rejected_not_guessed(tmp_path: Path) -> None:
+    agents = _serve_agents(
+        tmp_path,
+        [
+            _work("active", "provider"),
+            _work("waiting", "user", parent_key="PRIVATE_WORK_ID"),
+            _work("waiting", "user", parent_key=["PRIVATE_WORK_ID"]),
+            _work("waiting", "user", parent_key={}),
+            _work("waiting", "user", parent_key=True),
+            _work("waiting", "user", parent_key=0),
+        ],
+    )
+
+    # Neither a main session nor a worker: the entry is left out, like any
+    # other value the allowlist does not recognise.
+    assert agents["work_count"] == 1
+    assert agents["lifecycle_counts"] == {"active": 1}
+    assert agents["workers"] == {"work_count": 0, "lifecycle_counts": {}}
 
 
 def test_unknown_public_values_are_omitted(tmp_path: Path) -> None:

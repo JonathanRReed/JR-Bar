@@ -36,6 +36,13 @@ own, with one of the offered labels per question -- sends the agent's own
 input back with its documented ``answers`` field filled in. A bare approve
 never answers a question; it keeps the keystroke path it always had.
 
+A sub-agent's request (its payload names an agent other than the session)
+is held only while the Sub-agent asks setting is on. With it off no card is
+shown for it, so a hold could never be answered: the ingress gives the hook
+the ordinary empty reply at once and the agent's own prompt appears. A hold
+is keyed by the work as well as the request id, because a main session and a
+sub-agent that make the same call in one turn share an id.
+
 Claude Code shows its own prompt while the hook runs and takes whichever
 answer comes first, so a hold costs nothing there. Codex asks its hooks
 before it shows the prompt, so a hold delays the prompt; a Codex request
@@ -176,6 +183,22 @@ class PermissionFacts:
     cwd: str | None = None
     #: The questions, when this request is a question to pick answers for.
     choices: tuple[ChoiceQuestion, ...] = ()
+    #: The sub-agent that raised the request, when the payload names one.
+    agent_id: str | None = None
+
+    @property
+    def is_worker(self) -> bool:
+        """A sub-agent's request: its payload names an agent other than the
+        session itself. The main session's own request is never one."""
+        return self.agent_id is not None and self.agent_id != self.session_id
+
+    @property
+    def work_id(self) -> str:
+        """The work the request belongs to, as canonical state names it: the
+        agent when the payload names one, else the session. The derived
+        request id omits it, so a main session and a sub-agent that make the
+        same call share an id and are told apart by this."""
+        return self.agent_id if self.agent_id is not None else self.session_id
 
 
 def _request_identity(provider: str, payload_text: str) -> tuple[str, Any] | None:
@@ -251,6 +274,7 @@ def permission_facts(provider: object, payload_text: object) -> PermissionFacts 
         ),
         cwd=record.cwd if type(record.cwd) is str else None,
         choices=choices,
+        agent_id=record.agent_id if type(record.agent_id) is str and record.agent_id else None,
     )
 
 
@@ -558,6 +582,9 @@ class ParkedDecision:
     #: A held question's questions and options (``answer``); ``()`` for a
     #: yes/no request.
     choices: tuple[ChoiceQuestion, ...] = ()
+    #: The work that raised it: the sub-agent, else the session. An answer
+    #: names it, so two works holding the same call are never mixed up.
+    work_id: str = ""
 
     def document(self) -> dict[str, Any]:
         return {
@@ -694,7 +721,8 @@ class DecisionBroker:
         self._lock = threading.Lock()
         self._token = 0
         self._slots: dict[int, _Slot] = {}
-        self._decided: dict[tuple[str, str], float] = {}
+        #: (provider, work id, request id) -> when the tombstone lapses.
+        self._decided: dict[tuple[str, str, str], float] = {}
         self._on_change = on_change
 
     def set_on_change(self, on_change: Callable[[], object] | None) -> None:
@@ -740,7 +768,7 @@ class DecisionBroker:
                 host_pid if type(host_pid) is int and host_pid > 1 else None,
             )
             self._slots[slot.token] = slot
-            self._decided.pop((facts.provider, facts.request_id), None)
+            self._decided.pop((facts.provider, facts.work_id, facts.request_id), None)
             return slot
 
     def wait(
@@ -814,8 +842,14 @@ class DecisionBroker:
         verb: DecisionVerb,
         *,
         answers: object = None,
+        work_id: str | None = None,
     ) -> DecisionResult:
         """Send ``verb`` to the oldest hook parked on that request.
+
+        ``work_id`` names the work the card is for: a main session and a
+        sub-agent that make the same call share a request id, and the answer
+        reaches only the one asked for. Without it, the oldest hold for the
+        id takes the answer, as it always did.
 
         A held question takes ``answer`` (with ``answers``, see
         ``choice_answers``) or ``deny`` and nothing else: a bare allow would
@@ -825,9 +859,9 @@ class DecisionBroker:
         now = self._clock()
         with self._lock:
             self._expire_locked(now)
-            slot = self._first_locked(provider, request_id)
+            slot = self._first_locked(provider, request_id, work_id)
             if slot is None:
-                if (provider, request_id) in self._decided:
+                if self._decided_work_locked(provider, request_id, work_id) is not None:
                     return DecisionResult.ALREADY_DECIDED
                 return DecisionResult.NOT_PARKED
             if verb is DecisionVerb.ALWAYS and not slot.facts.always_rules:
@@ -860,13 +894,20 @@ class DecisionBroker:
             slot.verdict = verdict
             slot.state = "decided"
             self._slots.pop(slot.token, None)
-            self._decided[(provider, request_id)] = now + DECIDED_TOMBSTONE_SECONDS
+            self._decided[(provider, slot.facts.work_id, request_id)] = now + DECIDED_TOMBSTONE_SECONDS
             slot.event.set()
         if not slot.delivered_event.wait(DELIVERY_WAIT_SECONDS):
             return DecisionResult.NOT_DELIVERED
         return DecisionResult.SENT if slot.delivered else DecisionResult.NOT_DELIVERED
 
-    def release(self, provider: str, *, request_id: str | None = None, session_id: str | None = None) -> int:
+    def release(
+        self,
+        provider: str,
+        *,
+        request_id: str | None = None,
+        session_id: str | None = None,
+        work_id: str | None = None,
+    ) -> int:
         """Let parked requests fall through to the agent's own prompt."""
         released = 0
         with self._lock:
@@ -877,6 +918,8 @@ class DecisionBroker:
                 if request_id is not None and facts.request_id != request_id:
                     continue
                 if session_id is not None and facts.session_id != session_id:
+                    continue
+                if work_id is not None and facts.work_id != work_id:
                     continue
                 self._release_locked(slot)
                 released += 1
@@ -917,6 +960,12 @@ class DecisionBroker:
         if type(session_id) is not str or not session_id:
             return 0
         if event in _TURN_OVER_EVENTS:
+            # An event a sub-agent sent ends that sub-agent's holds only: the
+            # session's own prompt is still on screen. An event with no agent
+            # is the session's, and ends everything held under it.
+            agent_id = payload.get("agent_id") or payload.get("agentId")
+            if type(agent_id) is str and agent_id and agent_id != session_id:
+                return self.release(provider, session_id=session_id, work_id=agent_id)
             return self.release(provider, session_id=session_id)
         if event in _TOOL_RAN_EVENTS:
             from .provider_adapters import hook_request_identity
@@ -927,21 +976,35 @@ class DecisionBroker:
             request_id = hook_request_identity(routed[1])
             if request_id is None:
                 return 0
-            return self.release(provider, request_id=request_id)
+            # The call ran under one work: its twin under another still waits.
+            record = routed[1]
+            ran_session = record.session_id if type(record.session_id) is str else session_id
+            work_id = record.agent_id if type(record.agent_id) is str and record.agent_id else ran_session
+            return self.release(provider, request_id=request_id, work_id=work_id)
         return 0
 
     # -- reading (the projection side) --
 
-    def parked(self, provider: object, request_id: object) -> ParkedDecision | None:
-        if type(provider) is not str or type(request_id) is not str:
+    def parked(
+        self,
+        provider: object,
+        request_id: object,
+        work_id: object = None,
+    ) -> ParkedDecision | None:
+        if (
+            type(provider) is not str
+            or type(request_id) is not str
+            or (work_id is not None and type(work_id) is not str)
+        ):
             return None
         now = self._clock()
         with self._lock:
             self._expire_locked(now)
-            slot = self._first_locked(provider, request_id)
+            slot = self._first_locked(provider, request_id, work_id)
             if slot is not None:
                 return self._snapshot(slot, decided=False)
-            if (provider, request_id) in self._decided:
+            decided_work = self._decided_work_locked(provider, request_id, work_id)
+            if decided_work is not None:
                 return ParkedDecision(
                     provider=provider,
                     session_id="",
@@ -952,6 +1015,7 @@ class DecisionBroker:
                     preview=None,
                     risk=None,
                     decided=True,
+                    work_id=decided_work,
                 )
         return None
 
@@ -975,15 +1039,41 @@ class DecisionBroker:
             risk=tool_risk(facts.tool_name, facts.tool_input),
             decided=decided,
             choices=facts.choices,
+            work_id=facts.work_id,
         )
 
-    def _first_locked(self, provider: str, request_id: str) -> _Slot | None:
+    def _first_locked(
+        self,
+        provider: str,
+        request_id: str,
+        work_id: str | None = None,
+    ) -> _Slot | None:
         # Oldest first: two identical calls in one turn share an id, and
-        # the prompt on screen is the one that asked first.
+        # the prompt on screen is the one that asked first. A request that
+        # names its work only ever matches that work's holds: a main session
+        # and a sub-agent make the same call under the same id.
         for token in sorted(self._slots):
             slot = self._slots[token]
-            if slot.facts.provider == provider and slot.facts.request_id == request_id:
+            if (
+                slot.facts.provider == provider
+                and slot.facts.request_id == request_id
+                and (work_id is None or slot.facts.work_id == work_id)
+            ):
                 return slot
+        return None
+
+    def _decided_work_locked(
+        self,
+        provider: str,
+        request_id: str,
+        work_id: str | None,
+    ) -> str | None:
+        """The work of a request answered moments ago, if one matches."""
+        if work_id is not None:
+            return work_id if (provider, work_id, request_id) in self._decided else None
+        for decided_provider, decided_work, decided_request in self._decided:
+            if decided_provider == provider and decided_request == request_id:
+                return decided_work
         return None
 
     def _release_locked(self, slot: _Slot) -> None:
@@ -1110,14 +1200,23 @@ def _request_key_parts(request: object) -> tuple[str, str] | None:
     return provider, request_id
 
 
+def _request_work_id(request: object) -> str | None:
+    """The work a request belongs to (the sub-agent, else the session),
+    from the canonical key; ``None`` when the key carries none."""
+    key = getattr(request, "key", None)
+    work_id = getattr(getattr(getattr(key, "work_key", None), "work_id", None), "value", None)
+    return work_id if type(work_id) is str and work_id else None
+
+
 def parked_decision_for_request(request: object, broker: object | None = None) -> ParkedDecision | None:
-    """The parked entry for one operator-state request, by its exact key."""
+    """The parked entry for one operator-state request, by its exact key --
+    the work included, so a sub-agent's identical call is not its hold."""
     parts = _request_key_parts(request)
     if parts is None:
         return None
     lane = broker if broker is not None else default_decision_broker()
     try:
-        return lane.parked(*parts)  # type: ignore[attr-defined]
+        return lane.parked(*parts, work_id=_request_work_id(request))  # type: ignore[attr-defined]
     except Exception:
         return None
 
@@ -1250,7 +1349,13 @@ def answer_through_decision_lane(
             (record.error or {}).get("code", "send_failed"),
             (record.error or {}).get("message", "that command already failed"),
         )
-    outcome = lane.decide(parked.provider, parked.request_id, verb, answers=args.get("answers"))
+    outcome = lane.decide(
+        parked.provider,
+        parked.request_id,
+        verb,
+        answers=args.get("answers"),
+        work_id=parked.work_id or None,
+    )
     if outcome is not DecisionResult.SENT:
         code, message = {
             DecisionResult.NOT_DELIVERED: (

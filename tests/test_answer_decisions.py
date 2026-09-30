@@ -156,6 +156,36 @@ def test_permission_facts_key_the_request_the_way_canonical_state_does__and_3_mo
     assert first.request_id != other_turn.request_id
 
 
+def test_permission_facts_mark_a_sub_agents_request() -> None:
+    for provider, make, session in (
+        ("claude", _claude_payload, "claude-session-1"),
+        ("codex", _codex_payload, "codex-session-1"),
+    ):
+        main = permission_facts(provider, make())
+        worker = permission_facts(provider, make(agent_id="agent-9"))
+        # A payload that names the session as its own agent is the main.
+        itself = permission_facts(provider, make(agent_id=session))
+        assert main is not None and worker is not None and itself is not None
+        assert main.agent_id is None and main.is_worker is False
+        assert worker.agent_id == "agent-9" and worker.is_worker is True
+        assert itself.is_worker is False
+        # The derived request id does not move: asks already in flight at an
+        # upgrade must still resolve.
+        assert worker.request_id == main.request_id
+
+
+def test_the_facts_name_the_work_the_way_canonical_state_keys_it() -> None:
+    """The broker matches an answer on the work id the card's request key
+    carries, so the two must be the one string for a main and a sub-agent."""
+    for provider, make in (("claude", _claude_payload), ("codex", _codex_payload)):
+        for text in (make(), make(agent_id="agent-9")):
+            facts = permission_facts(provider, text)
+            assert facts is not None
+            actual, _, line = routed_hook_payload(provider, Path("/tmp/jrbar-test.jsonl"), text)
+            record = _normalized_hook_record(actual, line)
+            assert facts.work_id == record.provider_work_id.value
+
+
 def test_always_allow_keeps_only_the_agents_own_allow_rules__and_1_more() -> None:
     # --- scenario: modes, directories, deny rules and junk are dropped
     suggestions = [
@@ -523,6 +553,170 @@ def test_a_held_codex_prompt_lets_go_when_its_terminal_comes_forward__and_3_more
     assert watch(codex, None) is False
 
 
+# --- one call from a main and from a sub-agent ----------------------------------
+
+MAIN_WORK = "claude-session-1"
+WORKER_WORK = "claude-agent-9"
+
+
+def _worker_facts(**overrides) -> PermissionFacts:
+    """The same call as ``_facts()``, raised by a sub-agent of that session:
+    the derived request id is the same, the work is not."""
+    return _facts(agent_id=WORKER_WORK, **overrides)
+
+
+def _behavior(received: list) -> str:
+    return received[0]["hookSpecificOutput"]["decision"]["behavior"]
+
+
+def test_a_main_and_a_sub_agent_hold_the_same_call_as_two_slots__and_3_more() -> None:
+    # --- scenario: the facts name the work the way canonical state does
+    assert _facts().work_id == MAIN_WORK
+    assert _worker_facts().work_id == WORKER_WORK
+    assert _facts(agent_id=MAIN_WORK).work_id == MAIN_WORK
+
+    # --- scenario: both park, each readable by its own work
+    broker = _broker()
+    _main, main_received, main_thread = _park_and_serve(broker, _facts())
+    _worker, worker_received, worker_thread = _park_and_serve(broker, _worker_facts())
+    assert broker.parked_count() == 2
+    main = broker.parked("claude", "derived:abc", work_id=MAIN_WORK)
+    worker = broker.parked("claude", "derived:abc", work_id=WORKER_WORK)
+    assert main is not None and main.work_id == MAIN_WORK and main.session_id == "claude-session-1"
+    assert worker is not None and worker.work_id == WORKER_WORK
+    assert broker.parked("claude", "derived:abc", work_id="claude-agent-other") is None
+
+    # --- scenario: an answer for the main's work reaches only the main's slot
+    assert (
+        broker.decide("claude", "derived:abc", DecisionVerb.DENY, work_id=MAIN_WORK) is DecisionResult.SENT
+    )
+    main_thread.join(2.0)
+    assert _behavior(main_received) == "deny"
+    assert worker_thread.is_alive() and worker_received == []
+    assert broker.parked_count() == 1
+
+    # --- scenario: the main's tombstone refuses the main's second answer, not the worker's
+    assert (
+        broker.decide("claude", "derived:abc", DecisionVerb.ALLOW, work_id=MAIN_WORK)
+        is DecisionResult.ALREADY_DECIDED
+    )
+    assert broker.parked("claude", "derived:abc", work_id=MAIN_WORK).decided is True
+    assert broker.parked("claude", "derived:abc", work_id=WORKER_WORK).decided is False
+    assert (
+        broker.decide("claude", "derived:abc", DecisionVerb.ALLOW, work_id=WORKER_WORK)
+        is DecisionResult.SENT
+    )
+    worker_thread.join(2.0)
+    assert _behavior(worker_received) == "allow"
+
+
+def test_an_answer_never_crosses_between_works_whichever_parked_first() -> None:
+    # The worker parks first, so it is the oldest slot for the request id. An
+    # answer for the main's work must still reach the main.
+    broker = _broker()
+    _worker, worker_received, worker_thread = _park_and_serve(broker, _worker_facts())
+    _main, main_received, main_thread = _park_and_serve(broker, _facts())
+
+    assert broker.decide("claude", "derived:abc", DecisionVerb.DENY, work_id=MAIN_WORK) is DecisionResult.SENT
+    main_thread.join(2.0)
+    assert _behavior(main_received) == "deny"
+    assert worker_thread.is_alive() and worker_received == []
+
+    # A work with nothing parked is not parked, however many slots share the id.
+    assert (
+        broker.decide("claude", "derived:abc", DecisionVerb.ALLOW, work_id="claude-agent-other")
+        is DecisionResult.NOT_PARKED
+    )
+    assert broker.parked_count() == 1
+    broker.release_all()
+    worker_thread.join(2.0)
+    assert worker_received == [None]
+
+
+def test_an_answer_without_a_work_still_takes_the_oldest_slot() -> None:
+    # Callers with no work identity keep the behaviour they always had.
+    broker = _broker()
+    _first, first_received, first_thread = _park_and_serve(broker, _worker_facts())
+    _second, second_received, second_thread = _park_and_serve(broker, _facts())
+    assert broker.parked("claude", "derived:abc").work_id == WORKER_WORK
+    assert broker.decide("claude", "derived:abc", DecisionVerb.DENY) is DecisionResult.SENT
+    first_thread.join(2.0)
+    assert _behavior(first_received) == "deny"
+    assert second_thread.is_alive() and second_received == []
+    assert broker.decide("claude", "derived:abc", DecisionVerb.ALLOW) is DecisionResult.SENT
+    second_thread.join(2.0)
+
+
+def test_a_new_hold_clears_only_its_own_works_tombstone() -> None:
+    broker = _broker()
+    _main, _received, thread = _park_and_serve(broker, _facts())
+    assert broker.decide("claude", "derived:abc", DecisionVerb.DENY, work_id=MAIN_WORK) is DecisionResult.SENT
+    thread.join(2.0)
+    assert broker.parked("claude", "derived:abc", work_id=MAIN_WORK).decided is True
+
+    # A sub-agent's identical call parks: the main's tombstone stands.
+    _worker, _worker_received, worker_thread = _park_and_serve(broker, _worker_facts())
+    assert broker.parked("claude", "derived:abc", work_id=MAIN_WORK).decided is True
+    broker.release_all()
+    worker_thread.join(2.0)
+
+    # The main's own new hold replaces its tombstone.
+    _again, _again_received, again_thread = _park_and_serve(broker, _facts())
+    assert broker.parked("claude", "derived:abc", work_id=MAIN_WORK).decided is False
+    broker.release_all()
+    again_thread.join(2.0)
+
+
+def test_a_sub_agents_events_never_release_the_mains_hold__and_2_more() -> None:
+    text = _claude_payload()
+    worker_text = _claude_payload(agent_id=WORKER_WORK)
+
+    def parked(broker: DecisionBroker):
+        main = _park_and_serve(broker, permission_facts("claude", text))
+        worker = _park_and_serve(broker, permission_facts("claude", worker_text))
+        assert broker.parked_count() == 2
+        return main, worker
+
+    def ended(event: dict, **extra) -> str:
+        return json.dumps({"hook_event_name": event, "session_id": "claude-session-1", **extra})
+
+    # --- scenario: a Stop-like event from the sub-agent lets only its own hold go
+    broker = _broker()
+    (_m, main_received, main_thread), (_w, worker_received, worker_thread) = parked(broker)
+    assert broker.observe("claude", ended("Stop", agent_id=WORKER_WORK)) == 1
+    worker_thread.join(2.0)
+    assert worker_received == [None]
+    assert main_thread.is_alive() and main_received == []
+    assert broker.parked_count() == 1
+    # The same event naming the session as its own agent is the main's.
+    assert broker.observe("claude", ended("Stop", agent_id="claude-session-1")) == 1
+    main_thread.join(2.0)
+    assert main_received == [None]
+
+    # --- scenario: an event with no agent keeps the session-wide release
+    broker = _broker()
+    (_m, main_received, main_thread), (_w, worker_received, worker_thread) = parked(broker)
+    assert broker.observe("claude", ended("Stop")) == 2
+    main_thread.join(2.0)
+    worker_thread.join(2.0)
+    assert main_received == [None] and worker_received == [None]
+
+    # --- scenario: the tool that ran releases the hold of the work that ran it
+    broker = _broker()
+    (_m, main_received, main_thread), (_w, worker_received, worker_thread) = parked(broker)
+    worker_ran = json.loads(worker_text)
+    worker_ran.update({"hook_event_name": "PostToolUse", "tool_response": {"stdout": "ok"}})
+    assert broker.observe("claude", json.dumps(worker_ran)) == 1
+    worker_thread.join(2.0)
+    assert worker_received == [None]
+    assert main_thread.is_alive() and main_received == []
+    main_ran = json.loads(text)
+    main_ran.update({"hook_event_name": "PostToolUse", "tool_response": {"stdout": "ok"}})
+    assert broker.observe("claude", json.dumps(main_ran)) == 1
+    main_thread.join(2.0)
+    assert main_received == [None]
+
+
 # --- answer_ask through the lane -----------------------------------------------
 
 
@@ -546,11 +740,13 @@ def _request_key(provider: str, request_id: str):
     )
 
 
-def _controller(provider: str = "claude", request_id: str = "derived:abc"):
+def _controller(provider: str = "claude", request_id: str = "derived:abc", work_id: str | None = None):
     work_key = object()
     key = _request_key(provider, request_id)
     key.work_key = work_key
     key.work_key = SimpleNamespace(source_key=SimpleNamespace(provider_id=provider))
+    if work_id is not None:
+        key.work_key.work_id = SimpleNamespace(value=work_id)
     request = SimpleNamespace(key=key, phase=SimpleNamespace(value="live_waiting"))
     status = SimpleNamespace(agent_id="claude:session:1", work_key=key.work_key)
     refreshed: list = []
@@ -618,6 +814,37 @@ def test_answer_ask_answers_a_held_request_by_its_hook__and_4_more() -> None:
     thread.join(2.0)
     assert error.value.code == "stale_ask"
     assert journal.settled[-1]["error"]["code"] == "stale_ask"
+
+
+def test_answer_ask_reaches_the_work_the_card_names_when_two_hold_the_same_call() -> None:
+    journal = _Journal()
+
+    def call(controller, status, args, broker):
+        return answer_through_decision_lane(
+            controller, status, args, journal_for=lambda _c: journal, on_main=lambda fn: fn(), broker=broker
+        )
+
+    broker = _broker()
+    _main, main_received, main_thread = _park_and_serve(broker, _facts())
+    _worker, worker_received, worker_thread = _park_and_serve(broker, _worker_facts())
+
+    # The card for the main session's request answers the main's hold.
+    controller, status, request, _refreshed = _controller(work_id=MAIN_WORK)
+    parked = parked_decision_for_request(request, broker)
+    assert parked is not None and parked.work_id == MAIN_WORK
+    result = call(controller, status, {"session": status.agent_id, "decision": "deny"}, broker)
+    main_thread.join(2.0)
+    assert result["answered"] is True
+    assert _behavior(main_received) == "deny"
+    assert worker_thread.is_alive() and worker_received == []
+
+    # The sub-agent's card answers the sub-agent's hold, not the tombstone.
+    controller, status, request, _refreshed = _controller(work_id=WORKER_WORK)
+    parked = parked_decision_for_request(request, broker)
+    assert parked is not None and parked.work_id == WORKER_WORK and parked.decided is False
+    call(controller, status, {"session": status.agent_id, "decision": "approve"}, broker)
+    worker_thread.join(2.0)
+    assert _behavior(worker_received) == "allow"
 
 
 # --- previews for every PermissionRequest ----------------------------------------

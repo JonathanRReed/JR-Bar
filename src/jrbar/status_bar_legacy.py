@@ -158,6 +158,7 @@ from .attention import (
     AttentionProjection,
     LifecycleMode,
     project_attention,
+    quiet_worker_request_keys,
     regate_actionable_attention,
 )
 from .audit import (
@@ -2533,13 +2534,8 @@ class StatusBarController(NSObject):
         snapshot = self.last_snapshot
         if snapshot is not None:
             projection = self.current_attention_projection
-            mode = (
-                self.display_aggregate_mode(projection)
-                if projection is not None
-                else snapshot.aggregate.mode
-            )
             self.sync_leds(
-                mode,
+                self.resync_display_mode(snapshot),
                 self.last_battery_snapshot,
                 self.active_led_display_kind(self.last_battery_snapshot),
                 tuple(snapshot.statuses),
@@ -8982,6 +8978,7 @@ class StatusBarController(NSObject):
             ),
             receipt_handler=self._record_hook_ingress_receipt,
             statusline_enabled=lambda: bool(getattr(self.settings, "claude_statusline_source", False)),
+            subagent_asks_alert=lambda: bool(getattr(self.settings, "subagent_asks_alert", False)),
         )
         self.hook_ingress_service = service
         try:
@@ -10073,9 +10070,16 @@ class StatusBarController(NSObject):
         }
         primary_count = 0
         worker_count = 0
+        quiet_requests: frozenset = frozenset()
         if type(state) is CanonicalOperatorState:
             primary_count = sum(work.parent_key is None for work in state.works)
             worker_count = len(state.works) - primary_count
+            quiet_requests = quiet_worker_request_keys(
+                state,
+                subagent_asks_alert=bool(
+                    getattr(self.settings, "subagent_asks_alert", False)
+                ),
+            )
         rows: list[RuntimeHistoryEvent] = []
         for event in events:
             phrase = phrases.get(event.kind)
@@ -10083,6 +10087,13 @@ class StatusBarController(NSObject):
                 self.append_operator_history_reel(phrase, event.key)
             kind = history_kinds.get(event.kind)
             if kind is None:
+                continue
+            if (
+                event.kind is TransitionKind.REQUEST_OPENED
+                and event.subject_key in quiet_requests
+            ):
+                # With worker asks off nobody was asked, so no attention
+                # episode is counted. The reel above still says it opened.
                 continue
             subject = event.subject_key
             source = subject.source_key if type(subject) is WorkKey else subject.work_key.source_key
@@ -10476,7 +10487,11 @@ class StatusBarController(NSObject):
         snapshot = self.last_snapshot
         statuses = snapshot.statuses if snapshot is not None else ()
         self.sync_leds(
-            snapshot.aggregate.mode if snapshot is not None else AgentMode.IDLE_READY,
+            (
+                self.resync_display_mode(snapshot)
+                if snapshot is not None
+                else AgentMode.IDLE_READY
+            ),
             None,
             LED_DISPLAY_AGENT,
             statuses,
@@ -11442,7 +11457,7 @@ class StatusBarController(NSObject):
             return
         if self.last_snapshot is not None:
             self.sync_leds(
-                self.last_snapshot.aggregate.mode,
+                self.resync_display_mode(self.last_snapshot),
                 self.last_battery_snapshot,
                 self.active_led_display_kind(self.last_battery_snapshot),
             )
@@ -15536,6 +15551,20 @@ class StatusBarController(NSObject):
             LifecycleMode.UNKNOWN: AgentMode.UNKNOWN,
         }[projection.lifecycle_mode]
 
+    def resync_display_mode(self, snapshot) -> AgentMode:
+        """The mode an LED repaint shows when no refresh pass is running.
+
+        A repaint after a lid flourish, a colour preview or a device
+        setting has no fresh projection of its own, so it reads the last
+        refresh's. The raw aggregate mode picks the most urgent status of
+        every session, workers included, which painted a waiting
+        sub-agent as an ask while the normal path stayed quiet.
+        """
+        projection = getattr(self, "current_attention_projection", None)
+        return self.display_aggregate_mode(
+            projection if projection is not None else snapshot
+        )
+
     def agents_active_now(self) -> bool:
         """Any MAIN session actually working at this instant -- the lid
         animation says "your agents are still cooking" vs "all quiet"
@@ -16861,7 +16890,7 @@ def restore_led_display(target, token_value) -> None:
     target.reset_led_controllers_for_display_change()
     if target.last_snapshot is not None:
         target.sync_leds(
-            target.last_snapshot.aggregate.mode,
+            target.resync_display_mode(target.last_snapshot),
             target.last_battery_snapshot,
             target.active_led_display_kind(target.last_battery_snapshot),
         )

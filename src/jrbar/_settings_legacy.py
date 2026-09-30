@@ -662,8 +662,9 @@ class AgentMonitorSettings:
     # Global action identifier -> strict ShortcutChord persistence fields.
     # Empty is intentional: a new installation does not claim a system chord.
     global_action_shortcuts: dict[str, dict] = field(default_factory=dict)
-    # Sub-agent asks can't be answered (their parent handles them), so
-    # by default only MAIN sessions may ring the Ask signal.
+    # Sub-agent asks stay quiet by default: no light, sound, banner or
+    # answer card, and the sub-agent's own agent still shows its prompt.
+    # Turning this on lets them alert like a main session's ask does.
     subagent_asks_alert: bool = False
     # The owner's defaults: a nudge at 90, a real warning at 95.
     quota_alert_thresholds: tuple[float, ...] = DEFAULT_QUOTA_THRESHOLDS

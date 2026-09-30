@@ -44,6 +44,8 @@ from jrbar.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
+from jrbar.semantic_effect_router import SemanticEventKind
+from jrbar.settings import AgentMonitorSettings
 
 
 class _Writer:
@@ -678,3 +680,196 @@ def test_a_fresh_milestone_crossing_is_one_event_for_the_toys(monkeypatch) -> No
     assert observed(1_800_000_000.0 + 3_600.0, milestone_odometer_enabled=True, milestone_odometer_steps=(1,)) == []
     # Off means no counter at all, so nothing for the toys either.
     assert observed(1_800_000_010.0, milestone_odometer_steps=(1,)) == []
+
+
+def _fresh_request(request_key, watermark, epoch):
+    return CanonicalRequestTruth(
+        request_key,
+        RequestPhase.LIVE_UNACKNOWLEDGED,
+        RequestKind.INPUT,
+        NextActor.USER,
+        watermark,
+        SourceFreshness.FRESH,
+        AcknowledgementEligibility.ELIGIBLE,
+        SemanticEventKey(request_key, TransitionKind.REQUEST_OPENED, watermark),
+        epoch,
+        0.0,
+    )
+
+
+def _main_and_worker_state(*, main_request: bool, worker_request: bool):
+    """One main work and one worker under it, either holding a live ask."""
+    epoch = 1_800_000_000.0
+    state, main_key, main_request_key, watermark = _canonical_state(
+        lifecycle=WorkLifecycle.ACTIVE,
+        request_open=main_request,
+        epoch=epoch,
+    )
+    worker_key = WorkKey(main_key.source_key, WorkIdentifier("work:worker-01"))
+    worker_request_key = RequestKey(worker_key, RequestIdentifier("request:worker-01"))
+    worker = replace(
+        state.works[0],
+        key=worker_key,
+        parent_key=main_key,
+        lifecycle=(
+            WorkLifecycle.WAITING if worker_request else WorkLifecycle.ACTIVE
+        ),
+        next_actor=NextActor.USER if worker_request else NextActor.PROVIDER,
+        safe_label="Codex worker 01",
+        request_keys=(worker_request_key,) if worker_request else (),
+    )
+    requests = tuple(state.requests)
+    if worker_request:
+        requests = (*requests, _fresh_request(worker_request_key, watermark, epoch))
+    state = replace(state, works=(*state.works, worker), requests=requests)
+    return state, main_request_key, worker_request_key, watermark
+
+
+def _dispatched_families(controller):
+    dispatch = controller._ambient_effect_dispatch
+    return {output.family for output in dispatch.outputs}, {
+        item.family for item in dispatch.suppressed
+    }
+
+
+def _observe_request_opened(controller, state, request_key, watermark, monkeypatch):
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+    events = (_operator_event(request_key, TransitionKind.REQUEST_OPENED, watermark),)
+    controller.observe_operator_history_events(events, state)
+
+
+def test_a_workers_ask_stays_off_every_light_while_worker_asks_are_off(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    controller.settings = AgentMonitorSettings()
+    assert controller.settings.subagent_asks_alert is False
+    state, _main_request, worker_request, watermark = _main_and_worker_state(
+        main_request=False,
+        worker_request=True,
+    )
+
+    _observe_request_opened(controller, state, worker_request, watermark, monkeypatch)
+
+    assert controller._ask_heartbeat_plan.request_count == 0
+    assert controller._dot_binary_heartbeat_plan.selected_semantic is not (
+        SemanticEventKind.ASK
+    )
+    # The courtesy signature is one-shot state that the dispatch consumes, so
+    # the proof is that it never reached a surface, nor was it even proposed.
+    assert controller._courtesy_signature_plan is None
+    staged, refused = _dispatched_families(controller)
+    assert AmbientEffectFamily.COURTESY_SIGNATURE not in staged | refused
+    assert AmbientEffectFamily.ASK_HEARTBEAT not in staged
+    for surface in AmbientEffectSurface:
+        active = active_ambient_surface_output(
+            controller,
+            surface,
+            now_monotonic=controller._ambient_effect_dispatch_started_at,
+        )
+        assert active is None or active[0].family not in {
+            AmbientEffectFamily.ASK_HEARTBEAT,
+            AmbientEffectFamily.COURTESY_SIGNATURE,
+        }
+    # The worker's request is still canonical truth: nothing was dropped.
+    assert [request.key for request in state.requests] == [worker_request]
+
+
+def test_a_workers_ask_lights_the_strip_when_worker_asks_are_on(monkeypatch) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    controller.settings = replace(AgentMonitorSettings(), subagent_asks_alert=True)
+    state, _main_request, worker_request, watermark = _main_and_worker_state(
+        main_request=False,
+        worker_request=True,
+    )
+
+    _observe_request_opened(controller, state, worker_request, watermark, monkeypatch)
+
+    assert controller._ask_heartbeat_plan.request_count == 1
+    assert controller._dot_binary_heartbeat_plan.selected_semantic is (
+        SemanticEventKind.ASK
+    )
+    staged, refused = _dispatched_families(controller)
+    assert AmbientEffectFamily.ASK_HEARTBEAT in staged
+    assert AmbientEffectFamily.COURTESY_SIGNATURE in refused
+
+
+def test_a_main_ask_still_lights_the_strip_with_worker_asks_off(monkeypatch) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    controller.settings = AgentMonitorSettings()
+    state, main_request, _worker_request, watermark = _main_and_worker_state(
+        main_request=True,
+        worker_request=False,
+    )
+
+    _observe_request_opened(controller, state, main_request, watermark, monkeypatch)
+
+    assert controller._ask_heartbeat_plan.request_count == 1
+    assert controller._dot_binary_heartbeat_plan.selected_semantic is (
+        SemanticEventKind.ASK
+    )
+    staged, refused = _dispatched_families(controller)
+    assert AmbientEffectFamily.ASK_HEARTBEAT in staged
+    assert AmbientEffectFamily.COURTESY_SIGNATURE in refused
+
+
+def test_a_mixed_state_lights_only_the_main_ask_with_worker_asks_off(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    controller.settings = AgentMonitorSettings()
+    state, main_request, worker_request, watermark = _main_and_worker_state(
+        main_request=True,
+        worker_request=True,
+    )
+
+    _observe_request_opened(controller, state, worker_request, watermark, monkeypatch)
+
+    # Only the main's request counts, and it is the one that was already live.
+    assert controller._ask_heartbeat_plan.request_count == 1
+    assert controller._dot_binary_heartbeat_plan.selected_semantic is (
+        SemanticEventKind.ASK
+    )
+    assert {request.key for request in state.requests} == {
+        main_request,
+        worker_request,
+    }
+    # The worker's own opening does not fire the interruption signature.
+    staged, refused = _dispatched_families(controller)
+    assert AmbientEffectFamily.COURTESY_SIGNATURE not in staged | refused
+
+
+def test_a_waiting_worker_alone_never_reads_as_an_ask_on_the_dot(monkeypatch) -> None:
+    """A worker WAITING lifecycle without a request must not raise ASK either."""
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    controller.settings = AgentMonitorSettings()
+    state, _main_request, worker_request, _watermark = _main_and_worker_state(
+        main_request=False,
+        worker_request=True,
+    )
+    worker = state.works[-1]
+    assert worker.parent_key is not None
+    state = replace(state, requests=())
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+
+    controller.observe_operator_history_events((), state)
+
+    assert controller._ask_heartbeat_plan.request_count == 0
+    assert controller._dot_binary_heartbeat_plan.selected_semantic is not (
+        SemanticEventKind.ASK
+    )
+    assert worker_request not in {request.key for request in state.requests}
