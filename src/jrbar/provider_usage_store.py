@@ -10,6 +10,7 @@ from .provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
+    is_invented_antigravity_reading,
 )
 from .provider_usage_runtime import ProviderUsageState
 
@@ -169,10 +170,18 @@ def load_provider_usage_state(
     ):
         return ProviderUsageState((), None, None, False)
     snapshots = []
+    purged = False
     raw_snapshots = document.get("snapshots")
     if isinstance(raw_snapshots, list):
         for raw_snapshot in raw_snapshots[:16]:
             snapshot = _snapshot(raw_snapshot)
+            if snapshot is not None and is_invented_antigravity_reading(snapshot):
+                # Every reader of the saved file drops it here, not only the
+                # daemon on restore: the CLIs, the sync and the endpoint read
+                # the file without the daemon and would show or send it until
+                # the daemon next saved.
+                purged = True
+                continue
             if snapshot is not None and snapshot.identity not in {
                 existing.identity for existing in snapshots
             }:
@@ -186,7 +195,8 @@ def load_provider_usage_state(
     return ProviderUsageState(
         tuple(snapshots),
         None if refreshed_at is None else float(refreshed_at),
-        None if next_refresh_at is None else float(next_refresh_at),
+        # A dropped reading is a gap the next refresh should fill, not wait out.
+        None if purged or next_refresh_at is None else float(next_refresh_at),
         False,
     )
 

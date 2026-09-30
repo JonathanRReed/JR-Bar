@@ -403,14 +403,13 @@ class ProviderUsageService:
     def _is_invented_antigravity_reading(snapshot: ProviderUsageSnapshot) -> bool:
         """The READY "Antigravity CLI 100% left" lane older builds made up.
 
-        Nothing ever measured it: it came from the Gemini CLI's sign-in file,
-        not from Antigravity's quota server, and it was saved to disk. Real
-        Antigravity lanes come from ``antigravity-app``.
+        One rule shared with the saved-file reader
+        (``provider_usage_platform.is_invented_antigravity_reading``), so a
+        state that reaches the daemon by any road is purged the same way.
         """
-        return snapshot.provider_id == "antigravity" and any(
-            lane.lane_id == "cli" and lane.source_id == "antigravity-oauth"
-            for lane in snapshot.lanes
-        )
+        from .provider_usage_platform import is_invented_antigravity_reading
+
+        return is_invented_antigravity_reading(snapshot)
 
     def _identity_checked_restored_state(
         self,

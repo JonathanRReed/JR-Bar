@@ -34,7 +34,11 @@ from urllib.parse import parse_qs
 
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .provider_facts import NextActor, SourceFreshness, SourceHealth, WorkLifecycle
-from .provider_usage_platform import ProviderSourceState, provider_descriptors
+from .provider_usage_platform import (
+    ProviderSourceState,
+    is_invented_antigravity_lane,
+    provider_descriptors,
+)
 from .provider_usage_store import default_provider_usage_state_path
 from .providers import default_state_dir
 
@@ -202,6 +206,11 @@ def _quota_summary(
     if isinstance(lanes, list):
         for lane in lanes[:_MAX_LANES]:
             if not isinstance(lane, dict) or lane.get("provider_id") != provider_id:
+                continue
+            if is_invented_antigravity_lane(
+                provider_id, lane.get("lane_id"), lane.get("source_id")
+            ):
+                # A saved lane no server ever measured is not a window.
                 continue
             raw_remaining = lane.get("remaining_percent")
             raw_reset = lane.get("reset_at")

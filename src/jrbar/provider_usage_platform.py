@@ -445,6 +445,33 @@ def most_constrained_lane(
     return min(eligible, key=lambda lane: lane.remaining_percent) if eligible else None
 
 
+def is_invented_antigravity_lane(
+    provider_id: object,
+    lane_id: object,
+    source_id: object,
+) -> bool:
+    """The "Antigravity CLI 100% left" lane older builds made up.
+
+    Nothing ever measured it: it came from the Gemini CLI's sign-in file, not
+    from Antigravity's quota server, and it was saved to disk. Real Antigravity
+    lanes come from ``antigravity-app``. Takes the three ids so a saved-file
+    row (a plain dict) and a ``UsageLane`` are judged by one rule.
+    """
+    return (
+        provider_id == "antigravity"
+        and lane_id == "cli"
+        and source_id == "antigravity-oauth"
+    )
+
+
+def is_invented_antigravity_reading(snapshot: ProviderUsageSnapshot) -> bool:
+    """A snapshot carrying the lane no server ever measured."""
+    return any(
+        is_invented_antigravity_lane(snapshot.provider_id, lane.lane_id, lane.source_id)
+        for lane in snapshot.lanes
+    )
+
+
 def provider_usage_identity(snapshot: ProviderUsageSnapshot) -> tuple[str, str]:
     """Return the composite identity used by stores, sync, and projections."""
     if type(snapshot) is not ProviderUsageSnapshot:
@@ -481,6 +508,8 @@ __all__ = [
     "ProviderSourceState",
     "ProviderUsageSnapshot",
     "UsageLane",
+    "is_invented_antigravity_lane",
+    "is_invented_antigravity_reading",
     "most_constrained_lane",
     "normalize_dynamic_lane",
     "provider_descriptor",
