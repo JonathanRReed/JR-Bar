@@ -1395,6 +1395,11 @@ def focus_document(dnd_projection: object, *, override_until: object = None) -> 
     effect, and with nothing in effect the next transition is a quiet
     period *starting* -- which a reader would paint as an end time, so
     the field is null then.
+
+    ``display`` is the lights' admission; ``outbound`` is the admission for
+    banners, sounds and webhooks by kind class (``all``, ``critical``,
+    ``asks``, ``none``). The two differ when Mute is composed with a mode
+    that keeps the lights on, so a reader never derives one from the other.
     """
     contributions = getattr(dnd_projection, "contributions", ()) or ()
     mode: str | None = None
@@ -1421,6 +1426,7 @@ def focus_document(dnd_projection: object, *, override_until: object = None) -> 
         "source": _FOCUS_SOURCE_WORDS.get(source, source) if source else None,
         "until": until,
         "display": getattr(getattr(dnd_projection, "display_admission", None), "value", None),
+        "outbound": getattr(getattr(dnd_projection, "outbound_admission", None), "value", None),
         "brightness_factor": getattr(dnd_projection, "brightness_factor", None),
         "banner_allowed": getattr(dnd_projection, "banner_allowed", None),
         "audible_allowed": getattr(dnd_projection, "audible_allowed", None),

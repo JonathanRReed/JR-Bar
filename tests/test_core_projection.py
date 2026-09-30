@@ -44,6 +44,7 @@ from jrbar.core_projection import (
     build_settings_document,
     build_state_document,
     duration_since,
+    focus_document,
     history_rows,
     hook_health,
     lifecycle_for_mode,
@@ -60,6 +61,13 @@ from jrbar.core_projection import (
     why_for_glance,
 )
 from jrbar.core_usage_samples import UsageSampleBuffer
+from jrbar.dnd_policy import (
+    DndMode,
+    DndSource,
+    compose_dnd_contributions,
+    contribution_for_mode,
+    contribution_for_presence,
+)
 from jrbar.models import AgentMode, AgentStatus
 from jrbar.provider_facts import RequestIdentifier, RequestKey, RequestKind, WorkIdentifier, WorkKey
 from jrbar.providers import negotiated_provider_sources
@@ -234,6 +242,7 @@ def fixture_inputs() -> dict:
         active_sources=(SimpleNamespace(value="schedule"),),
         next_transition_epoch=NOW + 3600.0,
         display_admission=SimpleNamespace(value="all"),
+        outbound_admission=SimpleNamespace(value="all"),
         brightness_factor=0.15,
         banner_allowed=True,
         audible_allowed=False,
@@ -454,6 +463,7 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     }
     assert document["focus"]["mode"] == "dim" and document["focus"]["source"] == "schedule"
     assert document["focus"]["until"] == NOW + 3600.0
+    assert document["focus"]["display"] == "all" and document["focus"]["outbound"] == "all"
     assert document["escalation"] == {"stage": "menu_bar", "since": 1788982800.0}
     assert document["health"]["hooks"] == {"claude": "ok", "codex": "stale", "pi": "missing"}
     assert document["health"]["detected"] == {"claude": True, "codex": True, "pi": False}
@@ -531,6 +541,43 @@ def test_state_document_focus_reads_off_when_idle_and_override_when_manual__and_
     assert document["escalation"] == {"stage": "none", "since": None}
     json.dumps(document)
 
+
+
+def test_focus_carries_the_outbound_admission_beside_the_lights_axis() -> None:
+    """``focus.outbound`` is the admission for banners, sounds and webhooks
+    by kind class, read off the real composed projection. ``display`` is
+    the lights' axis and can disagree with it: a Dim schedule under a Mute
+    Focus lights everything (``display`` all) and admits nothing outbound."""
+
+    def focus_of(*contributions) -> dict:
+        projection = compose_dnd_contributions(contributions)
+        return focus_document(projection)
+
+    muted_dim = focus_of(
+        contribution_for_mode(DndSource.SCHEDULE, DndMode.DIM),
+        contribution_for_mode(DndSource.MACOS_FOCUS, DndMode.MUTE),
+    )
+    assert muted_dim["display"] == "all"
+    assert muted_dim["outbound"] == "none"
+    # The mode word is only the first contribution's; the axes are what lead.
+    assert muted_dim["mode"] == "dim"
+    assert muted_dim["banner_allowed"] is False and muted_dim["audible_allowed"] is False
+
+    asks_only = focus_of(contribution_for_mode(DndSource.MANUAL, DndMode.ASKS_ONLY))
+    assert asks_only["mode"] == "asks_only" and asks_only["outbound"] == "asks"
+    assert focus_of(contribution_for_mode(DndSource.MANUAL, DndMode.PAUSE))["outbound"] == "critical"
+    assert focus_of(contribution_for_mode(DndSource.MANUAL, DndMode.DARK))["outbound"] == "none"
+    assert focus_of(contribution_for_mode(DndSource.MANUAL, DndMode.DIM))["outbound"] == "all"
+
+    # Nothing quiet, and a call's no-sounds quiet, admit everything.
+    assert focus_of()["outbound"] == "all"
+    call = focus_of(contribution_for_presence(DndSource.CALL, "sounds"))
+    assert call["mode"] == "off" and call["outbound"] == "all"
+    assert call["audible_allowed"] is False
+
+    # A projection that predates the axis says nothing rather than guessing.
+    bare = SimpleNamespace(contributions=(), active_sources=(), next_transition_epoch=None)
+    assert focus_document(bare)["outbound"] is None
 
 
 def test_lights_and_settings_documents__and_2_more() -> None:
