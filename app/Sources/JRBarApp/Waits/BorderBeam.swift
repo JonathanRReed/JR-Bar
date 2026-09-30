@@ -151,16 +151,11 @@ enum BeamGeometry {
 extension View {
     /// A short, soft arc of light travelling round the element's border
     /// while `active` — gliding at a steady `BeamGeometry.speed`,
-    /// concentric with its corners, fading in and out over a quarter
-    /// second. Under Reduce Motion it
+    /// concentric with its corners (`BeamTrack.ring`) or along a
+    /// command bar's field (`BeamTrack.baseline`), fading in and out
+    /// over a quarter second. Under Reduce Motion it
     /// is a still glow on the border. Inactive, it draws nothing and no
     /// clock runs.
-    func borderBeam(active: Bool, cornerRadius: CGFloat, tint: Color) -> some View {
-        modifier(BorderBeamModifier(active: active, track: .ring(cornerRadius: cornerRadius), tint: tint))
-    }
-
-    /// The same beam on a chosen track (`BeamTrack.baseline` for a
-    /// command bar's field).
     func borderBeam(active: Bool, track: BeamTrack, tint: Color) -> some View {
         modifier(BorderBeamModifier(active: active, track: track, tint: tint))
     }
