@@ -172,7 +172,8 @@ final class DeckRailController {
             content = RailLabelView(title: "Open Creator Micro", subtitle: store.banks.title, provider: nil, number: "…")
         } else {
             let slot = store.slots[safe: cell] ?? DeckSlot(index: cell)
-            content = RailLabelView(title: slot.title, subtitle: slot.subtitle, provider: slot.provider, number: "\(cell + 1)",
+            content = RailLabelView(title: slot.title, subtitle: store.railSubtitle(for: slot),
+                                    provider: slot.provider, number: "\(cell + 1)",
                                     detail: store.askDetail(for: slot),
                                     ask: store.ask(for: slot), desk: AskAnswerDesk.shared,
                                     onHover: { [weak store] inside in store?.railPillHovered = inside })
@@ -414,6 +415,9 @@ struct RailSlotCell: View {
     private var hovered: Bool { store.railHoveredCell == cell }
     private var dim: Bool { slot.isEmpty || slot.isReserved }
     private var mark: String { slot.state.railMark }
+    /// The key's second line, which says "Answered" for an ask JR-Bar
+    /// already answered rather than "Needs you".
+    private var subtitle: String { store.railSubtitle(for: slot) }
 
     var body: some View {
         ZStack {
@@ -446,8 +450,8 @@ struct RailSlotCell: View {
         .onHover { store.railHoveredCell = $0 ? cell : (store.railHoveredCell == cell ? nil : store.railHoveredCell) }
         .onTapGesture { if slot.navigable { store.press(index: slot.index) } }
         .animation(store.reduceMotion ? nil : .easeOut(duration: 0.15), value: lit)
-        .help("\(slot.title): \(slot.subtitle)")
-        .accessibilityLabel("Key \(slot.index + 1), \(slot.title), \(slot.subtitle)")
+        .help("\(slot.title): \(subtitle)")
+        .accessibilityLabel("Key \(slot.index + 1), \(slot.title), \(subtitle)")
         .accessibilityAddTraits(slot.navigable ? .isButton : [])
     }
 }
@@ -474,6 +478,27 @@ struct RailOverflowCell: View {
         .help("Open the Creator Micro window, \(store.banks.title.lowercased())")
         .accessibilityLabel("Open the Creator Micro window, \(store.banks.title.lowercased())")
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+extension DeckStore {
+    /// The word an answered key's second line says.
+    nonisolated static let answeredSubtitle = "Answered"
+
+    /// The second line of a key's hover pill, tooltip and VoiceOver label.
+    /// A key whose ask JR-Bar already answered says "Answered", so the pill
+    /// does not read "Needs you" directly above "Answered, waiting for the
+    /// agent". It is the label only: the key is the same state, lit the
+    /// same, and counted the same in every header.
+    func railSubtitle(for slot: DeckSlot) -> String {
+        Self.railSubtitle(slot, ask: ask(for: slot))
+    }
+
+    nonisolated static func railSubtitle(_ slot: DeckSlot, ask: CoreAsk?) -> String {
+        guard slot.state == .inputRequired, RailLabelView.decidedLineText(ask) != nil else {
+            return slot.subtitle
+        }
+        return answeredSubtitle
     }
 }
 
