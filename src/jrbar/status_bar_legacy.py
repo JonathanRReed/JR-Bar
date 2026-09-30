@@ -8138,6 +8138,14 @@ class StatusBarController(NSObject):
             if grant.banner_allowed:
                 state = getattr(self, "current_operator_state", None)
                 if type(state) is CanonicalOperatorState:
+                    # A worker's request is quiet while sub-agent asks are
+                    # off: nobody was asked, so it never raises the banner.
+                    quiet_requests = quiet_worker_request_keys(
+                        state,
+                        subagent_asks_alert=bool(
+                            getattr(self.settings, "subagent_asks_alert", False)
+                        ),
+                    )
                     request = next(
                         (
                             candidate
@@ -8145,6 +8153,7 @@ class StatusBarController(NSObject):
                             if candidate.phase is RequestPhase.LIVE_UNACKNOWLEDGED
                             and candidate.next_actor is NextActor.USER
                             and candidate.source_freshness is SourceFreshness.FRESH
+                            and candidate.key not in quiet_requests
                         ),
                         None,
                     )
@@ -10485,7 +10494,10 @@ class StatusBarController(NSObject):
 
     def push_colors_preview_to_device(self) -> None:
         snapshot = self.last_snapshot
-        statuses = snapshot.statuses if snapshot is not None else ()
+        # Like every repaint between refreshes, this reads the last
+        # refresh's projection and hands over no raw statuses: the strip is
+        # drawn from them when there is no projection, and a waiting
+        # sub-agent among them was painted as an ask.
         self.sync_leds(
             (
                 self.resync_display_mode(snapshot)
@@ -10494,7 +10506,8 @@ class StatusBarController(NSObject):
             ),
             None,
             LED_DISPLAY_AGENT,
-            statuses,
+            (),
+            projection=getattr(self, "current_attention_projection", None),
         )
 
     @objc.IBAction
