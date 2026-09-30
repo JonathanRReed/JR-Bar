@@ -8984,6 +8984,57 @@ class DeviceBrightnessWatcherTests(unittest.TestCase):
         self.assertEqual(controller.last_watched_brightness, 140)
         self.assertEqual(refreshes, [True])
 
+    def test_a_manual_brightness_turns_auto_brightness_off(self) -> None:
+        '''The daemon's set_brightness command lands on the controller's
+        set_device_brightness. A value the person picks is explicit intent,
+        so it is kept and auto-brightness is switched off; otherwise the
+        screen-derived level silently wins and the control does nothing.'''
+        # --- scenario: a_manual_brightness_turns_auto_brightness_off
+        self.setUp()  # fresh isolated controller per scenario
+        status_bar = self.status_bar
+        controller = self.controller
+        # The resync after a change replays the last snapshot onto the
+        # device; this test is about the stored setting, not LED writes.
+        controller.sync_leds = lambda *args, **kwargs: None
+        device = next(
+            entry
+            for entry in controller.status_bar_devices(remember=False)
+            if entry.connected and entry.device_id != status_bar.VIRTUAL_DEVICE_ID
+        )
+        device_id = device.device_id
+        controller.settings = controller.settings.with_device_auto_brightness(
+            device_id, True, name=device.name, path=str(device.root)
+        )
+        self.assertTrue(controller.settings.auto_brightness_enabled_for_device(device_id))
+
+        controller.set_device_brightness(device_id, 120)
+
+        self.assertEqual(controller.settings.brightness_for_device(device_id), 120)
+        self.assertFalse(controller.settings.auto_brightness_enabled_for_device(device_id))
+        # The device list the menu and the state document read agrees, and
+        # the change is on disk for the next launch.
+        listed = next(
+            entry
+            for entry in controller.status_bar_devices(remember=False)
+            if entry.device_id == device_id
+        )
+        self.assertEqual(listed.brightness, 120)
+        self.assertFalse(listed.auto_brightness_enabled)
+        saved = load_settings(self._settings_path)
+        self.assertEqual(saved.brightness_for_device(device_id), 120)
+        self.assertFalse(saved.auto_brightness_enabled_for_device(device_id))
+
+        # --- scenario: a_later_manual_brightness_replaces_the_earlier_one
+        controller.set_device_brightness(device_id, 200)
+
+        listed = next(
+            entry
+            for entry in controller.status_bar_devices(remember=False)
+            if entry.device_id == device_id
+        )
+        self.assertEqual(listed.brightness, 200)
+        self.assertFalse(listed.auto_brightness_enabled)
+
     def test_refresh_does_not_crash_before_the_status_item_exists(self) -> None:
         # Regression guard: set_closed_lid_awake_policy (and several other
         # settings actions) call refresh_() as their final step, which
