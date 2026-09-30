@@ -1,5 +1,10 @@
 # JR-Bar: the vision
 
+> **Historical.** The pre-0.8 product vision (2026-08-14), kept for provenance.
+> What ships is in [`docs/FEATURE-MATRIX.md`](../FEATURE-MATRIX.md), and the
+> contract between the app and the daemon is
+> [`docs/CORE-PROTOCOL.md`](../CORE-PROTOCOL.md).
+
 Synthesized 2026-08-14 from source-first study of CodexBar (`c4ed34d0`) and
 t3code (`b73232bd`) plus research into the notch-utility landscape, the
 notification-LED tradition, calm-technology principles, and the current
@@ -8,14 +13,14 @@ agent-management market. Opinionated on purpose.
 > **Where this stands after 0.8 (2026-09-10).** The open decisions in
 > section 7 were settled by building: the shell is Swift over a headless
 > Python daemon behind a documented JSON contract
-> ([CORE-PROTOCOL.md](CORE-PROTOCOL.md)), which is option (c) followed by
+> ([CORE-PROTOCOL.md](../CORE-PROTOCOL.md)), which is option (c) followed by
 > the Swift port it was meant to enable; weather was cut; the fork
 > diverged hard. One call went the other way from the recommendation
 > below: the Screen Bar deliberately mirrors the strip as one unsegmented
 > band, phase-locked, and carries its words in the hover pill and the
 > panel rather than as a segmented announcer. The status paragraphs dated
 > 2026-08-30 describe the PyObjC app that 0.8 replaced; what ships is
-> [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
+> [FEATURE-MATRIX.md](../FEATURE-MATRIX.md).
 
 ## 1. Thesis
 

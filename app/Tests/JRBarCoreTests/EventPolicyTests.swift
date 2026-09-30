@@ -82,7 +82,7 @@ struct EventPolicyTests {
     @Test("fully dark holds the banner as well as the sound")
     func dark() {
         // The daemon's Dark says banner_allowed false and audible_allowed
-        // false, and docs/VISION.md has Fully Dark withhold every visual
+        // false, and docs/archive/VISION.md has Fully Dark withhold every visual
         // interruption; it used to keep the banner.
         let axes = CoreFocus(mode: "dark", bannerAllowed: false, audibleAllowed: false)
         let withheld = EventPolicy.delivery(for: Self.completedEvent, state: Self.state(quiet: axes), settings: Self.bannersOn)

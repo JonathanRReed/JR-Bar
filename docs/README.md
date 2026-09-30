@@ -70,7 +70,7 @@ Plans, audits and research notes, kept for provenance. Nothing in the
 build reads them.
 
 - Plans: [0.8 plan](archive/PLAN-0.8.md), [build spec](archive/BUILD-SPEC.md),
-  [vision](VISION.md), [production task contract](archive/production-task-contract.md),
+  [vision](archive/VISION.md), [production task contract](archive/production-task-contract.md),
   [toy parity](TOY-PARITY.md), [upgrade ledger](archive/upgrade/STATUS.md)
 - Audits: [rescue report](archive/audits/RESCUE-REPORT.md)
 - Research: [ecosystem](archive/research/ECOSYSTEM-RESEARCH.md),
