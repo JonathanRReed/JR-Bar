@@ -8,7 +8,9 @@ only.
 Turn on **Settings › Remote › Serve status**. The daemon then serves
 `http://127.0.0.1:8737/status.json`:
 
-- agent counts (working, waiting, failed);
+- agent counts (working, waiting, failed) for your main sessions; sub-agents
+  are a number of their own under `agents.workers`, so a sub-agent waiting on
+  its own prompt never moves the waiting count;
 - each provider's quota, redacted: no account names, no tokens;
 - the timestamps that say how fresh each number is.
 

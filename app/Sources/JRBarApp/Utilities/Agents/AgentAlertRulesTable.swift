@@ -112,7 +112,7 @@ struct AgentAlertRulesTable: View {
         Toggle(labelled ? "Asks" : "", isOn: utility.bindRule(provider, \.asks))
             .labelsHidden(!labelled)
             .toggleStyle(.checkbox)
-            .help("Ask banners, the ask sound and the escalation's pulse and chime; off keeps the ask on the panel and the light but never interrupts")
+            .help("Ask banners, the ask sound and the escalation's pulse, chime and notch takeover; off keeps the ask on the panel and the light but never interrupts")
     }
 
     private func finishes(_ provider: String, labelled: Bool) -> some View {

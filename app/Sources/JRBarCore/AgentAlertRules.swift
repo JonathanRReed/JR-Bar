@@ -15,7 +15,9 @@ public struct AgentAlertRule: Codable, Equatable, Hashable, Sendable {
     /// card, the light) but never interrupts.
     public var asks: Bool
     /// Completion banners: nil follows `completion_notification_enabled`,
-    /// true always banners this provider's finishes, false never does.
+    /// true banners this provider's finishes, false never does. A rule never
+    /// widens past a quiet mode: Mute, Fully Dark and a call's no-sounds
+    /// hold still hold what they hold.
     public var completions: Bool?
     /// Failure banners and the failure sound.
     public var failures: Bool

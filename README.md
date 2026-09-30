@@ -219,7 +219,8 @@ and leaves any file it did not put there alone. `--dry-run` shows the
 steps without taking them, `--keep-app` keeps the app and `--purge-state`
 also removes settings and history. By hand: quit the app, run
 `jrbar agent-monitor uninstall all` (it also puts back Claude Code's
-status line), then delete `JR-Bar.app`.
+status line; it tries every provider, names any config it could not clean
+and exits 1 after the last one), then delete `JR-Bar.app`.
 
 ### Permissions
 
