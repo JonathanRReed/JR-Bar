@@ -419,7 +419,6 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         headless=True,
         _enabled=False,
         _live_program_call=None,
-        presentation_scheduler_inputs=None,
     )
     for name in (
         "load_operator_local_state", "trim_oversized_state_logs", "start_event_server",

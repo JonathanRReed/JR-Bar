@@ -10573,12 +10573,6 @@ class StatusBarController(NSObject):
         self._hardware_write_generation += 1
         self._hardware_write_worker.cancel_generation(previous_generation)
 
-    @objc.IBAction
-    def pollLid_(self, _timer):
-        # The fallback lid timer's selector -- it was armed with no
-        # handler, a latent crash on its first fire.
-        self.reconcile_lid_observation()
-
     def reconcile_lid_observation(self) -> None:
         if not hasattr(self.virtual_status_device, "presentation_scheduler_inputs"):
             return

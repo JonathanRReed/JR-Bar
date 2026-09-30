@@ -90,7 +90,6 @@ def test_the_daemon_launch_schedules_no_foreign_notification_poll() -> None:
     assert "pollNotifications" not in source
     assert selectors == [
         "refresh:",
-        "pollLid:",
         "pollLiveness:",
         "coreHousekeepingTick:",
         "coreSupervisionTick:",

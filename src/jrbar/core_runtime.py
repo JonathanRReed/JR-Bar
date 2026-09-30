@@ -4373,8 +4373,6 @@ def build_headless_controller_class() -> type:
             self._core_sync_serve_server()
             self.refresh_(None)
             self.timer = _schedule_timer(legacy.STATUS_BAR_REFRESH_SECONDS, self, "refresh:", True)
-            if not hasattr(self.virtual_status_device, "presentation_scheduler_inputs"):
-                self.lid_timer = _schedule_timer(legacy.LID_POLL_SECONDS, self, "pollLid:", True)
             self.liveness_timer = _schedule_timer(legacy.LIVENESS_POLL_SECONDS, self, "pollLiveness:", True)
             self.start_remote_peer_timer()
             # The Screen Bar is the app's; the daemon only computes its program.
