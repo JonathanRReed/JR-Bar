@@ -48,7 +48,7 @@ enum DecidedAskFixture {
     /// A desk that records every send and answers ok. Its notes never
     /// arm a wall-clock timer.
     @MainActor
-    static func desk(logging log: SentLog) -> AskAnswerDesk {
+    static func loggingDesk(_ log: SentLog) -> AskAnswerDesk {
         let desk = AskAnswerDesk(send: { session, verdict, request in
             log.answers.append((session, verdict, request))
             return CoreReply(id: "1", ok: true)
@@ -86,7 +86,7 @@ enum DecidedAskFixture {
         let toy: NotchToy = store.notch
         toy.islandVisible = true
         let log = SentLog()
-        let desk = desk(logging: log)
+        let desk = loggingDesk(log)
         toy.cardModel.askDesk = { desk }
         return (toy, store, desk, log)
     }

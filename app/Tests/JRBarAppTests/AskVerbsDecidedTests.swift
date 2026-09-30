@@ -95,7 +95,7 @@ struct AskVerbsDecidedTests {
     @Test("the desk refuses every verdict for a decided ask and sends nothing")
     func deskSendsNothingForADecidedAsk() async {
         let log = Fixture.SentLog()
-        let desk = Fixture.desk(logging: log)
+        let desk = Fixture.loggingDesk(log)
         let stale = Fixture.olderDaemonDecidedAsk()
         for verdict in [AskVerdict.approve, .deny, .always] {
             let outcome = await desk.answer(stale, verdict)
@@ -117,7 +117,7 @@ struct AskVerbsDecidedTests {
     func railPillForAnOlderDaemonsDecidedAsk() {
         let stale = Fixture.olderDaemonDecidedAsk()
         #expect(!DeckStore.pillAnswers(stale))
-        let desk = Fixture.desk(logging: Fixture.SentLog())
+        let desk = Fixture.loggingDesk(Fixture.SentLog())
         let pill = RailLabelView(title: "Key 1", subtitle: "Needs you", provider: "claude", number: "1",
                                  ask: stale, desk: desk)
         #expect(!pill.isInteractive)

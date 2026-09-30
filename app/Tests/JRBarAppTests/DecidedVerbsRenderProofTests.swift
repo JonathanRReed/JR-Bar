@@ -92,7 +92,7 @@ struct DecidedVerbsRenderProofTests {
     /// an answered one says it is waiting for the agent.
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write PNGs"))
     func railPills() throws {
-        let desk = Fixture.desk(logging: Fixture.SentLog())
+        let desk = Fixture.loggingDesk(Fixture.SentLog())
         func pill(_ ask: CoreAsk, key: String) -> some View {
             RailLabelView(title: "release cleanup", subtitle: "Needs you", provider: "claude", number: key,
                           detail: ask.summary, ask: ask, desk: desk)

@@ -50,7 +50,7 @@ struct DockRailDecidedAskTests {
     @Test("the Rail's pill draws no verb for a decided ask and carries the decided line instead")
     func railPillForADecidedAsk() {
         let log = Fixture.SentLog()
-        let desk = Fixture.desk(logging: log)
+        let desk = Fixture.loggingDesk(log)
         let answered = Fixture.decidedAsk()
         #expect(!DeckStore.pillAnswers(answered))
         let pill = RailLabelView(title: "Key 1", subtitle: "Needs you", provider: "claude", number: "1",
@@ -65,7 +65,7 @@ struct DockRailDecidedAskTests {
 
     @Test("the Rail's pill is unchanged for an open ask, a held question, a peer's ask and none at all")
     func railPillIsUnchangedOtherwise() {
-        let desk = Fixture.desk(logging: Fixture.SentLog())
+        let desk = Fixture.loggingDesk(Fixture.SentLog())
         let open = Fixture.openAsk()
         #expect(DeckStore.pillAnswers(open))
         #expect(RailLabelView.decidedLine(open) == nil)
