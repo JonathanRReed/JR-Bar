@@ -351,6 +351,74 @@ import Testing
         #expect(lines.count == 2)
     }
 
+    /// A router on a clock and a scheduler of the test's own: `advance`
+    /// moves the wall clock without running the scheduled end, the way a
+    /// sleeping Mac lets time pass while the uptime timer stands still.
+    @MainActor
+    private final class DeepWorkBench {
+        let router = AppCommandRouter()
+        var clock = Date(timeIntervalSince1970: 1_000)
+        var scheduled: [(TimeInterval, DispatchWorkItem)] = []
+        var sessions = [CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active")]
+        var lines: [String] = []
+
+        init() {
+            router.now = { [unowned self] in self.clock }
+            router.schedule = { [unowned self] delay, work in self.scheduled.append((delay, work)) }
+            router.quiet = { _, _ in nil }
+            router.endQuiet = { nil }
+            router.sessionsNow = { [unowned self] in self.sessions }
+            router.onDeepWorkSummary = { [unowned self] line in self.lines.append(line) }
+        }
+
+        func advance(_ seconds: TimeInterval) { clock = clock.addingTimeInterval(seconds) }
+
+        func finishSession() {
+            sessions = [CoreSession(id: "a", provider: "claude", mode: "completed", lifecycle: "completed")]
+        }
+    }
+
+    @MainActor
+    @Test func aStretchThatRanLongPastItsEndStillNamesItsPlannedLength() {
+        let bench = DeepWorkBench()
+        bench.router.perform(.deepWork(seconds: 1500))
+        bench.finishSession()
+        // The Mac slept through most of a day: the end timer only fires
+        // now, long after the daemon's quiet lease lapsed on the wall clock.
+        bench.advance(50_000)
+        bench.scheduled.first?.1.perform()
+        #expect(bench.lines == ["Deep work over (25 min): 1 session finished."])
+        #expect(!bench.router.isInDeepWork)
+    }
+
+    @MainActor
+    @Test func endingQuietByHandAfterASleepIsClampedToo() {
+        let slept = DeepWorkBench()
+        slept.router.perform(.deepWork(seconds: 600))
+        slept.advance(30_000)
+        slept.router.perform(.endQuiet)
+        #expect(slept.lines.last?.hasPrefix("Deep work ended after 10 min") == true)
+
+        // A real early end is not inflated to the planned length.
+        let early = DeepWorkBench()
+        early.router.perform(.deepWork(seconds: 600))
+        early.advance(120)
+        early.router.perform(.endQuiet)
+        #expect(early.lines.last?.hasPrefix("Deep work ended after 2 min") == true)
+    }
+
+    @MainActor
+    @Test func theEndFiresOnce() {
+        let bench = DeepWorkBench()
+        bench.router.perform(.deepWork(seconds: 1500))
+        bench.advance(1500)
+        let end = bench.scheduled.first?.1
+        end?.perform()
+        bench.router.perform(.endQuiet)
+        end?.perform()
+        #expect(bench.lines.count == 1, "a late timer and a hand end cannot both report")
+    }
+
     @MainActor
     @Test func aRefusedQuietStartsNoStretch() {
         let router = AppCommandRouter()

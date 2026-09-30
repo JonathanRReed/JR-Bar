@@ -53,13 +53,17 @@ final class AppCommandRouter {
         notices.deliverBanner("deep-work", "Deep work", line)
     }
 
-    /// The stretch in progress: when it began, every session's state
-    /// then, and the scheduled end.
-    private var deepWork: (started: Date, before: [String: SessionActivity], end: DispatchWorkItem)?
+    /// The stretch in progress: when it began, how long it was meant to
+    /// run, every session's state then, and the scheduled end.
+    private var deepWork: (started: Date, seconds: Int, before: [String: SessionActivity], end: DispatchWorkItem)?
     /// Tests stand in for the clock and the scheduler.
     var now: () -> Date = Date.init
+    /// On the wall clock, not the uptime clock: the daemon's quiet override
+    /// expires by the wall clock, and uptime stands still while the Mac
+    /// sleeps, so an uptime timer would end a stretch hours late. This is
+    /// the same rule as the shelf timers'.
     var schedule: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + delay, execute: work)
     }
 
     /// Run one command.
@@ -155,7 +159,7 @@ final class AppCommandRouter {
         let end = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.finishDeepWork(early: false) }
         }
-        deepWork = (now(), DeepWork.snapshot(sessionsNow?() ?? []), end)
+        deepWork = (now(), seconds, DeepWork.snapshot(sessionsNow?() ?? []), end)
         schedule(TimeInterval(seconds), end)
     }
 
@@ -165,7 +169,10 @@ final class AppCommandRouter {
         guard let stretch = deepWork else { return }
         stretch.end.cancel()
         deepWork = nil
-        let elapsed = Int(now().timeIntervalSince(stretch.started))
+        // Never longer than the stretch was meant to be: a Mac that slept
+        // through the end, or a quiet ended by hand after it lapsed, still
+        // reads as the planned length. An early end keeps its real time.
+        let elapsed = min(Int(now().timeIntervalSince(stretch.started)), stretch.seconds)
         onDeepWorkSummary(DeepWork.summary(before: stretch.before, after: sessionsNow?() ?? [],
                                             elapsedSeconds: elapsed, early: early))
     }
