@@ -176,7 +176,7 @@ work. Nothing above touches the interrupt budget.
 ## Execution
 
 The full brainstorm and its sequencing live in
-`docs/superpowers/plans/2026-08-18-make-it-the-best.md` — seven waves,
+`docs/archive/superpowers/plans/2026-08-18-make-it-the-best.md` — seven waves,
 gated the same way every shipped wave has been.
 
 ## Survey refresh (2026-08-19)
