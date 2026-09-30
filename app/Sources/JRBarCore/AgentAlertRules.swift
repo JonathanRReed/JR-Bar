@@ -10,9 +10,9 @@ import Foundation
 /// provider behaves exactly as before; a rule only ever narrows or widens
 /// what the global policy already decided for that provider's events.
 public struct AgentAlertRule: Codable, Equatable, Hashable, Sendable {
-    /// Ask banners, the ask sound burst and the escalation's pulse and
-    /// chime. Off keeps the ask on every surface (the panel card, the
-    /// light) but never interrupts.
+    /// Ask banners, the ask sound burst and the escalation's pulse, chime
+    /// and notch takeover. Off keeps the ask on every surface (the panel
+    /// card, the light) but never interrupts.
     public var asks: Bool
     /// Completion banners: nil follows `completion_notification_enabled`,
     /// true always banners this provider's finishes, false never does.
@@ -23,11 +23,11 @@ public struct AgentAlertRule: Codable, Equatable, Hashable, Sendable {
     /// repeating chime included; banners stay.
     public var sounds: Bool
     /// The highest escalation stage this provider's asks may reach
-    /// (1 the light, 2 menu-bar pulse, 3 chime); nil follows
-    /// `escalation_tier`. A rule can only lower the global ceiling. There
-    /// is no stage 0: the light's ramp is the daemon's, and rules apply in
-    /// the app, so "nothing" would have promised a quiet light it cannot
-    /// keep.
+    /// (1 the light, 2 menu-bar pulse, 3 chime, and the notch takeover
+    /// when Settings arms it); nil follows `escalation_tier`. A rule can
+    /// only lower the global ceiling. There is no stage 0: the light's
+    /// ramp is the daemon's, and rules apply in the app, so "nothing"
+    /// would have promised a quiet light it cannot keep.
     public var escalationCeiling: Int?
 
     public init(asks: Bool = true, completions: Bool? = nil, failures: Bool = true,
@@ -152,13 +152,22 @@ public enum AgentAlertRules {
             if let ceiling = rule.escalationCeiling {
                 let stage = min(event.stage ?? currentStage ?? 0, ceiling)
                 if stage < 2 { out.statusPulse = false }
-                if stage < 3 { out.chime = .stop }
+                if stage < 3 {
+                    out.chime = .stop
+                    // The ask grown out of the notch is stage 3's finale.
+                    out.takeover = false
+                }
             }
             // The stage-3 chime is the loudest sound JR-Bar makes; a rule
             // that silences this provider's sounds or asks silences it too,
-            // and a provider whose asks never interrupt never pulses.
+            // and a provider whose asks never interrupt never pulses and
+            // never holds a card open over the notch. Sounds off leaves
+            // the takeover alone: it is a picture, not a sound.
             if !rule.sounds || !rule.asks { out.chime = .stop }
-            if !rule.asks { out.statusPulse = false }
+            if !rule.asks {
+                out.statusPulse = false
+                out.takeover = false
+            }
         default:
             return delivery
         }
