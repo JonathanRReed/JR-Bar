@@ -76,7 +76,7 @@ struct DataHoarderView: View {
                     Button("Restore Selected") { Task { await model.restoreSelected() } }
                         .disabled(model.selected == nil)
                     Button("Empty Archive Trash…") { model.confirmEmptyTrash() }
-                        .disabled(model.storageUsage?.trashedRecordCount == 0)
+                        .disabled(!model.canEmptyTrash)
                 } else {
                     Button("Move to Archive Trash", systemImage: "trash") {
                         Task { await model.moveSelectedToTrash() }

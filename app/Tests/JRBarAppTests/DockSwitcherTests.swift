@@ -297,6 +297,17 @@ struct DockSwitcherTests {
         #expect(!backoff.skips(7, now: 202))
     }
 
+    @Test("a note made through the controller's shared API is seen by skips")
+    @MainActor func controllerBackoffIsShared() {
+        let controller = DockSwitcherController(tap: SwitcherKeyTap())
+        #expect(!controller.axSkips(7, now: 100))
+        controller.noteAX(7, unresponsive: true, now: 100)
+        #expect(controller.axSkips(7, now: 105))
+        #expect(!controller.axSkips(8, now: 105), "only the app that hung")
+        controller.noteAX(7, unresponsive: false, now: 106)
+        #expect(!controller.axSkips(7, now: 107), "an answer clears it")
+    }
+
     // MARK: Minimized-window tiles
 
     @Test("a minimized tile's owner needs a sole claimant — no guessing")
@@ -568,5 +579,123 @@ struct DockSwitcherTests {
         // strip keeps them after the windowed apps.
         let strip = [item("w1", pid: 1, app: "Safari")] + cards
         #expect(DockSwitcherList.arranged(strip, order: .byApp).map(\.id) == ["w1", "app4", "app5"])
+    }
+}
+
+/// The switcher's key tap when macOS refuses it (no Accessibility yet) and
+/// is asked again later. The tap is always made by a counting factory:
+/// the real `CGEvent.tapCreate` is never reached, so a Terminal with
+/// Accessibility cannot leave a key tap standing that eats ⌥⇥ for the run.
+@MainActor
+@Suite("Switcher key tap revival")
+struct SwitcherTapReviveTests {
+    /// How many times the tap was asked for, and what it answers with.
+    private final class TapFactory {
+        var asked = 0
+        var refusals: Int
+        init(refusing refusals: Int) { self.refusals = refusals }
+
+        /// A tap that refuses `refusals` times and then answers with a
+        /// plain mach port (serviced by the tap thread like the real one;
+        /// enabling a non-tap port is a no-op).
+        func make(_ owner: SwitcherKeyTap) -> CFMachPort? {
+            asked += 1
+            if refusals > 0 { refusals -= 1; return nil }
+            return CFMachPortCreate(kCFAllocatorDefault, nil, nil, nil)
+        }
+    }
+
+    private func keyTap(_ factory: TapFactory) -> SwitcherKeyTap {
+        let tap = SwitcherKeyTap()
+        tap.makeTap = { factory.make($0) }
+        return tap
+    }
+
+    @Test("a refused tap is not live, and every start asks again")
+    func refusedTapRetries() {
+        let factory = TapFactory(refusing: .max)
+        let tap = keyTap(factory)
+        tap.start()
+        #expect(!tap.tapLive)
+        #expect(factory.asked == 1)
+        tap.start()
+        #expect(factory.asked == 2, "a second start retries")
+        tap.stop()
+        #expect(!tap.tapLive)
+    }
+
+    @Test("a tap made on the retry is live until stopped, and a live one is not asked for again")
+    func retrySucceeds() {
+        let factory = TapFactory(refusing: 1)
+        let tap = keyTap(factory)
+        tap.start()
+        #expect(!tap.tapLive)
+        tap.start()
+        #expect(tap.tapLive)
+        #expect(factory.asked == 2)
+        tap.start()
+        #expect(factory.asked == 2, "live: the factory is not called")
+        tap.stop()
+        #expect(!tap.tapLive)
+    }
+
+    @Test("the controller never starts a tap nobody chose")
+    func reviveNeedsARunningSwitcher() {
+        let factory = TapFactory(refusing: 0)
+        let controller = DockSwitcherController(tap: keyTap(factory))
+        controller.reviveTap()
+        #expect(factory.asked == 0)
+        #expect(!controller.running)
+    }
+
+    @Test("a started switcher whose tap was refused keeps running and revives on the next start or revive")
+    func startedSwitcherRevives() {
+        let factory = TapFactory(refusing: 1)
+        let tap = keyTap(factory)
+        let controller = DockSwitcherController(tap: tap)
+        controller.start()
+        defer { controller.stop() }
+        #expect(controller.running)
+        #expect(!tap.tapLive)
+        #expect(factory.asked == 1)
+        // A card edit reconciles through start() again.
+        controller.start()
+        #expect(tap.tapLive)
+        #expect(factory.asked == 2)
+        controller.reviveTap()
+        #expect(factory.asked == 2, "live: reviving asks for nothing")
+    }
+
+    @Test("reviveTap alone brings the tap up, and a stopped switcher is not resurrected")
+    func reviveAndStop() {
+        let factory = TapFactory(refusing: 1)
+        let tap = keyTap(factory)
+        let controller = DockSwitcherController(tap: tap)
+        controller.start()
+        controller.reviveTap()
+        #expect(tap.tapLive)
+        controller.stop()
+        #expect(!tap.tapLive)
+        let asked = factory.asked
+        controller.reviveTap()
+        #expect(!tap.tapLive, "stopped: nothing to revive")
+        #expect(factory.asked == asked)
+    }
+
+    @Test("start on a running switcher asks for a tap only while the tap is down")
+    func repeatedStartsAskOnlyWhileDown() {
+        let factory = TapFactory(refusing: 2)
+        let tap = keyTap(factory)
+        let controller = DockSwitcherController(tap: tap)
+        controller.start()
+        defer { controller.stop() }
+        controller.start()
+        #expect(factory.asked == 2)
+        #expect(!tap.tapLive)
+        controller.start()
+        #expect(tap.tapLive)
+        #expect(factory.asked == 3)
+        for _ in 0..<3 { controller.start() }
+        #expect(factory.asked == 3, "once live, repeated starts change nothing")
     }
 }

@@ -106,6 +106,9 @@ final class DataHoarderModel {
     @ObservationIgnored private var exportTask: Task<Void, Never>?
     var exportingArchive = false
     var storageUsage: ArchiveStorageUsage?
+    /// Whether Empty Archive Trash has anything to act on. A footer not
+    /// measured yet leaves it on; only a measured empty trash turns it off.
+    var canEmptyTrash: Bool { storageUsage?.trashedRecordCount != 0 }
     var storageError: String?
     var measuringStorage = false
     @ObservationIgnored private var storageRevision = 0
@@ -278,6 +281,15 @@ final class DataHoarderModel {
                   revision == searchRevision else { return }
             searchError = error.localizedDescription
         }
+    }
+
+    /// The archive's totals just changed. Re-measure once `busy` is
+    /// released, and only while the window is up: reopening measures
+    /// again, so a closed archive does no idle walk
+    /// (docs/ARCHIVE-LIFECYCLE.md).
+    private func remeasureStorageAfterChange() async {
+        guard archiveWindowIsOpen else { return }
+        await refreshStorage()
     }
 
     func refreshStorage() async {
@@ -572,6 +584,7 @@ final class DataHoarderModel {
         importTask = nil
         importProgress = nil
         busy = false
+        await remeasureStorageAfterChange()
         // Content searches are owned by the view's cancellable task. Only
         // refresh inexpensive metadata here, so Stop Import really finishes.
         // The reload is part of the finished import, not idle work: records
@@ -733,11 +746,12 @@ final class DataHoarderModel {
         busy = true
         error = nil
         message = nil
-        defer { busy = false }
         do {
             try await archive.moveToTrash(id: record.id)
             message = "Moved \(record.name) to Archive Trash. You can restore it there."
         } catch { self.error = error.localizedDescription }
+        busy = false
+        await remeasureStorageAfterChange()
     }
 
     func restoreSelected() async {
@@ -745,11 +759,12 @@ final class DataHoarderModel {
         busy = true
         error = nil
         message = nil
-        defer { busy = false }
         do {
             try await archive.restoreFromTrash(id: record.id)
             message = "Restored \(record.name)."
         } catch { self.error = error.localizedDescription }
+        busy = false
+        await remeasureStorageAfterChange()
     }
 
     @discardableResult
@@ -757,32 +772,45 @@ final class DataHoarderModel {
         guard !busy else { return nil }
         busy = true
         return Task {
-            defer { busy = false }
-            error = nil
-            message = nil
+            let touched = await emptyTrashPass(confirm: confirm)
+            busy = false
+            // A declined confirm or an already-empty trash changed nothing,
+            // so it costs no walk; a cleanup that stopped part way did.
+            if touched { await remeasureStorageAfterChange() }
+        }
+    }
+
+    /// The body of Empty Archive Trash. True once `archive.emptyTrash` has
+    /// been attempted, whether it finished or stopped part way.
+    private func emptyTrashPass(confirm: (([ArchiveRecord]) -> Bool)?) async -> Bool {
+        error = nil
+        message = nil
+        do {
+            let records = try await archive.trashedRecords()
+            guard !records.isEmpty else { return false }
+            let approved: Bool
+            if let confirm {
+                approved = confirm(records)
+            } else {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "Permanently delete \(records.count) \(records.count == 1 ? "archived file" : "archived files")?"
+                alert.informativeText = "This empties Archive Trash, including files hidden by search. The archived copies cannot be recovered afterward. Original source files stay untouched."
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: "Delete Permanently")
+                approved = alert.runModal() == .alertSecondButtonReturn
+            }
+            guard approved else { return false }
             do {
-                let records = try await archive.trashedRecords()
-                guard !records.isEmpty else { return }
-                let approved: Bool
-                if let confirm {
-                    approved = confirm(records)
-                } else {
-                    let alert = NSAlert()
-                    alert.alertStyle = .warning
-                    alert.messageText = "Permanently delete \(records.count) \(records.count == 1 ? "archived file" : "archived files")?"
-                    alert.informativeText = "This empties Archive Trash, including files hidden by search. The archived copies cannot be recovered afterward. Original source files stay untouched."
-                    alert.addButton(withTitle: "Cancel")
-                    alert.addButton(withTitle: "Delete Permanently")
-                    approved = alert.runModal() == .alertSecondButtonReturn
-                }
-                guard approved else { return }
-                do {
-                    let count = try await archive.emptyTrash(ids: records.map(\.id))
-                    message = "Deleted \(count) \(count == 1 ? "archived copy" : "archived copies")."
-                } catch {
-                    self.error = "Cleanup stopped: \(error.localizedDescription) Some copies may already have been deleted. Remaining entries stay in Archive Trash for retry."
-                }
-            } catch { self.error = error.localizedDescription }
+                let count = try await archive.emptyTrash(ids: records.map(\.id))
+                message = "Deleted \(count) \(count == 1 ? "archived copy" : "archived copies")."
+            } catch {
+                self.error = "Cleanup stopped: \(error.localizedDescription) Some copies may already have been deleted. Remaining entries stay in Archive Trash for retry."
+            }
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
         }
     }
 

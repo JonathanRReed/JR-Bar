@@ -24,7 +24,9 @@ final class AlcoveMediaAdapter {
     /// helper, so every callback is a real change.
     var onChange: (@MainActor (AlcoveMedia?) -> Void)?
     /// The helper died before (or without ever) printing — the caller
-    /// falls back to the in-process path for the rest of this run.
+    /// falls back to the in-process path and restarts the helper on a
+    /// bounded pace (`AlcoveMediaMonitor.adapterDidFail`), until the
+    /// retry budget is spent.
     var onFailure: (@MainActor () -> Void)?
 
     /// The perl driver: load the dylib, install `jrbar_mr_stream` as an
@@ -205,7 +207,7 @@ final class AlcoveMediaAdapter {
 
     /// The helper died: silent while nothing was ever heard (the watchdog
     /// reports it), or an ordinary drop mid-run — either way the caller
-    /// moves to the in-process path for the rest of this run.
+    /// moves to the in-process path until the retry budget is spent.
     private func terminated() {
         guard running else { return }
         fail(sawFirstLine ? "the helper exited mid-run" : "the helper exited before answering")

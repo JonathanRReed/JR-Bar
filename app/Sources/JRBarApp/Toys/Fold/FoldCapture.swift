@@ -57,12 +57,74 @@ enum FoldCapturePermission {
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
 }
 
+/// When a failed capture start may try again: not before the wait for the
+/// failures in a row has passed on the sensor's clock. The toy asks on
+/// every sensor sample, up to 120 a second, and each attempt costs a
+/// window-server enumeration and a permission round trip, so a start
+/// that keeps failing must not be retried back to back. Pure, with the
+/// clock passed in, so the pace can be pinned.
+///
+/// The first failure waits for nothing: a one-off error, or a revoked
+/// grant that hands the fold to the wallpaper, retries at once. Later
+/// ones wait 1, 2, 4, 8, 16 and then 30 seconds. Time decays the count
+/// (a failure over a minute after the last starts it again), not a
+/// delivered frame, so a stream that gives one frame and dies stays
+/// throttled. A different source than the one that failed may always
+/// start, and so may a clock that ran backwards.
+struct FoldCaptureRetry {
+    enum Source: Equatable {
+        case capture
+        case wallpaper
+    }
+
+    /// The wait after the 1st, 2nd, ... consecutive failure; the last
+    /// holds from then on.
+    static let waits: [TimeInterval] = [0, 1, 2, 4, 8, 16, 30]
+    static let decayAfter: TimeInterval = 60
+
+    private var failures = 0
+    private var failedAt: TimeInterval?
+    private var failedSource: Source?
+
+    static func wait(afterFailures count: Int) -> TimeInterval {
+        guard count > 0 else { return 0 }
+        return waits[min(count, waits.count) - 1]
+    }
+
+    func mayStart(_ source: Source, at t: TimeInterval) -> Bool {
+        guard let failedAt, source == failedSource else { return true }
+        if t < failedAt { return true }
+        return t - failedAt >= Self.wait(afterFailures: failures)
+    }
+
+    mutating func noteFailure(_ source: Source, at t: TimeInterval) {
+        let sameStreak = source == failedSource
+        let recent = failedAt.map { t >= $0 && t - $0 <= Self.decayAfter } ?? false
+        failures = sameStreak && recent ? failures + 1 : 1
+        failedSource = source
+        failedAt = t
+    }
+
+    /// A fresh ask — a new grant, a display change, the toy switched
+    /// back on: forget the failures.
+    mutating func reset() {
+        failures = 0
+        failedAt = nil
+        failedSource = nil
+    }
+}
+
 enum FoldCaptureError: LocalizedError {
     case noBuiltinDisplay
+    /// ScreenCaptureKit lists no application entry for JR-Bar itself, as
+    /// happens while it has no listable windows: the fold keeps its own
+    /// pieces out of the picture through that entry.
+    case ownAppMissing
 
     var errorDescription: String? {
         switch self {
         case .noBuiltinDisplay: return "no built-in display to capture"
+        case .ownAppMissing: return "JR-Bar is not in the list of apps ScreenCaptureKit can capture"
         }
     }
 }
@@ -187,10 +249,11 @@ final class FoldCapture {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false)
         guard !stopRequested else { return }
-        guard let display = content.displays.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }),
-              let ownApp = content.applications.first(where: {
-                  $0.processID == ProcessInfo.processInfo.processIdentifier })
+        guard let display = content.displays.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 })
         else { throw FoldCaptureError.noBuiltinDisplay }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        guard let ownApp = content.applications.first(where: { $0.processID == ownPID })
+        else { throw FoldCaptureError.ownAppMissing }
         displayID = display.displayID
         displayFrameQuartz = CGDisplayBounds(display.displayID)
 

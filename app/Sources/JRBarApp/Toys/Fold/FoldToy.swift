@@ -165,6 +165,10 @@ final class FoldToy: Toy {
     @ObservationIgnored private var capture: (any FoldFrameSource)?
     @ObservationIgnored private var captureDisplayVersion = -1
     @ObservationIgnored private var captureFailure: String?
+    /// When the capture source last failed to start or died, and so when
+    /// it may try again — the sensor asks on every sample, and each
+    /// attempt is a window-server enumeration and a permission round trip.
+    @ObservationIgnored private var captureRetry = FoldCaptureRetry()
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// The lock and unlock broadcasts arrive on the distributed centre.
     @ObservationIgnored private var distributedObservers: [NSObjectProtocol] = []
@@ -276,7 +280,11 @@ final class FoldToy: Toy {
         observers.append(center.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.displayVersion += 1 }
+            MainActor.assumeIsolated {
+                self?.displayVersion += 1
+                // A changed display set is a fresh ask.
+                self?.captureRetry.reset()
+            }
         })
         observers.append(center.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
@@ -287,6 +295,7 @@ final class FoldToy: Toy {
                 // preflight so the next read asks TCC once, here,
                 // instead of waiting out the 30 s freshness.
                 FoldCapturePermission.invalidate()
+                self?.captureRetry.reset()
                 self?.permissionVersion += 1
             }
         })
@@ -313,6 +322,7 @@ final class FoldToy: Toy {
                 // Re-enabling is a fresh ask — a stale renderer
                 // failure must not outlive the toggle.
                 rendererFailed = false
+                captureRetry.reset()
             }
             reconcile()
         }
@@ -1109,7 +1119,12 @@ final class FoldToy: Toy {
             stopCapture()
         }
         guard capture == nil else { return }
-        let capture: any FoldFrameSource = FoldCapturePermission.granted
+        // A start that keeps failing waits out its backoff instead of
+        // being retried on every sensor sample. The failure text stays up
+        // meanwhile (`captureFailure` clears only on a real attempt).
+        let kind: FoldCaptureRetry.Source = FoldCapturePermission.granted ? .capture : .wallpaper
+        guard captureRetry.mayStart(kind, at: CACurrentMediaTime()) else { return }
+        let capture: any FoldFrameSource = kind == .capture
             ? FoldCapture(dual: dual) : FoldWallpaperSource()
         self.capture = capture
         captureDisplayVersion = displayVersion
@@ -1155,6 +1170,7 @@ final class FoldToy: Toy {
             // preflight goes stale here — re-ask on the next read.
             guard let self else { return }
             FoldCapturePermission.invalidate()
+            self.captureRetry.noteFailure(kind, at: CACurrentMediaTime())
             self.captureFailure = message
             self.stopCapture()
             self.core.appendLocalLog(level: "error", "Fold capture stopped: \(message)")
@@ -1175,6 +1191,7 @@ final class FoldToy: Toy {
                     return
                 }
                 FoldCapturePermission.invalidate()
+                self.captureRetry.noteFailure(kind, at: CACurrentMediaTime())
                 self.captureFailure = error.localizedDescription
                 self.stopCapture()
                 FoldLog.log.error("capture: start failed: \(error.localizedDescription, privacy: .public)")
@@ -1569,6 +1586,7 @@ final class FoldToy: Toy {
             // Handing the render back to us is a fresh ask — a stale
             // failure must not outlive the switch.
             rendererFailed = false
+            captureRetry.reset()
             reconcile()
             return
         }

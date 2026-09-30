@@ -186,7 +186,9 @@ final class MenuBarStateRunner {
     private var quietBefore: MenuBarQuiet?
     private var leaseEnds: [Double] = []
     /// The quiet was changed by hand mid-rule — the rule stops leasing
-    /// and leaves it alone when it ends.
+    /// and leaves it alone when it ends. A quiet that reads as ended
+    /// after the last lease's own end is the lease running out, so the
+    /// rule renews it instead.
     private var quietYielded = false
 
     /// The quiet lease a rule takes — short, so a crash mid-rule lets the
@@ -310,10 +312,20 @@ final class MenuBarStateRunner {
             let standing = currentQuiet()
             if let standing, standing.until > epoch + lease { return }
             quietBefore = standing
-        } else if !leaseInForce(currentQuiet()) {
-            // The quiet moved by hand since the last lease — yours now.
-            quietYielded = true
-            return
+        } else {
+            let standing = currentQuiet()
+            if !leaseInForce(standing) {
+                // Nil once every lease has run out on the daemon's clock
+                // (a sleep or a stall past 15 minutes) is the lease
+                // lapsing, not a hand: renew. Nil before the newest
+                // lease's end was ended by hand, and any other quiet
+                // standing is yours.
+                let lapsed = standing == nil && epoch >= (leaseEnds.max() ?? epoch)
+                guard lapsed else {
+                    quietYielded = true
+                    return
+                }
+            }
         }
         quietAgents(Self.quietLeaseSeconds)
         leaseEnds = Array((leaseEnds + [epoch + lease]).suffix(2))

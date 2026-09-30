@@ -348,6 +348,92 @@ struct MenuBarStateRuleTests {
         #expect(off.restored.isEmpty, "the Mute the lease replaced is not revived")
     }
 
+    @MainActor
+    @Test("a lease that ran out on the daemon's clock is renewed; a quiet ended or set by hand still yields")
+    func quietLapsedIsRenewed() {
+        let t0 = Date(timeIntervalSince1970: 10_000)
+        let epoch = t0.timeIntervalSince1970
+        let rules = [rule(.microphoneLive, [.quietAgents])]
+        let lease = MenuBarStateRunner.quietLeaseSeconds
+        func later(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
+
+        // A. A Mac that slept past the lease reads no quiet at the next
+        // renewal: the lease ran out, so the rule takes it again — and
+        // the renewed lease ends with the rule.
+        let slept = MenuBarStateRunner()
+        let sleeper = Recorder()
+        sleeper.wire(slept, rules: rules)
+        slept.absorb(.micInUse(true), now: t0)
+        sleeper.current = nil
+        slept.holdQuiet(now: later(1000))
+        #expect(sleeper.quiet == [lease, lease])
+        sleeper.current = leaseEcho(at: later(1000))
+        slept.absorb(.micInUse(false), now: later(1100))
+        #expect(sleeper.quiet == [lease, lease, 0])
+
+        // B. The boundary: one second before the lease's end a nil read is
+        // a hand; at the end it is the lease running out.
+        let early = MenuBarStateRunner()
+        let justBefore = Recorder()
+        justBefore.wire(early, rules: rules)
+        early.absorb(.micInUse(true), now: t0)
+        justBefore.current = nil
+        early.holdQuiet(now: later(899))
+        #expect(justBefore.quiet == [lease])
+        let edge = MenuBarStateRunner()
+        let atEnd = Recorder()
+        atEnd.wire(edge, rules: rules)
+        edge.absorb(.micInUse(true), now: t0)
+        atEnd.current = nil
+        edge.holdQuiet(now: later(900))
+        #expect(atEnd.quiet == [lease, lease])
+
+        // C. A quiet of somebody else's standing after the lease's end is
+        // theirs, never renewed over.
+        let foreign = MenuBarStateRunner()
+        let hand = Recorder()
+        hand.wire(foreign, rules: rules)
+        foreign.absorb(.micInUse(true), now: t0)
+        hand.current = MenuBarQuiet(mode: "dim", until: epoch + 100 + 3600)
+        foreign.holdQuiet(now: later(2000))
+        #expect(hand.quiet == [lease])
+        foreign.absorb(.micInUse(false), now: later(2100))
+        #expect(hand.quiet == [lease], "no 0: the Dim is left as it stands")
+        #expect(hand.restored.isEmpty)
+
+        // D. Two leases in the window: the newest end is the one that
+        // counts, so a nil before it is a hand and one after it a lapse.
+        let renewed = MenuBarStateRunner()
+        let pair = Recorder()
+        pair.wire(renewed, rules: rules)
+        renewed.absorb(.micInUse(true), now: t0)
+        pair.current = leaseEcho(at: t0)
+        renewed.holdQuiet(now: later(600))
+        #expect(pair.quiet == [lease, lease])
+        pair.current = nil
+        renewed.holdQuiet(now: later(1200))
+        #expect(pair.quiet == [lease, lease], "before the newest end at t0+1500: yours")
+        let overdue = MenuBarStateRunner()
+        let stalled = Recorder()
+        stalled.wire(overdue, rules: rules)
+        overdue.absorb(.micInUse(true), now: t0)
+        stalled.current = leaseEcho(at: t0)
+        overdue.holdQuiet(now: later(600))
+        stalled.current = nil
+        overdue.holdQuiet(now: later(2500))
+        #expect(stalled.quiet == [lease, lease, lease])
+
+        // E. A rule that yielded stays yielded until it enters again.
+        let stood = MenuBarStateRunner()
+        let yielded = Recorder()
+        yielded.wire(stood, rules: rules)
+        stood.absorb(.micInUse(true), now: t0)
+        yielded.current = nil
+        stood.holdQuiet(now: later(899))
+        stood.holdQuiet(now: later(3000))
+        #expect(yielded.quiet == [lease], "yielded at t0+899, still yielded at t0+3000")
+    }
+
     // MARK: Through the utility
 
     @MainActor

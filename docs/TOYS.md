@@ -1049,9 +1049,19 @@ as bytes in `AlcoveMediaAdapterAsset.swift` — which calls MediaRemote
 inside that process and streams JSON lines (`AlcoveMediaAdapter`).
 If the helper can't run, the in-process MediaRemote bridge covers the
 older releases where reads were never gated, and Music's own
-`com.apple.Music.playerInfo` payload fills in wherever it posts.
+`com.apple.Music.playerInfo` payload fills in wherever it posts. A
+helper that dies or stays silent is restarted after 5, 30 and then 120
+seconds and then left alone until Media is toggled or the island is
+shown again; one that stayed up for a minute starts the count over, and
+a parked island never holds a restart.
 Transport commands go through `MRMediaRemoteSendCommand`, which was
 never gated, and down the helper's stdin for good measure.
+**Lyrics** (opt-in, from LRCLIB): a track's synced lyrics are looked up
+once and remembered, and a song LRCLIB truly has none for is remembered
+as having none. A lookup that could not be answered (offline, a timeout,
+a 429 or a 5xx, or a page that is not LRCLIB's) is not remembered as no
+lyrics: the next play, pause or seek after a two-minute cool-down asks
+again.
 **Swipes**: a horizontal two-finger swipe on the capsule is
 next/previous while media shows; a downward swipe dismisses the capsule
 or folds the card — read off the hosting view's scroll phases,
