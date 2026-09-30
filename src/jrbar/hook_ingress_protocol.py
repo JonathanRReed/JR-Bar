@@ -249,6 +249,20 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
     kind = document.get("kind")
     if kind is not None and type(kind) is not str:
         return None
+    if ppid is not None and ppid <= 1:
+        # The agent had already exited and launchd adopted the hook, so
+        # getppid() read 1 (or 0). The event still happened, and this is
+        # often the very SessionEnd or Stop that says so: deliver it
+        # without the pid, exactly as a spooled line already is
+        # (hook_pending.request_from_pending_line). The start time goes
+        # too: it describes launchd, not the agent. A `--decide` hook is
+        # the exception. Nobody is left to read a verdict, and without a
+        # ppid it would look like the Python decide client and park an ask
+        # that can never be answered, so it stays refused.
+        if decide_ms is not None:
+            return None
+        ppid = None
+        ppid_start = None
     try:
         return HookIngressRequest(
             document["provider"],

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -172,13 +173,34 @@ def test_even_dry_run_rejects_an_app_path_outside_supported_locations(tmp_path: 
     assert unsafe.is_dir()
 
 
-def test_real_flow_never_runs_the_user_writable_helper_for_root_cleanup(tmp_path: Path) -> None:
+@dataclass
+class _RealFlow:
+    result: subprocess.CompletedProcess
+    helper_log: Path
+    command_log: Path
+    app: Path
+    fixed_paths: dict[str, Path]
+    fixed_directories: dict[str, Path]
+
+
+def _real_flow(tmp_path: Path, *, fail_on: tuple[str, ...] = ()) -> _RealFlow:
+    """Run the script for real against stand-in tools, all inside tmp_path.
+
+    ``fail_on`` lists helper command lines (as the fake core sees "$*") for
+    which the fake core exits 1.
+    """
     home = tmp_path / "fixture-home"
     helper_log = tmp_path / "helper.log"
     app = _fake_app(home / "Applications")
     core = app / "Contents" / "Helpers" / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
+    arms = "|".join(f'"{line}"' for line in fail_on)
+    failure = (
+        f'case "$*" in {arms}) echo "fake core: refusing a config" >&2; exit 1 ;; esac\n'
+        if fail_on
+        else ""
+    )
     core.write_text(
-        f"#!/bin/sh\nprintf '%s:%s\\n' \"${{FAKE_EFFECTIVE_USER:-unset}}\" \"$*\" >> '{helper_log}'\n",
+        f"#!/bin/sh\nprintf '%s:%s\\n' \"${{FAKE_EFFECTIVE_USER:-unset}}\" \"$*\" >> '{helper_log}'\n{failure}",
         encoding="utf-8",
     )
     core.chmod(0o755)
@@ -303,6 +325,24 @@ exit 0
         check=False,
     )
 
+    return _RealFlow(
+        result=result,
+        helper_log=helper_log,
+        command_log=command_log,
+        app=app,
+        fixed_paths=fixed_paths,
+        fixed_directories=fixed_directories,
+    )
+
+
+def test_real_flow_never_runs_the_user_writable_helper_for_root_cleanup(tmp_path: Path) -> None:
+    flow = _real_flow(tmp_path)
+    result = flow.result
+    helper_log = flow.helper_log
+    command_log = flow.command_log
+    fixed_paths = flow.fixed_paths
+    fixed_directories = flow.fixed_directories
+
     assert result.returncode == 0, result.stderr
     helper_calls = helper_log.read_text(encoding="utf-8").splitlines()
     assert helper_calls == [
@@ -318,3 +358,83 @@ exit 0
         assert f"rmdir {target}" in commands
     assert "status-bar uninstall-sleep-helper" not in commands
     assert "sdejectguard uninstall --scope system" not in commands
+
+
+def _command_log_text(flow: _RealFlow) -> str:
+    return flow.command_log.read_text(encoding="utf-8") if flow.command_log.exists() else ""
+
+
+def _assert_the_app_was_kept(flow: _RealFlow, *, step: str) -> None:
+    result = flow.result
+    assert result.returncode == 1, result.stderr
+    assert step in result.stderr
+    assert "JR-Bar.app was kept" in result.stderr
+    commands = _command_log_text(flow)
+    assert f"rm -rf {flow.app}" not in commands
+    assert ".local/state/jrbar" not in commands
+    assert "Library/Application Support/JR-Bar" not in commands
+    # Nothing past the hook steps ran: no system cleanup, no link removal.
+    for target in flow.fixed_paths.values():
+        assert str(target) not in commands
+    for target in flow.fixed_directories.values():
+        assert f"rmdir {target}" not in commands
+    assert flow.app.is_dir()
+    assert "JR-Bar integrations removed" not in result.stdout
+
+
+def test_failed_hook_uninstall_keeps_the_app_and_exits_nonzero(tmp_path: Path) -> None:
+    """A config JR-Bar could not clean still points into the app. Deleting
+    the app would leave that hook running a program that is gone."""
+    flow = _real_flow(tmp_path, fail_on=("agent-monitor uninstall all",))
+
+    _assert_the_app_was_kept(flow, step="agent-monitor uninstall all")
+    # The other hook steps still ran, so everything removable is removed.
+    assert flow.helper_log.read_text(encoding="utf-8").splitlines() == [
+        "fixture:agent-monitor uninstall claude-statusline",
+        "fixture:agent-monitor uninstall all",
+        "fixture:sdejectguard uninstall --scope user",
+    ]
+    assert "run this script again" in flow.result.stderr
+
+
+def test_failed_statusline_restore_keeps_the_app(tmp_path: Path) -> None:
+    """A symlinked ~/.claude/settings.json makes the status-line restore
+    fail first. The hooks step still runs, and the app stays."""
+    flow = _real_flow(tmp_path, fail_on=("agent-monitor uninstall claude-statusline",))
+
+    _assert_the_app_was_kept(flow, step="agent-monitor uninstall claude-statusline")
+    assert flow.helper_log.read_text(encoding="utf-8").splitlines() == [
+        "fixture:agent-monitor uninstall claude-statusline",
+        "fixture:agent-monitor uninstall all",
+        "fixture:sdejectguard uninstall --scope user",
+    ]
+
+
+def test_a_failed_user_guard_removal_keeps_the_app(tmp_path: Path) -> None:
+    flow = _real_flow(tmp_path, fail_on=("sdejectguard uninstall --scope user",))
+
+    _assert_the_app_was_kept(flow, step="sdejectguard uninstall --scope user")
+
+
+def test_every_failed_hook_step_is_named(tmp_path: Path) -> None:
+    flow = _real_flow(
+        tmp_path,
+        fail_on=("agent-monitor uninstall claude-statusline", "agent-monitor uninstall all"),
+    )
+
+    _assert_the_app_was_kept(flow, step="agent-monitor uninstall claude-statusline")
+    assert "agent-monitor uninstall all" in flow.result.stderr
+    assert "sdejectguard" not in flow.result.stderr
+
+
+def test_a_dry_run_is_not_stopped_by_the_hook_guard(tmp_path: Path) -> None:
+    """The guard changes nothing in a dry run: every step is still printed
+    and the exit is 0, because a dry run runs no helper."""
+    home = tmp_path / "home"
+    _fake_app(home / "Applications")
+
+    result = _dry_run(home)
+
+    assert result.returncode == 0, result.stderr
+    assert "was kept" not in result.stderr
+    assert "Dry run: nothing was removed" in result.stdout

@@ -14,6 +14,7 @@ import threading
 import time
 import tomllib
 import uuid
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1536,13 +1537,19 @@ def decide_hook_command(
     return f"{command} --decide" if decides(arguments) else command
 
 
-def verify_hook_command(arguments: list[str]) -> str | None:
+def verify_hook_command(
+    arguments: list[str],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
     """Run a candidate hook command once and return an error, or None.
 
     Registration used to write a path nobody had ever executed. This is
     the missing gate: a hook is only worth writing into a user's agent
     config if it actually runs, because the failure mode is not a
     degraded feature -- it is every prompt in every session blocked.
+
+    ``env`` is the probe's environment; ``None`` inherits the caller's.
     """
     import subprocess
 
@@ -1558,6 +1565,7 @@ def verify_hook_command(arguments: list[str]) -> str | None:
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
     except FileNotFoundError:
         return f"interpreter not found: {arguments[0]}"
@@ -2065,18 +2073,36 @@ def _probe_registration_command(provider: str, python_executable: str | None) ->
     This is the gate verify_hook_command was written for (wired
     2026-08-26): a registered hook that cannot run does not degrade a
     feature -- it blocks every prompt in every session for that agent.
-    The scratch log keeps the probe's fake session out of live state.
+    The scratch log keeps the probe's fake session out of the provider's
+    log, and the compiled shim is also given a scratch state dir, so its
+    fake SessionStart reaches neither the live daemon's ingress nor the
+    real spool.
     """
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="jrbar-hook-probe-") as scratch:
-        error = verify_hook_command(
-            hook_command_arguments(
-                provider,
-                Path(scratch) / "probe.jsonl",
-                python_executable,
-            )
+        arguments = hook_command_arguments(
+            provider,
+            Path(scratch) / "probe.jsonl",
+            python_executable,
         )
+        # Only the compiled shim honours JRBAR_STATE_DIR (hook/jrbar-hook.c
+        # state_dir()). Without it the probe found the real ingress socket:
+        # in the daemon, which runs installs, that left a resident
+        # deduplicator and an open file per scratch log for the daemon's
+        # whole life, and with the daemon down it spooled the fake session
+        # for the next start to replay into the real log. The Python client
+        # reads XDG_STATE_HOME and always also tries ~/.local/state/jrbar,
+        # so this cannot isolate it, and overriding HOME could fail a
+        # probe that would have run, which blocks registration. With the
+        # daemon down it writes the scratch log, not the spool; with the
+        # daemon up it still reaches it.
+        env = (
+            {**os.environ, "JRBAR_STATE_DIR": scratch}
+            if Path(arguments[0]).name == HOOK_SHIM_NAME
+            else None
+        )
+        error = verify_hook_command(arguments, env=env)
     if error is not None:
         raise HookVerificationError(
             f"refusing to register {provider} hooks -- the command does not "

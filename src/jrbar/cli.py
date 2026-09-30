@@ -33,6 +33,7 @@ from .hook import hook_log_main
 from .hook_client import hook_client_main
 from .install import (
     HookVerificationError,
+    InstallResult,
     hook_command_arguments,
     install_provider_hooks,
     uninstall_provider_hooks,
@@ -1270,6 +1271,11 @@ def install_hook_results(args: argparse.Namespace):
             # going -- one broken interpreter must not hide the other
             # providers' outcomes.
             print(f"{provider}: {exc}")
+        except Exception as exc:
+            # A config JR-Bar will not touch (a symlink, a file another
+            # tool owns) or cannot read raises here. It is one provider's
+            # problem: say so and let the rest install.
+            print(f"{provider}: skipped ({_failure_reason(exc)})", file=sys.stderr)
     return results
 
 
@@ -1287,24 +1293,66 @@ def print_install_results(results, *, dry_run: bool) -> None:
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
     providers = selected_hook_providers(args.provider)
-    results = []
+    outcomes: list[tuple[str, InstallResult | Exception]] = []
     for provider in providers:
         log_path = uninstall_log_path(provider, args)
-        results.append(uninstall_provider_hooks(
-            provider, log_path=log_path, dry_run=args.dry_run,
-            state_dir=default_state_dir(),
-        ))
+        try:
+            outcomes.append((provider, uninstall_provider_hooks(
+                provider, log_path=log_path, dry_run=args.dry_run,
+                state_dir=default_state_dir(),
+            )))
+        except Exception as exc:
+            # One config JR-Bar refuses to edit (a dotfiles symlink) or
+            # cannot read (a commented JSON file) must not hide the other
+            # providers. Record it and go on.
+            outcomes.append((provider, exc))
 
-    for result in results:
-        action = "would remove" if args.dry_run and result.changed else "removed"
-        if not result.changed:
+    failed = False
+    for provider, outcome in outcomes:
+        if isinstance(outcome, Exception):
+            failed = True
+            print_uninstall_failure(provider, outcome)
+            continue
+        action = "would remove" if args.dry_run and outcome.changed else "removed"
+        if not outcome.changed:
             action = "already uninstalled"
-        print(f"{result.provider}: {action}")
-        print(f"  config: {result.config_path}")
-        print(f"  log: {result.log_path}")
-        if result.backup_path:
-            print(f"  backup: {result.backup_path}")
-    return 0
+        print(f"{outcome.provider}: {action}")
+        print(f"  config: {outcome.config_path}")
+        print(f"  log: {outcome.log_path}")
+        if outcome.backup_path:
+            print(f"  backup: {outcome.backup_path}")
+    return 1 if failed else 0
+
+
+def _failure_reason(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {str(exc)[:500]}"
+
+
+def print_uninstall_failure(provider: str, exc: Exception) -> None:
+    """Name the provider, the reason and the config, on stderr.
+
+    Never worded as a removal: the person is about to delete the app, and
+    a hook left behind points into it."""
+    print(f"{provider}: could not remove hooks ({_failure_reason(exc)})", file=sys.stderr)
+    try:
+        config = provider_spec(provider).config_path(None)
+    except Exception:
+        config = None
+    if config is not None:
+        print(f"  config: {config}", file=sys.stderr)
+    if isinstance(exc, OSError) and "refusing" in str(exc):
+        hint = (
+            "JR-Bar does not edit a symlinked or shared-writable config; "
+            "remove its entries by hand."
+        )
+    elif isinstance(exc, ValueError):
+        hint = (
+            "JR-Bar could not read this config as plain JSON; "
+            "remove its entries by hand."
+        )
+    else:
+        hint = "Fix the problem above, or remove its entries by hand, then run this again."
+    print(f"  {hint}", file=sys.stderr)
 
 
 def cmd_hook_log(args: argparse.Namespace) -> int:

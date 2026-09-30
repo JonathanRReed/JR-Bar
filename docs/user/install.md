@@ -70,6 +70,12 @@ The script removes:
 It removes a `jrbar` link only when that link points into a JR-Bar
 bundle, so a `jrbar` of your own is left alone.
 
+If a hook cannot be removed, for example because an agent's config is a
+symlink into your dotfiles or holds comments JR-Bar cannot read, the
+script names the config, exits 1 and keeps the app, the helpers and your
+data. Every other agent is still cleaned first. Fix that config or remove
+JR-Bar's entries from it by hand, then run the script again.
+
 Options:
 
 - `--keep-app` keeps the app.
@@ -80,5 +86,7 @@ To remove it by hand:
 
 1. Quit the app.
 2. Run `jrbar agent-monitor uninstall all`. It removes the hooks and puts
-   back Claude Code's status line if JR-Bar's was in it.
-3. Delete `JR-Bar.app`.
+   back Claude Code's status line if JR-Bar's was in it. It names any
+   config it could not clean and exits 1; clean those by hand and run it
+   again before you go on.
+3. Delete `JR-Bar.app`, once step 2 exits 0.

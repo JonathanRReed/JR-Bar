@@ -166,9 +166,35 @@ for label in $RETIRED_AGENT_LABELS; do
 done
 # Claude Code's status line points at a shim inside this bundle: put back
 # the one the person had (or remove ours) before the bundle goes.
-run_as_user "$CORE_BINARY" agent-monitor uninstall claude-statusline
-run_as_user "$CORE_BINARY" agent-monitor uninstall all
-run_as_user "$CORE_BINARY" sdejectguard uninstall --scope user
+#
+# Each step runs even when an earlier one fails, so everything that can be
+# removed is. A step that fails leaves a hook or status line pointing into
+# the app, so the script names it and stops before anything else goes. It
+# never deletes the app after that: a hook left behind would then run a
+# program that no longer exists.
+FAILED_HOOK_STEPS=""
+if ! run_as_user "$CORE_BINARY" agent-monitor uninstall claude-statusline; then
+    FAILED_HOOK_STEPS="$FAILED_HOOK_STEPS
+  agent-monitor uninstall claude-statusline"
+fi
+if ! run_as_user "$CORE_BINARY" agent-monitor uninstall all; then
+    FAILED_HOOK_STEPS="$FAILED_HOOK_STEPS
+  agent-monitor uninstall all"
+fi
+if ! run_as_user "$CORE_BINARY" sdejectguard uninstall --scope user; then
+    FAILED_HOOK_STEPS="$FAILED_HOOK_STEPS
+  sdejectguard uninstall --scope user"
+fi
+if [ -n "$FAILED_HOOK_STEPS" ]; then
+    {
+        echo "JR-Bar could not finish removing its hooks for $TARGET_USER. Failed:$FAILED_HOOK_STEPS"
+        echo "The lines above name the config it could not clean. JR-Bar.app was kept, and so were the"
+        echo "system helpers, the jrbar link and JR-Bar's data, because an agent's config may still"
+        echo "point into the app. Fix that config, or remove JR-Bar's entries from it by hand,"
+        echo "then run this script again."
+    } >&2
+    exit 1
+fi
 
 # System cleanup uses fixed reviewed paths. Never execute a binary from the
 # target user's writable app bundle as root.

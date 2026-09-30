@@ -43,6 +43,14 @@ JR-Bar has been checked against. "Newer than verified" is a note, not a
 failure: the hooks usually keep working, and they have just not been
 checked on that version yet.
 
+`jrbar agent-monitor uninstall all` visits every provider and prints what
+it did for each. A config it cannot clean, such as a symlinked file or one
+with comments it cannot read, is named on stderr with the reason, and the
+other providers are still cleaned. It exits 1 when any provider could not
+be cleaned, and 0 otherwise. `jrbar agent-monitor install all` also skips
+and names a provider it cannot write, and still exits 0 because nothing was
+written for that provider.
+
 ## Driving the app
 
 ```sh

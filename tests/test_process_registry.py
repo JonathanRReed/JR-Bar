@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from jrbar import process_registry as pr
+from jrbar.hook_ingress import HookIngressRequest, register_shim_process
 
 
 def _table(*rows):
@@ -354,3 +355,58 @@ def test_the_table_worker_reads_off_the_callers_thread_once_at_a_time__and_2_mor
         assert pr.cached_process_table() == (-1e9, table)
     finally:
         pr._table_cache, pr._list_processes_uncached = original_cache, original_read
+
+
+def _orphaned(payload: dict) -> HookIngressRequest:
+    return HookIngressRequest("codex", "/tmp/state/codex.jsonl", json.dumps(payload))
+
+
+def test_an_orphaned_session_end_still_upgrades_the_end_reason(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A hook the agent outlived reaches the daemon with no ppid, so it
+    registers no process. Its SessionEnd is still the provider saying the
+    session ended: without the upgrade the sweep closes the record as
+    process_exited and the row shows grey instead of Done."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    state = tmp_path / "jrbar"
+    entry = pr.ProcessEntry(300, 1, 5.0, "/opt/homebrew/bin/codex")
+    record = pr.record_agent_process("codex", "s1", entry, cwd="/work", state_dir=state, now=100.0)
+    pr.write_record(replace(record, ended_at_epoch=1000.0, end_reason="process_exited"), state_dir=state)
+
+    register_shim_process(_orphaned({"hook_event_name": "SessionEnd", "session_id": "s1"}))
+
+    ended = pr.load_record("codex", "s1", state_dir=state)
+    assert ended.end_reason == "hook"
+    assert ended.ended_at_epoch == 1000.0, "the end time it already had is the truthful one"
+
+    # Idempotent: a second one changes nothing.
+    register_shim_process(_orphaned({"hook_event_name": "SessionEnd", "session_id": "s1"}))
+    assert pr.load_record("codex", "s1", state_dir=state) == ended
+
+
+def test_an_orphaned_frame_that_is_not_a_session_end_registers_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from jrbar import process_registry
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    noted: list[tuple] = []
+    monkeypatch.setattr(process_registry, "note_hook_payload", lambda *a, **k: noted.append((a, k)))
+
+    # A walk with no start pid would begin at the daemon's own parent and
+    # pin the wrong process, so no other event may reach the registry.
+    register_shim_process(_orphaned({"hook_event_name": "SessionStart", "session_id": "s2"}))
+    register_shim_process(_orphaned({"hook_event_name": "Stop", "session_id": "s2"}))
+    # The token as data is not the event.
+    register_shim_process(
+        _orphaned({"hook_event_name": "UserPromptSubmit", "session_id": "s2", "note": "SessionEnd"})
+    )
+    assert noted == []
+
+    # Only the event itself goes through, with no start pid.
+    register_shim_process(_orphaned({"hook_event_name": "SessionEnd", "session_id": "s2"}))
+    assert len(noted) == 1
+    (args, kwargs) = noted[0]
+    assert args[0] == "codex" and '"SessionEnd"' in args[1]
+    assert kwargs == {}
+    assert not list(pr.registry_dir(tmp_path / "jrbar").glob("**/*.json"))

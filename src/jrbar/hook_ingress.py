@@ -217,8 +217,11 @@ def register_shim_process(request: HookIngressRequest) -> None:
     """The compiled shim cannot walk the process table itself; it sends its
     parent pid and the daemon registers the agent process here. Requests
     from the Python hook client carry no ``ppid`` and registered themselves
-    before submitting."""
+    before submitting. A hook the agent outlived carries none either (see
+    ``decode_hook_ingress_request``): it registers no process, but its
+    ``SessionEnd`` still counts."""
     if request.ppid is None:
+        _note_session_end_without_process(request)
         return
     try:
         from .process_registry import note_hook_payload
@@ -229,6 +232,26 @@ def register_shim_process(request: HookIngressRequest) -> None:
             start_pid=request.ppid,
             start_pid_started=request.ppid_start,
         )
+    except Exception:
+        pass
+
+
+def _note_session_end_without_process(request: HookIngressRequest) -> None:
+    """Let a ``SessionEnd`` that arrived with no ppid mark its record ended
+    by the provider, which is what the app reads to show Done instead of a
+    grey row once the liveness sweep has closed it as ``process_exited``.
+    That branch needs no pid. Every other event is left alone: with no
+    start pid the registry would walk from the daemon's own parent and pin
+    the wrong process."""
+    if '"SessionEnd"' not in request.payload_text:
+        return
+    try:
+        payload = json.loads(request.payload_text)
+        if not isinstance(payload, dict) or payload.get("hook_event_name") != "SessionEnd":
+            return
+        from .process_registry import note_hook_payload
+
+        note_hook_payload(request.provider, request.payload_text)
     except Exception:
         pass
 
@@ -927,6 +950,15 @@ class HookIngressService:
                 )
                 return None
             chunks.append(chunk)
+        if total == 0:
+            # A connection that closes before sending a byte is a liveness
+            # probe (`jrbar hooks doctor` and the daemon's own hooks_doctor
+            # command connect and close), not a refused frame. Timeouts
+            # above are silent too. Answer as before, so a bare EOF is
+            # never read as delivered, but neither count it nor write the
+            # rejection log.
+            self._send_response(connection, HookIngressDisposition.REFUSED_INVALID)
+            return None
         request = decode_hook_ingress_request(b"".join(chunks))
         parked = None
         if request is None:
