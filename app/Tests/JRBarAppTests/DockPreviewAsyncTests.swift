@@ -333,30 +333,42 @@ struct DockPreviewAsyncTests {
         #expect(bench.controller.preview.selectedWindowID == nil)
     }
 
-    @Test("through the real preview lane the show returns while the reader is blocked, then lands")
+    /// The one test that runs the real lane. It asks nothing of the main
+    /// queue's turnaround — other suites hold main for seconds at a time in
+    /// a full run — so it proves the two facts that need none: the show
+    /// has returned while the read is still blocked on the worker, and the
+    /// worker's read is what finishes once released. That the answer then
+    /// lands on main, in order, is `DockAXWorkerTests`'s.
+    @Test("through the real preview lane the show returns while the reader is blocked on the worker")
     func realLaneDoesNotBlockMain() async {
         final class Held: @unchecked Sendable {
             let entered = DispatchSemaphore(value: 0)
             let release = DispatchSemaphore(value: 0)
-            let landed = DispatchSemaphore(value: 0)
+            let finished = DispatchSemaphore(value: 0)
+            let ranOnMain = NSLock()
+            var onMain = false
         }
         let held = Held()
         let bench = Bench()
         bench.controller.ax.lane = DockAXPreviewLane()
-        bench.controller.ax.read = { pid, _ in
+        bench.controller.ax.read = { _, _ in
+            held.ranOnMain.withLock { held.onMain = Thread.isMainThread }
             held.entered.signal()
             // A bound, so a failing run releases itself.
             _ = held.release.wait(timeout: .now() + 20)
+            held.finished.signal()
             return ([card(1, "One")], false)
         }
-        bench.controller.presenter = { _, _ in held.landed.signal() }
         bench.controller.showPreview(for: bench.tile("Alpha"))
-        // Here, and not blocked: the reader is on the worker's thread.
+        // This line is reached with the reader still blocked: the show did not wait for it.
         #expect(await Self.signalled(held.entered), "the worker took the read")
-        #expect(bench.controller.preview.windows.isEmpty, "still nothing while it is blocked")
+        #expect(bench.controller.preview.windows.isEmpty, "nothing has landed while it is blocked")
+        #expect(bench.presented.isEmpty)
+        // The answer that follows is stale by then: it is dropped when it reaches main.
+        bench.controller.hidePreview()
         held.release.signal()
-        #expect(await Self.signalled(held.landed), "the answer lands on main once it is released")
-        #expect(bench.controller.preview.windows.map(\.title) == ["One"])
+        #expect(await Self.signalled(held.finished), "released, the reader finishes")
+        #expect(held.ranOnMain.withLock { held.onMain } == false, "the read ran on the worker, never on main")
     }
 
     private static func signalled(_ semaphore: DispatchSemaphore, within seconds: Double = 10) async -> Bool {
