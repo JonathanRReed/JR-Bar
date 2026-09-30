@@ -46,7 +46,7 @@ def test_sampler_serves_frames_from_one_batched_engine_call() -> None:
         "repeat"
     )
     assert raw.parse(program, 1000).ok
-    # The production cadence: GENTLE_MOTION_FPS accumulates a FLOAT
+    # The production gentle-motion cadence (30 fps) accumulates a FLOAT
     # interval (1/30s), while batch stamps once stepped by the rounded
     # integer millisecond interval -- a ~1/3ms-per-frame drift that blew
     # the +/-1ms gate and silently discarded most of every batch.
