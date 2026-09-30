@@ -2445,19 +2445,6 @@ public enum CoreMessage: Hashable, Sendable {
     /// A type this build does not know (or a protocol version it does not
     /// speak). Kept so callers can count or log it; never an error.
     case unknown(type: String, version: Int?)
-
-    public var typeName: String {
-        switch self {
-        case .hello: return "hello"
-        case .state: return "state"
-        case .lights: return "lights"
-        case .event: return "event"
-        case .settings: return "settings"
-        case .reply: return "reply"
-        case .log: return "log"
-        case .unknown(let type, _): return type
-        }
-    }
 }
 
 // MARK: - Provider management (W06: `list_providers`, `provider_consent`)

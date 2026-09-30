@@ -249,22 +249,6 @@ public final class CoreClient: @unchecked Sendable {
         return reply
     }
 
-    /// Fire-and-forget variant; the reply is delivered as a `.message(.reply)` event.
-    public func post(name: String, args: [String: JSONValue] = [:]) throws {
-        let command = CoreCommand(id: nextCommandID(), name: name, args: args)
-        let bytes = try CoreCodec.encode(command: command)
-        lock.lock()
-        let socket = fd
-        let generation = connectionGeneration
-        let connected = _isConnected
-        lock.unlock()
-        guard connected, socket >= 0 else { throw CoreClientError.notConnected }
-        if let errno = writeAll(socket, bytes, generation: generation) {
-            dropConnection(socket, generation: generation)
-            throw CoreClientError.writeFailed(errno)
-        }
-    }
-
     /// Forces the read loop out of its blocking read so the run loop
     /// tears down and reconnects. `shutdown`, never `close`: the run
     /// loop owns the descriptor and closes it after `readLoop` returns;

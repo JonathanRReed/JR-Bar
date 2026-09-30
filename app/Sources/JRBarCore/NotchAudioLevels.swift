@@ -86,8 +86,6 @@ public struct NotchBandSmoother: Equatable, Sendable {
         levels = [Float](repeating: 0, count: bands)
     }
 
-    public var current: [Float] { levels }
-
     /// Fold one raw reading in. Each band chases the raw value with a
     /// per-sample coefficient chosen by direction: rising uses the
     /// attack constant, falling the release. `dt` is the wall time

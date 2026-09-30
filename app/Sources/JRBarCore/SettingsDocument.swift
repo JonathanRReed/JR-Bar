@@ -30,9 +30,6 @@ public struct SettingsPath: Hashable, Sendable, CustomStringConvertible, Express
             }
         }.joined(separator: ".")
     }
-
-    public func appending(_ key: String) -> SettingsPath { SettingsPath(segments: segments + [.key(key)]) }
-    public func appending(index: Int) -> SettingsPath { SettingsPath(segments: segments + [.index(index)]) }
 }
 
 /// The daemon's settings document with typed, path-addressed reads and a
