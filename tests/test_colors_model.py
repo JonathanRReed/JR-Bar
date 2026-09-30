@@ -1,5 +1,4 @@
-"""The Colour / Animation Studio: its model, its rendering, and the thin
-renderer over both.
+"""The colour and animation model: swatches, names, motion and the preview lease.
 
 The bug this suite exists for was reported as "we have a thing somewhere in
 the menu that lets us choose brand colors for all of the providers we have
@@ -9,17 +8,16 @@ squares, and a sentence of body text claiming the first four squares were the
 Claude/OpenAI/Codex/Gemini brand colours -- which they were not, because the
 strip being drawn was CURATED_PALETTE (system red/blue/green/purple).
 
-So the interesting half is now a MODEL: which swatches, what they are named,
-what order they come in, which ones are brands. That is what this file tests
-exhaustively. The view tests below only assert that AppKit renders the model
-faithfully and wires its actions, because PyObjC is a bad place to hold logic.
+So the interesting half is a MODEL: which swatches, what they are named, what
+order they come in, which ones are brands, how a provider's animation
+replaces a state's rhythm, and how a held preview owns the Screen Bar and
+gives it back. ``jrbar.colors`` and the Screen Bar's preview lease are live
+code, so this file tests them exhaustively without building a single view.
 """
 
 from __future__ import annotations
 
-import unittest
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import pytest
 
@@ -51,11 +49,6 @@ from jrbar.colors import (
     studio_preview_program,
     swatch_name,
 )
-from jrbar.effect_selection import (
-    BLEND_MODE_OPTIONS,
-    COLOR_PRESET_OPTIONS,
-    PREVIEW_SCENARIO_OPTIONS,
-)
 from jrbar.led_status import LedDisplayState
 from jrbar.models import AgentMode, AgentStatus
 from jrbar.providers import PROVIDER_SPECS
@@ -67,11 +60,6 @@ def is_brand_color(hex_value):
     from jrbar.colors import _BRAND_NAME_BY_HEX, normalize_hex
 
     return normalize_hex(hex_value, "#000000").upper() in _BRAND_NAME_BY_HEX
-
-
-class _DictSubclass(dict):
-    pass
-
 
 
 def _status(provider: str, mode: AgentMode, *, agent_id: str | None = None) -> AgentStatus:
@@ -664,328 +652,3 @@ def test_a_hold_nobody_released_expires_instead_of_owning_the_bar_forever(
 
     assert device.preview_is_held() is False
     assert recorder.shown == "live-2"
-
-
-# --- The view is a thin renderer over the model ---------------------------
-
-
-class StudioPaneTests(unittest.TestCase):
-    def setUp(self) -> None:
-        from tests.test_jrbar import isolate_controller
-
-        isolate_controller(self)
-        self.controller.show_settings_window()
-        self.controller.ensure_settings_pane("color_studio")
-        self.pane = self.controller.settings_panes["color_studio"]
-        self.actions = self.controller.studio_actions
-        # refresh_() walks real device discovery and the keepalive path; the
-        # Studio's own behaviour is what is under test here.
-        self.controller.refresh_ = lambda _sender: None
-
-    def test_the_pane_builds_three_peer_sections_and_shows_one(self) -> None:
-        self.assertEqual(
-            sorted(self.actions.section_views), sorted(STUDIO_SECTION_CHOICES)
-        )
-        visible = [
-            key for key, view in self.actions.section_views.items() if not view.isHidden()
-        ]
-        self.assertEqual(visible, ["colors"])
-
-        self.actions.select_section("animations")
-        visible = [
-            key for key, view in self.actions.section_views.items() if not view.isHidden()
-        ]
-        self.assertEqual(visible, ["animations"])
-        self.assertEqual(self.controller.studio_section, "animations")
-
-    def test_switching_section_hands_the_screen_bar_back(self) -> None:
-        held = []
-        self.controller.virtual_status_device = SimpleNamespace(
-            hold_preview_program=lambda program, **kwargs: held.append(program),
-            release_preview_program=lambda: (held.append("released"), True)[1],
-        )
-        self.actions.preview_colors(self.controller.settings.colors, "trying")
-        self.actions.select_section("preview")
-        self.assertIn("released", held)
-        self.assertFalse(self.actions.preview_session.previewing)
-
-    def test_every_rendered_swatch_carries_a_visible_name(self) -> None:
-        """Not a tooltip: a word, on screen, under the chip."""
-        found = 0
-        for (_row_key, _hex), button in self.controller.color_swatches.items():
-            caption = getattr(button, "studio_caption", None)
-            self.assertIsNotNone(caption)
-            self.assertTrue(caption.stringValue().strip())
-            self.assertTrue(button.toolTip().strip())
-            found += 1
-        self.assertGreater(found, len(PROVIDER_SPECS) * 4)
-
-    def test_each_provider_has_an_animation_control_wired_to_its_own_provider(
-        self,
-    ) -> None:
-        self.assertEqual(
-            sorted(self.actions.animation_popups),
-            sorted(spec.provider for spec in PROVIDER_SPECS),
-        )
-        popup = self.actions.animation_popups["claude"]
-        self.assertEqual(
-            [popup.itemAtIndex_(i).title() for i in range(popup.numberOfItems())],
-            [PROVIDER_ANIMATION_LABELS[m] for m in PROVIDER_ANIMATION_CHOICES],
-        )
-        for index in range(popup.numberOfItems()):
-            self.assertEqual(
-                popup.itemAtIndex_(index).representedObject()["provider"], "claude"
-            )
-
-    def test_shared_effect_popups_render_catalog_order_and_current_selection(self) -> None:
-        preset_popup = self.controller.color_fields["preset_popup"]
-        self.assertEqual(
-            [preset_popup.itemAtIndex_(i).title() for i in range(preset_popup.numberOfItems())],
-            [option.label for option in COLOR_PRESET_OPTIONS],
-        )
-        self.assertEqual(
-            [
-                preset_popup.itemAtIndex_(i).representedObject()["preset"]
-                for i in range(preset_popup.numberOfItems())
-            ],
-            [option.value for option in COLOR_PRESET_OPTIONS],
-        )
-        self.assertEqual(
-            preset_popup.titleOfSelectedItem(),
-            colors_module.PRESET_LABELS[colors_module.matching_preset(self.controller.settings.colors)],
-        )
-
-        blend_popup = self.controller.color_fields["blend_mode_popup"]
-        self.assertEqual(
-            [blend_popup.itemAtIndex_(i).title() for i in range(blend_popup.numberOfItems())],
-            [option.label for option in BLEND_MODE_OPTIONS],
-        )
-        self.assertEqual(
-            [
-                blend_popup.itemAtIndex_(i).representedObject()["blend_mode"]
-                for i in range(blend_popup.numberOfItems())
-            ],
-            [option.value for option in BLEND_MODE_OPTIONS],
-        )
-        self.assertEqual(
-            blend_popup.titleOfSelectedItem(),
-            colors_module.BLEND_MODE_LABELS[self.controller.settings.colors.blend_mode],
-        )
-
-        preview_popup = self.controller.color_fields["preview_scenario_popup"]
-        self.assertEqual(
-            [
-                preview_popup.itemAtIndex_(i).title()
-                for i in range(preview_popup.numberOfItems())
-            ],
-            [option.label for option in PREVIEW_SCENARIO_OPTIONS],
-        )
-        self.assertEqual(
-            [
-                preview_popup.itemAtIndex_(i).representedObject()["scenario"]
-                for i in range(preview_popup.numberOfItems())
-            ],
-            [option.value for option in PREVIEW_SCENARIO_OPTIONS],
-        )
-        self.assertEqual(
-            preview_popup.titleOfSelectedItem(),
-            colors_module.PREVIEW_SCENARIO_LABELS[self.controller.color_preview_scenario],
-        )
-
-    def test_choosing_an_animation_saves_it_and_resyncs_the_control(self) -> None:
-        self.assertTrue(self.actions.apply_provider_animation("claude", MOTION_CHASE))
-        self.assertEqual(
-            self.controller.settings.colors.agent_animation("claude"), MOTION_CHASE
-        )
-        self.assertEqual(
-            self.actions.animation_popups["claude"].titleOfSelectedItem(),
-            PROVIDER_ANIMATION_LABELS[MOTION_CHASE],
-        )
-        from jrbar.settings import load_settings
-
-        self.assertEqual(
-            load_settings(self._settings_path).colors.agent_animation("claude"),
-            MOTION_CHASE,
-        )
-
-    def test_choosing_an_animation_accepts_a_bridged_mapping_payload(self) -> None:
-        payload = _DictSubclass(provider="claude", motion=MOTION_CHASE)
-
-        self.assertTrue(self.actions.apply_provider_animation(payload))
-        self.assertEqual(
-            self.controller.settings.colors.agent_animation("claude"), MOTION_CHASE
-        )
-
-    def test_choosing_a_colour_saves_it_and_renames_the_row(self) -> None:
-        self.assertTrue(self.actions.apply_provider_color("claude", "#10A37F"))
-        self.assertEqual(self.controller.settings.colors.agent_color("claude"), "#10A37F")
-        sync = self.controller.color_hex_labels[("agent", "claude")]
-        self.assertEqual(sync.name_label.stringValue(), "OpenAI")
-        self.assertEqual(sync.hex_label.stringValue(), "#10A37F")
-
-    def test_a_colour_changed_elsewhere_still_renames_the_row(self) -> None:
-        """A palette button writes settings directly and then asks the window
-        to catch up; the row's NAME has to be part of what catches up.
-
-        #FF3A00 is deliberate: this test used to assert the row now read
-        "Codex", because BRAND_SEED_COLORS claimed #FF3A00 as Codex's brand
-        colour while PROVIDER_BRAND_COLORS gave codex #2B8FFF. #FF3A00 is
-        led_status.ASK_AMBER -- this app's own blocked/waiting signal -- and
-        the assertion was pinning that confusion in place.
-        """
-        self.controller.settings = self.controller.settings.with_colors(
-            self.controller.settings.colors.with_agent_color("claude", "#FF3A00")
-        )
-        self.controller.refresh_colors_window()
-        sync = self.controller.color_hex_labels[("agent", "claude")]
-        self.assertEqual(sync.name_label.stringValue(), "Ask")
-        self.assertEqual(
-            self.actions.animation_popups["claude"].titleOfSelectedItem(),
-            PROVIDER_ANIMATION_LABELS[PROVIDER_ANIMATION_AUTO],
-        )
-
-    def test_agents_pane_animation_changes_resync_the_open_studio_popup(self) -> None:
-        self.controller.ensure_settings_pane("agents")
-        popup = self.controller.settings_fields["claude_agent_animation"]
-        chosen = next(
-            popup.itemAtIndex_(index)
-            for index in range(popup.numberOfItems())
-            if popup.itemAtIndex_(index).representedObject()["motion"] == MOTION_BLINK
-        )
-        popup.selectItem_(chosen)
-
-        self.controller.setAgentAnimation_(popup)
-
-        self.assertEqual(
-            self.actions.animation_popups["claude"].titleOfSelectedItem(),
-            PROVIDER_ANIMATION_LABELS[MOTION_BLINK],
-        )
-
-    def test_a_reset_underneath_an_open_hover_drops_the_stale_candidate(self) -> None:
-        """Reset to Defaults (or a palette button) changes the baseline while
-        the pointer is still on a swatch; the candidate derived from the old
-        baseline must not survive to repaint over the new one."""
-        self.controller.virtual_status_device = SimpleNamespace(
-            hold_preview_program=lambda program, **kwargs: None,
-            release_preview_program=lambda: False,
-        )
-        button = self.controller.color_swatches[(("agent", "claude"), "#10A37F")]
-        button.hover_enter(button)
-        self.assertTrue(self.actions.preview_session.previewing)
-
-        self.controller.settings = self.controller.settings.with_colors(
-            self.controller.settings.colors.with_agent_color("claude", "#FF3A00")
-        )
-        self.controller.refresh_colors_window()
-
-        self.assertFalse(self.actions.preview_session.previewing)
-        self.assertEqual(
-            self.actions.preview_session.committed.agent_color("claude"), "#FF3A00"
-        )
-
-    def test_hovering_a_swatch_previews_on_the_screen_bar_and_leaving_reverts(
-        self,
-    ) -> None:
-        events = []
-        self.controller.virtual_status_device = SimpleNamespace(
-            hold_preview_program=lambda program, **kwargs: events.append(("hold", program)),
-            release_preview_program=lambda: (events.append(("release", None)), True)[1],
-        )
-        button = self.controller.color_swatches[(("agent", "claude"), "#10A37F")]
-        self.assertTrue(callable(button.hover_enter))
-
-        button.hover_enter(button)
-        self.assertEqual(events[0][0], "hold")
-        # The view is a renderer: what it holds is exactly what the model says.
-        candidate = self.controller.settings.colors.with_agent_color("claude", "#10A37F")
-        self.assertEqual(
-            events[0][1],
-            studio_preview_program(
-                candidate,
-                statuses=colors_module.provider_preview_statuses("claude"),
-            ),
-        )
-        self.assertTrue(self.actions.preview_session.previewing)
-        # Hovering is not choosing.
-        self.assertEqual(self.controller.settings.colors.agent_color("claude"), "#D97757")
-
-        button.hover_exit(button)
-        self.assertEqual(events[-1][0], "release")
-        self.assertFalse(self.actions.preview_session.previewing)
-
-    def test_the_before_after_strip_shows_the_candidate_next_to_the_saved_look(
-        self,
-    ) -> None:
-        compare = self.controller.studio_compare
-        self.assertEqual(len(compare["before"]), 8)
-        self.assertEqual(len(compare["after"]), 8)
-
-        self.controller.virtual_status_device = None
-        candidate = self.controller.settings.colors.with_agent_color("claude", "#10A37F")
-        self.actions.preview_colors(candidate, "Trying Claude: OpenAI")
-        self.assertEqual(compare["caption"].stringValue(), "Trying Claude: OpenAI")
-
-        self.actions.end_preview()
-        self.assertIn("Hover", compare["caption"].stringValue())
-
-    def test_no_section_overlaps_itself_or_collapses_to_nothing(self) -> None:
-        """The generic pane-overlap guard in test_jrbar skips this pane
-        (it is a pinned header plus its own scroll view, not the standard
-        wrap_in_scroll_pane shape), so it needs its own."""
-        self.controller.settings_window.contentView().layoutSubtreeIfNeeded()
-        self.pane.layoutSubtreeIfNeeded()
-
-        def overlaps(a, b):
-            return (
-                a.origin.x < b.origin.x + b.size.width
-                and b.origin.x < a.origin.x + a.size.width
-                and a.origin.y < b.origin.y + b.size.height
-                and b.origin.y < a.origin.y + a.size.height
-            )
-
-        for key in STUDIO_SECTION_CHOICES:
-            self.actions.select_section(key)
-            self.pane.layoutSubtreeIfNeeded()
-            section = self.actions.section_views[key]
-            self.assertGreater(section.frame().size.height, 0, key)
-            self.assertGreater(section.frame().size.width, 0, key)
-            frames = [
-                card.frame()
-                for card in section.arrangedSubviews()
-                if card.frame().size.width > 0 and card.frame().size.height > 0
-            ]
-            self.assertGreater(len(frames), 0, key)
-            for i in range(len(frames)):
-                for j in range(i + 1, len(frames)):
-                    self.assertFalse(overlaps(frames[i], frames[j]), f"{key} cards overlap")
-
-    def test_every_swatch_caption_fits_inside_its_own_column(self) -> None:
-        """A name that spills into the chip beside it is the same failure as
-        having no name at all -- you cannot tell which colour it belongs to."""
-        from jrbar.settings_window import STUDIO_SWATCH_COLUMN_WIDTH
-
-        for button in self.controller.color_swatches.values():
-            caption = button.studio_caption
-            self.assertLessEqual(
-                caption.fittingSize().width,
-                STUDIO_SWATCH_COLUMN_WIDTH,
-                caption.stringValue(),
-            )
-
-    def test_hardware_preview_is_a_control_you_have_to_find_and_flip(self) -> None:
-        toggle = self.controller.color_fields["live_toggle"]
-        self.assertIsNotNone(toggle)
-        self.assertEqual(
-            bool(toggle.state()), bool(self.controller.color_preview_enabled)
-        )
-        # Hovering reaches the Screen Bar only -- never a physical device.
-        pushed = []
-        self.controller.push_colors_preview_to_device = lambda: pushed.append(True)
-        self.controller.virtual_status_device = SimpleNamespace(
-            hold_preview_program=lambda program, **kwargs: None,
-            release_preview_program=lambda: False,
-        )
-        button = self.controller.color_swatches[(("agent", "claude"), "#10A37F")]
-        button.hover_enter(button)
-        button.hover_exit(button)
-        self.assertEqual(pushed, [])
