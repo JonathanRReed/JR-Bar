@@ -406,7 +406,7 @@ struct AgentsPage: View {
         }
 
         SettingGroup("Asks") {
-            SettingToggle(store, "Sub-agent asks", subtitle: "Sub-agents cannot be answered, so only main sessions alert by default.",
+            SettingToggle(store, "Sub-agent asks", subtitle: SubagentAsksCopy.subtitle,
                           path: "subagent_asks_alert")
         }
     }
@@ -1338,4 +1338,10 @@ struct NullableSlider: View {
             }
         }
     }
+}
+
+/// The words under the Agents page's "Sub-agent asks" switch, shared with
+/// the Settings search index so the two can never disagree.
+enum SubagentAsksCopy {
+    nonisolated static let subtitle = "Sub-agent asks stay quiet by default: no light, sound, banner or answer card, while the agent still shows its own prompt. Turn this on to let them alert like a main session's."
 }

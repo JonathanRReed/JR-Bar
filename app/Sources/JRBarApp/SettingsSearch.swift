@@ -49,7 +49,7 @@ enum SettingsSearch {
         .init(.general, "Software Update", "Update channel", subtitle: "Stable or beta builds."),
         .init(.general, "Menu bar", "Menu bar icon", subtitle: "What the status item shows."),
         .init(.agents, "Transcripts", "Watch transcripts", subtitle: "Agents whose transcripts are read."),
-        .init(.agents, "Asks", "Sub-agent asks", subtitle: "Sub-agents cannot be answered, so only main sessions alert by default."),
+        .init(.agents, "Asks", "Sub-agent asks", subtitle: SubagentAsksCopy.subtitle),
         .init(.usage, "Menu bar meters", "Show meters for", subtitle: "Providers that get a meter in Meters-style menu-bar icons."),
         .init(.usage, "Display", "Lead with"),
         .init(.usage, "Display", "Graph range"),

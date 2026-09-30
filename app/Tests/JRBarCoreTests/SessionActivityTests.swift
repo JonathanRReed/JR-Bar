@@ -160,6 +160,77 @@ struct AgentMonitorFeedTests {
         #expect(AgentMonitorFeed.reduce(nil).state == .idle)
         #expect(AgentMonitorFeed.reduce(Self.feed("{}")).detail == "Unrecognised latest.json")
     }
+
+    /// A `latest.json` work entry, the way the daemon writes it: `parent_key`
+    /// is null on a main session and a work key on a sub-agent.
+    private static func work(_ lifecycle: String, actor: String, worker: Bool) -> String {
+        let parent = worker ? #"{"provider":"claude","session_id":"main-1"}"# : "null"
+        return #"{"lifecycle":"\#(lifecycle)","next_actor":"\#(actor)","parent_key":\#(parent)}"#
+    }
+
+    private static func works(_ entries: String...) -> Data {
+        feed(#"{"works":[\#(entries.joined(separator: ","))]}"#)
+    }
+
+    @Test("a waiting sub-agent never turns the file feed amber")
+    func waitingWorkerIsNotAnAsk() {
+        let result = AgentMonitorFeed.reduce(Self.works(
+            Self.work("active", actor: "provider", worker: false),
+            Self.work("waiting", actor: "user", worker: true)))
+        #expect(result.state == .working)
+        #expect(result.detail == "1 working")
+    }
+
+    @Test("with only a waiting sub-agent there is nothing to ask of you")
+    func onlyAWaitingWorker() {
+        let result = AgentMonitorFeed.reduce(Self.works(Self.work("waiting", actor: "user", worker: true)))
+        #expect(result.state == .idle)
+        #expect(result.detail == "No sessions")
+    }
+
+    @Test("a sub-agent that failed or finished does not colour the feed either")
+    func otherWorkerStatesAreSkippedToo() {
+        let result = AgentMonitorFeed.reduce(Self.works(
+            Self.work("failed", actor: "user", worker: true),
+            Self.work("active", actor: "provider", worker: true)))
+        #expect(result.state == .idle)
+    }
+
+    @Test("a main session waiting on you still turns the feed amber, counted once")
+    func waitingMainCountsOnce() {
+        let both = AgentMonitorFeed.reduce(Self.works(Self.work("waiting", actor: "user", worker: false)))
+        #expect(both.state == .needsInput)
+        #expect(both.detail == "1 waiting on you")
+        // Either signal alone is one waiting session, too.
+        let lifecycleOnly = AgentMonitorFeed.reduce(Self.works(Self.work("waiting", actor: "provider", worker: false)))
+        #expect(lifecycleOnly.detail == "1 waiting on you")
+        let actorOnly = AgentMonitorFeed.reduce(Self.works(Self.work("active", actor: "user", worker: false)))
+        #expect(actorOnly.state == .needsInput)
+        #expect(actorOnly.detail == "1 waiting on you · 1 working")
+    }
+
+    @Test("two waiting mains are two, and a worker beside them adds nothing")
+    func waitingMainsAreCounted() {
+        let result = AgentMonitorFeed.reduce(Self.works(
+            Self.work("waiting", actor: "user", worker: false),
+            Self.work("waiting", actor: "user", worker: false),
+            Self.work("waiting", actor: "user", worker: true)))
+        #expect(result.detail == "2 waiting on you")
+    }
+
+    @Test("a work entry with no parent_key at all is a main session")
+    func missingParentKeyIsMain() {
+        let result = AgentMonitorFeed.reduce(Self.feed(#"{"works":[{"lifecycle":"waiting","next_actor":"user"}]}"#))
+        #expect(result.state == .needsInput)
+        #expect(result.detail == "1 waiting on you")
+    }
+
+    @Test("the published summary counts a waiting session once, too")
+    func summaryCountsOnce() {
+        let result = AgentMonitorFeed.reduce(Self.feed(#"{"agents":{"lifecycle_counts":{"waiting":1},"next_actor_counts":{"user":1}}}"#))
+        #expect(result.state == .needsInput)
+        #expect(result.detail == "1 waiting on you")
+    }
 }
 
 @Suite("Asks with no session left")

@@ -143,6 +143,10 @@ extension CoreAggregate {
 /// the raw version-2 `works` list; both are handled. Completed work only
 /// counts as "Done" for a short window, the way the Python attention
 /// model treats `COMPLETED_RECENTLY`.
+///
+/// Only main sessions count, as in the daemon's own aggregate: a
+/// sub-agent's ask stays quiet by default, so a waiting worker must not
+/// turn the icon amber. A `works` entry with a `parent_key` is a worker.
 public enum AgentMonitorFeed {
     public static let completedWindow: TimeInterval = 90
 
@@ -166,15 +170,22 @@ public enum AgentMonitorFeed {
         var lifecycle: [String: Int] = [:]
         var nextActor: [String: Int] = [:]
         var recentlyCompleted = 0
+        var waiting = 0
         if let agents = json["agents"] as? [String: Any] {
             lifecycle = (agents["lifecycle_counts"] as? [String: Int]) ?? [:]
             nextActor = (agents["next_actor_counts"] as? [String: Int]) ?? [:]
             recentlyCompleted = lifecycle["completed"] ?? 0
+            // The summary has no per-session rows, so the sessions waiting
+            // on you are at least the larger of the two counts: a session
+            // that is both waiting and next-actor-user sits in each.
+            waiting = max(lifecycle["waiting"] ?? 0, nextActor["user"] ?? 0)
         } else if let works = json["works"] as? [[String: Any]] {
             for work in works {
                 guard let life = work["lifecycle"] as? String, let actor = work["next_actor"] as? String else { continue }
+                if isWorker(work) { continue }
                 lifecycle[life, default: 0] += 1
                 nextActor[actor, default: 0] += 1
+                if life == "waiting" || actor == "user" { waiting += 1 }
                 if life == "completed",
                    let watermark = work["watermark"] as? [String: Any],
                    let occurred = watermark["occurred_at_epoch"] as? Double,
@@ -194,7 +205,6 @@ public enum AgentMonitorFeed {
             }
         }
         let active = (lifecycle["active"] ?? 0)
-        let waiting = (lifecycle["waiting"] ?? 0) + (nextActor["user"] ?? 0)
         let failed = lifecycle["failed"] ?? 0
         let state: AgentAggregateState
         if waiting > 0 { state = .needsInput }
@@ -210,6 +220,14 @@ public enum AgentMonitorFeed {
         let total = lifecycle.values.reduce(0, +)
         let detail = parts.isEmpty ? (total > 0 ? "\(total) sessions, nothing live" : "No sessions") : parts.joined(separator: " · ")
         return (state, detail)
+    }
+
+    /// A `works` entry is a sub-agent when it names a parent. The daemon
+    /// writes `parent_key` as null on a main session, which decodes to
+    /// `NSNull`, so null and absent both read as a main session.
+    private static func isWorker(_ work: [String: Any]) -> Bool {
+        guard let parent = work["parent_key"] else { return false }
+        return !(parent is NSNull)
     }
 
     /// "47s" / "6m" / "2h" — a file age in the same shorthand the panel's

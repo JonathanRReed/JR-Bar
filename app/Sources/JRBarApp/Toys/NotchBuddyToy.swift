@@ -1219,7 +1219,9 @@ final class NotchBuddyToy: Toy {
     /// it while tucked, to distinguish real activity changes from heartbeats.
     /// Historical state documents never earn completion crumbs.
     func noteState(_ state: CoreState) {
-        noteAsks(state.sessions)
+        // The care log follows the sessions the panel lists: a sub-agent's
+        // ask stays quiet by default, so it is not a question put to you.
+        noteAsks(state.mainSessions)
         guard store?.state.notchBuddy.enabled == true,
               store?.state.notchBuddy.tucked == true else {
             wakeSnapshot = nil
