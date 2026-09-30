@@ -621,17 +621,6 @@ class LatestWinsWorker:
             return SubmissionDisposition.STARTED
         return SubmissionDisposition.QUEUED
 
-    def discard_pending(self, coalesce_key: str) -> bool:
-        """Discard one exact semantic slot without cancelling the generation."""
-
-        normalized = _normalize_work_key(coalesce_key)
-        with self._condition:
-            removed = self._pending.pop(normalized, None) is not None
-            if removed:
-                self._increment("cancelled")
-                self._condition.notify_all()
-            return removed
-
     def discard_pending_prefix(self, coalesce_prefix: str) -> int:
         """Discard every bounded slot under one opaque resource prefix."""
 
