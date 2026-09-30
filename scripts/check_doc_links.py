@@ -16,6 +16,7 @@ ccusage's lychee job are the idea; this is our own).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -47,11 +48,17 @@ def _prose(text: str) -> str:
 
 
 def markdown_files(root: Path) -> list[Path]:
-    return sorted(
-        path
-        for path in root.rglob("*.md")
-        if not (_SKIP_PARTS & set(path.relative_to(root).parts))
-    )
+    """Every ``*.md`` under ``root`` outside the skipped directories.
+
+    The skipped directories are pruned before they are listed: ``app/.build``
+    and the verification folders hold gigabytes, and filtering their paths
+    after a full walk took minutes.
+    """
+    found: list[Path] = []
+    for directory, subdirectories, names in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if name not in _SKIP_PARTS]
+        found.extend(Path(directory, name) for name in names if name.endswith(".md"))
+    return sorted(found)
 
 
 def anchors(path: Path, cache: dict[Path, set[str]]) -> set[str]:
