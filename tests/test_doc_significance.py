@@ -6,7 +6,12 @@ from __future__ import annotations
 import copy
 
 from jrbar import core_runtime
-from jrbar.core_runtime import _VOLATILE_DOC_PATHS, _equal_ignoring_volatile, doc_significant_equal
+from jrbar.core_runtime import (
+    _VOLATILE_DOC_PATHS,
+    _equal_ignoring_volatile,
+    _path_is_volatile,
+    doc_significant_equal,
+)
 
 
 def _walk(kind: str, a, b) -> bool:
@@ -20,7 +25,7 @@ def _state() -> dict:
         "now": 1000.0,
         "generation": 7,
         "sessions": [
-            {"id": "claude:session:alpha", "mode": "working", "label": "Fix the build", "pid": 4242, "terminal": {"app": "Ghostty", "tty": "/dev/ttys001"}},
+            {"id": "claude:session:alpha", "mode": "working", "label": "Fix the build", "since": 900.0, "pid": 4242, "terminal": {"app": "Ghostty", "tty": "/dev/ttys001"}},
             {"id": "codex:session:beta", "mode": "waiting_for_input", "label": None, "pid": None, "terminal": None},
         ],
         "aggregate": {"working": 1, "asks": 1, "ready": 0},
@@ -77,6 +82,7 @@ def _pairs():
     yield "write latency drifts", "state", base, changed(lambda d: d["devices"][0]["write_health"].update(latency_ms=9.0, writes=11))
     yield "a device starts failing", "state", base, changed(lambda d: d["devices"][0]["write_health"].update(failing=True))
     yield "a session changes mode", "state", base, changed(lambda d: d["sessions"][0].update(mode="tool_running"))
+    yield "a session's since moves", "state", base, changed(lambda d: d["sessions"][0].update(since=950.0))
     yield "a session appears", "state", base, changed(lambda d: d["sessions"].append({"id": "x", "mode": "working"}))
     yield "a terminal tty changes", "state", base, changed(lambda d: d["sessions"][0]["terminal"].update(tty="/dev/ttys002"))
     yield "a source changes state", "state", base, changed(lambda d: d["health"]["sources"][0].update(state="stale"))
@@ -112,6 +118,7 @@ def test_the_trie_agrees_with_the_path_walk_on_every_fixture_pair() -> None:
     # The fixtures exercise both answers.
     assert results["clock ticks"] and results["battery estimate drifts"] and results["lights sensor drifts"]
     assert not results["a session changes mode"] and not results["a significant key goes missing"]
+    assert not results["a session's since moves"]
     assert results["a list becomes a tuple"] and not results["a list becomes a dict"]
     assert results["a volatile leaf changes type"], "a volatile value is ignored whatever its type"
 
@@ -135,3 +142,17 @@ def test_a_numeric_type_change_alone_is_equal_outside_volatile_branches() -> Non
 
 def test_the_trie_is_built_once_per_kind() -> None:
     assert set(core_runtime._VOLATILE_TRIES) == set(_VOLATILE_DOC_PATHS)
+
+
+def test_the_moments_a_client_ages_a_wait_from_stay_significant() -> None:
+    """The app prints a light's "In this state" from ``sessions[].since`` (and a
+    waiting ask's ``asks[].opened_at``) on its own clock, because the daemon's
+    ``seconds_in_state`` is volatile and a quiet rebuild never re-sends it.
+    That only works while these moments reach every client, so they must
+    never be added to the volatile list."""
+    state_paths = _VOLATILE_DOC_PATHS["state"]
+    assert not _path_is_volatile(("sessions", "0", "since"), state_paths)
+    assert not _path_is_volatile(("asks", "0", "opened_at"), state_paths)
+    # The duration itself stays the volatile one: it is the field a client
+    # must not print as received.
+    assert _path_is_volatile(("surfaces", "0", "why_detail", "seconds_in_state"), _VOLATILE_DOC_PATHS["lights"])
