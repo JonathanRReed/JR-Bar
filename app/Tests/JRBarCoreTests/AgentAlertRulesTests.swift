@@ -188,6 +188,32 @@ struct AgentAlertRulesTests {
         #expect(watched.sound == nil)
     }
 
+    static let asksOnlyState = CoreState(
+        generation: 1,
+        aggregate: CoreAggregate(),
+        sessions: [CoreSession(id: "codex:2", provider: "codex", label: "core", mode: "working")],
+        focus: CoreFocus(mode: "asks_only", bannerAllowed: true, audibleAllowed: true, outbound: "asks"))
+
+    @Test("a rule that banners finishes stays inside Asks only, and a watch still banners without a sound")
+    func rulesStayInsideAsksOnly() {
+        let event = CoreEvent(id: "c", kind: "completed", session: "codex:2", provider: "codex")
+        let rules = ["codex": AgentAlertRule(completions: true)]
+        let widened = AgentAlertRules.apply(EventDelivery(sound: "Glass"), to: event, state: Self.asksOnlyState, rules: rules)
+        #expect(widened.notification == nil, "the rule widens a finish; Asks only admits none")
+        #expect(widened.sound == nil)
+        // The clamp is the same one the coordinator's rules hook composes.
+        let composed = EventPolicy.holdingQuiet(widened, for: event, focus: Self.asksOnlyState.focus)
+        #expect(composed.notification == nil)
+        // The explicit watch is the one documented exception.
+        let watched = AgentAlertRules.notifyWhenDone(composed, event: event, state: Self.asksOnlyState)
+        #expect(watched.notification?.title == "core finished")
+        #expect(watched.sound == nil)
+        // An ask under the same rule set is admitted and is not silenced by it.
+        let ask = CoreEvent(id: "a", kind: "ask_opened", session: "codex:2", provider: "codex")
+        let asked = AgentAlertRules.apply(Self.askDelivery, to: ask, state: Self.asksOnlyState, rules: rules)
+        #expect(asked == Self.askDelivery)
+    }
+
     @Test("a rule's escalation still lets quiet stop the chime it would have started")
     func rulesKeepQuietChime() {
         let loud = EventDelivery(statusPulse: true, chime: .start)
