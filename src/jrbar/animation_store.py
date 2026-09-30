@@ -32,7 +32,6 @@ from .animation import (
     MAX_PROGRAM_BYTES,
     Animation,
     AnimationValidationError,
-    compile_animation,
     parse_animation,
 )
 from .private_io import atomic_private_write, read_private_text
@@ -176,21 +175,6 @@ class AnimationLibrary:
                 "Delete one before saving another."
             )
         return AnimationLibrary((*self.entries, entry))
-
-    def with_animation(
-        self,
-        animation: Animation,
-        *,
-        name: str | None = None,
-        led_count: int = 8,
-        now_epoch: float | None = None,
-    ) -> AnimationLibrary:
-        return self.with_program(
-            name if name is not None else animation.name,
-            compile_animation(animation, led_count=led_count),
-            led_count=led_count,
-            now_epoch=now_epoch,
-        )
 
     def renamed(self, old: str, new: str) -> AnimationLibrary:
         """Rename in place. Order is identity here: the popup is a list the

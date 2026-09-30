@@ -840,16 +840,6 @@ _cached_opencode_mtime: tuple[str, float] | None = None
 _cached_opencode_totals: tuple[int, int, int] | None = None
 
 
-def _is_pid_alive(pid: int | None) -> bool:
-    if pid is None or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
-
-
 def _discover_antigravity_endpoints(
     command_runner: Callable[[list[str], float], str] | None = None,
     process_identity_resolver=None,
@@ -911,15 +901,6 @@ def _discover_antigravity_endpoints(
             except Exception:
                 continue
     return endpoints
-
-
-def _discover_antigravity_endpoint(
-    command_runner: Callable[[list[str], float], str] | None = None,
-) -> tuple[str | None, str | None]:
-    endpoints = _discover_antigravity_endpoints(command_runner)
-    if endpoints:
-        return endpoints[0][0], endpoints[0][1]
-    return None, None
 
 
 def collect_antigravity(

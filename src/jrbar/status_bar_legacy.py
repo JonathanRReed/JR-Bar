@@ -475,7 +475,6 @@ from .navigation_policy import (
     resolve_navigation,
 )
 from .notification_arbitration import (
-    issue_notification_action_binding,
     plan_semantic_notification,
     prune_notification_action_bindings,
     resolve_notification_work_key,
@@ -4992,8 +4991,7 @@ class StatusBarController(NSObject):
         opened_at = datetime.now(timezone.utc)
         self.menu_last_opened_at = opened_at
         # The same visit, for the same reason, on the "what did I miss"
-        # ledger. The menu the user is looking at was already built --
-        # `update_status_menu` refuses to rebuild while it is open -- so this
+        # ledger. The menu the user is looking at was already built, so this
         # clears the section for the NEXT open, never underneath his cursor.
         self.mark_activity_seen_now(opened_at.timestamp())
         projection = getattr(self, "current_attention_projection", None)
@@ -7524,11 +7522,11 @@ class StatusBarController(NSObject):
     ) -> tuple[ActivityEntry, ...]:
         """Build one ledger row per main session, named the way rows are.
 
-        `strip_session_short_id` is the pure half of the menu's own title
-        rule (display-name first, the short id dropped). `session_title_parts`
-        is not used here on purpose: it stats the filesystem looking for a
-        `.git` directory, which is not something a per-refresh recorder may
-        do. The row's `detail` is ``core_projection.session_label``: the
+        `strip_session_short_id` is the whole title rule here: the display
+        name with its short id dropped. It never looks for a project on disk,
+        because a per-refresh recorder must not stat the filesystem for a
+        `.git` directory. The row's `detail` is
+        ``core_projection.session_label``: the
         same projected name the daemon's ``state.sessions`` rows carry,
         including the provider's own session title from the daemon's
         extras cache when it has one, so History names the row when it is
@@ -7989,11 +7987,6 @@ class StatusBarController(NSObject):
             parts.append(f"{identifier} \u2014 {effect}")
         return "; ".join(parts)
 
-    def hard_ask_live(self) -> bool:
-        """A tracked blocked-on-you request is waiting right now."""
-        projection = getattr(self, "current_attention_projection", None)
-        return bool(projection and projection.actionable_attention)
-
     def quiet_active(self) -> bool:
         """Compatibility read for the durable one-hour Mute override."""
         override = self.settings.dnd_settings().override
@@ -8299,31 +8292,6 @@ class StatusBarController(NSObject):
             current_generation=current_generation,
             max_bindings=MAX_NOTIFICATION_ACTION_BINDINGS,
         )
-
-    def _issue_notification_action(
-        self,
-        event_key: SemanticEventKey,
-    ) -> ActionTokenBinding | None:
-        state = getattr(self, "current_operator_state", None)
-        if (
-            type(event_key) is not SemanticEventKey
-            or type(state) is not CanonicalOperatorState
-        ):
-            return None
-        issued = issue_notification_action_binding(
-            event_key=event_key,
-            operator_generation=state.generation,
-            now=time.time(),
-            randomness=secrets.token_bytes(32),
-            existing_bindings=self._notification_action_bindings,
-            max_bindings=MAX_NOTIFICATION_ACTION_BINDINGS,
-            ttl_seconds=NOTIFICATION_ACTION_TTL_SECONDS,
-        )
-        if issued is None:
-            return None
-        bindings, binding = issued
-        self._notification_action_bindings = bindings
-        return binding
 
     def _deliver_semantic_notification(
         self,
@@ -10854,17 +10822,6 @@ class StatusBarController(NSObject):
         demo_view = self.setup_fields.get("demo_view")
         if demo_view is not None:
             demo_view.setNeedsDisplay_(True)
-
-    def set_setup_checkbox(self, key: str, checked: bool | None, *, enabled: bool) -> None:
-        """checked=None leaves the user's current choice alone (the
-        refresh path); a bool sets it (the build path)."""
-        button = self.setup_buttons.get(key)
-        if button is None:
-            return
-        if checked is not None:
-            set_checkbox_state(button, checked)
-        button.setEnabled_(enabled)
-
 
     def complete_first_launch_setup(self, message: str) -> None:
         try:
@@ -17178,25 +17135,6 @@ def ask_statuses(projection, settings=None) -> list[AgentStatus]:
     return [row.source_status for row in projection.actionable_attention]
 
 
-def session_title_parts(status: AgentStatus) -> tuple[str, str | None]:
-    project = project_name_from_cwd(status.cwd)
-    title = strip_session_short_id(status.display_name, status.session_id)
-    if project and title.startswith(f"{project}: "):
-        title = title[len(project) + 2 :]
-    elif ": " in title:
-        maybe_project, maybe_title = title.split(": ", 1)
-        if not project:
-            project = maybe_project
-        title = maybe_title
-    if project and normalized_menu_part(project) == normalized_menu_part(title):
-        project = None
-    return title or status.display_name, project
-
-
-def normalized_menu_part(text: str) -> str:
-    return " ".join(text.replace("_", " ").replace("-", " ").split()).casefold()
-
-
 def strip_session_short_id(display_name: str, session_id: str | None) -> str:
     text = display_name.strip()
     if session_id:
@@ -17209,16 +17147,6 @@ def strip_session_short_id(display_name: str, session_id: str | None) -> str:
         if 6 <= len(token) <= 12 and all(char.isalnum() or char == "-" for char in token):
             return prefix.strip()
     return text
-
-
-def project_name_from_cwd(cwd: str | None) -> str | None:
-    if not cwd:
-        return None
-    path = Path(cwd)
-    for candidate in (path, *path.parents):
-        if (candidate / ".git").exists():
-            return candidate.name or str(candidate)
-    return path.name or cwd
 
 
 _symbol_image_cache: dict[tuple[str, str], object] = {}

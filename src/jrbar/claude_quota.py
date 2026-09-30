@@ -311,12 +311,6 @@ def _claude_code_user_agent() -> str:
     return f"claude-code/{CLAUDE_CODE_VERSION_FALLBACK}"
 
 
-def _default_opener(request, timeout: float):
-    from urllib.request import urlopen
-
-    return urlopen(request, timeout=timeout)
-
-
 def fetch_windows(
     *,
     access_token: str | None = None,

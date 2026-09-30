@@ -282,10 +282,6 @@ class DemoSnapshot:
             for agent in self.agents
         )
 
-    def to_agent_rows(self) -> tuple[dict[str, object], ...]:
-        """Alias for consumers that call the attention seam an agent adapter."""
-        return self.to_projection_rows()
-
     def to_render_input(self, *, surface: str = "screen_bar") -> DemoRenderInput:
         if type(surface) is not str or not surface or len(surface) > 32:
             raise ValueError("invalid demo render surface")
@@ -319,9 +315,6 @@ class DemoRun:
     @property
     def safety_metadata(self) -> DemoSafetyMetadata:
         return self.safety
-
-    def projection_inputs(self, *, surface: str = "screen_bar") -> tuple[DemoRenderInput, ...]:
-        return tuple(snapshot.to_render_input(surface=surface) for snapshot in self.snapshots)
 
 
 class DemoProjectionAdapter:

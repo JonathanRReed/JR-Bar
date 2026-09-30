@@ -275,9 +275,6 @@ class ProviderInstanceProfile:
     def to_dict(self) -> dict[str, Any]:
         return self.to_document()
 
-    def to_json(self) -> str:
-        return serialize_provider_instance_profile(self)
-
     @classmethod
     def from_document(
         cls, value: str | Mapping[str, Any]

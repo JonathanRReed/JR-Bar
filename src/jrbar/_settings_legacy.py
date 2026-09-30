@@ -1337,9 +1337,6 @@ class AgentMonitorSettings:
     def with_dot_role(self, role: object) -> AgentMonitorSettings:
         return replace(self, dot_role=normalize_dot_role(role))
 
-    def with_dot_role_include_completions(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, dot_role_include_completions=bool(enabled))
-
     def with_linked_sync(
         self,
         *,
@@ -1419,23 +1416,11 @@ class AgentMonitorSettings:
     def with_menu_bar_label_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, menu_bar_label_enabled=bool(enabled))
 
-    def with_menu_bar_icon_style(self, style: object) -> AgentMonitorSettings:
-        return replace(self, menu_bar_icon_style=normalize_menu_bar_icon_style(style))
-
     def with_tips_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, tips_enabled=bool(enabled))
 
-    def with_dismissed_tip(self, tip_text: str) -> AgentMonitorSettings:
-        text = str(tip_text).strip()
-        if not text or text in self.dismissed_tips:
-            return self
-        return replace(self, dismissed_tips=(*self.dismissed_tips, text))
-
     def with_focus_sync_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, focus_sync_enabled=bool(enabled))
-
-    def with_serve_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, serve_enabled=bool(enabled))
 
     def with_serve_answer_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, serve_answer_enabled=bool(enabled))
@@ -1580,9 +1565,6 @@ class AgentMonitorSettings:
             self,
             screen_bar_notch_corner=8.0 if normalized is None else normalized,
         )
-
-    def with_screen_bar_notch_wings(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, screen_bar_notch_wings=bool(enabled))
 
     def with_screen_bar_hidden_apps(self, apps: object) -> AgentMonitorSettings:
         return replace(self, screen_bar_hidden_apps=_screen_bar_hidden_apps_setting(apps))

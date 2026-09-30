@@ -320,12 +320,6 @@ class EffectDefinition:
             for parameter in self.parameter_metadata
         }
 
-    def surface_adaptation(self, surface: str) -> SurfaceAdaptation:
-        for adaptation in self.surface_adaptations:
-            if adaptation.surface == surface:
-                return adaptation
-        raise KeyError(surface)
-
 
 class EffectRegistry:
     """Immutable-by-convention registry with deterministic catalog queries."""
