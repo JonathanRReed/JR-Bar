@@ -8138,6 +8138,14 @@ class StatusBarController(NSObject):
             if grant.banner_allowed:
                 state = getattr(self, "current_operator_state", None)
                 if type(state) is CanonicalOperatorState:
+                    # A worker's request is quiet while sub-agent asks are
+                    # off: nobody was asked, so it never raises the banner.
+                    quiet_requests = quiet_worker_request_keys(
+                        state,
+                        subagent_asks_alert=bool(
+                            getattr(self.settings, "subagent_asks_alert", False)
+                        ),
+                    )
                     request = next(
                         (
                             candidate
@@ -8145,6 +8153,7 @@ class StatusBarController(NSObject):
                             if candidate.phase is RequestPhase.LIVE_UNACKNOWLEDGED
                             and candidate.next_actor is NextActor.USER
                             and candidate.source_freshness is SourceFreshness.FRESH
+                            and candidate.key not in quiet_requests
                         ),
                         None,
                     )
