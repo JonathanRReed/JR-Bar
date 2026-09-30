@@ -138,6 +138,38 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
         )
 
 
+def test_the_provider_host_and_the_screen_bar_installer_keep_their_shape__and_1_more() -> None:
+    # --- scenario: the_provider_host_is_one_controller_class_the_composition_installs
+    source = PROVIDER_USAGE_STATUS_BAR.read_text(encoding="utf-8")
+    composition = APPLICATION_COMPOSITION.read_text(encoding="utf-8")
+
+    assert "install_screen_bar_runtime()" in composition
+    assert "install_provider_usage_status_bar()" in composition
+    assert "install_screen_bar_runtime()" not in source
+    classes = {
+        node.name for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef)
+    }
+    assert classes == {"JRProviderUsageStatusBarController"}
+    assert "openProviderUsageCenter_" in source
+
+    # --- scenario: the_screen_bar_installer_does_not_rebind_objective_c_classes
+    screen_bar_source = (SRC / "screen_bar_runtime.py").read_text(encoding="utf-8")
+    screen_bar_tree = ast.parse(screen_bar_source)
+
+    assert "VirtualLedView._draw_compact_accent = _draw_compact_accent" in screen_bar_source
+    assert "VirtualLedView._draw_wings_only = _draw_wings_only" in screen_bar_source
+    assert not any(
+        isinstance(node, ast.ClassDef) for node in ast.walk(screen_bar_tree)
+    )
+    assert "StatusBarController" not in screen_bar_source
+    assert "objc.super" not in screen_bar_source
+    assert "rounded_band_bounds" in screen_bar_source
+    assert '== "bracket"' in screen_bar_source
+    assert "def _min_glow" in screen_bar_source
+    assert "finally:" in screen_bar_source
+    assert "outline_alpha" in screen_bar_source
+
+
 
 def test_status_bar_composition_is_pure_on_import_and_idempotent_at_boot__and_1_more() -> None:
     # --- scenario: status_bar_composition_is_pure_on_import_and_idempotent_at_boot
