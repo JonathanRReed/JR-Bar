@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import stat
+import struct
 import tempfile
 import threading
 import time
@@ -750,5 +751,54 @@ def test_an_oversize_frame_is_still_counted_and_recorded(
         assert _serve_one_connection(service, b"x" * 16) == b"refused_invalid\n"
         assert service.snapshot().refused_invalid == 1
         assert len(rejection_path.read_text().splitlines()) == 1
+    finally:
+        assert service.close(timeout_seconds=1.0)
+
+
+def _hand_built_frame(payload: str, **header_fields: object) -> bytes:
+    """A frame with the length fields computed for what it carries."""
+    header = json.dumps(
+        {"version": 1, "provider": "claude", "log_path": "/tmp/state/claude.jsonl", **header_fields},
+        separators=(",", ":"),
+    ).encode()
+    body = payload.encode()
+    return b"JRBARHOOK\x01" + struct.pack("!II", len(header), len(body)) + header + body
+
+
+def test_a_hook_whose_agent_already_exited_is_delivered_without_its_ppid(
+    tmp_path: Path,
+) -> None:
+    """The agent is gone when the shim reads its parent, so getppid() is 1.
+    That is often the very SessionEnd that says the session ended. It used
+    to be refused as invalid, and the shim does not spool that, so the event
+    was lost and the session ran on until the liveness sweep."""
+    seen: list[HookIngressRequest] = []
+    processed = threading.Event()
+
+    def process(request: HookIngressRequest) -> None:
+        seen.append(request)
+        processed.set()
+
+    rejection_path = tmp_path / "rejections.jsonl"
+    service = HookIngressService(
+        process=process,
+        rejection_path=rejection_path,
+        peer_uid_reader=lambda _connection: os.geteuid(),
+        backlog_cleared=lambda: None,
+    )
+    payload = json.dumps({"hook_event_name": "SessionEnd", "session_id": "orphaned-session"})
+    try:
+        frame = _hand_built_frame(payload, ppid=1, ppid_start=1788982000.5)
+        assert _serve_one_connection(service, frame) == b"accepted\n"
+        assert processed.wait(1.0)
+        assert service.wait_idle(timeout_seconds=1.0)
+
+        assert len(seen) == 1
+        assert seen[0].ppid is None and seen[0].ppid_start is None
+        assert seen[0].payload_text == payload
+        snapshot = service.snapshot()
+        assert snapshot.accepted == 1
+        assert snapshot.refused_invalid == 0
+        assert not rejection_path.exists()
     finally:
         assert service.close(timeout_seconds=1.0)

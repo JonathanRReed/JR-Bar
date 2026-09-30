@@ -4,6 +4,7 @@ import io
 import json
 import socket
 import stat
+import struct
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from jrbar import hook_client
 from jrbar.hook_ingress_protocol import (
     HOOK_INGRESS_SOCKET_NAME,
     MAX_HOOK_INGRESS_PAYLOAD_BYTES,
+    MAX_HOOK_PPID,
     HookIngressDisposition,
     HookIngressRequest,
     candidate_hook_ingress_socket_paths,
@@ -121,6 +123,50 @@ def test_protocol_rejects_truncated_duplicate_and_unknown_headers__and_1_more() 
         assert decode_hook_ingress_response(encoded) is disposition
         assert decode_hook_ingress_response(encoded + b"extra") is HookIngressDisposition.UNAVAILABLE
 
+
+
+def _hand_built_frame(**header_fields: object) -> bytes:
+    """A frame with the length fields computed for the header it carries, so a
+    refusal can only come from the header's values."""
+    header = json.dumps(
+        {"version": 1, "provider": "claude", "log_path": "/tmp/state/claude.jsonl", **header_fields},
+        separators=(",", ":"),
+    ).encode()
+    body = b"{}"
+    return b"JRBARHOOK\x01" + struct.pack("!II", len(header), len(body)) + header + body
+
+
+def test_protocol_reads_an_orphaned_hook_as_carrying_no_ppid__and_2_more() -> None:
+    # --- scenario: a_live_parent_pid_is_kept
+    decoded = decode_hook_ingress_request(_hand_built_frame(ppid=4242, ppid_start=1788982000.5))
+    assert decoded is not None
+    assert (decoded.ppid, decoded.ppid_start) == (4242, 1788982000.5)
+
+    # --- scenario: a_hook_the_agent_outlived_is_delivered_without_its_ppid
+    # The agent exited and launchd adopted the shim: getppid() is 1 (or an
+    # unreadable parent leaves 0). The event still happened and is delivered,
+    # as a spooled line already is; only the pid is dropped, with the start
+    # time, which describes launchd and not the agent.
+    for orphaned in (1, 0, -5):
+        decoded = decode_hook_ingress_request(_hand_built_frame(ppid=orphaned, ppid_start=1.5))
+        assert decoded is not None, orphaned
+        assert decoded.ppid is None and decoded.ppid_start is None
+        assert decoded.provider == "claude"
+        assert decoded.log_path == "/tmp/state/claude.jsonl"
+        assert decoded.payload_text == "{}"
+
+    # --- scenario: an_orphaned_decide_hook_still_fails_closed
+    # An agent that is gone cannot be waiting for a verdict. Reading the
+    # frame as ppid-less would make it look like the Python decide client,
+    # and park an ask nobody can answer.
+    assert decode_hook_ingress_request(_hand_built_frame(ppid=1, ppid_start=1.5, decide_ms=50000)) is None
+
+    # Everything else about ppid is as strict as before.
+    for bad in (True, "1", MAX_HOOK_PPID + 1):
+        assert decode_hook_ingress_request(_hand_built_frame(ppid=bad, ppid_start=1.5)) is None, bad
+    # The in-process constructor keeps refusing it.
+    with pytest.raises(ValueError, match="invalid hook ingress request"):
+        HookIngressRequest("claude", "/tmp/state/claude.jsonl", "{}", ppid=1)
 
 
 def test_candidate_socket_paths_try_xdg_then_standard_without_duplicates(

@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
+import struct
 import subprocess
 import tempfile
 import threading
@@ -450,3 +452,59 @@ def test_python_decide_client_falls_back_without_a_verdict__and_1_more(tmp_path:
         fallback=lambda *args: pytest.fail("an unreadable frame was processed"),
         spool=lambda *args: pytest.fail("an unreadable frame was spooled"),
     ) is None
+
+
+def _raw_decide_frame(payload: dict, **header_fields: object) -> bytes:
+    """A ``--decide`` frame written by hand, so a test can give it any ppid."""
+    header = json.dumps(
+        {
+            "version": 1,
+            "provider": "claude",
+            "log_path": "/tmp/state/claude.jsonl",
+            "decide_ms": HOOK_DECISION_WAIT_MS,
+            **header_fields,
+        },
+        separators=(",", ":"),
+    ).encode()
+    body = json.dumps(payload).encode()
+    return b"JRBARHOOK\x01" + struct.pack("!II", len(header), len(body)) + header + body
+
+
+def _send_raw(sock_dir: Path, frame: bytes) -> socket.socket:
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(5.0)
+    client.connect(str(sock_dir / "hook-ingress.sock"))
+    client.sendall(frame)
+    client.shutdown(socket.SHUT_WR)
+    return client
+
+
+def test_an_orphaned_decide_hook_is_refused_and_parks_nothing(sock_dir: Path) -> None:
+    """A hook the agent outlived (ppid 1) is delivered when it is an ordinary
+    event, but a ``--decide`` one is refused: nobody is left to read a
+    verdict, and without a ppid it would look like the Python decide client
+    and park an ask that can never be answered."""
+    broker = _broker()
+    seen = _Seen()
+    service = _service(sock_dir, broker, seen)
+    try:
+        orphan = _send_raw(sock_dir, _raw_decide_frame(PERMISSION, ppid=1, ppid_start=1.5))
+        try:
+            assert orphan.recv(64) == b"refused_invalid\n"
+        finally:
+            orphan.close()
+        assert broker.parked_count() == 0
+        assert not broker.parked_event.is_set()
+        assert len(seen) == 0
+
+        # Positive control: the same frame from a live parent does park, so
+        # the absence above is the ppid's doing.
+        live = _send_raw(sock_dir, _raw_decide_frame(PERMISSION, ppid=os.getpid(), ppid_start=1.5))
+        try:
+            assert live.recv(64) == b"accepted\n"
+            broker.next_parked()
+            assert broker.parked_count() == 1
+        finally:
+            live.close()
+    finally:
+        assert service.close(timeout_seconds=2.0)
