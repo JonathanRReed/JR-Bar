@@ -23,7 +23,10 @@ install it. This page lists everything else.
 - [Scripts, status bars and launchers](user/scripts-and-status.md):
   `jrbar serve`, xbar and SwiftBar, Raycast, and the
   [examples](../examples/README.md)
-- [Toys](TOYS.md) and [Utilities](UTILITIES.md)
+- [Toys](TOYS.md) and [Utilities](UTILITIES.md); [toy parity](TOY-PARITY.md)
+  measures each native surface against the app it stands in for, and
+  [archive lifetime](ARCHIVE-LIFECYCLE.md) says how Data Hoarder opens,
+  closes and reads its archive
 - [Control Center](CONTROL-CENTER.md) for the Creator Micro 2, and its
   [adapter](creator-micro-2.md)
 - [Integrations](INTEGRATIONS.md): T3 Code and Alcove, read-only
@@ -50,39 +53,21 @@ install it. This page lists everything else.
   agents)
 - [Local verification](LOCAL-VERIFICATION.md) and
   [final testing](FINAL-TESTING.md)
-- [Repair handoff, 2026-09-26](archive/REPAIR-HANDOFF-2026-09-26.md): implemented
-  utility/toy fixes, remaining code work, and pending native acceptance
-- [Audit and release preparation, 2026-09-26](archive/audits/2026-09-26-release-readiness.md):
-  Fold and reset repairs, branch consolidation, verification and release gates
 - [Releasing](PRODUCTION-RELEASE.md); `make release-check` runs the release
   preconditions without publishing
 - [Repository hygiene](REPOSITORY-HYGIENE.md)
 - [Prior art and attribution](PRIOR-ART.md)
 - [Upstream research cadence](UPSTREAM-RESEARCH-CADENCE.md);
   `scripts/check_upstreams.py` shows what each upstream has changed since
-  the last review
-- [Feature matrix](FEATURE-MATRIX.md), [roadmap](ROADMAP.md) and
-  [feature disposition](archive/feature-disposition.md)
+  the last review. [Upstream sync](UPSTREAM-SYNC.md) and the
+  [2026-08-30 refresh](UPSTREAM-REFRESH-2026-08-30.md) record how past
+  reviews went.
+- [Feature matrix](FEATURE-MATRIX.md) and [roadmap](ROADMAP.md)
 
 ## History
 
-Plans, audits and research notes, kept for provenance. Nothing in the
-build reads them.
-
-- Plans: [0.8 plan](archive/PLAN-0.8.md), [build spec](archive/BUILD-SPEC.md),
-  [vision](archive/VISION.md), [production task contract](archive/production-task-contract.md),
-  [toy parity](TOY-PARITY.md), [upgrade ledger](archive/upgrade/STATUS.md)
-- Audits: [rescue report](archive/audits/RESCUE-REPORT.md)
-- Research: [ecosystem](archive/research/ECOSYSTEM-RESEARCH.md),
-  [providers](archive/research/PROVIDER-RESEARCH.md),
-  [upstream refresh 2026-08-30](UPSTREAM-REFRESH-2026-08-30.md),
-  [upstream sync](UPSTREAM-SYNC.md), [research](archive/research/)
-- [archive/](archive/): the dated plans and audits once they are done, the
-  superseded plans and the pre-0.8 specs:
-  - Plans: [product design 2026-09-19](archive/product-design-2026-09-19.md),
-    [finishing pass 2026-09-19](archive/finish-2026-09-19.md),
-    [Data Hoarder plan 2026-09-19](archive/data-hoarder-implementation-2026-09-19.md),
-    [upgrade plan 2026-09-24](archive/UPGRADE-PLAN-2026-09-24.md)
-  - Audits: [systems audit 2026-09-16](archive/AUDIT-2026-09-16.md),
-    [branch consolidation 2026-09-07](archive/BRANCH-CONSOLIDATION-2026-09-07.md),
-    [archive/audits/](archive/audits/) (2026-08-15 to 2026-09-21)
+Plans, audits, research notes and the pre-0.8 specs, kept for provenance.
+Nothing in the build reads them. They all live in [archive/](archive/): the
+dated plans and audits once they are done, the repair handoff, the 0.8 plan,
+the vision, the build spec, the feature disposition ledger, the upgrade
+ledger and the research notes.
