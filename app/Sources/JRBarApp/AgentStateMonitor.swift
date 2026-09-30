@@ -22,7 +22,6 @@ extension AgentAggregateState {
 @MainActor
 final class AgentStateMonitor {
     static let directory = CoreSocketPath.stateDirectory()
-    nonisolated static let completedWindow: TimeInterval = AgentMonitorFeed.completedWindow
 
     var onChange: (@MainActor (AgentAggregateState, String) -> Void)?
     private(set) var state: AgentAggregateState = .idle
@@ -91,11 +90,5 @@ final class AgentStateMonitor {
                 }
             }
         }
-    }
-
-    /// The file-feed reduction; `now` is injectable for the tests, which
-    /// exercise this through `AgentMonitorFeed.reduce` in JRBarCore.
-    nonisolated static func reduce(_ data: Data?, now: Date = Date(), fileModifiedAt: Date? = nil) -> (state: AgentAggregateState, detail: String) {
-        AgentMonitorFeed.reduce(data, now: now, fileModifiedAt: fileModifiedAt)
     }
 }
