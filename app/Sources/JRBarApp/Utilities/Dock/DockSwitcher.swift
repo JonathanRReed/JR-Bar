@@ -1823,8 +1823,8 @@ final class DockSwitcherController {
     /// The pointer's gate for hover-selects — re-armed on every open.
     private var hoverGate = SwitcherHoverGate()
     /// Apps that didn't answer AX lately — skipped instead of waited on.
-    /// Shared with the hover previews through `axSkips`, `noteAX` and
-    /// `readWindows`, so a hang either side saw spares the other.
+    /// Shared with the hover previews through `axSkips` and `noteAX`, so a
+    /// hang either side saw spares the other.
     private var axBackoff = DockAXBackoff()
 
     /// Whether `pid` is resting after not answering AX. `now` is
@@ -1836,14 +1836,6 @@ final class DockSwitcherController {
     /// Note whether `pid` answered AX: a hang rests it, an answer clears it.
     func noteAX(_ pid: pid_t, unresponsive: Bool, now: TimeInterval) {
         axBackoff.note(pid, unresponsive: unresponsive, now: now)
-    }
-
-    /// A hover-side read of one app's windows through the shared backoff.
-    func readWindows(
-        pid: pid_t, now: TimeInterval,
-        reader: (pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool)
-    ) -> DockPreviewRead {
-        DockPreviewRead.read(pid: pid, backoff: &axBackoff, now: now, reader: reader)
     }
 
     /// The pointer entered a card: that card becomes the pick, so the

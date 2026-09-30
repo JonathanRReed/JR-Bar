@@ -90,25 +90,55 @@ struct DockAXElement: @unchecked Sendable {
     let element: AXUIElement
 }
 
+/// A preview card crosses to the preview lane, and its answer back, as a
+/// value: the AX element in it is an immutable handle (`DockAXElement`
+/// explains) and the thumbnail an image nothing mutates in place. The
+/// lane reads and writes through the handle and never touches the card's
+/// stored fields, so main keeps sole ownership of the live list.
+extension DockPreviewWindow: @unchecked Sendable {}
+
 /// The Dock utility's slow Accessibility work, off the main thread. A
 /// hung app answers every AX call with its full timeout — half a second
 /// for a window list or a menu walk, 0.2 s for the remote-token walk —
 /// and on main that wait froze the strip, the previews and every surface
 /// JR-Bar draws. One serial queue keeps the work in the order it was
 /// asked for: a second ⌘⇥ never lands before the first.
+///
+/// There are two such queues, the `Lane`s. A hover preview's window read
+/// and a card's verbs wait on whatever app is under the pointer; a ⌘⇥
+/// commit must not wait on that app, so they never share a queue. Each
+/// lane keeps its own order.
 enum DockAXWorker {
-    private static let queue = DispatchQueue(label: "JR-Bar dock AX", qos: .userInitiated)
+    /// Which queue a job runs on.
+    enum Lane: Sendable {
+        /// ⌥⇥'s list builds, ⌘⇥ commits and their verbs, the session
+        /// raise: the ordering the strip depends on.
+        case commit
+        /// The hover preview's window reads and its cards' verbs.
+        case preview
+    }
 
-    static func run(_ work: @escaping @Sendable () -> Void) {
-        queue.async(execute: work)
+    private static let commitQueue = DispatchQueue(label: "JR-Bar dock AX", qos: .userInitiated)
+    private static let previewQueue = DispatchQueue(label: "JR-Bar dock preview AX", qos: .userInitiated)
+
+    private static func queue(for lane: Lane) -> DispatchQueue {
+        switch lane {
+        case .commit: return commitQueue
+        case .preview: return previewQueue
+        }
+    }
+
+    static func run(on lane: Lane = .commit, _ work: @escaping @Sendable () -> Void) {
+        queue(for: lane).async(execute: work)
     }
 
     /// `work` on the worker, then `then` with its answer on the main
     /// actor — through the main queue, so it lands in order with the
     /// blocks already waiting there.
-    static func run<Answer: Sendable>(_ work: @escaping @Sendable () -> Answer,
+    static func run<Answer: Sendable>(on lane: Lane = .commit,
+                                      _ work: @escaping @Sendable () -> Answer,
                                       then: @escaping @MainActor @Sendable (Answer) -> Void) {
-        queue.async {
+        queue(for: lane).async {
             let answer = work()
             DispatchQueue.main.async { MainActor.assumeIsolated { then(answer) } }
         }
@@ -155,4 +185,57 @@ struct SwitcherCommitTarget: Sendable {
         DockPreviewWindow(id: 0, title: title, minimized: minimized, fullScreen: nil,
                           frame: nil, thumbnail: nil, element: element)
     }
+}
+
+// MARK: - The preview's seam
+
+/// Where the hover preview's Accessibility jobs run. The app answers with
+/// the worker's preview lane; a test answers with a lane it steps by
+/// hand, so "the read is still out" is a fact it holds, not a race.
+@MainActor
+protocol DockPreviewLane {
+    /// `work` off the main thread, then `then` with its answer on the
+    /// main actor, in the order the jobs were asked.
+    func run<Answer: Sendable>(_ work: @escaping @Sendable () -> Answer,
+                               then: @escaping @MainActor @Sendable (Answer) -> Void)
+}
+
+/// The preview lane of `DockAXWorker`.
+struct DockAXPreviewLane: DockPreviewLane {
+    func run<Answer: Sendable>(_ work: @escaping @Sendable () -> Answer,
+                               then: @escaping @MainActor @Sendable (Answer) -> Void) {
+        DockAXWorker.run(on: .preview, work, then: then)
+    }
+}
+
+/// Every Accessibility call the hover preview and its cards make, and the
+/// lane they run on, as one value the controller holds. Each closure is
+/// the worker's to call — none touches main-actor state — and `AppleDockReader`
+/// is what they do by default. Nothing else reaches AX from a hover.
+struct DockPreviewAX {
+    /// One app's window list, and whether it let the timeout lapse.
+    typealias Reading = (windows: [DockPreviewWindow], unresponsive: Bool)
+
+    var lane: any DockPreviewLane = DockAXPreviewLane()
+    /// An app's windows as cards; `stamp` is folded into each card's id
+    /// (`AppleDockReader.nextStamp`, taken on main).
+    var read: @Sendable (_ pid: pid_t, _ stamp: Int) -> Reading = {
+        AppleDockReader.windowsReading(pid: $0, stamp: $1)
+    }
+    /// A card's raise: the writes alone, activation stays on main.
+    var raise: @Sendable (DockPreviewWindow) -> Void = { AppleDockReader.raiseWindow($0) }
+    var close: @Sendable (DockPreviewWindow) -> Bool = { AppleDockReader.close($0) }
+    var setMinimized: @Sendable (DockPreviewWindow, Bool) -> Bool = { AppleDockReader.setMinimized($0, $1) }
+    /// The window's `AXFullScreen`, nil where it offers none.
+    var fullScreen: @Sendable (DockPreviewWindow) -> Bool? = { window in
+        window.element.flatMap { AppleDockReader.fullScreenState(of: $0) }
+    }
+    var setFullScreen: @Sendable (DockPreviewWindow, Bool) -> Bool = { AppleDockReader.setFullScreen($0, $1) }
+    var setFrame: @Sendable (DockPreviewWindow, CGRect) -> Bool = { AppleDockReader.setFrame($0, $1) }
+    /// The window's frame: the card's own, else one AX read for it.
+    var frame: @Sendable (DockPreviewWindow) -> CGRect? = { window in
+        window.frame ?? window.element.flatMap { AppleDockReader.frame(of: $0) }
+    }
+    /// The header's "New": the menu walk and press for `pid`.
+    var newWindow: @Sendable (pid_t) -> Void = { AppleDockReader.pressNewWindow(pid: $0) }
 }
