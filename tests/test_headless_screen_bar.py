@@ -9,6 +9,8 @@ presentation timers are told about it the way they always were.
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from jrbar.headless_screen_bar import (
@@ -163,3 +165,20 @@ def test_the_screen_bar_identity_the_controller_and_daemon_share() -> None:
     assert LED_COUNT == 8
     assert status_bar_legacy.VIRTUAL_DEVICE_ID == VIRTUAL_DEVICE_ID
     assert status_bar_legacy.LED_COUNT == LED_COUNT
+
+
+def test_the_python_bars_drawing_modules_are_not_packaged() -> None:
+    """The daemon boots the headless bar, so nothing imports these, and a
+    module that comes back would be drawing code nothing runs."""
+    for retired in (
+        "virtual_device",
+        "announcer_stack_view",
+        "announcer_presenter",
+        "native_gradient",
+        "notch_silhouette",
+        "alcove_window_probe",
+        "screen_bar_runtime",
+        "screen_bar_design",
+        "screen_bar_profile",
+    ):
+        assert importlib.util.find_spec(f"jrbar.{retired}") is None, retired
