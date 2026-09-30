@@ -12,7 +12,6 @@ import json
 import math
 import os
 import re
-import shutil
 import sqlite3
 import ssl
 import subprocess
@@ -33,7 +32,7 @@ from .provider_usage_parsers import (
     parse_openai_api_usage,
     parse_opencode_go_usage,
 )
-from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot, UsageLane
+from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot
 from .provider_usage_settings import ProviderPreference
 
 HTTP_TIMEOUT_SECONDS = 20.0
@@ -837,7 +836,6 @@ def _validated_loopback_endpoint(value: str | None) -> str | None:
 
 _cached_antigravity_connection: dict[str, Any] = {}
 _cached_antigravity_creds: tuple[float, str | None] | None = None
-_cached_antigravity_tokens: tuple[float, int] | None = None
 _cached_opencode_mtime: tuple[str, float] | None = None
 _cached_opencode_totals: tuple[int, int, int] | None = None
 
@@ -933,7 +931,7 @@ def collect_antigravity(
     home: Path | None = None,
     process_identity_resolver=None,
 ) -> ProviderUsageSnapshot:
-    global _cached_antigravity_creds, _cached_antigravity_tokens
+    global _cached_antigravity_creds
 
     gemini_dir = (home or Path.home()) / ".gemini"
     creds_path = gemini_dir / "oauth_creds.json"
@@ -957,23 +955,6 @@ def collect_antigravity(
                 if not account_label:
                     account_label = cdata.get("email")
                 _cached_antigravity_creds = (mtime, account_label)
-        except Exception:
-            pass
-
-    summaries_path = gemini_dir / "antigravity-cli" / "conversation_summaries.db"
-    input_tokens = 0
-    if summaries_path.is_file():
-        try:
-            mtime = summaries_path.stat().st_mtime
-            if _cached_antigravity_tokens is not None and _cached_antigravity_tokens[0] == mtime:
-                input_tokens = _cached_antigravity_tokens[1]
-            else:
-                con = sqlite3.connect(f"file:{summaries_path}?mode=ro", uri=True)
-                row = con.execute("SELECT SUM(step_count) FROM conversation_summaries").fetchone()
-                if row and row[0]:
-                    input_tokens = int(row[0]) * 350
-                con.close()
-                _cached_antigravity_tokens = (mtime, input_tokens)
         except Exception:
             pass
 
@@ -1028,8 +1009,9 @@ def collect_antigravity(
 
     def _query_candidates(
         cands: list[tuple[str, str | None, int | None, tuple | None]],
-    ) -> tuple[ProviderUsageSnapshot | None, ProviderHttpError | None]:
+    ) -> tuple[ProviderUsageSnapshot | None, ProviderHttpError | None, bool]:
         last_err: ProviderHttpError | None = None
+        invalid_response = False
         for cand_endpoint, cand_csrf, cand_pid, cand_identity in cands:
             if cand_pid is not None and (
                 cand_identity is None
@@ -1065,17 +1047,19 @@ def collect_antigravity(
                     payload,
                     observed_at=observed_at,
                     account_label=account_label,
-                    input_tokens=input_tokens,
                 )
-                return snap, None
+                return snap, None, False
             except ProviderHttpError as error:
                 last_err = error
                 continue
             except (ValueError, KeyError):
+                # The server answered, but with something the parser cannot
+                # read (no groups, or two buckets for one lane).
+                invalid_response = True
                 continue
-        return None, last_err
+        return None, last_err, invalid_response
 
-    snapshot, last_error = _query_candidates(candidates)
+    snapshot, last_error, invalid_response = _query_candidates(candidates)
     if snapshot is not None:
         return snapshot
 
@@ -1092,41 +1076,23 @@ def collect_antigravity(
             cand_pid = ep[2] if len(ep) > 2 else None
             cand_identity = ep[3] if len(ep) > 3 else None
             fresh_candidates.append((cand_url, cand_csrf, cand_pid, cand_identity))
-        snapshot, last_error = _query_candidates(fresh_candidates)
+        snapshot, last_error, invalid_response = _query_candidates(fresh_candidates)
         if snapshot is not None:
             return snapshot
 
-    cli_configured = creds_path.is_file() or summaries_path.is_file() or (shutil.which("agy") is not None)
-    if cli_configured and (account_label or creds_path.is_file() or input_tokens > 0):
-        return ProviderUsageSnapshot(
-            provider_id="antigravity",
-            account_label=account_label or "Google Account",
+    # No lane is made up from the Gemini CLI's own sign-in file or an `agy`
+    # binary: nothing about the Antigravity quota was measured. With no
+    # server to ask, the row says what to do and the runtime keeps the last
+    # real reading, marked stale.
+    if invalid_response:
+        # A server that answered with an odd payload is better evidence than
+        # a sibling port's HTTP error.
+        return _failure(
+            "antigravity",
             observed_at=observed_at,
-            state=ProviderSourceState.READY,
-            reason_code=None,
-            action_label=None,
-            lanes=(
-                UsageLane(
-                    provider_id="antigravity",
-                    lane_id="cli",
-                    label="Antigravity CLI",
-                    remaining_percent=100.0,
-                    reset_at=None,
-                    scope="session",
-                    model="Gemini 3.8 Flash",
-                    feature=None,
-                    bindable=True,
-                    source_id="antigravity-oauth",
-                ),
-            ),
-            input_tokens=input_tokens,
-            cached_input_tokens=0,
-            output_tokens=0,
-            model_count=1,
-            estimated_cost_usd=None,
-            cache_savings_usd=None,
-            credits_remaining=None,
-            incident=None,
+            state=ProviderSourceState.ERROR,
+            reason="invalid_provider_response",
+            action="Retry",
         )
 
     if last_error is not None:

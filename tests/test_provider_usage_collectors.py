@@ -159,7 +159,7 @@ def test_grok_missing_login_is_actionable(tmp_path: Path):
     assert result.action_label == "Run grok login"
 
 
-def test_antigravity_uses_configured_loopback_endpoint__and_2_more() -> None:
+def test_antigravity_uses_configured_loopback_endpoint__and_2_more(tmp_path: Path) -> None:
     # --- scenario: antigravity_uses_configured_loopback_endpoint
     http = FixtureHttp(
         [
@@ -185,6 +185,7 @@ def test_antigravity_uses_configured_loopback_endpoint__and_2_more() -> None:
         observed_at=1000,
         http_json=http,
         command_runner=lambda _args, _timeout: "",
+        home=tmp_path,
     )
     assert result.state.value == "ready"
     assert result.lanes[0].label == "Gemini Weekly"
@@ -212,6 +213,7 @@ def test_antigravity_uses_configured_loopback_endpoint__and_2_more() -> None:
         preference("antigravity", options={"endpoint": "http://127.0.0.1:54321"}),
         observed_at=1000,
         http_json=http,
+        home=tmp_path,
     )
     assert result.state.value == "ready"
     assert "http://127.0.0.1:54321" in http.calls[0][1]
@@ -237,6 +239,7 @@ def test_antigravity_uses_configured_loopback_endpoint__and_2_more() -> None:
             123456,
             789,
         ),
+        home=tmp_path,
     )
     assert res2.state.value == "ready"
     assert "http://127.0.0.1:44556" in http2.calls[0][1]
@@ -301,6 +304,7 @@ def test_antigravity_uses_configured_loopback_endpoint__and_2_more() -> None:
             123456,
             789,
         ),
+        home=tmp_path,
     )
     assert result.state.value == "ready"
     assert len(result.lanes) == 4
@@ -312,7 +316,9 @@ def test_antigravity_uses_configured_loopback_endpoint__and_2_more() -> None:
 
 
 
-def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process__and_2_more() -> None:
+def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process__and_2_more(
+    tmp_path: Path,
+) -> None:
     # --- scenario: antigravity_endpoint_cache_reuses_only_the_same_verified_process
     import jrbar.provider_usage_collectors as puc
 
@@ -352,6 +358,7 @@ def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process__and_2
         observed_at=1000,
         http_json=mock_http,
         process_identity_resolver=lambda pid: identity if pid == identity[0] else None,
+        home=tmp_path,
     )
     assert res.state.value == "ready"
     assert len(called_urls) == 1
@@ -585,12 +592,51 @@ def test_devin_uses_a_manual_stored_token_when_browser_sources_are_enabled__and_
 
 
 
-def test_antigravity_cli_fallback_when_server_not_running__and_1_more(tmp_path: Path) -> None:
-    # --- scenario: antigravity_cli_fallback_when_server_not_running
+def _write_gemini_home(tmp_path: Path, *, steps: int | None = None) -> None:
+    """A synthetic Gemini CLI home: a sign-in file and, when asked, a summaries db."""
     gemini_dir = tmp_path / ".gemini"
-    gemini_dir.mkdir(parents=True)
-    creds_file = gemini_dir / "oauth_creds.json"
-    creds_file.write_text(json.dumps({"email": "testuser@example.com"}), encoding="utf-8")
+    gemini_dir.mkdir(parents=True, exist_ok=True)
+    (gemini_dir / "oauth_creds.json").write_text(
+        json.dumps({"email": "testuser@example.com"}), encoding="utf-8"
+    )
+    if steps is not None:
+        db_dir = gemini_dir / "antigravity-cli"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(db_dir / "conversation_summaries.db")
+        con.execute(
+            "CREATE TABLE conversation_summaries "
+            "(conversation_id TEXT, step_count INT, last_modified_time TEXT)"
+        )
+        con.execute("INSERT INTO conversation_summaries VALUES ('c1', ?, 't')", (steps,))
+        con.commit()
+        con.close()
+
+
+_ANTIGRAVITY_STABLE_IDENTITY = (
+    12345,
+    "/Applications/Antigravity.app/Contents/Resources/bin/language_server",
+    501,
+    123456,
+    789,
+)
+
+
+def _duplicate_lane_payload() -> dict:
+    """Two Gemini groups that each carry a weekly bucket: the same lane id twice."""
+    bucket = {"bucketId": "weekly", "remaining": {"remainingFraction": 0.5}}
+    return {
+        "response": {
+            "groups": [
+                {"displayName": "Gemini Pro", "buckets": [dict(bucket)]},
+                {"displayName": "Gemini Flash", "buckets": [dict(bucket)]},
+            ]
+        }
+    }
+
+
+def test_antigravity_without_a_running_server_invents_no_lane__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: antigravity_without_a_running_server_invents_no_lane
+    _write_gemini_home(tmp_path, steps=10)
 
     result = collect_antigravity(
         preference("antigravity"),
@@ -598,10 +644,15 @@ def test_antigravity_cli_fallback_when_server_not_running__and_1_more(tmp_path: 
         command_runner=lambda _args, _timeout: "",
         home=tmp_path,
     )
-    assert result.state.value == "ready"
-    assert result.account_label == "testuser@example.com"
-    assert len(result.lanes) == 1
-    assert result.lanes[0].label == "Antigravity CLI"
+    # A Gemini CLI sign-in is not an Antigravity quota: nothing was measured,
+    # so there is no lane, no token figure, and the row says what to do.
+    assert result.state.value == "source_not_found"
+    assert result.state.value != "ready"
+    assert result.reason_code == "antigravity_not_detected"
+    assert result.action_label
+    assert result.action_label.startswith("Open Antigravity")
+    assert result.lanes == ()
+    assert result.input_tokens == 0
 
     # --- scenario: opencode_collector_reports_tokens_and_no_invented_quota
     root = tmp_path / ".local" / "share" / "opencode"
@@ -637,3 +688,101 @@ def test_antigravity_cli_fallback_when_server_not_running__and_1_more(tmp_path: 
     assert result.lanes == ()
     assert result.incident is not None
 
+
+def test_antigravity_real_quota_carries_no_steps_estimate(tmp_path: Path) -> None:
+    # A step count proves activity, not tokens: even with a summaries db on
+    # disk and a server that answers, the token figure is not made up.
+    _write_gemini_home(tmp_path, steps=10)
+    payload = {
+        "response": {
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "buckets": [
+                        {"bucketId": "weekly", "remaining": {"remainingFraction": 0.3}}
+                    ],
+                }
+            ]
+        }
+    }
+    http = FixtureHttp([payload])
+    result = collect_antigravity(
+        preference("antigravity", options={"endpoint": "http://127.0.0.1:54321"}),
+        observed_at=1000,
+        http_json=http,
+        command_runner=lambda _args, _timeout: "",
+        home=tmp_path,
+    )
+    assert result.state.value == "ready"
+    assert [lane.lane_id for lane in result.lanes] == ["gemini-weekly"]
+    assert result.lanes[0].source_id == "antigravity-app"
+    assert result.input_tokens == 0
+
+
+def test_antigravity_answer_the_parser_rejects_is_an_error_not_a_fake_lane(
+    tmp_path: Path,
+) -> None:
+    _write_gemini_home(tmp_path, steps=10)
+    for payload in (_duplicate_lane_payload(), {"unexpected": 1}):
+        http = FixtureHttp([payload])
+        result = collect_antigravity(
+            preference("antigravity", options={"endpoint": "http://127.0.0.1:54321"}),
+            observed_at=1000,
+            http_json=http,
+            command_runner=lambda _args, _timeout: "",
+            home=tmp_path,
+        )
+        assert result.state.value == "error"
+        assert result.state.value != "ready"
+        assert result.reason_code == "invalid_provider_response"
+        assert result.lanes == ()
+        assert result.input_tokens == 0
+
+
+def test_antigravity_odd_answer_outranks_a_sibling_port_http_error(tmp_path: Path) -> None:
+    # Discovery tries several ports. A server that answered with a payload
+    # we cannot read is better evidence than a neighbour port's 400.
+    _write_gemini_home(tmp_path)
+
+    def runner(args, _timeout):
+        if args[0] == "ps":
+            return "12345 /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token abc\n"
+        if args[0] == "lsof":
+            return (
+                "ls 12345 user 12u IPv4 0x1 0t0 TCP 127.0.0.1:59237 (LISTEN)\n"
+                "ls 12345 user 13u IPv4 0x2 0t0 TCP 127.0.0.1:59238 (LISTEN)\n"
+            )
+        return ""
+
+    def http(method, url, **kwargs):
+        if "59237" in url:
+            return _duplicate_lane_payload()
+        raise ProviderHttpError(400, "Bad Request")
+
+    result = collect_antigravity(
+        preference("antigravity"),
+        observed_at=1000,
+        http_json=http,
+        command_runner=runner,
+        process_identity_resolver=lambda _pid: _ANTIGRAVITY_STABLE_IDENTITY,
+        home=tmp_path,
+    )
+    assert result.state.value == "error"
+    assert result.reason_code == "invalid_provider_response"
+    assert result.reason_code != "network_unavailable"
+    assert result.lanes == ()
+
+
+def test_antigravity_server_that_answers_401_needs_sign_in(tmp_path: Path) -> None:
+    _write_gemini_home(tmp_path)
+    http = FixtureHttp([ProviderHttpError(401, "unauthorized")])
+    result = collect_antigravity(
+        preference("antigravity", options={"endpoint": "http://127.0.0.1:54321"}),
+        observed_at=1000,
+        http_json=http,
+        command_runner=lambda _args, _timeout: "",
+        home=tmp_path,
+    )
+    assert result.state.value == "needs_sign_in"
+    assert result.reason_code == "authentication_required"
+    assert result.lanes == ()

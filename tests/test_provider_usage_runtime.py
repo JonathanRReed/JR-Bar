@@ -1140,6 +1140,179 @@ def test_restored_claude_quota_is_withheld_before_refresh_after_account_switch(t
 
 
 
+def _antigravity_reading(
+    *,
+    lane_id: str,
+    source_id: str,
+    remaining: float,
+    input_tokens: int = 0,
+    observed: float = 900,
+) -> ProviderUsageSnapshot:
+    return ProviderUsageSnapshot(
+        provider_id="antigravity",
+        account_label=None,
+        observed_at=observed,
+        state=ProviderSourceState.READY,
+        reason_code=None,
+        action_label=None,
+        lanes=(
+            UsageLane(
+                provider_id="antigravity",
+                lane_id=lane_id,
+                label="Fixture",
+                remaining_percent=remaining,
+                reset_at=None,
+                scope="gemini",
+                model=None,
+                feature=None,
+                bindable=True,
+                source_id=source_id,
+            ),
+        ),
+        input_tokens=input_tokens,
+        cached_input_tokens=0,
+        output_tokens=0,
+        model_count=0,
+        estimated_cost_usd=None,
+        cache_savings_usd=None,
+        credits_remaining=None,
+        incident=None,
+    )
+
+
+def _antigravity_not_running(observed):
+    return ProviderUsageSnapshot(
+        provider_id="antigravity",
+        account_label=None,
+        observed_at=observed,
+        state=ProviderSourceState.SOURCE_NOT_FOUND,
+        reason_code="antigravity_not_detected",
+        action_label="Open Antigravity",
+        lanes=(),
+        input_tokens=0,
+        cached_input_tokens=0,
+        output_tokens=0,
+        model_count=0,
+        estimated_cost_usd=None,
+        cache_savings_usd=None,
+        credits_remaining=None,
+        incident=None,
+    )
+
+
+def test_a_saved_invented_antigravity_lane_is_purged_on_restore(tmp_path) -> None:
+    """Earlier builds saved a READY "Antigravity CLI 100% left" lane that no
+    server ever measured, plus a steps-based token figure. Restoring it as
+    the last known good would serve it back as a stale reading forever."""
+    settings = default_provider_usage_settings()
+    invented = _antigravity_reading(
+        lane_id="cli",
+        source_id="antigravity-oauth",
+        remaining=100.0,
+        input_tokens=3500,
+    )
+    initial = ProviderUsageState((invented,), 900, 960, False)
+    saved: list[ProviderUsageState] = []
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={
+            "antigravity": lambda _pref, _home, observed, _credentials: (
+                _antigravity_not_running(observed)
+            )
+        },
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000,
+        state_loader=lambda: initial,
+        state_saver=saved.append,
+        incident_lookup=lambda *_args: None,
+    )
+
+    assert service.snapshot().snapshots == ()
+    refreshed = service.refresh_now(providers=("antigravity",), force=True)
+    reading = refreshed.by_provider("antigravity")
+
+    assert reading.state is ProviderSourceState.SOURCE_NOT_FOUND
+    assert reading.lanes == ()
+    assert reading.input_tokens == 0
+    for state in (service.snapshot(), *saved):
+        for item in state.snapshots:
+            assert all(lane.lane_id != "cli" for lane in item.lanes)
+    service.close()
+
+
+def test_a_real_antigravity_reading_is_kept_and_marked_stale_when_the_app_closes(
+    tmp_path,
+) -> None:
+    settings = default_provider_usage_settings()
+    real = _antigravity_reading(
+        lane_id="gemini-weekly",
+        source_id="antigravity-app",
+        remaining=30.0,
+    )
+    initial = ProviderUsageState((real,), 900, 960, False)
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={
+            "antigravity": lambda _pref, _home, observed, _credentials: (
+                _antigravity_not_running(observed)
+            )
+        },
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000,
+        state_loader=lambda: initial,
+        incident_lookup=lambda *_args: None,
+    )
+
+    reading = service.refresh_now(providers=("antigravity",), force=True).by_provider(
+        "antigravity"
+    )
+
+    assert reading.state is ProviderSourceState.STALE
+    assert reading.reason_code == "antigravity_not_detected"
+    assert reading.action_label == "Open Antigravity"
+    assert [lane.lane_id for lane in reading.lanes] == ["gemini-weekly"]
+    assert reading.lanes[0].remaining_percent == 30.0
+    service.close()
+
+
+def test_an_antigravity_sign_in_refusal_waits_for_a_forced_refresh(tmp_path) -> None:
+    """With no invented fallback lane to mask it, a server that answers
+    401/403 reaches the terminal gate. Antigravity has no credential file
+    the gate could watch, so only a forced refresh (or a relaunch) asks
+    again. This pins that sticky behaviour so changing it is deliberate."""
+    settings = default_provider_usage_settings()
+    calls: list[float] = []
+    clock = {"now": 1000.0}
+
+    def collector(_pref, _home, observed, _credentials):
+        calls.append(observed)
+        return snapshot(
+            "antigravity", state=ProviderSourceState.NEEDS_SIGN_IN, observed=observed
+        )
+
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"antigravity": collector},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: clock["now"],
+        incident_lookup=lambda *_args: None,
+    )
+
+    first = service.refresh_now(providers=("antigravity",))
+    assert len(calls) == 1
+    clock["now"] = 5000.0
+    background = service.refresh_now(providers=("antigravity",))
+    assert len(calls) == 1, "a terminal refusal was re-collected in the background"
+    assert background.by_provider("antigravity") == first.by_provider("antigravity")
+
+    service.refresh_now(providers=("antigravity",), force=True)
+    assert len(calls) == 2, "a forced refresh must ask again"
+    service.close()
+
+
 def test_a_visible_quota_strip_counts_as_attention():
     """Our one adaptation of CodexBar's ladder: they only have a menu,
     we can be showing the number on the LED bar the whole time."""
