@@ -92,6 +92,11 @@ FOCUSED_TESTS: Final = (
     "tests/test_why_light_context.py",
     "tests/test_why_light_projection.py",
     "tests/test_why_panel.py",
+    # The colour model, its motion and the preview lease, and the announcer's
+    # root views: live code whose coverage does not ride on the Settings
+    # window's tests.
+    "tests/test_colors_model.py",
+    "tests/test_announcer_stack_view.py",
     "tests/test_settings_accessibility.py",
 )
 
