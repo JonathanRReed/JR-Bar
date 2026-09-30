@@ -10494,7 +10494,10 @@ class StatusBarController(NSObject):
 
     def push_colors_preview_to_device(self) -> None:
         snapshot = self.last_snapshot
-        statuses = snapshot.statuses if snapshot is not None else ()
+        # Like every repaint between refreshes, this reads the last
+        # refresh's projection and hands over no raw statuses: the strip is
+        # drawn from them when there is no projection, and a waiting
+        # sub-agent among them was painted as an ask.
         self.sync_leds(
             (
                 self.resync_display_mode(snapshot)
@@ -10503,7 +10506,8 @@ class StatusBarController(NSObject):
             ),
             None,
             LED_DISPLAY_AGENT,
-            statuses,
+            (),
+            projection=getattr(self, "current_attention_projection", None),
         )
 
     @objc.IBAction
