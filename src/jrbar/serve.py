@@ -86,6 +86,26 @@ def _increment(counts: dict[str, int], value: str) -> None:
     counts[value] = counts.get(value, 0) + 1
 
 
+_MAIN = "main"
+_WORKER = "worker"
+
+
+def _work_role(raw: dict) -> str | None:
+    """Whether a persisted work is a main session or a sub-agent.
+
+    A sub-agent has a parent, and ``parent_key`` says so. A work whose key is
+    absent (an older file) or null is a main session. A key that is anything
+    but a non-empty object is not something to guess about, so the work is
+    left out with the other values the allowlist does not recognise.
+    """
+    parent_key = raw.get("parent_key")
+    if parent_key is None:
+        return _MAIN
+    if isinstance(parent_key, dict) and parent_key:
+        return _WORKER
+    return None
+
+
 def _public_agents(latest: object) -> dict[str, object] | None:
     if not isinstance(latest, dict) or latest.get("version") != 2:
         return None
@@ -103,6 +123,8 @@ def _public_agents(latest: object) -> dict[str, object] | None:
     freshness_counts: dict[str, int] = {}
     timing_uncertain_count = 0
     work_count = 0
+    worker_lifecycle_counts: dict[str, int] = {}
+    worker_count = 0
     for raw in works[:_MAX_WORKS]:
         if not isinstance(raw, dict):
             continue
@@ -111,8 +133,10 @@ def _public_agents(latest: object) -> dict[str, object] | None:
         source_health = raw.get("source_health")
         source_freshness = raw.get("source_freshness")
         timing_uncertain = raw.get("timing_uncertain")
+        role = _work_role(raw)
         if not (
-            type(lifecycle) is str
+            role is not None
+            and type(lifecycle) is str
             and lifecycle in _WORK_LIFECYCLES
             and type(next_actor) is str
             and next_actor in _NEXT_ACTORS
@@ -122,6 +146,12 @@ def _public_agents(latest: object) -> dict[str, object] | None:
             and source_freshness in _SOURCE_FRESHNESS
             and type(timing_uncertain) is bool
         ):
+            continue
+        if role == _WORKER:
+            # A sub-agent is a number of its own, so a blocked one stays
+            # visible without reading as a session that needs the person.
+            worker_count += 1
+            _increment(worker_lifecycle_counts, lifecycle)
             continue
         work_count += 1
         _increment(lifecycle_counts, lifecycle)
@@ -137,6 +167,10 @@ def _public_agents(latest: object) -> dict[str, object] | None:
         "source_health_counts": health_counts,
         "source_freshness_counts": freshness_counts,
         "timing_uncertain_count": timing_uncertain_count,
+        "workers": {
+            "work_count": worker_count,
+            "lifecycle_counts": worker_lifecycle_counts,
+        },
     }
 
 
