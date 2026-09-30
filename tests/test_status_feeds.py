@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from jrbar.status_feeds import (
     STATUS_FEED_THREAD_NAME,
     FeedState,
@@ -149,3 +151,179 @@ def test_scoped_poll_fetches_only_requested_provider() -> None:
 
     assert fetched == ["https://status.example/codex"]
     assert poller.feed_state("claude") is FeedState.UNAVAILABLE
+
+
+# --- stopping a feed ------------------------------------------------------------
+#
+# Every wait below is on an Event with a timeout, and the poll cadence is
+# passed in, so nothing depends on how long a real 10 minutes takes.
+
+_HEALTHY = {"status": {"indicator": "none", "description": "All systems operational"}}
+_CODEX_FEED = {"codex": ("OpenAI", "https://status.example/codex", "https://status.example")}
+
+
+def test_stop_ends_the_feed_thread_and_it_makes_no_further_request() -> None:
+    first_fetch = threading.Event()
+    fetchers: list[threading.Thread] = []
+    fetched: list[str] = []
+
+    def fetch(url, **_kwargs):
+        fetched.append(url)
+        fetchers.append(threading.current_thread())
+        first_fetch.set()
+        return _HEALTHY
+
+    poller = StatusFeedPoller(feeds=_CODEX_FEED, fetch_json=fetch)
+    poller.start(provider_ids=("codex",))
+    assert first_fetch.wait(5.0)
+
+    # The loop is now waiting out its 600 s; stop wakes it instead of sleeping.
+    assert poller.stop() == ("codex",)
+
+    assert not fetchers[0].is_alive()
+    assert fetched == ["https://status.example/codex"]
+    assert poller.stop() == ()
+
+
+def test_stop_scopes_to_the_providers_it_is_given() -> None:
+    both_fetched = threading.Event()
+    fetchers: dict[str, threading.Thread] = {}
+
+    def fetch(url, **_kwargs):
+        fetchers[url] = threading.current_thread()
+        if len(fetchers) == 2:
+            both_fetched.set()
+        return _HEALTHY
+
+    poller = StatusFeedPoller(
+        feeds={
+            **_CODEX_FEED,
+            "claude": ("Anthropic", "https://status.example/claude", "https://status.example"),
+        },
+        fetch_json=fetch,
+    )
+    poller.start()
+    assert both_fetched.wait(5.0)
+
+    assert poller.stop(provider_ids=("codex",)) == ("codex",)
+
+    assert not fetchers["https://status.example/codex"].is_alive()
+    assert fetchers["https://status.example/claude"].is_alive()
+    assert poller.stop() == ("claude",)
+    assert not fetchers["https://status.example/claude"].is_alive()
+
+
+def test_a_stopped_feed_can_be_started_again() -> None:
+    fetched = threading.Semaphore(0)
+    fetchers: list[threading.Thread] = []
+
+    def fetch(url, **_kwargs):
+        fetchers.append(threading.current_thread())
+        fetched.release()
+        return _HEALTHY
+
+    poller = StatusFeedPoller(feeds=_CODEX_FEED, fetch_json=fetch)
+    poller.start(provider_ids=("codex",))
+    assert fetched.acquire(timeout=5.0)
+    poller.stop()
+
+    poller.start(provider_ids=("codex",))
+    assert fetched.acquire(timeout=5.0)
+
+    assert len(fetchers) == 2
+    assert fetchers[0] is not fetchers[1]
+    assert poller.stop() == ("codex",)
+    assert not fetchers[1].is_alive()
+
+
+def test_a_request_in_flight_when_the_feed_stops_records_nothing() -> None:
+    in_flight = threading.Event()
+    release = threading.Event()
+    fetchers: list[threading.Thread] = []
+
+    def fetch(url, **_kwargs):
+        fetchers.append(threading.current_thread())
+        in_flight.set()
+        assert release.wait(5.0)
+        return {"status": {"indicator": "major", "description": "Elevated errors"}}
+
+    poller = StatusFeedPoller(feeds=_CODEX_FEED, fetch_json=fetch, clock=lambda: 100.0)
+    poller.start(provider_ids=("codex",))
+    assert in_flight.wait(5.0)
+
+    # The join is bounded: a request that is still out does not hold stop().
+    assert poller.stop(timeout=0.01) == ("codex",)
+    release.set()
+    fetchers[0].join(5.0)
+
+    assert not fetchers[0].is_alive()
+    assert poller.incident_for("codex", now=100.0) is None
+    assert poller.feed_state("codex", now=100.0) is FeedState.UNAVAILABLE
+
+
+def test_stop_forgets_what_the_feed_last_saw() -> None:
+    poller = StatusFeedPoller(
+        feeds=_CODEX_FEED,
+        fetch_json=lambda *_a, **_k: {
+            "status": {"indicator": "major", "description": "Elevated errors"}
+        },
+        clock=lambda: 100.0,
+    )
+    poller.poll_once()
+    poller.start(provider_ids=("codex",))
+    assert poller.incident_for("codex", now=100.0) is not None
+
+    poller.stop()
+
+    # Turning the feeds back on later must not show a reading from before.
+    assert poller.incident_for("codex", now=100.0) is None
+    assert poller.feed_state("codex", now=100.0) is FeedState.UNAVAILABLE
+
+
+def test_a_feed_whose_gate_closes_ends_without_asking_again() -> None:
+    fetchers: list[threading.Thread] = []
+    gate_answers = iter((True, False))
+    fetched: list[str] = []
+    fetched_once = threading.Event()
+
+    def fetch(url, **_kwargs):
+        fetched.append(url)
+        fetchers.append(threading.current_thread())
+        fetched_once.set()
+        return _HEALTHY
+
+    poller = StatusFeedPoller(feeds=_CODEX_FEED, fetch_json=fetch, poll_seconds=0.0)
+    poller.start(provider_ids=("codex",), enabled=lambda: next(gate_answers))
+    assert fetched_once.wait(5.0)
+    fetchers[0].join(5.0)
+
+    assert not fetchers[0].is_alive()
+    assert fetched == ["https://status.example/codex"]
+    # The thread took itself off the books, so the feed can start again.
+    assert poller.stop() == ()
+
+
+
+def test_stop_does_not_join_a_thread_that_has_not_started_running(monkeypatch) -> None:
+    joined: list[str] = []
+
+    class Thread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            return None
+
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=None):
+            joined.append(self.name)
+
+    monkeypatch.setattr("jrbar.status_feeds.threading.Thread", Thread)
+    poller = StatusFeedPoller(feeds=_CODEX_FEED)
+    poller.start(provider_ids=("codex",))
+
+    assert poller.stop() == ("codex",)
+    assert joined == []
