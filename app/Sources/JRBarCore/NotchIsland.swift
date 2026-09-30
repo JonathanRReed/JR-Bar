@@ -1018,6 +1018,11 @@ public enum NotchAskVerbs: Equatable, Sendable {
     /// the daemon can't type into that terminal); nil while the ask has
     /// not reached the state yet.
     case openOnly(reason: String?)
+    /// JR-Bar already answered this ask and the agent's own events have
+    /// not closed the request yet, so nothing is being asked of the
+    /// person: no verb, not even Open, and `line` says the agent is being
+    /// waited for. It is `CoreAsk.decidedLine`, the panel's own words.
+    case decided(line: String)
     /// A peer Mac's session: nothing here can answer it or raise it.
     case remote(machine: String?)
     /// Nothing to act on.
@@ -1029,6 +1034,9 @@ public enum NotchAskVerbs: Equatable, Sendable {
             return .remote(machine: CoreSession.remoteMachine(inID: session))
         }
         guard let live else { return .openOnly(reason: nil) }
+        // First, whatever else the ask says: an answered ask draws no
+        // verb, and an older daemon may still call it answerable.
+        if let line = live.decidedLine { return .decided(line: line) }
         if live.wantsTextReply { return .openOnly(reason: "Wants a typed reply") }
         guard live.canAnswer else { return .openOnly(reason: "Answer it in its window") }
         return .answer
@@ -1040,7 +1048,7 @@ public enum NotchAskVerbs: Equatable, Sendable {
     public var opens: Bool {
         switch self {
         case .answer, .openOnly: return true
-        case .remote, .none: return false
+        case .decided, .remote, .none: return false
         }
     }
 
@@ -1048,6 +1056,7 @@ public enum NotchAskVerbs: Equatable, Sendable {
     public var note: String? {
         switch self {
         case .openOnly(let reason): return reason
+        case .decided(let line): return line
         case .remote(let machine): return "Runs on \(machine ?? "another Mac") — answer it there"
         case .answer, .none: return nil
         }
