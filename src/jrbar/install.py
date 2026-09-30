@@ -2073,18 +2073,36 @@ def _probe_registration_command(provider: str, python_executable: str | None) ->
     This is the gate verify_hook_command was written for (wired
     2026-08-26): a registered hook that cannot run does not degrade a
     feature -- it blocks every prompt in every session for that agent.
-    The scratch log keeps the probe's fake session out of live state.
+    The scratch log keeps the probe's fake session out of the provider's
+    log, and the compiled shim is also given a scratch state dir, so its
+    fake SessionStart reaches neither the live daemon's ingress nor the
+    real spool.
     """
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="jrbar-hook-probe-") as scratch:
-        error = verify_hook_command(
-            hook_command_arguments(
-                provider,
-                Path(scratch) / "probe.jsonl",
-                python_executable,
-            )
+        arguments = hook_command_arguments(
+            provider,
+            Path(scratch) / "probe.jsonl",
+            python_executable,
         )
+        # Only the compiled shim honours JRBAR_STATE_DIR (hook/jrbar-hook.c
+        # state_dir()). Without it the probe found the real ingress socket:
+        # in the daemon, which runs installs, that left a resident
+        # deduplicator and an open file per scratch log for the daemon's
+        # whole life, and with the daemon down it spooled the fake session
+        # for the next start to replay into the real log. The Python client
+        # reads XDG_STATE_HOME and always also tries ~/.local/state/jrbar,
+        # so this cannot isolate it, and overriding HOME could fail a
+        # probe that would have run, which blocks registration. With the
+        # daemon down it writes the scratch log, not the spool; with the
+        # daemon up it still reaches it.
+        env = (
+            {**os.environ, "JRBAR_STATE_DIR": scratch}
+            if Path(arguments[0]).name == HOOK_SHIM_NAME
+            else None
+        )
+        error = verify_hook_command(arguments, env=env)
     if error is not None:
         raise HookVerificationError(
             f"refusing to register {provider} hooks -- the command does not "

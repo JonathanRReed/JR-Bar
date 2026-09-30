@@ -12,6 +12,8 @@ across every harness at once.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -173,3 +175,89 @@ def test_verify_hook_command_passes_env(tmp_path: Path) -> None:
     assert verify_hook_command([str(needs_env)], env={**os.environ, "PROBE_ENV": "ok"}) is None
     failure = verify_hook_command([str(needs_env)])
     assert failure is not None and "exited 3" in failure
+
+
+def test_probe_gives_the_shim_a_private_state_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe's fake SessionStart must not reach the live daemon's ingress
+    (which keeps a resident deduplicator and an open file for every scratch
+    log it is shown) or the real spool. The shim honours JRBAR_STATE_DIR, so
+    the probe gives it a scratch one that is gone afterwards."""
+    from jrbar.install import _probe_registration_command
+
+    capture = tmp_path / "seen-state-dirs"
+    fake_shim = _script(tmp_path / "jrbar-hook", f'echo "$JRBAR_STATE_DIR" >> "{capture}"')
+    real_state = tmp_path / "real-state"
+    monkeypatch.setenv("JRBAR_HOOK_EXEC", str(fake_shim))
+    monkeypatch.setenv("JRBAR_STATE_DIR", str(real_state))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+
+    _probe_registration_command("claude", None)
+
+    seen = capture.read_text().splitlines()
+    assert len(seen) == 1
+    probe_dir = Path(seen[0])
+    assert probe_dir.name.startswith("jrbar-hook-probe-")
+    assert probe_dir != real_state
+    assert not probe_dir.exists(), "the scratch state dir is removed with the scratch log"
+    assert not real_state.exists() or not any(real_state.iterdir())
+
+
+@pytest.fixture(scope="module")
+def built_shim() -> Path:
+    root = Path(__file__).resolve().parents[1]
+    built = root / "hook" / "build" / "jrbar-hook"
+    if not Path("/usr/bin/clang").exists() and shutil.which("clang") is None:
+        pytest.skip("clang not available")
+    if not built.exists() or built.stat().st_mtime < (root / "hook" / "jrbar-hook.c").stat().st_mtime:
+        subprocess.run([str(root / "hook" / "build.sh")], check=True, capture_output=True)
+    return built
+
+
+def test_probe_leaves_no_pending_spool_in_the_real_state_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built_shim: Path
+) -> None:
+    """With the daemon down the shim spools what it could not deliver. The
+    probe's fake session used to land in the real <provider>.pending.jsonl
+    and replay into the real provider log at the next daemon start."""
+    from jrbar.install import _probe_registration_command
+
+    real_state = tmp_path / "real-state"
+    real_state.mkdir(mode=0o700)
+    monkeypatch.setenv("JRBAR_HOOK_EXEC", str(built_shim))
+    monkeypatch.setenv("JRBAR_STATE_DIR", str(real_state))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+
+    _probe_registration_command("claude", None)
+
+    assert list(real_state.iterdir()) == []
+    assert not (tmp_path / "xdg-state" / "jrbar" / "claude.pending.jsonl").exists()
+
+
+def test_probe_env_is_left_alone_for_the_python_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the compiled shim honours JRBAR_STATE_DIR. The Python client reads
+    XDG_STATE_HOME and always also tries ~/.local/state/jrbar, so it cannot
+    be isolated this way, and with the daemon down it writes the scratch log,
+    not the spool. Pinned as deliberate."""
+    from unittest.mock import patch
+
+    from jrbar.install import _probe_registration_command
+
+    monkeypatch.setenv("JRBAR_HOOK_EXEC", "")
+    recorded: list[dict] = []
+
+    def record(arguments, **kwargs):
+        recorded.append(kwargs)
+        return None
+
+    with patch("jrbar.install.verify_hook_command", side_effect=record):
+        _probe_registration_command("claude", sys.executable)
+        _probe_registration_command("claude", None)
+
+    assert len(recorded) == 2
+    assert [kwargs.get("env") for kwargs in recorded] == [None, None]
