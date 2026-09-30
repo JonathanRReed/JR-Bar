@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from jrbar import process_registry as pr
+from jrbar.hook_ingress import HookIngressRequest, register_shim_process
 
 
 def _table(*rows):
@@ -356,9 +357,7 @@ def test_the_table_worker_reads_off_the_callers_thread_once_at_a_time__and_2_mor
         pr._table_cache, pr._list_processes_uncached = original_cache, original_read
 
 
-def _orphaned(payload: dict) -> "HookIngressRequest":
-    from jrbar.hook_ingress import HookIngressRequest
-
+def _orphaned(payload: dict) -> HookIngressRequest:
     return HookIngressRequest("codex", "/tmp/state/codex.jsonl", json.dumps(payload))
 
 
@@ -369,8 +368,6 @@ def test_an_orphaned_session_end_still_upgrades_the_end_reason(
     registers no process. Its SessionEnd is still the provider saying the
     session ended: without the upgrade the sweep closes the record as
     process_exited and the row shows grey instead of Done."""
-    from jrbar.hook_ingress import register_shim_process
-
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     state = tmp_path / "jrbar"
     entry = pr.ProcessEntry(300, 1, 5.0, "/opt/homebrew/bin/codex")
@@ -392,8 +389,6 @@ def test_an_orphaned_frame_that_is_not_a_session_end_registers_nothing(
     tmp_path: Path, monkeypatch
 ) -> None:
     from jrbar import process_registry
-    from jrbar.hook_ingress import register_shim_process
-
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     noted: list[tuple] = []
     monkeypatch.setattr(process_registry, "note_hook_payload", lambda *a, **k: noted.append((a, k)))
