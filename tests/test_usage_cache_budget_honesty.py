@@ -31,7 +31,6 @@ from tests.test_provider_usage_cached_scan import (
     _claude_card,
     _claude_projects,
     _claude_transcript,
-    _codex_rollouts,
     _scan_claude,
     _scan_codex,
     _state_cache,

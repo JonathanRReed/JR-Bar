@@ -22,7 +22,6 @@ from jrbar.serve import (
 )
 
 
-
 @pytest.fixture(autouse=True)
 def _clock_before_the_saved_windows_reset(monkeypatch: pytest.MonkeyPatch) -> None:
     """The saved windows below reset at 1500 and 2000; hold the quota
