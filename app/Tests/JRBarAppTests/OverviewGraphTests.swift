@@ -279,11 +279,13 @@ import JRBarCore
     // MARK: What the Graph draws
 
     private static func entry(_ id: String, mode: String, lifecycle: String = "active", parent: String? = nil,
-                              updated: Double, hidden: Bool = false, label: String? = nil) -> CoreRosterEntry {
-        CoreRosterEntry(session: CoreSession(id: id, provider: "claude", parent: parent, label: label ?? id,
-                                             cwd: "/r/app", mode: mode, lifecycle: lifecycle,
-                                             since: updated, updatedAt: updated),
-                        visibility: hidden ? "hidden" : nil)
+                              updated: Double, hidden: Bool = false, label: String? = nil,
+                              kind: String = "main", nextActor: String? = nil,
+                              ask: CoreAsk? = nil) -> CoreRosterEntry {
+        CoreRosterEntry(session: CoreSession(id: id, provider: "claude", kind: kind, parent: parent,
+                                             label: label ?? id, cwd: "/r/app", mode: mode, lifecycle: lifecycle,
+                                             nextActor: nextActor, since: updated, updatedAt: updated, ask: ask),
+                        pinned: ask != nil, visibility: hidden ? "hidden" : nil)
     }
 
     @Test("Active keeps live work and the last hour's finishes, with each kept worker's session")
@@ -305,6 +307,62 @@ import JRBarCore
         #expect(everything.count == roster.count)
         let searched = OverviewStore.graphEntries(roster, scope: .everything, search: "done-", now: now).map(\.id)
         #expect(searched == ["done-recent", "done-old"])
+    }
+
+    /// A sub-agent as `list_roster` sends it while sub-agent asks are off:
+    /// still `waiting_for_input` and `next_actor: user`, with no ask.
+    private static func quietWorker(_ id: String, parent: String = "main") -> CoreRosterEntry {
+        entry(id, mode: "waiting_for_input", parent: parent, updated: 100, kind: "worker", nextActor: "user")
+    }
+
+    @Test("a worker whose prompt is quiet is not counted, haloed, sorted or focused as waiting on you")
+    func quietWorkerIsNotWaiting() throws {
+        let store = OverviewStore(core: CoreModel())
+        store.roster = [Self.entry("main", mode: "working", updated: 100), Self.quietWorker("w1"), Self.quietWorker("w2")]
+        store.graphScope = .everything
+        let nodes = store.graphNodes
+        // The header's chips tally these; the waiting chip has nothing to count.
+        #expect(nodes.map(\.activity) == [.working, .working, .working])
+        let tally = Dictionary(grouping: nodes, by: \.activity).mapValues(\.count)
+        #expect(tally[.waiting] == nil)
+        #expect(tally[.working] == 3)
+        // The project's halo reads the cluster's waiting count.
+        let layout = Layout.make(nodes)
+        #expect(layout.clusters.map(\.counts) == [[.working: 3]])
+        // The opening camera has no worker to pan to.
+        let shown = OverviewGraphCanvas.Shown(layout: layout, nodes: Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) }))
+        #expect(OverviewGraphCanvas.focus(shown) == nil)
+        // The roster row says Working and sorts as work, not first as an ask.
+        let quiet = try #require(store.roster.first { $0.id == "w1" })
+        #expect(SessionActivity.reduce(quiet.session).word == "Working")
+        #expect(quiet.sortRankKey == SessionActivity.working.sortRank + 1)
+    }
+
+    @Test("a worker that carries an ask is still waiting on you on the Graph and in the roster")
+    func askedWorkerIsWaiting() throws {
+        let ask = CoreAsk(kind: "permission", openedAt: 90, summary: "Run the build?")
+        let store = OverviewStore(core: CoreModel())
+        store.roster = [Self.entry("main", mode: "working", updated: 100),
+                        Self.entry("w1", mode: "waiting_for_input", parent: "main", updated: 100, kind: "worker",
+                                   nextActor: "user", ask: ask),
+                        Self.quietWorker("w2")]
+        store.graphScope = .everything
+        let nodes = store.graphNodes
+        #expect(nodes.map(\.activity) == [.working, .waiting, .working])
+        let layout = Layout.make(nodes)
+        #expect(layout.clusters.map(\.counts) == [[.working: 2, .waiting: 1]])
+        let shown = OverviewGraphCanvas.Shown(layout: layout, nodes: Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) }))
+        #expect(OverviewGraphCanvas.focus(shown) == "w1")
+        let asked = try #require(store.roster.first { $0.id == "w1" })
+        #expect(asked.sortRankKey == 0)
+    }
+
+    @Test("a main session waiting on you reads as it always did")
+    func waitingMainIsUnchanged() {
+        let store = OverviewStore(core: CoreModel())
+        store.roster = [Self.entry("main", mode: "waiting_for_input", updated: 100, nextActor: "user")]
+        store.graphScope = .everything
+        #expect(store.graphNodes.map(\.activity) == [.waiting])
     }
 
     @Test("a node picked on the Graph is the inspector's, and Show in Roster finds its row")
