@@ -488,3 +488,54 @@ enum AppleDockReader {
         return CGRect(origin: point, size: size)
     }
 }
+
+// MARK: - A hover-side window read
+
+/// One hover-side read of an app's windows, gated by the same hung-app
+/// backoff the ⌥⇥ switcher keeps (`DockAXBackoff`). The read itself is
+/// synchronous Accessibility IPC with a half-second timeout, so an app
+/// that does not answer would block main for that long on every hover,
+/// sweep and observer burst. Through the backoff a hung app costs one
+/// wait per `DockAXBackoff.backoff`, and a hang either surface saw
+/// spares the other. Pure: the reader and the clock come in as
+/// arguments.
+enum DockPreviewRead {
+    /// The app answered: its windows, possibly none.
+    case windows([DockPreviewWindow])
+    /// The app did not answer inside the timeout. The wait was paid
+    /// once, and the pid now rests.
+    case unresponsive
+    /// The pid is resting after a recent hang: nothing was asked.
+    case skipped
+
+    static func read(
+        pid: pid_t, backoff: inout DockAXBackoff, now: TimeInterval,
+        reader: (pid_t) -> (windows: [DockPreviewWindow], unresponsive: Bool)
+    ) -> DockPreviewRead {
+        guard !backoff.skips(pid, now: now) else { return .skipped }
+        let reading = reader(pid)
+        backoff.note(pid, unresponsive: reading.unresponsive, now: now)
+        return reading.unresponsive ? .unresponsive : .windows(reading.windows)
+    }
+
+    /// The windows the app answered with; nil when it did not (a hung or
+    /// resting app), which a fill shows as no cards.
+    var answered: [DockPreviewWindow]? {
+        guard case .windows(let windows) = self else { return nil }
+        return windows
+    }
+
+    /// The cards after a live refresh. An answer merges into the old
+    /// cards (so a survivor keeps its id and still), and a genuine empty
+    /// answer leaves none, which is how the last window closing
+    /// elsewhere hides the panel. A read that got no answer is no news:
+    /// the old cards stay, where an empty list would have closed a busy
+    /// app's own open preview.
+    static func refreshedCards(
+        old: [DockPreviewWindow], reading: DockPreviewRead,
+        narrow: ([DockPreviewWindow]) -> [DockPreviewWindow] = { $0 }
+    ) -> [DockPreviewWindow] {
+        guard case .windows(let windows) = reading else { return old }
+        return DockEnhanceMath.mergeWindows(old: old, new: narrow(windows))
+    }
+}

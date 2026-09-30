@@ -297,6 +297,17 @@ struct DockSwitcherTests {
         #expect(!backoff.skips(7, now: 202))
     }
 
+    @Test("a note made through the controller's shared API is seen by skips")
+    @MainActor func controllerBackoffIsShared() {
+        let controller = DockSwitcherController(tap: SwitcherKeyTap())
+        #expect(!controller.axSkips(7, now: 100))
+        controller.noteAX(7, unresponsive: true, now: 100)
+        #expect(controller.axSkips(7, now: 105))
+        #expect(!controller.axSkips(8, now: 105), "only the app that hung")
+        controller.noteAX(7, unresponsive: false, now: 106)
+        #expect(!controller.axSkips(7, now: 107), "an answer clears it")
+    }
+
     // MARK: Minimized-window tiles
 
     @Test("a minimized tile's owner needs a sole claimant — no guessing")

@@ -171,6 +171,32 @@ struct DockPreviewAgentTests {
                 "with no id and no element, nothing proves two rows are one window")
     }
 
+    @Test("a read that got no answer keeps the open cards; a genuinely empty one still empties them")
+    func unansweredRefreshKeepsTheCards() {
+        let still = NSImage(size: NSSize(width: 4, height: 4))
+        let open = [
+            DockPreviewWindow(id: 101, title: "Busy", minimized: false, fullScreen: nil,
+                              frame: nil, thumbnail: still, element: nil, windowID: 1),
+            DockPreviewWindow(id: 102, title: "Other", minimized: false, fullScreen: nil,
+                              frame: nil, thumbnail: nil, element: nil, windowID: 2),
+        ]
+        let unresponsive = DockPreviewRead.refreshedCards(old: open, reading: .unresponsive)
+        #expect(unresponsive.map(\.id) == [101, 102], "a hung app is no news: never []")
+        #expect(unresponsive[0].thumbnail === still)
+        let resting = DockPreviewRead.refreshedCards(old: open, reading: .skipped)
+        #expect(resting.map(\.id) == [101, 102])
+        #expect(!DockEnhanceMath.cardsDiffer(open, unresponsive), "so the refresh does nothing")
+        let empty = DockPreviewRead.refreshedCards(old: open, reading: .windows([]))
+        #expect(empty.isEmpty, "the last window closed elsewhere still hides the panel")
+        let fresh = DockPreviewWindow(id: 900, title: "Renamed", minimized: false, fullScreen: nil,
+                                      frame: nil, thumbnail: nil, element: nil, windowID: 1)
+        let merged = DockPreviewRead.refreshedCards(old: open, reading: .windows([fresh])) { $0 }
+        #expect(merged.map(\.id) == [101], "an answer merges: the survivor keeps its card id")
+        #expect(merged[0].title == "Renamed")
+        let narrowed = DockPreviewRead.refreshedCards(old: open, reading: .windows([fresh])) { _ in [] }
+        #expect(narrowed.isEmpty, "the display filter applies to an answer")
+    }
+
     @Test("a retitle alone asks for no stills; a newcomer or a window back from the Dock does")
     func liveStills() {
         let still = NSImage(size: NSSize(width: 4, height: 4))

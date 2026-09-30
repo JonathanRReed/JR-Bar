@@ -1111,7 +1111,12 @@ final class DockEnhanceController {
         guard let panel, panel.isVisible, let pid = preview.processIdentifier,
               force || windowObserver.pid == pid, preview.folderURL == nil else { return }
         let old = preview.windows
-        let merged = DockEnhanceMath.mergeWindows(old: old, new: listWindows(pid: pid))
+        // An app that did not answer is no news: the old cards stay (an
+        // empty list would close its own open preview).
+        let reading = readWindows(pid: pid)
+        let merged = DockPreviewRead.refreshedCards(old: old, reading: reading) {
+            self.narrowToDisplay($0)
+        }
         guard DockEnhanceMath.cardsDiffer(old, merged) else { return }
         preview.windows = merged
         windowObserver.watch(merged.compactMap(\.element))
@@ -1365,9 +1370,34 @@ final class DockEnhanceController {
     /// on the pointer's screen, and so are the windows worth previewing
     /// from it.
     private func listWindows(pid: pid_t) -> [DockPreviewWindow] {
-        let windows = AppleDockReader.windows(pid: pid)
+        narrowToDisplay(answeredWindows(pid: pid))
+    }
+
+    private func narrowToDisplay(_ windows: [DockPreviewWindow]) -> [DockPreviewWindow] {
         guard preferences.previewThisDisplay, let display = DockDisplays.pointerDisplayQuartz() else { return windows }
         return DockEnhanceMath.onDisplay(windows, display: display)
+    }
+
+    /// One app's windows for a hover read — the fill, a live refresh, a
+    /// minimized tile's owner check and click-to-minimize — through the
+    /// switcher's hung-app backoff. A read is synchronous AX IPC with a
+    /// half-second timeout: an app that did not answer costs main one wait
+    /// per `DockAXBackoff.backoff`, not one per hover, sweep and burst,
+    /// and a hang the ⌥⇥ strip saw spares this side too.
+    private func readWindows(pid: pid_t) -> DockPreviewRead {
+        let read = switcher.readWindows(pid: pid, now: ProcessInfo.processInfo.systemUptime) {
+            AppleDockReader.windowsReading(pid: $0)
+        }
+        if case .unresponsive = read {
+            Self.log.notice("preview: pid \(pid, privacy: .public) didn't answer AX — skipped for \(DockAXBackoff.backoff, privacy: .public) s")
+        }
+        return read
+    }
+
+    /// The windows an app answered with, or none for a hung or resting
+    /// one — what a fill or a tile check shows as no cards.
+    private func answeredWindows(pid: pid_t) -> [DockPreviewWindow] {
+        readWindows(pid: pid).answered ?? []
     }
 
     /// Mark the cards whose windows host an agent session, and collect
@@ -1425,7 +1455,7 @@ final class DockEnhanceController {
         }
         let offRows = DockSwitcherList.offScreenRows()
         guard let pid = DockSwitcherList.minimizedOwnerPID(
-            title: itemTitle, rows: offRows, axWindows: { AppleDockReader.windows(pid: $0) }),
+            title: itemTitle, rows: offRows, axWindows: { self.answeredWindows(pid: $0) }),
               let app = NSRunningApplication(processIdentifier: pid),
               app.activationPolicy == .regular else {
             content.windows = [card]
@@ -1445,7 +1475,7 @@ final class DockEnhanceController {
         content.isRunning = true
         content.icon = app.icon
         let rows = offRows.filter { $0.pid == pid && $0.title == itemTitle }
-        let axWindows = AppleDockReader.windows(pid: pid)
+        let axWindows = answeredWindows(pid: pid)
         // A same-titled window parked on another Space shares the
         // off-screen list; only a minimized one can be this tile.
         let matched = rows.compactMap { DockSwitcherList.match(row: $0, in: axWindows) }
@@ -2110,7 +2140,7 @@ final class DockEnhanceController {
                 appPID: app.processIdentifier,
                 frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
                 lastActivation: lastActivation, clickAt: clickAt) else { return }
-        let visible = AppleDockReader.windows(pid: app.processIdentifier).filter { !$0.minimized }
+        let visible = answeredWindows(pid: app.processIdentifier).filter { !$0.minimized }
         guard !visible.isEmpty else { return }
         for window in visible { AppleDockReader.setMinimized(window, true) }
         if tracker.shown == item.hoverID {
