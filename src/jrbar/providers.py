@@ -307,10 +307,11 @@ ANTIGRAVITY_HOOK_NAME = "jrbar-status"
 LEGACY_ANTIGRAVITY_HOOK_NAME = "sidepulse-status"
 ANTIGRAVITY_ENVELOPE_KEY = "antigravity"
 
-# The plugin file is versioned so an older install keeps working until
-# Settings > Agents reinstalls it. Ownership is an exact comparison against
-# the text of the generation the file's marker names, never marker plus
-# arguments: an edited or forged file is still refused. v1 is frozen below.
+# The plugin file is versioned so an older install keeps working until the
+# next hook refresh or a reinstall replaces it. Ownership is an exact
+# comparison against the text of the generation the file's marker names,
+# never marker plus arguments: an edited or forged file is still refused.
+# v1 is frozen below.
 OPENCODE_PLUGIN_MARKER = "jrbar-opencode-plugin-v2"
 _OPENCODE_PLUGIN_V1_MARKER = "jrbar-opencode-plugin-v1"
 LEGACY_OPENCODE_PLUGIN_MARKER = "sidepulse-opencode-plugin-v1"
