@@ -67,6 +67,7 @@ from .hook_pending import (
     pending_hook_files,
     pending_line_count,
 )
+from .login_shell_path import default_login_shell_probe
 from .state_paths import default_state_dir
 
 CORE_VERSION: Final = __version__
@@ -119,6 +120,10 @@ DECK_INTEGRATION_TTL_SECONDS: Final = 2.0
 # this often: the scan is a few dozen lstats, but ``state`` rebuilds on
 # every refresh and "is the CLI still installed" does not move that fast.
 DETECTED_AGENTS_TTL_SECONDS: Final = 60.0
+# While the login-shell PATH probe has not answered, the scan is repeated
+# this soon: a CLI that lives only in a login-shell directory is unknown,
+# and the answer is due any moment (login_shell_path).
+DETECTED_AGENTS_PENDING_TTL_SECONDS: Final = 2.0
 # Display kinds a live claim arms for a bounded window only. The lights
 # document reads the kind the last sync recorded; when the write path
 # misses, that record survives the claim by hours -- a dead quota blink
@@ -4288,6 +4293,11 @@ def build_headless_controller_class() -> type:
             self.load_operator_local_state()
             self.trim_oversized_state_logs()
             legacy.log_status_bar("core: launching headless")
+            # The login shell's PATH is asked for on a thread of its own, so
+            # a cold shell right after a login never holds up the first
+            # state build. Until it answers, a CLI outside the literal
+            # install locations is unknown, not "not installed".
+            default_login_shell_probe().ensure_started(on_done=self._core_login_path_ready)
             # The backlog the shim spooled while the daemon was down drains
             # once here, before the ingress socket opens. A fresh replay is
             # stamped when it is drained (hook_ingress._replay_arguments),
@@ -7141,6 +7151,13 @@ def build_headless_controller_class() -> type:
                 return frozenset()
             return state.acknowledged_keys
 
+        def _core_login_path_ready(self) -> None:
+            """The login-shell probe has its first answer, on the probe's own
+            thread: forget the detection made without it and rebuild the
+            state, so Settings and Setup stop saying "unknown"."""
+            self._core_detected_agents_cache = None
+            self._core_publish_state_soon()
+
         def _core_detected_agents(self) -> dict[str, bool]:
             """``{hook provider: the agent's CLI or app is on this Mac}``.
 
@@ -7150,15 +7167,24 @@ def build_headless_controller_class() -> type:
             installed", so they never count. Cached for a minute: the scan
             is a few dozen lstats, but ``state`` rebuilds on every refresh
             and the answer does not move that fast.
+
+            Never waits on the login shell. Until its probe has answered
+            (``login_shell_path``) a provider whose only detector is a PATH
+            marker and that the literal locations did not find is left out
+            of the answer, so the app shows "unknown" rather than "not
+            installed" and ``install_hooks`` does not refuse it. That
+            partial answer is cached for seconds, not a minute.
             """
             now = time.monotonic()
             cached = getattr(self, "_core_detected_agents_cache", None)
             if (
                 isinstance(cached, tuple)
-                and len(cached) == 2
-                and now - float(cached[0]) < DETECTED_AGENTS_TTL_SECONDS
+                and len(cached) == 3
+                and now - float(cached[0]) < float(cached[2])
             ):
                 return dict(cached[1])
+            probe = default_login_shell_probe()
+            unresolved = False
             try:
                 from .installed_agent_inventory import (
                     collect_installed_agent_inventory,
@@ -7166,11 +7192,13 @@ def build_headless_controller_class() -> type:
                 )
                 from .installed_agents import (
                     InstalledSurfaceKind,
+                    SurfaceDetectorKind,
                     SurfacePresence,
                     installed_surface_registrations,
                 )
                 from .providers import HOOK_PROVIDERS
 
+                unresolved = not probe.resolved()
                 result = collect_installed_agent_inventory(default_inventory_roots())
                 present = {
                     observation.key
@@ -7178,6 +7206,7 @@ def build_headless_controller_class() -> type:
                     if observation.presence is not SurfacePresence.ABSENT
                 }
                 detected: dict[str, bool] = {}
+                path_only: set[str] = set()
                 for registration in installed_surface_registrations():
                     if registration.kind is InstalledSurfaceKind.LOCAL_HARNESS:
                         continue
@@ -7189,16 +7218,29 @@ def build_headless_controller_class() -> type:
                         provider = registration.surface_id.split("-", 1)[0]
                     if provider not in HOOK_PROVIDERS:
                         continue
+                    if registration.detector_kind is SurfaceDetectorKind.PATH_MARKER:
+                        path_only.add(provider)
                     if registration.key in present:
                         detected[provider] = True
                     else:
                         detected.setdefault(provider, False)
+                if unresolved:
+                    probe.ensure_started(on_done=self._core_login_path_ready)
+                    for provider in path_only:
+                        if detected.get(provider) is False:
+                            del detected[provider]
             except Exception:
                 self._core_log(
                     f"core: agent detection failed: {traceback.format_exc(limit=3)}"
                 )
-                detected = dict(cached[1]) if isinstance(cached, tuple) and len(cached) == 2 else {}
-            self._core_detected_agents_cache = (now, detected)
+                detected = dict(cached[1]) if isinstance(cached, tuple) and len(cached) == 3 else {}
+            ttl = DETECTED_AGENTS_PENDING_TTL_SECONDS if unresolved else DETECTED_AGENTS_TTL_SECONDS
+            self._core_detected_agents_cache = (now, detected, ttl)
+            if unresolved and probe.resolved():
+                # The answer landed while this scan ran, and its
+                # ``_core_login_path_ready`` may already have cleared the
+                # cache before this store: drop the partial answer again.
+                self._core_detected_agents_cache = None
             return dict(detected)
 
         def _core_catalog_generation(self) -> int | None:

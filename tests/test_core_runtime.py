@@ -777,6 +777,158 @@ def test_the_pending_lines_check_counts_records_not_line_separators(headless, mo
     assert check["detail"] == "1 files, 2 lines"
 
 
+class _PendingLoginProbe:
+    """A login-shell probe the test resolves by hand: it has no runner, no
+    thread and no shell, so nothing here can spawn one."""
+
+    def __init__(self) -> None:
+        self.is_resolved = False
+        self.directories: tuple[Path, ...] = ()
+        self.started: list = []
+
+    def resolved(self) -> bool:
+        return self.is_resolved
+
+    def snapshot(self) -> tuple[Path, ...]:
+        return self.directories
+
+    def ensure_started(self, on_done=None) -> bool:
+        self.started.append(on_done)
+        return True
+
+
+def _detection_sandbox(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, probe: _PendingLoginProbe) -> Path:
+    """Inventory roots under a temporary home, an empty process PATH, and
+    the given probe as the daemon's shared one. Returns a directory holding
+    a ``codex`` executable, which only the login shell's PATH would name."""
+    from jrbar import installed_agent_inventory, login_shell_path
+
+    home = tmp_path / "detect-home"
+    home.mkdir(mode=0o700)
+    roots = (installed_agent_inventory.InventoryRoot("home", home, frozenset({os.getuid()})),)
+    monkeypatch.setattr(installed_agent_inventory, "default_inventory_roots", lambda: roots)
+    empty = tmp_path / "empty-bin"
+    empty.mkdir(mode=0o700)
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setattr(login_shell_path, "_default_probe", probe)
+    shell_bin = tmp_path / "shell-bin"
+    shell_bin.mkdir(mode=0o700)
+    codex = shell_bin / "codex"
+    codex.touch()
+    codex.chmod(0o700)
+    return shell_bin
+
+
+def test_detection_never_waits_on_the_login_shell_and_never_says_not_installed__and_2_more(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # --- scenario: a_pending_probe_leaves_path_only_providers_unknown
+    probe = _PendingLoginProbe()
+    shell_bin = _detection_sandbox(monkeypatch, tmp_path, probe)
+    controller = headless
+
+    detected = controller._core_detected_agents()
+
+    # The scan came back with the probe still out. A CLI only a login-shell
+    # directory could name is missing from the answer, not False; a provider
+    # whose detectors are not a PATH lookup has an honest answer already.
+    assert "codex" not in detected and "claude" not in detected and "kiro" not in detected
+    assert detected["cursor"] is False and detected["openclaw"] is False
+    assert len(probe.started) == 1
+    assert controller._core_detected_agents_cache[2] == core_runtime.DETECTED_AGENTS_PENDING_TTL_SECONDS
+    # Asking again while it is pending asks the probe again (it applies its
+    # own backoff) and still says nothing false.
+    controller._core_detected_agents_cache = None
+    assert "codex" not in controller._core_detected_agents()
+    assert len(probe.started) == 2
+
+    # --- scenario: the_answer_clears_the_cache_and_republishes
+    probe.is_resolved = True
+    probe.directories = (shell_bin,)
+    published: list[str] = []
+    controller._core_publish_state_soon = lambda: published.append("state")
+    assert controller._core_detected_agents_cache is not None
+    probe.started[0]()
+    assert controller._core_detected_agents_cache is None
+    assert published == ["state"]
+
+    # --- scenario: once_resolved_an_absent_cli_is_honestly_not_installed
+    detected = controller._core_detected_agents()
+    assert detected["codex"] is True
+    assert detected["claude"] is False and detected["kiro"] is False
+    assert controller._core_detected_agents_cache[2] == core_runtime.DETECTED_AGENTS_TTL_SECONDS
+    assert len(probe.started) == 2
+
+
+def test_launch_starts_the_login_shell_probe_before_the_first_state_build(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    order: list[str] = []
+    probe = _PendingLoginProbe()
+    _detection_sandbox(monkeypatch, tmp_path, probe)
+    real_start = probe.ensure_started
+    probe.ensure_started = lambda on_done=None: (order.append("probe"), real_start(on_done))[1]
+    headless.refresh_.side_effect = lambda *_args: order.append("refresh")
+
+    headless.applicationDidFinishLaunching_(None)
+
+    assert order[:2] == ["probe", "refresh"]
+    assert probe.started and callable(probe.started[0])
+
+
+def test_an_answer_that_lands_during_a_scan_does_not_leave_a_partial_cache(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from jrbar import installed_agent_inventory
+
+    probe = _PendingLoginProbe()
+    _detection_sandbox(monkeypatch, tmp_path, probe)
+    real_collect = installed_agent_inventory.collect_installed_agent_inventory
+
+    def collect_then_answer(roots, path_dirs=None):
+        result = real_collect(roots, path_dirs)
+        # The probe's thread finishes, and runs its callback, mid-scan.
+        probe.is_resolved = True
+        headless._core_login_path_ready()
+        return result
+
+    monkeypatch.setattr(installed_agent_inventory, "collect_installed_agent_inventory", collect_then_answer)
+    headless._core_publish_state_soon = lambda: None
+
+    headless._core_detected_agents()
+
+    assert headless._core_detected_agents_cache is None
+
+
+def test_install_hooks_refuses_only_a_cli_known_to_be_missing(
+    headless, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jrbar import install
+
+    installed: list[str] = []
+
+    def install_provider_hooks(provider, *, state_dir):
+        installed.append(provider)
+        return SimpleNamespace(changed=True, to_dict=lambda: {"provider": provider})
+
+    monkeypatch.setattr(install, "install_provider_hooks", install_provider_hooks)
+    controller = headless
+    controller.performSelectorOnMainThread_withObject_waitUntilDone_ = lambda *_args: None
+
+    # The probe has not answered: the CLI is unknown, so the install goes ahead.
+    controller._core_detected_agents = lambda: {"cursor": False}
+    reply = controller._core_dispatch("install_hooks", {"providers": ["codex"]})
+    assert installed == ["codex"]
+    assert reply["results"]["codex"]["ok"] is True
+    assert reply["results"]["codex"]["detected"] is None
+
+    # An explicit False (looked everywhere, found nothing) still refuses.
+    controller._core_detected_agents = lambda: {"codex": False}
+    reply = controller._core_dispatch("install_hooks", {"providers": ["codex"]})
+    assert installed == ["codex"]
+    assert reply["results"]["codex"] == {"ok": False, "detected": False, "error": "no CLI found on PATH"}
+
+
 def test_doctor_and_history_answer_without_a_snapshot__and_1_more(headless) -> None:
     # --- scenario: doctor_and_history_answer_without_a_snapshot
     controller = headless
