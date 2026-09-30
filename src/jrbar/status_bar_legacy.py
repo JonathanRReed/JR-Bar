@@ -10107,24 +10107,6 @@ class StatusBarController(NSObject):
                 request.projection,
                 request.relay_elapsed_seconds,
             )
-        elif (
-            presentation_sync is not None
-            and self.settings.link_screen_bar_to_hardware
-            and write.changed
-            and write.error is None
-        ):
-            # Linked means SYNCED: the strip restarted its cycle at this
-            # write; snap the bar's phase to the same moment so the two
-            # surfaces loop together instead of a few hundred ms apart.
-            # ``screen_bar_phase_offset_ms`` shifts that anchor for the
-            # pair that still reads out of step -- positive holds the bar
-            # back, so its t=0 lands later than the strip's write.
-            reanchor = getattr(self.virtual_status_device, "reanchor_program", None)
-            if callable(reanchor):
-                offset_ms = float(
-                    getattr(self.settings, "screen_bar_phase_offset_ms", 0.0) or 0.0
-                )
-                reanchor(result.completed_at + offset_ms / 1000.0)
 
     def _lid_observation_interval(self) -> float:
         # The 1s cadence exists to catch the lid edge promptly when the
