@@ -157,6 +157,14 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
 
     /// The agent's hook is holding this ask for JR-Bar's Approve/Deny.
     public var isHeldForDecision: Bool { decision.map { !$0.decided } ?? false }
+    /// JR-Bar already answered this ask through the agent's hook, and the
+    /// agent's own events have not closed the request yet, so the approved
+    /// tool may still be running. The daemon says `answerable: false` for
+    /// it, keeps its preview and risk mark, and refuses a second answer.
+    public var isDecided: Bool { decision?.decided ?? false }
+    /// What a surface says where the verbs were: nothing is being asked of
+    /// the person, and nothing is typed. nil for an ask that is not decided.
+    public var decidedLine: String? { isDecided ? "Answered, waiting for the agent" : nil }
     /// Still held at `now`: false once `hold_until` has come, when the
     /// agent's own prompt carries on and Always and the choices lapse
     /// with the hold. A hold with no deadline lasts until the daemon
@@ -221,7 +229,9 @@ public struct CoreAskDecision: Codable, Hashable, Sendable {
     public var holdUntil: Double?
     /// An "Always allow" can be sent (Claude, with an allow rule offered).
     public var always: Bool
-    /// Answered a moment ago; the provider's events have not caught up.
+    /// Answered from JR-Bar. It stays true until the agent's own events
+    /// close the request (the tool finished, or the turn ended), however
+    /// long the approved tool runs; the daemon lets it go after an hour.
     public var decided: Bool
     /// The questions of a held multiple-choice ask (Claude's
     /// AskUserQuestion), in the agent's order. Empty for a yes/no ask.

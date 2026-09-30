@@ -946,21 +946,33 @@ def ask_document(
         from .answer_decisions import ask_preview_for_request, parked_decision_for_request
 
         parked = parked_decision_for_request(request, decision_lane)
-        if parked is not None:
-            if not parked.decided:
-                preview, risk = parked.preview, parked.risk
+        if parked is not None and not parked.decided:
+            preview, risk = parked.preview, parked.risk
         else:
+            # Not held, or held and already answered. The answered request
+            # keeps no preview of its own, but what the person approved is
+            # still what is running, so it comes from the PermissionRequest
+            # the ingress saw for that exact request id, as for any ask.
             preview, risk = ask_preview_for_request(request, ask_previews)  # type: ignore[arg-type]
-    answerable, replyable = _answer_flags(
-        request,
-        answer_contracts,
-        has_answer_handler,
-        host_bundle_ids,
-        # A held question is answered by picking its options
-        # (``decision.choices``); its Approve/Deny stay the keystroke
-        # path's to offer, exactly as before it was held.
-        decision_parked=parked is not None and not parked.choices,
-    )
+    decided = parked is not None and parked.decided
+    if decided:
+        # Answered from JR-Bar: the agent's own events have not closed the
+        # request yet, so the approved tool may still be running, and a
+        # second answer is refused (``stale_ask``) before anything is typed.
+        # No surface may draw Approve, Deny or a reply field for it, and the
+        # keystroke path's answer must not be offered in its place.
+        answerable, replyable = False, False
+    else:
+        answerable, replyable = _answer_flags(
+            request,
+            answer_contracts,
+            has_answer_handler,
+            host_bundle_ids,
+            # A held question is answered by picking its options
+            # (``decision.choices``); its Approve/Deny stay the keystroke
+            # path's to offer, exactly as before it was held.
+            decision_parked=parked is not None and not parked.choices,
+        )
     # The ask's exact episode identity: the canonical request key when the
     # operator state models one, ``None`` when it does not. A surface that
     # pins a card to ``request`` can have ``answer_ask`` verify the same

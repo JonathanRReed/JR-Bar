@@ -38,6 +38,34 @@ struct DecideLaneCodecTests {
         #expect(!answered.isDestructive)
     }
 
+    @Test("an answered ask is not answerable, keeps what it would run, and says it waits for the agent")
+    func decidedAskAsTheDaemonPublishesIt() throws {
+        let answered = try ask("""
+        {"session":"claude:session:a","kind":"permission","opened_at":1788982800.0,
+         "summary":"Bash","answerable":false,"replyable":false,"request":"request:v1:x",
+         "decision":{"hold_until":1788982845.5,"always":false,"decided":true,"choices":[]},
+         "preview":"rm -rf build","risk":"destructive"}
+        """)
+        #expect(answered.isDecided)
+        #expect(!answered.canAnswer, "no Approve or Deny is offered for it")
+        #expect(!answered.wantsTextReply)
+        #expect(!answered.isHeldForDecision)
+        #expect(!answered.canChoose)
+        #expect(answered.preview == "rm -rf build", "what was approved is still on the card")
+        #expect(answered.isDestructive, "and so is its mark")
+        #expect(answered.decidedLine == "Answered, waiting for the agent")
+    }
+
+    @Test("an ask that is held, plain or from an older daemon is not decided and says nothing of it")
+    func undecidedAsksHaveNoDecidedLine() throws {
+        let held = try ask(#"{"session":"s","answerable":true,"decision":{"hold_until":1.0,"always":true,"decided":false}}"#)
+        #expect(!held.isDecided && held.decidedLine == nil)
+        let plain = try ask(#"{"session":"s","answerable":true}"#)
+        #expect(!plain.isDecided && plain.decidedLine == nil)
+        let odd = try ask(#"{"session":"s","answerable":true,"decision":"soon"}"#)
+        #expect(!odd.isDecided && odd.decidedLine == nil)
+    }
+
     @Test("a hold lapses at hold_until; one with no deadline, or none at all, reads as before")
     func holdLapses() throws {
         let held = try ask("""

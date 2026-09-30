@@ -17,6 +17,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from jrbar.answer_decisions import (
+    DECIDED_TOMBSTONE_CAP_SECONDS,
+    AskPreviews,
+    DecisionBroker,
+    DecisionResult,
+    DecisionVerb,
+    permission_facts,
+)
 from jrbar.completion_visibility import filter_visible_sessions
 from jrbar.core_deck import DeckSlotFacts, build_deck_document, device_document
 from jrbar.core_projection import (
@@ -30,6 +38,7 @@ from jrbar.core_projection import (
     SurfaceFacts,
     aggregate_counts,
     aggregate_mode,
+    ask_document,
     bounded_duration,
     build_lights_document,
     build_settings_document,
@@ -52,7 +61,7 @@ from jrbar.core_projection import (
 )
 from jrbar.core_usage_samples import UsageSampleBuffer
 from jrbar.models import AgentMode, AgentStatus
-from jrbar.provider_facts import RequestKind, WorkIdentifier, WorkKey
+from jrbar.provider_facts import RequestIdentifier, RequestKey, RequestKind, WorkIdentifier, WorkKey
 from jrbar.providers import negotiated_provider_sources
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1682,3 +1691,157 @@ def test_constrained_lapse_boundary_is_strict_and_no_reset_never_lapses() -> Non
 
     assert provider["constrained"]["id"] == "credits"
     assert provider["constrained"]["candidates"] == 2
+
+
+# --- an ask the agent's hook was answered for ---------------------------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _decide_lane_ask(*, session_id: str = "codex-session-1"):
+    """One Codex permission ask on its real request key, with the pieces the
+    projection reads for it: a broker that has not parked it yet, the store
+    of what every PermissionRequest wanted to run, the negotiated contract
+    and a Terminal host that can prove its focused tab (so the keystroke
+    path would call the ask answerable)."""
+    text = json.dumps(
+        {
+            "hook_event_name": "PermissionRequest",
+            "session_id": session_id,
+            "turn_id": "turn-7",
+            "cwd": "/work/project",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -rf build"},
+        }
+    )
+    facts = permission_facts("codex", text)
+    assert facts is not None
+    source = next(
+        source
+        for source in negotiated_provider_sources()
+        if source.source_key.provider_id == "codex" and source.source_key.capability_id == "live_agent_events"
+    )
+    work_key = WorkKey(source.source_key, WorkIdentifier(facts.work_id))
+    request = SimpleNamespace(
+        key=RequestKey(work_key, RequestIdentifier(facts.request_id)),
+        request_kind=RequestKind.PERMISSION,
+        opened_at_epoch=NOW - 30.0,
+        phase=SimpleNamespace(value="live_waiting"),
+    )
+    clock = _Clock()
+    broker = DecisionBroker(clock=clock, wall_clock=lambda: NOW, watching=lambda _facts, _pid: False)
+    previews = AskPreviews(clock=clock)
+    assert previews.note("codex", text)
+
+    def document(*, for_work_key: object = work_key, operator_request: object = request) -> dict:
+        status = _status(
+            provider="codex",
+            agent_id=CODEX_ID,
+            mode=AgentMode.WAITING_FOR_INPUT,
+            event_name="PermissionRequest",
+            work_key=for_work_key,
+            message="Run: rm -rf build",
+        )
+        return ask_document(
+            status,
+            SimpleNamespace(requests=(operator_request,), works=()),
+            with_session=False,
+            answer_contracts={source.source_key: source.contract},
+            has_answer_handler=lambda _invocation: True,
+            host_bundle_ids=frozenset({"com.apple.Terminal"}),
+            decision_lane=broker,
+            ask_previews=previews,
+        )
+
+    def park_and_answer(verb: DecisionVerb = DecisionVerb.ALLOW) -> None:
+        slot = broker.park(facts, wait_limit_seconds=50.0)
+        assert slot is not None
+        # The hook's connection took the verdict line before the answer
+        # waited on it: nothing to sleep on, nothing to join.
+        broker.delivered(slot, True)
+        assert broker.decide(facts.provider, facts.request_id, verb, work_id=facts.work_id) is DecisionResult.SENT
+
+    return SimpleNamespace(
+        facts=facts,
+        request=request,
+        work_key=work_key,
+        clock=clock,
+        broker=broker,
+        previews=previews,
+        document=document,
+        park=lambda: broker.park(facts, wait_limit_seconds=50.0),
+        park_and_answer=park_and_answer,
+    )
+
+
+def test_a_decided_ask_offers_no_verb_and_keeps_what_it_would_run__and_4_more() -> None:
+    lane = _decide_lane_ask()
+
+    # --- scenario: an ask the lane does not hold is unchanged, preview from the ingress
+    document = lane.document()
+    assert document["answerable"] is True and document["replyable"] is False
+    assert document["decision"] is None
+    assert document["preview"] == "rm -rf build" and document["risk"] == "destructive"
+
+    # --- scenario: a parked ask that nobody answered yet is unchanged
+    assert lane.park() is not None
+    parked = lane.document()
+    assert parked["answerable"] is True and parked["replyable"] is False
+    assert parked["decision"]["decided"] is False and parked["decision"]["hold_until"] > NOW
+    assert parked["decision"]["always"] is False and parked["decision"]["choices"] == []
+    assert parked["preview"] == "rm -rf build" and parked["risk"] == "destructive"
+
+    # --- scenario: once answered from JR-Bar it offers no Approve and no Deny, and still says what was approved
+    lane.broker.release_all()
+    lane.park_and_answer()
+    decided = lane.document()
+    assert decided["answerable"] is False and decided["replyable"] is False
+    assert decided["decision"]["decided"] is True and decided["decision"]["choices"] == []
+    assert decided["preview"] == "rm -rf build" and decided["risk"] == "destructive"
+    # The rest of the card is what it was: the same episode, the same words.
+    assert decided["kind"] == parked["kind"] and decided["summary"] == parked["summary"]
+    assert decided["opened_at"] == parked["opened_at"] and decided["request"] == parked["request"]
+    assert decided["request"] is not None
+    json.dumps(decided)
+
+    # --- scenario: a sub-agent's identical call is its own ask, not the answered one
+    other_work = WorkKey(lane.work_key.source_key, WorkIdentifier("codex-agent-9"))
+    other_request = SimpleNamespace(
+        key=RequestKey(other_work, lane.request.key.request_id),
+        request_kind=RequestKind.PERMISSION,
+        opened_at_epoch=NOW - 5.0,
+        phase=SimpleNamespace(value="live_waiting"),
+    )
+    other = lane.document(for_work_key=other_work, operator_request=other_request)
+    assert other["answerable"] is True and other["decision"] is None
+
+    # --- scenario: the agent's own events closing the request (here the cap) give the ask its ordinary flags back
+    lane.clock.now += DECIDED_TOMBSTONE_CAP_SECONDS + 1.0
+    closed = lane.document()
+    assert closed["decision"] is None and closed["answerable"] is True
+
+
+def test_a_decided_ask_the_ingress_never_previewed_still_reads_as_answered() -> None:
+    lane = _decide_lane_ask()
+    lane.previews = AskPreviews(clock=lane.clock)
+    # The ask's card asks for its preview from the shared store, and a fresh
+    # store has none: the decided card keeps the summary the status carries.
+    lane.park_and_answer()
+    document = ask_document(
+        _status(provider="codex", agent_id=CODEX_ID, work_key=lane.work_key, message="Run: rm -rf build"),
+        SimpleNamespace(requests=(lane.request,), works=()),
+        with_session=True,
+        decision_lane=lane.broker,
+        ask_previews=lane.previews,
+    )
+    assert document["session"] == CODEX_ID
+    assert document["answerable"] is False and document["replyable"] is False
+    assert document["decision"]["decided"] is True
+    assert document["preview"] is None and document["risk"] is None
+    assert document["summary"] == "Run: rm -rf build"
