@@ -229,7 +229,7 @@ All notable changes to JR-Bar are documented here.
 - Integrated the utility and toy repair branch and retained the useful
   menu-bar and Keep Awake corrections from the alternate lifecycle branch.
 
-## 0.9.9 (unreleased)
+## 0.9.9
 
 ### Round 4 (2026-09-25): the performance pass
 
@@ -1355,7 +1355,7 @@ All notable changes to JR-Bar are documented here.
   Under the concealer it has no face at all; the Screen Bar ear's ‹
   carries the hidden run and the panel hotkey opens the panel.
 
-## 0.9.8 (unreleased)
+## 0.9.8
 
 - Provider pickers everywhere a counterpart exists: each utility card
   now carries "Render with" — Menu Bar delegates to Bartender, Ice, or
@@ -1955,7 +1955,7 @@ All notable changes to JR-Bar are documented here.
   Alcove silhouette — while the shared tray stays flush under the
   bezel between them and an unclaimed side grows no lobe at all.
 
-## 0.9.7 (unreleased)
+## 0.9.7
 
 - Fold learned the last of the gesture. The fold is now a bounded 0…1
   arc from your activation angle down to the shut line instead of an
@@ -1995,7 +1995,7 @@ All notable changes to JR-Bar are documented here.
   `idle_screensaver_*` settings and their tests. The ambient runtime's
   other seams (semantic cues, DND, night) are untouched.
 
-## 0.9.6 (unreleased)
+## 0.9.6
 
 - Toys. A new Settings page for the things that are fun first & don't
   touch agents or usage (docs/TOYS.md). Six to start: Fold, your desktop

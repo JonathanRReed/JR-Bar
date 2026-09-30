@@ -28,6 +28,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Final
 
+from . import __version__
 from .ipc import _accept_one, _AcceptWakeup, _same_uid_peer
 from .state_paths import default_state_dir
 
@@ -242,7 +243,7 @@ class CoreServer:
         dispatch: Callable[[str, dict[str, Any]], Any],
         initial_documents: Callable[[], Iterable[dict[str, Any]]],
         socket_path: Path | None = None,
-        core_version: str = "0.8.0",
+        core_version: str = __version__,
         capabilities: Iterable[str] = DEFAULT_CAPABILITIES,
         max_clients: int = MAX_CLIENTS,
         peer_uid_reader: Callable[[socket.socket], int] | None = None,
