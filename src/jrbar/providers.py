@@ -507,6 +507,13 @@ function canonicalEvent(event) {{
   }}[name];
 }}
 
+// An ask names its request as properties.id; the replied and rejected events
+// that close it name the same request as properties.requestID.
+function isAsk(event) {{
+  const name = eventName(event);
+  return name === "permission.asked" || name === "question.asked";
+}}
+
 function payloadFor(event) {{
   if (!event || typeof event !== "object") return undefined;
   const hookEventName = canonicalEvent(event);
@@ -514,12 +521,17 @@ function payloadFor(event) {{
   const payload = {{ hook_event_name: hookEventName }};
   const properties = event.properties;
   if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
+  const ask = isAsk(event);
   const sessionId = opaqueIdentifier(properties.sessionID ?? properties.sessionId);
   const workId = opaqueIdentifier(properties.workID ?? properties.workId);
-  const requestId = opaqueIdentifier(properties.requestID ?? properties.requestId);
+  const rawRequestId = ask ? properties.id : (properties.requestID ?? properties.requestId);
+  const requestId = opaqueIdentifier(rawRequestId);
   if ((properties.sessionID ?? properties.sessionId) !== undefined && !sessionId) return undefined;
   if ((properties.workID ?? properties.workId) !== undefined && !workId) return undefined;
-  if ((properties.requestID ?? properties.requestId) !== undefined && !requestId) return undefined;
+  // A malformed id on an ask is forwarded without it: a dropped ask is worse
+  // than one the daemon reports honestly as keyless. A reply that names no
+  // valid request resolves nothing, so it is dropped.
+  if (!ask && rawRequestId !== undefined && !requestId) return undefined;
   const sequence = boundedSequence(properties.sequence);
   const timestamp = boundedTimestamp(properties.timestamp);
   if (sessionId) payload.session_id = sessionId;
@@ -527,7 +539,7 @@ function payloadFor(event) {{
   if (requestId) payload.request_id = requestId;
   if (sequence !== undefined) payload.sequence = sequence;
   if (timestamp) payload.timestamp = timestamp;
-  if (hookEventName === "Notification") payload.notification_kind = "input_required";
+  if (hookEventName === "Notification") payload.notification_type = "input_required";
   const encoded = JSON.stringify(payload);
   return encoded.length <= JRBAR_MAX_PAYLOAD_BYTES ? encoded : undefined;
 }}
