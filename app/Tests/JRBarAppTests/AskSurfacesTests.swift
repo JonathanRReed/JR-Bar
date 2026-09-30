@@ -654,6 +654,43 @@ struct AskSurfacesTests {
         #expect(quiet == UNNotificationInterruptionLevel.active, "every other banner stays active")
     }
 
+    @Test("a cached grant posts straight away, with no system read")
+    func grantedPostsWithoutARead() {
+        let authorized = NotificationBridge.gate(for: .authorized, rechecked: false)
+        #expect(authorized == NotificationBridge.AuthorizationGate.send)
+        let provisional = NotificationBridge.gate(for: .provisional, rechecked: false)
+        #expect(provisional == NotificationBridge.AuthorizationGate.send)
+    }
+
+    @Test("a cached denial is re-read before it is believed")
+    func deniedIsReReadFirst() {
+        let believed = NotificationBridge.gate(for: .denied, rechecked: false)
+        #expect(believed == NotificationBridge.AuthorizationGate.recheck)
+    }
+
+    @Test("a denial confirmed by the system stays skipped and never re-prompts")
+    func confirmedDenialSkips() {
+        let confirmed = NotificationBridge.gate(for: .denied, rechecked: true)
+        #expect(confirmed == NotificationBridge.AuthorizationGate.skip)
+        #expect(confirmed != NotificationBridge.AuthorizationGate.askSystem)
+    }
+
+    @Test("a re-read that finds the grant sends")
+    func reReadFindsTheGrant() {
+        let authorized = NotificationBridge.gate(for: .authorized, rechecked: true)
+        #expect(authorized == NotificationBridge.AuthorizationGate.send)
+        let provisional = NotificationBridge.gate(for: .provisional, rechecked: true)
+        #expect(provisional == NotificationBridge.AuthorizationGate.send)
+    }
+
+    @Test("an undecided status still goes to the lazy system prompt")
+    func undecidedStillPrompts() {
+        let first = NotificationBridge.gate(for: .notDetermined, rechecked: false)
+        #expect(first == NotificationBridge.AuthorizationGate.askSystem)
+        let again = NotificationBridge.gate(for: .notDetermined, rechecked: true)
+        #expect(again == NotificationBridge.AuthorizationGate.askSystem)
+    }
+
     @Test("the daemon going away shrinks a takeover card back to its capsule")
     func resetReleasesTakeover() {
         var toysState = ToysState()
