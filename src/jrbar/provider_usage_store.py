@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 from .provider_usage_platform import (
@@ -59,6 +60,9 @@ def _snapshot_document(snapshot: ProviderUsageSnapshot) -> dict[str, object]:
         "source_instance_id": snapshot.source_instance_id,
         "reset_credits": snapshot.reset_credits,
         "account_discriminator": snapshot.account_discriminator,
+        # Optional on read and not a schema bump: a file with no key loads as
+        # "read at observed_at", and an older build ignores the key.
+        "read_at": snapshot.read_at,
     }
 
 
@@ -138,6 +142,7 @@ def _snapshot(value: object) -> ProviderUsageSnapshot | None:
             source_instance_id=value.get("source_instance_id", DEFAULT_SOURCE_INSTANCE_ID),
             reset_credits=_reset_credits(value.get("reset_credits")),
             account_discriminator=value.get("account_discriminator"),
+            read_at=_read_at(value.get("read_at")),
         )
     except (TypeError, ValueError):
         return None
@@ -147,6 +152,18 @@ def _reset_credits(value: object) -> int | None:
     """An older file has no count, and a bad one is dropped, never fatal."""
     if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10_000:
         return value
+    return None
+
+
+def _read_at(value: object) -> float | None:
+    """An older file has no read time, and a bad one is dropped, never fatal."""
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and float(value) >= 0.0
+    ):
+        return float(value)
     return None
 
 
