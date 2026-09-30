@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -284,11 +285,31 @@ def _local_token_totals(
     }
 
 
+#: Log lines already written, so a fault that repeats on every quota refresh
+#: is said once.
+_noted_once: set[str] = set()
+_noted_once_lock = threading.Lock()
+
+
+def _note_once(key: str, message: str) -> None:
+    with _noted_once_lock:
+        if key in _noted_once:
+            return
+        _noted_once.add(key)
+    # stderr, never stdout: a command printing JSON shares this code.
+    print(f"usage: {message}", file=sys.stderr, flush=True)
+
+
 def _extra_cache_roots(
     provider_id: str,
     home: Path,
     extra_homes: Iterable[str] | None,
-) -> tuple[Path, ...]:
+) -> tuple[Path, ...] | None:
+    """The extra account homes to add, or ``None`` when they cannot be listed.
+
+    ``None`` is not "no extra homes": the caller decides what an unknown set
+    means (Claude publishes no total, Codex keeps its primary home).
+    """
     try:
         from .provider_homes import configured_extra_homes, extra_scan_roots
 
@@ -298,8 +319,21 @@ def _extra_cache_roots(
             else tuple(extra_homes)
         )
         return extra_scan_roots(provider_id, home=home, extras=configured)
-    except Exception:
-        return ()
+    except Exception as error:
+        cause = error.__class__.__name__
+        if provider_id == "codex":
+            _note_once(
+                provider_id,
+                f"codex extra homes could not be listed ({cause}); "
+                "the token card counts the primary home",
+            )
+        else:
+            _note_once(
+                provider_id,
+                f"{provider_id} extra homes could not be listed ({cause}); "
+                "the token card shows nothing rather than a total that may leave a home out",
+            )
+        return None
 
 
 def _cached_provider_local_scan(
@@ -348,6 +382,12 @@ def _cached_provider_local_scan(
     graph_cache = default_state_dir(home) / "usage-scan-cache.json"
     cold_cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
     extra_roots = _extra_cache_roots(provider_id, home, extra_homes)
+    if extra_roots is None:
+        if provider_id != "codex":
+            # Claude's total is every home or nothing: the primary home
+            # alone is the half total the card refuses to show.
+            return None
+        extra_roots = ()
     candidates = (
         (
             usage_stats.provider_cache_path(graph_cache, source_key),

@@ -30,6 +30,7 @@ def _default_homes_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
     subject._local_tokens_memo.clear()
+    subject._noted_once.clear()
 
 
 #: A fixed "now" (2026-08-29T10:40:00Z) so no window depends on the wall clock.
@@ -604,3 +605,66 @@ def test_claude_cached_scan_remembers_a_refusal_while_the_cache_is_unchanged(
 
     assert document is not None
     assert document["input_tokens"] == 20
+
+
+def _extra_homes_cannot_be_listed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("the extra homes could not be resolved")
+
+    monkeypatch.setattr(provider_homes, "extra_scan_roots", broken)
+
+
+def test_claude_cached_scan_withholds_the_total_when_extra_homes_cannot_be_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "primary.jsonl",
+        [_claude_line("primary", "p1", OBSERVED - 2 * DAY)],
+    )
+    _scan_claude(tmp_path, graph_days=30)
+    assert _claude_card(tmp_path) is not None, "the fixture must start with a real total"
+    capsys.readouterr()
+
+    _extra_homes_cannot_be_listed(monkeypatch)
+
+    # The primary home alone is half a total: the card shows nothing, and the
+    # daemon's log says why, once however many refreshes ask.
+    assert _claude_card(tmp_path) is None
+    assert _claude_card(tmp_path) is None
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert len(lines) == 1, lines
+    assert "claude" in lines[0]
+    assert str(tmp_path) not in lines[0], "the log line named a personal path"
+
+    monkeypatch.undo()
+    recovered = _claude_card(tmp_path)
+
+    assert recovered is not None and recovered["input_tokens"] == 10
+
+
+def test_codex_cached_scan_keeps_the_primary_home_when_extra_homes_cannot_be_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    started = OBSERVED - 3 * DAY
+    root = _codex_rollouts(
+        tmp_path,
+        {
+            "primary.jsonl": [
+                _meta("primary", timestamp=_at(started)),
+                _tokens(100, 100, _at(started + 60)),
+            ]
+        },
+    )
+    _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
+    _extra_homes_cannot_be_listed(monkeypatch)
+
+    first = subject._cached_provider_local_scan("codex", tmp_path, OBSERVED)
+    second = subject._cached_provider_local_scan("codex", tmp_path, OBSERVED)
+
+    # Codex documents "the primary home plus whatever the cache covers".
+    assert _card_tokens(first) == 100
+    assert first == second
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert len(lines) == 1, lines
+    assert "codex" in lines[0]
