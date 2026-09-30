@@ -525,6 +525,14 @@ cannot be honestly "implemented" without the live provider runs.
   shared dispatch queue that sheds its OLDEST frames on overflow, latest-
   wins coalescing for `state`/`lights`/`settings`, hello deadline, and
   the client's deterministic backoff + pending-command drain.
+  Correction, 2026-09-29: the "3-strike drop" above never ran. On a
+  blocking socket the kernel send deadline surfaces as `BlockingIOError`,
+  not `TimeoutError`, so the first send stalled past the deadline dropped
+  the client. That is the safe behaviour, since a stalled send can leave
+  half a frame on the wire, and it is now the stated one: one stalled send
+  drops the client, which reconnects and replays the events it missed. The
+  daemon's send buffer is 256 KB, so a reader that pauses for a moment is
+  no longer dropped for it.
 - `src/jrbar/core_server.py`: every `publish_event` is now journaled
   under the flush lock — the journal IS the wire's order. Each event
   carries `cursor` (`<stream>:<event id>`); `stream` is pid + start

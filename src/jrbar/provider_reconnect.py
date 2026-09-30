@@ -44,6 +44,9 @@ CREDENTIAL_SOURCE_FILES: dict[str, tuple[str, ...]] = {
     "grok": (".grok/auth.json",),
     "codex": (".codex/auth.json",),
     "claude": (".claude/.credentials.json",),
+    # The Gemini CLI writes this file when the person signs in, and JR-Bar
+    # never rewrites it, so a change here is always the CLI's own.
+    "gemini": (".gemini/oauth_creds.json",),
 }
 
 #: Transient-failure ladder, seconds. CodexBar uses 5 min doubling to a
@@ -560,8 +563,10 @@ def note_failure(
 ) -> FailureGate:
     if terminal:
         # An auth failure retries only when the credential source
-        # changes -- but never goes completely quiet, in case the fix
-        # happens somewhere fingerprints cannot see (the Keychain).
+        # fingerprint changes (a file, or a Keychain item's attributes for
+        # Claude). `retry_at` is not consulted for a terminal gate, so a
+        # provider with no fingerprint waits for the person's own refresh:
+        # a forced refresh from a click always bypasses the gate.
         return FailureGate(
             retry_at=now + TRANSIENT_BACKOFF_SECONDS[-1],
             strikes=gate.strikes,

@@ -40,12 +40,17 @@ LIGHTS_MIN_INTERVAL_SECONDS: Final = 1.0 / 30.0
 SETTINGS_MIN_INTERVAL_SECONDS: Final = 1.0 / 10.0
 # SO_SNDTIMEO on every accepted client: the flusher fans frames out
 # serially, so one peer that stops reading must not wedge publishing for
-# the rest. A send that blocks longer than this counts one strike; a
-# client with CLIENT_MAX_BLOCKED_SENDS consecutive strikes is dropped
-# (a timed-out sendall may have written a partial frame, so the stream
-# is already suspect by then).
+# the rest. A send that blocks longer than this drops the client at once:
+# a timed-out sendall may have written part of a frame, so the stream is
+# already suspect. The app reconnects with backoff and replays the events
+# it missed (``replay_events``).
 CLIENT_SEND_TIMEOUT_SECONDS: Final = 1.0
-CLIENT_MAX_BLOCKED_SENDS: Final = 3
+# The kernel's default send buffer for a Unix socket is 8 KB on macOS, so a
+# 30-60 KB state frame stalls the moment the peer is a little slow. A
+# larger buffer on the daemon's side lets a reader that pauses for a moment
+# catch up without being dropped. Best effort: a failure to set it is not
+# a reason to refuse the client.
+CLIENT_SEND_BUFFER_BYTES: Final = 256 * 1024
 # Bound on queued event/log frames waiting for the flusher. Coalesced
 # kinds (state/lights/settings) live in `_pending` latest-wins and are
 # already bounded; this cap keeps an absent flusher or a burst of logs
@@ -142,12 +147,58 @@ def _envelope(kind: str, document: dict[str, Any]) -> dict[str, Any]:
 
 
 class _Client:
-    def __init__(self, connection: socket.socket, index: int) -> None:
+    def __init__(
+        self,
+        connection: socket.socket,
+        index: int,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
         self.connection = connection
         self.index = index
         self.write_lock = threading.Lock()
         self.alive = True
-        self.blocked_sends = 0
+        self._log = log or (lambda _line: None)
+        # A client is registered for live frames before its greeting is sent,
+        # so no event falls between the journal tail in ``hello`` and the
+        # live stream. Until the greeting is done the flusher holds live
+        # frames here (``deliver``), and ``finish_priming`` sends them after
+        # it, in order. ``None`` means the client is primed.
+        self._gate = threading.Lock()
+        self._held: list[bytes] | None = []
+
+    def deliver(self, frame: bytes) -> bool:
+        """The flusher's send. Never blocks on a client that is still being
+        greeted: its frames wait behind the greeting instead."""
+        if not self.alive:
+            return False
+        with self._gate:
+            if self._held is not None:
+                if len(self._held) >= MAX_QUEUED_FRAMES:
+                    # A greeting that stalls this long is not coming back;
+                    # dropping it loses nothing the reconnect cannot replay,
+                    # and buffering without bound would.
+                    self.alive = False
+                    return False
+                self._held.append(frame)
+                return True
+        return self.send(frame)
+
+    def finish_priming(self) -> None:
+        """Send what was held during the greeting, in order, then go live.
+
+        ``_held`` only becomes ``None`` under the gate after a drain finds
+        nothing new, so no live frame can overtake a held one.
+        """
+        while True:
+            with self._gate:
+                batch = self._held
+                if not batch:
+                    self._held = None
+                    return
+                self._held = []
+            for frame in batch:
+                if not self.send(frame):
+                    return
 
     def send(self, frame: bytes) -> bool:
         if not self.alive:
@@ -155,19 +206,19 @@ class _Client:
         with self.write_lock:
             try:
                 self.connection.sendall(frame)
-            except TimeoutError:
+            except (TimeoutError, BlockingIOError):
                 # SO_SNDTIMEO fired: the peer stopped draining its buffer.
-                # Tolerate a few consecutive blocked sends (a busy app may
-                # just be slow), then declare the client dead so the
-                # flusher stops paying the timeout on every frame.
-                self.blocked_sends += 1
-                if self.blocked_sends >= CLIENT_MAX_BLOCKED_SENDS:
-                    self.alive = False
-                return self.alive
+                # On a blocking socket the kernel deadline surfaces as
+                # BlockingIOError (EAGAIN), not TimeoutError. The stall may
+                # have left a partial NDJSON line on the wire, so nothing
+                # can safely follow it: drop the client now. It recovers by
+                # reconnecting and replaying the events it missed.
+                self.alive = False
+                self._log(f"core dropped client {self.index}: send stalled")
+                return False
             except OSError:
                 self.alive = False
                 return False
-            self.blocked_sends = 0
             return True
 
     def close(self) -> None:
@@ -634,7 +685,7 @@ class CoreServer:
         with self._lock:
             clients = list(self._clients)
         self.stats["frames_out"] += 1
-        dead = [client for client in clients if not client.send(frame)]
+        dead = [client for client in clients if not client.deliver(frame)]
         if dead:
             self._drop_clients(dead)
 
@@ -663,6 +714,12 @@ class CoreServer:
             except OSError:
                 connection.close()
                 continue
+            try:
+                connection.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_SNDBUF, CLIENT_SEND_BUFFER_BYTES
+                )
+            except OSError:
+                pass
             if not _same_uid_peer(connection, self._peer_uid_reader):
                 self.stats["refused_clients"] += 1
                 self._log("core refused a foreign-uid peer")
@@ -678,7 +735,7 @@ class CoreServer:
                     connection.close()
                     continue
                 self._client_counter += 1
-                client = _Client(connection, self._client_counter)
+                client = _Client(connection, self._client_counter, self._log)
                 self._clients.append(client)
             try:
                 threading.Thread(
@@ -701,31 +758,40 @@ class CoreServer:
 
     def _serve_client(self, client: _Client) -> None:
         try:
-            client.send(encode_frame(self.hello_document()))
-            for document in self._initial_documents():
-                if not client.alive:
-                    break
-                kind = document.get("t")
-                if not isinstance(kind, str):
-                    continue
-                frame = encode_frame(_envelope(kind, document))
-                if len(frame) > MAX_FRAME_BYTES:
-                    self._log(f"core skipped oversize initial {document.get('t')} frame")
-                    continue
-                client.send(frame)
-            for event in self.recent_reset_events():
-                if not client.alive:
-                    break
-                frame = encode_frame(event)
-                if len(frame) > MAX_FRAME_BYTES:
-                    self._log("core skipped oversize initial quota_reset frame")
-                    continue
-                client.send(frame)
+            try:
+                self._greet(client)
+            finally:
+                # Frames published while the greeting was being sent follow
+                # it, in order; a skipped frame or an early exit must never
+                # leave the client held forever.
+                client.finish_priming()
             self._read_commands(client)
         except Exception as exc:  # pragma: no cover - defensive
             self._log(f"core client {client.index} failed: {exc}")
         finally:
             self._drop_clients([client])
+
+    def _greet(self, client: _Client) -> None:
+        client.send(encode_frame(self.hello_document()))
+        for document in self._initial_documents():
+            if not client.alive:
+                break
+            kind = document.get("t")
+            if not isinstance(kind, str):
+                continue
+            frame = encode_frame(_envelope(kind, document))
+            if len(frame) > MAX_FRAME_BYTES:
+                self._log(f"core skipped oversize initial {document.get('t')} frame")
+                continue
+            client.send(frame)
+        for event in self.recent_reset_events():
+            if not client.alive:
+                break
+            frame = encode_frame(event)
+            if len(frame) > MAX_FRAME_BYTES:
+                self._log("core skipped oversize initial quota_reset frame")
+                continue
+            client.send(frame)
 
     def _read_commands(self, client: _Client) -> None:
         buffer = bytearray()

@@ -498,6 +498,9 @@ def _event_time(
     stranger's request body -- so the string is validated here first. The skew
     bounds matter because a far-future timestamp is how a caller would pin a
     row at the top of the ledger forever.
+
+    A stamp inside the future bound is not trusted either: it is clamped back
+    to the moment this machine heard about the event. Past stamps stand.
     """
     if value is None:
         return datetime.fromtimestamp(now_epoch, timezone.utc)
@@ -517,6 +520,14 @@ def _event_time(
         return None
     if delta > limits.max_future_skew_seconds or -delta > limits.max_past_skew_seconds:
         return None
+    if delta > 0:
+        # A sender's clock may run ahead of ours, but an event cannot have
+        # happened after we heard about it. The reducer quarantines the whole
+        # provider source for any fact more than
+        # operator_state.MAX_CLOCK_DELTA_DIVERGENCE_SECONDS ahead, and cloud
+        # events share that source with local hooks, so the skew tolerance is
+        # a wire nicety and is never handed on.
+        return datetime.fromtimestamp(now_epoch, timezone.utc)
     return parsed
 
 

@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from jrbar import cloud_ingest
+from jrbar import _collector_legacy, cloud_ingest
 from jrbar.cloud_ingest import (
     INGEST_PATH,
     WIRE_VERSION,
@@ -42,7 +42,9 @@ from jrbar.collector import (
     status_from_event,
 )
 from jrbar.models import AgentMode, HookEvent
+from jrbar.operator_state import BootIdentifier, ClockContinuityStatus, ClockSample
 from jrbar.provider_adapters import minimize_hook_event
+from jrbar.provider_facts import WorkLifecycle
 from jrbar.providers import negotiated_provider_sources, parse_log_line
 
 TOKEN = "cloud-ingest-test-token-0123456789abcdef"
@@ -533,6 +535,95 @@ def test_invalid_documents_are_refused__and_2_more() -> None:
         ingest = _ingest()
         assert _post(ingest, body=body).reason is IngestReason.MALFORMED
 
+
+
+def test_a_skewed_cloud_clock_is_clamped_to_arrival__and_1_more() -> None:
+    # --- scenario: skewed_ahead_timestamp_is_clamped_to_arrival
+    """Deletion: remove the `delta > 0` clamp in `_event_time`."""
+    assert CloudIngestLimits().max_future_skew_seconds == 300.0
+    ingest = _ingest(limits=_limits(burst_events=100))
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    epoch = now.timestamp()
+
+    ahead = (now + timedelta(seconds=60)).isoformat()
+    assert (
+        _post(ingest, _document(occurred_at=ahead), now=epoch).reason
+        is IngestReason.ACCEPTED
+    )
+    assert ingest.drain()[0].occurred_at == now
+
+    too_far = (now + timedelta(seconds=301)).isoformat()
+    assert (
+        _post(ingest, _document(occurred_at=too_far), now=epoch).reason
+        is IngestReason.INVALID_TIME
+    )
+
+    past = now - timedelta(seconds=5)
+    assert (
+        _post(ingest, _document(occurred_at=past.isoformat()), now=epoch).reason
+        is IngestReason.ACCEPTED
+    )
+    assert ingest.drain()[0].occurred_at == past
+
+    assert _post(ingest, _document(), now=epoch).reason is IngestReason.ACCEPTED
+    assert ingest.drain()[0].occurred_at == now
+
+    # --- scenario: skewed_cloud_event_does_not_quarantine_local_provider
+    """Deletion: remove the `delta > 0` clamp in `_event_time`. The same run
+    then sees an uncertain clock and a `future_fact_quarantined` diagnostic."""
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    epoch = now.timestamp()
+    diagnostics: list[str] = []
+    real_reduce = _collector_legacy.reduce_operator_state
+
+    def recording_reduce(*args, **kwargs):
+        reduced = real_reduce(*args, **kwargs)
+        diagnostics.extend(item.identifier.value for item in reduced.diagnostics)
+        return reduced
+
+    monitor = LiveAgentMonitor(
+        clock_sampler=lambda: ClockSample(epoch, 100.0, BootIdentifier("boot:test"))
+    )
+    document = _document(
+        session_id="cloud-skewed",
+        occurred_at=(now + timedelta(seconds=60)).isoformat(),
+    )
+    event = cloud_ingest.parse_cloud_event(
+        document, limits=CloudIngestLimits(), now_epoch=epoch
+    )
+    assert isinstance(event, CloudAgentEvent)
+
+    def local(name: str, session: str) -> HookEvent:
+        return HookEvent(
+            provider="claude",
+            logged_at=now,
+            event_name=name,
+            raw={
+                "hook_event_name": name,
+                "session_id": session,
+                "logged_at": now.isoformat(),
+            },
+            session_id=session,
+        )
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(_collector_legacy, "reduce_operator_state", recording_reduce)
+        monitor.ingest_record(local("UserPromptSubmit", "local-session"))
+        monitor.ingest_record(hook_event_from_cloud_event(event))
+        monitor.ingest_record(local("Stop", "local-session"))
+
+    # One plain local Stop, with no request identity, completes the turn.
+    local_work = [
+        work
+        for work in monitor.operator_state.works
+        if work.key.work_id.value == "local-session"
+    ]
+    assert [work.lifecycle for work in local_work] == [WorkLifecycle.COMPLETED]
+    assert (
+        monitor.operator_state.clock_continuity.status
+        is ClockContinuityStatus.STABLE
+    )
+    assert "future_fact_quarantined" not in diagnostics
 
 
 def test_duplicate_json_keys_are_refused__and_2_more() -> None:

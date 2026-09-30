@@ -104,7 +104,12 @@ def test_initial_connection_recovers_only_recent_quota_resets(server: CoreServer
     server.publish_event({"kind": "quota_reset", "at": 990.0, "detail": "x" * MAX_FRAME_BYTES})
     monkeypatch.setattr("jrbar.core_server.time.time", lambda: 1000.0)
     frames = []
-    client = SimpleNamespace(alive=True, index=1, send=lambda frame: frames.append(json.loads(frame)))
+    client = SimpleNamespace(
+        alive=True,
+        index=1,
+        send=lambda frame: frames.append(json.loads(frame)),
+        finish_priming=lambda: None,
+    )
     monkeypatch.setattr(server, "_read_commands", lambda _: None)
     monkeypatch.setattr(server, "_drop_clients", lambda _: None)
     server._serve_client(client)
@@ -266,16 +271,15 @@ def test_a_client_that_stops_reading_is_dropped_without_wedging_fanout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One stalled reader must not park the serial flusher: SO_SNDTIMEO
-    bounds every send, and enough consecutive blocked sends drop the
+    bounds every send, and a send blocked past that deadline drops the
     client so the other clients keep receiving frames."""
     import struct as _struct
 
-    # Shrink the per-send deadline and the strike budget so the stall is
-    # measured in tenths of a second rather than whole seconds.
+    # Shrink the per-send deadline so the stall is measured in tenths of a
+    # second rather than whole seconds.
     monkeypatch.setattr(
         "jrbar.core_server._SEND_TIMEOUT_TIMEVAL", _struct.pack("ll", 0, 200_000)
     )
-    monkeypatch.setattr("jrbar.core_server.CLIENT_MAX_BLOCKED_SENDS", 2)
 
     reader = _connect(server)
     assert _read_frames(reader, 4)[0]["t"] == "hello"
@@ -338,6 +342,306 @@ def test_a_client_that_stops_reading_is_dropped_without_wedging_fanout(
     assert read_errors == []
     staller.close()
     reader.close()
+
+
+def _greeting_server(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    snapshot_taken: threading.Event,
+    release: threading.Event,
+    block: dict[str, bool],
+) -> tuple[CoreServer, threading.Semaphore]:
+    """A started server whose initial snapshot can be held back, and whose
+    flusher reports each finished fan-out."""
+
+    def documents() -> list[dict]:
+        taken = [
+            {"t": "state", "generation": 1, "sessions": []},
+            {"t": "lights", "surfaces": {}},
+            {"t": "settings", "generation": 1, "document": {}},
+        ]
+        if block["on"]:
+            snapshot_taken.set()
+            release.wait(5.0)
+        return taken
+
+    server = _server(sock_dir, initial_documents=documents)
+    original = server._fan_out
+    fanned = threading.Semaphore(0)
+
+    def counted(frame: bytes) -> None:
+        original(frame)
+        fanned.release()
+
+    monkeypatch.setattr(server, "_fan_out", counted)
+    server.start()
+    return server, fanned
+
+
+def test_a_state_published_during_the_greeting_follows_the_snapshot(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot_taken, release = threading.Event(), threading.Event()
+    server, fanned = _greeting_server(
+        sock_dir,
+        monkeypatch,
+        snapshot_taken=snapshot_taken,
+        release=release,
+        block={"on": True},
+    )
+    client = None
+    try:
+        client = _connect(server)
+        assert snapshot_taken.wait(3.0), "the greeting never took its snapshot"
+        server.publish_state({"t": "state", "generation": 2, "sessions": []})
+        assert fanned.acquire(timeout=3.0), "the flusher never fanned the newer state out"
+        release.set()
+
+        frames = _read_frames(client, 5)
+        assert [frame["t"] for frame in frames] == [
+            "hello", "state", "lights", "settings", "state",
+        ]
+        states = [frame["generation"] for frame in frames if frame["t"] == "state"]
+        assert states == [1, 2], "the older snapshot overtook the newer state"
+    finally:
+        release.set()
+        if client is not None:
+            client.close()
+        server.stop()
+
+
+def test_a_frame_published_before_hello_is_sent_waits_behind_hello(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, fanned = _greeting_server(
+        sock_dir,
+        monkeypatch,
+        snapshot_taken=threading.Event(),
+        release=threading.Event(),
+        block={"on": False},
+    )
+    in_hello, release = threading.Event(), threading.Event()
+    real_hello = server.hello_document
+
+    def held_hello() -> dict:
+        in_hello.set()
+        release.wait(5.0)
+        return real_hello()
+
+    monkeypatch.setattr(server, "hello_document", held_hello)
+    client = None
+    try:
+        client = _connect(server)
+        assert in_hello.wait(3.0), "the greeting never reached hello"
+        server.publish_event({"kind": "probe"})
+        assert fanned.acquire(timeout=3.0), "the flusher never fanned the probe out"
+        release.set()
+
+        frames = _read_frames(client, 5)
+        assert frames[0]["t"] == "hello"
+        assert [frame["t"] for frame in frames] == [
+            "hello", "state", "lights", "settings", "event",
+        ]
+        assert frames[-1]["kind"] == "probe"
+    finally:
+        release.set()
+        if client is not None:
+            client.close()
+        server.stop()
+
+
+def test_a_client_that_never_finishes_its_greeting_is_dropped_not_buffered_without_bound(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jrbar.core_server import MAX_QUEUED_FRAMES
+
+    snapshot_taken, release = threading.Event(), threading.Event()
+    block = {"on": False}
+    server, fanned = _greeting_server(
+        sock_dir,
+        monkeypatch,
+        snapshot_taken=snapshot_taken,
+        release=release,
+        block=block,
+    )
+    steady = stuck = None
+    try:
+        steady = _connect(server)
+        assert [frame["t"] for frame in _read_frames(steady, 4)] == [
+            "hello", "state", "lights", "settings",
+        ]
+        block["on"] = True
+        stuck = _connect(server)
+        assert snapshot_taken.wait(3.0), "the second greeting never took its snapshot"
+        assert server.client_count == 2
+
+        published = 0
+        batch = MAX_QUEUED_FRAMES // 4
+        # Batches, each waited out, so the flusher's own bounded queue never
+        # sheds what the held client is being counted against.
+        for _ in range(8):
+            for _ in range(batch):
+                server.publish_event({"kind": "tick"})
+            published += batch
+            for _ in range(batch):
+                assert fanned.acquire(timeout=3.0), "the flusher stalled behind a greeting"
+            if server.client_count == 1:
+                break
+        assert server.client_count == 1, "a greeting that never finished was buffered forever"
+
+        server.publish_event({"kind": "marker"})
+        published += 1
+        frames = _read_frames(steady, published, timeout=5.0)
+        assert frames[-1].get("kind") == "marker", (
+            "the healthy client stopped receiving while another was greeting"
+        )
+    finally:
+        release.set()
+        for peer in (steady, stuck):
+            if peer is not None:
+                peer.close()
+        server.stop()
+
+
+def test_client_holds_live_frames_until_priming_finishes_then_sends_in_order() -> None:
+    from types import SimpleNamespace
+
+    from jrbar.core_server import MAX_QUEUED_FRAMES, _Client
+
+    sent: list[bytes] = []
+    client = _Client(SimpleNamespace(sendall=sent.append), 1)
+
+    assert client.deliver(b"a") is True
+    assert client.deliver(b"b") is True
+    assert sent == [], "a live frame beat the greeting"
+    client.finish_priming()
+    assert sent == [b"a", b"b"]
+    assert client.deliver(b"c") is True
+    assert sent == [b"a", b"b", b"c"], "a primed client is sent to directly"
+
+    unprimed = _Client(SimpleNamespace(sendall=sent.append), 2)
+    for index in range(MAX_QUEUED_FRAMES):
+        assert unprimed.deliver(b"x") is True, index
+    assert unprimed.deliver(b"x") is False
+    assert unprimed.alive is False
+
+
+def _drain_without_waiting(reader: socket.socket) -> int:
+    """Bytes already sitting in the peer's buffers; never waits for more."""
+    reader.setblocking(False)
+    total = 0
+    while True:
+        try:
+            chunk = reader.recv(65536)
+        except BlockingIOError:
+            return total
+        if not chunk:
+            return total
+        total += len(chunk)
+
+
+def test_client_send_stall_drops_immediately_and_never_writes_after_a_partial_frame() -> None:
+    import struct as _struct
+
+    from jrbar.core_server import _Client
+
+    writer, reader = socket.socketpair()
+    try:
+        writer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        reader.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        writer.setsockopt(
+            socket.SOL_SOCKET, socket.SO_SNDTIMEO, _struct.pack("ll", 0, 100_000)
+        )
+        client = _Client(writer, 1)
+        frame = encode_frame({"t": "state", "v": 1, "blob": "x" * (64 * 1024)})
+
+        assert client.send(frame) is False
+        assert client.alive is False
+        partial = _drain_without_waiting(reader)
+        assert partial < len(frame), "the stalled send was not partial"
+
+        # The stream now ends mid-line; nothing may follow it.
+        assert client.send(encode_frame({"t": "event", "v": 1})) is False
+        assert _drain_without_waiting(reader) == 0
+    finally:
+        writer.close()
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    "error",
+    (
+        BlockingIOError(35, "Resource temporarily unavailable"),
+        TimeoutError("timed out"),
+    ),
+    ids=("blocking_io_error", "timeout_error"),
+)
+def test_blocking_io_error_from_a_stalled_send_is_classified_as_a_drop(error) -> None:
+    from types import SimpleNamespace
+
+    from jrbar.core_server import _Client
+
+    calls: list[bytes] = []
+
+    def sendall(frame: bytes) -> None:
+        calls.append(frame)
+        raise error
+
+    client = _Client(SimpleNamespace(sendall=sendall), 1)
+
+    # SO_SNDTIMEO on a blocking socket surfaces as BlockingIOError (EAGAIN),
+    # not TimeoutError; either way one stall drops the client.
+    assert client.send(b"{}\n") is False
+    assert client.alive is False
+    assert client.send(b"{}\n") is False
+    assert len(calls) == 1, "a dropped client was written to again"
+
+
+def test_accepted_client_send_buffer_absorbs_several_state_frames(
+    server: CoreServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A short reader pause must not drop the app: a state-sized frame or
+    two goes into the kernel buffer without blocking the flusher."""
+    import struct as _struct
+
+    monkeypatch.setattr(
+        "jrbar.core_server._SEND_TIMEOUT_TIMEVAL", _struct.pack("ll", 0, 200_000)
+    )
+    staller = _connect(server)
+    staller.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
+    assert _read_frames(staller, 4)[0]["t"] == "hello"
+
+    original = server._fan_out
+    fanned = threading.Semaphore(0)
+
+    def counted(frame: bytes) -> None:
+        original(frame)
+        fanned.release()
+
+    monkeypatch.setattr(server, "_fan_out", counted)
+
+    blob = "x" * (40 * 1024)
+    for _ in range(5):
+        server.publish_event({"kind": "state_sized", "blob": blob})
+    for _ in range(5):
+        assert fanned.acquire(timeout=3.0), "the flusher never finished a fan-out"
+    # 5 x 40 KB is under the daemon-side buffer: nothing has blocked yet.
+    assert server.client_count == 1
+    with server._lock:
+        connection = server._clients[0].connection
+    assert connection.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF) >= 256 * 1024
+
+    overflow = "x" * (200 * 1024)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and server.client_count > 0:
+        server.publish_event({"kind": "fill", "blob": overflow})
+    assert server.client_count == 0, "a peer that never reads was never dropped"
+    staller.close()
 
 
 def test_event_queue_is_bounded_and_drops_oldest__and_1_more(sock_dir: Path,
