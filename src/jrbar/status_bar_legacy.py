@@ -142,16 +142,6 @@ from .answer_local import (  # noqa: E402
 )
 from .answer_local import session_host as answer_local_session_host  # noqa: E402
 from .answer_runtime import ANSWER_CLOSE_TIMEOUT_SECONDS  # noqa: E402
-from .global_action_controller import (  # noqa: E402
-    GlobalActionLifecycleCoordinator,
-    performRevealCurrentAsk_,
-)
-from .global_actions import GlobalActionID  # noqa: E402
-from .global_hotkeys import (  # noqa: E402
-    CarbonHotkeyBackend,
-    GlobalHotkeyRegistry,
-    HotkeyCleanupError,
-)
 from .brightness_policy import (
     idle_auto_off_due,
     plan_ambient_brightness,
@@ -1666,8 +1656,6 @@ def refresh_timing_line(
 
 
 class StatusBarController(NSObject):
-    performRevealCurrentAsk_ = performRevealCurrentAsk_
-
     def init(self):
         # Production facades rebind the StatusBarController name to a
         # subclass. objc.super must see the class that defined this init.
@@ -1676,21 +1664,6 @@ class StatusBarController(NSObject):
             return None
 
         self.settings = load_settings()
-        self.global_action_lifecycle = GlobalActionLifecycleCoordinator(
-            registry_factory=lambda on_action: GlobalHotkeyRegistry(
-                backend=CarbonHotkeyBackend(),
-                main_thread_dispatch=self._dispatch_runtime_worker_result,
-                on_action=on_action,
-            ),
-            settings_getter=lambda: self.settings,
-            settings_setter=lambda candidate: setattr(self, "settings", candidate),
-            settings_saver=lambda candidate: save_settings(candidate),
-            action_handler=lambda action: (
-                self.performRevealCurrentAsk_(None)
-                if action is GlobalActionID.REVEAL_CURRENT_ASK
-                else None
-            ),
-        )
         self._dnd_refresh_in_progress = False
         self._dnd_environment_workspace_center = None
         self._dnd_environment_foundation_center = None
@@ -4977,12 +4950,6 @@ class StatusBarController(NSObject):
         t3_service = getattr(self, "_t3_snapshot_service", None)
         if t3_service is not None:
             t3_service.close()
-        try:
-            self.global_action_lifecycle.close()
-        except HotkeyCleanupError as exc:
-            log_status_bar(
-                f"global hotkey shutdown cleanup failed ({exc.failure_count} resources)"
-            )
         previous_inventory_generation = self._installed_agent_inventory_generation
         self._installed_agent_inventory_generation += 1
         cancel_inventory = getattr(self._os_poll_worker, "cancel_generation", None)

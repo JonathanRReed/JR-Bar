@@ -659,7 +659,9 @@ class AgentMonitorSettings:
     # Webhook bridge: which non-capacity moment events (beyond stage-3
     # escalation, which always fires when the URL is set) also POST.
     webhook_events: tuple[str, ...] = ()
-    # Global action identifier -> strict ShortcutChord persistence fields.
+    # The chord the retired daemon hotkey registry held for each global action
+    # ({key_code, key_label, modifiers}). The app reads it once to adopt it;
+    # nothing in the daemon registers or writes it, and it is kept verbatim.
     # Empty is intentional: a new installation does not claim a system chord.
     global_action_shortcuts: dict[str, dict] = field(default_factory=dict)
     # Sub-agent asks stay quiet by default: no light, sound, banner or
