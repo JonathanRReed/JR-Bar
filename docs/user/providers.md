@@ -28,7 +28,12 @@ installed from **Settings > Agents**. It forwards session state and asks and
 nothing else: no prompts, file paths or tool output. A permission prompt or a
 question shows as Needs You and clears when you answer it. A plugin installed
 by an earlier version keeps working and is still recognised, but it cannot
-show a question as an ask. Reinstall it from Settings > Agents to update it.
+show a question as an ask. The app updates it the next time it refreshes its
+hooks after an upgrade, or you can reinstall it from Settings > Agents.
+
+OpenCode sub-agents group under their session, and their asks follow the
+Sub-agent asks setting. With it off, a sub-agent's approval raises no card and
+its session keeps reading Working while the sub-agent waits.
 
 ## Usage cards
 

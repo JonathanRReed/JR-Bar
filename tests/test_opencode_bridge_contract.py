@@ -27,6 +27,7 @@ from jrbar.hook import _normalized_hook_record, routed_hook_payload
 from jrbar.install import (
     install_opencode_plugin,
     opencode_plugin_source,
+    refresh_managed_hooks,
     uninstall_opencode_plugin,
 )
 from jrbar.operator_state import (
@@ -154,6 +155,25 @@ def test_installing_over_v1_leaves_exactly_the_v2_source(home: Path) -> None:
     second = install_opencode_plugin(log, plugin_path=plugin, python_executable=sys.executable)
 
     assert not second.changed
+
+
+def test_the_upgrade_refresh_replaces_a_v1_plugin_with_v2(home: Path) -> None:
+    """A later app upgrade rewrites only detector-proven plugins, and v1 is proven."""
+    plugin = default_opencode_plugin_path(home)
+    log = home / ".local" / "state" / "jrbar" / "opencode.jsonl"
+    plugin.write_text(_v1(log))
+
+    results = refresh_managed_hooks(
+        home=home,
+        state_dir=home / ".local" / "state" / "jrbar",
+        python_executable=sys.executable,
+    )
+
+    result = results["opencode"]
+    assert not isinstance(result, Exception), result
+    assert result.changed
+    assert plugin.read_text() == opencode_plugin_source(log, python_executable=sys.executable)
+    assert detect_opencode_plugin(home).log_paths == (log,)
 
 
 def test_uninstall_removes_either_generation(home: Path) -> None:
@@ -602,3 +622,206 @@ def test_an_ask_without_a_session_is_still_dropped(tmp_path: Path) -> None:
     asked["properties"]["sessionID"] = "/private/project"
 
     assert _run_bridge(tmp_path, [asked]) == []
+
+
+# --- a Task subagent's child session -----------------------------------------
+#
+# OpenCode's Task tool makes a child session whose events carry the child's own
+# session id. The plugin keeps a bounded child-to-parent map, filled from
+# session.created and session.updated before the forwarding gate (session.updated
+# is never forwarded), and stamps a child's events with Claude's worker shape:
+# agent_id the child, session_id the ROOT session. Nothing but the two ids is
+# ever read from ``info``.
+
+_ROOT = "ses_root0000000000000000000001"
+_CHILD = "ses_child000000000000000000001"
+_GRANDCHILD = "ses_grand000000000000000000001"
+_OTHER = "ses_other00000000000000000001"
+
+
+def _created(session: str, parent: str | None, *, name: str = "session.created") -> dict[str, object]:
+    info: dict[str, object] = {
+        "id": session,
+        "title": "secret title",
+        "directory": "/private/project",
+        "summary": {"diffs": [{"file": "/private/project/secret.txt"}]},
+    }
+    if parent is not None:
+        info["parentID"] = parent
+    return {"type": name, "properties": {"sessionID": session, "info": info}}
+
+
+def _busy(session: str) -> dict[str, object]:
+    return {
+        "type": "session.status",
+        "properties": {"sessionID": session, "status": {"type": "busy"}},
+    }
+
+
+def _asked(session: str, request: str = _PERMISSION) -> dict[str, object]:
+    return {
+        "type": "permission.asked",
+        "properties": {"id": request, "sessionID": session, "patterns": ["secret pattern"]},
+    }
+
+
+def _idle(session: str) -> dict[str, object]:
+    return {"type": "session.idle", "properties": {"sessionID": session}}
+
+
+def _stamped(name: str, root: str, child: str, **extra: object) -> dict[str, object]:
+    return {"hook_event_name": name, "session_id": root, "agent_id": child, **extra}
+
+
+@needs_bun
+def test_a_childs_events_carry_the_child_as_agent_and_the_root_as_session(tmp_path: Path) -> None:
+    events = [
+        _created(_CHILD, _ROOT),
+        _busy(_CHILD),
+        _asked(_CHILD),
+        _idle(_CHILD),
+    ]
+
+    forwarded = _run_bridge(tmp_path, events)
+
+    assert forwarded == [
+        _stamped("SessionStart", _ROOT, _CHILD),
+        _stamped("UserPromptSubmit", _ROOT, _CHILD),
+        _stamped("PermissionRequest", _ROOT, _CHILD, request_id=_PERMISSION),
+        _stamped("Stop", _ROOT, _CHILD),
+    ]
+
+
+@needs_bun
+def test_an_unrelated_session_gets_no_agent_id(tmp_path: Path) -> None:
+    events = [
+        _created(_ROOT, None),
+        _busy(_ROOT),
+        _created(_CHILD, _ROOT),
+        _busy(_CHILD),
+        _busy(_OTHER),
+        _idle(_ROOT),
+    ]
+
+    forwarded = _run_bridge(tmp_path, events)
+
+    assert forwarded == [
+        {"hook_event_name": "SessionStart", "session_id": _ROOT},
+        {"hook_event_name": "UserPromptSubmit", "session_id": _ROOT},
+        _stamped("SessionStart", _ROOT, _CHILD),
+        _stamped("UserPromptSubmit", _ROOT, _CHILD),
+        {"hook_event_name": "UserPromptSubmit", "session_id": _OTHER},
+        {"hook_event_name": "Stop", "session_id": _ROOT},
+    ]
+
+
+@needs_bun
+def test_a_grandchild_resolves_to_the_root_not_its_parent(tmp_path: Path) -> None:
+    """Claude's worker identity is flat under the main session, so nesting flattens."""
+    events = [
+        _created(_CHILD, _ROOT),
+        _created(_GRANDCHILD, _CHILD),
+        _asked(_GRANDCHILD),
+    ]
+
+    forwarded = _run_bridge(tmp_path, events)
+
+    assert forwarded[-1] == _stamped("PermissionRequest", _ROOT, _GRANDCHILD, request_id=_PERMISSION)
+    assert forwarded[1] == _stamped("SessionStart", _ROOT, _GRANDCHILD)
+
+
+@needs_bun
+def test_session_updated_fills_the_map_but_is_never_forwarded(tmp_path: Path) -> None:
+    events = [_created(_CHILD, _ROOT, name="session.updated"), _busy(_CHILD)]
+
+    forwarded = _run_bridge(tmp_path, events)
+
+    assert forwarded == [_stamped("UserPromptSubmit", _ROOT, _CHILD)]
+
+
+@needs_bun
+def test_a_deleted_session_is_forgotten(tmp_path: Path) -> None:
+    events = [
+        _created(_CHILD, _ROOT),
+        _created(_CHILD, _ROOT, name="session.deleted"),
+        _busy(_CHILD),
+    ]
+
+    forwarded = _run_bridge(tmp_path, events)
+
+    assert forwarded[-1] == {"hook_event_name": "UserPromptSubmit", "session_id": _CHILD}
+
+
+@needs_bun
+@pytest.mark.parametrize(
+    "bad_parent",
+    ["a" * 129, "/private/project", "token_sk_live_1", "control\nvalue", 7, ["ses_a"], {"id": "x"}, ""],
+)
+def test_an_invalid_parent_leaves_the_child_top_level(tmp_path: Path, bad_parent: object) -> None:
+    bad = _created(_CHILD, _ROOT)
+    bad["properties"]["info"]["parentID"] = bad_parent  # type: ignore[index]
+
+    forwarded = _run_bridge(tmp_path, [bad, _busy(_CHILD)])
+
+    assert forwarded[-1] == {"hook_event_name": "UserPromptSubmit", "session_id": _CHILD}
+
+
+@needs_bun
+def test_a_message_parent_is_never_read_as_a_session_parent(tmp_path: Path) -> None:
+    """message.updated also carries info.parentID, but that names a message."""
+    message = {
+        "type": "message.updated",
+        "properties": {
+            "sessionID": _OTHER,
+            "info": {"id": "msg_test0000000000000000000002", "sessionID": _OTHER, "parentID": "msg_test0000000000000000000001"},
+        },
+    }
+
+    forwarded = _run_bridge(tmp_path, [message, _busy("msg_test0000000000000000000002")])
+
+    assert forwarded == [{"hook_event_name": "UserPromptSubmit", "session_id": "msg_test0000000000000000000002"}]
+
+
+@needs_bun
+def test_a_cycle_falls_back_to_top_level_and_does_not_hang(tmp_path: Path) -> None:
+    events = [_created(_CHILD, _GRANDCHILD), _created(_GRANDCHILD, _CHILD), _busy(_CHILD)]
+
+    forwarded = _run_bridge(tmp_path, events)
+
+    assert forwarded[-1] == {"hook_event_name": "UserPromptSubmit", "session_id": _CHILD}
+
+
+@needs_bun
+def test_a_session_that_names_itself_as_parent_stays_top_level(tmp_path: Path) -> None:
+    forwarded = _run_bridge(tmp_path, [_created(_CHILD, _CHILD), _busy(_CHILD)])
+
+    assert forwarded[-1] == {"hook_event_name": "UserPromptSubmit", "session_id": _CHILD}
+
+
+def _wide(index: int) -> str:
+    """A distinct, maximum-length (128 character) session id."""
+    return f"ses_{index:08d}".ljust(128, "x")
+
+
+@needs_bun
+def test_the_map_is_bounded_evicts_the_oldest_and_keeps_an_active_child(tmp_path: Path) -> None:
+    active = _wide(0)
+    root = _wide(999_999)
+    events: list[dict[str, object]] = [_created(active, root)]
+    for index in range(1, 601):
+        events.append(_created(_wide(index), root))
+        if index % 100 == 0:
+            # An active child is seen again and again, so it is never the oldest.
+            events.append(_busy(active))
+    events.extend([_busy(active), _busy(_wide(1)), _busy(_wide(600)), _asked(active, "p" * 128)])
+
+    forwarded = _run_bridge(tmp_path, events)
+
+    active_busy, oldest_busy, newest_busy, widest_ask = forwarded[-4:]
+    assert active_busy == _stamped("UserPromptSubmit", root, active)
+    # The oldest child was evicted, so it reads as top-level again.
+    assert oldest_busy == {"hook_event_name": "UserPromptSubmit", "session_id": _wide(1)}
+    assert newest_busy == _stamped("UserPromptSubmit", root, _wide(600))
+    # Four maximum-length ids plus the fixed fields stay inside the 1024-byte cap.
+    assert widest_ask == _stamped("PermissionRequest", root, active, request_id="p" * 128)
+    assert len(json.dumps(widest_ask, separators=(",", ":"))) <= 1024

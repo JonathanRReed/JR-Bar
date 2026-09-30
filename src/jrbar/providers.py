@@ -456,6 +456,8 @@ def opencode_plugin_source_for_arguments(hook_arguments: list[str] | tuple[str, 
 const JRBAR_HOOK_ARGS = Object.freeze({encoded_arguments});
 const JRBAR_MAX_ID_LENGTH = 128;
 const JRBAR_MAX_PAYLOAD_BYTES = 1024;
+const JRBAR_MAX_SESSION_LINKS = 512;
+const JRBAR_MAX_LINK_DEPTH = 8;
 
 function opaqueIdentifier(value) {{
   return typeof value === "string"
@@ -507,6 +509,60 @@ function canonicalEvent(event) {{
   }}[name];
 }}
 
+// A Task subagent runs in a child session whose events carry the child's own
+// session id. The plugin remembers child -> parent from session.created and
+// session.updated, and stamps a child's events the way Claude stamps a worker:
+// agent_id the child, session_id the ROOT session, so the daemon groups the
+// child under its session and its asks follow the sub-agent rules. Only the
+// two ids are read from info, and each goes through opaqueIdentifier.
+const sessionParents = new Map();
+
+function rememberSessionLink(child, parent) {{
+  // Re-inserting moves the link to the newest end, so a child that keeps
+  // sending events is never the one evicted; an eviction would send that
+  // child's next events back to the daemon as a top-level session.
+  sessionParents.delete(child);
+  sessionParents.set(child, parent);
+  while (sessionParents.size > JRBAR_MAX_SESSION_LINKS) {{
+    sessionParents.delete(sessionParents.keys().next().value);
+  }}
+}}
+
+function recordSessionLink(event) {{
+  const name = eventName(event);
+  if (name !== "session.created" && name !== "session.updated" && name !== "session.deleted") return;
+  const properties = event.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return;
+  const info = properties.info;
+  if (!info || typeof info !== "object" || Array.isArray(info)) return;
+  const child = opaqueIdentifier(info.id ?? properties.sessionID ?? properties.sessionId);
+  if (!child) return;
+  if (name === "session.deleted") {{
+    sessionParents.delete(child);
+    return;
+  }}
+  const parent = opaqueIdentifier(info.parentID ?? info.parentId);
+  if (!parent || parent === child) return;
+  rememberSessionLink(child, parent);
+}}
+
+// The root session above a child, or undefined for a session with no known
+// parent, a cycle, or a chain deeper than the cap: those keep today's
+// behaviour and travel as a top-level session.
+function rootSessionFor(sessionId) {{
+  const seen = new Set([sessionId]);
+  let current = sessionId;
+  for (let depth = 0; depth <= JRBAR_MAX_LINK_DEPTH; depth += 1) {{
+    const parent = sessionParents.get(current);
+    if (parent === undefined) return current === sessionId ? undefined : current;
+    if (seen.has(parent)) return undefined;
+    seen.add(parent);
+    rememberSessionLink(current, parent);
+    current = parent;
+  }}
+  return undefined;
+}}
+
 // An ask names its request as properties.id; the replied and rejected events
 // that close it name the same request as properties.requestID.
 function isAsk(event) {{
@@ -516,6 +572,9 @@ function isAsk(event) {{
 
 function payloadFor(event) {{
   if (!event || typeof event !== "object") return undefined;
+  // Before the canonicalEvent gate: session.updated is never forwarded, and
+  // the map must be current before this event's own payload is built.
+  recordSessionLink(event);
   const hookEventName = canonicalEvent(event);
   if (!hookEventName) return undefined;
   const payload = {{ hook_event_name: hookEventName }};
@@ -534,7 +593,13 @@ function payloadFor(event) {{
   if (!ask && rawRequestId !== undefined && !requestId) return undefined;
   const sequence = boundedSequence(properties.sequence);
   const timestamp = boundedTimestamp(properties.timestamp);
-  if (sessionId) payload.session_id = sessionId;
+  const rootId = sessionId ? rootSessionFor(sessionId) : undefined;
+  if (rootId) {{
+    payload.session_id = rootId;
+    payload.agent_id = sessionId;
+  }} else if (sessionId) {{
+    payload.session_id = sessionId;
+  }}
   if (workId) payload.work_id = workId;
   if (requestId) payload.request_id = requestId;
   if (sequence !== undefined) payload.sequence = sequence;
