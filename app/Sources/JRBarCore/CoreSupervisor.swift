@@ -343,29 +343,6 @@ public enum ServeToken {
 
 // MARK: - The bundled daemon
 
-/// Byte-capped output accumulator shared by the readability queue and the
-/// calling thread inside `BundledCore.run`.
-private final class _BoundedOutput: @unchecked Sendable {
-    private let lock = NSLock()
-    private var buffer = Data()
-    private let capacity: Int
-
-    init(capacity: Int) { self.capacity = capacity }
-
-    func append(_ data: Data) {
-        guard !data.isEmpty else { return }
-        lock.lock()
-        let room = capacity - buffer.count
-        if room > 0 { buffer.append(data.prefix(room)) }
-        lock.unlock()
-    }
-
-    var data: Data {
-        lock.lock(); defer { lock.unlock() }
-        return buffer
-    }
-}
-
 extension CoreSupervisor {
     /// What a packaged `JR-Bar.app` carries under `Contents/Helpers`: the
     /// frozen daemon (`jrbar-core.app/Contents/MacOS/jrbar-core`, one binary
@@ -400,51 +377,6 @@ extension CoreSupervisor {
         /// provider hooks once per stamp.
         public var buildStamp: String {
             "\(version ?? "?")@\(commit ?? "?")"
-        }
-
-        /// Runs the bundled binary once (`agent-monitor install all`, `hooks
-        /// doctor`) and hands back its exit status and combined output.
-        /// Blocks the calling thread; call it off the main thread.
-        /// `timeout` is a real bound: output accumulates on the pipe's
-        /// readability queue (capped at `maxOutputBytes`) and the wait for
-        /// exit is a semaphore, so a hung child is SIGKILLed at the
-        /// deadline rather than blocking `readDataToEndOfFile` forever.
-        public func run(_ arguments: [String], timeout: TimeInterval = 60,
-                        maxOutputBytes: Int = 1024 * 1024) -> (status: Int32, output: String) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = arguments
-            var childEnvironment = ProcessInfo.processInfo.environment
-            childEnvironment.merge(environment) { _, new in new }
-            process.environment = childEnvironment
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            process.standardInput = FileHandle.nullDevice
-            do {
-                try process.run()
-            } catch {
-                return (-1, "cannot launch \(executable): \(error)")
-            }
-            let output = _BoundedOutput(capacity: max(0, maxOutputBytes))
-            let readHandle = pipe.fileHandleForReading
-            readHandle.readabilityHandler = { handle in
-                output.append(handle.availableData)
-            }
-            let exited = DispatchSemaphore(value: 0)
-            process.terminationHandler = { _ in exited.signal() }
-            if exited.wait(timeout: .now() + timeout) == .timedOut {
-                readHandle.readabilityHandler = nil
-                kill(process.processIdentifier, SIGKILL)
-                process.waitUntilExit()
-                return (-2, "timed out after \(Int(timeout)) s")
-            }
-            process.waitUntilExit()
-            readHandle.readabilityHandler = nil
-            // The writer is closed: the drain returns the buffered tail
-            // without blocking.
-            output.append(readHandle.readDataToEndOfFile())
-            return (process.terminationStatus, String(decoding: output.data, as: UTF8.self))
         }
     }
 
