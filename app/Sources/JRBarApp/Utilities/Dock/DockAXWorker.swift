@@ -96,19 +96,42 @@ struct DockAXElement: @unchecked Sendable {
 /// and on main that wait froze the strip, the previews and every surface
 /// JR-Bar draws. One serial queue keeps the work in the order it was
 /// asked for: a second ⌘⇥ never lands before the first.
+///
+/// There are two such queues, the `Lane`s. A hover preview's window read
+/// and a card's verbs wait on whatever app is under the pointer; a ⌘⇥
+/// commit must not wait on that app, so they never share a queue. Each
+/// lane keeps its own order.
 enum DockAXWorker {
-    private static let queue = DispatchQueue(label: "JR-Bar dock AX", qos: .userInitiated)
+    /// Which queue a job runs on.
+    enum Lane: Sendable {
+        /// ⌥⇥'s list builds, ⌘⇥ commits and their verbs, the session
+        /// raise: the ordering the strip depends on.
+        case commit
+        /// The hover preview's window reads and its cards' verbs.
+        case preview
+    }
 
-    static func run(_ work: @escaping @Sendable () -> Void) {
-        queue.async(execute: work)
+    private static let commitQueue = DispatchQueue(label: "JR-Bar dock AX", qos: .userInitiated)
+    private static let previewQueue = DispatchQueue(label: "JR-Bar dock preview AX", qos: .userInitiated)
+
+    private static func queue(for lane: Lane) -> DispatchQueue {
+        switch lane {
+        case .commit: return commitQueue
+        case .preview: return previewQueue
+        }
+    }
+
+    static func run(on lane: Lane = .commit, _ work: @escaping @Sendable () -> Void) {
+        queue(for: lane).async(execute: work)
     }
 
     /// `work` on the worker, then `then` with its answer on the main
     /// actor — through the main queue, so it lands in order with the
     /// blocks already waiting there.
-    static func run<Answer: Sendable>(_ work: @escaping @Sendable () -> Answer,
+    static func run<Answer: Sendable>(on lane: Lane = .commit,
+                                      _ work: @escaping @Sendable () -> Answer,
                                       then: @escaping @MainActor @Sendable (Answer) -> Void) {
-        queue.async {
+        queue(for: lane).async {
             let answer = work()
             DispatchQueue.main.async { MainActor.assumeIsolated { then(answer) } }
         }

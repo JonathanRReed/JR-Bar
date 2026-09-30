@@ -139,6 +139,95 @@ struct DockAXWorkerTests {
         #expect(answers.onMain)
     }
 
+    /// A commit-lane job held open on a semaphore, the way a hung app's
+    /// half-second AX wait holds it, and the signals the test reads.
+    private final class Held: @unchecked Sendable {
+        let started = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let otherRan = DispatchSemaphore(value: 0)
+    }
+
+    /// Wait for a signal off the main actor, with a bound: a lane that
+    /// never runs the job ends the wait as a failure, not a hang.
+    private func signalled(_ semaphore: DispatchSemaphore, within seconds: Double = 10) async -> Bool {
+        await Task.detached { Self.waitForSignal(semaphore, seconds: seconds) }.value
+    }
+
+    /// The blocking half, in a synchronous function: an async context may
+    /// not call `wait` itself.
+    private static func waitForSignal(_ semaphore: DispatchSemaphore, seconds: Double) -> Bool {
+        semaphore.wait(timeout: .now() + seconds) == .success
+    }
+
+    /// One lane held while a job on the other runs. Both directions live
+    /// in one test on purpose: each holds a lane, so two tests in parallel
+    /// would hold each other's.
+    @Test("each lane runs its jobs while the other is stuck, so a hung app never holds up ⌘⇥ or a hover")
+    func lanesDoNotWaitOnEachOther() async {
+        // A commit's AX wait, and a hover's job behind nothing.
+        let commitHeld = Held()
+        DockAXWorker.run {
+            commitHeld.started.signal()
+            // A bound, so a failing run releases itself.
+            _ = commitHeld.release.wait(timeout: .now() + 20)
+            commitHeld.finished.signal()
+        }
+        #expect(await signalled(commitHeld.started), "the commit lane is now occupied")
+        DockAXWorker.run(on: .preview) { commitHeld.otherRan.signal() }
+        let previewRan = await signalled(commitHeld.otherRan, within: 5)
+        commitHeld.release.signal()
+        #expect(await signalled(commitHeld.finished))
+        #expect(previewRan, "the preview lane is its own queue: it never waits behind a commit's AX wait")
+
+        // A hover's AX wait, and a commit behind nothing.
+        let previewHeld = Held()
+        DockAXWorker.run(on: .preview) {
+            previewHeld.started.signal()
+            _ = previewHeld.release.wait(timeout: .now() + 20)
+            previewHeld.finished.signal()
+        }
+        #expect(await signalled(previewHeld.started), "the preview lane is now occupied")
+        DockAXWorker.run { previewHeld.otherRan.signal() }
+        let commitRan = await signalled(previewHeld.otherRan, within: 5)
+        previewHeld.release.signal()
+        #expect(await signalled(previewHeld.finished))
+        #expect(commitRan, "a hung app's hover read never delays a commit")
+    }
+
+    @Test("the preview lane keeps its own order, off main")
+    func previewLaneKeepsOrder() async {
+        let order = Order()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            for step in 0..<32 { DockAXWorker.run(on: .preview) { order.note(step) } }
+            DockAXWorker.run(on: .preview) { done.resume() }
+        }
+        order.lock.withLock {
+            #expect(order.ran == Array(0..<32), "a hover's reads and a card's verbs land in the order asked")
+            #expect(!order.onMain)
+        }
+    }
+
+    @Test("a preview-lane answer comes back on the main actor, in order")
+    @MainActor
+    func previewLaneAnswersOnMain() async {
+        let answers = Answers()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            for step in 0..<8 {
+                DockAXWorker.run(on: .preview, { () -> Int in
+                    precondition(!Thread.isMainThread, "the work itself is the worker's")
+                    return step
+                }, then: { value in
+                    answers.onMain = answers.onMain && Thread.isMainThread
+                    answers.values.append(value)
+                    if value == 7 { done.resume() }
+                })
+            }
+        }
+        #expect(answers.values == Array(0..<8))
+        #expect(answers.onMain)
+    }
+
     private func item(element: AXUIElement? = nil, windowID: CGWindowID? = 77,
                       onScreen: Bool) -> SwitcherItem {
         SwitcherItem(id: "w", pid: 4242, appName: "App", icon: nil, title: "Doc",
