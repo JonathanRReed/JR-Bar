@@ -204,14 +204,6 @@ enum MenuBarCommands {
         return total - cs.count / 4
     }
 
-    /// One item's display name — the card row's "Owner · Title".
-    nonisolated static func name(of item: MenuBarItem) -> String {
-        if let title = item.title, !title.isEmpty {
-            return "\(item.ownerName) · \(title)"
-        }
-        return item.ownerName
-    }
-
     /// The key an app's items share: its bundle, or — for a bare helper
     /// with none — its process name.
     nonisolated static func appKey(of item: MenuBarItem) -> String {

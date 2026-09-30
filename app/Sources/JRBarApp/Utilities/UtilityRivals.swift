@@ -151,11 +151,6 @@ enum UtilityRivals {
         }
     }
 
-    @MainActor
-    static func runningApps() -> [(bundleID: String?, name: String?)] {
-        RunningApps.shared.apps.map { ($0.bundleID, $0.name) }
-    }
-
     /// Whether any rival at all is among `apps` — a launch or a quit that
     /// isn't one changes no rival note.
     nonisolated static func anyRival(in apps: [RunningApp]) -> Bool {

@@ -597,11 +597,6 @@ final class MenuBarUtility: Toy {
             set: { value in self.update { $0.itemSpacing = Int(value.rounded()) } })
     }
 
-    /// The section an item sits in; unlisted is shown.
-    func section(for itemID: String) -> MenuBarItemSection {
-        settings().section(for: itemID)
-    }
-
     /// The card's per-item picker: the write is the single mapping and
     /// the cover lands where the item already sits — nothing is ever
     /// dragged anywhere.

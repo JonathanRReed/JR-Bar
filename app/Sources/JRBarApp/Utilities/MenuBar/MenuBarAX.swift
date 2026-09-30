@@ -11,7 +11,7 @@ import JRBarCore
 /// own overflow.
 ///
 /// Two jobs:
-///   * `items(targets:row:)` — the listing `MenuBarItemLister` caches,
+///   * `scan(targets:rows:)` — the listing `MenuBarItemLister` caches,
 ///     one bounded AX query per running app, a few at a time because a
 ///     slow app must never stall the whole scan.
 ///   * `press(_:)` — the Item Bar tile's click-through: re-resolve the
@@ -209,20 +209,15 @@ enum MenuBarAX {
         return (items, answer.timedOut)
     }
 
-    /// Every target's extras items, identities assigned, sorted left to
-    /// right (parked items sort last — their offscreen positions are
-    /// not bar order).
-    nonisolated static func items(targets: [Target], rows: [CGRect]) -> [MenuBarItem] {
-        scan(targets: targets, rows: rows).items
-    }
-
     /// A scan's answer: the items, and the apps that ran out of time.
     struct Scan: Sendable {
         var items: [MenuBarItem]
         var timedOut: Set<pid_t>
     }
 
-    /// `items(targets:rows:)` with the apps that ran out of time. Asks
+    /// Every target's extras items, identities assigned, sorted left to
+    /// right (parked items sort last — their offscreen positions are
+    /// not bar order), with the apps that ran out of time. Asks
     /// `maxConcurrentQueries` apps at once, each bounded by its target's
     /// timeout, so a hung app costs its timeout, not the whole scan.
     nonisolated static func scan(targets: [Target], rows: [CGRect]) -> Scan {
