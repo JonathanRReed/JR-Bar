@@ -178,7 +178,12 @@ def _from_core(socket_path: Path | None) -> dict[str, Any] | None:
     return usage if isinstance(usage, dict) else {"refreshed_at": None, "providers": []}
 
 
-def _from_store() -> dict[str, Any]:
+def _from_store(now: float | None = None) -> dict[str, Any]:
+    """The last saved readings, judged as of ``now`` (the clock when left out).
+
+    A saved window whose reset has passed describes a window that is over, so
+    it is not offered as the constrained one; it stays in ``windows``.
+    """
     from .core_projection import usage_document
     from .provider_usage_store import load_provider_usage_state
 
@@ -186,19 +191,26 @@ def _from_store() -> dict[str, Any]:
         state = load_provider_usage_state()
     except Exception:
         return {"refreshed_at": None, "providers": []}
-    return usage_document(state) or {"refreshed_at": None, "providers": []}
+    moment = time.time() if now is None else now
+    return usage_document(state, now=moment) or {"refreshed_at": None, "providers": []}
 
 
 def load_usage(
     *,
     socket_path: Path | None = None,
     core_reader: Callable[[Path | None], dict[str, Any] | None] = _from_core,
-    store_reader: Callable[[], dict[str, Any]] = _from_store,
+    store_reader: Callable[[], dict[str, Any]] | None = None,
+    now: float | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """(the usage block, where it came from: ``core`` or ``store``)."""
+    """(the usage block, where it came from: ``core`` or ``store``).
+
+    ``store_reader`` left out reads the saved file as of ``now``.
+    """
     live = core_reader(socket_path)
     if live is not None:
         return live, "core"
+    if store_reader is None:
+        return _from_store(now), "store"
     return store_reader(), "store"
 
 
@@ -229,15 +241,20 @@ def main(
     stderr: TextIO = sys.stderr,
     now: float | None = None,
     core_reader: Callable[[Path | None], dict[str, Any] | None] = _from_core,
-    store_reader: Callable[[], dict[str, Any]] = _from_store,
+    store_reader: Callable[[], dict[str, Any]] | None = None,
 ) -> int:
     options = build_parser().parse_args(argv)
-    document, source = load_usage(socket_path=options.socket, core_reader=core_reader, store_reader=store_reader)
+    moment = time.time() if now is None else now
+    document, source = load_usage(
+        socket_path=options.socket,
+        core_reader=core_reader,
+        store_reader=store_reader,
+        now=moment,
+    )
     providers = [row for row in document.get("providers") or [] if isinstance(row, dict)]
     if options.provider:
         providers = [row for row in providers if row.get("id") == options.provider]
     document = {**document, "providers": providers}
-    moment = time.time() if now is None else now
     if options.json:
         print(
             json.dumps({"schema": USAGE_JSON_SCHEMA, "source": source, **document}, indent=2, sort_keys=True),

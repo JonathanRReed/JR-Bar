@@ -26,6 +26,7 @@ import hmac
 import json
 import math
 import threading
+import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -174,7 +175,27 @@ def _public_agents(latest: object) -> dict[str, object] | None:
     }
 
 
-def _quota_summary(lanes: object, *, provider_id: str) -> dict[str, object]:
+#: The clock the quota summary judges a window's reset against. A name of its
+#: own so a test can hold it still.
+_wall_clock = time.time
+
+
+def _quota_summary(
+    lanes: object,
+    *,
+    provider_id: str,
+    now: float | None = None,
+) -> dict[str, object]:
+    """The provider's windows, as the endpoint publishes them.
+
+    ``remaining_percent`` is the tightest window and ``next_reset_at`` the
+    soonest reset, over windows still running. A window whose reset has
+    passed (at or before ``now``, the wall clock when left out) describes a
+    window that is over: it is neither the tightest nor the next, but it
+    still counts in ``window_count``. A window with no reset time never
+    lapses.
+    """
+    moment = float(_wall_clock() if now is None else now)
     remaining: list[float] = []
     resets: list[float] = []
     window_count = 0
@@ -194,11 +215,13 @@ def _quota_summary(lanes: object, *, provider_id: str) -> dict[str, object]:
                 reset_value = _timestamp(raw_reset)
                 if reset_value is None:
                     continue
+            window_count += 1
+            if reset_value is not None and reset_value <= moment:
+                continue
             if remaining_value is not None:
                 remaining.append(remaining_value)
             if reset_value is not None:
                 resets.append(reset_value)
-            window_count += 1
     return {
         "window_count": window_count,
         "remaining_percent": min(remaining) if remaining else None,
