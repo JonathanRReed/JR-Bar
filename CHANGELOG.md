@@ -130,7 +130,9 @@ All notable changes to JR-Bar are documented here.
 - Words match what the daemon means: Overview, Palette and the Rail say
   "Answered" for an answered ask instead of offering disabled buttons, and
   Why this light names the same quota window the light itself used and says
-  so when every window has lapsed.
+  so when every window has lapsed. The Overview's state chip, the panel's
+  context menu and a Creator Micro key tile say "Answered" for an ask you
+  already answered, too.
 - Removed: the old Python Settings window, global-hotkey stack, Screen Bar
   drawing, Usage, Why and Agent Browser windows and the controller code only
   they reached (about 51,000 lines; the Swift app owns every one of those
@@ -184,6 +186,33 @@ All notable changes to JR-Bar are documented here.
   while JR-Bar runs, JR-Bar takes your edit the next time it saves a setting
   and keeps what it held as `settings.json.replaced`; a half-written edit is
   given a second look before it is set aside.
+- A session row says "1 worker waiting" when a sub-agent has a quiet prompt
+  while Sub-agent asks is off, so a quiet ask is counted, never hidden, and
+  nothing lights, sounds or banners for it. With the setting on, a worker's
+  ask counts in Needs You and has its own Approve and Deny row in the panel,
+  so an alert never fires for something the panel cannot show.
+- Grok sub-agents group under their session. Grok's child session names no
+  parent in its own events, only the parent's SubagentStart does, so JR-Bar
+  remembers that link and stamps the child as a worker: its asks follow
+  Sub-agent asks and it never holds the Mac awake. Grok notifications show as
+  Waiting and raise no alert.
+- Decorative motion eases off. Under Low Power Mode or a serious thermal state
+  the Aquarium, Notch Buddy, the island's idle motion and the Fold's decorative
+  passes halve their frame rate or pause, and resume on recovery; alerts, state
+  and data never change, and at normal power the frame rates are as before.
+- Esc folds the notch card only when it is pressed in the card's own window,
+  and the Screen Bar's pinned peek does the same, so Esc in a Settings text
+  field is no longer swallowed. The hover-grown island card stays open while
+  the Custom timer popover or a menu attached to it is showing.
+- The Dock switcher no longer traps on an app that quit but still lingers in
+  the running list. The Overview settles on the newest roster or transcript
+  when two loads overlap, and large daemon replies decode off the main thread.
+- An answer typed into a terminal re-checks the frontmost app, the tty and
+  the Ghostty focus just before the key is sent, so switching tabs during the
+  delivery refuses the answer instead of typing into the wrong terminal. The
+  Python hook client sends the same cut-down record for an oversize payload as
+  the compiled shim. Claude's pid files are found under a moved
+  `CLAUDE_CONFIG_DIR`.
 - Docs and tests: CORE-PROTOCOL.md names every command and state field the
   daemon sends, and a contract test in `make fast` keeps commands from
   drifting out of it. The state cadence is described as it runs. The README
