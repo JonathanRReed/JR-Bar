@@ -230,6 +230,36 @@ def test_a_frame_that_cannot_be_encoded_is_a_counted_drop_and_the_connection_liv
         instance.stop()
 
 
+def test_a_circular_document_is_a_value_error_not_a_recursion_error() -> None:
+    circular: dict = {"t": "lights", "v": 1}
+    circular["self"] = circular
+    with pytest.raises(ValueError):
+        encode_frame(circular)
+
+
+def test_a_reply_whose_result_cannot_even_be_shown_still_answers_and_the_connection_lives(sock_dir: Path) -> None:
+    class Unshowable:
+        def __repr__(self) -> str:
+            raise RuntimeError("no text for this")
+
+    def dispatch(name: str, args: dict):
+        return Unshowable() if name == "odd" else {}
+
+    instance = _serve(sock_dir, dispatch)
+    try:
+        client = _connect(instance)
+        _read_strict(client, 1)
+        client.sendall(_command("odd-1", "odd"))
+        reply = _read_strict(client, 1)[0]
+        assert reply["id"] == "odd-1" and reply["ok"] is True
+        assert isinstance(reply["result"]["repr"], str)
+        client.sendall(_command("alive", "ping"))
+        assert _read_strict(client, 1)[0]["id"] == "alive"
+        client.close()
+    finally:
+        instance.stop()
+
+
 # -- 2. a reply obeys the frame limit -----------------------------------------
 
 

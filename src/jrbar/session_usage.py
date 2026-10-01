@@ -75,7 +75,7 @@ SESSION_USAGE_MAX_IDS: Final = 64
 #: reads already priced into the turns that follow.
 SESSION_USAGE_MAX_BYTES: Final = 64 * 1024 * 1024
 #: How long one request may spend reading before it answers: every other
-#: slow-lane read queues behind it on the daemon's one slow-lane worker
+#: read-lane read queues behind it on the daemon's one read-lane worker
 #: (core_server.py), and usage_history holds itself to 2 s for the same
 #: reason.
 SESSION_USAGE_REPLY_BUDGET_SECONDS: Final = 1.5

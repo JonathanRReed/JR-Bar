@@ -239,7 +239,7 @@ ANNOUNCER_PRIORITY_BY_KIND: Final[dict[RequestKind, AnnouncerAlertPriority]] = {
     RequestKind.DIALOG: AnnouncerAlertPriority.INPUT,
 }
 # Every event ``models.ASK_EVENT_NAMES`` calls an ask has a priority here
-# (tests/test_ask_and_worker_identity.py pins it); the plan and review names
+# (tests/test_ask_definition.py pins it); the plan and review names
 # are the announcer's own.
 _LEGACY_PRIORITY_BY_EVENT: Final[dict[str, AnnouncerAlertPriority]] = {
     "PermissionRequest": AnnouncerAlertPriority.PERMISSION,

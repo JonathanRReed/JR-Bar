@@ -187,7 +187,12 @@ def encode_frame_counting(document: dict[str, Any]) -> tuple[bytes, int]:
         # refuses them) or something worse, which the second pass raises
         # again for the caller to count as a drop.
         replaced = [0]
-        clean = _without_non_finite(document, replaced)
+        try:
+            clean = _without_non_finite(document, replaced)
+        except RecursionError as error:
+            # A document that holds itself: json refused it above as a
+            # circular reference, and walking it would never end.
+            raise ValueError("the document is circular or nested too deeply") from error
         return _dump(clean), replaced[0]
 
 
@@ -1030,8 +1035,19 @@ class CoreServer:
             frame, replaced = encode_frame_counting(reply)
         except Exception:
             reply = dict(reply)
-            reply["result"] = {"repr": repr(reply.get("result"))[:2000]}
-            frame, replaced = encode_frame_counting(reply)
+            try:
+                text = repr(reply.get("result"))[:2000]
+            except Exception:
+                text = "<a result that cannot be shown>"
+            reply["result"] = {"repr": text}
+            try:
+                frame, replaced = encode_frame_counting(reply)
+            except Exception:
+                # Nothing about this reply can be written: count it and let
+                # the caller carry on rather than end the connection.
+                self.stats["dropped_unencodable"] += 1
+                self._log(f"core dropped an unwritable reply to {name or 'a command'}")
+                return None
         if replaced:
             self._note_sanitized("reply", replaced)
         if len(frame) <= MAX_FRAME_BYTES:

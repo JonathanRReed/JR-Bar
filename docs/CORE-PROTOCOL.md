@@ -42,9 +42,11 @@ hand-written examples.
   (`used_pct: null`), so a consumer needs no new case. The app's decoder
   also reads the quoted strings `"inf"`, `"-inf"` and `"nan"`, but the
   daemon never sends them: the app turns some of these doubles into an
-  `Int`, which traps on an infinity, and `null` cannot. A frame that cannot be written at all (an object
-  JSON has no form for) is dropped and counted (`dropped_unencodable`),
-  and the connection carries on.
+  `Int`, which traps on an infinity, and `null` cannot. A frame that cannot
+  be written at all (an object JSON has no form for) is dropped and counted
+  (`dropped_unencodable`), and the connection carries on. A reply whose
+  result cannot be written is sent with the result's text (`{"repr": ...}`)
+  instead; only a reply with nothing writable in it is dropped.
 - Clients: up to 4 at once; the fifth is refused.
 - Lifecycle: the app launches the daemon as a child when `JRBAR_CORE_EXEC`
   is set (`CoreSupervisor`), otherwise it connects to whatever listens.
