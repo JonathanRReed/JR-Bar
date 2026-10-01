@@ -1,17 +1,16 @@
-"""usage_graph_worker: the settings chart must never lie about scanning.
+"""usage_graph_worker: the usage graph is built from the corpus and cached honestly.
 
-The live failure this file exists to prevent (seen 2026-08-26): the
-Overview chart showed "No activity in this range" with a degenerate axis
-for the entire cold year scan, the summary label sat on "Loading local
-usage history…", a mid-scan range change was silently dropped, and the
-default-QoS scan thread made the whole app feel laggy.
+The live failure this file grew out of (seen 2026-08-26): the Overview
+chart showed "No activity in this range" with a degenerate axis for a
+whole cold year scan. The graph is now one document the daemon answers
+for, so these tests pin what goes into it: the scans, the T3 opt-in,
+the settings snapshot and the persisted answer cache's keys.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,30 +36,6 @@ def _isolate_doc_cache(tmp_path, monkeypatch):
     )
 
 
-class FakeView:
-    def __init__(self):
-        self.models = []
-
-    def setModel_(self, model):
-        self.models.append(dict(model))
-
-
-class FakeLabel:
-    def __init__(self):
-        self.values = []
-
-    def setStringValue_(self, value):
-        self.values.append(str(value))
-
-
-class FakeHeatmapView:
-    def __init__(self):
-        self.heatmaps = []
-
-    def setHeatmap_(self, heatmap):
-        self.heatmaps.append(heatmap)
-
-
 def make_target(days=7, mode="tokens", providers=("claude", "codex")):
     target = SimpleNamespace()
     target.settings = SimpleNamespace(
@@ -68,264 +43,7 @@ def make_target(days=7, mode="tokens", providers=("claude", "codex")):
         usage_display_mode=mode,
         usage_graph_providers=tuple(providers),
     )
-    target.settings_fields = {
-        "profile_usage_graph": FakeView(),
-        "profile_usage_heatmap": FakeHeatmapView(),
-        "profile_usage_label": FakeLabel(),
-    }
-    target.usage_graph_model = None
-    target.usage_summary_text = None
     return target
-
-
-def _force_inline_apply(monkeypatch):
-    """PyObjC IS installed in the dev venv, so callAfter would schedule
-    onto a run loop no test ever spins. Poisoning the module import
-    routes the worker onto its own documented inline fallback."""
-    import sys
-
-    monkeypatch.setitem(sys.modules, "PyObjCTools", None)
-
-
-@pytest.fixture
-def synchronous_worker(monkeypatch):
-    """Run the worker thread inline and _apply directly (no AppKit)."""
-
-    class InlineThread:
-        def __init__(self, *, target, name, daemon):
-            self._target = target
-
-        def start(self):
-            self._target()
-
-    monkeypatch.setattr(threading, "Thread", InlineThread)
-    _force_inline_apply(monkeypatch)
-    monkeypatch.setattr(
-        usage_graph_worker, "_drop_to_utility_qos", lambda: None
-    )
-
-
-def model_for(settings, marker="built"):
-    return (
-        {
-            "days": int(settings.usage_graph_days),
-            "metric": str(settings.usage_display_mode),
-            "labels": ("x",),
-            "series": ({"provider": "claude"},),
-            "scale_max": 10.0,
-            "marker": marker,
-        },
-        "1 sessions summary",
-    )
-
-
-def test_scan_lands_model_and_resolves_loading_label(
-    synchronous_worker, monkeypatch
-):
-    target = make_target()
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", model_for)
-
-    usage_graph_worker.refresh_usage_graph(target)
-
-    view = target.settings_fields["profile_usage_graph"]
-    assert view.models[-1]["marker"] == "built"
-    assert target.usage_graph_model["marker"] == "built"
-    assert target._usage_local_scan_complete is True
-    label = target.settings_fields["profile_usage_label"]
-    assert label.values == ["1 sessions summary"]
-    assert getattr(target, "_usage_graph_worker_in_flight") is False
-
-
-def test_scan_lands_the_same_immutable_heatmap_payload(monkeypatch, synchronous_worker):
-    from jrbar.usage_heatmap import build_usage_heatmap
-
-    target = make_target(providers=("claude", "codex"))
-    stamp = datetime.now().timestamp()
-    heatmap = build_usage_heatmap(
-        [("claude", "session", "model", stamp, 10, 2, 3, 4, "message")],
-        provider_ids=("claude", "codex"),
-        days=7,
-    )
-    model, summary = model_for(target.settings)
-    monkeypatch.setattr(
-        usage_graph_worker,
-        "_build_payload",
-        lambda _settings: ({**model, "heatmap": heatmap}, summary),
-    )
-
-    usage_graph_worker.refresh_usage_graph(target)
-
-    view = target.settings_fields["profile_usage_heatmap"]
-    assert view.heatmaps == [heatmap]
-    assert view.heatmaps[0].providers["codex"].data_status == "unavailable"
-
-
-def test_scan_uses_one_settings_snapshot_for_key_and_payload(
-    synchronous_worker, monkeypatch
-):
-    """A settings update cannot split the cache key from the chart payload."""
-
-    class FlippingSettings:
-        def __init__(self):
-            self._values = {
-                "usage_graph_days": (7, 365),
-                "usage_display_mode": ("tokens", "sessions"),
-                "usage_graph_providers": (("claude", "codex"), ("grok",)),
-            }
-
-        def _next(self, name):
-            current, next_value = self._values[name]
-            self._values[name] = (next_value, next_value)
-            return current
-
-        @property
-        def usage_graph_days(self):
-            return self._next("usage_graph_days")
-
-        @property
-        def usage_display_mode(self):
-            return self._next("usage_display_mode")
-
-        @property
-        def usage_graph_providers(self):
-            return self._next("usage_graph_providers")
-
-    target = make_target()
-    target.settings = FlippingSettings()
-
-    built_settings = []
-
-    def build(settings):
-        built_settings.append(settings)
-        return model_for(settings)
-
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
-
-    usage_graph_worker.refresh_usage_graph(target)
-
-    assert built_settings[0].usage_graph_providers == ("claude", "codex")
-    assert target.usage_graph_model["days"] == 7
-    assert target.usage_graph_model["metric"] == "tokens"
-
-
-def test_range_change_shows_scanning_not_the_old_chart(
-    synchronous_worker, monkeypatch
-):
-    """A landed 7-day model must not keep rendering while a 365-day
-    scan runs: the person who just picked Year sees SCANNING."""
-    target = make_target(days=7)
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", model_for)
-    usage_graph_worker.refresh_usage_graph(target)
-
-    target.settings.usage_graph_days = 365
-    seen_placeholder = {}
-    original_build = usage_graph_worker._build_payload
-
-    def slow_build(settings):
-        # Capture what the view shows at the moment the scan STARTS.
-        seen_placeholder["model"] = dict(
-            target.settings_fields["profile_usage_graph"].models[-1]
-        )
-        return original_build(settings)
-
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", slow_build)
-    usage_graph_worker.refresh_usage_graph(target)
-
-    assert seen_placeholder["model"]["empty_text"] == "Scanning local activity…"
-    assert seen_placeholder["model"]["days"] == 365
-    view = target.settings_fields["profile_usage_graph"]
-    assert view.models[-1]["days"] == 365
-
-
-def test_mid_scan_request_is_remembered_not_dropped(monkeypatch):
-    """The in-flight flag used to swallow a range change entirely; now
-    it re-fires the scan when the running one lands."""
-    target = make_target(days=7)
-    builds = []
-    started = []
-
-    class DeferredThread:
-        def __init__(self, *, target, name, daemon):
-            started.append(target)
-
-        def start(self):
-            pass
-
-    monkeypatch.setattr(threading, "Thread", DeferredThread)
-    _force_inline_apply(monkeypatch)
-    monkeypatch.setattr(usage_graph_worker, "_drop_to_utility_qos", lambda: None)
-
-    def build(settings):
-        builds.append(int(settings.usage_graph_days))
-        return model_for(settings)
-
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
-
-    usage_graph_worker.refresh_usage_graph(target)  # scan 1 queued
-    target.settings.usage_graph_days = 365
-    usage_graph_worker.refresh_usage_graph(target)  # mid-scan: pending
-    assert len(started) == 1
-    assert getattr(target, "_usage_graph_rescan_pending") is True
-
-    # Scan 1 runs from the snapshot captured when it was requested. The
-    # pending re-fire then captures the updated settings and builds 365.
-    started[0]()
-    assert builds == [7]
-    assert len(started) == 2
-    started[1]()
-    assert builds == [7, 365]
-    assert target.usage_graph_model["days"] == 365
-    view = target.settings_fields["profile_usage_graph"]
-    assert view.models[-1]["days"] == 365
-
-
-def test_recent_identical_result_is_reused_without_a_second_scan(
-    synchronous_worker, monkeypatch
-):
-    target = make_target()
-    calls = []
-
-    def build(settings):
-        calls.append(1)
-        return model_for(settings)
-
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
-    usage_graph_worker.refresh_usage_graph(target)
-    # A pane rebuild replaces the view but not the inputs.
-    target.settings_fields["profile_usage_graph"] = FakeView()
-    target.settings_fields["profile_usage_label"] = FakeLabel()
-    usage_graph_worker.refresh_usage_graph(target)
-
-    assert len(calls) == 1
-    view = target.settings_fields["profile_usage_graph"]
-    assert view.models[-1]["marker"] == "built"
-    assert target.settings_fields["profile_usage_label"].values == ["1 sessions summary"]
-
-
-def test_recent_result_cache_uses_injected_monotonic_boundary(
-    synchronous_worker, monkeypatch
-):
-    target = make_target()
-    calls = []
-    now = [100.0]
-
-    def build(settings):
-        calls.append(now[0])
-        return model_for(settings, marker=f"built-{len(calls)}")
-
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
-    def monotonic():
-        return now[0]
-
-    usage_graph_worker.refresh_usage_graph(target, monotonic=monotonic)
-    now[0] = 159.999
-    usage_graph_worker.refresh_usage_graph(target, monotonic=monotonic)
-    assert calls == [100.0]
-
-    now[0] = 160.0
-    usage_graph_worker.refresh_usage_graph(target, monotonic=monotonic)
-    assert calls == [100.0, 160.0]
-    assert target.usage_graph_model["marker"] == "built-2"
 
 
 def test_scan_period_start_is_pinned_to_injected_calendar_day() -> None:
@@ -337,32 +55,6 @@ def test_scan_period_start_is_pinned_to_injected_calendar_day() -> None:
         23,
     )
 
-
-def test_build_failure_shows_unavailable_instead_of_scanning_and_can_retry(
-    synchronous_worker, monkeypatch
-):
-    target = make_target()
-    target.usage_summary_text = "An older provider summary"
-
-    def broken(_settings):
-        raise RuntimeError("private transcript path must not appear in the UI")
-
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", broken)
-    usage_graph_worker.refresh_usage_graph(target)
-
-    assert getattr(target, "_usage_graph_worker_in_flight") is False
-    assert target.usage_graph_model is None
-    view = target.settings_fields["profile_usage_graph"]
-    assert view.models[-1]["empty_text"] == "Local activity couldn't be loaded. Reopen Activity to retry."
-    assert target.settings_fields["profile_usage_label"].values[-1] == view.models[-1]["empty_text"]
-    assert target.settings_fields["profile_usage_heatmap"].heatmaps[-1].aggregate.data_status == "unavailable"
-    assert target._usage_local_scan_complete is False
-
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", model_for)
-    usage_graph_worker.refresh_usage_graph(target)
-    assert view.models[-1]["marker"] == "built"
-    assert target._usage_local_scan_complete is True
-    assert target.settings_fields["profile_usage_label"].values[-1] == "1 sessions summary"
 
 def test_scan_opencode_records_parses_messages(tmp_path):
     db_file = tmp_path / "opencode.db"
@@ -761,11 +453,7 @@ def test_usage_graph_does_not_scan_t3_for_observability_only(
     assert calls == []
 
 
-def test_usage_graph_refresh_forwards_the_explicit_t3_policy(
-    synchronous_worker,
-    monkeypatch,
-) -> None:
-    target = make_target()
+def test_usage_graph_document_forwards_the_explicit_t3_policy(monkeypatch) -> None:
     policy = project_t3_read_only_policy(
         SimpleNamespace(t3code_enabled=True, t3code_base_dir="/configured/t3"),
         activity_statistics_enabled=True,
@@ -774,44 +462,17 @@ def test_usage_graph_refresh_forwards_the_explicit_t3_policy(
 
     def build(settings, *, t3_policy=None):
         seen.append(t3_policy)
-        return model_for(settings)
+        return _document_payload(settings)
 
     monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
 
-    usage_graph_worker.refresh_usage_graph(target, t3_policy=policy)
+    usage_graph_worker.usage_graph_document(make_target().settings, t3_policy=policy)
 
     assert seen == [policy]
 
 
-def test_usage_graph_refresh_uses_the_runtime_t3_policy_on_the_target(
-    synchronous_worker,
-    monkeypatch,
-) -> None:
-    target = make_target()
-    target._t3_read_only_policy = project_t3_read_only_policy(
-        SimpleNamespace(
-            t3code_enabled=True,
-            t3code_activity_statistics_enabled=True,
-        )
-    )
-    seen = []
-
-    def build(settings, *, t3_policy=None):
-        seen.append(t3_policy)
-        return model_for(settings)
-
-    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
-
-    usage_graph_worker.refresh_usage_graph(target)
-
-    assert seen == [target._t3_read_only_policy]
-
-
-def test_t3_activity_opt_in_change_invalidates_the_usage_graph_cache(
-    synchronous_worker,
-    monkeypatch,
-) -> None:
-    target = make_target()
+def test_t3_activity_opt_in_change_rebuilds_the_usage_graph_document(monkeypatch) -> None:
+    settings = make_target().settings
     integration = SimpleNamespace(
         t3code_enabled=True,
         t3code_base_dir="/configured/t3",
@@ -825,15 +486,63 @@ def test_t3_activity_opt_in_change_invalidates_the_usage_graph_cache(
 
     def build(settings, *, t3_policy=None):
         builds.append(t3_policy)
-        return model_for(settings, marker=f"build-{len(builds)}")
+        return _document_payload(settings)
 
     monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
 
-    usage_graph_worker.refresh_usage_graph(target, t3_policy=observability_only)
-    usage_graph_worker.refresh_usage_graph(target, t3_policy=with_statistics)
+    usage_graph_worker.usage_graph_document(settings, t3_policy=observability_only)
+    usage_graph_worker.usage_graph_document(settings, t3_policy=with_statistics)
+    usage_graph_worker.usage_graph_document(settings, t3_policy=with_statistics)
 
     assert builds == [observability_only, with_statistics]
-    assert target.usage_graph_model["marker"] == "build-2"
+
+
+def test_usage_graph_document_uses_one_settings_snapshot_for_key_and_payload(
+    monkeypatch,
+) -> None:
+    """A settings update cannot split the cache key from the chart payload."""
+
+    class FlippingSettings:
+        def __init__(self):
+            self._values = {
+                "usage_graph_days": (7, 365),
+                "usage_display_mode": ("tokens", "sessions"),
+                "usage_graph_providers": (("claude", "codex"), ("grok",)),
+            }
+
+        def _next(self, name):
+            current, next_value = self._values[name]
+            self._values[name] = (next_value, next_value)
+            return current
+
+        @property
+        def usage_graph_days(self):
+            return self._next("usage_graph_days")
+
+        @property
+        def usage_display_mode(self):
+            return self._next("usage_display_mode")
+
+        @property
+        def usage_graph_providers(self):
+            return self._next("usage_graph_providers")
+
+    built_settings = []
+
+    def build(settings, *, t3_policy=None):
+        built_settings.append(settings)
+        return _document_payload(settings)
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
+    monkeypatch.setattr(usage_graph_worker, "_agent_histories_found", lambda: ())
+
+    document = usage_graph_worker.usage_graph_document(FlippingSettings())
+
+    assert built_settings[0].usage_graph_providers == ("claude", "codex")
+    assert built_settings[0].usage_graph_days == 7
+    assert built_settings[0].usage_display_mode == "tokens"
+    assert document["graph"]["days"] == 7
+    assert document["graph"]["metric"] == "tokens"
 
 
 def test_cost_graph_discloses_api_equivalent_semantics(monkeypatch) -> None:
@@ -1314,31 +1023,6 @@ def test_tree_fingerprint_tracks_append_delete_and_replacement(tmp_path):
 
     assert usage_graph_worker._tree_fingerprint(tmp_path / "absent")["missing"]
     assert usage_graph_worker._file_fingerprint(tmp_path / "absent.jsonl")["missing"]
-
-
-def test_refresh_warms_the_document_cache_for_identical_settings(
-    synchronous_worker, monkeypatch
-):
-    """A settings-pane scan doubles as the first Overview warm: after
-    ``refresh_usage_graph`` builds, a ``usage_graph_document`` request
-    with the same resolved settings must not pay the scan again."""
-    calls = []
-    monkeypatch.setattr(
-        usage_graph_worker,
-        "_build_payload",
-        lambda settings, t3_policy=None: (
-            calls.append(1) or _document_payload(settings)),
-    )
-    target = make_target()
-
-    usage_graph_worker.refresh_usage_graph(target)
-    document = usage_graph_worker.usage_graph_document(target.settings)
-
-    assert calls == [1]
-    assert document["graph"]["series"] == [
-        {"provider_id": "claude", "values": [100, 0]}
-    ]
-    assert document["summary"] == "Last 7 days: Claude 100 · 2 sessions"
 
 
 # --- Sessions: days before a hook ledger starts are gaps, not zeros ---------

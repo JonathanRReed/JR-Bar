@@ -215,7 +215,6 @@ UNDECLARED: Final[Mapping[str, str]] = MappingProxyType(
         "mailbox_retained_order": "read with None and with {}",
         "mailbox_seen_completion_ids": "a fresh set() per read",
         "navigation_candidates_by_work_key": "a fresh {} per read",
-        "settings_fields": "read with None and with {}",
         "working_since_by_agent": "a fresh {} per read",
     }
 )
