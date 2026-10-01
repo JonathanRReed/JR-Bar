@@ -303,6 +303,7 @@ def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(
         _claude_projects(tmp_path),
         default_state_dir(tmp_path) / "usage-scan-cache.json",
         since_epoch=OBSERVED - 30 * DAY,
+        now=OBSERVED,
     )
     subject._local_tokens_memo.clear()
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)

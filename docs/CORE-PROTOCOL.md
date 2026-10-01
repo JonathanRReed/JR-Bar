@@ -484,16 +484,28 @@ Vocabulary:
   goes stale or has not answered, so a present value is current and the
   wire never invents one.
 - For Claude and Codex, `usage.providers[].tokens` and `estimated_cost_usd`
-  are local totals for the last 30 days, read from the usage scan cache and
-  never from a scan of their own. Each message or turn is counted once (the
-  first sighting wins, and a Codex fork or copied rollout counts under its
-  parent), across the primary home and every extra home. A Claude reading
-  whose scan cache does not yet cover the 30 days shows zero tokens and a
-  null cost until it does, not a partial figure; a Codex reading counts only
-  the days its cache still covers, never more. A day the cache had to drop
-  to stay inside its size bound is not covered: on a very busy month the
-  Claude card can stay empty and the Codex card can count fewer than 30 days. `estimated_cost_usd` is null
-  unless every counted record was priced.
+  are local totals for the last 30 days (today and the 29 local days before
+  it, the days the usage graph's 30-day range draws), read from the usage
+  scan cache and never from a scan of their own. Each message or turn is
+  counted once (the first sighting wins, and a Codex fork or copied rollout
+  counts under its parent), across the primary home and every extra home.
+  Every scan, whatever range its caller asked for, reads at least the last
+  30 days and writes that month's totals into its cache as `daily`: per local
+  day and model key, the record count and the input, cached input,
+  cache-creation and output tokens, worked out from the whole stream the
+  scan saw, so a month of any size is a few kilobytes and the cache's
+  per-file records (capped at 8 MiB, and left to overflow on a busy month)
+  are never what the card sums. A Claude reading whose cache has no `daily`
+  reaching back to the start of the window shows zero tokens and a null cost
+  until one does, not a partial figure (a cache of an older version is
+  discarded and rebuilt; so is one that cannot be read, and a `daily` that
+  does not parse is never summed); a Codex reading counts only the days its
+  caches' `daily` covers, never more. In the rare case that `daily` cannot
+  be held (more than 256 distinct model keys, a `daily` past 512 KiB, or a
+  timestamp no calendar day holds), or the scan could not list every folder
+  (one it has no permission to read), the scan writes none and the Claude
+  card stays empty.
+  `estimated_cost_usd` is null unless every counted record was priced.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
   names it): `exhausts_at` (epoch, or null when nothing is burning),

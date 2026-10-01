@@ -56,11 +56,6 @@ def _credential(credentials, provider_id: str, account: str) -> str | None:
     return value
 
 
-#: The period the Usage Center's token figures cover. Both card paths (the
-#: deduped scan and the cache reader) use it, so they cannot drift apart.
-LOCAL_TOKEN_WINDOW_SECONDS = 30 * 24 * 60 * 60
-
-
 def _default_provider_local_scan(
     provider_id: str,
     home: Path,
@@ -99,13 +94,17 @@ def _default_provider_local_scan(
         else primary_claude_projects(home=home)
     )
     cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
-    since = max(0.0, observed_at - LOCAL_TOKEN_WINDOW_SECONDS)
+    # The period the Usage Center's token figures cover: today and the 29
+    # local days before it. Both card paths (this scan and the cache reader)
+    # take it from the same place, so they cannot drift apart.
+    since = usage_stats.card_window_start(observed_at)
     try:
         result, totals = usage_stats._scan_provider_usage_with_totals(
             source,
             root,
             cache,
             since_epoch=since,
+            now=observed_at,
         )
         # Token totals count every home of this provider (provider_extra_homes),
         # each real folder once; the quota evidence stays the primary account's.
@@ -122,6 +121,7 @@ def _default_provider_local_scan(
                     extra,
                     _home_cache_path(cache, extra),
                     since_epoch=since,
+                    now=observed_at,
                 )
                 parts.append(extra_totals)
             merged = usage_stats._merge_usage_totals(tuple(parts))
@@ -198,10 +198,10 @@ def _cached_claude_local_scan(
 
 #: The small token results already worked out, keyed on the cache files they
 #: were read from. A quota refresh runs every couple of minutes; without this
-#: each one would decode up to 8 MiB of cache and rebuild the same totals.
+#: each one would read the cache again and rebuild the same totals.
 #: A refusal (``None``: the cache does not reach back far enough yet) is
-#: remembered too, or every refresh would decode the whole cache just to find
-#: the floor too new, and that is the state after every default graph scan.
+#: remembered too, or every refresh would read the cache just to find the
+#: same answer.
 _LOCAL_TOKENS_MEMO_LIMIT = 16
 _local_tokens_memo: dict[tuple, dict[str, object] | None] = {}
 _local_tokens_memo_lock = threading.Lock()
@@ -225,22 +225,31 @@ def _local_token_totals(
 ) -> dict[str, object] | None:
     """The last 30 days of one provider, once each, across every home's cache.
 
-    Claude needs the whole window: a cache that was last written for a
-    narrower one (the default graph range keeps about ten days) would read as
-    complete and undercount, so that answers nothing until a wider scan
-    refills it. Codex counts the days its cache still covers and no more,
-    because its quota evidence lives in the same cache and must not be lost.
+    Each cache carries ``daily``: the per-day, per-model totals its last scan
+    worked out from every message or turn it saw, each counted once, however
+    many records the month held and however much of them the cache's entries
+    could keep. The window is whole local days (``card_window_start``), so
+    the days are summed as they stand.
+
+    A cache whose ``daily`` starts after the window is not whole for it (it
+    was never scanned, or not for a month). Claude needs the whole window and
+    answers nothing then. Codex counts the days its caches do cover and no
+    more, because its quota evidence lives in the same cache and must not be
+    lost.
     """
     from . import usage_stats
 
     clamp = provider_id == "codex"
-    primary = usage_stats.cache_provider_records(primary_cache, provider_id)
+    primary = usage_stats.cache_card_days(primary_cache, provider_id)
+    homes = []
     if primary is None:
-        return None
-    homes = [primary]
+        if not clamp:
+            return None
+    else:
+        homes.append(primary)
     for path in extra_paths:
         cache = usage_stats._load_cache(path, source_key)
-        extra = usage_stats.cache_provider_records(cache, provider_id) if cache else None
+        extra = usage_stats.cache_card_days(cache, provider_id) if cache else None
         if extra is None:
             if not clamp:
                 # A home no scan has covered yet: half a total is worse than none.
@@ -248,7 +257,7 @@ def _local_token_totals(
             continue
         homes.append(extra)
     start = window_start
-    floor = max(home_floor for _records, home_floor in homes)
+    floor = max((card.since for card in homes), default=window_start)
     if floor > start:
         if not clamp:
             return None
@@ -261,16 +270,14 @@ def _local_token_totals(
     total_records = 0
     cost = 0.0
     savings = 0.0
-    for records, _floor in homes:
-        totals = usage_stats._totals_from_records(records, start)
-        input_tokens += sum(record[4] for record in totals.records)
-        cached_input_tokens += sum(record[5] for record in totals.records)
-        output_tokens += sum(record[7] for record in totals.records)
-        model_ids.update(
-            record[2] for record in totals.records if isinstance(record[2], str)
-        )
-        priced_records += totals.pricing_coverage.priced_records
-        total_records += totals.pricing_coverage.total_records
+    for card in homes:
+        totals = usage_stats.card_totals(card, start, provider_id)
+        input_tokens += totals.input_tokens
+        cached_input_tokens += totals.cached_input_tokens
+        output_tokens += totals.output_tokens
+        model_ids.update(totals.models)
+        priced_records += totals.priced_records
+        total_records += totals.total_records
         cost += totals.estimated_cost_usd
         savings += totals.estimated_cache_savings_usd
     # A dollar figure is published only when every counted record was priced;
@@ -350,12 +357,11 @@ def _cached_provider_local_scan(
     transcript tree on every refresh can take tens of seconds on large local
     histories, which stalls publication of a newer live rate-limit reading.
 
-    The cache is written for other callers' windows: it holds raw per-file
-    records, back to the widest graph range that last ran plus a few days,
-    with copies a fork or resume repeated. The floor it recorded is the truth
-    about how far back it reaches, so a card never sums the raw entries. It
-    counts the last 30 days once each, across the primary home and every
-    extra home, and never more than the cache covers.
+    Every scan writes the card's own per-day totals into its cache, for the
+    last 30 days whatever range the scan was asked for, so this reads a few
+    dozen numbers however busy the month was and never the per-file entries.
+    It counts the last 30 days once each, across the primary home and every
+    extra home, and never more than the caches cover.
 
     ``extra_homes`` names the extra account homes to add; left out, it is the
     saved ``provider_extra_homes`` setting.
@@ -402,13 +408,13 @@ def _cached_provider_local_scan(
             tuple(_home_cache_path(cold_cache, root) for root in extra_roots),
         ),
     )
-    window_start = max(0.0, observed_at - LOCAL_TOKEN_WINDOW_SECONDS)
+    window_start = usage_stats.card_window_start(observed_at)
     for cache_path, extra_paths in candidates:
         if not isinstance(cache_path, Path):
             continue
         extra_paths = tuple(path for path in extra_paths if isinstance(path, Path))
         stamps = tuple(_cache_stamp(path) for path in (cache_path, *extra_paths))
-        memo_key = (provider_id, stamps, int(window_start // 3600.0))
+        memo_key = (provider_id, stamps, window_start)
         cache: dict | None = None
         windows: tuple[dict[str, object], ...] = ()
         newest_window_marker: tuple[float, str] | None = None

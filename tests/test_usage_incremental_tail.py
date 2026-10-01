@@ -179,3 +179,68 @@ def test_codex_tail_total_replaces_the_cached_cumulative__and_1_more(tmp_path) -
     assert len(result.records) == 2  # exactly the snapshot's two lines
     assert result.parsed_size == frozen.st_size
 
+
+
+def test_a_codex_tail_keeps_the_model_of_the_turn_it_continues(tmp_path) -> None:
+    """A rollout names its model once per turn, in a ``turn_context`` row, and
+    the token events after it say nothing. A scan that resumes mid-turn must
+    carry that model on, or the new events read as the model ``codex``, which
+    no price table knows, and stay that way in the cache."""
+    codex_root = tmp_path / "codex"
+    claude_root = tmp_path / "claude"
+    claude_root.mkdir()
+    rollout = codex_root / "rollout-x.jsonl"
+    cache = tmp_path / "cache.json"
+
+    def token_count(total, when):
+        return {
+            "timestamp": when,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": total,
+                        "cached_input_tokens": 0,
+                        "cache_write_input_tokens": 0,
+                        "output_tokens": 5,
+                    },
+                    "last_token_usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 0,
+                        "cache_write_input_tokens": 0,
+                        "output_tokens": 5,
+                    },
+                },
+            },
+        }
+
+    context = {
+        "timestamp": "2026-08-11T11:59:00Z",
+        "type": "turn_context",
+        "payload": {"model": "gpt-5.6-sol"},
+    }
+    _write_lines(rollout, [context, token_count(100, "2026-08-11T12:00:00Z")])
+    first = usage_stats.scan_usage(claude_root, cache, codex_root=codex_root)
+    assert {record[2] for record in first.records} == {"gpt-5.6-sol"}
+
+    # The same turn goes on: more events, no new turn_context row.
+    _append_lines(rollout, [token_count(200, "2026-08-11T12:01:00Z")])
+    second = usage_stats.scan_usage(claude_root, cache, codex_root=codex_root)
+
+    assert len(second.records) == 2
+    assert {record[2] for record in second.records} == {"gpt-5.6-sol"}, (
+        "the appended event lost the turn's model"
+    )
+
+    # A later turn that changes the model is still read as that model.
+    _append_lines(
+        rollout,
+        [
+            {"timestamp": "2026-08-11T12:02:00Z", "type": "turn_context", "payload": {"model": "gpt-6-astra"}},
+            token_count(300, "2026-08-11T12:03:00Z"),
+        ],
+    )
+    third = usage_stats.scan_usage(claude_root, cache, codex_root=codex_root)
+
+    assert sorted(record[2] for record in third.records) == ["gpt-5.6-sol", "gpt-5.6-sol", "gpt-6-astra"]

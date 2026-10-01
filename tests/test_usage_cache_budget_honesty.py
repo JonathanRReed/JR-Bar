@@ -1,11 +1,16 @@
-"""A cache that had to drop entries for its size budget does not vouch for them.
+"""A busy month that does not fit the scan cache's entries is still totalled whole.
 
-The scan cache is capped (8 MiB, and a file-count bound). When a busy month does
-not fit, whole per-file entries are left out. The token cards sum the entries
-that were kept, so they would present that partial sum as the last 30 days.
-The cache now records how far back it is whole (``complete_since``: just after
-the newest record among the dropped entries), and the cards read that as the
-floor: Claude shows nothing, Codex counts only the days that are whole.
+The scan cache is capped (8 MiB, and a file-count bound). When a busy month
+does not fit, whole per-file entries are left out. The 30-day token cards do
+not read those entries: every scan writes the card's own per-day totals
+(``daily``) from the whole canonical stream it saw, a few dozen bytes a day
+however many records the month held. So a size drop costs the next scan a
+re-read of a file at worst, and costs the card nothing.
+
+What stays honest is the one thing that can still go wrong: if even those
+per-day totals cannot be held (too many distinct models, or past their own
+byte bound), the cache carries none and the card says nothing rather than
+total what it could not hold.
 
 Every scan here is a real ``scan_usage`` over synthetic transcripts and a fixed
 "now"; the size bound is made small by pricing a record high, not by a big file.
@@ -13,8 +18,8 @@ Every scan here is a real ``scan_usage`` over synthetic transcripts and a fixed
 
 from __future__ import annotations
 
+import functools
 import json
-import math
 import os
 from pathlib import Path
 
@@ -69,36 +74,25 @@ def _two_claude_transcripts(home: Path) -> None:
     os.utime(older, (OBSERVED - 3 * DAY, OBSERVED - 3 * DAY))
 
 
-def test_a_size_drop_makes_the_claude_card_show_nothing_until_a_scan_fits(
+def test_a_size_drop_leaves_the_claude_card_whole(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _two_claude_transcripts(tmp_path)
-    real_cost = usage_stats._CACHE_BYTES_PER_RECORD
     monkeypatch.setattr(usage_stats, "_CACHE_BYTES_PER_RECORD", TIGHT_RECORD_COST)
 
     _scan_claude(tmp_path, graph_days=30)
 
     document = _claude_cache_document(tmp_path)
     assert len(document["files"]) == 1, "the fixture must leave one entry out"
-    # The cache holds the newer file's records only, yet every entry it kept
-    # was trimmed to a floor 33 days back. The card must not read that as
-    # thirty whole days.
-    complete_since = document["complete_since"]
-    assert OBSERVED - 20 * DAY < complete_since < OBSERVED - 2 * DAY
-    assert _claude_card(tmp_path) is None
-
-    # Given room, the next scan keeps both files and the card fills in whole.
-    monkeypatch.setattr(usage_stats, "_CACHE_BYTES_PER_RECORD", real_cost)
-    _scan_claude(tmp_path, graph_days=30)
-
-    assert "complete_since" not in _claude_cache_document(tmp_path)
+    assert "complete_since" not in document, "nothing reads a completeness floor any more"
+    # The entry that did not fit held 20-day-old messages. The card has them.
     card = _claude_card(tmp_path)
     assert card is not None
     assert card["input_tokens"] == 160
     assert card["output_tokens"] == 80
 
 
-def test_a_size_drop_limits_the_codex_card_to_the_days_that_are_whole(
+def test_a_size_drop_leaves_the_codex_card_whole(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     long_ago = OBSERVED - 25 * DAY
@@ -121,13 +115,11 @@ def test_a_size_drop_limits_the_codex_card_to_the_days_that_are_whole(
     _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
     card = subject._cached_provider_local_scan("codex", tmp_path, OBSERVED, extra_homes=())
 
-    # The entry that did not fit had turns 20 days ago, so the cache is whole
-    # only for the days after them: the four recent turns, not the four from
-    # 25 days ago that happen to sit in a kept entry.
-    assert _card_tokens(card) == 40
+    # Eight turns in the entry that was kept and eight in the one that was not.
+    assert _card_tokens(card) == 160
 
 
-def test_a_file_count_drop_makes_the_claude_card_show_nothing(tmp_path: Path) -> None:
+def test_a_file_count_drop_leaves_the_claude_card_whole(tmp_path: Path) -> None:
     _two_claude_transcripts(tmp_path)
 
     usage_stats.scan_usage(
@@ -135,30 +127,18 @@ def test_a_file_count_drop_makes_the_claude_card_show_nothing(tmp_path: Path) ->
         _state_cache(tmp_path),
         since_epoch=OBSERVED - 30 * DAY,
         cache_max_files=1,
+        now=OBSERVED,
     )
 
     document = _claude_cache_document(tmp_path)
     assert len(document["files"]) == 1
-    assert document["complete_since"] > OBSERVED - 20 * DAY
-    assert _claude_card(tmp_path) is None
+    card = _claude_card(tmp_path)
+    assert card is not None and card["input_tokens"] == 160
 
 
-def test_a_cache_that_dropped_nothing_records_no_completeness_floor(tmp_path: Path) -> None:
-    _two_claude_transcripts(tmp_path)
-
-    _scan_claude(tmp_path, graph_days=30)
-
-    document = _claude_cache_document(tmp_path)
-    assert len(document["files"]) == 2
-    assert "complete_since" not in document
-    assert _claude_card(tmp_path) is not None
-
-
-def test_dropped_entries_with_nothing_inside_the_window_cost_no_coverage(
+def test_dropped_entries_with_nothing_inside_the_window_cost_the_card_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The dropped file's records are all older than the retention floor, so
-    # nothing the window could ask for is missing.
     newer = _claude_transcript(
         _claude_projects(tmp_path),
         "newer.jsonl",
@@ -175,33 +155,69 @@ def test_dropped_entries_with_nothing_inside_the_window_cost_no_coverage(
 
     _scan_claude(tmp_path, graph_days=30)
 
-    assert "complete_since" not in _claude_cache_document(tmp_path)
     card = _claude_card(tmp_path)
     assert card is not None and card["input_tokens"] == 80
 
 
-def test_an_unreadable_completeness_floor_is_never_trusted(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing",
+        "since-text",
+        "negative-count",
+        "huge-count",
+        "too-many-models",
+        "wrong-provider",
+        "days-not-a-map",
+        "bad-day",
+    ],
+)
+def test_a_card_section_that_cannot_be_trusted_is_never_summed(
+    tmp_path: Path, damage: str
+) -> None:
     _two_claude_transcripts(tmp_path)
     _scan_claude(tmp_path, graph_days=30)
     assert _claude_card(tmp_path) is not None
     path = _state_cache(tmp_path)
     document = json.loads(path.read_text(encoding="utf-8"))
-    document["complete_since"] = "soon"
+    daily = document["daily"]
+    first_day = next(iter(daily["days"]))
+    first_model = next(iter(daily["days"][first_day]))
+    if damage == "missing":
+        del document["daily"]
+    elif damage == "since-text":
+        daily["since"] = "soon"
+    elif damage == "negative-count":
+        daily["days"][first_day][first_model][1] = -5
+    elif damage == "huge-count":
+        daily["days"][first_day][first_model][1] = 10**30
+    elif damage == "too-many-models":
+        counts = daily["days"][first_day][first_model]
+        for number in range(usage_stats.USAGE_CARD_MAX_MODELS + 1):
+            daily["days"][first_day][f"made-up-{number}"] = list(counts)
+    elif damage == "wrong-provider":
+        daily["provider"] = "codex"
+    elif damage == "days-not-a-map":
+        daily["days"] = [1, 2, 3]
+    else:
+        daily["days"]["yesterday"] = daily["days"].pop(first_day)
     path.write_text(json.dumps(document), encoding="utf-8")
     subject._local_tokens_memo.clear()
 
     assert _claude_card(tmp_path) is None
-    loaded = usage_stats._load_cache(path)
-    reading = usage_stats.cache_provider_records(loaded, "claude")
-    assert reading is not None and math.isinf(reading[1])
+    assert usage_stats.cache_card_days(usage_stats._load_cache(path), "claude") is None
+
+    # The next scan writes a fresh one and the card is whole again.
+    _scan_claude(tmp_path, graph_days=30)
+    card = _claude_card(tmp_path)
+    assert card is not None and card["input_tokens"] == 160
 
 
-def test_one_home_that_overflowed_holds_the_whole_claude_total_back(
+def test_one_home_that_overflowed_still_gives_the_whole_claude_total(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The primary home overflows its own cache; the extra home (a cache file
-    # of its own) does not. The card needs every home whole, so the primary
-    # home's drop holds the total back.
+    # of its own) does not. Every home's card days are whole either way.
     _two_claude_transcripts(tmp_path)
     extra = tmp_path / "work-claude"
     _claude_transcript(
@@ -217,6 +233,51 @@ def test_one_home_that_overflowed_holds_the_whole_claude_total_back(
         env={},
         home=tmp_path,
         extras={"claude": [str(extra)]},
+        scan=functools.partial(usage_stats.scan_usage, now=OBSERVED),
     )
 
-    assert _claude_card(tmp_path, extras=(str(extra),)) is None
+    card = _claude_card(tmp_path, extras=(str(extra),))
+
+    assert card is not None
+    assert card["input_tokens"] == 160 + 10
+    assert card["output_tokens"] == 80 + 5
+
+
+def test_card_days_that_do_not_fit_their_own_bound_leave_the_claude_card_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_claude_transcripts(tmp_path)
+    monkeypatch.setattr(usage_stats, "USAGE_CARD_MAX_BYTES", 20)
+
+    _scan_claude(tmp_path, graph_days=30)
+
+    # The cache itself is fine and the entries are kept; it just carries no
+    # totals the card could trust, and the card says nothing.
+    document = _claude_cache_document(tmp_path)
+    assert len(document["files"]) == 2
+    assert "daily" not in document
+    assert _claude_card(tmp_path) is None
+
+    monkeypatch.undo()
+    _scan_claude(tmp_path, graph_days=30)
+    card = _claude_card(tmp_path)
+    assert card is not None and card["input_tokens"] == 160
+
+
+def test_more_distinct_models_than_the_bound_leave_the_claude_card_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "two-models.jsonl",
+        [
+            _claude_line("s1", "m1", OBSERVED - 2 * DAY).replace("claude-opus-4", "claude-opus-4-5"),
+            _claude_line("s1", "m2", OBSERVED - 2 * DAY).replace("claude-opus-4", "claude-haiku-4-5"),
+        ],
+    )
+    monkeypatch.setattr(usage_stats, "USAGE_CARD_MAX_MODELS", 1)
+
+    _scan_claude(tmp_path, graph_days=30)
+
+    assert "daily" not in _claude_cache_document(tmp_path)
+    assert _claude_card(tmp_path) is None
