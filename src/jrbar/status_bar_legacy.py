@@ -334,7 +334,7 @@ from .mailbox_preferences import (
     apply_mailbox_preferences,
 )
 from .snooze_scope import filter_snoozed_statuses, status_snoozed
-from .menu_tracking import ExactBoundarySchedule
+from .exact_boundary_schedule import ExactBoundarySchedule
 from .models import (
     AgentMode,
     AgentStatus,

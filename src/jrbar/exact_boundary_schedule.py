@@ -37,7 +37,7 @@ class ExactBoundarySchedule:
             and math.isfinite(deadline_epoch)
             and deadline_epoch >= 0.0
         ):
-            raise ValueError("invalid menu boundary")
+            raise ValueError("invalid boundary deadline")
         self._generation += 1
         self._token = BoundaryToken(self._generation, float(deadline_epoch))
         return self._token
