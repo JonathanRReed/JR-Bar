@@ -612,7 +612,7 @@ _LOST_STATES = frozenset({"needs_sign_in", "unavailable", "error", "rate_limited
 #: failure wearing old numbers: for any provider with last-known-good,
 #: the runtime converts failures to STALE, so without this the
 #: healthy->lost edge never exists for an established provider.
-_LOST_STALE_REASONS = frozenset({"authentication_required"})
+_LOST_STALE_REASONS = frozenset({"authentication_required", "usage_permission_missing"})
 
 
 def connection_loss_transitions(

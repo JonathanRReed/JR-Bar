@@ -457,13 +457,14 @@ def test_credential_fingerprint_watches_the_gemini_oauth_file(tmp_path):
 
 
 class Snap:
-    def __init__(self, provider_id, state_value):
+    def __init__(self, provider_id, state_value, reason_code=None):
         class State:
             pass
 
         self.provider_id = provider_id
         self.state = State()
         self.state.value = state_value
+        self.reason_code = reason_code
 
 
 def test_connection_loss_transitions_edge_only():
@@ -484,6 +485,29 @@ def test_connection_loss_transitions_edge_only():
             before, after, seen_keys=frozenset(k for k, _p, _s in events)
         )
         == ()
+    )
+
+
+def test_a_stale_claude_card_with_no_usage_permission_earns_the_connection_loss_cue():
+    """A 403 the API explains as "no usage permission" is as much a lost connection as a 401 is:
+    the numbers are old and nothing the card does will refresh them until the person acts."""
+    before = (Snap("claude", "ready"), Snap("grok", "ready"), Snap("codex", "ready"))
+    after = (
+        Snap("claude", "stale", "usage_permission_missing"),
+        Snap("grok", "stale", "authentication_required"),
+        Snap("codex", "stale", "local_reading_stale"),
+    )
+
+    events = connection_loss_transitions(before, after)
+
+    assert events == (
+        ("claude:usage_permission_missing", "claude", "usage_permission_missing"),
+        ("grok:authentication_required", "grok", "authentication_required"),
+    )
+    # Edge-triggered and deduped, as for authentication_required.
+    assert connection_loss_transitions(after, after) == ()
+    assert (
+        connection_loss_transitions(before, after, seen_keys=frozenset(key for key, _p, _s in events)) == ()
     )
 
 
