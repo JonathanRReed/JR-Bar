@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .hook import process_hook_payload
-from .models import AgentMode, AgentStatus
+from .models import AgentMode, AgentStatus, worker_id
 from .process_registry import DeadAgentProcess, ProcessSweeper
 from .providers import detect_log_path
 
@@ -63,10 +63,7 @@ class SweepResult:
 
 
 def _subagent_worker_id(status: AgentStatus) -> str | None:
-    marker = ":agent:"
-    if marker not in status.agent_id:
-        return None
-    return status.agent_id.split(marker, 1)[1] or None
+    return worker_id(status.provider, status.agent_id) or None
 
 
 def synthetic_end_payloads(
