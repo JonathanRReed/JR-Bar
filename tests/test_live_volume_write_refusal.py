@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from jrbar import _battery_legacy, _device_writer_legacy, cli, device_writer, led_status, write_health
+from jrbar import _device_writer_legacy, battery, cli, device_writer, led_status, write_health
 from jrbar.firmware_validation import (
     FirmwareValidationUnavailableError,
     require_firmware_program,
@@ -99,7 +99,7 @@ def test_a_refusal_is_an_os_error_not_a_device_write_error() -> None:
     "writer",
     (
         led_status.write_led_program,
-        _battery_legacy.write_led_program,
+        battery.write_led_program,
         cli.write_led_program,
     ),
     ids=("status", "battery", "cli"),

@@ -21,7 +21,7 @@ from jrbar.battery_runtime import (
 def _stub_apple_tool_identity(monkeypatch):
     # The subprocess is injected below. Tool validation has its own tests;
     # portable timeout tests must not require an installed macOS binary.
-    monkeypatch.setattr("jrbar._battery_legacy.trusted_system_tool", lambda name: Path("/usr/bin") / name)
+    monkeypatch.setattr("jrbar.battery.trusted_system_tool", lambda name: Path("/usr/bin") / name)
 
 
 def test_battery_reader_has_a_strict_subprocess_timeout__and_2_more() -> None:

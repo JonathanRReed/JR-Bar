@@ -3272,8 +3272,7 @@ def test_battery_display_uses_the_strip_transfer(headless) -> None:
     ``brightness N`` never decoded. The battery boundary is now the strip's
     own transform, so the bytes match what the agent path would write for
     the same nominal program."""
-    from jrbar._battery_legacy import BatteryLedController
-    from jrbar.battery import BatterySnapshot, program_for_battery
+    from jrbar.battery import BatteryLedController, BatterySnapshot, program_for_battery
     from jrbar.led_status import (
         AgentLedController,
         LedDisplayState,
