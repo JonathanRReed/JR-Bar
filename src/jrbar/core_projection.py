@@ -1554,6 +1554,7 @@ def build_state_document(
     has_answer_handler: object = None,
     detected_agents: Mapping[str, bool] | None = None,
     catalog_generation: int | None = None,
+    provider_updates: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped
     object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``;
@@ -1692,6 +1693,12 @@ def build_state_document(
         # Moves when the effect registry, packs or assignments change, so a
         # client can reload its catalog without reconnecting.
         document["catalog_generation"] = int(catalog_generation)
+    if provider_updates is not None:
+        # What each agent CLI's updater last did (provider_updates.py): moves
+        # only with a phase, a version or a message, never with a running clock.
+        document["provider_updates"] = {
+            str(provider): dict(record) for provider, record in provider_updates.items()
+        }
     if deck is not None:
         document["deck"] = dict(deck)
     return document

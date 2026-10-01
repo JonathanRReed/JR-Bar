@@ -2741,21 +2741,13 @@ def _cmd_provider_sign_in(self, args):
     It waits on the slow lane (``core_server.SLOW_LANE_COMMANDS``) because a
     Claude Code renewal can take up to 90 s, and the app's other commands
     must not wait behind it."""
-    provider = args.get("provider")
+    provider = _known_provider(args.get("provider"))
     instance = args.get("instance") or "default"
     terminal = args.get("terminal")
-    if not isinstance(provider, str) or not provider:
-        raise CommandError("invalid_args", "provider is required")
     if not isinstance(instance, str) or not instance:
         raise CommandError("invalid_args", "instance must be a nonempty string")
     if terminal is not None and not isinstance(terminal, str):
         raise CommandError("invalid_args", "terminal must be a bundle identifier")
-    from .provider_usage_platform import provider_descriptor
-
-    try:
-        provider_descriptor(provider)
-    except ValueError as exc:
-        raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
     on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
     state = getattr(self, "provider_usage_state", None)
     snapshot = next(
@@ -2814,6 +2806,57 @@ def _cmd_provider_sign_in(self, args):
         "command": result.command,
         "sign_in_url": result.sign_in_url,
     }
+
+
+def _provider_updates_of(self):
+    """The daemon's one ``ProviderUpdates`` (``provider_updates.py``): the
+    updater runs and the opt-in update check. Built on first use."""
+    updates = getattr(self, "_jrbar_provider_updates", None)
+    if updates is None:
+        from .provider_updates import ProviderUpdates
+
+        def checks_enabled() -> bool:
+            return getattr(getattr(self, "settings", None), "provider_update_checks_enabled", False) is True
+
+        publish = getattr(self, "_core_publish_state_soon", None)
+        updates = ProviderUpdates(
+            checks_enabled=checks_enabled,
+            on_change=publish if callable(publish) else None,
+            log=getattr(self, "_core_log", None),
+        )
+        self._jrbar_provider_updates = updates
+    return updates
+
+
+def _known_provider(provider: object) -> str:
+    """``provider`` as a string the provider registry knows, else the same
+    refusals ``provider_action`` gives."""
+    if not isinstance(provider, str) or not provider:
+        raise CommandError("invalid_args", "provider is required")
+    from .provider_usage_platform import provider_descriptor
+
+    try:
+        provider_descriptor(provider)
+    except ValueError as exc:
+        raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
+    return provider
+
+
+@command("provider_update", main_thread=False)
+def _cmd_provider_update(self, args):
+    """Settings > Agents' Update button: run the provider's own updater on a
+    worker thread and reply at once (``provider_updates.py``). The command is
+    the daemon's own table's; the app sends only a provider id. Explicit
+    only: nothing starts an updater on a timer."""
+    return _provider_updates_of(self).update(_known_provider(args.get("provider")))
+
+
+@command("provider_update_check", main_thread=False)
+def _cmd_provider_update_check(self, args):
+    """The Agents refresh asks for a fresh "update available" look. Does
+    nothing at all (no request, no thread) unless
+    ``provider_update_checks_enabled`` is on."""
+    return _provider_updates_of(self).check(forced=True)
 
 
 def _hooks_command(self, args, *, install: bool):
@@ -4708,6 +4751,11 @@ def build_headless_controller_class() -> type:
                 # The last settings write failed: the retry belongs on
                 # the writer too, not as an fsync on the run loop.
                 self._core_save_settings_soon()
+            try:
+                # "Update available" is opt in: free while the setting is off.
+                _provider_updates_of(self).tick()
+            except Exception as exc:
+                legacy.log_status_bar(f"core: update check failed: {exc.__class__.__name__}")
             # Forget a departed strip BEFORE the legacy refresh plans the
             # Dot's next write: the disconnecting refresh itself would
             # otherwise still submit the ghost program it is reacting to.
@@ -7406,6 +7454,10 @@ def build_headless_controller_class() -> type:
                 catalog_generation = self._core_catalog_generation()
             except Exception:
                 catalog_generation = None
+            try:
+                provider_updates = _provider_updates_of(self).document()
+            except Exception:
+                provider_updates = None
             document = build_state_document(
                 now=wall_now,
                 generation=self._core_state_generation,
@@ -7441,6 +7493,7 @@ def build_headless_controller_class() -> type:
                 ),
                 detected_agents=detected_agents,
                 catalog_generation=catalog_generation,
+                provider_updates=provider_updates,
             )
             try:
                 document["deck"] = self._core_deck_document(document["sessions"])
