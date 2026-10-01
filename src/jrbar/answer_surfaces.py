@@ -1322,22 +1322,58 @@ def start_session_in_terminal(
     directory, command = parts
     if not os.path.isdir(directory):
         raise CommandError("not_found", "no such directory")
-    if terminal is not None and terminal not in _STARTABLE_TERMINALS:
-        raise CommandError("invalid_args", "terminal must be Ghostty, Terminal or iTerm")
-    chosen = terminal or (recorder or default_surface_recorder()).latest_host(frozenset(_STARTABLE_TERMINALS))
-    if chosen is None:
-        chosen = GHOSTTY_BUNDLE_ID if _GHOSTTY_APP.exists() else TERMINAL_BUNDLE_ID
+    chosen = _startable_terminal(terminal, recorder)
     runner = runner or SurfaceRunner()
-    opened = _open_in_terminal(runner, str(chosen), directory, command)
+    opened = _open_in_terminal(runner, chosen, directory, command)
     if opened is None:
         raise CommandError("unsupported", "that terminal could not be opened")
     return {
         "provider": str(provider).lower(),
         "cwd": directory,
         "raised": opened,
-        "app": _STARTABLE_TERMINALS[str(chosen)],
+        "app": _STARTABLE_TERMINALS[chosen],
         "bundle_id": chosen,
     }
+
+
+def _startable_terminal(terminal: object, recorder: SurfaceRecorder | None) -> str:
+    """The terminal a command is typed into: the one named, else the one the
+    owner's most recent session ran in, else Ghostty when it is installed,
+    else Terminal.app."""
+    from .core_server import CommandError
+
+    if terminal is not None and terminal not in _STARTABLE_TERMINALS:
+        raise CommandError("invalid_args", "terminal must be Ghostty, Terminal or iTerm")
+    chosen = terminal or (recorder or default_surface_recorder()).latest_host(frozenset(_STARTABLE_TERMINALS))
+    if chosen is None:
+        chosen = GHOSTTY_BUNDLE_ID if _GHOSTTY_APP.exists() else TERMINAL_BUNDLE_ID
+    return str(chosen)
+
+
+def run_command_in_terminal(
+    directory: str,
+    command: str,
+    *,
+    terminal: object = None,
+    runner: SurfaceRunner | None = None,
+    recorder: SurfaceRecorder | None = None,
+) -> dict[str, Any]:
+    """Type ``command`` into the owner's own terminal at ``directory``: a new
+    Ghostty tab, or a new Terminal.app / iTerm2 window, exactly as
+    ``new_session`` opens an agent. Explicit actions only (a click on Fix
+    sign-in or Update); the command is chosen by the daemon, never the client.
+    Raises ``CommandError``: ``not_found`` for a directory that is not there,
+    ``invalid_args`` for an unreviewed terminal, ``unsupported`` when the
+    terminal could not be opened."""
+    from .core_server import CommandError
+
+    if not os.path.isdir(directory):
+        raise CommandError("not_found", "no such directory")
+    chosen = _startable_terminal(terminal, recorder)
+    opened = _open_in_terminal(runner or SurfaceRunner(), chosen, directory, command)
+    if opened is None:
+        raise CommandError("unsupported", "that terminal could not be opened")
+    return {"raised": opened, "app": _STARTABLE_TERMINALS[chosen], "bundle_id": chosen}
 
 
 def resume_ended_session(
