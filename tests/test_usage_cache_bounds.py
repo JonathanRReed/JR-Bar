@@ -263,13 +263,17 @@ def test_a_spent_budget_still_remembers_the_files_that_cost_nothing(
         os.utime(target, (now - 60, now - 60))
     cache = tmp_path / "usage-scan-cache.json"
 
-    # Room for one busy file, then exactly the six cheap ones. Derived from the
-    # module's own costs so this stays honest if they are retuned.
+    # Room for one busy file, then exactly the six cheap ones, and the card's
+    # per-day totals (a few hundred bytes here), which come off the budget
+    # first. Derived from the module's own costs so this stays honest if they
+    # are retuned.
     busy_cost = usage_stats._CACHE_BYTES_PER_ENTRY + 40 * usage_stats._CACHE_BYTES_PER_RECORD
+    card_room = 600
+    assert card_room < busy_cost, "the margin must not make room for a second busy file"
     monkeypatch.setattr(
         usage_stats,
         "USAGE_CACHE_MAX_BYTES",
-        busy_cost + 6 * usage_stats._CACHE_BYTES_PER_ENTRY,
+        busy_cost + 6 * usage_stats._CACHE_BYTES_PER_ENTRY + card_room,
     )
     _scan(root, cache, since_epoch=now - 7 * DAY)
 

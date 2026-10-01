@@ -37,9 +37,10 @@ import math
 import os
 import secrets
 import stat
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import BinaryIO
@@ -62,7 +63,9 @@ from .reset_policy import parse_reset_epoch
 from .usage_file_index import UsageFileIndex
 from .usage_heatmap import build_usage_heatmap
 
-CACHE_VERSION = 7
+# 8: the cache carries ``daily``, the 30-day card's per-day totals, and every
+# scan reads at least the card's 30 days whatever window its caller asked for.
+CACHE_VERSION = 8
 # 5: records carry the turn_context model instead of the literal ``codex``.
 CODEX_CACHE_SEMANTICS_VERSION = 5
 # The byte budget below is the real bound; this one only stops the candidate
@@ -98,6 +101,17 @@ USAGE_RECORD_MAX_BYTES = 1024 * 1024
 #      version degrades to a cold scan instead of being parsed into memory.
 USAGE_CACHE_MAX_BYTES = 8 * 1024 * 1024
 USAGE_CACHE_RETENTION_HEADROOM_SECONDS = 3 * 24 * 60 * 60
+# The Claude and Codex token cards total the last 30 days: today and the 29
+# local days before it. Every scan reads at least that far back, so the cache
+# can always vouch for the card, whatever range the graph asked for.
+USAGE_CARD_DAYS = 30
+# ``daily`` is bounded on its own: at most this many distinct model keys across
+# the window (a hostile rollout can name a new model on every turn), and a
+# whole ``daily`` document no larger than this. Past either, it is left out and
+# the card says nothing rather than total what it could not hold.
+USAGE_CARD_MAX_MODELS = 256
+USAGE_CARD_MAX_BYTES = 512 * 1024
+_CARD_DAYS_SCHEMA = 1
 # Conservative per-record cost: a serialized record plus its amortized share of
 # the interning tables. Measured at ~80 bytes/record; budgeted at 110 so the
 # estimate overshoots and the cap binds early rather than late.
@@ -2051,6 +2065,18 @@ def _intern(value: str, table: list[str], index: dict[str, int]) -> int:
     return position
 
 
+def card_window_start(now: float) -> float:
+    """The epoch the 30-day token card's window starts at: local midnight, 29
+    days before today's.
+
+    "The last 30 days" is today and the 29 local days before it, the same days
+    the usage graph's 30-day range draws, so the card, the graph and the
+    Usage window cannot disagree about which days a month holds.
+    """
+    today = datetime.fromtimestamp(now).date() - timedelta(days=USAGE_CARD_DAYS - 1)
+    return datetime(today.year, today.month, today.day).timestamp()
+
+
 def _scan_inventory_usage(
     inventory: LocalUsageInventory,
     expected_roots: dict[str, Path],
@@ -2059,12 +2085,22 @@ def _scan_inventory_usage(
     since_epoch: float = 0.0,
     cache_max_files: int = USAGE_CACHE_MAX_FILES,
     cache_source_key: SourceKey,
+    now: float | None = None,
 ) -> UsageTotals:
-    """Scan one frozen provider-local inventory into private aggregate state."""
+    """Scan one frozen provider-local inventory into private aggregate state.
+
+    ``since_epoch`` is the window the caller wants its totals for. The scan
+    itself always reads (or recalls from its file index) at least the card's
+    30 days, so the cache it writes can vouch for the card whatever the
+    caller's window was: a 7-day graph narrows what is returned, never what
+    the cache covers. ``now`` is the clock for the card's window.
+    """
     inventory_roots = {source.provider_id: source.root for source in inventory.sources}
     if inventory_roots != expected_roots:
         raise ValueError("usage inventory roots do not match scan roots")
 
+    card_start = card_window_start(time.time() if now is None else now)
+    read_since = since_epoch if since_epoch <= 0.0 else min(since_epoch, card_start)
     cache = _load_cache(cache_path, cache_source_key) if cache_path is not None else {}
     file_index = None
     if cache_path is not None:
@@ -2083,8 +2119,8 @@ def _scan_inventory_usage(
     try:
         return _scan_inventory_usage_with_index(
             inventory, cache_path, cache=cache, file_index=file_index,
-            since_epoch=since_epoch, cache_max_files=cache_max_files,
-            cache_source_key=cache_source_key,
+            since_epoch=read_since, output_since=since_epoch, card_start=card_start,
+            cache_max_files=cache_max_files, cache_source_key=cache_source_key,
         )
     finally:
         if file_index is not None:
@@ -2122,9 +2158,13 @@ def _scan_inventory_usage_with_index(
     cache: dict,
     file_index: UsageFileIndex | None,
     since_epoch: float,
+    output_since: float,
+    card_start: float,
     cache_max_files: int,
     cache_source_key: SourceKey,
 ) -> UsageTotals:
+    # ``since_epoch`` is how far back this scan reads; ``output_since`` is the
+    # window its caller gets totals for, never earlier than that.
     cached_files = cache.get("files", {}) if cache else {}
     cached_sessions = cache.get("sessions", []) if cache else []
     cached_models = cache.get("models", []) if cache else []
@@ -2448,16 +2488,33 @@ def _scan_inventory_usage_with_index(
     )
     cache_candidates.sort(key=lambda item: (-item[1], item[0]))
     selected_cache_candidates = cache_candidates[: max(0, cache_max_files)]
-    # Newest first, so both bounds below drop the least useful history.
-    cache_budget = USAGE_CACHE_MAX_BYTES
+
+    # What the 30-day token card reads. It is worked out from the whole
+    # canonical stream this scan saw, never from the per-file entries kept
+    # below: those are bounded and may leave a busy month's older files out,
+    # while this is a handful of numbers per day and always whole.
+    resolved = _resolved_lineage(all_records)
+    card_window = _first_sightings(resolved, card_start)
+    daily = None
+    if cache_path is not None:
+        if all(source.walk_complete for source in inventory.sources):
+            daily = _card_days_document(cache_source_key.provider_id, card_window, card_start)
+        else:
+            # A transcript folder that could not be walked completely (gone
+            # for a moment, a folder that would not open) says nothing about
+            # what is in it, so it must not zero or shrink the month: the last
+            # good days stay, as the file index keeps its rows on such a walk.
+            kept = cache.get("daily") if cache else None
+            daily = kept if isinstance(kept, dict) else None
+    daily_bytes = 0 if daily is None else len(_compact_json(daily))
+    if daily_bytes > USAGE_CARD_MAX_BYTES:
+        daily, daily_bytes = None, 0
+
+    # Newest first, so both bounds below drop the least useful history. The
+    # card's days come off the budget first: the file as a whole stays inside
+    # USAGE_CACHE_MAX_BYTES whatever the month held.
+    cache_budget = USAGE_CACHE_MAX_BYTES - daily_bytes
     new_files: dict[str, dict] = {}
-    # The newest record inside the retention window among every entry left
-    # out (by the file-count bound here, or the byte budget below). The cache
-    # is whole only after it: the entries it kept may reach back much
-    # further, and a reader must not sum them as if they were everything.
-    newest_left_out = 0.0
-    for left_out in cache_candidates[max(0, cache_max_files):]:
-        newest_left_out = max(newest_left_out, _newest_record_epoch(left_out[8], retention_epoch))
     for (
         key,
         mtime,
@@ -2499,7 +2556,10 @@ def _scan_inventory_usage_with_index(
             # which is exactly the CPU pin that paragraph was written about.
             # The first entry is still always admitted: an empty cache would
             # mean a cold scan on every single refresh.
-            newest_left_out = max(newest_left_out, _newest_record_epoch(records, retention_epoch))
+            #
+            # A left-out entry costs the next scan a re-read of that file when
+            # the file index cannot serve it. It costs the card nothing: the
+            # card's days above already hold its records.
             continue
         cache_budget -= cost
         new_files[key] = {
@@ -2540,20 +2600,21 @@ def _scan_inventory_usage_with_index(
             "dedupes": dedupes_table,
             "dedupe_secret": dedupe_secret.hex(),
         }
+        if daily is not None:
+            payload["daily"] = daily
         if cache_source_key.provider_id == "codex":
             payload["codex_semantics_version"] = CODEX_CACHE_SEMANTICS_VERSION
-        if newest_left_out > 0.0:
-            payload["complete_since"] = math.nextafter(newest_left_out, math.inf)
         if payload != cache:
             try:
-                atomic_private_write(
-                    cache_path,
-                    json.dumps(payload, separators=(",", ":")),
-                )
+                atomic_private_write(cache_path, _compact_json(payload))
             except OSError:
                 pass
 
-    totals = _totals_from_records(all_records, since_epoch)
+    # The caller's own window, from the same resolved stream. When it is the
+    # card's window the sums are the ones already made.
+    totals = _totals_from_window(
+        card_window if output_since == card_start else _first_sightings(resolved, output_since)
+    )
     totals.source_coverage = {provider_id: coverage.finalize() for provider_id, coverage in coverage_states.items()}
     if rate_candidates:
         newest = max(rate_candidates, key=lambda item: item[0])
@@ -2585,8 +2646,17 @@ def _canonical_window_records(
     the first record for each dedupe key. The window comes before the dedupe
     so an old copy cannot suppress a current record.
 
-    The scan and every cached reader sum this stream, so a card and the graph
+    The scan and the 30-day card both sum this stream, so a card and the graph
     cannot disagree about what one window holds.
+    """
+    return _first_sightings(_resolved_lineage(records), since_epoch)
+
+
+def _resolved_lineage(records: list[tuple]) -> list[tuple]:
+    """Step (a): every Codex copy renamed to the event it copies.
+
+    Independent of any window, so a scan that totals two windows (the
+    caller's and the card's) resolves it once.
     """
     # Forked rollouts contain an exact copy of their ancestor's token events.
     # Resolve those copies only through the admitted lineage graph. This keeps
@@ -2640,10 +2710,14 @@ def _canonical_window_records(
             unresolved_owner = parent_id or root_id or session_id
             canonical = f"codex-unresolved:{unresolved_owner}:{event_id}"
         normalized_records.append((*record[:8], canonical))
+    return normalized_records
 
+
+def _first_sightings(resolved: list[tuple], since_epoch: float) -> list[tuple]:
+    """Steps (b) and (c): the window, then the first record of each key."""
     window: list[tuple] = []
     seen: set[str] = set()
-    for record in normalized_records:
+    for record in resolved:
         if record[3] < since_epoch:
             continue
         dedupe = record[8]
@@ -2654,6 +2728,27 @@ def _canonical_window_records(
     return window
 
 
+def _model_amounts(
+    model: str, inp: int, cached_in: int, cache_create: int, out: int
+) -> tuple[float, float] | None:
+    """Estimated cost and cache savings (USD) of these Claude tokens on ``model``,
+    or None when no table prices it. One record's, or one model's whole day: the
+    sums are linear, so the scan and the 30-day card price the same way."""
+    pricing = _pricing_for_model(model)
+    if pricing is None:
+        return None
+    input_rate, output_rate = pricing
+    cache_read_rate = cache_read_rate_for_model(model)
+    cost = (
+        inp * input_rate
+        + cached_in * input_rate * cache_read_rate
+        + cache_create * input_rate * cache_write_rate_for_model(model)
+        + out * output_rate
+    ) / 1_000_000.0
+    savings = (cached_in * input_rate * (1.0 - cache_read_rate)) / 1_000_000.0
+    return cost, savings
+
+
 def _totals_from_records(records: list[tuple], since_epoch: float) -> UsageTotals:
     """Sum one window's canonical records: tokens, sessions and estimated cost.
 
@@ -2661,12 +2756,17 @@ def _totals_from_records(records: list[tuple], since_epoch: float) -> UsageTotal
     and its dollar estimate cannot be computed two different ways. Coverage
     and rate-limit evidence are the caller's to fill in.
     """
+    return _totals_from_window(_canonical_window_records(records, since_epoch))
+
+
+def _totals_from_window(window: list[tuple]) -> UsageTotals:
+    """``_totals_from_records`` for a stream that is already canonical."""
     totals = UsageTotals()
     priced_records = 0
     total_pricing_records = 0
     priced_token_count = 0
     total_pricing_token_count = 0
-    for record in _canonical_window_records(records, since_epoch):
+    for record in window:
         provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
         totals.records.append(record)
         totals.sessions.add(session)
@@ -2681,20 +2781,13 @@ def _totals_from_records(records: list[tuple], since_epoch: float) -> UsageTotal
         total_pricing_records += 1
         record_tokens = inp + cached_in + cache_create + out
         total_pricing_token_count += record_tokens
-        pricing = _pricing_for_model(model)
-        if pricing is None:
+        amounts = _model_amounts(model, inp, cached_in, cache_create, out)
+        if amounts is None:
             continue
         priced_records += 1
         priced_token_count += record_tokens
-        input_rate, output_rate = pricing
-        cache_read_rate = cache_read_rate_for_model(model)
-        totals.estimated_cost_usd += (
-            inp * input_rate
-            + cached_in * input_rate * cache_read_rate
-            + cache_create * input_rate * cache_write_rate_for_model(model)
-            + out * output_rate
-        ) / 1_000_000.0
-        totals.estimated_cache_savings_usd += (cached_in * input_rate * (1.0 - cache_read_rate)) / 1_000_000.0
+        totals.estimated_cost_usd += amounts[0]
+        totals.estimated_cache_savings_usd += amounts[1]
     totals.pricing_coverage = PricingCoverageMetrics(
         priced_records=priced_records,
         total_records=total_pricing_records,
@@ -2793,6 +2886,7 @@ def _scan_provider_usage_with_totals(
     since_epoch: float,
     cache_max_files: int = USAGE_CACHE_MAX_FILES,
     inventory: LocalUsageInventory | None = None,
+    now: float | None = None,
 ) -> tuple[ProviderUsageResult, UsageTotals]:
     source_key = _validated_transcript_source(source)
     local_inventory = inventory or _provider_inventory(source_key.provider_id, root)
@@ -2803,6 +2897,7 @@ def _scan_provider_usage_with_totals(
         since_epoch=since_epoch,
         cache_max_files=cache_max_files,
         cache_source_key=source_key,
+        now=now,
     )
     return _provider_result(source_key, totals), totals
 
@@ -2840,80 +2935,177 @@ def provider_cache_path(
     return _secondary_provider_cache_path(cache_path, source_key)
 
 
-def cache_entry_floor(entry: dict) -> float:
-    """How far back one cache entry reaches: the floor it was trimmed to.
-
-    A missing floor counts as 0.0 (nothing was trimmed). One that cannot be
-    read counts as unbounded, so it is never trusted to cover a window.
-    """
-    try:
-        floor = float(entry.get("since", 0.0))
-    except (TypeError, ValueError):
-        return math.inf
-    return math.inf if math.isnan(floor) else floor
+def _compact_json(value: object) -> str:
+    return json.dumps(value, separators=(",", ":"))
 
 
-def _newest_record_epoch(records: list[tuple], floor: float) -> float:
-    """The newest record timestamp at or after ``floor``; 0.0 when none."""
-    return max((record[3] for record in records if record[3] >= floor), default=0.0)
-
-
-def cache_complete_since(cache: dict) -> float:
-    """How far back a loaded cache is whole, past its entries' own floors.
-
-    A scan that could not fit every entry under the cache's size bounds
-    writes ``complete_since``: just after the newest record among the entries
-    it left out. Nothing at or before that moment can be trusted to be
-    complete, however far back the entries it did keep reach. 0.0 when nothing
-    was left out; unbounded (never trusted) when the value cannot be read.
-    """
-    if "complete_since" not in cache:
-        return 0.0
-    value = cache["complete_since"]
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return math.inf
-    return float(value) if math.isfinite(float(value)) else math.inf
-
-
-def cache_provider_records(
-    cache: dict,
+def _card_days_document(
     provider_id: str,
-) -> tuple[list[tuple], float] | None:
-    """Every record a loaded scan cache holds, and how far back it reaches.
+    window: list[tuple],
+    card_start: float,
+) -> dict | None:
+    """The 30-day card's totals, per local day and model, from a canonical stream.
 
-    The cache is written for whichever window last scanned: raw per-file
-    records, with the copies a fork or resume repeated and everything back to
-    that window's floor. Callers total them through
-    ``_totals_from_records`` and never sum them as they stand. The second
-    value is the earliest moment the whole cache can vouch for: the newest
-    floor any entry was trimmed to, or, when a scan had to leave entries out
-    for the cache's size bounds, just after the newest record it left out
-    (``cache_complete_since``). ``None`` when the cache is not readable.
-    A file whose records cannot be decoded is skipped, as elsewhere.
+    ``window`` is the scan's canonical records at or after ``card_start``, each
+    message or turn once. Per day and per model key it keeps the record count
+    and the four token counts the card sums (input, cached input, cache
+    creation, output): enough for the tokens, the model count and the
+    estimated cost, at a few dozen bytes a day however many records the month
+    held. ``since`` is where its coverage starts. None when the stream cannot
+    be held honestly (too many distinct models, or a timestamp no calendar day
+    holds): the cache then carries no ``daily`` and the card shows nothing.
     """
-    files = cache.get("files")
-    sessions = cache.get("sessions")
-    models = cache.get("models")
-    dedupes = cache.get("dedupes")
-    if not (
-        isinstance(files, dict)
-        and isinstance(sessions, list)
-        and isinstance(models, list)
-        and isinstance(dedupes, list)
+    days: dict[str, dict[str, list[int]]] = {}
+    models: set[str] = set()
+    for record in window:
+        if record[0] != provider_id:
+            continue
+        try:
+            day = datetime.fromtimestamp(record[3]).date().isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+        model = record[2]
+        row = days.setdefault(day, {}).get(model)
+        if row is None:
+            if model not in models and len(models) >= USAGE_CARD_MAX_MODELS:
+                return None
+            models.add(model)
+            row = days[day][model] = [0, 0, 0, 0, 0]
+        row[0] += 1
+        row[1] += record[4]
+        row[2] += record[5]
+        row[3] += record[6]
+        row[4] += record[7]
+    return {
+        "v": _CARD_DAYS_SCHEMA,
+        "provider": provider_id,
+        "since": card_start,
+        "days": days,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class CardDays:
+    """A cache's ``daily`` section, read back and checked."""
+
+    #: The epoch its first day starts at; nothing before it is vouched for.
+    since: float
+    #: ISO day -> model key -> (records, input, cached input, cache creation, output).
+    days: dict[str, dict[str, tuple[int, int, int, int, int]]]
+
+
+@dataclass(frozen=True, slots=True)
+class CardTotals:
+    """What the 30-day card shows, summed from a ``CardDays``."""
+
+    input_tokens: int
+    cached_input_tokens: int
+    cache_creation_tokens: int
+    output_tokens: int
+    models: frozenset[str]
+    priced_records: int
+    total_records: int
+    estimated_cost_usd: float
+    estimated_cache_savings_usd: float
+
+
+def cache_card_days(cache: dict, provider_id: str) -> CardDays | None:
+    """The card's per-day totals from a loaded scan cache, or None.
+
+    None when the cache has none (an overflow left it out, or a scan has not
+    written it yet) or when anything in it is not what this version writes: a
+    ``daily`` that cannot be trusted is never summed. The next scan writes a
+    fresh one.
+    """
+    document = cache.get("daily") if isinstance(cache, dict) else None
+    if (
+        not isinstance(document, dict)
+        or document.get("v") != _CARD_DAYS_SCHEMA
+        or document.get("provider") != provider_id
     ):
         return None
-    records: list[tuple] = []
-    floor = 0.0
-    for key, entry in tuple(files.items())[:USAGE_CACHE_MAX_FILES]:
-        if not isinstance(key, str) or not isinstance(entry, dict):
+    since = document.get("since")
+    raw_days = document.get("days")
+    if (
+        isinstance(since, bool)
+        or not isinstance(since, (int, float))
+        or not math.isfinite(float(since))
+        or not isinstance(raw_days, dict)
+        or len(raw_days) > 4 * USAGE_CARD_DAYS
+    ):
+        return None
+    days: dict[str, dict[str, tuple[int, int, int, int, int]]] = {}
+    models: set[str] = set()
+    for day, rows in raw_days.items():
+        try:
+            valid_day = isinstance(day, str) and date.fromisoformat(day).isoformat() == day
+        except ValueError:
+            valid_day = False
+        if not valid_day or not isinstance(rows, dict):
+            return None
+        parsed: dict[str, tuple[int, int, int, int, int]] = {}
+        for model, counts in rows.items():
+            if (
+                not isinstance(model, str)
+                or not isinstance(counts, list)
+                or len(counts) != 5
+                or any(
+                    isinstance(value, bool) or not isinstance(value, int) or value < 0
+                    for value in counts
+                )
+            ):
+                return None
+            models.add(model)
+            parsed[model] = (counts[0], counts[1], counts[2], counts[3], counts[4])
+        if len(models) > USAGE_CARD_MAX_MODELS:
+            return None
+        days[day] = parsed
+    return CardDays(since=float(since), days=days)
+
+
+def card_totals(card: CardDays, start_epoch: float, provider_id: str) -> CardTotals:
+    """Sum the days of ``card`` that start at or after the day ``start_epoch`` is in.
+
+    Claude's estimated cost is the sum of each model's day, priced the way the
+    scan prices one record (``_model_amounts``). Codex records carry no price,
+    so Codex counts none as priced, as in the scan.
+    """
+    first_day = datetime.fromtimestamp(start_epoch).date().isoformat()
+    inp = cached = creation = out = 0
+    models: set[str] = set()
+    priced = total = 0
+    cost = savings = 0.0
+    for day, rows in card.days.items():
+        if day < first_day:
             continue
-        decoded = _decode_records(
-            entry, sessions, models, dedupes, expected_provider=provider_id
-        )
-        if decoded is not None:
-            records.extend(decoded)
-        floor = max(floor, cache_entry_floor(entry))
-    return records, max(floor, cache_complete_since(cache))
+        for model, (records, i, c, w, o) in rows.items():
+            if records == 0:
+                continue
+            models.add(model)
+            inp += i
+            cached += c
+            creation += w
+            out += o
+            if provider_id == "codex":
+                continue
+            total += records
+            amounts = _model_amounts(model, i, c, w, o)
+            if amounts is None:
+                continue
+            priced += records
+            cost += amounts[0]
+            savings += amounts[1]
+    return CardTotals(
+        input_tokens=inp,
+        cached_input_tokens=cached,
+        cache_creation_tokens=creation,
+        output_tokens=out,
+        models=frozenset(models),
+        priced_records=priced,
+        total_records=total,
+        estimated_cost_usd=cost,
+        estimated_cache_savings_usd=savings,
+    )
 
 
 def _merge_usage_totals(parts: tuple[UsageTotals, ...]) -> UsageTotals:
@@ -2954,8 +3146,14 @@ def scan_usage(
     cache_max_files: int = USAGE_CACHE_MAX_FILES,
     inventory: LocalUsageInventory | None = None,
     provider_ids: tuple[str, ...] | None = None,
+    now: float | None = None,
 ) -> UsageTotals:
-    """Compatibility aggregation over independent provider-local scans."""
+    """Compatibility aggregation over independent provider-local scans.
+
+    ``since_epoch`` is the window the returned totals cover; the cache each
+    scan writes always reaches back the card's 30 days from ``now`` (the wall
+    clock unless a caller passes one) whatever that window is.
+    """
     roots = {"claude": root}
     if codex_root is not None:
         roots["codex"] = codex_root
@@ -3002,6 +3200,7 @@ def scan_usage(
             since_epoch=since_epoch,
             cache_max_files=cache_max_files,
             inventory=LocalUsageInventory((source_inventory,)),
+            now=now,
         )
         parts.append(totals)
     return _merge_usage_totals(tuple(parts))

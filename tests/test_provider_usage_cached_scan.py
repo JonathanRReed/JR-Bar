@@ -3,11 +3,17 @@ with the scan that wrote it.
 
 Every test here builds a real cache with ``usage_stats.scan_usage`` and reads
 it back through the provider cards' cached readers. Nothing patches
-``_load_cache``. Clocks are passed in as ``OBSERVED``; nothing sleeps.
+``_load_cache``. Clocks are passed in as ``OBSERVED`` (the scan takes it as
+``now``, the reader as ``observed_at``); nothing sleeps.
+
+The card totals the last 30 local days. Every scan writes those days into its
+cache whatever range it was asked for, so a graph scan of any length leaves
+the card whole.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import time
@@ -57,13 +63,16 @@ def _codex_rollouts(home: Path, files: dict[str, list[dict]]) -> Path:
     return root
 
 
-def _scan_codex(home: Path, root: Path, *, since_epoch: float) -> usage_stats.UsageTotals:
+def _scan_codex(
+    home: Path, root: Path, *, since_epoch: float, now: float = OBSERVED
+) -> usage_stats.UsageTotals:
     return usage_stats.scan_usage(
         home / ".claude" / "projects",
         _state_cache(home),
         codex_root=root,
         since_epoch=since_epoch,
         provider_ids=("codex",),
+        now=now,
     )
 
 
@@ -74,18 +83,6 @@ def _card_tokens(document: dict | None) -> int:
         + int(document["cached_input_tokens"])
         + int(document["output_tokens"])
     )
-
-
-def _cache_floor(home: Path, provider_id: str) -> float:
-    source = next(
-        row
-        for row in usage_stats.negotiated_provider_sources()
-        if row.source_key.provider_id == provider_id
-        and row.source_key.capability_id == "transcript_usage"
-    )
-    path = usage_stats._secondary_provider_cache_path(_state_cache(home), source.source_key)
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return max(float(entry["since"]) for entry in payload["files"].values())
 
 
 def test_cached_codex_scan_counts_a_forked_rollout_once(tmp_path: Path) -> None:
@@ -148,7 +145,7 @@ def test_cached_scan_ignores_records_older_than_thirty_days(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize("graph_days", [7, 30, 365])
-def test_cached_scan_never_reports_more_than_the_cache_covers(
+def test_a_graph_scan_of_any_range_leaves_the_codex_card_whole(
     tmp_path: Path, graph_days: int
 ) -> None:
     near = OBSERVED - 5 * DAY
@@ -168,18 +165,13 @@ def test_cached_scan_never_reports_more_than_the_cache_covers(
     )
     _scan_codex(tmp_path, root, since_epoch=OBSERVED - graph_days * DAY)
 
-    start = max(OBSERVED - 30 * DAY, _cache_floor(tmp_path, "codex"))
-    expected = _scan_codex(tmp_path, root, since_epoch=start).codex_tokens
-    if graph_days == 7:
-        # The default graph range keeps about ten days: the card counts only
-        # what that cache still holds and never claims thirty days of it.
-        assert expected == 30
-    else:
-        assert expected == 230
-    # Reading back must not have changed what the cache covers.
+    # The default graph range is 7 days; the card is the last 30 whatever
+    # range the scan that wrote the cache was asked for.
+    assert _card_tokens(subject._cached_codex_local_scan(tmp_path, OBSERVED)) == 230
+    # And scanning again must not have changed what the cache covers.
     _scan_codex(tmp_path, root, since_epoch=OBSERVED - graph_days * DAY)
 
-    assert _card_tokens(subject._cached_codex_local_scan(tmp_path, OBSERVED)) == expected
+    assert _card_tokens(subject._cached_codex_local_scan(tmp_path, OBSERVED)) == 230
 
 
 def test_cached_and_cold_provider_scans_agree(tmp_path: Path) -> None:
@@ -257,7 +249,9 @@ def _claude_transcript(root: Path, name: str, lines: list[str]) -> Path:
     return target
 
 
-def _scan_claude(home: Path, *, graph_days: int, extras: dict | None = None) -> None:
+def _scan_claude(
+    home: Path, *, graph_days: int, extras: dict | None = None, now: float = OBSERVED
+) -> None:
     provider_homes.scan_usage_all_homes(
         _state_cache(home),
         since_epoch=OBSERVED - graph_days * DAY,
@@ -265,6 +259,7 @@ def _scan_claude(home: Path, *, graph_days: int, extras: dict | None = None) -> 
         env={},
         home=home,
         extras=extras or {},
+        scan=functools.partial(usage_stats.scan_usage, now=now),
     )
 
 
@@ -287,7 +282,7 @@ def test_claude_cached_scan_reads_what_scan_usage_wrote(tmp_path: Path) -> None:
     )
     cache = _state_cache(tmp_path)
     usage_stats.scan_usage(
-        _claude_projects(tmp_path), cache, since_epoch=OBSERVED - 365 * DAY
+        _claude_projects(tmp_path), cache, since_epoch=OBSERVED - 365 * DAY, now=OBSERVED
     )
 
     document = _claude_card(tmp_path)
@@ -307,6 +302,7 @@ def test_claude_cached_scan_counts_a_resumed_message_once(tmp_path: Path) -> Non
         _claude_projects(tmp_path),
         _state_cache(tmp_path),
         since_epoch=OBSERVED - 30 * DAY,
+        now=OBSERVED,
     )
 
     document = _claude_card(tmp_path)
@@ -316,9 +312,7 @@ def test_claude_cached_scan_counts_a_resumed_message_once(tmp_path: Path) -> Non
     assert document["output_tokens"] == scanned.output_tokens == 5
 
 
-def test_claude_cached_scan_refuses_a_cache_that_does_not_cover_30_days(
-    tmp_path: Path,
-) -> None:
+def test_claude_card_is_whole_after_a_7_day_graph_scan(tmp_path: Path) -> None:
     _claude_transcript(
         _claude_projects(tmp_path),
         "session.jsonl",
@@ -329,8 +323,30 @@ def test_claude_cached_scan_refuses_a_cache_that_does_not_cover_30_days(
     )
     _scan_claude(tmp_path, graph_days=7)
 
-    # The default graph range keeps about ten days. A card that said "last
-    # 30 days" over that would read as complete and undercount.
+    # The default graph range is 7 days. It narrows what the graph is given,
+    # not what the cache covers: the 20-day-old message is still in the card.
+    document = _claude_card(tmp_path)
+
+    assert document is not None
+    assert document["input_tokens"] == 20
+    assert document["output_tokens"] == 10
+
+
+def test_claude_cached_scan_refuses_a_cache_that_was_not_scanned_far_enough_back(
+    tmp_path: Path,
+) -> None:
+    _claude_transcript(
+        _claude_projects(tmp_path),
+        "session.jsonl",
+        [
+            _claude_line("s1", "recent", OBSERVED - 2 * DAY),
+            _claude_line("s1", "older", OBSERVED - 20 * DAY),
+        ],
+    )
+    # Written by a scan five days after the moment the card is read for: its
+    # days start after that card's window does, so they are not whole for it.
+    _scan_claude(tmp_path, graph_days=30, now=OBSERVED + 5 * DAY)
+
     assert _claude_card(tmp_path) is None
 
     _scan_claude(tmp_path, graph_days=30)
@@ -545,6 +561,7 @@ def test_cached_codex_scan_adds_an_extra_home_but_keeps_the_primary_quota(
         env={},
         home=tmp_path,
         extras={"codex": [str(extra_home)]},
+        scan=functools.partial(usage_stats.scan_usage, now=OBSERVED),
     )
 
     alone = subject._cached_provider_local_scan(
@@ -569,25 +586,24 @@ def test_claude_cached_scan_remembers_a_refusal_while_the_cache_is_unchanged(
             _claude_line("s1", "older", OBSERVED - 20 * DAY),
         ],
     )
-    # The state after any default 7-day graph scan: the cache reaches back
-    # about ten days, so the 30-day card refuses.
-    _scan_claude(tmp_path, graph_days=7)
+    # A cache whose days start after the card's window does: the card refuses.
+    _scan_claude(tmp_path, graph_days=30, now=OBSERVED + 5 * DAY)
     loads: list[Path] = []
     decodes: list[int] = []
     real_load = usage_stats._load_cache
-    real_decode = usage_stats._decode_records
+    real_card_days = usage_stats.cache_card_days
 
     def counting_load(cache_path, source_key=None):
         if cache_path.exists():  # a cache file that was never written costs one lstat
             loads.append(cache_path)
         return real_load(cache_path, source_key)
 
-    def counting_decode(*args, **kwargs):
+    def counting_card_days(*args, **kwargs):
         decodes.append(1)
-        return real_decode(*args, **kwargs)
+        return real_card_days(*args, **kwargs)
 
     monkeypatch.setattr(usage_stats, "_load_cache", counting_load)
-    monkeypatch.setattr(usage_stats, "_decode_records", counting_decode)
+    monkeypatch.setattr(usage_stats, "cache_card_days", counting_card_days)
 
     assert _claude_card(tmp_path) is None
     loaded_once, decoded_once = len(loads), len(decodes)
@@ -597,7 +613,7 @@ def test_claude_cached_scan_remembers_a_refusal_while_the_cache_is_unchanged(
     assert _claude_card(tmp_path) is None
     assert _claude_card(tmp_path) is None
     assert len(loads) == loaded_once, "a remembered refusal reloaded the cache"
-    assert len(decodes) == decoded_once, "a remembered refusal decoded the cache again"
+    assert len(decodes) == decoded_once, "a remembered refusal read the cache's days again"
 
     # A wider scan rewrites the cache: the refusal must not outlive it.
     _scan_claude(tmp_path, graph_days=30)
@@ -670,7 +686,7 @@ def test_codex_cached_scan_keeps_the_primary_home_when_extra_homes_cannot_be_lis
     assert "codex" in lines[0]
 
 
-# --- Codex: one floor for every home ----------------------------------------
+# --- Codex: one start for every home ----------------------------------------
 
 
 def _codex_source_key():
@@ -682,20 +698,20 @@ def _codex_source_key():
     )
 
 
-def _codex_cache_floor_at(cache_path: Path) -> float:
+def _codex_days_start_at(cache_path: Path) -> float:
     source_key = _codex_source_key()
     loaded = usage_stats._load_cache(cache_path, source_key)
-    reading = usage_stats.cache_provider_records(loaded, "codex")
-    assert reading is not None, "the fixture must leave a readable cache"
-    return reading[1]
+    card = usage_stats.cache_card_days(loaded, "codex")
+    assert card is not None, "the fixture must leave a readable cache"
+    return card.since
 
 
 @pytest.mark.parametrize("narrower_home", ["primary", "extra"])
-def test_cached_codex_scan_counts_from_the_newest_floor_across_homes(
+def test_cached_codex_scan_counts_from_the_latest_start_across_homes(
     tmp_path: Path, narrower_home: str
 ) -> None:
     near = OBSERVED - 5 * DAY
-    far = OBSERVED - 20 * DAY
+    far = OBSERVED - 28 * DAY
     primary_root = _codex_rollouts(
         tmp_path,
         {
@@ -720,44 +736,39 @@ def test_cached_codex_scan_counts_from_the_newest_floor_across_homes(
     [extra_root] = provider_homes.extra_scan_roots(
         "codex", env={}, home=tmp_path, extras=[str(extra_home)]
     )
-    # Both homes scanned for the default 7-day graph: each cache reaches back
-    # about ten days and neither holds the 20-day-old turns.
-    provider_homes.scan_usage_all_homes(
-        _state_cache(tmp_path),
-        since_epoch=OBSERVED - 7 * DAY,
-        provider_ids=("codex",),
-        env={},
-        home=tmp_path,
-        extras={"codex": [str(extra_home)]},
+    # One home was last scanned ten days after the moment the card is read
+    # for, so its days start 19 days back and do not hold the 28-day-old turn;
+    # the other home's days start 29 days back and do.
+    late = OBSERVED + 10 * DAY
+    _scan_codex(
+        tmp_path, primary_root, since_epoch=OBSERVED - 30 * DAY,
+        now=late if narrower_home == "primary" else OBSERVED,
     )
-    # Then ONE home is scanned for 30 days and now holds its 20-day-old turn.
-    if narrower_home == "extra":
-        _scan_codex(tmp_path, primary_root, since_epoch=OBSERVED - 30 * DAY)
-    else:
-        usage_stats.scan_usage(
-            tmp_path / ".jrbar-no-such-home",
-            provider_homes._home_cache_path(_state_cache(tmp_path), extra_root),
-            codex_root=extra_root,
-            since_epoch=OBSERVED - 30 * DAY,
-            provider_ids=("codex",),
-        )
+    usage_stats.scan_usage(
+        tmp_path / ".jrbar-no-such-home",
+        provider_homes._home_cache_path(_state_cache(tmp_path), extra_root),
+        codex_root=extra_root,
+        since_epoch=OBSERVED - 30 * DAY,
+        provider_ids=("codex",),
+        now=late if narrower_home == "extra" else OBSERVED,
+    )
     source_key = _codex_source_key()
-    primary_floor = _codex_cache_floor_at(
+    primary_start = _codex_days_start_at(
         usage_stats.provider_cache_path(_state_cache(tmp_path), source_key)
     )
-    extra_floor = _codex_cache_floor_at(
+    extra_start = _codex_days_start_at(
         usage_stats.provider_cache_path(
             provider_homes._home_cache_path(_state_cache(tmp_path), extra_root), source_key
         )
     )
-    wide, narrow = sorted((primary_floor, extra_floor))
-    assert wide < OBSERVED - 30 * DAY < far < narrow < near, "the homes must disagree about 30 days"
+    wide, narrow = sorted((primary_start, extra_start))
+    assert wide <= far < narrow < near, "the homes must disagree about 30 days"
 
     card = subject._cached_provider_local_scan(
         "codex", tmp_path, OBSERVED, extra_homes=(str(extra_home),)
     )
 
-    # Only the newest floor is vouched for by every home: the wide home's
-    # 20-day-old turn is not counted, or one home would be counted for more
+    # Only the later start is vouched for by every home: the wide home's
+    # 28-day-old turn is not counted, or one home would be counted for more
     # days than the other.
     assert _card_tokens(card) == 30 + 70
