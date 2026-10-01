@@ -136,6 +136,8 @@ def test_a_settings_save_that_lost_to_an_outside_edit_is_adopted_not_retried(dae
     assert controller._core_settings_dirty is False
     assert daemon.saves == saves_before + 1
     generation = controller._core_settings_generation
+    # What the toggle itself reported is not what the adoption reports.
+    daemon.touched.clear()
     for _ in range(3):
         _tick(controller)
 
@@ -149,7 +151,9 @@ def test_a_settings_save_that_lost_to_an_outside_edit_is_adopted_not_retried(dae
     assert (daemon.replaced.stat().st_mode & 0o777) == 0o600
     assert len(daemon.lines_about_the_file()) == 1
     assert "settings.json.replaced" in daemon.lines_about_the_file()[0]
-    assert daemon.touched and "alert_burst" in daemon.touched[-1]
+    assert len(daemon.touched) == 1 and "alert_burst" in daemon.touched[0], (
+        "the adoption runs the side effects of the keys it changed, once"
+    )
     # The adopted file is the new baseline: the next toggle saves, over the edit, not over nothing.
     daemon.toggle(4)
     assert controller._core_flush_settings() is True
@@ -353,6 +357,26 @@ def test_a_file_that_is_unreadable_at_the_first_look_is_left_alone_at_quit(daemo
     controller._core_quit_flush()
 
     assert daemon.path.read_text(encoding="utf-8") == '{"half": ' and daemon.kept() == []
+
+
+def test_adopting_a_file_leaves_the_document_clean_so_nothing_is_written_after_it(daemon: _Daemon) -> None:
+    """A save that failed through the DND path leaves the settings dirty; the
+    adoption replaces memory with the file, so no write may follow it."""
+    controller = daemon.controller
+    daemon.toggle(6)
+    assert controller._core_settings_dirty is True
+    daemon.edit_outside(alert_burst=9)
+    with pytest.raises(SettingsConcurrentWriteError):
+        controller.dnd_controller._settings_saver(controller.settings)
+    saves_before = daemon.saves
+    daemon.monkeypatch.setattr(daemon.writer, "submit", daemon.inline_submit)
+
+    _tick(controller)
+    _tick(controller)
+
+    assert controller.settings.alert_burst == 9
+    assert controller._core_settings_dirty is False
+    assert daemon.saves == saves_before, "the adopted document was not written back"
 
 
 def test_a_file_that_cannot_be_read_yet_is_retried_next_refresh_and_at_quit(
