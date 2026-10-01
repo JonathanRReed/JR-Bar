@@ -202,7 +202,7 @@ def configured_extra_homes(settings: object = None) -> dict[str, tuple[str, ...]
         try:
             from .settings import load_settings
 
-            settings = load_settings()
+            settings = load_settings(track=False)
         except Exception:
             return normalized_extra_homes(None)
     return normalized_extra_homes(getattr(settings, "provider_extra_homes", None))

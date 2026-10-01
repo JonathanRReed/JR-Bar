@@ -2486,7 +2486,7 @@ def _operator_state_from_document(
 
 
 def default_sources(settings: AgentMonitorSettings | None = None) -> tuple[SourceSpec, ...]:
-    active_settings = load_settings() if settings is None else settings
+    active_settings = load_settings(track=False) if settings is None else settings
     sources: list[SourceSpec] = []
     for provider in HOOK_PROVIDERS:
         sources.append(SourceSpec(provider, detect_log_path(provider)))

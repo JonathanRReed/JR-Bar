@@ -652,7 +652,7 @@ class HubSource:
             return self._settings_loader()
         from .settings import load_settings
 
-        return load_settings()
+        return load_settings(track=False)
 
     def __call__(self, now: float, *, force: bool = False) -> tuple[ProviderUsageSnapshot, ...]:
         settings = self._settings()

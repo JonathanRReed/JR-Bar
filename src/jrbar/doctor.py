@@ -540,7 +540,7 @@ def _alcove_following_enabled() -> bool:
     # settings pulls in the colour and signal models with it.
     from .settings import load_settings
 
-    return bool(load_settings().screen_bar_follow_alcove)
+    return bool(load_settings(track=False).screen_bar_follow_alcove)
 
 
 def _alcove_follow_state_probe() -> DiagnosticFinding:
