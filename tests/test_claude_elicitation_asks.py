@@ -17,15 +17,15 @@ from pathlib import Path
 
 import pytest
 
-from jrbar._collector_legacy import (
+from jrbar.answer_in_place import answer_capability_for_request
+from jrbar.collector import (
+    LiveAgentMonitor,
     _registered_hook_source,
     mode_for_event,
     notification_requests_input,
     should_ignore_status_transition,
     status_from_event,
 )
-from jrbar.answer_in_place import answer_capability_for_request
-from jrbar.collector import LiveAgentMonitor
 from jrbar.hook import _normalized_hook_record, routed_hook_payload
 from jrbar.models import AgentMode
 from jrbar.operator_state import BootIdentifier, ClockSample, RequestPhase

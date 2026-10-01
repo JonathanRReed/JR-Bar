@@ -177,7 +177,7 @@ def _read_hub_settings() -> object:
 
 
 def _read_default_sources() -> object:
-    from jrbar._collector_legacy import default_sources
+    from jrbar.collector import default_sources
 
     return default_sources()
 

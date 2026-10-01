@@ -242,7 +242,7 @@ class MonitorAcknowledgementTests(unittest.TestCase):
     when the acknowledgement set changes, even with no new fact batch."""
 
     def test_live_monitor_rederives_phase_on_snapshot(self) -> None:
-        from jrbar._collector_legacy import LiveAgentMonitor
+        from jrbar.collector import LiveAgentMonitor
 
         state, _work_key, request_key = _state_with_live_ask()
         keys: list[frozenset] = [frozenset()]
@@ -272,7 +272,7 @@ class MonitorAcknowledgementTests(unittest.TestCase):
         )
 
     def test_live_monitor_ingest_carries_the_current_set(self) -> None:
-        from jrbar._collector_legacy import LiveAgentMonitor
+        from jrbar.collector import LiveAgentMonitor
 
         keys: list[frozenset] = [frozenset()]
         monitor = LiveAgentMonitor(
@@ -340,7 +340,7 @@ class MonitorAcknowledgementTests(unittest.TestCase):
         )
 
     def test_transcript_monitor_signature_carries_the_acknowledgement_set(self) -> None:
-        from jrbar._collector_legacy import AgentMonitor
+        from jrbar.collector import AgentMonitor
 
         keys: list[frozenset] = [frozenset()]
         monitor = AgentMonitor(
@@ -355,7 +355,7 @@ class MonitorAcknowledgementTests(unittest.TestCase):
         self.assertNotEqual(monitor._canonical_signature, first)
 
     def test_a_malformed_supplier_fails_closed_to_nothing_acknowledged(self) -> None:
-        from jrbar._collector_legacy import LiveAgentMonitor
+        from jrbar.collector import LiveAgentMonitor
 
         monitor = LiveAgentMonitor(
             sources=(),

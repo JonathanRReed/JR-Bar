@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from jrbar._collector_legacy import (
+from jrbar.attention import LifecycleMode, _lifecycle_mode, project_attention
+from jrbar.collector import (
     COMPLETED_VISIBLE_SECONDS,
     IDLE_VISIBLE_SECONDS,
     POST_TOOL_WORKING_VISIBLE_SECONDS,
@@ -21,7 +22,6 @@ from jrbar._collector_legacy import (
     status_counts_active,
     status_for_snapshot,
 )
-from jrbar.attention import LifecycleMode, _lifecycle_mode, project_attention
 from jrbar.models import AgentMode, AgentStatus
 
 _NOW = datetime.now(timezone.utc)
@@ -129,7 +129,7 @@ def test_liveness_beats_silence_for_a_long_quiet_tool_run__and_2_more() -> None:
 
     import time
 
-    from jrbar._collector_legacy import LIVE_SESSION_TRUST_SECONDS, LiveSessionMemory
+    from jrbar.collector import LIVE_SESSION_TRUST_SECONDS, LiveSessionMemory
 
     memory = LiveSessionMemory()
     quiet = _status(AgentMode.WORKING, "PreToolUse", silent_for=600.0)

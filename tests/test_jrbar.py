@@ -243,12 +243,12 @@ class _InlineHardwareWorker:
 def snapshot_from_statuses(statuses, **kwargs):
     """Test fixture: compose a MonitorSnapshot from bare statuses.
 
-    Moved out of _collector_legacy on 2026-08-26 -- production builds
+    Moved out of collector on 2026-08-26 -- production builds
     snapshots through the live collector; only tests composed them from
     loose statuses. Resolves every collector function at call time so the
     facade's patched status_is_stale semantics apply.
     """
-    from jrbar import _collector_legacy as _cl
+    from jrbar import collector as _cl
 
     fresh = []
     stale = []

@@ -1303,7 +1303,7 @@ def test_reconcile_reads_the_tail_of_an_over_cap_log(tmp_path: Path) -> None:
     crossed the collector's cap while the audit trim threshold sat above
     it, every reconcile aborted on OSError, and the menu said "writing to
     the log, nothing arriving" while the hook side was perfectly healthy."""
-    from jrbar import _collector_legacy
+    from jrbar import collector
     from jrbar.hook import _normalized_hook_record, routed_hook_payload
 
     log_path = tmp_path / "claude.jsonl"
@@ -1328,7 +1328,7 @@ def test_reconcile_reads_the_tail_of_an_over_cap_log(tmp_path: Path) -> None:
         clock_sampler=lambda: _clock(6.0, 106.0),
     )
     before = monitor.operator_state
-    with patch.object(_collector_legacy, "LATEST_STATE_MAX_BYTES", 4_096):
+    with patch.object(collector, "LATEST_STATE_MAX_BYTES", 4_096):
         monitor.reconcile_refresh_hint(
             ProviderRefreshHint(_CLAUDE, EventToken("event:claude:tail")),
             log_path=log_path,

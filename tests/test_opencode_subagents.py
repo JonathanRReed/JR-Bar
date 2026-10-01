@@ -18,9 +18,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from jrbar import core_power
-from jrbar._collector_legacy import LiveAgentMonitor
 from jrbar.attention import actionable_request
 from jrbar.capacity_types import SourceKey
+from jrbar.collector import LiveAgentMonitor
 from jrbar.ipc import ProviderRefreshHint
 from jrbar.models import AgentMode, AgentStatus, HookEvent
 from jrbar.provider_adapters import (

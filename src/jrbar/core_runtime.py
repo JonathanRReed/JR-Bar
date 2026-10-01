@@ -7292,7 +7292,7 @@ def build_headless_controller_class() -> type:
                         name = details.get("name")
                         cwd = cwd or details.get("cwd")
                 elif provider == "codex":
-                    from ._collector_legacy import codex_session_title
+                    from .collector import codex_session_title
 
                     name = codex_session_title(session_id)
             except Exception:

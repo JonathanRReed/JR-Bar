@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from jrbar._collector_legacy import LiveAgentMonitor
+from jrbar.collector import LiveAgentMonitor
 from jrbar.hook import _normalized_hook_record, routed_hook_payload
 from jrbar.install import install_grok_hooks
 from jrbar.ipc import ProviderRefreshHint
@@ -56,7 +56,7 @@ def _records(payload: dict[str, object]):
 
 
 def _batch(record: NormalizedProviderRecord | InertProviderRecord):
-    from jrbar._collector_legacy import _registered_hook_source
+    from jrbar.collector import _registered_hook_source
 
     source = _registered_hook_source("grok")
     assert source is not None
@@ -135,7 +135,7 @@ def test_a_replayed_stop_cancelled_record_reduces_again() -> None:
 
     assert replayed is not None
     assert replayed.event_name == "Interrupt"
-    from jrbar._collector_legacy import _registered_hook_source
+    from jrbar.collector import _registered_hook_source
 
     source = _registered_hook_source("grok")
     assert source is not None

@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jrbar._collector_legacy import mode_for_event
+from jrbar.collector import mode_for_event
 from jrbar.hook import _normalized_hook_record, routed_hook_payload
 from jrbar.models import AgentMode
 from jrbar.provider_adapters import NormalizedProviderRecord, ProviderEventName

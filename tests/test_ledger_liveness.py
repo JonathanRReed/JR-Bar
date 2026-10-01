@@ -310,7 +310,7 @@ def test_a_source_still_losing_is_not_released_by_the_lease__and_1_more() -> Non
     per-source stamps from the global uncertain_since -- impossible in
     that shape -- so the app's own latest.json failed its own validator
     and every restart lost its warm start."""
-    from jrbar._collector_legacy import (
+    from jrbar.collector import (
         _state_to_document,
         _v2_state_from_document,
     )

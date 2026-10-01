@@ -21,16 +21,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from jrbar._collector_legacy import (
+from jrbar._settings_legacy import AgentMonitorSettings
+from jrbar.attention import project_attention
+from jrbar.capacity_types import SourceKey
+from jrbar.collector import (
     COMPLETED_VISIBLE_SECONDS,
     IDLE_VISIBLE_SECONDS,
     POST_TOOL_WORKING_VISIBLE_SECONDS,
     RestoreHealth,
     _snapshot_from_operator_state,
 )
-from jrbar._settings_legacy import AgentMonitorSettings
-from jrbar.attention import project_attention
-from jrbar.capacity_types import SourceKey
 from jrbar.mailbox import project_canonical_mailbox
 from jrbar.operator_state import (
     ACTIVE_SILENCE_SECONDS,

@@ -297,7 +297,7 @@ _POST_TOOL = _rule(
 )
 # Ratified 2026-08-20 (audit D12): a failed TOOL call is non-terminal.
 # The agent sees the failure and keeps going -- the mode map
-# (_collector_legacy) and the attention layer already treated it as
+# (collector.py) and the attention layer already treated it as
 # Working, while this rule said FAILED and routed a live session to
 # "ready for review". One truth now: the WORK stays active.
 _FAILURE = _rule(
