@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,9 +8,7 @@ from .decision_trace import capacity_detail_text, decision_trace_text
 from .why_light_context import format_why_light_context
 
 __all__ = [
-    "build_window",
     "panel_body",
-    "present_panel",
     "refresh_visible_panel",
     "set_text_preserving_position",
 ]
@@ -206,72 +203,3 @@ def refresh_visible_panel(controller: object, body: str) -> bool:
         return False
     set_text_preserving_position(controller.why_panel_text_view, body)
     return True
-
-
-def present_panel(
-    controller: object,
-    body: str,
-    *,
-    window_builder: Callable[[object], object],
-    presenter: Callable[[object], None],
-    activator: Callable[[], None],
-) -> None:
-    """Present and focus AppKit through callables supplied by the controller."""
-    if getattr(controller, "why_panel_window", None) is None:
-        controller.why_panel_window = window_builder(controller)
-    set_text_preserving_position(controller.why_panel_text_view, body)
-    presenter(controller.why_panel_window)
-    make_first_responder = getattr(
-        controller.why_panel_window,
-        "makeFirstResponder_",
-        None,
-    )
-    if callable(make_first_responder):
-        try:
-            make_first_responder(controller.why_panel_text_view)
-        except Exception:
-            pass
-    activator()
-
-
-def build_window(
-    target: object,
-    *,
-    window_class: Any,
-    view_class: Any,
-    style_mask: int,
-    backing_store: int,
-    title: str,
-    text_view_builder: Callable[..., object],
-) -> object:
-    """Build the selectable AppKit explanation window from injected types."""
-    width, height = 620, 660
-    window = window_class.alloc().initWithContentRect_styleMask_backing_defer_(
-        ((0, 0), (width, height)),
-        style_mask,
-        backing_store,
-        False,
-    )
-    window.setTitle_(title)
-    window.setReleasedWhenClosed_(False)
-    window.center()
-    root = view_class.alloc().initWithFrame_(((0, 0), (width, height)))
-    window.setContentView_(root)
-    margin = 16
-    text_view = text_view_builder(
-        root,
-        "",
-        margin,
-        margin,
-        width - 2 * margin,
-        height - 2 * margin,
-    )
-    text_view.setEditable_(False)
-    text_view.setSelectable_(True)
-    text_view.setAccessibilityLabel_("Why this light explanation")
-    text_view.setAccessibilityHelp_(
-        "Selectable current-light explanation. Use Command-A and Command-C to copy."
-    )
-    window.setInitialFirstResponder_(text_view)
-    target.why_panel_text_view = text_view
-    return window

@@ -129,7 +129,7 @@ listed is a helper of the row it sits next to alphabetically.
 | Settings and persistence | `settings.py` → `_settings_legacy.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
 | Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
 | Retained controller (live: `application_composition.py` composes it and `core_runtime.build_headless_controller_class` subclasses it, running its refresh, escalation and keep-awake methods through `objc.super`; it is linted like the rest, with its import block kept as the surface the facade and tests read) | `application_composition.py`, `status_bar_legacy.py`, `_status_bar_production.py`, `status_bar.py`, `provider_usage_status_bar.py`, `usage_view.py`, `agent_browser.py`, `agent_browser_window.py` (payload types) |
-| Legacy AppKit windows (still imported, but no socket command opens them since `open_legacy_window` went; the Python Settings window stack is gone, and `docs/feature-disposition.md` names the last commit that still has it) | `why_panel.py` (the window half; `panel_body` feeds the controller's Why text) |
+| Legacy AppKit windows (still imported, but no socket command opens them since `open_legacy_window` went; the Python Settings window stack is gone, and `docs/feature-disposition.md` names the last commit that still has it) | `why_panel.py` (`panel_body` feeds the controller's Why text; its window builder is gone) |
 
 The one-release `sidepulse` import shim and console alias are gone. Hook
 commands registered before the rename (`python -m sidepulse.hook_client`
