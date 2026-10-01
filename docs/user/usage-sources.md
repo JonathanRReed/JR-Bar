@@ -100,43 +100,44 @@ count once, so a duplicate never doubles a total.
 
 ## How far back the token totals reach
 
-The Claude and Codex cards show tokens and cost for the last 30 days. They
-read the cache that JR-Bar's usage scans already keep and never scan the
-transcripts themselves, so what a card can show depends on the last scan
-that wrote the cache.
+The Claude and Codex cards show tokens and cost for the last 30 days: today
+and the 29 days before it, by this Mac's own calendar. Those are the same
+days the usage graph draws for its 30-day range, so the card and the graph
+count the same month. Each message or turn is counted once, however many
+times a resumed or forked session copied it. The cards read what JR-Bar's
+usage scans already worked out and never scan the transcripts themselves.
 
-- **Claude shows a whole total or nothing.** The card appears once the
-  cache reaches back a full 30 days across every home. JR-Bar's core scans
-  30 days a few seconds after it starts, and that fills the card.
-- **A shorter scan can blank it.** The usage graph keeps only the range it
-  was asked for, plus three days. On the default 7-day graph that is about
-  ten days, so after a graph scan the cache no longer reaches back 30 days
-  and the Claude card goes empty instead of showing a total with days
-  missing. It fills again after the next 30-day scan: a restart, the Usage
-  window's 30-day range, or a graph set to 30 days or more. While you use
-  the 7-day graph the card and the graph can take turns.
-- **A very busy month can blank it too.** The cache is capped at 8 MiB.
-  When 30 days of entries do not fit, a scan leaves out the oldest, largest
-  ones and writes down how far back the cache is still whole. The Claude
-  card then shows nothing, because a total with those days missing would
-  read as complete. The usage graph is not affected: it reads the full scan,
-  not this cache.
-- **Codex counts the days the cache still holds.** After a shorter scan, or
-  a busy month that did not fit, the Codex card adds up only the days that
-  are whole (about ten after a 7-day graph scan) and the card does not say
-  so. Its quota reading is kept either way, because that lives in the same
-  cache.
+- **Every scan keeps the whole 30 days.** However short a range a scan was
+  asked for, it reads back at least 30 days and writes that month's totals,
+  a few numbers for each day and model, into its cache. The 7-day graph, the
+  Usage window's ranges and the core's own 30-day scan after it starts all
+  leave the cards whole. The graph is still given only its own range.
+- **A busy month is counted whole.** The cache's per-file records are capped
+  at 8 MiB, which keeps JR-Bar's own memory small, and a month of heavy use
+  on a busy Mac does not fit in that. The cards do not read those records.
+  The month's totals are worked out from every message the scan saw, and
+  they take a few kilobytes however busy the month was.
+- **Claude shows a whole total or nothing.** The card appears once a scan
+  has covered the 30 days, across every home. After JR-Bar updates, the
+  first scan starts over from the transcripts, so the Claude card is empty
+  until the core's own 30-day scan finishes. That scan starts about 8
+  seconds after the core does and takes seconds on a quiet Mac and tens of
+  seconds on a very busy one. JR-Bar then keeps what it worked out, so a
+  restart does not repeat it.
+- **Codex counts the days its caches cover.** If a cache has no totals for
+  the whole 30 days (it was never scanned that far back, or a home you added
+  has not been scanned yet), Codex adds up only the days it does have and the
+  card does not say so. Its quota reading is kept either way, because that
+  lives in the same cache.
 - **Claude adds every home or none.** If a home you listed under
   `provider_extra_homes` has not been scanned yet, or JR-Bar cannot list
   your extra homes, the Claude card waits instead of showing one home's
   share. Codex keeps the primary home in that case.
-
-The graph does not keep 30 days on every scan because the cache is capped
-at 8 MiB, which keeps JR-Bar's own memory small. On a very busy machine 30
-days of entries are already more than that cap holds, so a 7-day graph that
-tried to keep them would write a much bigger file on every refresh for no
-gain to the graph. The graph keeps its own range, and the cards say nothing
-rather than guess.
+- **A month it cannot hold says so.** On rare input the month's totals
+  cannot be kept: a transcript that names more than 256 different models in
+  30 days, or a timestamp no calendar day holds. The scan then writes no
+  totals, and the Claude card shows nothing instead of a total that leaves
+  those days out. The usage graph is not affected: it reads the full scan.
 
 ## Token history for Pi, Grok, Gemini CLI and OpenClaw
 
