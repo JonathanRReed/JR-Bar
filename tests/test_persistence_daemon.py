@@ -313,6 +313,36 @@ def test_a_conflict_found_at_quit_still_keeps_what_memory_held(daemon: _Daemon) 
     assert json.loads(daemon.replaced.read_text(encoding="utf-8"))["alert_burst"] == 6
 
 
+def test_a_file_deleted_before_quit_is_written_out_at_quit(daemon: _Daemon) -> None:
+    controller = daemon.controller
+    controller.applicationDidFinishLaunching_(None)
+    daemon.toggle(6)
+    daemon.path.unlink()
+    assert controller._core_flush_settings() is False
+
+    controller._core_quit_flush()
+
+    assert json.loads(daemon.path.read_text(encoding="utf-8"))["alert_burst"] == 6
+    assert controller._core_settings_dirty is False
+
+
+def test_an_invalid_file_seen_twice_by_quit_is_set_aside_and_memory_is_written_out(daemon: _Daemon) -> None:
+    controller = daemon.controller
+    controller.applicationDidFinishLaunching_(None)
+    daemon.toggle(6)
+    daemon.path.write_text("{ not json", encoding="utf-8")
+    assert controller._core_flush_settings() is False
+    _tick(controller)  # the first look
+    assert daemon.kept() == []
+
+    controller._core_quit_flush()  # the second look finds it unchanged
+
+    (kept,) = daemon.kept()
+    assert kept.read_text(encoding="utf-8") == "{ not json"
+    assert json.loads(daemon.path.read_text(encoding="utf-8"))["alert_burst"] == 6
+    assert controller._core_settings_dirty is False
+
+
 def test_a_file_that_is_unreadable_at_the_first_look_is_left_alone_at_quit(daemon: _Daemon) -> None:
     controller = daemon.controller
     controller.applicationDidFinishLaunching_(None)

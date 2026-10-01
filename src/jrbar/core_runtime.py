@@ -4499,6 +4499,9 @@ def build_headless_controller_class() -> type:
                 # Not worth a refresh now, but the memory an outside edit
                 # replaced is still kept as settings.json.replaced.
                 self._core_adopt_settings_from_disk(quitting=True)
+                if self._core_settings_dirty:
+                    # A deleted or unreadable file is written out from memory.
+                    self._core_flush_settings()
             service = getattr(self, "_core_usage_history_service", None)
             if service is not None:
                 service.close()
