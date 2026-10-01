@@ -878,10 +878,10 @@ class CoreServer:
         try:
             message = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
-            client.send(encode_frame(self._reply(None, ok=False, code="bad_frame", message="not JSON")))
+            self._send_reply(client, self._reply(None, ok=False, code="bad_frame", message="not JSON"))
             return
         if not isinstance(message, dict):
-            client.send(encode_frame(self._reply(None, ok=False, code="bad_frame", message="not an object")))
+            self._send_reply(client, self._reply(None, ok=False, code="bad_frame", message="not an object"))
             return
         if message.get("t") != "command":
             return
@@ -893,14 +893,13 @@ class CoreServer:
         if not isinstance(args, dict):
             args = {}
         if not isinstance(name, str) or not name:
-            client.send(encode_frame(self._reply(command_id, ok=False, code="bad_command", message="missing name")))
+            self._send_reply(client, self._reply(command_id, ok=False, code="bad_command", message="missing name"))
             return
         self.stats["commands"] += 1
         if name in self._slow_commands:
             self._queue_slow(client, command_id, name, {**args, SLOW_LANE_RECEIVED_AT: time.time()})
             return
-        reply = self.run_command(command_id, name, args)
-        client.send(encode_frame(reply))
+        self._send_reply(client, self.run_command(command_id, name, args), name)
 
     def _queue_slow(self, client: _Client, command_id: str | None, name: str, args: dict[str, Any]) -> None:
         with self._slow_condition:
@@ -910,9 +909,10 @@ class CoreServer:
                 self._slow_condition.notify_all()
                 return
             self.stats["slow_lane_refused"] += 1
-        client.send(encode_frame(self._reply(
-            command_id, ok=False, code="busy", message=f"{name}: too many slow reads queued; try again"
-        )))
+        self._send_reply(
+            client,
+            self._reply(command_id, ok=False, code="busy", message=f"{name}: too many slow reads queued; try again"),
+        )
 
     def _slow_lane_loop(self, generation: int) -> None:
         if self._slow_lane_setup is not None:
@@ -934,7 +934,7 @@ class CoreServer:
             # _Client.send holds the client's write lock, so this reply
             # never interleaves with a frame the flusher or the reader
             # thread is writing to the same socket.
-            client.send(encode_frame(reply))
+            self._send_reply(client, reply, name)
 
     def run_command(self, command_id: str | None, name: str, args: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -948,10 +948,6 @@ class CoreServer:
             result = {}
         reply = self._reply(command_id, ok=True)
         reply["result"] = result
-        try:
-            encode_frame(reply)
-        except (TypeError, ValueError):
-            reply["result"] = {"repr": repr(result)[:2000]}
         return reply
 
     def _encode(self, document: dict[str, Any], kind: object) -> bytes | None:
@@ -983,6 +979,44 @@ class CoreServer:
                 f"core sent null for {replaced} non-finite number(s) in a {kind} frame "
                 f"({count} frame(s) so far)"
             )
+
+    def _reply_frame(self, reply: dict[str, Any], name: str = "") -> bytes | None:
+        """The wire bytes for a reply: always a frame the client can read.
+
+        A result that cannot be written is replaced by its ``repr``; one over
+        the frame limit is replaced by a ``frame_too_large`` error carrying
+        the same id, so the app's command fails at once instead of waiting
+        out its reply timeout for a frame its splitter threw away. ``None``
+        when even that error cannot be sent (the id the client chose is
+        itself over the limit).
+        """
+        try:
+            frame, replaced = encode_frame_counting(reply)
+        except Exception:
+            reply = dict(reply)
+            reply["result"] = {"repr": repr(reply.get("result"))[:2000]}
+            frame, replaced = encode_frame_counting(reply)
+        if replaced:
+            self._note_sanitized("reply", replaced)
+        if len(frame) <= MAX_FRAME_BYTES:
+            return frame
+        self.stats["dropped_oversize"] += 1
+        self._log(f"core dropped an oversize reply to {name or 'a command'} ({len(frame)} bytes)")
+        error = self._reply(
+            reply.get("id") if isinstance(reply.get("id"), str) else None,
+            ok=False,
+            code="frame_too_large",
+            message=f"{name or 'the command'}: the reply is {len(frame)} bytes, over the {MAX_FRAME_BYTES}-byte frame limit",
+        )
+        frame = self._encode(error, "reply")
+        if frame is None or len(frame) > MAX_FRAME_BYTES:
+            return None
+        return frame
+
+    def _send_reply(self, client: _Client, reply: dict[str, Any], name: str = "") -> None:
+        frame = self._reply_frame(reply, name)
+        if frame is not None:
+            client.send(frame)
 
     @staticmethod
     def _reply(

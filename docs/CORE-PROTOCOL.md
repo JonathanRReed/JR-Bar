@@ -29,7 +29,11 @@ hand-written examples.
 - Framing: newline-delimited JSON (one object per line, UTF-8, `ensure_ascii`
   on the daemon side so no raw newline ever appears). Max frame 1 MiB in
   both directions: an oversize outbound frame is dropped and counted, an
-  oversize inbound frame closes that client.
+  oversize inbound frame closes that client. A `reply` obeys the same
+  limit, but the command it answers must not be left waiting for a frame
+  that never arrives, so an oversize reply is replaced by
+  `{"ok":false,"error":{"code":"frame_too_large","message":…}}` with the
+  command's own `id` (counted with the other oversize drops).
 - Numbers: a number that is not finite (NaN, `+Infinity`, `-Infinity`) is
   never written as a bare token, which is not JSON and would cost the app
   the whole frame. The daemon writes `null` in its place, in every frame
@@ -1130,7 +1134,9 @@ Answer to a command.
 ```
 Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
-`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`;
+`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`,
+`frame_too_large` (any command whose answer would not fit in one 1 MiB
+frame; nothing is sent but the error, so ask for less, or for a page);
 `answer_ask` adds `accessibility_required`, `session_gone`, `stale_ask`,
 `stale_request` and
 `send_failed` (see below); the Effect

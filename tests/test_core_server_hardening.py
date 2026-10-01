@@ -1,9 +1,8 @@
 """The daemon's socket under the inputs it should never trust itself with.
 
-A frame is always JSON the app can decode: a number that is not finite goes
-out as ``null``, and a document that cannot be written at all costs that one
-frame, never the connection. Everything here is deterministic: every wait
-only bounds a hang.
+A frame is always JSON the app can decode (a number that is not finite goes
+out as ``null``), and a reply obeys the same size limit as every other frame.
+Everything here is deterministic: every wait only bounds a hang.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from jrbar.core_server import CoreServer, encode_frame
+from jrbar.core_server import MAX_FRAME_BYTES, CoreServer, encode_frame
 from tests.test_core_server import _connect
 
 HANG_BOUND_SECONDS = 30.0
@@ -223,6 +222,59 @@ def test_a_frame_that_cannot_be_encoded_is_a_counted_drop_and_the_connection_liv
         assert instance.stats["dropped_unencodable"] == 5
         client.sendall(_command("alive", "ping"))
         assert _read_strict(client, 1)[0]["id"] == "alive"
+        client.close()
+    finally:
+        instance.stop()
+
+
+# -- 2. a reply obeys the frame limit -----------------------------------------
+
+
+def test_an_oversize_reply_becomes_a_frame_too_large_error_for_that_command(sock_dir: Path) -> None:
+    watch = _LogWatch()
+
+    def dispatch(name: str, args: dict):
+        if name == "audit_export":
+            return {"text": "x" * MAX_FRAME_BYTES}
+        if name == "usage_graph":
+            return {"text": "x" * MAX_FRAME_BYTES}
+        return {"pong": True}
+
+    instance = _serve(sock_dir, dispatch, log=watch)
+    try:
+        client = _connect(instance)
+        _read_strict(client, 1)
+        # The same answer from the reader thread and from the slow lane.
+        client.sendall(_command("big-inline", "audit_export"))
+        client.sendall(_command("big-slow", "usage_graph"))
+        client.sendall(_command("after", "ping"))
+        replies = {reply["id"]: reply for reply in _read_strict(client, 3)}
+        for command_id in ("big-inline", "big-slow"):
+            reply = replies[command_id]
+            assert reply["ok"] is False
+            assert reply["error"]["code"] == "frame_too_large"
+            assert "limit" in reply["error"]["message"]
+            assert "result" not in reply
+        assert replies["after"]["result"] == {"pong": True}
+        assert instance.stats["dropped_oversize"] == 2
+        assert watch.count("oversize reply") == 2
+        client.close()
+    finally:
+        instance.stop()
+
+
+def test_a_reply_just_under_the_limit_is_delivered_whole(sock_dir: Path) -> None:
+    envelope = len(encode_frame({"t": "reply", "v": 1, "id": "fit", "ok": True, "result": {"text": ""}}))
+    text = "x" * (MAX_FRAME_BYTES - envelope)
+
+    instance = _serve(sock_dir, lambda name, args: {"text": text})
+    try:
+        client = _connect(instance)
+        _read_strict(client, 1)
+        client.sendall(_command("fit", "audit_export"))
+        reply = _read_strict(client, 1)[0]
+        assert reply["ok"] is True and reply["result"]["text"] == text
+        assert instance.stats["dropped_oversize"] == 0
         client.close()
     finally:
         instance.stop()
