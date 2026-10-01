@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import audit
+from .grok_children import GROK_CHILD_LINKS, GrokChildLinks, stamp_child_identity
 from .hook_dedupe import HookEventDeduplicator
 from .ipc import ProviderRefreshHint, send_refresh_hint
 from .origin import annotate_payload_with_origin
@@ -85,10 +86,14 @@ def routed_hook_payload(
     payload_text: str,
     *,
     logged_at: str | None = None,
+    child_links: GrokChildLinks = GROK_CHILD_LINKS,
 ) -> tuple[str, Path, dict[str, Any]]:
     line = format_hook_payload(provider, payload_text, logged_at=logged_at, include_origin=False)
     actual_provider = infer_provider_from_hook_line(provider, line)
     line = annotate_hook_line(actual_provider, line)
+    if actual_provider == "grok":
+        # A Grok sub-agent's session names no parent; its SubagentStart does.
+        line = stamp_child_identity(line, child_links)
     actual_log_path = log_path
     if actual_provider != provider:
         actual_log_path = detect_log_path(actual_provider)

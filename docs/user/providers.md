@@ -37,6 +37,13 @@ from the shell that has it. Other account homes you list under
 `provider_extra_homes` are read for usage only; JR-Bar installs no hooks into
 them.
 
+## Grok
+
+Grok runs each sub-agent in a session of its own. JR-Bar groups it under the
+session that started it, and its asks follow the Sub-agent asks setting, as
+OpenCode's do. A sub-agent that was already running when JR-Bar started shows
+as a session of its own until it ends.
+
 ## OpenCode
 
 OpenCode reports through a small plugin in `~/.config/opencode/plugins/`,
