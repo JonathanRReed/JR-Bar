@@ -1604,7 +1604,11 @@ identical are one request). A PostToolUse cut down after an ask that arrived
 whole does not resolve it; the ask clears when the turn ends. The shim
 sends no `decide_ms` for such a record and prints nothing, so the agent's own
 prompt appears at once; `permission_facts` refuses it too. `python -m
-jrbar.hook_client` does not do this and still drops an oversize payload.
+jrbar.hook_client`, the command that runs when no compiled shim is installed,
+does the same for Claude and Codex: it reads at most the first MiB and a byte,
+builds the same record with the same rules and fingerprint, and sends it as an
+ordinary hook (a test feeds one payload to both and compares the two records);
+every other provider's oversize payload is still dropped.
 
 A `ppid` of 1 or less in a frame means the agent had already exited and
 launchd had adopted the hook. The daemon reads such a frame as carrying no

@@ -101,12 +101,59 @@ ROOT = Path(__file__).resolve().parents[1]
 # product's hook path. It runs in a child so the composition does not leak
 # into this process.
 _DAEMON_REFRESH = r"""
-import json, tempfile, threading, time
+import json, os, socket, subprocess, tempfile, threading, time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from jrbar import core_runtime, status_bar
+# The child must not touch anything outside its temporary HOME. This guard
+# refuses, and records, a spawn of any provider CLI or of ``security`` (the
+# Keychain) and any connection that is not a local socket, so a regression
+# that lets the daemon's usage refresh probe a real provider fails the parent
+# on `probes` instead of leaving an orphan writing into the temporary HOME.
+probes = []
+PROVIDER_TOOLS = frozenset(
+    ("codex", "claude", "grok", "devin", "gemini", "opencode", "agent", "cursor-agent", "security")
+)
+_popen_init = subprocess.Popen.__init__
+
+
+def _guarded_popen(self, args, *more, **options):
+    argv = list(args) if isinstance(args, (list, tuple)) else [str(args)]
+    name = os.path.basename(str(argv[0]))
+    if name in PROVIDER_TOOLS:
+        probes.append(name)
+        raise FileNotFoundError(name)
+    return _popen_init(self, args, *more, **options)
+
+
+subprocess.Popen.__init__ = _guarded_popen
+_connect = socket.socket.connect
+
+
+def _guarded_connect(self, address):
+    if self.family != socket.AF_UNIX:
+        probes.append("network")
+        raise OSError("the network is off in this test")
+    return _connect(self, address)
+
+
+def _refused_lookup(*args, **kwargs):
+    probes.append("network")
+    raise OSError("the network is off in this test")
+
+
+socket.socket.connect = _guarded_connect
+socket.getaddrinfo = _refused_lookup
+
+from jrbar import core_runtime, provider_usage_runtime, status_bar
+
+# No provider collectors at all: the usage service answers "collector not
+# configured" for every provider, so nothing runs `codex app-server`, reads the
+# Keychain or calls a provider's API. The real registry did, and the probe it
+# started outlived this process and wrote into the temporary HOME while the
+# parent was deleting it ("Directory not empty").
+provider_usage_runtime._default_collectors = lambda: {}
 
 tmp = Path(tempfile.mkdtemp())
 status_bar.default_settings_path = lambda: tmp / "settings.json"
@@ -263,6 +310,10 @@ before, built = counts(), len(builds)
 controller.refresh_(None)
 out["after_stop"] = {"refreshed": counts()["refresh"] - before["refresh"], "built": len(builds) - built,
                      "mode": lifecycle(session)}
+# One whole usage refresh, here and now, so every probe the daemon would make
+# has been asked for before `probes` is read, however the workers were timed.
+controller._provider_usage_service().refresh_now()
+out["probes"] = sorted(set(probes))
 controller.applicationWillTerminate_(None)
 print(json.dumps(out))
 """
@@ -274,7 +325,10 @@ def test_a_hook_that_only_moves_the_monitor_is_admitted_at_once__and_2_more() ->
     fingerprint read, so its refresh was a no-op and the app heard about it
     at the next 15 s heartbeat (p90 11 s late, live). The monitor's
     revision is fingerprinted now: the Stop is admitted and published."""
-    with tempfile.TemporaryDirectory() as tempdir:
+    # ``ignore_cleanup_errors``: the child is done when ``run`` returns and the
+    # guard above keeps it from starting anything that outlives it, but a stray
+    # file in a temporary folder must never be what fails this test.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tempdir:
         env = os.environ.copy()
         env["HOME"] = tempdir
         env["XDG_STATE_HOME"] = str(Path(tempdir) / "state")
@@ -293,6 +347,7 @@ def test_a_hook_that_only_moves_the_monitor_is_admitted_at_once__and_2_more() ->
         )
     assert completed.returncode == 0, completed.stderr[-3000:]
     out = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert out["probes"] == [], "the daemon under test reached a provider tool, the Keychain or the network"
     assert out["working"] not in (None, "completed")
     assert out["after_stop"]["refreshed"] == 1
     assert out["after_stop"]["mode"] != out["working"]

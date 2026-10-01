@@ -100,6 +100,37 @@ class HookEvent:
         return f"{self.provider}:unknown"
 
 
+def worker_id(provider: str | None, agent_id: str) -> str | None:
+    """The worker's own id inside a status key, or ``None`` when the key is
+    not a worker's.
+
+    A key is ``<provider>:<kind>:<id>``. The kind is the part right after the
+    provider: ``agent`` for a worker, ``session`` for a main session. The id
+    after it is the provider's own and may hold a colon and anything past it,
+    so ``claude:session:abc:agent:def`` is a main session, never a worker
+    that is its own parent, and a worker's id may itself hold ``:agent:``. A
+    peer's row carries its machine in front (``remote:<machine>:claude:...``,
+    and a machine name holds no colon), which is stripped before the kind is
+    read. A ``provider`` of ``None`` accepts whichever provider the key names
+    (for a bare key with no status beside it).
+
+    Do not test a key for the substring ``:agent:``: it is also in the id of a
+    main session whose provider-owned id has it.
+    """
+    local = agent_id
+    if local.startswith("remote:"):
+        _namespace, separator, rest = local[len("remote:"):].partition(":")
+        if separator:
+            local = rest
+    named, separator, rest = local.partition(":")
+    if not separator or (provider is not None and named != provider):
+        return None
+    kind, separator, worker = rest.partition(":")
+    if kind != "agent" or not separator:
+        return None
+    return worker
+
+
 @dataclass(frozen=True)
 class AgentStatus:
     provider: str
@@ -143,18 +174,8 @@ class AgentStatus:
         provider:session:<id>. A real install had 77 of 111 statuses be
         sub-agents -- they need grouping, not top billing.
 
-        The kind is the part right after the provider. The id after it is
-        the provider's own and may hold a colon and anything past it, so
-        ``claude:session:abc:agent:def`` is a main session, not a worker
-        that is its own parent. A peer's row carries its machine in front
-        (``remote:<machine>:claude:agent:<id>``, and a machine name holds
-        no colon), which is stripped before the kind is read."""
-        agent_id = self.agent_id
-        if agent_id.startswith("remote:"):
-            _namespace, separator, local = agent_id[len("remote:"):].partition(":")
-            if separator:
-                agent_id = local
-        return agent_id.startswith(f"{self.provider}:agent:")
+        The kind is the part right after the provider (``worker_id``)."""
+        return worker_id(self.provider, self.agent_id) is not None
 
     @property
     def parent_agent_id(self) -> str | None:

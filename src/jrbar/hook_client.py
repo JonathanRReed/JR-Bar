@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
 from .hook_ingress_protocol import (
     HOOK_DECISION_WAIT_MS,
@@ -146,25 +148,214 @@ def run_decide_hook_client(
     return verdict if disposition is HookIngressDisposition.ACCEPTED else None
 
 
-def _read_bounded_payload() -> str | None:
-    try:
-        payload = sys.stdin.buffer.read(MAX_HOOK_INGRESS_PAYLOAD_BYTES + 1)
-    except (AttributeError, OSError):
+# ---- A payload past MAX_HOOK_INGRESS_PAYLOAD_BYTES --------------------------
+#
+# The same small record the compiled shim sends in its place
+# (hook/jrbar-hook.c, ``build_metadata``), for Claude and Codex: the event, the
+# session, the tool, and ``"payload_truncated":true``, found by one scan over
+# the first MiB. The scan walks the top-level object only and steps over every
+# value it does not want, so a key spelled inside a tool's output is never
+# taken for a top-level one. Values are plain printable ASCII of bounded
+# length, copied verbatim; the call's own ``tool_input`` is kept when it is a
+# whole object of at most ``_RECORD_INPUT_BYTES``, and otherwise a 64-bit
+# FNV-1a fingerprint of its first ``_RECORD_INPUT_BYTES`` names the call. Keep
+# the two in step: tests/test_hook_client_oversize.py feeds both the same
+# payloads and compares what they make.
+
+_RECORD_PROVIDERS: Final = frozenset({"claude", "codex"})
+_RECORD_VALUE_BYTES: Final = 256
+_RECORD_PATH_BYTES: Final = 1024
+_RECORD_INPUT_BYTES: Final = 64 * 1024
+_RECORD_BYTES: Final = _RECORD_INPUT_BYTES + 4096
+# In the order they are written; the first two are required.
+_RECORD_KEYS: Final = (
+    (b"hook_event_name", _RECORD_VALUE_BYTES),
+    (b"session_id", _RECORD_VALUE_BYTES),
+    (b"tool_name", _RECORD_VALUE_BYTES),
+    (b"turn_id", _RECORD_VALUE_BYTES),
+    (b"agent_id", _RECORD_VALUE_BYTES),
+    (b"transcript_path", _RECORD_PATH_BYTES),
+)
+_WHITESPACE: Final = b" \t\n\r"
+_STRING_EDGE: Final = re.compile(rb'["\\]')
+_STRUCTURE: Final = re.compile(rb'["{}\[\]]')
+_SCALAR_END: Final = re.compile(rb"[,}\] \t\n\r]")
+_PLAIN_ASCII: Final = re.compile(rb"[\x20-\x5b\x5d-\x7e]+")
+_FNV_OFFSET: Final = 0xCBF29CE484222325
+_FNV_PRIME: Final = 0x100000001B3
+
+
+def _skip_whitespace(head: bytes, i: int, n: int) -> int:
+    while i < n and head[i] in _WHITESPACE:
+        i += 1
+    return i
+
+
+def _skip_string(head: bytes, i: int, n: int) -> int:
+    """``i`` is at an opening quote: the index after the closing one, or 0
+    when the head ends first."""
+    i += 1
+    while i < n:
+        edge = _STRING_EDGE.search(head, i, n)
+        if edge is None:
+            return 0
+        at = edge.start()
+        if head[at] == 0x22:
+            return at + 1
+        if at + 1 >= n:
+            return 0
+        i = at + 2
+    return 0
+
+
+def _skip_value(head: bytes, i: int, n: int) -> int:
+    """The index after the value at ``i``, or 0 when the head ends inside it."""
+    if i >= n:
+        return 0
+    first = head[i]
+    if first == 0x22:
+        return _skip_string(head, i, n)
+    if first in (0x7B, 0x5B):
+        depth = 0
+        while i < n:
+            edge = _STRUCTURE.search(head, i, n)
+            if edge is None:
+                return 0
+            at = edge.start()
+            mark = head[at]
+            if mark == 0x22:
+                i = _skip_string(head, at, n)
+                if not i:
+                    return 0
+                continue
+            i = at + 1
+            if mark in (0x7B, 0x5B):
+                depth += 1
+            else:
+                depth -= 1
+                if depth == 0:
+                    return i
+        return 0
+    end = _SCALAR_END.search(head, i, n)
+    return end.start() if end is not None else 0
+
+
+def _fnv1a64(data: bytes) -> int:
+    value = _FNV_OFFSET
+    for byte in data:
+        value = ((value ^ byte) * _FNV_PRIME) & 0xFFFFFFFFFFFFFFFF
+    return value
+
+
+def oversize_payload_record(head: bytes) -> str | None:
+    """The record that stands in for a payload past the cap, from its first
+    MiB; ``None`` when the head does not name both the event and the session
+    (the daemon could not place it) or the record is not valid text."""
+    n = len(head)
+    kept: list[bytes | None] = [None] * len(_RECORD_KEYS)
+    seen = [False] * len(_RECORD_KEYS)
+    tool_input: bytes | None = None
+    fingerprint: int | None = None
+    input_seen = False
+    i = _skip_whitespace(head, 0, n)
+    if i >= n or head[i] != 0x7B:
         return None
-    if len(payload) > MAX_HOOK_INGRESS_PAYLOAD_BYTES:
+    i += 1
+    while True:
+        i = _skip_whitespace(head, i, n)
+        if i >= n or head[i] == 0x7D:
+            break
+        if head[i] == 0x2C:
+            i += 1
+            continue
+        if head[i] != 0x22:
+            break
+        after_key = _skip_string(head, i, n)
+        if not after_key:
+            break
+        key = head[i + 1 : after_key - 1]
+        i = _skip_whitespace(head, after_key, n)
+        if i >= n or head[i] != 0x3A:
+            break
+        i = _skip_whitespace(head, i + 1, n)
+        if i >= n:
+            break
+        end = _skip_value(head, i, n)
+        is_input = key == b"tool_input"
+        if is_input and not input_seen:
+            input_seen = True
+            if head[i] == 0x7B:
+                # A value the head ends inside runs to the end of the head.
+                span = end - i if end else n - i
+                if end and span <= _RECORD_INPUT_BYTES:
+                    tool_input = head[i : i + span]
+                else:
+                    fingerprint = _fnv1a64(head[i : i + min(span, _RECORD_INPUT_BYTES)])
+        if not end:
+            break
+        if not is_input:
+            for slot, (name, cap) in enumerate(_RECORD_KEYS):
+                if key != name:
+                    continue
+                if seen[slot]:
+                    break
+                seen[slot] = True
+                if head[i] != 0x22:
+                    break
+                value = head[i + 1 : end - 1]
+                if not value or len(value) > cap:
+                    break
+                if _PLAIN_ASCII.fullmatch(value):
+                    kept[slot] = value
+                break
+        i = end
+    if kept[0] is None or kept[1] is None:
+        return None
+    members = [b'"%b":"%b"' % (name, value) for (name, _), value in zip(_RECORD_KEYS, kept) if value is not None]
+    record = b"{" + b",".join(members)
+    if tool_input is not None:
+        record += b',"tool_input":' + tool_input
+    if fingerprint is not None:
+        record += b',"payload_fingerprint":"%016x"' % fingerprint
+    record += b',"payload_truncated":true}'
+    if len(record) >= _RECORD_BYTES:
         return None
     try:
-        return payload.decode("utf-8", errors="strict")
+        return record.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         return None
 
 
+def _read_bounded_payload(provider: str = "") -> tuple[str | None, bool]:
+    """The hook's stdin as text, and whether that text is the record standing
+    in for a payload past the cap (``None`` when there is nothing to send).
+
+    Never more than the cap and one byte is read: a payload past it is not
+    buffered, only its head is scanned for the record."""
+    try:
+        payload = sys.stdin.buffer.read(MAX_HOOK_INGRESS_PAYLOAD_BYTES + 1)
+    except (AttributeError, OSError):
+        return None, False
+    if len(payload) > MAX_HOOK_INGRESS_PAYLOAD_BYTES:
+        if provider not in _RECORD_PROVIDERS:
+            return None, False
+        record = oversize_payload_record(payload)
+        return record, record is not None
+    try:
+        return payload.decode("utf-8", errors="strict"), False
+    except UnicodeDecodeError:
+        return None, False
+
+
 def hook_client_main(provider: str, log_path: Path, *, decide: bool = False) -> int:
     try:
-        payload_text = _read_bounded_payload()
+        payload_text, is_record = _read_bounded_payload(provider)
         if payload_text is None:
             return 0
-        if decide:
+        # A record stands in for an ask whose input cannot be shown, so it is
+        # never held for a verdict: it goes as an ordinary hook and nothing
+        # is printed (hook/jrbar-hook.c does the same).
+        if decide and not is_record:
             verdict = run_decide_hook_client(provider, Path(log_path).expanduser(), payload_text)
             if verdict is not None:
                 try:
@@ -200,4 +391,10 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["hook_client_main", "main", "run_decide_hook_client", "run_hook_client"]
+__all__ = [
+    "hook_client_main",
+    "main",
+    "oversize_payload_record",
+    "run_decide_hook_client",
+    "run_hook_client",
+]

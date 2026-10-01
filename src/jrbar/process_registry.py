@@ -10,7 +10,8 @@ state dir (``processes/<provider>/<session>.json``). The app sweeps those
 records against the live process table and ends any session whose process
 is gone. Pid reuse is defeated by remembering the process start time.
 
-Claude Code also publishes ``~/.claude/sessions/<pid>.json``; that index is
+Claude Code also publishes ``<claude home>/sessions/<pid>.json`` (``~/.claude``,
+or ``CLAUDE_CONFIG_DIR`` when that names a folder); that index is
 read as a second source so sessions started before the hooks were
 installed still get a pid.
 """
@@ -582,9 +583,22 @@ def note_hook_payload(
 # Claude's own session index
 
 
+def _claude_sessions_dir() -> Path:
+    """Where Claude Code writes ``<pid>.json``: inside ``CLAUDE_CONFIG_DIR``
+    when the environment names a folder, else ``~/.claude`` (provider_homes,
+    the same home install and detect use)."""
+    from .provider_homes import primary_claude_home
+
+    return primary_claude_home() / "sessions"
+
+
 def claude_session_index(sessions_dir: Path | None = None) -> dict[str, ProcessEntry]:
-    """sessionId -> process from ``~/.claude/sessions/<pid>.json``."""
-    base = sessions_dir if sessions_dir is not None else Path.home() / ".claude" / "sessions"
+    """sessionId -> process from Claude's ``sessions/<pid>.json`` files.
+
+    An explicit ``sessions_dir`` wins; otherwise the Claude home the person
+    actually uses (``CLAUDE_CONFIG_DIR``, else ``~/.claude``).
+    """
+    base = sessions_dir if sessions_dir is not None else _claude_sessions_dir()
     result: dict[str, ProcessEntry] = {}
     try:
         candidates = sorted(base.glob("*.json"))
@@ -617,9 +631,10 @@ def claude_session_details(
     sessions_dir: Path | None = None,
 ) -> dict[str, str] | None:
     """``{"name", "cwd"}`` for a Claude session from its own
-    ``~/.claude/sessions/<pid>.json`` (the file whose ``sessionId``
-    matches; ``pid`` names the file to try first). None when unknown."""
-    base = sessions_dir if sessions_dir is not None else Path.home() / ".claude" / "sessions"
+    ``sessions/<pid>.json`` (the file whose ``sessionId`` matches; ``pid``
+    names the file to try first), in the same home as ``claude_session_index``.
+    None when unknown."""
+    base = sessions_dir if sessions_dir is not None else _claude_sessions_dir()
     candidates: list[Path] = []
     if isinstance(pid, int) and pid > 1:
         candidates.append(base / f"{pid}.json")

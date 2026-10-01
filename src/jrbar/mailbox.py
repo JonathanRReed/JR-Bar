@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 
 from .attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
-from .models import AgentMode, AgentStatus
+from .models import AgentMode, AgentStatus, worker_id
 from .operator_state import (
     ACTIVE_SILENCE_SECONDS,
     PRESENCE_HORIZON_SECONDS,
@@ -732,7 +732,7 @@ def _valid_previous_order(previous_order: Mapping[str, int] | None) -> dict[str,
         agent_id: order
         for agent_id, order in previous_order.items()
         if isinstance(agent_id, str)
-        and ":agent:" not in agent_id
+        and worker_id(None, agent_id) is None
         and isinstance(order, int)
         and not isinstance(order, bool)
         and order >= 0
